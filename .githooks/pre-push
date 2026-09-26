@@ -554,6 +554,18 @@
 #       refuses naming both, a NUL byte among the causes, since the shell's
 #       read drops one. Its end: a cut count is a prefix of its digits,
 #       another number than the shell's
+#   the PROBE CHECK of the path-scoped copies
+#       one line per selected piece, named or missing, then one per finding at
+#       a second copy and one per other report line, from one awk over the
+#       path-scoped index and the probe run's report (probe_check, round 11b:
+#       a probe counts as named only under its own rule, the file and the rule
+#       together): the closing line's counts, pieces, findings and other
+#       lines, compared with the lines the shell read of each kind and with
+#       the probes it wrote, another number refused naming both; a missing
+#       probe refuses naming the rule, the file, the copy's name and the
+#       config read, and a finding at a second copy is named as a credential.
+#       Its end: the closing line, the answer's last, which an answer cut
+#       anywhere loses or contradicts, refused naming the read
 #   the ERR line of the scanner log
 #       the answer is always a word: none for a log with no ERR line, or
 #       error, a tab and the first such line, the awk stripping colour codes
@@ -770,16 +782,17 @@
 # tests/pre-push-hook.bats' newline case; the round 5 refuter, 2026-09-22).
 # The credential scan's files live in the same directory: the commits it
 # feeds (creds.list, and once each in creds.revs for their parent counts,
-# whose record is creds.parents), the pieces (creds.d) and the path-scoped
-# copies (creds.p), each directory made by mkdir, a writer like the others,
-# the two indexes that name each piece's commit and file (creds.index,
-# creds.pindex), the feed's record (creds.record), the merges' binary paths
-# the feed routes (creds.binary) and the record of each one's whole read
-# (creds.brecord), the report template, the two reports and, when an
-# [extend] path of the config is relative, the copies of its chain the
-# scanner is handed (creds.cfg.0.toml and on), each written by one printf
-# whose status gitleaks_config reads: it runs as a condition, where set -e
-# does not act, and a copy it could not write refuses the push naming it.
+# whose record is creds.parents), the pieces (creds.d), the path-scoped
+# copies (creds.p) and the probe run's probes and second copies (creds.q),
+# each directory made by mkdir, a writer like the others, the two indexes
+# that name each piece's commit and file (creds.index, creds.pindex), the
+# feed's record (creds.record), the merges' binary paths the feed routes
+# (creds.binary) and the record of each one's whole read (creds.brecord),
+# the report template, the three reports and the copies of the config's
+# chain every scanner run is handed (creds.cfg.0.toml and on), each copy
+# written by one redirect whose status gitleaks_config reads: it runs as a
+# condition, where set -e does not act, and a copy it could not write
+# refuses the push naming it.
 #
 # The credential scan reads the same new commits through the same listing and
 # its gates (list_commits), and a range this clone cannot resolve (a
@@ -895,23 +908,68 @@
 # the file's name, so gitleaks skipped such a copy and the figure could be
 # exact only with the file left out); a file its git mode skips by a
 # directory in its path (node_modules, a vendored tree) has no directory here
-# and is scanned. A repository config's path allowlist keyed on a file's real
-# name matches no copy, whose name is the fixed stem, so the copy is scanned
-# instead, the safe side (until round 10b such an allowlist skipped the copy,
-# and the push was refused on the figure), unless that name is one a copy
-# can carry: nuget.config (the copy of every file whose name ends so, in any
-# case, is named nuget.config), or a number and a lower-case suffix
-# (12.yaml); one keyed on a directory of the path never matched a copy, whose
-# one directory is its piece's number, unless that directory is a number
-# (12/); one keyed on a suffix alone, or on a name or a directory the copy
-# carries, skips the copy and refuses the push on the figure;
-# and a config that drops any of the five rules makes the run fail, refused
-# as a scan that could not complete.
-# The config both runs are handed is READ first, by the shell, where a scan
+# and is scanned. gitleaks evaluates every path-keyed element of the config
+# against a copy's name, not the file's path, so a per-rule or targeted path
+# allowlist, in either condition, or a rule's own path, that treats a copy's
+# name differently from the file's path changes that rule's verdict in the
+# copy without skipping it, and the figure agrees (until round 11 a per-rule
+# allowlist on nuget.config, or on the number directory 1/, published a
+# credential main's hook refused; the round 10 rulings, 2026-09-26). So a
+# third run, the PROBE run, reads one more directory holding, for each
+# selected piece, a PROBE at the copy's exact name (12/12.yaml), a short
+# text the rule reports under gitleaks' default rules, and a SECOND COPY of
+# the piece at the directory's root, named romp-copy-, the piece's number in
+# letters (a to j for 0 to 9), a dot when the suffix holds none, and the
+# file's own suffix as it spells it (romp-copy-bc.yaml,
+# romp-copy-bc.NuGet.Config): a name with no digit and no directory, which
+# each rule's default path matches and no global path of the default skips.
+# It runs with the five rules alone and the same config, its figure checked
+# against the bytes written there; its exit 2 is expected, its findings (the
+# probes among them) are never shown, and its log is shown only when it
+# fails. A probe its report does not hold under the probe's own rule (the
+# file and the rule, never the file alone) refuses the push, the line naming
+# the rule, the file's path, the copy's name and the config read, and saying
+# that config dropped the rule's probe at the copy's name. The hook learns
+# this by the effect alone, so the line names no entry and does not say a
+# path entry did it: a regex or stopword allowlist, or a raised entropy
+# floor, that matches a probe's value drops the probe as surely. The probes'
+# values are chosen so that the repository's own allowlists are the only
+# thing that can drop them (each clear of the default config's value
+# allowlists, stopwords and entropy floors). The line's remedies, in order:
+# excuse a false alarm by its value with a regex or stopword allowlist
+# instead of a path; keep the rule's default path; ROMP_NO_GITLEAKS=1 for
+# one push. A finding at a second copy refuses as a credential, named by
+# commit and file: it catches an AND-condition path allowlist, whose drop
+# depends on the content too, which no probe can see. The cost, with its
+# witnesses in tests/pre-push-hook.bats' round 11b section: a push adding a
+# selected file, under a config that drops the file's rule at the copy's
+# name, is refused even when the file is clean (a clean prod.nuget.config
+# under a per-rule allowlist on (^|/)nuget\.config$), and also where the
+# file's own path gets the same verdict (an unanchored per-rule
+# (?i)nuget\.config$ allowlist excuses the rule for every nuget.config, and
+# every push adding one is refused), each a push main's hook passes; a
+# narrower refusal is a held follow-up; and every push with a selected file
+# pays one more scanner run and one awk, no process per piece. The
+# residual, with its witness there: an AND-condition allowlist whose path
+# matches both the copy's name and the second copy's (^(?:[0-9]+/|romp-copy-))
+# and not the file's path, with value criteria matching the credential,
+# publishes it; such a path keys on the hook's synthetic names and has no
+# honest use, and what it publishes is a value the config excuses by value.
+# A global path allowlist that matches a copy's name skips the copy and
+# refuses the push on the figure; one keyed on the file's real path
+# (^deploy/secret\.yaml$) matches neither name, so the copy is scanned and a
+# credential there refused where main passes, the safe side; and a config
+# that drops any of the five rules makes the run fail, refused as a scan
+# that could not complete.
+# The config every run is handed is READ first, by the shell, where a scan
 # would run (gitleaks_config): the work tree's .gitleaks.toml and every file
 # its [extend] chain names, or, with none, the file GITLEAKS_CONFIG names or
 # GITLEAKS_CONFIG_TOML's text, the order gitleaks takes them in; gitleaks'
 # default config is never read, since the additive run owns its five paths.
+# Every run is then handed the reader's own copy of what it read, written to
+# the scratch directory (the owner's call, ruled 2026-09-26), so the reader's
+# verdict and the scanner's input are the same bytes, whatever changes a
+# file after the read.
 # A repository config whose rules carry a path condition (a path key on a
 # [[rules]] table, the rule's own, not an allowlist's paths) refuses the
 # push, one line per rule naming its id and the file: the scan reads the
@@ -920,22 +978,32 @@
 # custom rule on .env, a path-only rule on .jks, generic-api-key given a .py
 # path and hashicorp-tf-password widened to .tfvars each published a
 # credential until round 11; the round 10 checkers, 2026-09-26). Exact
-# support for path-conditioned rules is a held follow-up. The reader fails
+# support for path-conditioned rules is a held follow-up. Two path values
+# are exempt, each on a path key standing alone: on one of the five
+# path-scoped rules, the text the hook's own table gives that rule (the path
+# gitleaks' default config gives it, which the additive run's copies meet),
+# byte for byte in a literal string, so a config copied from gitleaks'
+# default passes; and on any rule, an empty string, which gitleaks reads as
+# no condition. The exemption is keyed on the hook's table, not on the
+# running gitleaks' default, which the hook cannot read. The reader fails
 # closed: a construct it does not parse (the rules written as a key, an
 # inline table or array of them; a string it cannot delimit; a table header
 # it does not recognize; a quoted key holding an escape or a byte outside
 # printable ASCII, which gitleaks decodes and case-folds; an [extend] path
 # that is not a one-line string; a file it cannot open) refuses the push
 # naming it and its line, and each file's bytes as the shell read them are
-# compared with its byte count, so a read cut short refuses too. A relative
-# [extend] path is resolved against the directory git runs the hook in (the
-# work tree's root), as gitleaks resolved it while the hook ran gitleaks
-# there, before round 9, at each of the two levels gitleaks follows (a path
-# at the third, which gitleaks ignores, is refused): the scanner is then
-# handed a copy of the chain in the scratch directory, each extend path made
-# absolute (until round 11 a relative extend refused every push with content
-# on gitleaks' own FTL line; the coordinator's decision 5, 2026-09-26), and a
-# relative GITLEAKS_CONFIG is made absolute the same way.
+# compared with its byte count, so a read cut short refuses too. These
+# refusals come before either scanner run, and each line says the scan
+# follows once the config is fixed. A relative [extend] path is resolved
+# against the directory git runs the hook in (the work tree's root), as
+# gitleaks resolved it while the hook ran gitleaks there, before round 9, at
+# each of the two levels gitleaks follows, and the copy names it absolutely
+# (until round 11 a relative extend refused every push with content on
+# gitleaks' own FTL line; the coordinator's decision 5, 2026-09-26); a path
+# at the third level, which gitleaks ignores, is refused, a visible refusal
+# of a rare shape, since a later gitleaks that followed it would read rules
+# the reader never saw; and a relative GITLEAKS_CONFIG is made absolute the
+# same way.
 # What the pieces cost, as three facts: gitleaks' path exemptions (lockfiles,
 # node_modules and vendored trees, images, fonts, documents, go.sum and the
 # rest of its global allowlist, and its per-rule path allowlists) do not reach
@@ -3223,8 +3291,14 @@ scan_identifiers() {
 # (until round 10b the copy took the path's quoted basename, escapes kept,
 # and a selected file whose quoted basename passed 255 bytes ended the hook
 # on a clean push with bash's File name too long line and no romp line; the
-# round 9 refuters, 2026-09-25); and the bytes of its pieces are counted
-# apart.
+# round 9 refuters, 2026-09-25); then the name of its SECOND copy, for the
+# probe run (the header): romp-copy-, the piece's number spelled in letters
+# (a to j for 0 to 9: 12 is bc), a dot when the suffix holds none at its
+# start, and the suffix as the file spells it, case kept (src/NuGet.Config's
+# is romp-copy-bc.NuGet.Config); then the rule that suffix's files answer to
+# (pkcs12-file, nuget-config-password, kubernetes-secret-yaml,
+# hashicorp-tf-password or freemius-secret-key); and the bytes of its pieces
+# are counted apart.
 # Inside a commit, between its two name lines, the awk accounts for every
 # line, by the lines this diff-tree prints (derived by running it over root,
 # one-parent and merge commits, renames with and without edits, mode and type
@@ -3268,9 +3342,10 @@ scan_identifiers() {
 # a merge's binary path read whole), so both cut, replay and index alike: the
 # constants CAP, V and LW, put (a line written and counted), the ring (keep
 # and forget), newpiece (the ~ line, the index lines, the replay), emit (a
-# line, or the windows of a long one), shut, and choose, the path-scoped
-# selection by a path's basename (the header). Each awk program is this text
-# followed by its own rules.
+# line, or the windows of a long one), shut, choose, the path-scoped
+# selection by a path's basename (the header), and letters, a piece's number
+# spelled for its second copy's name. Each awk program is this text followed
+# by its own rules.
 CRED_PIECES_AWK='
         function pieces_begin() {
             bytes = 0; pbytes = 0; pieces = 0; cur = ""; curq = 0; q = 0; rh = 1; rt = 0; rb = 0
@@ -3285,7 +3360,7 @@ CRED_PIECES_AWK='
             shut()
             cur = dir "/" (++pieces); pb = 0; curq = q; put("~")
             printf "%d\t%s\t%s\t.\n", pieces, sha, f >> idx
-            if (q) printf "%d\t%s\t.\n", pieces, (sfx == "nuget.config" ? sfx : pieces sfx) >> pidx
+            if (q) printf "%d\t%s\t%s\t%s\t.\n", pieces, (sfx == "nuget.config" ? sfx : pieces sfx), "romp-copy-" letters(pieces) (substr(osfx, 1, 1) == "." ? "" : ".") osfx, srule >> pidx
             if (replay) { x = rb - V; for (i = rh; i <= rt; i++) { s = rl[i]; if (i == rh && x > 0) s = substr(s, x + 1); put(s) } }
         }
         function emit(t,   L, s, w) {
@@ -3303,8 +3378,15 @@ CRED_PIECES_AWK='
             if (substr(base, 1, 1) == "\"") { base = substr(base, 2); sub(/"$/, "", base) }
             sub(/.*\//, "", base); lb = tolower(base)
             q = (lb ~ /(\.p12|\.pfx|nuget\.config|\.yaml|\.yml|\.tf|\.hcl|\.php)$/) && base !~ /gitleaks\.toml/ && lb !~ /verification-metadata\.xml|database.refactorlog/ && lb != "pnpm-lock.yaml"
-            sfx = ""; if (q && match(lb, /(\.p12|\.pfx|nuget\.config|\.yaml|\.yml|\.tf|\.hcl|\.php)$/)) sfx = substr(lb, RSTART)
-        }'
+            sfx = ""; osfx = ""; srule = ""
+            if (q && match(lb, /(\.p12|\.pfx|nuget\.config|\.yaml|\.yml|\.tf|\.hcl|\.php)$/)) { sfx = substr(lb, RSTART); osfx = substr(base, RSTART) }
+            if (sfx == ".p12" || sfx == ".pfx") srule = "pkcs12-file"
+            else if (sfx == "nuget.config") srule = "nuget-config-password"
+            else if (sfx == ".yaml" || sfx == ".yml") srule = "kubernetes-secret-yaml"
+            else if (sfx == ".tf" || sfx == ".hcl") srule = "hashicorp-tf-password"
+            else if (sfx == ".php") srule = "freemius-secret-key"
+        }
+        function letters(n,   s, i) { n = n ""; s = ""; for (i = 1; i <= length(n); i++) s = s substr("abcdefghij", substr(n, i, 1) + 1, 1); return s }'
 credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file> <binary paths file>
     git -c core.quotePath=true diff-tree --stdin -p -U0 -r -M -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short < "$1" \
     | LC_ALL=C tr '\000' '\001' \
@@ -3442,11 +3524,12 @@ parent_counts() {   # <list file: one commit per line> <record file>: prints "<c
         }'
 }
 
-# gitleaks' argument list, built in ONE place for both runs, in the order
+# gitleaks' argument list, built in ONE place for every run, in the order
 # tests/install-sh.bats pins by substring (--redact -v). dir . is the
 # directory mode over the directory the scanner runs in (scanner_run changes
 # into it), so each finding's File is a path relative to it: a piece's
-# number, or a copy's piece number and its name (12/12.yaml). -v prints each
+# number, a copy's piece number and its name (12/12.yaml), or in the probe
+# run a probe (12/12.yaml) or a second copy (romp-copy-bc.yaml). -v prints each
 # finding's file, line and rule (here the piece and a line within it: the hook
 # names the commit and the file itself); without it gitleaks reports only a
 # COUNT.
@@ -3457,8 +3540,8 @@ parent_counts() {   # <list file: one commit per line> <record file>: prints "<c
 # push, with different advice. The template report is the attribution's
 # input: one line per finding, its file, its rule and a terminator
 # (--report-template alone is refused by both versions, which ask for the
-# format by name too). The caller's options follow: the repo's config, and
-# for the path-scoped run its --enable-rule.
+# format by name too). The caller's options follow: the reader's copy of
+# the config, and for the path-scoped and probe runs their --enable-rule.
 gitleaks_args() {   # <template> <report> [<option>...]: fills GL_ARGS
     local tpl="$1" rep="$2"
     shift 2
@@ -3515,49 +3598,67 @@ scanner_version() {   # <gitleaks>
 # names, or GITLEAKS_CONFIG_TOML's text, each with every file its [extend]
 # chain names; with none of the three gitleaks reads its default, which is
 # never read here (the additive run owns its five paths), and cfg_name says
-# so. The work tree's file is named to the scanner explicitly, as before:
-# without --config gitleaks reads a GITLEAKS_CONFIG from the environment
-# first, so a developer's own config (for a pre-commit hook of theirs, say)
-# would replace the repo's. Each file is read by the shell, one line at a
-# time on descriptor 7, and parsed by the tl_ helpers below, no tool between
-# the file and the verdict; its bytes as read are compared with its BYTE
-# COUNT (wc -c, config_bytes, through judged_read), so a read cut short, or a
-# NUL byte (which the shell's read drops and TOML allows nowhere), refuses;
-# GITLEAKS_CONFIG_TOML's text is the shell's own and has no count to read.
-# A [[rules]] table carrying a path key (the rule's own path condition, not an
-# allowlist's paths) refuses the push, one line per rule naming its id and
-# the file: the scan reads the pushed lines as pieces named by number, and
-# gitleaks evaluates a rule's path against a piece's name, where it never
-# fires (the round 10 checkers, 2026-09-26: four such rules each published a
-# credential until round 11, which the hook's scan over real paths, before
-# round 9, refused). A construct the reader does not parse refuses naming it
-# and its line, as does a file it cannot open. An [extend] path is read
-# against gitleaks' working directory, which was the work tree's root while
-# the hook ran gitleaks there, before round 9; the scanner runs from the
-# scratch directory since, so a relative path is resolved against the
+# so. Every scanner run is handed the reader's own COPY of what it read, with
+# --config (the owner's call, ruled 2026-09-26): each file of the chain
+# copied line for line into the scratch directory (creds.cfg.0.toml and on),
+# its [extend] path made absolute, so the reader's verdict and the
+# scanner's input are the same bytes (until round 11b gitleaks read the files
+# itself, and a file changed between the reader's read and gitleaks' went
+# unseen; the r11a audit). --config outranks GITLEAKS_CONFIG and
+# GITLEAKS_CONFIG_TOML (executed, 8.28.0 and 8.30.1), so a developer's own
+# config (for a pre-commit hook of theirs, say) cannot replace the repo's.
+# Each file is read by the shell, one line at a time on descriptor 7, and
+# parsed by the tl_ helpers below, no tool between the file and the verdict;
+# its bytes as read are compared with its BYTE COUNT (wc -c, config_bytes,
+# through judged_read), so a read cut short, or a NUL byte (which the shell's
+# read drops and TOML allows nowhere), refuses; GITLEAKS_CONFIG_TOML's text
+# is the shell's own and has no count to read. A [[rules]] table carrying a
+# path key (the rule's own path condition, not an allowlist's paths) refuses
+# the push, one line per rule naming its id and the file: the scan reads the
+# pushed lines as pieces named by number, and gitleaks evaluates a rule's
+# path against a piece's name, where it never fires (the round 10 checkers,
+# 2026-09-26: four such rules each published a credential until round 11,
+# which the hook's scan over real paths, before round 9, refused). Two path
+# values are exempt, each on a path key standing alone (romp-manager's
+# rulings, 2026-09-26): on one of the five path-scoped rules, a one-line
+# literal string, or basic one with no escape, whose text is byte for byte
+# the hook's own entry for that rule's id (tl_default_path: the path
+# gitleaks' default config gives the rule, the path the additive run's
+# copies meet), so a config copied from gitleaks' default passes and the
+# additive run applies exactly that path; and on any rule, the empty string
+# in basic or literal quotes, which gitleaks reads as no condition, so the
+# scan of record reads the rule on every piece. Any other path text refuses,
+# a copied default's path written with an escape among them. A construct the
+# reader does not parse refuses naming it and its line, as does a file it
+# cannot open. These refusals come before either scanner run, and each line
+# says the scan follows once the config is fixed: a scan under a config the
+# hook has refused would be read under the wrong rules. An [extend] path is
+# read against gitleaks' working directory, which was the work tree's root
+# while the hook ran gitleaks there, before round 9; the scanner runs from
+# the scratch directory since, so a relative path is resolved against the
 # directory git runs the hook in, as gitleaks resolved it then, at every
 # level (the extended file's own [extend] too, as gitleaks reads it), and
-# when any is relative the scanner is handed a copy of the chain in the
-# scratch directory, each [extend] path made absolute (until round 11 a
-# relative extend refused every push with content on gitleaks' own FTL line,
-# where the hook before round 9 passed); a relative GITLEAKS_CONFIG is
-# resolved and named the same way. gitleaks 8.28.0 and 8.30.1 follow two
-# levels of [extend] and ignore a path at the third, which is refused here
-# rather than followed.
+# the copy names it absolutely (until round 11 a relative extend refused
+# every push with content on gitleaks' own FTL line, where the hook before
+# round 9 passed); a relative GITLEAKS_CONFIG is resolved the same way.
+# gitleaks 8.28.0 and 8.30.1 follow two levels of [extend] and ignore a path
+# at the third, which is refused here rather than followed, a visible
+# refusal of a rare shape: a later gitleaks that followed it would read rules
+# the reader never saw.
 # Status 0 when the scan may run; 1 when refused here (failed_creds set, and
 # failed_scan by unscanned).
 gitleaks_config() {   # sets cfg and cfg_name, the caller's
-    local LC_ALL=C wt d k f p l nb count opened relext=0 named=0 tl_n=0
-    local tl_i=0 tl_end=0 tl_ln=0 tl_rest="" tl_what="" tl_str="" tl_plain=0 tl_low="" tl_ext="" tl_extln=-1 tl_hit=0
-    local -a tl_all tl_segs chain_file chain_shown chain_short chain_start chain_end chain_extln copy
+    local LC_ALL=C wt d k n f p l nb count opened tl_n=0 fixed="no scanner run was made, and the scan follows once the config is fixed"
+    local tl_i=0 tl_end=0 tl_ln=0 tl_rest="" tl_what="" tl_str="" tl_plain=0 tl_q="" tl_low="" tl_ext="" tl_extln=-1 tl_hit=0 tl_dpath=""
+    local -a tl_all tl_segs chain_file chain_shown chain_short chain_start chain_end chain_extln chain_nonl copy
     cfg=(); cfg_name="the default config gitleaks embeds"
     wt=$(pwd -P)
     if [ -f .gitleaks.toml ]; then
         chain_file=("$wt/.gitleaks.toml"); chain_short=(.gitleaks.toml); chain_shown=(".gitleaks.toml (the work tree's)")
-        cfg_name="the work tree's .gitleaks.toml"; named=1
+        cfg_name="the work tree's .gitleaks.toml"
     elif [ -n "${GITLEAKS_CONFIG:-}" ]; then
         f=$GITLEAKS_CONFIG
-        case "$f" in /*) ;; *) f="$wt/$f"; named=1 ;; esac
+        case "$f" in /*) ;; *) f="$wt/$f" ;; esac
         chain_file=("$f"); chain_short=("$GITLEAKS_CONFIG"); chain_shown=("$GITLEAKS_CONFIG (the file GITLEAKS_CONFIG names)")
         cfg_name="the file GITLEAKS_CONFIG names ($GITLEAKS_CONFIG)"
     elif [ -n "${GITLEAKS_CONFIG_TOML:-}" ]; then
@@ -3575,12 +3676,12 @@ gitleaks_config() {   # sets cfg and cfg_name, the caller's
         opened=1
         if [ -z "$f" ]; then { exec 7<<< "$GITLEAKS_CONFIG_TOML"; } || opened=0; else { exec 7< "$f"; } || opened=0; fi
         if [ "$opened" -eq 0 ]; then
-            unscanned "the gitleaks config ${chain_shown[d]} could not be opened for reading, so whether a rule in it carries a path condition is unknown; make it readable, or set ROMP_NO_GITLEAKS=1 for one push"
+            unscanned "the gitleaks config ${chain_shown[d]} could not be opened for reading, so whether a rule in it carries a path condition is unknown; make it readable, or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
             failed_creds=1; return 1
         fi
-        nb=0; l=""
+        nb=0; l=""; chain_nonl[d]=0
         while IFS= read -r -u 7 l; do tl_all+=("$l"); tl_n=$((tl_n + 1)); nb=$((nb + ${#l} + 1)); done
-        if [ -n "$l" ]; then tl_all+=("$l"); tl_n=$((tl_n + 1)); nb=$((nb + ${#l})); fi
+        if [ -n "$l" ]; then tl_all+=("$l"); tl_n=$((tl_n + 1)); nb=$((nb + ${#l})); chain_nonl[d]=1; fi
         exec 7<&-
         chain_end[d]=$tl_n
         if [ -n "$f" ]; then
@@ -3593,48 +3694,64 @@ gitleaks_config() {   # sets cfg and cfg_name, the caller's
                 failed_creds=1; return 1
             fi
             if [ "$count" != "$nb" ]; then
-                unscanned "the gitleaks config ${chain_shown[d]} was read short (the shell read $nb bytes of the $count wc -c counts: a read cut short, or a NUL byte, which the shell's read drops and TOML allows nowhere)"
+                unscanned "the gitleaks config ${chain_shown[d]} was read short (the shell read $nb bytes of the $count wc -c counts: a read cut short, or a NUL byte, which the shell's read drops and TOML allows nowhere); $fixed"
                 failed_creds=1; return 1
             fi
         fi
         tl_i=${chain_start[d]}; tl_end=${chain_end[d]}
         if ! tl_file "${chain_shown[d]}"; then
-            unscanned "line $((tl_ln - chain_start[d] + 1)) of the gitleaks config ${chain_shown[d]} holds $tl_what, which the hook's reader does not parse, so whether a rule there carries a path condition is unknown; rewrite it with [[rules]] and [extend] tables, plain keys and closed strings, or set ROMP_NO_GITLEAKS=1 for one push"
+            unscanned "line $((tl_ln - chain_start[d] + 1)) of the gitleaks config ${chain_shown[d]} holds $tl_what, which the hook's reader does not parse, so whether a rule there carries a path condition is unknown; rewrite it with [[rules]] and [extend] tables, plain keys and closed strings, or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
             failed_creds=1; return 1
         fi
         chain_extln[d]=$tl_extln
         [ -n "$tl_ext" ] || break
         if [ "$d" -eq 2 ]; then
-            unscanned "line $((tl_extln - chain_start[d] + 1)) of the gitleaks config ${chain_shown[d]} names a third level of [extend] ($tl_ext), which gitleaks 8.28.0 and 8.30.1 ignore and the hook's reader does not read; remove it, or set ROMP_NO_GITLEAKS=1 for one push"
+            unscanned "line $((tl_extln - chain_start[d] + 1)) of the gitleaks config ${chain_shown[d]} names a third level of [extend] ($tl_ext), which gitleaks 8.28.0 and 8.30.1 ignore and the hook's reader does not read; remove it, or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
             failed_creds=1; return 1
         fi
-        case "$tl_ext" in /*) p=$tl_ext ;; *) p="$wt/$tl_ext"; relext=1 ;; esac
+        case "$tl_ext" in /*) p=$tl_ext ;; *) p="$wt/$tl_ext" ;; esac
         chain_file[d + 1]=$p; chain_short[d + 1]=$tl_ext; chain_shown[d + 1]="$tl_ext (the [extend] of ${chain_short[d]})"
     done
     if [ "$tl_hit" -ne 0 ]; then failed_creds=1; return 1; fi
-    if [ "$relext" -ne 0 ]; then
-        # The copy of the chain: each file's lines as the shell read them, its
-        # [extend] path line replaced by the next copy's absolute path as a
-        # basic string (a backslash and a double quote escaped), the last file
-        # copied whole; one printf per copy, its status read.
-        k=${#chain_start[@]}
-        # shellcheck disable=SC2089,SC2090  # the replaced line is TOML text: its quotes are data
-        for ((d = 0; d < k; d++)); do
-            copy=("${tl_all[@]:${chain_start[d]}:$((chain_end[d] - chain_start[d]))}")
-            if [ "$d" -lt $((k - 1)) ]; then
-                p="$scratch/creds.cfg.$((d + 1)).toml"; p=${p//\\/\\\\}; p=${p//\"/\\\"}
-                copy[chain_extln[d] - chain_start[d]]="path = \"$p\""
-            fi
-            if ! printf '%s\n' ${copy[@]+"${copy[@]}"} > "$scratch/creds.cfg.$d.toml"; then
-                unscanned "the copy of the gitleaks config ${chain_shown[d]}, its [extend] path made absolute, could not be written to the scratch directory"
-                failed_creds=1; return 1
-            fi
-        done
-        cfg=(--config "$scratch/creds.cfg.0.toml")
-    elif [ "$named" -ne 0 ]; then
-        cfg=(--config "${chain_file[0]}")
-    fi
+    # The copy of the chain, the config every scanner run is handed: each
+    # file's lines as the shell read them, a missing final newline kept
+    # missing, its [extend] path line replaced by the next copy's absolute
+    # path as a basic string (a backslash and a double quote escaped), the
+    # last file copied whole, so a copy is its file byte for byte but for
+    # that one line; each written by one redirect of two printfs chained, the
+    # lines and the last line, its status read.
+    k=${#chain_start[@]}
+    # shellcheck disable=SC2089,SC2090  # the replaced line is TOML text: its quotes are data
+    for ((d = 0; d < k; d++)); do
+        copy=("${tl_all[@]:${chain_start[d]}:$((chain_end[d] - chain_start[d]))}")
+        if [ "$d" -lt $((k - 1)) ]; then
+            p="$scratch/creds.cfg.$((d + 1)).toml"; p=${p//\\/\\\\}; p=${p//\"/\\\"}
+            copy[chain_extln[d] - chain_start[d]]="path = \"$p\""
+        fi
+        n=${#copy[@]}; l=""; [ "$n" -eq 0 ] || l=${copy[n - 1]}
+        if ! { { [ "$n" -le 1 ] || printf '%s\n' "${copy[@]:0:n-1}"; } && { [ "$n" -eq 0 ] || if [ "${chain_nonl[d]}" -eq 0 ]; then printf '%s\n' "$l"; else printf '%s' "$l"; fi; }; } > "$scratch/creds.cfg.$d.toml"; then
+            unscanned "the copy of the gitleaks config ${chain_shown[d]}, the config the scanner is handed, could not be written to the scratch directory"
+            failed_creds=1; return 1
+        fi
+    done
+    cfg=(--config "$scratch/creds.cfg.0.toml")
     return 0
+}
+# The five path-scoped rules' paths, the hook's own table (romp-manager's
+# rulings, 2026-09-26): each text as gitleaks' default config gives it, the
+# same five in 8.28.0 and 8.30.1 (read from the config each binary embeds,
+# 2026-09-26), and each the path the additive run's copies meet (the
+# header). The reader exempts one of these rules' path keys when its text is
+# this entry byte for byte (gitleaks_config).
+tl_default_path() {   # <rule id>: tl_dpath the entry; status 1 for an id that is none of the five
+    case "$1" in
+        pkcs12-file) tl_dpath='(?i)(?:^|\/)[^\/]+\.p(?:12|fx)$' ;;
+        nuget-config-password) tl_dpath='(?i)nuget\.config$' ;;
+        kubernetes-secret-yaml) tl_dpath='(?i)\.ya?ml$' ;;
+        hashicorp-tf-password) tl_dpath='(?i)\.(?:tf|hcl)$' ;;
+        freemius-secret-key) tl_dpath='(?i)\.php$' ;;
+        *) tl_dpath=""; return 1 ;;
+    esac
 }
 # The byte count of a config file, for the gate above: a function handed to
 # judged_read whole, so a file the redirect cannot open is a status the set
@@ -3646,14 +3763,23 @@ config_bytes() {   # <file>
 # through bash's dynamic scope: tl_all (the chain's lines), tl_i and tl_end
 # (the next line of the current file, and one past its last), tl_ln (the
 # current line), tl_rest (what is left of it to parse), tl_what (the construct
-# that could not be parsed), tl_segs (the key just parsed), tl_str and
-# tl_plain (a value's text, and 1 when it is a one-line string with no
-# escape), tl_ext and tl_extln (the [extend] path and its line), tl_hit (a
-# rule with a path key reported). The grammar is TOML's as gitleaks reads it
-# (go-toml under viper, probed on 8.28.0 and 8.30.1): viper lower-cases every
-# key and splits a quoted key at its dots, and its decoder matches a name in
-# any case, Unicode folding included ([["rule<U+017F>"]] defines rules; a
-# quoted key spelling path with a Unicode escape is a path), so a key is
+# that could not be parsed), tl_segs (the key just parsed), tl_str, tl_plain
+# and tl_q (a value's text, 1 when it is a one-line string with no escape,
+# and its form: basic or literal for such a string, mlliteral for a
+# triple-single-quoted one on one line, empty otherwise), tl_ext and
+# tl_extln (the [extend] path and its line), tl_hit (a rule with a path key
+# reported), tl_dpath (tl_default_path's entry). The grammar is TOML's as
+# gitleaks reads it (go-toml under viper, probed on 8.28.0 and 8.30.1): viper
+# lower-cases every key, and its decoder matches a name in any case, Unicode
+# folding included ([["rule<U+017F>"]] defines rules; a quoted key spelling
+# path with a Unicode escape is a path). A quoted dotted key is split at its
+# dots at the top level (a quoted "allowlist.regexes" there is the global
+# allowlist's regexes) but not inside a [[rules]] element, where it stays one
+# key that gitleaks ignores (executed, 8.28.0 and 8.30.1: the rule's finding
+# was reported under the quoted key and excused under the bare dotted one;
+# the r11a audit, 2026-09-26). The reader splits a quoted key at its dots
+# everywhere, so inside a rule table its split can only over-refuse (a quoted
+# "path.x" read as a path key: a visible refusal, never a miss). So a key is
 # compared lower-cased, a quoted one split at its dots, and a quoted key
 # holding an escape or a byte outside printable ASCII is refused; [rules] as
 # a single table defines one rule, and rules as a key an inline table or
@@ -3683,7 +3809,7 @@ tl_lower() {   # <text>: tl_low, the text with its ASCII capitals lowered
         tl_low=$tl_low$c
     done
 }
-tl_key() {   # parses a key, dotted or not, at the start of tl_rest: tl_segs its segments lower-cased, a quoted one split at its dots; status 1, tl_what set, when it is no key the reader reads
+tl_key() {   # parses a key, dotted or not, at the start of tl_rest: tl_segs its segments lower-cased, a quoted one split at its dots, as gitleaks splits one at the top level (inside a rule table gitleaks keeps it whole, so the split there only over-refuses); status 1, tl_what set, when it is no key the reader reads
     local seg quoted re_bare='^([A-Za-z0-9_-]+)(.*)$' re_basic='^"([^"]*)"(.*)$' re_lit="^'([^']*)'(.*)\$" re_odd='[^ -~]'
     tl_segs=()
     while :; do
@@ -3710,28 +3836,33 @@ tl_key() {   # parses a key, dotted or not, at the start of tl_rest: tl_segs its
         case "$tl_rest" in .*) tl_rest=${tl_rest#.} ;; *) return 0 ;; esac
     done
 }
-tl_value() {   # parses one value at the start of tl_rest, reading on across lines where TOML lets one run on (a triple-quoted string, an array): tl_plain 1 and tl_str its text for a one-line string with no escape, tl_plain 0 otherwise; status 1, tl_what set, when it is no value the reader reads
-    local re_basic='^"(([^"\\]|\\.)*)"(.*)$' re_lit="^'([^']*)'(.*)\$" re_scalar='^[A-Za-z0-9_:.+-]+( [0-9][0-9]:[A-Za-z0-9_:.+-]*)?(.*)$'
-    tl_plain=0; tl_str=""
+tl_value() {   # parses one value at the start of tl_rest, reading on across lines where TOML lets one run on (a triple-quoted string, an array): tl_plain 1 and tl_str its text for a one-line string with no escape (tl_q basic or literal), tl_str the text of a triple-single-quoted string closed on its line by three quotes (tl_q mlliteral, tl_plain 0), tl_plain 0 and tl_q empty otherwise; status 1, tl_what set, when it is no value the reader reads
+    local re_basic='^"(([^"\\]|\\.)*)"(.*)$' re_lit="^'([^']*)'(.*)\$" re_ml1="^'''([^']*)'''([^'].*)?\$" re_scalar='^[A-Za-z0-9_:.+-]+( [0-9][0-9]:[A-Za-z0-9_:.+-]*)?(.*)$'
+    tl_plain=0; tl_str=""; tl_q=""
     tl_ws
     case "$tl_rest" in
         '"""'*) tl_rest=${tl_rest:3}; tl_mlstring basic || return 1 ;;
-        "'''"*) tl_rest=${tl_rest:3}; tl_mlstring literal || return 1 ;;
+        "'''"*)
+            if [[ "$tl_rest" =~ $re_ml1 ]]; then
+                tl_str=${BASH_REMATCH[1]}; tl_rest=${BASH_REMATCH[2]}; tl_q=mlliteral
+            else
+                tl_rest=${tl_rest:3}; tl_mlstring literal || return 1
+            fi ;;
         '"'*)
             if [[ "$tl_rest" =~ $re_basic ]]; then
                 tl_str=${BASH_REMATCH[1]}; tl_rest=${BASH_REMATCH[3]}
-                case "$tl_str" in *\\*) ;; *) tl_plain=1 ;; esac
+                case "$tl_str" in *\\*) ;; *) tl_plain=1; tl_q=basic ;; esac
             else
                 tl_what="a string that does not close on its line"; return 1
             fi ;;
         "'"*)
             if [[ "$tl_rest" =~ $re_lit ]]; then
-                tl_str=${BASH_REMATCH[1]}; tl_rest=${BASH_REMATCH[2]}; tl_plain=1
+                tl_str=${BASH_REMATCH[1]}; tl_rest=${BASH_REMATCH[2]}; tl_plain=1; tl_q=literal
             else
                 tl_what="a string that does not close on its line"; return 1
             fi ;;
-        '['*) tl_rest=${tl_rest:1}; tl_array || return 1; tl_plain=0; tl_str="" ;;
-        '{'*) tl_rest=${tl_rest:1}; tl_inline || return 1; tl_plain=0; tl_str="" ;;
+        '['*) tl_rest=${tl_rest:1}; tl_array || return 1; tl_plain=0; tl_str=""; tl_q="" ;;
+        '{'*) tl_rest=${tl_rest:1}; tl_inline || return 1; tl_plain=0; tl_str=""; tl_q="" ;;
         *)
             if [[ "$tl_rest" =~ $re_scalar ]]; then
                 tl_rest=${BASH_REMATCH[2]}
@@ -3795,8 +3926,8 @@ tl_inline() {   # parses an inline table's keys and values after its opening bra
         esac
     done
 }
-tl_file() {   # <the file's name, for its lines>: parses the current file's lines, one refusal per [[rules]] table carrying a path key (tl_rule_end); tl_ext and tl_extln its [extend] path and that line, when it names one; status 1, tl_what and tl_ln set, when a line holds a construct the reader does not parse
-    local ctx=top rid="" rpath=0 hk hdr kln s
+tl_file() {   # <the file's name, for its lines>: parses the current file's lines, one refusal per [[rules]] table carrying a path key the reader does not exempt (tl_rule_end); tl_ext and tl_extln its [extend] path and that line, when it names one; status 1, tl_what and tl_ln set, when a line holds a construct the reader does not parse
+    local ctx=top rid="" rpath=0 rpv="" rpk="" hk hdr kln s
     local -a segs
     tl_ext=""; tl_extln=-1
     while tl_line; do
@@ -3821,10 +3952,10 @@ tl_file() {   # <the file's name, for its lines>: parses the current file's line
             hdr=""; for s in "${tl_segs[@]}"; do hdr="$hdr${hdr:+.}$s"; done
             case "$hk$hdr" in
                 '[extend') ctx=extend ;;
-                '[rules'|'[[rules') ctx=rule; rid=""; rpath=0 ;;
+                '[rules'|'[[rules') ctx=rule; rid=""; rpath=0; rpv=""; rpk="" ;;
                 '[rules.allowlist'|'[[rules.allowlist'|'[rules.allowlists'|'[[rules.allowlists'|'[rules.required'|'[[rules.required') ctx=sub ;;
                 '[allowlist'|'[[allowlist'|'[allowlists'|'[[allowlists') ctx=sub ;;
-                *) s=${tl_all[tl_ln]%$'\r'}; tl_what="the table header ${s#"${s%%[![:blank:]]*}"}, which the reader does not recognize"; return 1 ;;
+                *) s=${tl_all[tl_ln]%$'\r'}; tl_what="the table header ${s#"${s%%[![:blank:]]*}"}"; return 1 ;;
             esac
             continue
         fi
@@ -3837,61 +3968,82 @@ tl_file() {   # <the file's name, for its lines>: parses the current file's line
         tl_ws
         case "$tl_rest" in ''|'#'*) ;; *) tl_what="more after a value on its line"; return 1 ;; esac
         case "$ctx:${segs[0]}" in
-            top:rules) tl_ln=$kln; tl_what="the rules written as a key (rules = ...: an inline table or array of them), where the reader reads [[rules]] tables"; return 1 ;;
+            top:rules) tl_ln=$kln; tl_what="the rules written as a key (rules = ...: an inline table or array of them)"; return 1 ;;
             top:extend) tl_ln=$kln; tl_what="the [extend] table written as a key"; return 1 ;;
             extend:path)
                 if [ "${#segs[@]}" -ne 1 ] || [ "$tl_plain" -ne 1 ]; then tl_ln=$kln; tl_what="an [extend] path that is not a one-line string with no escape"; return 1; fi
                 if [ "$tl_extln" -ge 0 ]; then tl_ln=$kln; tl_what="a second [extend] path"; return 1; fi
                 tl_ext=$tl_str; tl_extln=$kln ;;
-            rule:path) rpath=1 ;;
+            rule:path)
+                rpath=$((rpath + 1)); rpv=$tl_str; rpk=""
+                [ "${#segs[@]}" -ne 1 ] || rpk=$tl_q ;;
             rule:id) if [ "${#segs[@]}" -eq 1 ] && [ "$tl_plain" -eq 1 ]; then rid=$tl_str; fi ;;
         esac
     done
     tl_rule_end "$1"
     return 0
 }
-tl_rule_end() {   # <the file's name>: the table just ended (tl_file's ctx, rid and rpath), refused when it is a rule carrying a path key
+tl_rule_end() {   # <the file's name>: the table just ended (tl_file's ctx, rid, rpath, rpv and rpk: the path keys seen, the last one's text and its form, empty for a dotted key), refused when it is a rule carrying a path key the reader does not exempt (gitleaks_config: an empty basic or literal string on any rule, or tl_default_path's entry on one of the five)
     if [ "$ctx" != rule ] || [ "$rpath" -eq 0 ]; then return 0; fi
-    unscanned "rule ${rid:-with no id} of the gitleaks config $1 carries a path condition (a path key), which the credential scan cannot apply: it reads the pushed lines as pieces named by number, not by their files' paths; a rule without a path condition is scanned, so remove the condition, or set ROMP_NO_GITLEAKS=1 for one push"
+    if [ "$rpath" -eq 1 ]; then
+        case "$rpk" in basic|literal) if [ -z "$rpv" ]; then rpath=0; return 0; fi ;; esac
+        case "$rpk" in basic|literal|mlliteral) if tl_default_path "$rid" && [ "$rpv" = "$tl_dpath" ]; then rpath=0; return 0; fi ;; esac
+    fi
+    unscanned "rule ${rid:-with no id} of the gitleaks config $1 carries a path condition (a path key), which the credential scan cannot apply: it reads the pushed lines as pieces named by number, not by their files' paths; a rule without a path condition is scanned, so remove the condition, or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
     tl_hit=1; rpath=0
 }
 
-# One run of the scanner over a directory the feed wrote (the pieces, or the
-# path-scoped copies), from inside that directory, so gitleaks finds no
-# .gitleaksignore of the work tree (it reads one from its working directory
-# whatever -i says) and no config but the one gitleaks_config names with
-# --config, or with none named its own resolution (GITLEAKS_CONFIG,
-# GITLEAKS_CONFIG_TOML, then its default: the directory holds no
-# .gitleaks.toml); its verdict is
+# One run of the scanner over a directory the hook wrote (the pieces, the
+# path-scoped copies, or the probe run's probes and second copies), from
+# inside that directory, so gitleaks finds no .gitleaksignore of the work
+# tree (it reads one from its working directory whatever -i says) and no
+# config but the copy gitleaks_config wrote and names with --config (the
+# reader's own bytes), or with no config to copy its default (the directory
+# holds no .gitleaks.toml, and GITLEAKS_CONFIG and GITLEAKS_CONFIG_TOML are
+# unset or empty then); its verdict is
 # read from its exit and its log (the header): 0 clean and 2 a finding are
 # judged further, anything else is a failed scan with the scanner's advice.
-# Its findings (its stdout, under -v) go to stderr as they are written; its
-# log, its stderr, is captured, shown after them, and read twice through
-# judged_read: the ERR line (any line at gitleaks' ERR level refuses) and the
-# byte figure (the one "scanned ~N bytes" line, compared with the bytes
-# written: none, two, or another number refuses naming both). Each awk strips
-# colour codes itself: --no-color makes gitleaks' lines plain, but a line
-# logged before the flag takes effect stays coloured. On exit 2 each finding
-# is named, for the report alone, from the report (a file, a rule and a
-# terminator per line) and the index the caller read into ix_sha and ix_path
-# (the caller's), the piece being the File's leading digits, the whole run
-# before its first slash (a copy lives in its piece's directory, whatever its
-# own name); a line cut inside, or naming no piece, is skipped, and a report
-# naming fewer findings than the log counts says so. Sets blocked_creds,
-# failed_scan and failed_creds.
-scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <bytes written there, or empty when the feed was refused> <report file> [<scanner option>...]
-    local gl="$1" what="$2" dir="$3" want="$4" rep="$5" rc log err got start rule term piece line_out seen_lines nrec leaks
-    shift 5
+# Its log, its stderr, is captured and read twice through judged_read: the
+# ERR line (any line at gitleaks' ERR level refuses) and the byte figure (the
+# one "scanned ~N bytes" line, compared with the bytes written: none, two, or
+# another number refuses naming both). Each awk strips colour codes itself:
+# --no-color makes gitleaks' lines plain, but a line logged before the flag
+# takes effect stays coloured. Two modes. names, the scan of record and the
+# additive run: its findings (its stdout, under -v) go to stderr as they are
+# written, its log is shown after them, and on exit 2 each finding is named,
+# for the report alone, from the report (a file, a rule and a terminator per
+# line) and the index the caller read into ix_sha and ix_path (the caller's),
+# the piece being the File's leading digits, the whole run before its first
+# slash (a copy lives in its piece's directory, whatever its own name); a
+# line cut inside, or naming no piece, is skipped, a line printed once for
+# the push (seen_lines, the caller's, so a credential two runs find is named
+# once), and a report naming fewer findings than the log counts says so.
+# probe, the probe run (the header): every probe is a finding, so its
+# findings are never shown (its stdout goes to /dev/null) and exit 2 sets
+# nothing; its log is shown only when the run fails (an exit other than 0 or
+# 2, which is named, an ERR line, or a byte figure missing, repeated or
+# another number), after the refusal; the caller judges its report
+# (probe_check) when it exits 0 or 2. Sets blocked_creds, failed_scan,
+# failed_creds and run_rc (the scanner's exit), the caller's.
+scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <bytes written there, or empty when the feed was refused> <report file> <names|probe> [<scanner option>...]
+    local gl="$1" what="$2" dir="$3" want="$4" rep="$5" mode="$6" rc log err got start rule term piece line_out nrec leaks judged=$unscanned_n
+    shift 6
     : > "$rep"
     gitleaks_args "$scratch/creds.template" "$rep" "$@"
     rc=0
+    # The probe run's findings, its stdout, are the probes: for its one
+    # statement stderr is /dev/null, so 3>&2 sends them there, restored after.
+    [ "$mode" != probe ] || exec 8>&2 2>/dev/null
     # outside judged_read: the scanner's own exit, judged with its log against the bytes the feed wrote.
     log=$( { cd "$dir" && "$gl" "${GL_ARGS[@]}" < /dev/null 2>&1 1>&3; } 3>&2 ) || rc=$?
-    [ -z "$log" ] || printf '%s\n' "$log" >&2
+    [ "$mode" != probe ] || exec 2>&8 8>&-
+    [ -z "$log" ] || [ "$mode" = probe ] || printf '%s\n' "$log" >&2
     case $rc in
         0) ;;
-        2) blocked_creds=1 ;;
-        *) failed_scan=1; failed_creds=1 ;;
+        2) [ "$mode" = probe ] || blocked_creds=1 ;;
+        *)
+            [ "$mode" != probe ] || unscanned "$what exited $rc, neither 0 (clean) nor 2 (a finding), so what it read is unknown; its log follows"
+            failed_scan=1; failed_creds=1 ;;
     esac
     if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
         # The ERR line's awk answers a WORD whatever the log holds: none for a
@@ -3929,26 +4081,23 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
             failed_creds=1
         fi
         if [ -n "$got" ] && [ -n "$want" ] && [ "$got" != "$want" ]; then
-            unscanned "$what read $got of the $want bytes of added lines it was fed"
+            if [ "$mode" = probe ]; then
+                unscanned "$what read $got of the $want bytes written for it (its probes and the second copies of the added lines)"
+            else
+                unscanned "$what read $got of the $want bytes of added lines it was fed"
+            fi
             failed_creds=1
         fi
     fi
-    if [ "$rc" -eq 2 ]; then
-        seen_lines=""; nrec=0
+    run_rc=$rc
+    if [ "$rc" -eq 2 ] && [ "$mode" != probe ]; then
+        nrec=0
         while IFS=$'\t' read -r -u 6 start rule term; do
             [ "$term" = . ] || continue
             piece=${start%%/*}
             case "$piece" in ''|*[!0-9]*) continue ;; esac
             nrec=$((nrec + 1))
-            if [ -n "${ix_sha[piece]:-}" ]; then
-                line_out="romp pre-push: commit ${ix_sha[piece]:0:10} ADDS a credential ($rule) in: ${ix_path[piece]}"
-            else
-                line_out="romp pre-push: a pushed commit ADDS a credential ($rule), whose commit and file could not be named"
-            fi
-            case "$seen_lines" in
-                *"$line_out"$'\n'*) ;;          # the overlap can find one token twice: one line for it
-                *) echo "$line_out" >&2; seen_lines="$seen_lines$line_out"$'\n' ;;
-            esac
+            credential_line "$piece" "$rule"
         done 6< "$rep"
         leaks=""
         [[ "$log" =~ leaks\ found:\ ([0-9]+) ]] && leaks=${BASH_REMATCH[1]}
@@ -3956,6 +4105,58 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
             echo "romp pre-push: $what logged $leaks findings and its report names $nrec, so the commit and file of the rest are not named above" >&2
         fi
     fi
+    if [ "$mode" = probe ] && [ "$unscanned_n" -ne "$judged" ] && [ -n "$log" ]; then printf '%s\n' "$log" >&2; fi
+}
+# A finding named with its commit and file, from the index the caller read
+# into ix_sha and ix_path, printed once for the push: the overlap can find one
+# token twice, and two runs one credential (the additive run and the probe
+# run's second copy), so seen_lines, the caller's, holds each line printed.
+credential_line() {   # <piece> <rule>
+    local line_out
+    if [ -n "${ix_sha[$1]:-}" ]; then
+        line_out="romp pre-push: commit ${ix_sha[$1]:0:10} ADDS a credential ($2) in: ${ix_path[$1]}"
+    else
+        line_out="romp pre-push: a pushed commit ADDS a credential ($2), whose commit and file could not be named"
+    fi
+    case "$seen_lines" in
+        *"$line_out"$'\n'*) ;;
+        *) echo "$line_out" >&2; seen_lines="$seen_lines$line_out"$'\n' ;;
+    esac
+}
+
+# The probe check (the header's probe paragraph): ONE awk over the
+# path-scoped index and the probe run's report, so no process runs per
+# piece. The index gives each selected piece its copy's name (its probe sits
+# at <piece>/<name>, the path the additive run scans), its second copy's name
+# (at the probe run's root) and its rule; a report line is a file, a rule
+# and a terminator. A probe is NAMED when the report holds its file under its
+# own rule: the file and the rule, never the file alone (with every rule on,
+# a yaml probe was named under generic-api-key while a per-rule allowlist had
+# dropped kubernetes-secret-yaml there; the round 10 checkers, 2026-09-26). A
+# line at a second copy is a finding in the piece's own bytes. Any other
+# line, one cut inside among them, names neither. The answer, in this order:
+# one line per selected piece (named <piece>, or missing <piece> <rule>
+# <copy's name>), one per finding at a second copy (found <piece> <rule>),
+# one per other line (foreign <the line>), and last a closing line of counts
+# (end <pieces> <findings> <other lines>), which the caller compares with the
+# lines it read of each kind and with the pieces it wrote probes for, so an
+# answer cut anywhere loses its close or disagrees with it. Its status, the
+# awk's.
+probe_check() {   # <path-scoped index file> <the probe run's report file>
+    LC_ALL=C awk -F '\t' '
+        FILENAME == ARGV[1] {
+            if ($5 != "." || $1 !~ /^[0-9]+$/) next
+            np++; pp[np] = $1; pr[np] = $4; pc[np] = $1 "/" $2; at[pc[np]] = np; sec[$3] = np; next
+        }
+        $3 == "." && ($1 in at)  { if ($2 == pr[at[$1]]) named[at[$1]] = 1; next }
+        $3 == "." && ($1 in sec) { found[++nf] = pp[sec[$1]] "\t" $2; next }
+        { other[++nx] = $0 }
+        END {
+            for (k = 1; k <= np; k++) if (named[k]) print "named\t" pp[k]; else print "missing\t" pp[k] "\t" pr[k] "\t" pc[k]
+            for (k = 1; k <= nf; k++) print "found\t" found[k]
+            for (k = 1; k <= nx; k++) print "foreign\t" other[k]
+            print "end\t" np + 0 "\t" nf + 0 "\t" nx + 0
+        }' "$1" "$2"
 }
 
 # A merge's binary paths (the header's credential paragraph): each merge and
@@ -3974,7 +4175,7 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
 # merge deletes the path) and a gitlink (mode 160000: a commit, no blob of
 # its own) transfer no bytes of their own and are skipped. The pieces are
 # numbered after the feed's, and their bytes are added to the figures the
-# two scanner runs are checked against. Called with the count of routed paths
+# scanner runs are checked against. Called with the count of routed paths
 # the feed recorded, compared with the lines read back. A content read that
 # fails, or records no four counts, leaves the pieces' numbering unknown, so
 # the paths after it are not read, and no figure is compared (the push is
@@ -4058,18 +4259,22 @@ merge_binary_reads() {   # <count of routed paths the feed recorded>
 # a foreign line refused naming its commit); then, when the feed's record is
 # whole, each merge's binary path it routed, read whole (merge_binary_reads);
 # then the scan of record over the pieces, and when the push adds a file the
-# path-scoped rules name, the additive run over its copies (scanner_run, each
-# judged by its exit, its ERR line and its byte figure). The scanner runs
-# unless the feed wrote nothing (no new commit, or commits that add no line:
-# 0 bytes and no piece); after a feed refused as short it still runs over the
-# pieces written, for their findings, with no figure to compare. Ahead of its
-# first run the scanner's version is read (scanner_version), and one older
-# than 8.25.0, or an answer that is no version, refuses the push with neither
-# run made; a push the scanner would not run over reads no version.
+# path-scoped rules name, the additive run over its copies and the probe run
+# over its probes and second copies (scanner_run, each judged by its exit,
+# its ERR line and its byte figure; the probe run's report by probe_check).
+# The scanner runs unless the feed wrote nothing (no new commit, or commits
+# that add no line: 0 bytes and no piece); after a feed refused as short it
+# still runs over the pieces written, for their findings, with no figure to
+# compare. Ahead of its first run the scanner's version is read
+# (scanner_version), then the config (gitleaks_config), and a version older
+# than 8.25.0, an answer that is no version, or a config the reader refuses,
+# refuses the push with no run made; a push the scanner would not run over
+# reads neither.
 scan_credentials() {
     local gl local_ref local_sha _remote_ref remote_sha revs rev peeled peeled_read nfed record n what
     # shellcheck disable=SC2034  # cfg_name: set by gitleaks_config, for the lines that name the config the runs read
     local rdone rpieces rbytes rpbytes rbin rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning sbytes step pk cfg_name=""
+    local sname prule qtext qbytes qn qwant qv qp_pkcs qp_nuget qp_k8s qp_tf qp_php kind qa qb qc qd qnamed qmiss qfound qother qend seen_lines="" run_rc=0
     local -a cfg=() ix_sha ix_path pdirs
     if ! credential_scan_armed; then
         [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0     # a skip asked for: silent
@@ -4105,7 +4310,7 @@ scan_credentials() {
                 nfed=$((nfed + 1))
             done >> "$scratch/creds.list" 4>> "$scratch/creds.revs"
         done 5<<< "$refs"
-        mkdir "$scratch/creds.d" "$scratch/creds.p"
+        mkdir "$scratch/creds.d" "$scratch/creds.p" "$scratch/creds.q"
         : > "$scratch/creds.index"; : > "$scratch/creds.pindex"; : > "$scratch/creds.record"; : > "$scratch/creds.binary"; : > "$scratch/creds.parents"
         # The parent counts (parent_counts): a commit of 64 or more parents
         # refuses the push by name, since git's combined diff cannot show the
@@ -4217,21 +4422,22 @@ scan_credentials() {
         # gitleaks, whatever its version (the round 9 rulings, 2026-09-25);
         # then the config (gitleaks_config), read and judged here for the same
         # reason, which refuses a rule carrying a path condition, and a
-        # construct it cannot read, with neither run made.
+        # construct it cannot read, with no run made.
         scanning=0
         if [ "$rbytes" = 0 ] && [ ! -e "$scratch/creds.d/1" ]; then
             :                                           # nothing written: nothing to scan
         elif scanner_version "$gl" && gitleaks_config; then
             scanning=1
-            # Both runs are handed cfg, the config gitleaks_config read and
-            # judged: the work tree's .gitleaks.toml by its physical path, or
-            # a copy of its [extend] chain in the scratch directory with each
-            # extend path made absolute when one is relative, or a relative
-            # GITLEAKS_CONFIG made absolute; with none of those, nothing, and
-            # gitleaks resolves the file GITLEAKS_CONFIG names,
-            # GITLEAKS_CONFIG_TOML's text or its default itself, the text the
-            # reader read (cfg_name names which, for the lines).
-            scanner_run "$gl" "the CREDENTIAL scan" "$scratch/creds.d" "$rbytes" "$scratch/creds.report" ${cfg[@]+"${cfg[@]}"}
+            # Every run is handed cfg, the reader's own copy of the config it
+            # read and judged (gitleaks_config): the work tree's
+            # .gitleaks.toml, the file GITLEAKS_CONFIG names or
+            # GITLEAKS_CONFIG_TOML's text, with its [extend] chain, copied
+            # into the scratch directory line for line, each extend path
+            # made absolute, so the reader's verdict and the scanner's input
+            # are the same bytes whatever changes the files after the read;
+            # with no config at all, nothing, and gitleaks reads its default
+            # (cfg_name names which, for the lines).
+            scanner_run "$gl" "the CREDENTIAL scan" "$scratch/creds.d" "$rbytes" "$scratch/creds.report" names ${cfg[@]+"${cfg[@]}"}
         fi
         # The additive run (the header): each piece the second index names,
         # copied under the name that index gives it (the piece's number and
@@ -4240,7 +4446,33 @@ scan_credentials() {
         # and printf under LC_ALL=C, which keep every byte: a piece holds no
         # NUL), and scanned with the five path-scoped rules alone; its figure
         # is compared with the bytes of those pieces the feed's awk recorded,
-        # so a copy written short is refused there. The directories are made a
+        # so a copy written short is refused there. Then the PROBE run (the
+        # header's probe paragraph), because gitleaks evaluates every
+        # path-keyed element of the config against the copy's name, not the
+        # file's path: a per-rule or targeted path allowlist, in either
+        # condition, or a rule's own path, that treats the copy's name
+        # differently from the path changes the rule's verdict in the copy
+        # without skipping it, so the figure agrees (the round 10 rulings,
+        # 2026-09-26). The config is the one every run reads, the reader's
+        # copy of the work tree's .gitleaks.toml and its [extend] chain, or
+        # of the file GITLEAKS_CONFIG names or GITLEAKS_CONFIG_TOML's text
+        # (gitleaks' default, with none of those; its five rules carry no
+        # path allowlist). In one more directory, for each selected piece: a
+        # PROBE at the copy's exact name (<piece>/<name>), a short text its
+        # rule reports under the default rules, and a SECOND COPY of the piece
+        # at the directory's root under the name the index gives it
+        # (romp-copy-<letters><suffix>, no digit and no directory). One more
+        # scanner run over it, with the same five rules alone and the same
+        # config, its figure checked against the probes' bytes and the
+        # copies'; its exit 2 is expected, and its findings are never shown.
+        # probe_check then reads its report: a probe not named under its own
+        # rule refuses (the config drops that rule at the copy's name), and a
+        # finding at a second copy refuses as a credential, named by commit
+        # and file (credential_line; blocked_creds is set there alone). Every
+        # write is a builtin and the check one awk, so the probe run adds one
+        # scanner run and one awk per push with a selected file, no process
+        # per piece, and its directories join the additive run's mkdir
+        # batches below. The directories are made a
         # bounded number at a time, never one mkdir for every piece: past the
         # system's argument limit that one mkdir failed (E2BIG, status 126),
         # and set -e ended the hook with bash's line and no romp line on a
@@ -4258,10 +4490,10 @@ scan_credentials() {
         # scratch paragraph).
         if [ "$scanning" -eq 1 ] && [ -s "$scratch/creds.pindex" ]; then
             pdirs=()
-            while IFS=$'\t' read -r -u 6 piece fpath fterm; do
+            while IFS=$'\t' read -r -u 6 piece fpath sname prule fterm; do
                 [ "$fterm" = . ] || continue
                 case "$piece" in ''|*[!0-9]*) continue ;; esac
-                pdirs+=("$scratch/creds.p/$piece")
+                pdirs+=("$scratch/creds.p/$piece" "$scratch/creds.q/$piece")
             done 6< "$scratch/creds.pindex"
             sbytes=$(LC_ALL=C; printf '%s' "${#scratch}")
             step=$(( 65536 / (sbytes + 32) )); [ "$step" -ge 1 ] || step=1
@@ -4270,15 +4502,73 @@ scan_credentials() {
                 mkdir -- "${pdirs[@]:pk:step}"
                 pk=$((pk + step))
             done
-            while IFS=$'\t' read -r -u 6 piece fpath fterm; do
+            # The probes' texts, one per rule, assembled here so the hook's own
+            # text holds none (each ASCII, so ${#qtext} counts its bytes; each
+            # clear of the default config's value allowlists, stopwords and
+            # entropy floors, so only the repository's own allowlists can drop
+            # one). generic-api-key also catches the yaml probe's data key when
+            # every rule runs, which is why the run enables the five alone and
+            # the check counts a probe under its own rule only.
+            printf -v qv '%s%s' Rq7Zp2Wx9Kd4 Tm8Vb3Nc
+            qp_pkcs="romp probe"$'\n'
+            printf -v qp_nuget '<add key="Clear%sPassword" value="%s" />\n' Text "$qv"
+            printf -v qp_k8s 'kind: Sec%s\ndata:\n  api_tok%s: %s\n' ret en "$qv"
+            printf -v qp_tf 'administrator_login_pass%s = "%s"\n' word rq7zp2wx9kd4tm8v
+            printf -v qp_php "'secret_%s' => 'sk_%s%s'\n" key "$qv" Hy6Jf1Lg9
+            qbytes=0; qn=0
+            while IFS=$'\t' read -r -u 6 piece fpath sname prule fterm; do
                 [ "$fterm" = . ] || continue
                 case "$piece" in ''|*[!0-9]*) continue ;; esac
                 data=""
                 LC_ALL=C IFS= read -r -d '' data < "$scratch/creds.d/$piece" || :
                 LC_ALL=C printf '%s' "$data" > "$scratch/creds.p/$piece/$fpath"
+                LC_ALL=C printf '%s' "$data" > "$scratch/creds.q/$sname"
+                case "$prule" in
+                    pkcs12-file) qtext=$qp_pkcs ;;
+                    nuget-config-password) qtext=$qp_nuget ;;
+                    kubernetes-secret-yaml) qtext=$qp_k8s ;;
+                    hashicorp-tf-password) qtext=$qp_tf ;;
+                    freemius-secret-key) qtext=$qp_php ;;
+                    *) qtext="" ;;                              # no rule: an empty probe, which no rule names, so the check refuses
+                esac
+                printf '%s' "$qtext" > "$scratch/creds.q/$piece/$fpath"
+                qbytes=$((qbytes + ${#qtext})); qn=$((qn + 1))
             done 6< "$scratch/creds.pindex"
             # handed the same cfg as the scan of record (gitleaks_config; the comment there)
-            scanner_run "$gl" "the CREDENTIAL scan under the path-scoped rules" "$scratch/creds.p" "$rpbytes" "$scratch/creds.preport" ${cfg[@]+"${cfg[@]}"} --enable-rule pkcs12-file,nuget-config-password,kubernetes-secret-yaml,hashicorp-tf-password,freemius-secret-key
+            scanner_run "$gl" "the CREDENTIAL scan under the path-scoped rules" "$scratch/creds.p" "$rpbytes" "$scratch/creds.preport" names ${cfg[@]+"${cfg[@]}"} --enable-rule pkcs12-file,nuget-config-password,kubernetes-secret-yaml,hashicorp-tf-password,freemius-secret-key
+            qwant=""; [ -z "$rpbytes" ] || qwant=$((qbytes + rpbytes))
+            scanner_run "$gl" "the PROBE run of the path-scoped copies" "$scratch/creds.q" "$qwant" "$scratch/creds.qreport" probe ${cfg[@]+"${cfg[@]}"} --enable-rule pkcs12-file,nuget-config-password,kubernetes-secret-yaml,hashicorp-tf-password,freemius-secret-key
+            if [ "$run_rc" -eq 0 ] || [ "$run_rc" -eq 2 ]; then
+                if judged_read gate="the PROBE CHECK of the path-scoped copies" 0 "the PROBE CHECK of the path-scoped copies could not be read (awk exited {rc}), so whether the config drops a path-scoped rule at a copy's name is unknown" -- probe_check "$scratch/creds.pindex" "$scratch/creds.qreport"; then
+                    qnamed=0; qmiss=0; qfound=0; qother=0; qend=""; qd=0
+                    while IFS=$'\t' read -r kind qa qb qc; do
+                        case "$kind" in
+                            named) qnamed=$((qnamed + 1)) ;;
+                            missing)
+                                qmiss=$((qmiss + 1))
+                                qa=${ix_path[qa]:-}; [ -n "$qa" ] || qa="a path whose name is unknown"
+                                unscanned "the config the scan read ($cfg_name) dropped $qb's probe at $qc, the name the scan gives the copy of $qa, so the scan cannot check $qa under $qb; the hook cannot tell which entry of the config dropped the probe, or whether $qa itself gets the same verdict; excuse a false alarm by its value with a regex or stopword allowlist instead of a path, keep $qb's default path, or set ROMP_NO_GITLEAKS=1 for one push"
+                                failed_creds=1 ;;
+                            found) qfound=$((qfound + 1)); credential_line "$qa" "$qb"; blocked_creds=1 ;;
+                            foreign)
+                                qother=$((qother + 1))
+                                unscanned "the report of the PROBE run of the path-scoped copies holds a line that names neither a probe nor a second copy the hook wrote (${qa}${qb:+ $qb}${qc:+ $qc}), so what the run read is unknown"
+                                failed_creds=1 ;;
+                            end) qend="$qa $qb $qc" ;;
+                            *) qd=$((qd + 1)) ;;
+                        esac
+                    done <<< "$read_out"
+                    if [ -z "$qend" ]; then
+                        unscanned "the PROBE CHECK of the path-scoped copies answered no closing line of counts (awk exited 0), so which probes the scan named is unknown"
+                        failed_creds=1
+                    elif [ "$qend" != "$qn $qfound $qother" ] || [ $((qnamed + qmiss)) -ne "$qn" ] || [ "$qd" -ne 0 ]; then
+                        unscanned "the PROBE CHECK of the path-scoped copies was read short (its closing line reads \"$qend\", for pieces, findings at a second copy and other lines, where the shell wrote $qn probes and read $((qnamed + qmiss)) probe lines, $qfound findings, $qother other lines and $qd lines of no kind)"
+                        failed_creds=1
+                    fi
+                else
+                    failed_creds=1
+                fi
+            fi
         fi
     fi
 

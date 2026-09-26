@@ -9466,10 +9466,14 @@ r9d_witness_case() {   # <rule>: the witness committed and pushed for real: refu
     git -C "$REPO" add nuget.config
     git -C "$REPO" commit -qm "a nuget.config"
     scanner_wrapper 'case "$PWD" in */creds.p) for f in */*; do head -c 3 "$f" > ../cut.tmp; mv ../cut.tmp "$f"; done ;; esac'
+    sha="$(git -C "$REPO" rev-parse HEAD)"
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: the CREDENTIAL scan under the path-scoped rules read 3 of the 222 bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
-    [[ "$output" != *"gitleaks found a credential"* ]]
+    # Since round 11b the probe run reads a second copy of the piece in a directory of its own, which the wrapper
+    # leaves whole, so the password is named once, from that copy, beside the additive run's refusal (until then this
+    # asserted that no credential was named: the cut copies were the only path-scoped read)
+    [ "$(grep -c "romp pre-push: commit ${sha:0:10} ADDS a credential (nuget-config-password) in: nuget.config" <<< "$output")" -eq 1 ]
     at_base
 }
 
@@ -10642,10 +10646,10 @@ r11a_witness() {   # <S1|S2|S3|S4|W7>: the shape's credential written under its 
 r11a_build_token() { printf 'build=zzbld_%s%s\n' 0123456789 abcdef; }   # a line only the cases' pathless custom rule catches
 R11A_BUILD_RULE="$(printf '[[rules]]\nid = "r11a-build-rule"\nregex = %s' "'''zzbld_[0-9a-f]{16}'''")"
 r11a_rule_line() {   # <rule id> <the file as the line names it>: the reader's refusal of a rule carrying a path condition
-    printf '%s' "romp pre-push: rule $1 of the gitleaks config $2 carries a path condition (a path key), which the credential scan cannot apply: it reads the pushed lines as pieces named by number, not by their files' paths; a rule without a path condition is scanned, so remove the condition, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+    printf '%s' "romp pre-push: rule $1 of the gitleaks config $2 carries a path condition (a path key), which the credential scan cannot apply: it reads the pushed lines as pieces named by number, not by their files' paths; a rule without a path condition is scanned, so remove the condition, or set ROMP_NO_GITLEAKS=1 for one push; no scanner run was made, and the scan follows once the config is fixed; the scan is incomplete, so the push is refused"
 }
 r11a_construct_line() {   # <line> <the file as the line names it> <construct>: the reader's refusal of a construct it does not parse
-    printf '%s' "romp pre-push: line $1 of the gitleaks config $2 holds $3, which the hook's reader does not parse, so whether a rule there carries a path condition is unknown; rewrite it with [[rules]] and [extend] tables, plain keys and closed strings, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+    printf '%s' "romp pre-push: line $1 of the gitleaks config $2 holds $3, which the hook's reader does not parse, so whether a rule there carries a path condition is unknown; rewrite it with [[rules]] and [extend] tables, plain keys and closed strings, or set ROMP_NO_GITLEAKS=1 for one push; no scanner run was made, and the scan follows once the config is fixed; the scan is incomplete, so the push is refused"
 }
 r11a_refused_by_reader() {   # <expected line>: the push just made was refused with that line, neither scanner run made, the remote at its base
     [ "$status" -ne 0 ]
@@ -10819,7 +10823,7 @@ r11a_shape_case() {   # <S1|S2|S3|S4|W7>: the shape's config in the work tree, i
     r11a_config "$(printf '[extend]\npath = "cfg/one.toml"')"
     commit_file ok.txt "nothing to see" "a clean commit"
     push_main_through_hook_with_shim
-    r11a_refused_by_reader "romp pre-push: line 2 of the gitleaks config cfg/two.toml (the [extend] of cfg/one.toml) names a third level of [extend] (cfg/three.toml), which gitleaks 8.28.0 and 8.30.1 ignore and the hook's reader does not read; remove it, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+    r11a_refused_by_reader "romp pre-push: line 2 of the gitleaks config cfg/two.toml (the [extend] of cfg/one.toml) names a third level of [extend] (cfg/three.toml), which gitleaks 8.28.0 and 8.30.1 ignore and the hook's reader does not read; remove it, or set ROMP_NO_GITLEAKS=1 for one push; no scanner run was made, and the scan follows once the config is fixed; the scan is incomplete, so the push is refused"
 }
 
 @test "round 11a (decision 5, extended to GITLEAKS_CONFIG): a relative GITLEAKS_CONFIG (tools/leaks.toml, from the work tree's root, where git runs the hook) is made absolute for the scanner: a clean push passes, and a credential only its rule catches is refused naming it (the clean push refused at 93684a4d1, both scanners, on gitleaks' FTL line: the path read against the scratch directory)" {
@@ -10845,7 +10849,7 @@ r11a_shape_case() {   # <S1|S2|S3|S4|W7>: the shape's config in the work tree, i
     r11a_config "$(printf 'rules = [ { id = "r11a-inline-rule", regex = %s, path = %s } ]' "'''zzenv_[0-9a-f]{16}'''" "'''(?i)\\.env\$'''")"
     r11a_witness S1
     push_main_through_hook_with_shim
-    r11a_refused_by_reader "$(r11a_construct_line 1 "$R11A_WT" "the rules written as a key (rules = ...: an inline table or array of them), where the reader reads [[rules]] tables")"
+    r11a_refused_by_reader "$(r11a_construct_line 1 "$R11A_WT" "the rules written as a key (rules = ...: an inline table or array of them)")"
 }
 
 @test "round 11a (decision 6, fail closed): a triple-quoted string that does not close is refused naming the construct and the line where the file ends, neither scanner run made, the remote at its base (refused at 93684a4d1 on gitleaks' own FTL line, not naming the construct)" {
@@ -10861,7 +10865,7 @@ r11a_shape_case() {   # <S1|S2|S3|S4|W7>: the shape's config in the work tree, i
     r11a_config "$(printf '[extend]\nuseDefault = true\n\n[[rule]]\nid = "r11a-typo"\nregex = %s' "'''zzenv_[0-9a-f]{16}'''")"
     commit_file ok.txt "nothing to see" "a clean commit"
     push_main_through_hook_with_shim
-    r11a_refused_by_reader "$(r11a_construct_line 4 "$R11A_WT" "the table header [[rule]], which the reader does not recognize")"
+    r11a_refused_by_reader "$(r11a_construct_line 4 "$R11A_WT" "the table header [[rule]]")"
 }
 
 @test "round 11a (decision 6, fail closed): an extend file the reader cannot read (r11a-missing.toml, absent) is refused naming it, neither scanner run made, the remote at its base (refused at 93684a4d1 on gitleaks' own FTL line)" {
@@ -10869,7 +10873,7 @@ r11a_shape_case() {   # <S1|S2|S3|S4|W7>: the shape's config in the work tree, i
     r11a_config "$(printf '[extend]\npath = "r11a-missing.toml"')"
     commit_file ok.txt "nothing to see" "a clean commit"
     push_main_through_hook_with_shim
-    r11a_refused_by_reader "romp pre-push: the gitleaks config r11a-missing.toml (the [extend] of .gitleaks.toml) could not be opened for reading, so whether a rule in it carries a path condition is unknown; make it readable, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+    r11a_refused_by_reader "romp pre-push: the gitleaks config r11a-missing.toml (the [extend] of .gitleaks.toml) could not be opened for reading, so whether a rule in it carries a path condition is unknown; make it readable, or set ROMP_NO_GITLEAKS=1 for one push; no scanner run was made, and the scan follows once the config is fixed; the scan is incomplete, so the push is refused"
 }
 
 @test "round 11a (decision 6, fail closed): a quoted key holding an escape (\"p\\u0061th\", which gitleaks decodes to path) is refused naming the construct and its line, neither scanner run made, the remote at its base (published at 93684a4d1, both scanners)" {
@@ -10899,7 +10903,7 @@ r11a_shape_case() {   # <S1|S2|S3|S4|W7>: the shape's config in the work tree, i
     nb=$(wc -c < "$REPO/.gitleaks.toml"); nb=${nb//[[:space:]]/}
     commit_file ok.txt "nothing to see" "a clean commit"
     push_main_through_hook_with_shim
-    r11a_refused_by_reader "romp pre-push: the gitleaks config $R11A_WT was read short (the shell read $((nb - 1)) bytes of the $nb wc -c counts: a read cut short, or a NUL byte, which the shell's read drops and TOML allows nowhere); the scan is incomplete, so the push is refused"
+    r11a_refused_by_reader "romp pre-push: the gitleaks config $R11A_WT was read short (the shell read $((nb - 1)) bytes of the $nb wc -c counts: a read cut short, or a NUL byte, which the shell's read drops and TOML allows nowhere); no scanner run was made, and the scan follows once the config is fixed; the scan is incomplete, so the push is refused"
 }
 
 @test "round 11a (decision 6, fail closed): an [extend] path holding an escape (gitleaks-base\\u002etoml) is refused naming the construct and its line, neither scanner run made, the remote at its base" {
@@ -10931,5 +10935,437 @@ r11a_shape_case() {   # <S1|S2|S3|S4|W7>: the shape's config in the work tree, i
     calls_short_on_input wc cfg-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "r11a byte count marker" bytes:1
     push_main_through_hook_with_shim
     fired_short cfg-count "wc -c"
-    r11a_refused_by_reader "romp pre-push: the gitleaks config $R11A_WT was read short (the shell read $nb bytes of the ${nb:0:1} wc -c counts: a read cut short, or a NUL byte, which the shell's read drops and TOML allows nowhere); the scan is incomplete, so the push is refused"
+    r11a_refused_by_reader "romp pre-push: the gitleaks config $R11A_WT was read short (the shell read $nb bytes of the ${nb:0:1} wc -c counts: a read cut short, or a NUL byte, which the shell's read drops and TOML allows nowhere); no scanner run was made, and the scan follows once the config is fixed; the scan is incomplete, so the push is refused"
+}
+
+# ── round 11b: the probe run over the copies' names, and the reader's copy for every run (the round 10 rulings' A with the coordinator's decisions 1, 2, 3 and 7; romp-manager's rulings of 2026-09-26 on round 11a's questions) ──
+# Round 10b named each path-scoped copy by its piece (1/1.yaml, 1/nuget.config), and gitleaks evaluates every
+# path-keyed element of the config against that name, not the file's path: a per-rule or targeted path allowlist, in
+# either condition, or a rule's own path, that treats the copy's name differently from the file's path drops the
+# rule's finding in the copy while gitleaks still reads it, so the byte figure agrees (extra6-1: a per-rule allowlist
+# on nuget.config's name published a password in prod.nuget.config at 93684a4d1, both scanners). The hook now writes,
+# for each selected piece, a PROBE at the copy's exact name, which the piece's rule reports under the default rules,
+# and a SECOND COPY of the piece at the probe run's root (romp-copy-, the piece's number in letters, the file's own
+# suffix), and runs the five rules once more over them: a probe the report does not hold under its own rule refuses
+# (the probe line), and a finding at a second copy refuses as a credential. W1 to W12 are the rulings' witnesses, each
+# PUBLISHED at 93684a4d1 and refused here (W7 is round 11a's reader case and is not repeated); W3 to W5 need a scanner
+# that applies targetRules (8.30.1), and CI's 8.28.0 refuses them at both heads. Then the controls, the cost and
+# same-verdict witnesses, the residual, the probe run's own arms, the PROBE CHECK read's two cases, the reader's copy
+# handed to every run, and the reader's two exemptions. The rulings' mutant list names W7 among the witnesses a
+# deleted probe check reds; since round 11a the reader refuses W7's config before any run, so under that mutant W7
+# stays refused and the cost witnesses and the rule-set case are what turn red. Every credential and probe value is
+# assembled at run time, and none decodes to text under base64 (the coordinator's decision 3).
+
+r11b_password() { printf 'Qz7%sKp9Lm2Xv' ww; }                      # the witnesses' nuget password
+R11B_PASSWORD_RE="'''Qz7w{2}Kp9'''"                                   # a regex matching it, which never spells it
+R11B_NUGET_PATH="'''(^|/)nuget\\.config\$'''"
+r11b_nuget() {   # <path> [clean]: a nuget config there, holding the password unless clean, added (not committed)
+    local line
+    line=$(printf '      <add key="Clear%sPassword" value="%s" />' Text "$(r11b_password)")
+    [ "${2:-}" != clean ] || line='      <add key="Username" value="builder" />'
+    mkdir -p "$(dirname "$REPO/$1")"
+    printf '<configuration>\n  <packageSourceCredentials>\n    <feed>\n%s\n    </feed>\n  </packageSourceCredentials>\n</configuration>\n' "$line" > "$REPO/$1"
+    git -C "$REPO" add -- "$1"
+}
+r11b_secret() {   # <path>: a Kubernetes Secret there whose data key only kubernetes-secret-yaml catches, added (not committed)
+    mkdir -p "$(dirname "$REPO/$1")"
+    printf 'apiVersion: v1\nkind: Sec%s\nmetadata:\n  name: probe\ndata:\n  blob: %s%s\n' ret Wm4Xq8Zr2Kp7 Vt3Nb6Hy > "$REPO/$1"
+    git -C "$REPO" add -- "$1"
+}
+r11b_commit() { git -C "$REPO" commit -qm "${1:-the pushed change}"; sha="$(git -C "$REPO" rev-parse HEAD)"; }   # sets sha
+r11b_shape_config() {   # <shape>: the shape's config on stdout, under useDefault (the round 10 rulings' A)
+    local and='condition = "AND"'
+    printf '[extend]\nuseDefault = true\n\n'
+    case "$1" in
+        W1) printf '[[rules]]\nid = "nuget-config-password"\n[[rules.allowlists]]\npaths = [%s]\n' "$R11B_NUGET_PATH" ;;
+        W3) printf '[[allowlists]]\ntargetRules = ["nuget-config-password"]\npaths = [%s]\n' "$R11B_NUGET_PATH" ;;
+        W5) printf '[[allowlists]]\ntargetRules = ["kubernetes-secret-yaml"]\npaths = [%s]\n' "'''(^|/)1\\.yaml\$'''" ;;
+        W6) printf '[[rules]]\nid = "kubernetes-secret-yaml"\n[[rules.allowlists]]\npaths = [%s]\n' "'''(^|/)1/'''" ;;
+        W8) printf '[[rules]]\nid = "nuget-config-password"\n[[rules.allowlists]]\n%s\npaths = [%s]\nregexes = [%s]\n' "$and" "$R11B_NUGET_PATH" "$R11B_PASSWORD_RE" ;;
+        W10) printf '[[rules]]\nid = "nuget-config-password"\n[[rules.allowlists]]\n%s\npaths = [%s]\nregexes = [%s]\n' "$and" "'''nuget\\.config\$'''" "$R11B_PASSWORD_RE" ;;
+        W11) printf '[[rules]]\nid = "nuget-config-password"\n[[rules.allowlists]]\n%s\npaths = [%s]\nregexes = [%s]\n' "$and" "'''[0-9]/'''" "$R11B_PASSWORD_RE" ;;
+        W12) printf '[[rules]]\nid = "nuget-config-password"\n[[rules.allowlists]]\n%s\npaths = [%s]\nregexes = [%s]\n' "$and" "'''/'''" "$R11B_PASSWORD_RE" ;;
+        residual) printf '[[rules]]\nid = "nuget-config-password"\n[[rules.allowlists]]\n%s\npaths = [%s]\nregexes = [%s]\n' "$and" "'''^(?:[0-9]+/|romp-copy-)'''" "$R11B_PASSWORD_RE" ;;
+        global) printf '[[allowlists]]\npaths = [%s]\n' "$R11B_NUGET_PATH" ;;
+        unanchored) printf '[[rules]]\nid = "nuget-config-password"\n[[rules.allowlists]]\npaths = [%s]\n' "'''(?i)nuget\\.config\$'''" ;;
+        k8sdrop) printf '[[rules]]\nid = "kubernetes-secret-yaml"\n[[rules.allowlists]]\npaths = [%s]\n' "'''(^|/)[0-9]+\\.ya?ml\$'''" ;;
+        *) echo "r11b_shape_config: no shape $1" >&2; return 1 ;;
+    esac
+}
+r11b_probe_line() {   # <rule> <copy's name> <file> [<the config as the line names it>]: the probe line
+    local cfg=${4:-}
+    [ -n "$cfg" ] || cfg="the work tree's .gitleaks.toml"
+    printf '%s' "romp pre-push: the config the scan read ($cfg) dropped $1's probe at $2, the name the scan gives the copy of $3, so the scan cannot check $3 under $1; the hook cannot tell which entry of the config dropped the probe, or whether $3 itself gets the same verdict; excuse a false alarm by its value with a regex or stopword allowlist instead of a path, keep $1's default path, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+}
+r11b_cred_line() {   # <rule> <file> [<commit>]: the credential line for that commit (sha by default)
+    local c=${3:-$sha}
+    printf '%s' "romp pre-push: commit ${c:0:10} ADDS a credential ($1) in: $2"
+}
+r11b_refused_by_either() {   # <probe line> <credential line>: refused, the remote at its base, by at least one of the two arms (W1 to W6 and W9, which both arms refuse)
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$1"* ]] || [[ "$output" == *"$2"* ]]
+    at_base
+}
+r11b_refused_by_probe() {   # <probe line>: refused by that probe line, no credential named, the remote at its base
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$1"* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+r11b_refused_by_second_copy() {   # <credential line>: refused by the second copy's credential line, no probe line, the remote at its base
+    [ "$status" -ne 0 ]
+    [ "$(grep -c -F -- "$1" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"'s probe at "* ]]
+    at_base
+}
+r11b_witness_case() {   # <shape> <file> [<shape for the config, the shape by default>]: the shape's config in the work tree, the password at that file, pushed for real
+    r11a_base
+    r11a_config "$(r11b_shape_config "${3:-$1}")"
+    r11b_nuget "$2"
+    r11b_commit "a password at $2"
+    push_main_through_hook_with_shim
+}
+r11b_report_copier() {   # a scanner wrapper that keeps a copy of the probe run's report at TEST_DIR/qreport
+    scanner_wrapper '' "$(printf 'case "$PWD" in */creds.q) prev=; for a in "$@"; do [ "$prev" = -r ] && cp -- "$a" %q; prev=$a; done ;; esac' "$TEST_DIR/qreport")"
+}
+
+@test "round 11b (A, W1): a per-rule allowlist on nuget.config's name for nuget-config-password and a password in prod.nuget.config: refused, the probe at 1/nuget.config dropped and the second copy romp-copy-b.nuget.config naming the password, the remote at its base (PUBLISHED at 93684a4d1, both scanners: the copy met the allowlist and the figure agreed; red there and under the mutant deleting both arms)" {
+    r11b_witness_case W1 prod.nuget.config
+    r11b_refused_by_either "$(r11b_probe_line nuget-config-password 1/nuget.config prod.nuget.config)" "$(r11b_cred_line nuget-config-password prod.nuget.config)"
+}
+
+@test "round 11b (A, W2): the same per-rule allowlist and a password in src/NuGet.Config: refused, the probe at 1/nuget.config dropped and the second copy romp-copy-b.NuGet.Config naming the password, the remote at its base (PUBLISHED at 93684a4d1, both scanners; red there and under the mutant deleting both arms)" {
+    r11b_witness_case W2 src/NuGet.Config W1
+    r11b_refused_by_either "$(r11b_probe_line nuget-config-password 1/nuget.config src/NuGet.Config)" "$(r11b_cred_line nuget-config-password src/NuGet.Config)"
+}
+
+@test "round 11b (A, W3): a targeted allowlist (targetRules nuget-config-password) on nuget.config's name and a password in prod.nuget.config: refused, the remote at its base (PUBLISHED at 93684a4d1 under 8.30.1; CI's 8.28.0 applies no targeted allowlist and refuses at both heads, so this red shows under 8.30.1 alone)" {
+    r11b_witness_case W3 prod.nuget.config
+    r11b_refused_by_either "$(r11b_probe_line nuget-config-password 1/nuget.config prod.nuget.config)" "$(r11b_cred_line nuget-config-password prod.nuget.config)"
+}
+
+@test "round 11b (A, W4): the same targeted allowlist and a password in src/NuGet.Config: refused, the remote at its base (PUBLISHED at 93684a4d1 under 8.30.1; CI's 8.28.0 applies no targeted allowlist and refuses at both heads, so this red shows under 8.30.1 alone)" {
+    r11b_witness_case W4 src/NuGet.Config W3
+    r11b_refused_by_either "$(r11b_probe_line nuget-config-password 1/nuget.config src/NuGet.Config)" "$(r11b_cred_line nuget-config-password src/NuGet.Config)"
+}
+
+@test "round 11b (A, W5): a targeted allowlist on the copy name 1.yaml for kubernetes-secret-yaml and a Secret in deploy/secret.yaml: refused, the probe at 1/1.yaml dropped and the second copy romp-copy-b.yaml naming the Secret, the remote at its base (PUBLISHED at 93684a4d1 under 8.30.1; CI's 8.28.0 applies no targeted allowlist and refuses at both heads, so this red shows under 8.30.1 alone)" {
+    r11a_base
+    r11a_config "$(r11b_shape_config W5)"
+    r11b_secret deploy/secret.yaml
+    r11b_commit "a Secret"
+    push_main_through_hook_with_shim
+    r11b_refused_by_either "$(r11b_probe_line kubernetes-secret-yaml 1/1.yaml deploy/secret.yaml)" "$(r11b_cred_line kubernetes-secret-yaml deploy/secret.yaml)"
+}
+
+@test "round 11b (A, W6): a per-rule allowlist on the number directory 1/ for kubernetes-secret-yaml and a Secret in deploy/secret.yaml: refused, the probe at 1/1.yaml dropped and the second copy, which holds no digit and no directory, naming the Secret, the remote at its base (PUBLISHED at 93684a4d1, both scanners, and at eee3938a8; red there and under the mutant deleting both arms)" {
+    r11a_base
+    r11a_config "$(r11b_shape_config W6)"
+    r11b_secret deploy/secret.yaml
+    r11b_commit "a Secret"
+    push_main_through_hook_with_shim
+    r11b_refused_by_either "$(r11b_probe_line kubernetes-secret-yaml 1/1.yaml deploy/secret.yaml)" "$(r11b_cred_line kubernetes-secret-yaml deploy/secret.yaml)"
+}
+
+@test "round 11b (A, W8): an AND per-rule allowlist on nuget.config's name and a regex matching the password, a password in prod.nuget.config: refused by the second copy's credential line alone, the probe reported (its value meets no regex), the remote at its base (PUBLISHED at 93684a4d1, both scanners; red there and under the mutant deleting the second copy's check)" {
+    r11b_witness_case W8 prod.nuget.config
+    r11b_refused_by_second_copy "$(r11b_cred_line nuget-config-password prod.nuget.config)"
+}
+
+@test "round 11b (A, W9): no work-tree config and W1's allowlist in the file GITLEAKS_CONFIG names, a password in prod.nuget.config: refused, the probe line naming that file as the config read, the remote at its base (PUBLISHED at 93684a4d1, both scanners, so its red shows in CI too; red there and under the mutant deleting both arms)" {
+    r11a_base
+    r11b_shape_config W1 > "$TEST_DIR/env-config.toml"
+    export GITLEAKS_CONFIG="$TEST_DIR/env-config.toml"
+    r11b_nuget prod.nuget.config
+    r11b_commit "a password"
+    push_main_through_hook_with_shim
+    r11b_refused_by_either "$(r11b_probe_line nuget-config-password 1/nuget.config prod.nuget.config "the file GITLEAKS_CONFIG names ($TEST_DIR/env-config.toml)")" "$(r11b_cred_line nuget-config-password prod.nuget.config)"
+}
+
+@test "round 11b (A, W10): an AND per-rule allowlist on nuget.config's name matched case-sensitively and the regex, a password in src/NuGet.Config: refused by the second copy romp-copy-b.NuGet.Config, which keeps the file's own case, the remote at its base (PUBLISHED at 93684a4d1, both scanners, and under the draft's second copy that lower-cased the suffix; red under the mutant deleting the second copy's check)" {
+    r11b_witness_case W10 src/NuGet.Config
+    r11b_refused_by_second_copy "$(r11b_cred_line nuget-config-password src/NuGet.Config)"
+}
+
+@test "round 11b (A, W11): an AND per-rule allowlist on a digit before a slash and the regex, a password in prod.nuget.config and in src/prod.nuget.config: each refused by its second copy, whose name holds no digit, the remote at its base (PUBLISHED at 93684a4d1, both scanners, and under the draft's second copy in a numbered directory; red under the mutant deleting the second copy's check)" {
+    r11a_base
+    r11a_config "$(r11b_shape_config W11)"
+    r11b_nuget prod.nuget.config
+    r11b_nuget src/prod.nuget.config
+    r11b_commit "two passwords"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -c -F -- "$(r11b_cred_line nuget-config-password prod.nuget.config)" <<< "$output")" -eq 1 ]
+    [ "$(grep -c -F -- "$(r11b_cred_line nuget-config-password src/prod.nuget.config)" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"'s probe at "* ]]
+    at_base
+}
+
+@test "round 11b (A, W12): an AND per-rule allowlist on the path slash and the regex, a password in a root-level prod.nuget.config: refused by the second copy at the probe run's root, whose name holds no slash, the remote at its base (PUBLISHED at 93684a4d1, both scanners; red under the mutant deleting the second copy's check)" {
+    r11b_witness_case W12 prod.nuget.config
+    r11b_refused_by_second_copy "$(r11b_cred_line nuget-config-password prod.nuget.config)"
+}
+
+@test "round 11b (A, the global control): an untargeted global allowlist on nuget.config's name skips the copy, so a password in prod.nuget.config is refused on the additive run's figure, read 0 of its bytes, the remote at its base (refused at both heads on that figure)" {
+    r11b_witness_case global prod.nuget.config
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL scan under the path-scoped rules read 0 of the "*" bytes of added lines it was fed; the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 11b (A, the unselected control): in a repository carrying W1's allowlist a clean push of a file no path-scoped rule selects passes with no romp line and no probe run (at both heads)" {
+    r11a_base
+    r11a_config "$(r11b_shape_config W1)"
+    commit_file notes.txt "nothing to see" "a clean commit"
+    r11b_report_copier
+    push_main_through_hook_with_shim
+    r10a_passes
+    [ ! -e "$TEST_DIR/qreport" ]
+}
+
+@test "round 11b (A, the cost witness): a CLEAN prod.nuget.config under W1's per-rule allowlist is refused by the probe line alone, no credential named, the remote at its base (passes at 93684a4d1 and at main; the header's disclosed cost; red under the mutant deleting the probe check)" {
+    r11a_base
+    r11a_config "$(r11b_shape_config W1)"
+    r11b_nuget prod.nuget.config clean
+    r11b_commit "a clean nuget config"
+    push_main_through_hook_with_shim
+    r11b_refused_by_probe "$(r11b_probe_line nuget-config-password 1/nuget.config prod.nuget.config)"
+}
+
+@test "round 11b (A, the same-verdict witness): an unanchored per-rule allowlist on nuget.config's name in any case excuses the rule for every nuget.config, its real path included, and a password in prod.nuget.config is refused by the probe line alone, the second copy excused too, the remote at its base (passes at 93684a4d1 and at main, where the allowlist excuses the file by its real path: the header's disclosed cost; red under the mutant deleting the probe check)" {
+    r11b_witness_case unanchored prod.nuget.config
+    r11b_refused_by_probe "$(r11b_probe_line nuget-config-password 1/nuget.config prod.nuget.config)"
+}
+
+r11b_suffix_push() {   # <repo|none>: one clean file per selected suffix but .p12 and .pfx, under this repository's .gitleaks.toml or no config, pushed for real behind the report copier: passes, the probe run's report naming each probe under its own rule and no second copy
+    local pair
+    r11a_base
+    if [ "$1" = repo ]; then
+        cp "$ROMP_DIR/.gitleaks.toml" "$REPO/.gitleaks.toml"
+        git -C "$REPO" add .gitleaks.toml
+        git -C "$REPO" commit -qm "the repository's config"
+        git -C "$REPO" push -q origin main
+        BASE="$(git -C "$REPO" rev-parse HEAD)"
+    fi
+    r11b_nuget nuget.config clean
+    printf 'name: app\nreplicas: 2\n' > "$REPO/app.yaml"
+    printf 'name: app\nreplicas: 3\n' > "$REPO/app.yml"
+    printf 'variable "region" {\n  default = "eu"\n}\n' > "$REPO/main.tf"
+    printf 'job "web" {\n  count = 2\n}\n' > "$REPO/main.hcl"
+    printf '<?php\necho "ok";\n' > "$REPO/app.php"
+    git -C "$REPO" add app.yaml app.yml main.tf main.hcl app.php
+    r11b_commit "one clean file per suffix"
+    r11b_report_copier
+    push_main_through_hook_with_shim
+    r10a_passes
+    # the pieces in the feed's path order: app.php, app.yaml, app.yml, main.hcl, main.tf, nuget.config
+    for pair in '1/1.php	freemius-secret-key' '2/2.yaml	kubernetes-secret-yaml' '3/3.yml	kubernetes-secret-yaml' '4/4.hcl	hashicorp-tf-password' '5/5.tf	hashicorp-tf-password' '6/nuget.config	nuget-config-password'; do
+        [ "$(grep -c -x -F -- "$pair	." "$TEST_DIR/qreport")" -eq 1 ]
+    done
+    [ "$(grep -c 'romp-copy-' "$TEST_DIR/qreport")" -eq 0 ]
+    [ "$(wc -l < "$TEST_DIR/qreport")" -eq 6 ]
+}
+
+@test "round 11b (A): a clean push of one file per selected suffix other than .p12 and .pfx (nuget.config, .yaml, .yml, .tf, .hcl, .php) passes under this repository's .gitleaks.toml, the probe run's report naming each probe under its own rule and no second copy" {
+    r11b_suffix_push repo
+}
+
+@test "round 11b (A): the same clean push of one file per selected suffix passes under no config at all, each probe named under its own rule and no second copy" {
+    r11b_suffix_push none
+}
+
+@test "round 11b (A, the residual, OUTSIDE the closed class): an AND per-rule allowlist whose path matches both the copy's name and the second copy's, a number directory or the romp-copy- stem, with the regex matching the password, PUBLISHES a password in prod.nuget.config, the probe reported (the header's disclosed residual: such a path keys on the hook's synthetic names and has no honest use; main's hook refuses the file)" {
+    r11b_witness_case residual prod.nuget.config
+    r10a_passes
+}
+
+@test "round 11b (A, the rule set and the key): under a per-rule allowlist dropping kubernetes-secret-yaml at number names a CLEAN deploy/app.yaml is refused by the probe line, though generic-api-key names the yaml probe's data key when every rule runs: the probe run enables the five rules alone and counts a probe named under its own rule, the file and the rule (red under the mutant that enables every rule and keys the check on the file alone; passes at 93684a4d1)" {
+    r11a_base
+    r11a_config "$(r11b_shape_config k8sdrop)"
+    mkdir -p "$REPO/deploy"
+    printf 'name: app\nreplicas: 2\n' > "$REPO/deploy/app.yaml"
+    git -C "$REPO" add deploy/app.yaml
+    r11b_commit "a clean yaml"
+    push_main_through_hook_with_shim
+    r11b_refused_by_probe "$(r11b_probe_line kubernetes-secret-yaml 1/1.yaml deploy/app.yaml)"
+}
+
+@test "round 11b (A, the probe run's figure): under W8's AND allowlist, a scanner that cuts the second copies at the probe run's root to three bytes each (a wrapper acting there alone) is refused naming the probe run and both numbers, its log shown after, the remote at its base (red under the mutant deleting the probe run's figure refusal: the password published)" {
+    r11a_base
+    r11a_config "$(r11b_shape_config W8)"
+    r11b_nuget prod.nuget.config
+    r11b_commit "a password"
+    size=$(wc -c < "$REPO/prod.nuget.config"); size=${size//[[:space:]]/}
+    scanner_wrapper 'case "$PWD" in */creds.q) for f in romp-copy-*; do head -c 3 "$f" > ../qcut.tmp; mv ../qcut.tmp "$f"; done ;; esac'
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ "romp pre-push: the PROBE run of the path-scoped copies read "([0-9]+)" of the "([0-9]+)" bytes written for it (its probes and the second copies of the added lines); the scan is incomplete, so the push is refused" ]]
+    [ $((BASH_REMATCH[2] - BASH_REMATCH[1])) -eq $((size + 2 - 3)) ]             # the piece is its ~ line and the file; its copy kept three bytes
+    [[ "$output" != *"ADDS a credential"* ]]
+    [ "$(grep -c 'INF scanned ~' <<< "$output")" -eq 3 ]                            # the two runs' logs, then the probe run's, shown because it failed
+    at_base
+}
+
+@test "round 11b (A, the probe run's ERR arm): a scanner that logs a line at its ERR level in the probe run alone, over a clean selected file, is refused naming the probe run and the error, the remote at its base (red under the mutant deleting the ERR arm)" {
+    r11a_base
+    printf 'name: app\n' > "$REPO/app.yaml"
+    git -C "$REPO" add app.yaml
+    r11b_commit "a clean yaml"
+    scanner_wrapper 'case "$PWD" in */creds.q) echo "1:00AM ERR probe run broke" >&2 ;; esac'
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the PROBE run of the path-scoped copies did not complete: gitleaks logged an error (probe run broke); the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 11b (A, the probe run's exit arm): a scanner whose probe run exits 3 after a whole scan, over a clean selected file, is refused naming the probe run and the exit, neither 0 nor 2, its log shown after, the remote at its base (red under the mutant deleting the arm for an exit other than 0 or 2)" {
+    r11a_base
+    printf 'name: app\n' > "$REPO/app.yaml"
+    git -C "$REPO" add app.yaml
+    r11b_commit "a clean yaml"
+    scanner_wrapper '' 'case "$PWD" in */creds.q) s=3 ;; esac'
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the PROBE run of the path-scoped copies exited 3, neither 0 (clean) nor 2 (a finding), so what it read is unknown; its log follows; the scan is incomplete, so the push is refused"* ]]
+    [ "$(grep -c 'INF scanned ~' <<< "$output")" -eq 3 ]
+    at_base
+}
+
+@test "round 11b (A, the probe run's foreign arm): a report line in the probe run that names neither a probe nor a second copy the hook wrote (a wrapper appending one after a whole scan), over a clean selected file, is refused naming the line, the remote at its base (red under the mutant deleting the foreign-line refusal)" {
+    r11a_base
+    printf 'name: app\n' > "$REPO/app.yaml"
+    git -C "$REPO" add app.yaml
+    r11b_commit "a clean yaml"
+    scanner_wrapper '' 'case "$PWD" in */creds.q) prev=; for a in "$@"; do [ "$prev" = -r ] && printf "%s\t%s\t.\n" romp-copy-zz.yaml kubernetes-secret-yaml >> "$a"; prev=$a; done ;; esac'
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the report of the PROBE run of the path-scoped copies holds a line that names neither a probe nor a second copy the hook wrote (romp-copy-zz.yaml kubernetes-secret-yaml .), so what the run read is unknown; the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+r11b_check_push() {   # W1's allowlist, a clean ok.yaml and a password in prod.nuget.config in one commit: the PROBE CHECK's answer is named 1, missing 2, found 2, then its close
+    r11a_base
+    r11a_config "$(r11b_shape_config W1)"
+    printf 'name: app\n' > "$REPO/ok.yaml"
+    git -C "$REPO" add ok.yaml
+    r11b_nuget prod.nuget.config
+    r11b_commit "a clean yaml and a password"
+}
+
+@test "round 11b table case: the PROBE CHECK of the path-scoped copies: an awk silent on the probe check's program alone, through a real push of a clean ok.yaml and a password in prod.nuget.config under W1's allowlist, is refused naming the missing closing line, no credential named, and the remote stays at its base (without the close the password, which only the second copy catches there, would publish)" {
+    r11b_check_push
+    calls_silent_on_text awk probe-check 'sec[$3] = np'
+    push_main_through_hook_with_shim
+    fired probe-check "sec[\$3] = np"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the PROBE CHECK of the path-scoped copies answered no closing line of counts (awk exited 0), so which probes the scan named is unknown; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 11b short case: the PROBE CHECK of the path-scoped copies: an awk whose probe check answers only its first line, the clean ok.yaml's probe named (exit 0, cut ahead of the missing probe's line), through a real push of that file and a password in prod.nuget.config under W1's allowlist, is refused naming the missing closing line, and the remote stays at its base" {
+    r11b_check_push
+    calls_short_on_text awk probe-check 'sec[$3] = np' before:missing:1
+    push_main_through_hook_with_shim
+    fired_short probe-check "sec[\$3] = np"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the PROBE CHECK of the path-scoped copies answered no closing line of counts (awk exited 0), so which probes the scan named is unknown; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 11b (ITEM 2, the reader's copy): a work-tree config rewritten after the reader's read (a scanner wrapper writing a global allowlist on every value into .gitleaks.toml before each run) changes nothing the scan reads: every run is handed the reader's copy, so a default rule's credential is still refused naming the commit and file, the remote at its base (PUBLISHED at 93684a4d1 and at round 11a's head, where the scanner read the work tree's file)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true')"
+    commit_file k.py "k = \"$(probe_token)\"" "a default rule's credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    scanner_wrapper "$(printf 'printf %%s %q > %q' "$(printf '[extend]\nuseDefault = true\n\n[[allowlists]]\nregexes = [%s]\n' "'''.*'''")" "$REPO/.gitleaks.toml")"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (github-pat) in: k.py"* ]]
+    grep -q "'''\.\*'''" "$REPO/.gitleaks.toml"                                   # the wrapper did rewrite the work tree's file
+    at_base
+}
+
+r11b_default_config() {   # the default config the scanner under test embeds, on stdout: from gitleaks' generated header to the first NUL byte after it (newlines and NULs swapped for the cut, then swapped back)
+    local off
+    off=$(LC_ALL=C grep -a -b -o -m 1 '# This file has been auto-generated. Do not edit manually.' "$GL" | head -n 1 | cut -d: -f1)
+    [ -n "$off" ] || return 1
+    tail -c +$((off + 1)) "$GL" | LC_ALL=C tr '\n\000' '\001\n' | head -n 1 | LC_ALL=C tr '\001' '\n'
+}
+r11b_default_in_work_tree() {   # [<sed script>]: the running scanner's default config, edited by the script when given, as the work tree's .gitleaks.toml, committed and pushed without the hook (BASE moves); at least 100 rules and the five path-scoped rules' default paths in it
+    r11b_default_config > "$REPO/.gitleaks.toml"
+    [ "$(grep -c '^\[\[rules\]\]' "$REPO/.gitleaks.toml")" -ge 100 ]
+    grep -qxF "path = '''(?i)\\.ya?ml\$'''" "$REPO/.gitleaks.toml"
+    grep -qxF "path = '''(?i)nuget\\.config\$'''" "$REPO/.gitleaks.toml"
+    [ -z "${1:-}" ] || sed -i.bak -e "$1" "$REPO/.gitleaks.toml"
+    rm -f "$REPO/.gitleaks.toml.bak"
+    git -C "$REPO" add .gitleaks.toml
+    git -C "$REPO" commit -qm "gitleaks' default config, copied"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+}
+
+@test "round 11b (ITEM 5 (1), a copied default): the running scanner's own default config copied whole as the work tree's .gitleaks.toml, its five path-scoped rules' paths equal to the hook's table, passes a clean push of a selected file, and a password in a nuget.config under it is refused naming the rule, the commit and the file (the reader refused every push with content under it at round 11a's head)" {
+    r11a_base
+    r11b_default_in_work_tree
+    printf 'name: app\n' > "$REPO/app.yaml"
+    git -C "$REPO" add app.yaml
+    r11b_commit "a clean yaml"
+    push_main_through_hook_with_shim
+    r10a_passes
+    r11b_nuget nuget.config
+    r11b_commit "a password"
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$(r11b_cred_line nuget-config-password nuget.config)"* ]]
+    [[ "$output" != *"of the gitleaks config"* ]]
+    at_base
+}
+
+@test "round 11b (ITEM 5 (1)): the copied default with ONE character of kubernetes-secret-yaml's path changed (ml to mx) is refused by the reader's line naming that rule, neither scanner run made, the remote at its base" {
+    r11a_base
+    r11b_default_in_work_tree "s/^path = '''(?i)\\\\.ya?ml\\\$'''\$/path = '''(?i)\\\\.ya?mx\\\$'''/"
+    grep -qxF "path = '''(?i)\\.ya?mx\$'''" "$REPO/.gitleaks.toml"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_rule_line kubernetes-secret-yaml "$R11A_WT")"
+}
+
+@test "round 11b (ITEM 5 (1)): the copied default with a sixth rule carrying a path, the very text of kubernetes-secret-yaml's default path under another id, is refused by the reader's line naming the sixth rule, neither scanner run made, the remote at its base" {
+    r11a_base
+    r11b_default_in_work_tree
+    printf '\n[[rules]]\nid = "r11b-sixth"\nregex = %s\npath = %s\n' "'''zzbld_[0-9a-f]{16}'''" "'''(?i)\\.ya?ml\$'''" >> "$REPO/.gitleaks.toml"
+    git -C "$REPO" commit -qam "a sixth rule with a path"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_rule_line r11b-sixth "$R11A_WT")"
+}
+
+r11b_empty_path_case() {   # <the empty string, quoted>: S1's rule with that path, a clean push passing with the reader silent, then S1's credential refused naming the rule
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "r11a-env-rule"\nregex = %s\npath = %s\n' "'''zzenv_[0-9a-f]{16}'''" "$1")"
+    grep -qxF "path = $1" "$REPO/.gitleaks.toml"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r10a_passes
+    r11a_witness S1
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (r11a-env-rule) in: config/prod.env"* ]]
+    [[ "$output" != *"of the gitleaks config"* ]]
+    at_base
+}
+
+@test "round 11b (ITEM 5 (4)): a rule whose path is the empty BASIC string, which gitleaks reads as no condition, passes a clean push with the reader silent, and the rule's credential is still named (the reader refused both pushes at round 11a's head)" {
+    r11b_empty_path_case '""'
+}
+
+@test "round 11b (ITEM 5 (4)): a rule whose path is the empty LITERAL string passes a clean push with the reader silent, and the rule's credential is still named (the reader refused both pushes at round 11a's head)" {
+    r11b_empty_path_case "''"
 }

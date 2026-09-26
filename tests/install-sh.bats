@@ -636,14 +636,19 @@ setup_gitleaks_stub() {   # <exit-code>: records its args and the bytes it is ha
     # commit and file can be asserted. Asked its version, it answers a
     # release's dotted version above the floor the hook's version gate reads
     # (gitleaks 8.25.0) and records nothing, so the args file holds the scans.
+    # It copies the file its --config names to gitleaks.config: since round
+    # 11b the hook hands every run its own copy of the config it read, in a
+    # scratch directory it removes when it exits.
     unset ROMP_NO_GITLEAKS
     GL_ARGS="$TEST_DIR/gitleaks.args"
     GL_FEED="$TEST_DIR/gitleaks.feed"
+    GL_CONFIG="$TEST_DIR/gitleaks.config"
     export ROMP_GITLEAKS="$TEST_DIR/gitleaks-stub"
     cat > "$ROMP_GITLEAKS" <<EOF
 #!/usr/bin/env bash
 if [ "\$1" = version ]; then echo 8.30.1; exit 0; fi
 echo "\$@" >> "$GL_ARGS"
+prev=; for a in "\$@"; do [ "\$prev" = --config ] && cat "\$a" > "$GL_CONFIG"; prev=\$a; done
 echo "stub scanner ran" >&2
 # every file under the directory it runs in, fed and counted (why: setup_gitleaks_stub)
 n=0
@@ -745,10 +750,14 @@ feed_lines() {   # <line>: how many lines of what the stub was handed equal it e
     [[ "$(cat "$GL_ARGS")" != *"--config"* ]]   # no .gitleaks.toml in this repo: default rules
 }
 
-@test "pre-push hook: the repo's .gitleaks.toml is handed to the scanner by name" {
+@test "pre-push hook: the repo's .gitleaks.toml is handed to the scanner by name, as the copy the hook read" {
     # Explicit, not left to gitleaks' own lookup: with no --config it reads a
     # GITLEAKS_CONFIG from the environment before the source root, and a
-    # developer's own config would replace the repo's rules.
+    # developer's own config would replace the repo's rules. Since round 11b
+    # the name is the hook's own copy of the file, written to its scratch
+    # directory by the reader that judged it (the bytes it read), not the work
+    # tree's path, so a file changed after the read changes nothing the
+    # scanner reads; tests/pre-push-hook.bats pins that with the real scanner.
     setup_hook_repo
     setup_gitleaks_stub 0
     printf '[extend]\nuseDefault = true\n' > "$WORK/.gitleaks.toml"
@@ -756,7 +765,9 @@ feed_lines() {   # <line>: how many lines of what the stub was handed equal it e
     run git -C "$WORK" push origin HEAD:main
     [ "$status" -eq 0 ]
     root="$(git -C "$WORK" rev-parse --show-toplevel)"
-    [[ "$(cat "$GL_ARGS")" == *"--config $root/.gitleaks.toml"* ]]
+    [[ "$(cat "$GL_ARGS")" != *"--config $root/.gitleaks.toml"* ]]
+    [[ "$(cat "$GL_ARGS")" =~ --config\ [^\ ]*/romp-pre-push\.[^/\ ]*/creds\.cfg\.0\.toml(\ |$) ]]
+    cmp "$GL_CONFIG" "$WORK/.gitleaks.toml"
 }
 
 @test "pre-push hook: only the commits being pushed are handed to the scanner" {
