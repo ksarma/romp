@@ -1402,8 +1402,13 @@ test('the phrase the script reads a lost browser by is a literal in inBrowser\'s
  *  specifier that resolves to none is red, naming it. Not followed: a specifier that is not relative (node:fs,
  *  playwright), a computed one (a template literal, a concatenation), and a file a module reads at run time by a path
  *  it builds (the launcher's sheets and render.ts). `read(rel)` gives a file's text by that path, or null when the tree
- *  has no such file. Returns the paths in that order, the script, the roster and the reporter first, each once. Its
- *  table: STEP_FILES_ROWS, run by the test after it. */
+ *  has no such file. The run field is read as `bash `, a space and the script's path to the field's end, and a run field
+ *  of any other shape (another shell, a flag before the path) is red, naming it, as is a script the tree does not hold.
+ *  Each of the ROSTER= and REPORTER= lines is the script's first line that is KEY= and non-space text to its end, the
+ *  text read literally, quotes included, and a script with no such line (a line with text after the path is not one)
+ *  is red, naming the key. The roster must be in the tree, and the reporter is not checked. Returns the paths in that
+ *  order, the script, the roster and the reporter first, each once. Its table: STEP_FILES_ROWS, run by the test after
+ *  it. */
 function stepFiles(run, wd, read) {
   const m = /^bash (\S+)$/.exec(run || '');
   assert.ok(m, 'the step\'s run field is bash and a script\'s path: ' + JSON.stringify(run));
@@ -1443,9 +1448,10 @@ function stepFiles(run, wd, read) {
   return out;
 }
 /** stepFiles' table: each row a synthetic tree (paths from its root to texts), under a step whose run field is `bash
- *  scripts/s.sh` in vscode-extension, whose script names ROSTER=r.txt and REPORTER=./scripts/rep.mjs, and the files
- *  stepFiles derives from it after those three (null where it is red, naming the specifier), one spelling inside and one
- *  outside each family its docstring names. */
+ *  scripts/s.sh` in vscode-extension, whose script names ROSTER=r.txt and REPORTER=./scripts/rep.mjs (unless the row
+ *  gives another run field, or its tree another script), and the files stepFiles derives from it after those three
+ *  (after the row's own base where it gives one), or, where it is red, a pattern of the red's message, one spelling
+ *  inside and one outside each family its docstring names. */
 const SF_BASE = ['vscode-extension/scripts/s.sh', 'vscode-extension/r.txt', 'vscode-extension/scripts/rep.mjs'];
 const SF_A = 'ui/webview/a-browser.test.ts', SF_LINE = 'out-tests/ui/webview/a-browser.test.js\n';
 const STEP_FILES_ROWS = [
@@ -1459,17 +1465,25 @@ const STEP_FILES_ROWS = [
   ['a relative specifier after from inside a string, an esbuild entry\'s, followed (a loud over-read)', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'const entry = \'export { f } from "./page";\';\n', 'ui/webview/page.ts': '' }, [SF_A, 'ui/webview/page.ts']],
   ['a file read at run time by a path the module builds, not followed', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'const css = fs.readFileSync(path.join(UI, "styles.css"), "utf8");\n', 'ui/webview/styles.css': '' }, [SF_A]],
   ['a file imported twice and by a second rostered source, listed once', { 'vscode-extension/r.txt': SF_LINE + 'out-tests/ui/webview/b-browser.test.js\n', [SF_A]: 'import "./h";\nimport { y } from "./h";\n', 'ui/webview/b-browser.test.ts': 'import "./h";\n', 'ui/webview/h.ts': '' }, [SF_A, 'ui/webview/h.ts', 'ui/webview/b-browser.test.ts']],
-  ['a specifier that resolves to no file of the tree, red', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'import { g } from "./gone";\n' }, null],
+  ['a specifier that resolves to no file of the tree, red', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: 'import { g } from "./gone";\n' }, /resolves to no file of the tree/],
+  ['a run field that runs the script with sh, red', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: '' }, /the step's run field is bash and a script's path/, { run: 'sh scripts/s.sh' }],
+  ['a run field with a flag before the script\'s path, red', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: '' }, /the step's run field is bash and a script's path/, { run: 'bash -e scripts/s.sh' }],
+  ['a run field naming a script the tree does not hold, red', { 'vscode-extension/r.txt': SF_LINE, [SF_A]: '' }, /the script the step's run field calls is in the tree/, { run: 'bash scripts/gone.sh' }],
+  ['a ROSTER= line with text after the path, red', { 'vscode-extension/scripts/s.sh': 'ROSTER=r.txt # the roster\nREPORTER=./scripts/rep.mjs\n', 'vscode-extension/r.txt': SF_LINE, [SF_A]: '' }, /names its ROSTER on a line ROSTER=<path>/],
+  ['a REPORTER= line with text after the path, red', { 'vscode-extension/scripts/s.sh': 'ROSTER=r.txt\nREPORTER=./scripts/rep.mjs # the reporter\n', 'vscode-extension/r.txt': SF_LINE, [SF_A]: '' }, /names its REPORTER on a line REPORTER=<path>/],
+  ['a quoted ROSTER= value, read with its quotes, so the roster it names is not in the tree, red', { 'vscode-extension/scripts/s.sh': 'ROSTER="r.txt"\nREPORTER=./scripts/rep.mjs\n', 'vscode-extension/r.txt': SF_LINE, [SF_A]: '' }, /the roster the script names is in the tree/],
+  ['a quoted REPORTER= value, read with its quotes and listed so (the reporter is not checked)', { 'vscode-extension/scripts/s.sh': 'ROSTER=r.txt\nREPORTER="./scripts/rep.mjs"\n', 'vscode-extension/r.txt': SF_LINE, [SF_A]: '' }, [SF_A], { base: ['vscode-extension/scripts/s.sh', 'vscode-extension/r.txt', 'vscode-extension/"./scripts/rep.mjs"'] }],
 ];
 test('stepFiles\' table: each row\'s files derived as stepFiles\' docstring states', () => {
   const wrong = [];
-  for (const [what, tree, files] of STEP_FILES_ROWS) {
+  for (const [what, tree, files, opts = {}] of STEP_FILES_ROWS) {
     const all = { 'vscode-extension/scripts/s.sh': 'ROSTER=r.txt\nREPORTER=./scripts/rep.mjs\n', 'vscode-extension/scripts/rep.mjs': '', ...tree };
     const read = (rel) => (Object.prototype.hasOwnProperty.call(all, rel) ? all[rel] : null);
     let got;
-    try { got = stepFiles('bash scripts/s.sh', 'vscode-extension', read); } catch (e) { got = e instanceof assert.AssertionError && /resolves to no file of the tree/.test(e.message) ? null : 'threw ' + e.message; }
-    const want = files && [...SF_BASE, ...files];
-    if (!isDeepStrictEqual(got, want)) wrong.push(what + ': stepFiles derives ' + JSON.stringify(got) + ', not ' + JSON.stringify(want));
+    try { got = stepFiles(opts.run || 'bash scripts/s.sh', 'vscode-extension', read); } catch (e) { got = e instanceof assert.AssertionError ? { red: e.message } : 'threw ' + e.message; }
+    const want = files instanceof RegExp ? files : [...(opts.base || SF_BASE), ...files];
+    const ok = want instanceof RegExp ? got !== null && typeof got === 'object' && typeof got.red === 'string' && want.test(got.red) : isDeepStrictEqual(got, want);
+    if (!ok) wrong.push(what + ': stepFiles derives ' + JSON.stringify(got) + ', not ' + (want instanceof RegExp ? 'a red matching ' + want : JSON.stringify(want)));
   }
   assert.deepEqual(wrong, [], 'each row of stepFiles\' table is derived as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
 });
