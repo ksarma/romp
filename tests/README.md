@@ -198,7 +198,10 @@ clean up what you create — `with tempfile.TemporaryDirectory()`,
 fixture — so a fixture is gone when its test is, not at exit; bats suites use
 `mktemp -d` in `setup` and `rm -rf` it in `teardown`, and stand in for any
 subject that detaches work (a detached launcher probe once re-created four to
-six test dirs per run by minting a serve-token after the teardown). Never give
+six test dirs per run by minting a serve-token after the teardown). A suite
+whose test starts a background process that writes under that directory ends
+its teardown with `stop_then_remove` (`tests/stop-then-remove.bash`), which
+waits for the process to exit before the `rm -rf`. Never give
 a tempfile call a literal
 directory as its `dir` — by keyword or position, composed (`f"/tmp/{x}"`,
 `os.path.join("/tmp", x)`) or through a name bound to one — and never point
