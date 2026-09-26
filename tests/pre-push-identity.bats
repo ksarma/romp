@@ -464,6 +464,7 @@ fail_log_addresses() {   # [<sha whose addresses log fails; every commit's when 
     run_hook_tag v1
     [ "$status" -eq 1 ]
     [[ "$output" == *"the TYPE of the object refs/tags/v1 pushes (${sha:0:10}) could not be read"* ]]
+    [ "$(grep -c -F "the TYPE of the object refs/tags/v1 pushes (${sha:0:10})" <<< "$output")" -eq 1 ]   # refused once, at the first call site: going on past the failed read would judge an answer the read never gave, a second line
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" == *"git push --no-verify"* ]]
     # reported as a failed read, not as a finding: the tagger was never read
@@ -480,6 +481,7 @@ fail_log_addresses() {   # [<sha whose addresses log fails; every commit's when 
     run_hook_tag v1-outer
     [ "$status" -eq 1 ]
     [[ "$output" == *"the TYPE of the object refs/tags/v1-outer pushes (${inner:0:10}) could not be read"* ]]
+    [ "$(grep -c -F "the TYPE of the object refs/tags/v1-outer pushes (${inner:0:10})" <<< "$output")" -eq 1 ]   # refused once, at the second call site (the peel's)
     [[ "$output" != *"is tagged as"* ]]
 }
 
@@ -490,6 +492,7 @@ fail_log_addresses() {   # [<sha whose addresses log fails; every commit's when 
     run_hook
     [ "$status" -eq 1 ]
     [[ "$output" == *"the TYPE of the object refs/heads/main pushes (${tip:0:10}) could not be read"* ]]
+    [ "$(grep -c -F "the TYPE of the object refs/heads/main pushes (${tip:0:10})" <<< "$output")" -eq 1 ]   # refused once, a branch's tip at the first call site
     [[ "$output" != *"of tag refs/heads/main"* ]]
     [[ "$output" != *"BLOCKED"* ]]
 }

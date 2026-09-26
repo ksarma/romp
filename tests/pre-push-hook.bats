@@ -10517,3 +10517,70 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     [[ "$output" != *"the scan is incomplete"* ]]
     at_base
 }
+
+# ── round 10e: flag 72's control case ──
+# Flag 58's refused alternative dropped the join's +typed marker for every merge
+# (merges-only), where the ruled condition drops it only for a merge's path whose
+# combined section printed Binary (binm). The two differ on a merge's rename
+# candidate whose combined section printed no Binary line, and the report tells
+# them apart only where some parent holds the new path with a NUL in the bytes
+# the parent loop reads. A parent holding the path as a GITLINK does: git's
+# combined patch renders a gitlink as the text "Subproject commit <id>" and reads
+# no object, while the parent loop (git cat-file blob <merge>^<i>:<path>) reads
+# the object the gitlink's id names. With that id naming a blob with a NUL and the
+# merge's result holding exactly the rendered text, the combined section has no
+# Binary line and no hunk, the addition verdict (binary under the key) decides
+# the path, and the key's line is the accurate one; the merges-only marker sends
+# the path through the parent loop, which names parent 2's blob as a previous
+# version binary by its bytes. The flag 72 pre-check found the shape by a real
+# push, and the coordinator ruled this case owed (red under the merges-only
+# marker, a one-line change of the join's printf).
+@test "round 10e (flag 72, the control case): a MERGE whose parent 2 holds P as a gitlink naming a blob with a NUL, its result P a regular file holding exactly the gitlink's rendered text (Subproject commit and the blob's id) taken from a path Q the merge deletes, P gone at the tip, under core.bigFileThreshold 20: the combined patch prints P's section with no Binary line and no hunk, so the addition verdict decides P, and a real push is refused with the key's line naming core.bigFileThreshold and its value 20, not the previous-version line naming parent 2's bytes, the remote at its base (the merges-only marker, flag 58's refused alternative, prints the previous-version line here)" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    bin="$(printf 'bin\0ary blob\n' | git -C "$REPO" hash-object -w --stdin)"     # the blob the gitlink names: a NUL in its bytes
+    printf 'Subproject commit %s\n' "$bin" > "$REPO/Q"                             # the text git's combined patch renders that gitlink as, from the blob's id (either object format)
+    git -C "$REPO" add Q
+    git -C "$REPO" commit -qm "Q holds a gitlink's rendered text"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    qblob="$(git -C "$REPO" rev-parse "$BASE:Q")"
+    idx="$TEST_DIR/r10e.index"
+    GIT_INDEX_FILE="$idx" git -C "$REPO" read-tree "$BASE"
+    GIT_INDEX_FILE="$idx" git -C "$REPO" update-index --add --cacheinfo "160000,$bin,P"
+    p2="$(git -C "$REPO" commit-tree "$(GIT_INDEX_FILE="$idx" git -C "$REPO" write-tree)" -p "$BASE" -m "P as a gitlink naming the blob")"
+    git -C "$REPO" update-ref refs/heads/p2 "$p2"
+    git -C "$REPO" push -q origin p2                                               # the remote holds both parents: the push carries the merge and the tip
+    GIT_INDEX_FILE="$idx" git -C "$REPO" read-tree "$BASE"
+    GIT_INDEX_FILE="$idx" git -C "$REPO" update-index --force-remove Q
+    GIT_INDEX_FILE="$idx" git -C "$REPO" update-index --add --cacheinfo "100644,$qblob,P"
+    merge="$(git -C "$REPO" commit-tree "$(GIT_INDEX_FILE="$idx" git -C "$REPO" write-tree)" -p "$BASE" -p "$p2" -m "merge p2, Q's blob at P")"
+    GIT_INDEX_FILE="$idx" git -C "$REPO" update-index --force-remove P
+    tip="$(git -C "$REPO" commit-tree "$(GIT_INDEX_FILE="$idx" git -C "$REPO" write-tree)" -p "$merge" -m "remove P")"   # gone at the tip: only the per-commit half can name it
+    git -C "$REPO" update-ref refs/heads/main "$tip"
+    git -C "$REPO" reset -q --hard main
+    git -C "$REPO" config core.bigFileThreshold 20
+    is_merge "$merge"
+    # the road as git applies it: parent 2's P is a gitlink, and a read of it by name reaches the blob with the NUL
+    [ "$(git -C "$REPO" ls-tree "$p2" -- P)" = "160000 commit $bin"$'\t'"P" ]
+    [ "$(git -C "$REPO" cat-file -t "$merge^2:P")" = blob ]
+    # the combined patch (no pathspec, which would keep -M from pairing Q with P) renders the gitlink as the result's own text:
+    # a section for P, parent 2's side a gitlink, with no Binary line and no hunk
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$merge"
+    [[ "$output" == *"diff --combined P"* ]]
+    [[ "$output" == *"mode 100644,160000..100644"* ]]
+    [[ "$output" != *"Binary files"* ]]
+    [[ "$output" != *"@@@"* ]]
+    # and the addition calls P binary under the key alone (its bytes hold no NUL)
+    empty_tree="$(git -C "$REPO" hash-object -t tree /dev/null)"
+    [ "$(git -C "$REPO" diff-tree -r --numstat "$empty_tree" "$merge" -- P)" = "-"$'\t'"-"$'\t'"P" ]
+    size="$(git -C "$REPO" cat-file -s "$qblob")"
+    push_main_through_installed_hook
+    [ "$status" -ne 0 ]
+    at_base
+    [[ "$output" == *"romp pre-push: P in commit ${merge:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is $size bytes; core.bigFileThreshold is 20 in this clone's configuration); the identifier scan did not read it, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary: core.bigFileThreshold"* ]]
+    [[ "$output" != *"the previous version of the file in parent 2 of the merge is binary by its bytes"* ]]   # the merges-only marker's clause
+    [[ "$output" != *"Where a line names the previous version's bytes as the cause"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+}
