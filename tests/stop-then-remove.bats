@@ -4,14 +4,19 @@
 # once that process has exited. These cases run it against a stand-in that keeps writing under the
 # directory after its TERM, the way bin/romp-manager's shutdown writes its restart audit there: nothing
 # may be left behind, the call returns at the stand-in's exit and not after a fixed time, a process that
-# ignores TERM is KILLed at the bound, and a directory that cannot be removed still fails the call. The
-# last case checks that tests/romp-manager-origin.bats's teardown goes through the helper. Nothing below
-# starts a manager.
+# ignores TERM is KILLed, and a directory that cannot be removed still fails the call. The last case
+# checks that tests/romp-manager-origin.bats's teardown goes through the helper. Nothing below starts a
+# manager.
 #
-# Two parts of the helper are not exercised. One is the branch for a pid still running five seconds
-# after its KILL: a KILL cannot be caught or ignored, so no stand-in can reach it. The other is the
-# `wait` that reaps a pid that is this shell's child: bash reaps its children on its own and keeps their
-# exit status, so a later `wait` in a case returns the same status with or without it.
+# Among the parts of the helper no case pins (changing each leaves every case green): the branch for a
+# pid still running five seconds after its KILL, which no case reaches, since a KILL cannot be caught or
+# ignored; the `wait` that reaps a pid that is this shell's child, which case 1 runs, though no case
+# reads a status that `wait` could change; when the KILL comes, and which stream its message goes to
+# (case 3 reads the message in run's merged output); the default bound's value (a default of 4 s leaves
+# every case green); and a pid whose TERM fails, one already gone at the call or one that kill -0 is
+# refused on, which no case passes: the helper swallows the failure, the poll ends at once and the
+# directory is removed, and a helper that returned at the failed TERM instead, leaving the directory,
+# keeps every case green.
 
 load stop-then-remove
 
@@ -80,8 +85,9 @@ _await_ready() {   # the stand-in has set its TERM disposition, so the TERM belo
 }
 
 _returned_at_the_exit() {   # $1 and $2 the call's start and end (microseconds), after a burst stand-in has exited
-    # The call returned after the stand-in's last write, and less than a second after it: it waited for
-    # the exit, not for a fixed time.
+    # The call returned after the stand-in's last write, and less than a second after it. On its own this
+    # passes a fixed wait a little longer than cases 1 and 2's one-second burst; case 5's three-second
+    # stand-in is what rules out a fixed wait in place of the poll.
     local done_us
     done_us="$(cat "$TEST_DIR/ready.burst-done")"
     echo "the call started at $1, the stand-in's last write was at $done_us, the call returned at $2 (microseconds)"
@@ -124,7 +130,7 @@ _returned_at_the_exit() {   # $1 and $2 the call's start and end (microseconds),
     _returned_at_the_exit "$start" "$end"
 }
 
-@test "a process that ignores TERM is KILLed at the bound, the KILL is said on stderr, and the directory is removed" {
+@test "a process that ignores TERM is KILLed, the KILL is said in the call's output, and the directory is removed" {
     "$STANDIN" "$TEST_DIR/target" "$TEST_DIR/ready" ignore &
     STANDIN_PID=$!
     _await_ready

@@ -204,7 +204,9 @@ directory: its teardown ends with `stop_then_remove`
 (`tests/stop-then-remove.bash`), which waits for the process to exit before the
 `rm -rf`. `tests/romp-manager-ensure.bats` and `tests/romp.bats` still kill a
 manager and remove the directory without waiting; they have not yet moved to
-the helper. Never give
+the helper. `tests/stop-then-remove.bats`, the helper's own suite, KILLs and
+waits on its stand-ins in its teardown instead, so a broken helper cannot also
+break that suite's cleanup. Never give
 a tempfile call a literal
 directory as its `dir` — by keyword or position, composed (`f"/tmp/{x}"`,
 `os.path.join("/tmp", x)`) or through a name bound to one — and never point
