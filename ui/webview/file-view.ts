@@ -2839,7 +2839,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the sign covered, or out of view, at the tap's start, in Chromium, Firefox and WebKit (the closing check after the fixes for the
   // file review's round 18; the other-document cells and their node guard, red at 0f998a3b9, whose mousedown left the slot alone);
   // and its exception for the one-finger tap's own mousedown is what lets a tap's click find its press (the guard's one-finger taps,
-  // red under a gate that empties the slot at every such mousedown). Its residual: a one-finger touch of this window that ends in a
+  // red under a gate that empties the slot at every such mousedown). The tap's flag (tapDue) stands from a primary touch's pointerup,
+  // that touch the only contact since its own pointerdown, until the next mousedown, pointerdown or pointercancel: its clears at a
+  // pointerdown and at a pointercancel are defensive, since each of those empties the slot and the next pointerup sets the flag
+  // again, while its test of a primary contact and its clear at the tap's own mousedown are pinned over the stand-in alone (the
+  // guard's rows of a contact that is not primary, whose primary contact pressed another document, and of a tap whose click never
+  // came after its compatibility mousedown, each then another document's tap; no browser cell drives either order). Its residual: a one-finger touch of this window that ends in a
   // pointerup with no compatibility mousedown and no click, then such a tap on another document's element, would find that touch's
   // press in the slot; no touch measured ends so (a swipe ends in a pointercancel, and in Chromium a touch held 1.2 s clicks), and
   // the viewer's own document cancels a touch only on the comment float, which holds no picture. The slot's four other clears (a
