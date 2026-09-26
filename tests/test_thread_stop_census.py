@@ -18,11 +18,11 @@ reaches _sdk() through _turn_notify_tick and _alive_sessions and builds a real S
 it as a side effect). The module under -n 9: red. A full -n 10 sweep: a prior latcher in the target's worker is likely
 but not guaranteed: five full sweeps checked on 2026-09-21 did not fire it (those for 853, 862 twice and 887, and 781's
 at c7e51ae47), one did (box 2's control at 65f1895f6). An isolated-level certainty and a sweep-level flake at the same
-time, decided by which tests ran before it in that worker's process; never in CI (serial). The failed assertion skipped the stop on
-the tail, the tearDown only CLEARED the stop flag when the producer was already dead and never SET it, so a live,
-fully UNPATCHED judge loop (the with-block's eleven patches were undone on the way out while the producer was still in
-its hold) ran for the rest of the worker's life. The T282 census in tearDown named the leftover thread (the "1 error"
-beside the "1 failed") but could not stop it.
+time, decided by which tests ran before it in that worker's process; never in CI, whose cells then ran serially. The
+failed assertion skipped the stop on the tail, the tearDown only CLEARED the stop flag when the producer was already
+dead and never SET it, so a live, fully UNPATCHED judge loop (the with-block's eleven patches were undone on the way out
+while the producer was still in its hold) ran for the rest of the worker's life. The T282 census in tearDown named the
+leftover thread (the "1 error" beside the "1 failed") but could not stop it.
 
 THE BLAST RADIUS, proven by romp-manager's probe, has TWO FIGURES with different meanings. REACH: the leaked loop runs
 _compact_goal_stores() on its 3 s backstop (_producer_wake.wait(3)), globbing jd.GOALDIR and rewriting any store whose
@@ -393,8 +393,9 @@ parse_cache.derived's TREE_KEY: tree_census), which setUpClass, the --table road
 pins the MECHANISM through the helper's counters, not the seconds: the entry point run again builds nothing, every module
 of the population and every product file was parsed once, the parse count over the population is the module count, and a
 second derivation reds (a planted key beside the census's shows it). The cache is per PROCESS: under pytest-xdist the
-censuses that land on different workers parse and derive on their own, and no saving is claimed there; the saving is the
-serial cell and this module's own tests. A second census in the same process that reads kernel/kernel.py or another
+censuses that land on different workers parse and derive on their own, and no saving is claimed there; the saving is a
+serial run (CI's cells until 2026-09-25, its macOS cells since) and this module's own tests.
+A second census in the same process that reads kernel/kernel.py or another
 product file through the helper gets this census's parse (a tree test holds that from this side). WHAT A DERIVATION LEAVES
 ALIVE, the trees among it, stays for the process: the helper holds the collector off for the build's own run and, once
 the build has returned, freezes every object then tracked, before derived() returns (the fourteenth pass, 2026-09-22;
@@ -413,7 +414,9 @@ asserts gc.collect() finds nothing. And EVERY gc.get_freeze_count() READ AFTER T
 generation's list, a tenth of a second per read over the eight million objects this module freezes (up to a second once
 a collection has scattered the heap): the kernel's perf snapshot (_PerfStats.snapshot) reads it, so a test that reads
 the snapshot after this module in the same process pays that per read, 2 to 60 times its call time (about 2 s over a
-serial CI cell, where four snapshot-reading modules sort after this one; 18 to 25 s for an xdist worker that runs this
+serial run such as CI's cells until 2026-09-25 and its macOS cells since, where four snapshot-reading modules sort
+after this one;
+18 to 25 s for an xdist worker that runs this
 module before tests/test_kernel_delta_send.py); the count is read here by the retention pins alone, and the kernel side
 is a follow-up, not this pass's. THE CACHED TREES ARE
 READ-ONLY, tests/parse_cache.py's contract for every consumer (stated in its docstring; the eleventh pass, 2026-09-22): the
@@ -444,8 +447,10 @@ and before and after every build, the build returning or raising (a raising buil
 own exception chained as the cause), so every consumer of the cache inherits it; setUpClass calls it before the tree
 derivation as the visible site; a tree test holds the singletons clean after the derivation; the read-only pin walks
 them too, each named once per tree with the words that say it is shared. Order-dependent by nature: red exactly when a
-writer ran earlier in the same process, CI's serial shape, green for a module run alone. The mechanism is reproduced by
-a plant in IterativeHandCopier on the process's real Load, the restore registered before the write.
+writer ran earlier in the same process (a serial run, as CI's cells were until 2026-09-25 and its macOS cells still
+are, or the same xdist worker),
+green for a module run alone. The mechanism is reproduced by a plant in IterativeHandCopier on the process's real Load,
+the restore registered before the write.
 
 """
 import ast
@@ -5513,9 +5518,10 @@ class ThreadStopCensus(unittest.TestCase):
         afterwards: CI's diagnostic run
         35740276523 read that back, tests/test_hosts_path_census.py's `_fn` and `_parent` marks on the shared nodes, which
         copy.deepcopy of a hand followed into that census's whole graph (the mechanism plant in IterativeHandCopier
-        reproduces it). ORDER-DEPENDENT BY NATURE: this reds only when such a writer ran EARLIER in the same process, which
-        is CI's serial shape (one process, every test module in collection order), and is green when the module runs
-        alone; a red here names the attributes, their value types and the remedy (grep tests/ for the write over AST walks
+        reproduces it). ORDER-DEPENDENT BY NATURE: this reds only when such a writer ran EARLIER in the same process, a
+        serial run (one process, every test module in collection order, as CI's cells were until 2026-09-25 and its
+        macOS cells still are) or the same xdist worker, and is green when the module runs alone;
+        a red here names the attributes, their value types and the remedy (grep tests/ for the write over AST walks
         and guard singleton nodes), and the writer is the module to fix, not this one. After the derivation the singletons
         are clean (setUpClass held the same before it, so the derivation wrote nothing on them either), and the probe sees
         one node of each of the 32 singleton types, the same objects on a second probe."""
