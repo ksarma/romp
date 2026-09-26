@@ -207,9 +207,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   run with no xdist worker (and none of the variables pytest-xdist sets in one)
   and, where pytest-xdist is installed, one with `-n 2`; and the pair of forms,
   each of those runs made in both: whether each option that one run gives and
-  another does not is given (CI's `-q`, `--durations`, `--timeout`,
-  `--timeout-method` and `-n`, which every run gives but the developer's with
-  no worker, and the developer's `-p no:cacheprovider` and `-k`). The pair
+  another does not is given (CI's `-q`, `--durations`, `--timeout` and
+  `--timeout-method`, the last two where pytest-timeout is installed, and `-n`,
+  where pytest-xdist is installed, which every run gives but the developer's
+  with no worker; and the developer's `-p no:cacheprovider` and `-k`). The pair
   covers whether an option is given, not its value. Code that stops the fixture
   from running in any of those tests, keyed on those facts alone or on facts one
   run has together, named or not, is refused by the run. The pair doubles each
