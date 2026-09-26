@@ -1417,11 +1417,14 @@ test('the phrase the script reads a lost browser by is a literal in inBrowser\'s
  *  one (a template literal, a concatenation), and a file a module reads at run time by a path it builds (the launcher's
  *  sheets and render.ts). `read(rel)` gives a file's text by that path, or null when the tree has no such file. The run
  *  field is read as `bash `, a space and the script's path to the field's end, and a run field of any other shape
- *  (another shell, a flag before the path) is red, naming it, as is a script the tree does not hold. Each of the ROSTER=
- *  and REPORTER= lines is the script's first line that is KEY= and non-space text to its end, the text read literally,
- *  quotes included, and a script with no such line (a line with text after the path is not one) is red, naming the key.
- *  The roster must be in the tree, and the reporter is not checked. Returns the paths in that order, the script, the
- *  roster and the reporter first, each once. Its table: STEP_FILES_ROWS, run by the test after it. */
+ *  (another shell, a flag before the path) is red, naming it, as is a script the tree does not hold. Each of the
+ *  ROSTER= and REPORTER= lines is the script's one line that begins KEY=, which must be KEY= and non-space text to its
+ *  end, the text read literally, quotes included. A script with no such line (a line with text after the path is not
+ *  one) is red, naming the key, and so is a script with more than one line that begins KEY=, naming the key and the
+ *  lines, since bash takes the last of them it runs, which need not be the first. A line that sets the key any other
+ *  way (indented, after export, or by a command such as read) is not read. The roster must be in the tree, and the
+ *  reporter is not checked. Returns the paths in that order, the script, the roster and the reporter first, each once.
+ *  Its table: STEP_FILES_ROWS, run by the test after it. */
 function stepFiles(run, wd, read) {
   const m = /^bash (\S+)$/.exec(run || '');
   assert.ok(m, 'the step\'s run field is bash and a script\'s path: ' + JSON.stringify(run));
@@ -1429,6 +1432,8 @@ function stepFiles(run, wd, read) {
   const text = read(script);
   assert.ok(text !== null, 'the script the step\'s run field calls is in the tree: ' + script);
   const named = (key) => {
+    const begins = [...text.matchAll(new RegExp('^' + key + '=.*$', 'gm'))].map((x) => x[0]);
+    assert.ok(begins.length <= 1, script + ' has one line that begins ' + key + '=, not ' + begins.length + ' (bash takes the last of them it runs, which need not be the first): ' + JSON.stringify(begins));
     const k = new RegExp('^' + key + '=(\\S+)$', 'm').exec(text);
     assert.ok(k, script + ' names its ' + key + ' on a line ' + key + '=<path>');
     return path.posix.join(wd, k[1]);
@@ -1486,6 +1491,10 @@ const STEP_FILES_ROWS = [
   ['a REPORTER= line with text after the path, red', { 'vscode-extension/scripts/s.sh': 'ROSTER=r.txt\nREPORTER=./scripts/rep.mjs # the reporter\n', 'vscode-extension/r.txt': SF_LINE, [SF_A]: '' }, /names its REPORTER on a line REPORTER=<path>/],
   ['a quoted ROSTER= value, read with its quotes, so the roster it names is not in the tree, red', { 'vscode-extension/scripts/s.sh': 'ROSTER="r.txt"\nREPORTER=./scripts/rep.mjs\n', 'vscode-extension/r.txt': SF_LINE, [SF_A]: '' }, /the roster the script names is in the tree/],
   ['a quoted REPORTER= value, read with its quotes and listed so (the reporter is not checked)', { 'vscode-extension/scripts/s.sh': 'ROSTER=r.txt\nREPORTER="./scripts/rep.mjs"\n', 'vscode-extension/r.txt': SF_LINE, [SF_A]: '' }, [SF_A], { base: ['vscode-extension/scripts/s.sh', 'vscode-extension/r.txt', 'vscode-extension/"./scripts/rep.mjs"'] }],
+  ['two ROSTER= lines naming two rosters of the tree, red, naming the key and the lines', { 'vscode-extension/scripts/s.sh': 'ROSTER=r.txt\nROSTER=r2.txt\nREPORTER=./scripts/rep.mjs\n', 'vscode-extension/r.txt': SF_LINE, 'vscode-extension/r2.txt': '', [SF_A]: '' }, /has one line that begins ROSTER=, not 2 .*"ROSTER=r2\.txt"/],
+  ['two REPORTER= lines, red, naming the key and the lines', { 'vscode-extension/scripts/s.sh': 'ROSTER=r.txt\nREPORTER=./scripts/rep.mjs\nREPORTER=./scripts/rep2.mjs\n', 'vscode-extension/r.txt': SF_LINE, [SF_A]: '' }, /has one line that begins REPORTER=, not 2 .*"REPORTER=\.\/scripts\/rep2\.mjs"/],
+  ['a ROSTER= line and a second line that begins ROSTER= with text after the path, red, the second counted', { 'vscode-extension/scripts/s.sh': 'ROSTER=r.txt\nROSTER=r2.txt # the other roster\nREPORTER=./scripts/rep.mjs\n', 'vscode-extension/r.txt': SF_LINE, 'vscode-extension/r2.txt': '', [SF_A]: '' }, /has one line that begins ROSTER=, not 2 /],
+  ['a line that sets ROSTER indented, and one after export, not read beside the ROSTER= line', { 'vscode-extension/scripts/s.sh': 'ROSTER=r.txt\n  ROSTER=r2.txt\nexport ROSTER=r2.txt\nREPORTER=./scripts/rep.mjs\n', 'vscode-extension/r.txt': SF_LINE, 'vscode-extension/r2.txt': '', [SF_A]: '' }, [SF_A]],
 ];
 test('stepFiles\' table: each row\'s files derived as stepFiles\' docstring states', () => {
   const wrong = [];
