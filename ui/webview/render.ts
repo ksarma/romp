@@ -15349,6 +15349,15 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   // before the clear and hands its keep in; the emptied scroller here would read as the bottom for anyone)
   if (reshow && keep === undefined) v.stick = reshowStick(v.stick, atBottom(content));
   const keepAnchor = reshow ? (keep !== undefined ? keep : (!atBottom(content) ? captureScrollAnchor(content, v) : null)) : null;   // follow mode: off the true bottom keeps its place
+  // Does the scroller hold THIS view's reader as the show begins? Only when the view was already on screen (displayed, in a visible pane)
+  // and no deferred build is pending (followReader's transient: while one is, the scroller can hold the reveal's clamp). Then the
+  // scroller's own scrollTop is the reader's place and the view's record can only lag it, by the one frame between a page write that does
+  // not sync the record (the re-window's) and that write's scroll event, so landActive reads the saved place from the scroller (the landing
+  // lab's road 16). A switch fails the first test (the scroller still holds the leaving tab), a hidden pane has no reader, and the deferred
+  // build's land below passes nothing: while a build is pending the scroller can hold the reveal's clamp, which followReader keeps out of
+  // the record. That gate keeps out every scroll event of the pending interval, a re-window's echo too, so a deep link that defers its build
+  // on the view already on screen still reads a record that can lag the scroller (a residual no road reaches)
+  const scrollerHolds = v.el.style.display !== "none" && content.clientHeight > 0 && pendingBuildRaf == null;
   // Bound the switch. A view the user scrolled to the top of has had its window expanded to the WHOLE
   // transcript (winStart crept to 0 via lazy-expand), and compact mode renders the whole folded stream —
   // either way, revealing thousands of nodes is the big-session switch lag (the user 2026-06-25: 4144 turns
@@ -15375,7 +15384,7 @@ function showActive(keep?: { uuid: string; y: number } | null) {
   // `length > 0` guard is what stops a zero-event session from flashing (or sticking on) "Loading…".
   const heavy = s.events.length > 0 && (v.el.childNodes.length === 0 || (settings.compact && (v.rendered !== s.events.length || v.stale)));
   if (!heavy) {
-    syncView(activeId!); landActive(content, v);
+    syncView(activeId!); landActive(content, v, scrollerHolds);
     if (keepAnchor) keepPlaceAcrossWindow(content, v, keepAnchor);   // the line being read stays put across the rebuild (T249; T262l for a re-windowed view)
     return;
   }
@@ -15464,7 +15473,7 @@ function whenChatVisible(cb: () => void): void {
   window.addEventListener("resize", fire);
 }
 
-function landActive(content: HTMLElement | null, v: View): void {
+function landActive(content: HTMLElement | null, v: View, scrollerHolds: boolean = false): void {
   if (!content) return;
   // DEEP-LINK INTO A HIDDEN CHAT PANE (the user 2026-06-30): a jump from the Outline/feed/timeline can arrive
   // while the chat pane is toggled OFF (display:none → #content clientHeight 0). A scroll can't land in a
@@ -15476,13 +15485,22 @@ function landActive(content: HTMLElement | null, v: View): void {
     whenChatVisible(() => { const c = document.getElementById("content"); const vv = activeId ? views.get(activeId) : null; if (c && vv) landActive(c, vv); });
     return;
   }
+  // THE SAVED PLACE on a view the scroller already holds (showActive's `scrollerHolds`: on screen before this show, no deferred build between)
+  // is the scroller's own position. The record follows the reader through the scroll listener and lags the scroller by one frame after a page
+  // write that does not sync it (the re-window's); a deep link inside that frame captured the row at the record's stale place, and when its land
+  // missed the restore wrote the reader back there (the landing lab's road 10 once PR 861 moved the fallback to that capture; road 16 enters the
+  // frame on every run, land-active-keep.test.ts executes the roads). Synced here, the record also feeds the raw land-saved write below, which
+  // read the same lag before PR 861; that write still reads the record after the attempt, so on the raw roads (no row held, or the held row
+  // gone) a pre-jump that synced it in this pass stands, while a restore that puts a held row back returns the reader to that row
+  if (scrollerHolds) v.scrollTop = content.scrollTop;
   // the view is now VISIBLE (display set in showActive): the spacers take the figures the view holds, and the land takes the figures the
   // observer parked since the last paint on every road but the nothing-armed re-show (`saved`), BEFORE its landing attempt: an anchor's or
   // a moment's land reads the target's live rect (scrollToAnchor, landOn) and a resident target rebuilds nothing, so a take after the
   // attempt would re-size the spacer under a row just placed; a seek, the reload restore and the bottom land put the reader over the
   // result too. The take is decided on what is ARMED, not on the outcome: a land whose anchor misses (nowhere in the transcript, the wrong
   // kind, a fetch armed) falls through to the saved-place restore below with the spacers re-sized, so the row the SAVED place held is
-  // captured here, at that place (the scroller does not hold it yet on a switch: the leaving tab's position is still under the viewport),
+  // captured here, at that place (the scroller does not hold it yet on a switch: the leaving tab's position is still under the viewport; on a view
+  // the scroller already holds, the record was synced to the scroller above),
   // and the fallback puts it back at its offset (anchor-restore). The raw land-saved write stands whenever that restore finds no row to
   // put back, three roads: nothing was armed (no take: the saved scrollTop is exact, and the figures wait for keepPlaceAcrossWindow,
   // which showActive runs after this land with the reader's own row, or for the next tail paint); no row was at the saved place (inside
