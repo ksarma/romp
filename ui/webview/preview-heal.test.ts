@@ -51,7 +51,7 @@ test("an UNVERIFIED failure never self-removes — it hides, registers, and unhi
   assert.match(PREVIEW, /if \(!verified\) box\.style\.display = "none";\s*\/\/ hidden while failed, healable — never removed\s*\n\s*failAfterBeat\(started\);/);
   // …and both success paths unhide the healed sentinel in place
   assert.equal((PREVIEW.match(/box\.style\.display = "";\s+\/\/ a hidden unverified sentinel that healed comes back/g) || []).length, 2,
-    "the resolved-url fast path AND the managed success both unhide");
+    "the resolved-url fast path AND the managed success both unhide (a source pin on where the lines sit; the managed success's unhide is executed in preview-retry-pace.test.ts, the unverified svg preview whose picture fails to load after the resumed fetch: the box shows with its picture, and shows again after the heal)");
   // the PDF card's HEAD probe re-registers itself for the heal on every failure, and unhides on ok
   assert.match(PREVIEW, /const probe = \(\) => fetch\(fileUrl\(path, sid\), \{ method: "HEAD" \}\)/);
   assert.match(PREVIEW, /box\.style\.display = "none"; failedPreviews\.set\(box, probe\);/);

@@ -318,6 +318,12 @@ test("in a browser, the pane at 900 px (review closing pass): in the Raw view Ch
 // ── the PR review's round 1: a media landing through the box guard, and the pane toggled off and on ──────────────────────
 const activeName = (page: any): Promise<string> => page.evaluate(() => { const a = document.activeElement as HTMLElement | null; return a ? a.tagName + "." + String(a.className).split(/\s+/).filter(Boolean).join(".") : "none"; });
 const noticeOf = (page: any): Promise<string | null> => page.evaluate(() => { const n = document.getElementById("fileview-save-err"); return n ? n.textContent : null; });
+/** The picture once it settles: the failure pane up, or the img complete with its natural width (the svg below is 200 wide). */
+const decoded = (page: any): Promise<{ pane: boolean; width: number }> => page.waitForFunction(() => {
+  const pane = !!document.querySelector(".fileview-body .fileview-err");
+  const img = document.querySelector(".fileview-body img.fileview-img") as HTMLImageElement | null;
+  return pane || (img && img.complete) ? { pane, width: img ? img.naturalWidth : 0 } : null;
+}, null, { timeout: 10000 }).then((h: any) => h.jsonValue());
 
 test("in a browser, the pane at 900 px (PR review round 1): a picture opened at a line or an offset names the target in the notice bar, the kind of file with it (before the fix: dropped in silence, the media paint judging the heading alone), and a picture whose first paint happens while the viewer has no box names it at the show, the body then holding the keyboard (before: the media landing spent the one keyboard take on a boxless body and nothing re-took it at the show); the visible control lands the same", { timeout: 300000 }, async (t) => {
   await inBrowser(t, async (browser) => {
@@ -327,7 +333,7 @@ test("in a browser, the pane at 900 px (PR review round 1): a picture opened at 
       const kind = "line" in at ? "line" : "offset";
       const what = kind + (hidden ? ", hidden at the paint" : ", visible throughout");
       const words = kind === "line" ? "No line 12 in this file: it is a picture." : "No offset 1200 in this file: it is a picture.";
-      const { page, errors } = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: LONG, [FIG]: SVG } });
+      const { page, errors } = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: LONG, [FIG]: SVG }, serve: (u: URL) => (u.pathname === "/file" && u.searchParams.get("path") === FIG ? { status: 200, type: "image/svg+xml", body: SVG } : null) });   // the picture's /file request, answered with the svg as image/svg+xml
       await install(page);
       await page.evaluate(() => { (window as any).FV.closeFileView(); });
       await gate(page);
@@ -346,6 +352,7 @@ test("in a browser, the pane at 900 px (PR review round 1): a picture opened at 
       assert.equal(await noticeOf(page), words, what + ": the notice names the target and the kind of file (before the fix: none)");
       assert.equal(await page.evaluate(() => (document.getElementById("fileview-save-err") as HTMLElement).getAttribute("role")), "status", what + ": a polite live region");
       assert.equal(await activeName(page), BODY_EL, what + ": the body holds the keyboard (before the fix, hidden: the document's body)");
+      assert.deepEqual(await decoded(page), { pane: false, width: 200 }, what + ": the picture decoded from its /file address: no failure pane");
       assert.deepEqual(errors, [], what + ": no page errors");
       await page.close();
     }
@@ -379,7 +386,7 @@ test("in a browser, the pane at 900 px (PR review round 1): the pane toggled off
     // a picture: the same re-take at the show (landMedia's repaint arm)
     const FIG = "/repo/notes-api/figs/a.svg";
     const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect width="200" height="120" fill="#336699"/></svg>';
-    const pic = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: LONG, [FIG]: SVG } });
+    const pic = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: LONG, [FIG]: SVG }, serve: (u: URL) => (u.pathname === "/file" && u.searchParams.get("path") === FIG ? { status: 200, type: "image/svg+xml", body: SVG } : null) });   // the picture's /file request, answered with the svg as image/svg+xml
     await install(pic.page);
     await pic.page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [FIG, SID]);
     await pic.page.waitForFunction(() => !!document.querySelector(".fileview-body img"), null, { timeout: 10000 });
@@ -389,6 +396,9 @@ test("in a browser, the pane at 900 px (PR review round 1): the pane toggled off
     assert.equal(await pic.page.evaluate(() => document.activeElement === document.body), true, "the fixup dropped it under the hide");
     await hide(pic.page, false); await frames(pic.page, 3);
     assert.equal(await activeName(pic.page), BODY_EL, "the show's repaint over the picture took the keyboard back (before the fix: the document's body)");
+    assert.deepEqual(await decoded(pic.page), { pane: false, width: 200 }, "the picture decoded from its /file address: no failure pane");
+    const picSrc = await pic.page.evaluate(() => (document.querySelector(".fileview-body img.fileview-img") as HTMLImageElement).getAttribute("src") || "");
+    assert.ok(picSrc.startsWith("/file?path=" + encodeURIComponent(FIG) + "&sid=" + encodeURIComponent(SID) + "&v="), "the svg's picture is its /file address, not an object URL; got " + picSrc);
     assert.deepEqual(pic.errors, [], "no page errors (the picture)");
     await pic.page.close();
   });
