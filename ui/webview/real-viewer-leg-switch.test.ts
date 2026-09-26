@@ -22,11 +22,12 @@
 // each child's temporary directory sit in one scratch directory under out-tests/ that the test removes, and the test asserts
 // that each child's leg reports its own temporary directory, under that scratch directory, and that the scratch directory is
 // gone after the children ran. This branch adds those temporary directories and their two assertions, which 860's copy does
-// not have (the review's round 11, regression-1: each run left six such directories in this process's temporary directory). On a box with a browser the outer leg launches and passes; the switch test passes on any box,
-// since its child never sees the browser. tools/ci-browser-legs.test.mjs pins the phrase the step's script reads a lost
-// browser by to the helper's source text and names this file as the test of the behaviour; a green there with a red here is
-// a helper that carries the words and not the behaviour. Rostered in vscode-extension/ci-browser-legs.txt, so the step runs
-// the outer leg with a browser and reads its record on every CI run. Synthetic: a one-paragraph page.
+// not have (without them, each run of this test left six such directories in this process's temporary directory). On a box
+// with a browser the outer leg launches and passes; the switch test passes on any box, since its child never sees the
+// browser. tools/ci-browser-legs.test.mjs pins the phrase the step's script reads a lost browser by to the helper's source
+// text and names this file as the test of the behaviour; a green there with a red here is a helper that carries the words
+// and not the behaviour. Rostered in vscode-extension/ci-browser-legs.txt, so the step runs the outer leg with a browser and
+// reads its record on every CI run. Synthetic: a one-paragraph page.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
