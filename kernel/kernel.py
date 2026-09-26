@@ -73428,7 +73428,9 @@ class Handler(BaseHTTPRequestHandler):
     def handle_one_request(self):
         # What end_headers reads about a request starts empty before the request's line and headers are
         # read, so an error the base class answers mid-parse on a keep-alive connection reads nothing from
-        # the request before it.
+        # the request before it. This is also the one reset of the session a sign-in sets (_set_cookie), and
+        # with it of the seed and the no-store, which _send writes only beside that cookie: every request on
+        # a keep-alive connection passes here first, the routes served before the gate included.
         self._legacy_ours = self._legacy_signed_in = False
         self._set_cookie = None
         super().handle_one_request()
@@ -73893,7 +73895,9 @@ class Handler(BaseHTTPRequestHandler):
         first). Approve only what the auth gate itself allows — the actual request
         still runs the full _authorize on arrival; this grants delivery, not access."""
         q = parse_qs(urlparse(self.path).query)
-        self._set_cookie = self._page_ok = self._reauth = self._trace_ok = False   # nothing from an earlier request on this keep-alive connection
+        # Nothing from an earlier request on this keep-alive connection reaches this response, with no reset
+        # here: handle_one_request clears the session cookie before every request, and _authorize, which runs
+        # before either response below, resets the page, re-sign-in and traceback flags itself.
         ok, _, _ = self._authorize(q)
         origin = self.headers.get("Origin")
         if not (ok and origin):
@@ -73914,10 +73918,9 @@ class Handler(BaseHTTPRequestHandler):
         # 501s every HEAD, which the client would read as "gone" and hide a live chip.
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        self._set_cookie = None
-        self._page_ok = False
-        self._reauth = False
-        self._trace_ok = False
+        # No reset of the per-request flags here: handle_one_request clears the session cookie before every
+        # request, and _authorize runs before any response this method writes and resets the page,
+        # re-sign-in and traceback flags itself.
         # CORS delivery baseline: an allowed browser origin echoes on every response,
         # including the auth-EXEMPT routes (/healthz, /version) served before _authorize
         # runs; the _authorize call site then refines it (a valid token authorizes a
@@ -73948,8 +73951,11 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = u.path
         q = parse_qs(u.query)
-        self._set_cookie = None
-        self._page_ok = False
+        # The routes served before the gate below never run _authorize, so these two resets are the clear of
+        # the re-sign-in marker and the traceback permission an earlier request on this keep-alive connection
+        # set. The session cookie needs none here (handle_one_request clears it before every request), and
+        # the page flag needs none: _authorize sets it on every gated request, and no route before the gate
+        # serves a document with a <head> for _send to put the page-key script in.
         self._reauth = False
         self._trace_ok = False
         # CORS delivery baseline: an allowed browser origin echoes on every response,
@@ -74706,8 +74712,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        self._set_cookie = None
-        self._page_ok = False
+        # The push ack below is served before the gate and never runs _authorize, so these two resets are the
+        # clear of the re-sign-in marker and the traceback permission an earlier request on this keep-alive
+        # connection set. The session cookie needs none here (handle_one_request clears it before every
+        # request), and the page flag needs none: _authorize sets it on every gated request (a POST is never
+        # the page class), and the ack's answers are plain text or JSON.
         self._reauth = False
         self._trace_ok = False
         # CORS delivery baseline: an allowed browser origin echoes on every response,

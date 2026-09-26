@@ -403,12 +403,41 @@ class ReauthSignalOnAStaleKey(_Server):
         self.assertIn("/login", js, "and hops to /login")
 
 
+class PageKeyScriptInPageDocumentsOnly(_Server):
+    """The page-key script goes into a page document and no other response: _send puts it into an HTML body
+    only when _authorize classed the request as the page class (the page flag). A file-class response can be
+    an HTML document too: the page a PDF's own tab shows when the file is past the size limit, which carries
+    no script (_too_large_page). The flag is what keeps the script out of it."""
+
+    def test_the_too_large_page_of_a_pdf_tab_carries_no_page_key_script(self):
+        fd, pdf = tempfile.mkstemp(suffix=".pdf")
+        os.write(fd, b"%PDF-1.4\n" + b"0" * 64)
+        os.close(fd)
+        self.addCleanup(os.unlink, pdf)
+        saved = km._MEDIA_MAX_BYTES
+        km._MEDIA_MAX_BYTES = 16                  # the synthetic PDF is past the limit
+        self.addCleanup(setattr, km, "_MEDIA_MAX_BYTES", saved)
+        status, body, headers = self._req("/file?path=%s&cap=%s" % (pdf, _cap(SESS, pdf, "")), cookie=SESS,
+                                          accept="text/html", sec_fetch="document")
+        self.assertEqual(status, 413, "the size refusal, on the file's cap")
+        self.assertIn("text/html", headers.get("Content-Type", ""), "served as the tab's own page")
+        text = body.decode("utf-8", "replace")
+        self.assertIn("<head>", text, "a document with a head, where _send would put the script")
+        self.assertIn("download=1", text, "the too-large page, with its download link")
+        self.assertNotIn("__rompPageKey", text, "the file-class page carries no page-key script")
+        self.assertNotIn("<script", text, "and no script at all")
+
+
 class KeepAliveConnectionReuse(_Server):
-    """A sign-in's cookie, key seed, no-store and traceback permission are per-request. The handler object
-    lives for the whole keep-alive connection, and the routes served before the gate (/login, /healthz,
-    /version, POST /push/ack) never run _authorize, so only the resets at the top of do_GET, do_POST and
-    do_OPTIONS clear what a sign-in on the same connection set. Each request after the sign-in must carry
-    no Set-Cookie, no seed, no no-store and no traceback."""
+    """A sign-in's cookie, key seed, no-store and traceback permission, and a refusal's re-sign-in marker, are
+    per-request. The handler object lives for the whole keep-alive connection, and the routes served before
+    the gate (/login, /healthz, /version, POST /push/ack) never run _authorize. Two mechanisms clear what an
+    earlier request on the connection set. Handler.handle_one_request clears the session a sign-in sets before
+    every request, and with it the seed and the no-store, which _send writes only beside that cookie. The
+    resets at the top of do_GET and do_POST clear the traceback permission and the re-sign-in marker for the
+    routes before the gate; every other request runs _authorize, which resets both itself. Each request after
+    a sign-in, or after a re-sign-in refusal, must carry no Set-Cookie, no seed, no no-store, no traceback and
+    no re-sign-in marker."""
 
     def _read_one(self, s):
         """Read exactly one HTTP/1.1 response off `s`: the head, then Content-Length body bytes."""
@@ -464,6 +493,7 @@ class KeepAliveConnectionReuse(_Server):
         self.assertNotIn(SEED_SET.encode(), body, what + ": no key seed")
         self.assertNotIn(b"__rompPageKey", body, what + ": no page-key script")
         self.assertNotIn(b"Traceback", body, what + ": no traceback")
+        self.assertNotIn(b"X-Romp-Reauth", head, what + ": no re-sign-in marker")
 
     def test_the_routes_before_the_gate_after_a_sign_in_on_one_connection_set_nothing(self):
         # each case on a connection of its own, straight after the sign-in, so no request between them resets the flags
@@ -511,6 +541,31 @@ class KeepAliveConnectionReuse(_Server):
             self._assert_clean(head, body, "POST /push/ack")
         finally:
             s.close()
+
+    def test_a_route_before_the_gate_after_a_re_sign_in_refusal_on_one_connection_carries_no_marker(self):
+        # A valid session with no page key is refused with the re-sign-in marker. The marker names that one
+        # refusal: a route before the gate answered next on the same connection must not carry it. Each case on
+        # a connection of its own, straight after the refusal.
+        cases = (
+            ("GET /healthz", "GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n", b" 200 "),
+            ("GET /login", "GET /login HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nAccept: text/html\r\n\r\n", b" 200 "),
+            ("POST /push/ack", "POST /push/ack HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n"
+                               "Content-Length: 2\r\n\r\n{}", b" 400 "),
+        )
+        for what, raw, want in cases:
+            s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+            try:
+                s.sendall(("GET /sessions HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nCookie: %s=%s\r\n\r\n"
+                           % (self.port, CN, SESS)).encode())
+                head, _ = self._read_one(s)
+                self.assertIn(b" 403 ", head.split(b"\r\n", 1)[0] + b" ", what + ": the keyless read is refused")
+                self.assertIn(b"\r\nX-Romp-Reauth: 1", head, what + ": the refusal carries the marker")
+                s.sendall((raw % self.port).encode())
+                head, body = self._read_one(s)
+                self.assertIn(want, head.split(b"\r\n", 1)[0] + b" ", what + ": answered as it would be on a connection of its own")
+                self._assert_clean(head, body, what)
+            finally:
+                s.close()
 
 
 class CookieOnlyClassBare500(_Server):
