@@ -1,7 +1,7 @@
 ---
 title: The fake clients of PendingQueueLoop, InterruptWithQueue and InterruptSettlesStall stream one init per turn, as the CLI does, so the mid-flight forwarding test no longer flakes; two tests force the order in which an init at stream open reached romp before the first turn
 status: candidate
-where: tests/test_sdk_backend.py (PendingQueueLoop.setUp: GatedClient.receive_messages; PendingQueueLoop.test_second_turn_forwarded_immediately_when_the_first_is_sent_after_connect, new; InterruptWithQueue.setUp: StallClient.receive_messages; InterruptWithQueue.test_interrupt_holds_a_turn_queued_after_it_when_the_first_is_sent_after_connect, new; InterruptSettlesStall.setUp: StallClient.receive_messages); upstream/2026-09-25-pqloop-fake-init-per-turn.md (this entry)
+where: tests/test_sdk_backend.py (PendingQueueLoop.setUp: GatedClient.receive_messages; PendingQueueLoop.test_second_turn_forwarded_immediately_when_the_first_is_sent_after_connect, new; InterruptWithQueue.setUp: StallClient.receive_messages, StallClient.query and StallClient.fed; InterruptWithQueue.test_interrupt_holds_a_turn_queued_after_it_when_the_first_is_sent_after_connect, new; InterruptSettlesStall.setUp: StallClient.receive_messages); upstream/2026-09-25-pqloop-fake-init-per-turn.md (this entry)
 added: 2026-09-25
 pr: 918
 tier: docs
