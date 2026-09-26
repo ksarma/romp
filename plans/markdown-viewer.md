@@ -8626,7 +8626,15 @@ elementsFromPoint skips such an element as elementFromPoint does, measured in Ch
 does not see stays below the control, the viewer having taken off the classes the sheets would raise it to the control's stacking level
 (`dropStackClasses`, below); a same-origin parent's own
 chrome over the frame is not read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
-and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click through the pointerId they share;
+and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click: a click by a pointer reads the
+record under its own pointerId or, with none, the press a one-click slot took at the last pointerup, the slot emptied by any
+pointerdown, pointercancel or keydown and by the click that takes it and never by time, a key's or a script's click reads neither
+and is read at the click, and a primary press ends every earlier record whatever its pointer type (in the three engines measured,
+Chromium's tap click carries the touch's own pointerId and Firefox's its press's, while in WebKit under Playwright's touch
+emulation on Linux, a stand-in for WebKitGTK on a touchscreen, a tap's click carries pointerId 1 of type mouse where its press
+carried the touch's, so there it finds its press in the slot; iOS WebKit's source gives an iPhone tap's click the touch's own
+pointerId, read and not run on a device; the slot's clears are defensive, the slot refilled at every pointerup and read by no
+key's or script's click; the file review's round 17, tests-1 with regression-1);
 a refused gesture opens nothing and scrolls the sign into view (`revealSign`, block and inline "nearest", the same-origin frames and
 a pinch zoom's visual viewport included), moving no focus, so the next gesture opens; where the reveal cannot put the sign on the
 screen the gate stays closed, stated limits measured in Chromium: the chat page's modal framed by the dashboard under a pinch zoom of
