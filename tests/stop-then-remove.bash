@@ -16,8 +16,9 @@
 # is left behind in the temp dir.
 #
 # The wait is a poll, not bash's `wait`, which reaches only this shell's own children (a call under `run`
-# is a subshell, whose parent's children it cannot wait on) and has no bound. The poll works for any pid.
-# After the bound it sends KILL, says so on stderr, and polls for up to five more seconds. The default
+# is a subshell, whose parent's children it cannot wait on) and has no bound. The poll works for any pid
+# this shell may signal. A pid that `kill -0` is refused on (another user's process, for example) is
+# treated as gone, and the directory is removed at once. After the bound it sends KILL, says so on stderr, and polls for up to five more seconds. The default
 # bound is above the manager's own shutdown grace for its kernels (8 s, then it exits), so a manager is
 # not cut off in the middle of its shutdown. A zombie counts as exited, since it can write nothing more.
 # Once the poll ends, `wait` reaps the process when it is this shell's child.
