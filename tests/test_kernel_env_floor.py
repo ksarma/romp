@@ -10,11 +10,13 @@ queued input for both boots of tests/test_fold_checkpoints_served.py, one red on
 Until 2026-09-22 a second pin here walked every test module for a module-level assignment of the name, top level only,
 the subscript shape only, test_*.py only. That walk is retired (the reviewer's ruling on fork PR #813's finding: one
 definition of a module-level environment write in this repo): the property is held by tests/test_hermetic_kernel_postal.py
-for EVERY name, every write shape, module-level if/try/for/with bodies included, every .py under tests/, as an equality
-against a licensed set that ROMP_CLAUDE_BIN is not in, so a module-level write of it in a test module reds there, naming
-the module and the line. Retiring lost nothing the wider pin does not hold; the message a reader of that fault needs (a
-module-level CLI write reaches every lab kernel of the run) lives beside the floor in tests/conftest.py. What stays here
-is the property specific to the floor: an autouse fixture re-asserts the value, and the value holds while a test runs.
+for every name, in each write shape its scan reads (the comment above _Module there names shapes it does not read),
+module-level if/try/for/with bodies included, every .py under tests/, as an equality against a licensed set that
+ROMP_CLAUDE_BIN is not in, so a module-level write of it in a test module, in a shape the scan reads, reds there, naming
+the module and the line. Retiring the walk gave up the `<expr>.environ[NAME] = ...` shapes the scan does not read,
+`sys.modules["os"].environ` among them, which the walk read. Why a module-level write of the name matters is said beside
+the floor in tests/conftest.py. What stays here is the property specific to the floor: an autouse fixture re-asserts
+the value, and the value holds while a test runs.
 Synthetic throughout: the inputs are the test files' text."""
 import ast
 import os
@@ -60,9 +62,11 @@ class CliBinaryFloor(unittest.TestCase):
 
     def test_the_module_level_write_rule_for_this_name_is_the_repo_wide_pins(self):
         """The name is outside the licensed set of tests/test_hermetic_kernel_postal.py, so a test module writing it at
-        module level reds there; this pin says where the rule lives so a reader does not look for the retired walk here."""
+        module level reds there in each shape the scan reads; this pin says where the rule lives so a reader does not look
+        for the retired walk here."""
         from tests.test_hermetic_kernel_postal import LICENSED_MODULE_LEVEL_WRITES, FLOOR_MODULES
-        self.assertNotIn(NAME, LICENSED_MODULE_LEVEL_WRITES, "a module-level %s in a test module is a leak the repo-wide pin reds on" % NAME)
+        self.assertNotIn(NAME, LICENSED_MODULE_LEVEL_WRITES,
+                         "a module-level %s in a test module is a leak the repo-wide pin reds on in each shape its scan reads" % NAME)
         self.assertIn("conftest.py", FLOOR_MODULES, "conftest's own write of the floor is the licensed one")
 
     def test_the_value_holds_while_this_test_runs(self):

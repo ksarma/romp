@@ -21,12 +21,16 @@ the bus itself: `romp-postal-service serve` and `ensure` refuse the fixed port u
 state root under a temporary directory) unless ROMP_POSTAL_PORT names the port as the run's own (ROMP_POSTAL_HERMETIC beside
 it, as the runner, the shell suite's setup and kernel_env set; an inherited name does not count), pinned by
 tests/test_postal_fixed_port_belt.py.
-A module that loads the kernel in-process and exercises the bus still carries the trio, all three legs PER TEST and
-none at import: set in the setUp of every class that attaches or detaches, beside the kernel's BUS_PORT (which the
-kernel reads from the port at import) patched to the test's own port and its _ensure_postal_bus revive road stubbed,
-all put back by cleanups that setUp registers (the tunnel tests' _PostalTrio), or all three around the one call that
-provokes the revive, held until that revive has ended, under a scoped fake of subprocess.run (the peer-notify test,
-described below). Peers was the first leg moved off the import: the kernel reads it at call time, and under xdist every
+The tunnel tests and the peer-notify test, which load the kernel in-process and exercise the bus, carry the trio, all
+three legs PER TEST and none at import: the tunnel tests set it in the setUp of every class that attaches or detaches,
+beside the kernel's BUS_PORT (which the kernel reads from the port at import) patched to the test's own port and its
+_ensure_postal_bus revive road stubbed, all put back by cleanups that setUp registers (_PostalTrio), and the
+peer-notify test sets all three around the one call that provokes the revive, held until that revive has ended, under
+a scoped fake of subprocess.run (described below). Other tests that load the kernel in-process and make a bus call do
+without it: tests/test_kernel_known_hosts.py and tests/test_peer_reconnect.py, whose refused detach or trust notify
+kicks the revive, rely on conftest's _dead_bus_port (below) for a dead BUS_PORT in each test and stub
+_revive_postal_bus in setUp, put back by a cleanup (two examples of that form, not a list of the tests that take it).
+Peers was the first leg moved off the import: the kernel reads it at call time, and under xdist every
 worker imports every collected module before it runs a test, so the "0" the tunnel tests once wrote at module level
 reached every module on every worker, and the remote-identity absorb case (a bus notice gated on peers) was red in 5
 of 6 full runs (diagnosed 2026-09-18).
@@ -98,7 +102,10 @@ and the module changes no collector state (the reviewer's rulings of
 module in a serial run then pays per read; the census's own parse rather than parse_cache's shared one, by the
 measurement module_level_env_census's docstring gives); that docstring also says which of its figures are compared and
 which are not (the reviewer's ruling of round 1 on fork PR #894). Beside it,
-tests/conftest.py's run-end process check makes a run red that leaves any process holding its temp root
+tests/conftest.py's run-end process check names a process whose environment, cwd, open files or argv hold a path under
+the run's roots and makes the run red; one of this user's that it cannot read (a non-dumpable one) and that started
+after the controller, in its cgroup, it lists by pid and command line as not judged and leaves the exit status alone;
+the classes it does not read are listed in the comment above LEAK_EXIT_BOUND_S and in tests/README.md
 (tests/test_run_end_leaked_processes.py). Every kernel a module loads in-process gets a dead BUS_PORT for each test,
 and every postal service loaded in-process a dead client BASE (conftest's _dead_bus_port: with ROMP_POSTAL_PORT popped,
 each read the machine's fixed bus port at import and its bus calls reached the bus running there, the reviewer's ruling
@@ -2315,14 +2322,15 @@ LICENSED_MODULE_LEVEL_WRITES = {
         "their state root at import: a private root under the run's temp root (tempfile.mkdtemp(), directly or through "
         "a name bound to one), removed with the run; a child that inherits it writes under that root and nowhere real. "
         "Licensed 2026-09-22 until the class item is taken, which may retire the mandate, and this licence with it. The "
-        "mandate grows the writer population with every new module that loads bin/romp-*, so the date bounds no "
-        "writer: the value check on every write is what holds the licence",
+        "mandate may add a writer with every new module that loads bin/romp-* (such a module may write ROMP_STATE_DIR "
+        "instead), so the date bounds no writer: the value check on every write is what holds the licence",
         value_ok=_a_mkdtemp, since="2026-09-22", until=CLASS_ITEM_871),
     "ROMP_STATE_DIR": _Licence(
         "the other half of the same preamble (a live kernel exports it and it outranks the XDG floor): a private root "
         "(a TemporaryDirectory's name, a path joined onto a mkdtemp), or the shell's own value written back after the "
         "load, in the four modules that do not pop it. Licensed 2026-09-22 until the class item is taken. The mandate "
-        "grows its writers as it grows XDG_STATE_HOME's, so the date bounds no writer: the value check does",
+        "may add a writer with every new module that loads bin/romp-* (one that writes it rather than popping it), so "
+        "the date bounds no writer: the value check does",
         value_ok=_a_state_dir, since="2026-09-22", until=CLASS_ITEM_871),
     "ROMP_SERVE_TOKEN": _Licence(
         "a synthetic serve token so a kernel or bus loaded in-process mints none under the module's root: a string "
@@ -5421,7 +5429,8 @@ class HermeticKernelPostal(unittest.TestCase):
         module level and the sessions-file seam ten postal modules wrote at module level, and outlived the run). The
         property: no test module writes an environment variable at module level that a spawned child could inherit,
         except the names licensed in LICENSED_MODULE_LEVEL_WRITES, each with a reason that is checked per write (a
-        value, a per-test re-assert in conftest, a date and the item a temporary licence waits on). Held as an
+        value or a per-test re-assert in conftest), and each temporary licence held once, over the table, to a since
+        date and a named item (_licence_table_faults). Held as an
         EQUALITY, never a floor: the set of names the test modules write at module level is the licensed set, so a new
         name reds by construction and a licence with no writer left is removed. Every write shape _env_write_records
         reads, in everything that executes at import (module-level if/try/for/with bodies, class bodies, the header

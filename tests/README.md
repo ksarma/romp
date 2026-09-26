@@ -150,11 +150,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `ROMP_STATE_DIR` a bare `TemporaryDirectory`'s name, a path joined onto such a
   mkdtemp, or the shell's value put back, never a bare mkdtemp, which no writer
   uses; `tests/test_state_isolation_order.py` mandates the preamble, so every new
-  module that loads `bin/romp-*` is a new writer of both, no date bounds them, and
-  their licences rest on the value check of every write),
-  `ROMP_SERVE_TOKEN` (a string literal, or the shell's value put back) and
+  module that loads `bin/romp-*` is a new writer of `XDG_STATE_HOME` (or
+  `ROMP_STATE_DIR`) and pops or writes `ROMP_STATE_DIR`, no date bounds the
+  writers of either name, and their licences rest on the value check of every
+  write), `ROMP_SERVE_TOKEN` (a string literal, or the shell's value put back) and
   `ROMP_KERNEL_NO_OPEN` (the value "1"), the four of them dated 2026-09-22 and
-  pointed at the class item fork PR #871 filed in the notes (import-time writers
+  pointed at the class item filed on the reviewer's ruling from fork PR #871's
+  polluter investigation (fork PR #871 merged 2026-09-22; import-time writers
   migrate into fixtures or the floor); the writer modules of these two are
   committed, one path per line, in `tests/fixtures/module-level-env-writers/` and
   compared with the census as sets, so a new writer fails naming itself (omit the
