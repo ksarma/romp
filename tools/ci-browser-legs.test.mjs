@@ -194,10 +194,13 @@ function keyRead(l, i) {
  *  line among them, since YAML reads them as the value's text (a blank line among them is neither read nor refused).
  *  A value still open at the step's last line goes on into the next step, whose lines are refused the same way up
  *  to the closing line, its opener among them: a line of six spaces and `- ` inside the value is a step's opener to
- *  steps() and the value's text to YAML. When the value began in the block or on an env key's line, the block goes
- *  on after the closing line, as YAML's does: a key after the value, which YAML keeps in the step's env, is read or
- *  refused, and a later line of eight spaces or fewer ends the block. After a value begun on any other line, the lines
- *  after the closing line are read at the step's level. A line that begins a flow collection ([ or {) is refused,
+ *  steps() and the value's text to YAML. When the value began in the block or on an env key's line and closes in
+ *  the step it began in, the block goes on after the closing line, as YAML's does: a key after the value, which
+ *  YAML keeps in the step's env, is read or refused, and a later line of eight spaces or fewer ends the block.
+ *  After a value begun on any other line, or closed in a later step than the one it began in, the lines after
+ *  the closing line are read at the level of the step it closes in: a key there that YAML keeps in the env of the
+ *  step the value began in is neither read nor refused, and each step the value spans holds a refused line (the
+ *  line that opens the value, or the step's opener). A line that begins a flow collection ([ or {) is refused,
  *  closed on its line or not, and so is every later line of the step that is not blank: the reader does not follow
  *  a collection to its closing bracket, which can sit on a later line of eight spaces or fewer that YAML reads past,
  *  as a quoted scalar's closing line can. A collection still open at the step's last line goes on into the next step,
@@ -433,6 +436,7 @@ const ENV_ROWS = [
   { what: 'a single-quoted value on a line of eight spaces before the env line, spanning it and closed on a line of eight spaces: the four lines refused, and the env not read', lines: ['        shell: \'a', '        env:', ENV_ON, '        b\''], env: {}, refused: ['        shell: \'a', '        env:', ENV_ON, '        b\''] },
   { what: 'a single-quoted value on the opener, spanning the env line and closed on a line of eight spaces: the four lines refused, and the env not read', step: ['      - name: \'S', '        env:', ENV_ON, '        b\'', '        run: x'], env: {}, refused: ['      - name: \'S', '        env:', ENV_ON, '        b\''] },
   { what: 'a single-quoted value left open at the last line of the step before, its text holding this step\'s lines up to the line of eight spaces that closes it: those lines refused, the opener among them, and the env not read', step: ['      - name: A', '        run: \'a', '      - name: S', '        env:', ENV_ON, '        b\'', '        run: x'], at: 1, env: {}, refused: ['      - name: S', '        env:', ENV_ON, '        b\''] },
+  { what: 'a single-quoted value opened in the block of the step before and closed on a line of eight spaces in this step: this step\'s opener and the closing line refused, and a key after the closing line, which YAML keeps in the env of the step before, neither read nor refused', step: ['      - name: A', '        env:', '          X: \'a', '      - name: S', '        b\'', '          Y: "1"', '        run: x'], at: 1, env: {}, refused: ['      - name: S', '        b\''] },
   { what: 'a single-quoted value opened after "? " on a line of eight spaces, a key the reader cannot tell, left open at the last line of the step before: this step\'s lines up to its close refused', step: ['      - name: A', '        ? \'x', '      - name: S', '        env:', ENV_ON, '        b\'', '        run: x'], at: 1, env: {}, refused: ['      - name: S', '        env:', ENV_ON, '        b\''] },
   { what: 'a flow collection left open at the last line of the step before, a single-quoted value inside it holding this step\'s lines: every line of this step refused, the opener among them', step: ['      - name: A', '        with: [ \'x', '      - name: S', '        env:', ENV_ON, '        y\' ]', '        run: x'], at: 1, env: {}, refused: ['      - name: S', '        env:', ENV_ON, '        y\' ]', '        run: x'] },
   { what: 'a flow collection begun and closed on a key\'s line of eight spaces after the block, refused with every later line of the step', lines: ['        env:', ENV_ON, '        with: [a]', '        timeout-minutes: 5'], env: ENV_SW, refused: ['        with: [a]', '        timeout-minutes: 5', '        run: x'] },
