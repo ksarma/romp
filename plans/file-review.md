@@ -3023,10 +3023,13 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   ordinary command it refused for a file the command never touches: a cd inside `( ... )` ending at the `)`, and
   in an if, loop or case body leaving the cwd unknown once the body closes; a heredoc body kept by the command
   that opened it through a following `&&`, `|`, `;` or `&`, or piped into python or node; a shell fed its script
-  by heredoc (`bash <<EOF`, `bash -s`, `sh -`) read like `sh -c`; `-c` in an option cluster (`bash -lc`,
+  by heredoc (`bash <<EOF`, `bash -s`, `sh -`) read like `sh -c`, and since the fifth addendum's second fix-up
+  (2026-09-20) one fed by a literal echo or printf piped into it; `-c` in an option cluster (`bash -lc`,
   `sh -ec`); python and node options before a heredoc on stdin; a prefix with options (`sudo -u`, `env -u`,
   `timeout -s`, `exec -a`); pushd moving the cwd and popd leaving it unknown; `[[ a > b ]]` and `(( a > b ))`
-  comparing while `[ a > b ]` redirects; a function body moving nothing after it; `Path(x).open('w')`, `open()`
+  comparing in bash and zsh and, since round 5's fifth addendum (2026-09-20), read in dash's grammar too, a
+  tracked target there refusing, an operator glued to the closing `]]` and a process substitution among the
+    operands read as anywhere (the addendum's fix-up), while `[ a > b ]` redirects in every shell; a function body moving nothing after it; `Path(x).open('w')`, `open()`
   with keyword arguments and `fs.openSync` with a write flag; node `-p` and `--print`; the refusal's word (a
   change, never a suggestion); the NUL-byte rule; the full walk of a directory source, past 500 entries and into
   a subfolder behind them, skipped for a landing folder that does not exist under any project that tracks
@@ -3565,23 +3568,380 @@ document stands on its own, each with the reasoning it was given.
     by the project's `.trackchanges/config.json` through store-io's `findVaultRoot` and the three steps of its
     `isTrackedFile` (the veto list, the explicit list by name, then the link closure), which the hook runs itself
     as `trackedIn` so the closure is built once per call; a path is judged under the name given and under the real
-    path the kernel opens, so a symlink to a tracked file carries no write past it. The refusal is exit 2 with one
+    path the kernel opens, so a symlink to a tracked file carries no write past it (a `..` after a directory that
+    exists climbs from that directory's real path, as the kernel does, round 3, 2026-09-19; a link the same command
+    creates is resolved only when it is an `ln -s` with literal operands the hook can place and an untouched name,
+    class H; every other same-command link or mutation makes a later write through the name refuse, family 3 and
+    rule (c) of the third pass, below). The refusal is exit 2 with one
     line naming the file and the track-edit command, in the person's voice. What it lets through: a read (cat,
-    grep, diff, git, sed without -i) names no target; a path built from a variable, and a command behind eval,
-    xargs or a shell -c it cannot read, is unresolvable and passes, since a silent block of ordinary work would
-    cost more than a missed write; a glob is expanded against the filesystem as the shell expands it and passes
-    only when it matches nothing or names more than the hook will list, a brace list is expanded before the
-    operands are read, a here-string is scanned like a heredoc and a process substitution's command is read like
-    a `$(...)`; a tracked image or PDF passes by name as in the vendored guard; a source copied out of a tracked
+    grep, diff, git, sed without -i) names no target; a command behind eval, xargs or a shell -c it cannot read
+    is unresolvable and passes, since a silent block of ordinary work would cost more than a missed write (so does a
+    script piped into a shell from a producer other than a literal echo or printf, and one handed to a shell outside the
+    set the guard reads, busybox sh or ash among them: the second fix-up of round 5's fifth addendum names both; since the
+    third fix-up, a script a `${...}` word stands for when the guard cannot read the word, one fed by a redirection on the closing
+    brace of zsh's brace-body compound, and one a command named by an expansion runs, named among the writers below), and
+    so does a python or node one-liner whose write path is computed (a name, an f-string, `sys.argv`,
+    `os.environ`), since the interpreter scan reads a literal path only (the round-1 review of 2026-09-18
+    rejected a scan of computed paths by execution: it would refuse ordinary scripting and still miss the
+    common forms); a write whose target the hook cannot read (a variable, a `$(...)` or a backtick, a `~user`, a
+    brace list past the cap, or a glob that matches nothing or names more than the hook will list) is refused
+    while a project that tracks anything is in play, that is when the session's cwd, the directory a `cd`
+    moved to, or the folder a copy lands in sits under a config whose tracked list holds an entry the literal
+    rule could refuse (a text name the veto list does not cover, or a note the link closure reaches from one),
+    the directory judged under its real path and its name, and the landing folder counting only when a tracked
+    file could land there (a refusable entry at or below it, an existing entry there that is guarded or links to
+    a tracked file, or a note the closure reaches below it) or when it holds more than 2000 entries, past which
+    the hook does not scan it and takes it as in play (`LANDING_SCAN_CAP`, a deliberate false refusal, pinned on
+    both sides of the boundary and escalated with the change; review round 2, 2026-09-18), and passes with no
+    such project in play (2026-09-18, after a research session's report through the box admin, 2026-09-17: a
+    `cp` built from shell variables landed raw on a tracked file beside a refused literal one; the round-1
+    review the same day bounded the rule so that a temp log or a copy into an untracked folder is not refused
+    across the box once one project tracks a file); a landing folder no project claims counts when an entry of it is
+    or leads to a tracked file whose name the copy could take (round 3, 2026-09-19: `cp "$SRC" <outside>/` over a link
+    there onto a tracked file overwrote it while the same copy spelled out was refused; past 2000 entries such a folder
+    is not scanned and the copy passes, a stated residual, since a folder no project claims carries no case for a
+    blanket refusal); the project the target's own literal directory part sits in is asked first, from any cwd, for
+    every target the hook cannot read that it can place, absolute or relative to a write-time directory it knows, when
+    a tracked file could land in that folder (round 2 for a numeric target; round 3 for every unreadable word and for a
+    relative spelling, after `cp x <project>/notes/$N.md` from a cwd in no project overwrote a tracked note while
+    `<project>/notes/`, the literal name and the numeric spelling were all refused); a literal relative target after a
+    `cd` the hook cannot follow (one to a name the shell fills in, `cd -`, `popd`, one inside an if, loop or case body,
+    or one to a directory the command cannot enter when the hook runs, which it may make first or which the cd fails
+    on, leaving the shell where it was) is refused while the cwd's project is in play, with the reason and the remedy
+    (an absolute target, or a `cd` to a literal directory that exists), where before it was dropped (round 3: one such
+    `cd` turned a refused write on a tracked file into an allowed one; the cost, a `mkdir -p build && cd build && cmd >
+    log.txt` from a tracked cwd, is a deliberate false refusal); one narrowing from the round-1 review, corrected by its
+    round 2 and again by round 3 (2026-09-19): a target whose only expansions are `$$` and `${$}`, the shell's process
+    id, and whose text is an absolute path outside every project in play is allowed, since such an expansion cannot
+    carry a `../` back in. The numeric set is those two spellings and nothing else, in every shell: every other
+    candidate can be unset or shadowed by the command and then hold a path (round 1 listed `$RANDOM`, `$SECONDS` and
+    `$BASHPID` as read-only integers; round 2 dropped BASHPID, which zsh leaves assignable, and kept the other two
+    under bash and zsh; round 3 measured `unset RANDOM; RANDOM=../x` and `local RANDOM=` in a function in bash,
+    `typeset -h RANDOM` in a function in zsh and a sourced file carrying the unset, each carrying a traversal onto a
+    tracked file while the hook read the word as numeric; `$$` resists every road in bash, zsh and dash), so a
+    `log.$RANDOM` inside a tracked project is refused, a deliberate false refusal recoverable in one step (`$$`, the
+    literal spelling, or a write outside the project), where an overwrite with no change recorded is not. A numeric
+    target is judged by where it lands: the project its own literal directory part sits in first (a numeric name
+    landing in a second tracked project is refused from any cwd, the refusal naming that project), that part resolved
+    through the filesystem (a link in it, a `..` after one), each entry of that directory that exists now and whose
+    name the process id could spell (`x-4242` for `x-$$`) followed as the write would follow it, and a fold that
+    leaves no expansion handed to the literal rule (round 3: a pre-existing link named by the number, a fold onto a
+    link to a tracked file, and a literal `..` after a link were each folded away before the resolve step and a write
+    landed on a tracked file); the landing gate on that literal directory part is folder-granular, so a numeric name
+    in any folder where a tracked file could land is refused from any cwd while its literal spelling may pass,
+    `<root>/x-$$/y.md` and `<root>/docs/build-$$.log` alike, a deliberate false refusal ruled correct in round 2's
+    addendum (2026-09-18) for the first segment (the folder's name does not exist at check time and is not derivable
+    from the text, so the hook cannot tell which folder of the project the write lands in, a person recovers in one
+    step, and the opposite error overwrites tracked content silently) and restated by round 3 as the gate rather than
+    the segment, since `<root>/docs/x-$$/y.md` is refused the same way when docs/ holds a tracked file; the refusal
+    names the unknown folder when the expansion names one, at any depth, and offers a literal folder name or a write
+    outside the project, never the name the shell would give it, which nobody can know before the command runs; a
+    folder of more than 2000 entries inside a tracked project refuses a numeric name unscanned, as it does a copy
+    (`LANDING_SCAN_CAP`, both sides pinned); a segment that is nothing but an expansion cancelled by a `..`
+    (`<out>/$$/../x.md`) is not narrowed. Two things the rule does not see, stated: a link the same command creates
+    under or after the numeric segment (the pid-candidate scan reads only entries that exist when the hook runs; the
+    class-H rewrite that follows a same-command `ln -s` with literal operands runs for a literal target, not for the
+    candidate scan), and an entry
+    named by the process id in a folder outside every project that holds more than 2000 entries, which is not listed
+    (a fail-closed cap there would refuse every temp log in a large `/tmp` from a tracked cwd; the box's `/tmp` held
+    2767 entries when measured). A relative numeric target stays refused even when the write-time directory is known
+    and outside every project in play, since the allowance needs an absolute path; a variable of unknown content, a
+    substitution (a `$(date)` in a log's name among them, a cost stated to the user rather than solved) and a bare
+    expansion stay refused; `$'...'` is ANSI-C quoting in bash and zsh, a literal word (round 3: it was a non-literal
+    word dropped from a cwd in no project, and bash wrote the tracked file), one the hook cannot read inside a script
+    handed to `sh`, `dash` or `ksh` (dash reads a literal dollar), and `$"..."` stays one the hook cannot read; a
+    bare, escaped or quoted `$` is a literal dollar, so a folder or a project whose name holds one is judged by that
+    name (round 3: every dollar in a word read as an expansion, with a false refusal one way and an allowed write
+    into a tracked folder the other); `bash -O extglob -c '...'` and an `o` or `O` anywhere in bash's option cluster
+    (an `o` in dash's) take their word, so the script is read (round 3; it was taken as the operand), while zsh reads
+    the letters after a cluster's first `o` as that option's name and takes the next word after `--emulate`; the names
+    `sh` and `ksh` are read under all three grammars, and an option's value word that may become no word or several is
+    an option word the hook reads or refuses; a `c` counts with either sign and so does bash's `s`, a lone `+` or `+-`
+    ends zsh's options, zsh reads a digit in a cluster as a letter, a blank as the end of the word, a trailing `-` as
+    the end of the options and `+-emulate` as `--emulate`, an option that reads the script from the standard input by
+    name (dash's `stdin`, zsh's SHIN_STDIN or STDIN, in any spelling zsh takes) counts as `s`, an option name dash or
+    zsh may read so is an option word, and dash's `-sc` is read as its `-c` text and then its standard input (round 7:
+    round 3's count, applied to zsh too, allowed `zsh -oextendedglob -c '...'`, which the base refused, and the mode
+    word of `--emulate` was read as the script file, while every shell ran zsh onto the tracked file; `bash +c '...'`,
+    `dash -o stdin` and `dash -sc` were allowed at every head while every shell wrote, as were `zsh -1c`, `zsh -c-`
+    and `zsh '-c '`); a command nested past 64 substitutions or brace lists is marked opaque rather than followed, so
+    it cannot overflow the stack, which evaluate read as allow
+    (round 3); the hook reads no variable of the ENVIRONMENT named in the command to
+    resolve the word, which would read names shaped like secrets and guess at the cwd (of the environment it
+    reads HOME, for `~` and a leading `$HOME` as the shell does, TRACKCHANGES_ROOT, which stands in for the root
+    search only for a directory under it, and ROMP_SID; of those only HOME's value can appear in a refusal, and
+    only as a path the hook resolved through it, the target a `~/` or a leading `$HOME` names or the project
+    root a bare `cd` lands in, while TRACKCHANGES_ROOT is named by the variable, never by its value, and
+    ROMP_SID is never printed; since B2, below, it does read a name the command's OWN TEXT sets to a plain string,
+    and PWD and OLDPWD from its own directory model, and a refusal can show such a value, so the sentence as it
+    stood before round 5 of the review, that no variable the command names is read and only HOME's value can
+    appear, was false from B2 on); a glob is otherwise
+    expanded against the filesystem as the shell expands it (a redirection onto several matches or brace
+    alternatives names each, as zsh's multios writes them; bash writes none), a brace list is expanded before
+    the operands are read, a here-string is scanned like a heredoc and a process substitution's command is read
+    like a `$(...)`; a tracked image or PDF passes by name as in the vendored guard; a source copied out of a tracked
     file is a read. Not read: rm, a mv of the tracked file elsewhere (a rename the store heals by content hash),
-    find -exec, rsync and patch. Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
-    per Bash call when no target needs the link closure (a read, a target outside any project, an explicit hit on
-    the project's tracked list, an empty list); a write to a file inside a tracking project that the list does not
-    name (the common write in a project that tracks anything) adds one walk of the project's markdown tree per
-    call, store-io's `trackedClosure`, a listing of every .md under the root and a read of every tracked note, the
-    same walk the vendored guard pays on every such Write, built once and shared by all the command's targets, so
-    a directory copy pays it once: measured at 80 to 100 ms on a 3000-note tree and 130 to 170 ms on a 12000-note
-    one, more under load, growing with the project's markdown count and well under the installer's 10 s timeout.
+    find -exec, rsync and patch. Round 4 (2026-09-19, a walk-around lens) closed eight more in-model roads: cp,
+    mv, install and ln read a per-writer option table (`COPY_OPT`), so a no-argument flag (`-Z`, a bare
+    `--context`) no longer eats an operand and an option the table does not know refuses the command; `env -C DIR`,
+    `env --chdir=DIR` and `sudo -D DIR` run the inner command in DIR (`commandOf` returns its `chdir`); the
+    `PREFIXES` set gained `setsid`, `flock`, `taskset`, `chrt` and `numactl`, each peeling its operand (`flock … -c`
+    read like `sh -c`); a same-command assignment to HOME makes `$HOME` and `~` unreadable (the lexer marks a home
+    expansion 'h' and `extract` computes `homeAssigned`); a word whose literal head parents a tracked root
+    (`parentTrackedRoots`) or sits under one (`ownProjectFor` returns the root without the landing gate) is refused
+    unless every expansion is numeric; a directory the hook cannot search before a `..` is refused, not folded
+    (`foldSegments` folds a `..` through the real path and lets a stat error there propagate); and a symlink an `ln
+    -s` makes earlier in the command redirects a later literal target (`recordSymlink`, `applyInCommandLinks`). The
+    walk-around lens second pass (2026-09-19) then closed six families of in-model write the hook read yet let through,
+    each stated as one rule. (1) OPTION TABLES: the per-writer tables and `sort`'s `-o` accept a glued short form
+    (`sort -oFILE`), and `env -S`/`--split-string` runs a shell string, read like `flock -c`, not skipped as an operand
+    (`commandOf`). (2) ANY ASSIGNMENT FORM: HOME, the one variable the guard expands, as an lvalue in any form the
+    shells offer (`HOME=`, `HOME+=`, `export`/`declare`/`typeset`/`local`/`readonly HOME`, `read HOME`, `printf -v
+    HOME`, `mapfile`/`readarray HOME`, `env HOME=… cmd`, `getopts … HOME`, `for HOME in`) makes `$HOME` and `~`
+    unreadable for the whole command (`assignsHome`). (3) IN-COMMAND PREFIX MUTATIONS: an earlier `rm`/`rmdir`/`mv`/hard
+    `ln`/`cp -l`/`cp -s` that removes, renames or aliases a path makes every later word under that prefix unreadable
+    (`mutated`, `recordMutations`); the `ln -s` class-H rewrite is kept only when nothing else in the command touched
+    the link name or its source, and a relative link source resolves against the LINK's directory. (4) STAT ERRORS
+    REFUSE: a stat, lstat, realpath, readdir or config-read error other than ENOENT anywhere on a judged path (a
+    mode-000 parent, a mode-000 tracked folder or `.trackchanges`, the whole project mode 000) is an answer the hook
+    does not have, so it refuses from any cwd, naming the error and the path (`UnknownPath`, the class-G flip applied to
+    every judged path, since a directory it cannot search may itself be a tracked project; the cost, a false refusal of
+    a write under a directory the session may not search, is recoverable in one step). (5) NESTED MARKERS: a `.git`,
+    `.obsidian` or `.trackchanges` between a tracked project's root and the target refuses, naming both markers
+    (`outerTrackingRoot`); store-io's nearest-marker rule stays for the untracked case. (6) A cd THE GUARD CANNOT KNOW
+    leaves the directory unknown from that point (as `cd -` already did), so a later literal relative target refuses
+    with the construct named: a cd after `&&`/`||`, a cd in a pipeline or backgrounded, a cd under a wrapper, `pushd
+    -n` or a rotate, a physical cd (`cd -P`, after `set -P`, or an option not modelled), and a call of a function whose
+    body ran a cd; `env -C DIR` resolves its operand physically, as chdir(2) does. The guard states its contract on the
+    hook header, the vendored skill, hooks/README.md and docs/install.md: it is best-effort against known write forms,
+    its default on an unrecognised form is allow (deliberately not flipped, since flipping it would refuse almost all
+    normal work), the one class flipped to refuse is a path it cannot check (family 4), and the unmodelled writers that
+    still reach a tracked file are listed.
+    The walk-around lens third pass (2026-09-19) re-keyed six rules on what the guard can see, after a third attack
+    walked around each enumeration with the next spelling (a nameref and `select HOME in`; a glued `env -Cdocs`, an
+    abbreviated `env --chd=`, a nested `env -C docs env -C ..`, an `env -S` string beginning with env's own option; a
+    non-literal `ln -s` source; zsh's `set -o chaselinks`; a two-segment expansion under a grandparent; `cp --targ`
+    from a cwd in no project). The reviewer's rule, paraphrased: a rule implemented as an enumeration of spellings is
+    a case list, and the next spelling walks around it; a rule is keyed on a token, an unparsed option, a non-literal
+    operand or the presence of a construct. (a) BARE IDENTIFIER: the identifier of a variable the guard expands (HOME,
+    `EXPANDED_NAMES`) anywhere in the command outside a `$`-expansion makes that expansion unreadable for the whole
+    command and a bare `cd` or `cd ~` unknown (`bareExpandedNames`). (b) FULLY PARSED OR REFUSED: every wrapper in
+    `PREFIXES` is parsed against its own option table (`WRAPPER_OPT`) or the command refuses naming the option (an
+    unknown, abbreviated, glued-unknown or non-literal one), the words after it judged by their own project; a nested
+    chdir composes (`commandOf` returns its `chdirs` in order); `env -S`/`--split-string` and sudo's -e, -i, -s, -R and
+    -h are opaque and refused outright, never recursed; `time -o FILE` is a write of FILE. (c) NON-LITERAL LINK SOURCE:
+    a symbolic link whose source the guard cannot read or place marks the link name as mutated, so a later write
+    through it refuses (`recordSymlink`). (d) SHELL OPTIONS, AN ALLOWLIST (the reviewer's recast, 2026-09-19): an option
+    on `set`, `shopt`, `setopt` or `unsetopt` not on the inert lists (`INERT_SET_LETTERS`, `INERT_SET_OPTIONS`,
+    `INERT_SHOPT`, built from the shells' own option lists: exit status, tracing, history, completion, prompts, job
+    control and syntax choices that move no path) leaves the directory unknown from that point (`shellOptionChange`);
+    every option about cd, pushd, physical paths, links, globbing, brace expansion, aliases, quoting, restricted or
+    POSIX mode is off the lists, so its gap is a false refusal. (e) ANY DEPTH: the parent-prefix rule finds every
+    tracked root under the literal head at any depth, breadth-first within `PARENT_SCAN_BUDGET` entries
+    (`parentTrackedRoots`). (f) UNKNOWN OPTION REFUSES EVERYWHERE: an option a writer's table does not know refuses on
+    every path the writer is reached through, each candidate operand judged by its own project from any cwd
+    (`optionCandidates`), and the mutation and symlink recorders mark every candidate. Also from that pass: `chdir`
+    (zsh's and dash's cd, no command in bash) leaves the directory unknown, and coreutils `link` is a hard-link maker.
+    The hook header audits every list that remains for the side its gap falls on. The cost is measured against
+    `tools/romp-track-bash-guard-corpus.json` (164 ordinary developer commands and the 22 recorded false refusals, run
+    at the head before the pass and at this one): no ordinary command newly refuses; the refusals added are a `~/`
+    write beside a mention of HOME, an `env -S` line, a relative write after `shopt -s globstar`, a write through a
+    link whose source is a variable, and a variable-named file in a folder with a tracked project anywhere beneath it,
+    each pinned with its remedy. The contract paragraph is identical on the four surfaces, its allow-by-default
+    sentence and its refused-class sentence included, and its writer list names the out-of-model roads the passes
+    found (a sourced or eval'd script, a wrapper outside the set, shuf -o, a cd through CDPATH).
+    The fifth commit (2026-09-19) closed the fourth pass's misses as rules on visible constructs, on the reviewer's
+    ruling, and settled two boundary questions. M6, first: 576 of the dollar matrix's refusals put a shell-live `$`
+    inside the double quotes of the remedy's `--file "..."`, so the pasted line named another file in bash and a third
+    in zsh; `trackEditLine` single-quotes the argument (`shellQuote`, a quote inside the path as `'\''`), pinned by
+    running the pasted line through real bash and real zsh against a stub that prints its argv. M1: a name operand that
+    carries an expansion, a substitution or is itself a quoted expansion on an assignment, declaration, nameref, export,
+    typeset, local, readonly, read, mapfile, getopts, unset or `printf -v`, or an expansion in lvalue position of a
+    `let` or `(( ))`, marks every expanded name unreadable for the whole command and a bare `cd` unknown
+    (`assembledNameOperand`, `homeUnreadableWhy`), since `export ${h}${m}=<dir>` reassigned HOME with no literal token;
+    a literal name other than HOME and a read-only twin change nothing. M2: the lexer consumes zsh's clobber-override
+    `!` and `|` after `>`, `>>`, `>&`, `>>&`, `&>` and `&>>` (`clobberSuffix`), records the operator as spelled, and
+    records bash's reading beside zsh's (a file named `!`, or `!word` when glued), so a command refuses when either
+    shell would write the tracked file. M3: `extract` returns the command's class-H links and `evaluate` follows them
+    while it places the targets it could not read, so a numeric target's literal directory part is folded through a link
+    the same command makes before it; a numeric or opaque word under a prefix an earlier command mutated is refused with
+    the family-3 reason (`mutatedUnderLiteralPart`). M4: a `$` inside a plain interpreter string is text, so a literal
+    path is kept and judged by name (the `[{}$]` filter and the node classes' `$` exclusion are gone), and a template or
+    format string (an f-string, `.format(`, `%`, a template literal with `${`) is returned as unreadable
+    (`scriptTemplateTargets`, the `templatePath` refusal) while a computed path stays out of model. M5, THE CRITERION:
+    an option earns a place on an inert list only if it changes neither how a word is expanded, matched or split, nor
+    where a relative path resolves, nor which grammar is in force; every entry carries its one-line reason
+    (`INERT_OPTIONS`, exported for the data-driven test), verified against the option descriptions of bash 5.2.21, zsh
+    5.9 and dash 0.5.12 on this box and by execution where a description left a doubt; the eleven the fourth pass found
+    came off with twenty-six more `set -o` names, twelve shopt names and six letters, and bash's `set -k`, measured
+    writing a tracked file through a `cp` the guard read as writing nothing, is read both ways (`setsKeywordMode`). B1
+    (ruled yes): a record that aliases a source (a hard `ln`, `cp -l`, `cp -s`, `link`, a symbolic link whose source the
+    guard cannot read) carries the source, and the in-play question for a write through it is asked of where the write
+    LANDS, the source, from any cwd (`aliasSourceInPlay`): a source in a tracked project puts that project in play, a
+    source the guard cannot read refuses from any cwd, a source outside every project is allowed. The cost, measured
+    against the corpus (196 entries, run at the head before the commit and at this one over one world): none of the 164
+    ordinary commands newly refuses; the five entries added are a `~/` write beside a `printf -v "$name"`, a relative
+    write after `set -f` and after `shopt -s nocasematch`, an f-string path from a tracked cwd, and a write through a
+    link whose source is a substitution from a cwd in no project. The contract paragraph on the four surfaces names the
+    variable name the shell fills in, the template path and the alias among what is refused, and the interpreter's
+    computed forms, the unbounded class of command-running wrappers and a link made by an unmodelled writer among what
+    still reaches a tracked file.
+    B2 (the second commit of the fifth pass, 2026-09-19; the reviewer's ruling with its condition, then the reviewer's
+    option (c) on the measured delta: the resolution half kept, the refusal half dropped; the dropped sequence is fork
+    PR #780's cb0b15422 and 24acdce20): a literal head outside every project bounds nothing once an opaque expansion
+    follows it (the matrix's `x='../sub-on/p$abc'; printf poison > <out>/$x/rep.md` from a cwd in no project). `extract`
+    now RESOLVES every expansion whose value it can read before judging a word (`resolveWord`, `valueOf`): a name the
+    command set to a plain string earlier, at the top level in plain sequence (`recordPlainWord` and `recordSegment`
+    since the seventh pass, the readability rule's predicate, which mark a name
+    set in a body, a subshell, after `&&`/`||` or in a `{ }` group opened after one of them, by a `read`, a loop, a nameref, an unset or a `+=`, or any name once
+    an eval, a source, an unknown wrapper option or a call of a function the command defines ran, as unreadable); HOME
+    through the guard's home; PWD through the directory it knows; OLDPWD, `~+` and `~-` through the directory before a
+    `cd` in the same command; none of HOME, PWD and OLDPWD once the command names the name outside an expansion or may
+    fill it in (`EXPANDED_NAMES` names every name `valueOf` substitutes and `unreadableExpandedNames` returns each the
+    command may reassign with its reason, rule (a) and M1; B2's first draft read `$PWD` and `$OLDPWD` through the
+    guard's own directory model while the command reassigned them, so `PWD=<web>; cp <web>/base/report.md
+    $PWD/docs/report.md` from a tracked cwd wrote the tracked file, the fifth pass's attacker found; the refusal says
+    why the name was not read); a `$(...)` in a subshell inherits a copy of the names, a script handed to a named shell
+    none. The resolved word is judged as literal (`x=other.md; echo hi > docs/$x` by name; `x='../docs/report.md'; cp
+    base/report.md scratch/$x` refused by name; attack 1's `~-` road and attack 2's `scratch/$v` road closed the same
+    way). What stays opaque keeps the verdict the working directory gives it: refused as not literal from a cwd in a
+    tracked project (class F and the cwd rule, as before B2), dropped from a cwd in no project. THE PRINCIPLE (the
+    reviewer's): a guard is strictest where its subject is and loosest where its subject is not; this guard's subject is
+    tracked files inside projects; from a tracked cwd an opaque expansion is refused before and after B2, since that is
+    where the danger and the user's intent live; from a cwd in no project the guard reaches furthest from its subject
+    and must not refuse on a value it cannot know. The threat model is the user's own box against accident, not malice:
+    for the dropped refusal half to be worth the refusals it added, an accidental opaque value would have to hold a
+    climbing relative path AND land on a tracked file, issued from a cwd outside every project; a variable holding
+    climbing relative text is rare by accident, a user in a scratch directory writing `$USER.log` or `$(date +%s).md` is
+    ordinary, and a guard that refuses ordinary work gets switched off. THE RESIDUAL, with its boundary, on the four
+    surfaces: a literal head outside every project followed by an opaque expansion whose value can climb with `..` is
+    allowed from a cwd in no project; from a tracked cwd the refusal stands unchanged. The cost, measured
+    (tools/romp-track-bash-guard-corpus.json, the b2-readable and b2-opaque entries, 44 shapes run from a cwd in no
+    project and from a tracked one; a sample of shapes, not the population of commands, so the principle decides and the
+    count describes): none of the 164 ordinary commands changes verdict; the 22 readable shapes refuse 3 times after
+    resolution, each by name on a tracked file the value reaches (one of them a live overwrite before), and 20 of their
+    22 refusals from the tracked cwd became allowances; the 22 opaque shapes keep their verdicts, refused from the
+    tracked cwd and allowed from the cwd in no project; three recorded false refusals from earlier passes are allowed
+    now that their value resolves (a `$PWD` link source, an `x=scratch` class-E entry, a `~+` spelling), and one cost
+    entry is added, a `$PWD` write beside a mention of PWD from the tracked cwd.
+    The pin addendum (2026-09-19; the fifth pass's mutation lens found seven B2 claims no test held, and its attacker
+    seven in-model overwrites; the second commit of the ruled sequence) pinned five of the claims from the tracked cwd,
+    where an unresolved name is refused and a resolved one judged by name (a mid-word `$HOME` beside a mention of HOME;
+    a loop variable, a `read`, a `mapfile` and a `getopts` into a name set earlier; the copy of the names a `$(...)`
+    inherits; the fresh scope of a `flock -c` string; and beside them resolution under a bare `.git` repo, each with the
+    real-shell landing or the clean twin run, and each opaque row pinned allowed from a cwd in no project, the residual
+    with its boundary); the poison of an unknown wrapper option and of an `env -S` string (the other two)
+    is not pinned, disclosed for a ruling (an external command cannot reassign the calling shell's names, so whether
+    that poison stays is the reviewer's call, and a pin would fix one side of it). The addendum closed the overwrites,
+    each a stated rule applied to a construct the guard could already see, no rule added (the PWD and OLDPWD finding is
+    closed in B2's
+    own commit, above): `cp --parents` lands each source at its whole spelling under the destination (`under` in
+    `copyTargets`; the flag was known and its landing computed as the basename); python's short options are read as a
+    cluster the way python reads them, `-c` and `-m` taking the rest of the word or the next word and `-W` and `-X` a
+    value (`-c'CODE'`, `-uc'CODE'`, `-Xutf8 -c'CODE'`, `-bc'CODE'` and `-Ic'CODE'` were skipped as unknown options);
+    node's `--eval=CODE` is its code and `--print=X` a flag (node then reads the script from stdin, measured); a
+    triple-quoted python string is the plain string it is (`pyStringArg`'s delimiter is three quotes or one) and a JS
+    string body runs to the next quote of its own kind, so a template literal holding a quote is a template (`nodeStr`).
+    The cost, measured against the corpus (285 entries): none of the 164 ordinary commands newly refuses. The contract's
+    writer list names a concatenation and an escape sequence among the interpreter paths that pass
+    (`open("docs\x2freport.md","w")` lands, measured), and the four surfaces carry the addendum's sentence.
+    The sixth pass (2026-09-19; the mutation lens over the ruled sequence's head ran seventy-five mutations and found
+    thirteen green, each a claim the code made that no test held) pinned nine of them in both directions, the refused
+    row run unguarded in a real shell and every allowed row run with the tracked subset fingerprinted after: the
+    unreadable-name marks reach a `$(...)` (`unreadableNames` in the recurse context; PWD reassigned outside and `$PWD`
+    inside, bash and zsh wrote another project's tracked file); a cd the guard cannot follow leaves OLDPWD unknown
+    (`moveUnknown`; `cd docs; cd "$(pwd)"; cp <src> $OLDPWD/report.md` overwrote the tracked file through the stale
+    value); a nameref, a `printf -v` and a `readarray` into a name set earlier make it unreadable (`recordAssignments`;
+    bash landed the write in the tracked folder through each); a `$(...)`'s own assignments do not come back (the copy
+    of the names; a shared map refused the write by name, falsely); an empty value is not read (`resolveWord`); with
+    `cp --parents` a destination that is not there is read as a directory (`copyTargets`; cp writes nothing without it,
+    and the guard's reading of the landing is what refuses); python's `-m` ends the option walk (a heredoc after
+    `-mjson.tool` is the module's stdin data, allowed and run). The `recordAssignments` line that poisoned the names
+    after an unknown wrapper option, an `env -S` string or a `flock -c` string was unreachable (each branch continues
+    before `recordAssignments` runs; the first two poison in their own branches of `extract`) and is removed, and a
+    `flock -c` string is pinned as it measures, no poisoner. Not pinned, for a ruling: whether the poison of an unknown
+    wrapper option, an `env -S` string and `xargs` stays (an external command cannot reassign the calling shell's
+    names; both sides are observable once ruled: from a tracked cwd the refusal's class, from a cwd in no project the
+    verdict). No verdict changes: the corpus's 285 entries keep theirs.
+    The seventh pass (2026-09-19; the sixth pass's attacker on 86c0643ec, whose report the workflow that ran it read as no
+    finding when the agent died on 529s, so the pin addendum's commit message and the PR body said the attacker filed none)
+    found 77 in-model live overwrites in 13 spelling classes, each a value the command spells that the resolution half
+    resolved to a string the shell does not produce, judged the wrong path and allowed while the shell wrote a tracked file
+    (0 structural). They are closed as one rule, THE READABILITY RULE, stated once at the resolution half (the comment at
+    `RESOLVED_NAME`) and on the four surfaces' contract paragraph, and implemented as one predicate (`plainSequence`,
+    `plainValue`, `recordPlainWord`, `recordSegment`, `taintWord`): a name is readable only when every write to it in the
+    command is a plain top-level `NAME=plain-string` the shell performs as spelled, and any other construct that can write it
+    makes it unreadable from that construct on (a plain write after it does not restore it), keyed on the construct's shape
+    (an lvalue-shaped word in any position, the bare identifier as a whole word or a token of a word that is not an option,
+    an assignment inside a `${x=..}` or `${x:=..}` expansion, a name in an arithmetic body, `identifierTokens`) and never on a
+    list of commands, the reviewer's framing being B2's own unknown-defaults-to-unreadable doctrine, already applied to a
+    `read` and a loop variable, applied to assignment. The classes: a tilde opening an assignment value (`plainValue`: `~/`
+    and `~` resolve through HOME, `~+` and `~-` through PWD and OLDPWD, a `~user` and a tilde after a `:` leave the name
+    unreadable); a declaration flag that transforms the value (at that pass `INERT_DECLARATION_FLAGS`: `-g`, `-x`, `-r` and
+    `--` alone were inert; since round 5's addendum no option word is, and `ATTRIBUTE_ONLY_FLAGS` picks the refusal's text
+    alone); a nameref (the target tainted, `refTargets`, or every name when the target is one the shell fills in); an
+    assembled name operand (the resolved name tainted when it resolves, every name when it does not); scoping (a pipeline's
+    tail, a `{ }` group whose closing brace is piped or backgrounded, which also restores the directory, a wrapper's
+    argument, `commandOf` returning the assignment words as a nameless command's arguments, an assignment-only segment's
+    words read left to right); functions (`function NAME {` is a definition, and a call by the head as spelled, a wrapper's
+    name included, poisons every name); a subscript. Found with the fix, the same rule's unlisted spellings: an eval that
+    assembles `HOME=` then a `~` write (the poison covers HOME, PWD and OLDPWD, `homeUnreadableNow`), zsh's `print -v x`
+    and `${x::=..}`, and a piped `{ cd docs; }` group whose cd was followed. A plain `unset NAME` in plain sequence resets
+    the name (the shells drop its value and attributes, measured), so a plain write after it is readable again. From a
+    tracked cwd every one of the attacker's 62 rows there refuses, by name where the value resolves and as not literal with
+    the construct named otherwise; from a cwd in no project the 15 rows the guard resolved wrongly split into 5 refused by
+    name and 10 the ruled residual (an opaque expansion after a literal head outside every project, allowed and landing,
+    the boundary B2 states). The cost, measured against the corpus (285 entries, no verdict changes) and the dollar matrix
+    and stated in the PR body: a `~/` value resolves through HOME at no cost; `declare -i x=5` (and `-a`, `-A`) then `$x`,
+    `let x=5` then `$x`, a pipeline-tail assignment (which zsh keeps) and a piped plain group then `$x` each refuse from a
+    tracked cwd where the shell's value was known. The addendum the same day, four items: a plain top-level `HOME=<path>`
+    assignment is the one readable write to HOME (`readableHomeWrites`), read for the commands after it (a bare `cd` is
+    resolved against the cwd like `cd <dir>`; a bare `pushd`, which bash and dash fail and zsh takes home, leaves the
+    directory unknown, a live overwrite since before this pass), inherited by a
+    `$(...)` and by a script handed to a named shell (the shells keep HOME exported), with the prefix form `HOME=<path> cmd`
+    excluded and refused with its own reason (`unreadableExpandedNames`, kind `homePrefix`), since bash, zsh and dash expand
+    cmd's `$HOME` and `~` before the prefix applies and cmd runs under the new HOME; the refusal for a cd under `builtin`,
+    `command` or `time` says what each shell does (`WRAPPED_CD_WHY`: bash and zsh move under `builtin`, bash and dash under
+    `command`, bash and zsh under `time`; the verdict stays unknown) where it said the shell does not move; the prefix
+    form's own text; and the test file's real-shell evidence legs run through one probe that reports a shell that is
+    missing or too old with a `NOT RUN` line per leg, never a silent pass (zsh since the addendum; dash, the bash legs and
+    a bash below the 4.3 the legs need since round 5 of the review, whose `spawnSync` wrapper throws by name when a leg
+    reaches a shell the probe declined).
+    The seventh pass's attacker (2026-09-19; on 93bb93b68, at the rule's own boundary) found two misses, 0 structural, each
+    a construct the lexer already produced that the implementation realised at one level only, and the close found a
+    sibling beside its readonly rows. F2, a `{ }` group nested in a piped or backgrounded group (13 live rows in bash, zsh
+    and dash, a cd face included): one frame opened for the first `{` and popped on the first `}`, so the piped outer brace
+    was never a subshell boundary; the group frames are nesting-aware (`openGroup`, `closeGroups`: a group closing in plain
+    sequence hands its names to the enclosing group, a piped or backgrounded close taints every name and restores the
+    directory, and a trailing `}` closes after its segment, `pendingClose`), and a declaration inside a group notes its
+    name (`noteGroupName`: `{ declare x=..; } | cat` kept x readable at one level). F1, zsh's precommand modifiers
+    `noglob`, `nocorrect` and `-` (`ZSH_MODIFIERS`; 14 live rows in zsh alone, bash and dash failing on the word and
+    writing nothing) were read as commands named so and hid the writer behind them; they are wrappers of the shape of
+    `command` and `builtin`, with an empty option table and a `WRAPPED_CD_WHY` text for a cd behind one, and the wrapper
+    list on hooks/README.md, docs/install.md and the vendored SKILL.md names them. RO: a name made readonly then written by
+    a `declare`, `typeset`, `export` or `unset`, which bash refuses and continues past with the readonly value (dash too
+    where the word is no command of its) while the guard adopted the later one (`readonly x=docs/report.md; declare
+    x=scratch/keep.md; cp base/report.md $x` wrote the tracked file in both); a readonly name keeps its value and every
+    later write is skipped (`readonlyNames`), the one write outside the plain form that resolves at no cost, and a `+r`,
+    which zsh honours, is a flag outside the inert set and taints as before. The one twin that moves: `command noglob cp`,
+    allowed before and refused by name now, a spelling no shell runs. The mutation lens's unpinned claims are pinned row
+    by row in the test file, and its shadowed poison (a declaration's option word the shell fills in, which M1's
+    per-segment detector reads first on the same word) is removed.
+    Without ROMP_SID it exits 0 before reading stdin (decision 24). Cost: about 60 ms
+    per Bash call when no target needs the link closure (a read, a literal target outside any project, an explicit
+    hit on the project's tracked list, an empty list); a write to a file inside a tracking project that the list
+    does not name (the common write in a project that tracks anything) adds one walk of the project's markdown
+    tree per call, store-io's `trackedClosure`, a listing of every .md under the root and a read of every tracked
+    note, the same walk the vendored guard pays on every such Write, built once and shared by all the command's
+    targets, so a directory copy pays it once: measured at 80 to 100 ms on a 3000-note tree and 130 to 170 ms on
+    a 12000-note one, more under load, growing with the project's markdown count and well under the installer's
+    10 s timeout. A write whose target the hook cannot read pays the same walk only when the tracked list alone
+    does not settle whether its project is in play (a figures-only or fully vetoed list, or a copy whose literal
+    landing folder has no refusable entry at or below it, which also pays a listing of that folder and a guard
+    check of each of its entries first, up to the 2000-entry cap), a numeric target outside every project
+    included when the cwd's project lists nothing refusable; then one walk per call, shared with the literal
+    targets; none when a listed refusable entry settles it, and none when the list is empty (review round 2,
+    2026-09-18; `tools/file-review-plan-bash-guard-review.test.mjs` counts the walks).
     `tools/romp-track-bash-guard.test.mjs` drives the grammar and the process;
     `tools/romp-track-bash-guard-shapes.test.mjs`, from the review's first round (2026-09-10), the shapes that
     round found misread, each in both directions where it has two (a cd inside a subshell or a body, a heredoc
@@ -3592,6 +3952,1020 @@ document stands on its own, each with the reasoning it was given.
     `tools/file-review-plan-bash-guard.test.mjs` holds this decision to the hook and the installer, and
     `tools/file-review-plan-bash-guard-review.test.mjs` its cost sentence to the hook's closure and every
     `romp-track-bash-guard…` module under `tools/` to this decision and the Tests bullet.
+    Round 5 of the review (2026-09-20; the reviewer's round-4 ruling over the seventh pass's head: twenty-nine findings,
+    seven highs, six of them one defect, and none refuted) closed two root causes and their riders. THE FRAME ON PARSED
+    STRUCTURE: the frame decision (a body that may not run: its names unreadable, its `cd` unknown at the closer) was keyed
+    on the segment's FIRST word, so a leading `!`, `time`, `{`, a `then` or `do` before a nested head, and `select`, which
+    COMPOUND_HEADS listed and neither the push nor CLOSERS did, hid the head, no frame opened, and the body was walked as
+    this shell's own plain sequence (the name adopted, the `cd` followed, so the wrapped spelling walked around round 3's
+    unknown-directory refusal by being confidently wrong instead of unknown). The head is read after a peel of everything
+    the shell reads past before a reserved word (`peelIndex`, `compoundHeadOf`, `FRAME_PEEL`, `TIME_OPTIONS`: `!`, `time`
+    and its `-p` and `--`, the braces, `then`, `do`, `else`, `elif`, the wrapper words and assignment-prefix words), at the
+    brace scan, at both head reads and at the function-name reads (`! f() {` and `{ f() {}; } | cat` are definitions),
+    re-peeling between braces; the push, CLOSERS and COMPOUND_HEADS read ONE table (`BODY_CLOSER`), so `select` fell out of
+    it; and a function body's closing brace is counted once (`braces` returns the enclosing scope's index; it was counted by
+    the group scan too, closing a piped group one brace early). PEEL FOR THE FRAME, NOT FOR THE FREEZE: `frozen` was read
+    from the peeled command, so `env readonly x=..` froze a name no shell froze and the guard kept a stale value while the
+    later plain write went through, the one place the rule's failure was an allow; the freeze now needs the segment's own
+    unwrapped `readonly`, `declare -r` or `typeset -r` (`!cmd.wrapped`), and a declaration behind any wrapper taints its
+    names (the shells differ on whether it ran: `command readonly` freezes in bash and dash, `builtin readonly` in bash and
+    zsh, `noglob readonly` in zsh, the external wrappers nowhere, measured; round 5's addendum, 2026-09-20, narrowed this
+    further, below: the freeze is an unwrapped `readonly` with no option word in plain sequence alone, and `declare -r` and
+    `typeset -r` taint, dash having neither). THE CATCH-ALL REFUSES: `Object.hasOwn` at the
+    CLOSERS and BODY_CLOSER lookups (a command word that is an Object.prototype key threw inside a body), and any exception
+    evaluate did not anticipate refuses while a tracked project is in play, naming it (`judge`, `internalErrorRefusal`; two of the three catches that allowed rethrow to the one catch-all, and the
+    process-level catch refuses in place). THE CENSUS DERIVED: the hand-written census of the lists that remain, which omitted
+    the two write-side lists this round's highs lived in, is replaced by one computed from the hook's source at test time
+    (`tools/romp-track-bash-guard-census.mjs`: every column-0 `const`, `let` or `var` whose initializer opens a Set, an
+    array, an object table, an `Object.fromEntries(` or a `new RegExp(`, the writer cases and the root markers, each
+    classified against its consumer line; a list the census does not name reds the test;
+    it corrected one stated side, an interpreter option not on `INTERPRETER_OPERANDS` being a write gap, measured, not an
+    over-count, disclosed and unfixed). THE DRAW WIDENED: the rule pin's UNLISTED set spans the scope half of the rule (a
+    body behind `{`, `!`, `time`, a select body, a function body in a group, a subshell, each closer). The riders: a node
+    or python path that opens with a string literal and goes on is a template (`nodeStringArg`, `pyStringArg`; the base
+    refused it and round 4's head let it through); a `>&` dup is exactly a digit run or `-` before a delimiter and `>>&`
+    is never one (`printf x >&2-3` in a tracked folder was invisible while bash and zsh wrote `2-3`); the guide's Files
+    sentence and its pin say the class the code refuses, a target the guard cannot read; the ledger entry corrects the
+    clauses B2 made false and this decision's own privacy sentence above says so; the vendored skill names the two
+    escalated false refusals and patch 0009 is regenerated; the rule's statement names the five-part predicate where it
+    named a function befa93b3f removed; the corpus's `since` labels are swept against the passes' heads and pinned (one
+    dropped, one re-anchored, one relabelled); the priced costs say what each shell does by execution; and every
+    real-shell evidence leg, dash and bash included, goes through the one probe, which reports a shell that is missing or
+    below the bash 4.3 floor with a `NOT RUN` line and whose `spawnSync` wrapper throws by name otherwise.
+    Round 5's addendum (2026-09-20; five lenses over the round-5 commit, each running the hook as a process and every row
+    unguarded in bash 5.2, zsh 5.9 and dash 0.5.12) closed what they found, every item a live false allow pre-existing at
+    round 4's head or a claim no test held. THE FRAME LENS (a grammar-driven matrix of 3526 rows on four faces): a `{ }`
+    group whose opening brace follows `&&`, `||` or `|` with its body on a later line was walked as a plain group while the
+    shells skip it whole or run it in a subshell (36 rows in all three shells; `test -d d || {`, `mkdir d`, `cd d`, `}` and a
+    relative write, the commonest multi-line conditional, was judged from d/); a group frame now carries the operator it
+    was opened after (`openGroup`), `plainSequence` and the cd handler refuse through it, and a group behind `time` is
+    marked too, since zsh does not keep an assignment standing alone in a timed group. The compound frame (`pushCompound`)
+    records its body's opener, so a `{` before the opener is a brace body closed by its `}` (`compoundBody`, zsh's
+    `if [[ .. ]] {`, `case x {`, `repeat n {`, `for y (..) {`, bash's `for y in ..; {` and `select ..; {`), a later segment
+    after a word-list head or a `)` with nothing after it is zsh's one-command body that closes before the next segment
+    (`oneSegment`, `closeOneSegment`), and a frame whose body was the frame pushed above it closes with it
+    (`afterChildClosed`, `closeCompoundAt`); `BODY_CLOSER` holds the opener and the closer of every head and gains zsh's
+    `repeat` and `foreach .. end`. A function body without braces (`f() cmd`, zsh and dash) is the one segment after the
+    parentheses, defined and not run, where the frame had been popped and the body read as the enclosing scope's; every
+    word before an empty pair of parentheses names a function (zsh's `f g () {`, `env f () {`) and every word after
+    `function` up to its brace does (`function f g {`), bash rejecting each spelling; a `function NAME` whose brace opens
+    on a later segment is run by dash, which has no `function` word, so a cd in it leaves the directory unknown
+    (`popFunction`); `coproc` (bash and zsh) drops the word and its NAME and reads the rest inside a frame that keeps no
+    name and restores the directory while its writes are judged, so `coproc cp base/report.md docs/report.md`, which the
+    contract had listed among the unmodelled wrappers, is refused by name; and zsh's `always` continues a group. THE
+    FREEZE LENS (163 constructs): the readonly skip ran before the scope check, so a bare `readonly x` in a body that may
+    not run, a subshell, a pipeline, a piped or backgrounded group, after `&&` or `||` or in a function never called froze
+    the guard's name and no shell's, and every shell performed the later write onto the tracked file (34 rows); `declare
+    -r` and `typeset -r` freeze in bash and zsh and are not found in dash, which performs the write; `export -r`, `readonly
+    -r`, `-x` and `-g` are options bash rejects, assigning nothing; an option after the operand is an operand to bash; and
+    `local -r x` at the top level is rejected by bash. The freeze is now `!cmd.wrapped && seq.ok && cmd.name ===
+    'readonly' && plainOptions` (an unwrapped `readonly` with no option word, a `--` before the operands aside, in plain
+    sequence), a freeze made inside a group that turns out piped or backgrounded is undone at its brace, and every other
+    road taints the name: the class widened to every `declare` and `typeset`, since dash has neither (`x=docs/report.md;
+    declare x=scratch/keep.md; cp base/report.md $x` wrote the tracked file in dash, measured), and to any option word on
+    `export` or `readonly`; `export NAME=..` and `readonly NAME=..` with no option word are the two declarations every
+    shell performs, and `INERT_DECLARATION_FLAGS` is `ATTRIBUTE_ONLY_FLAGS`, a text table that picks the refusal's reason
+    (a flag that changes the value, or the shells' disagreement) and changes no verdict. THE CENSUS LENS planted fourteen
+    list shapes in scratch copies of the hook, each live on the write side, and twelve landed green: the census reads
+    `var`, a declaration split after its `=` and spacing drift since, and names the six shapes it still cannot read (an
+    inline literal at its point of use, a second declarator, a second `switch`, beside the call, string, regex-literal,
+    later-filled `let` and in-function shapes it stated); the header's sentence that a planted list reds the test is
+    qualified to the shapes the census reads; the writer cases stop at the switch's own `default:`; and the UNLISTED comment
+    that said every scope row was a live false allow at round 4's head says nine of the ten (the subshell row was refused
+    there) and that the select and subshell rows cover the table and the frame rather than the peel, with the population
+    pinned (six mechanism rows, ten scope rows spelling each construct). THE MUTATION LENS found thirteen claims no test
+    held; each is pinned (the assignment-only head read after the peel with a condition of assignments alone, the
+    wrapper-word and assignment-word peels as refusals that cost nothing, the in-play check throwing inside the catch-all,
+    the process-level catch on a removed working directory, the module-level `spawnSync` binding, the bash version floor
+    by a stub, the runners' dropped shell default, the scan's list clause, the draw's population, the census side of
+    `INTERPRETER_OPERANDS`, the priced-cost, privacy and `u`-letter sentences on the header and the ledger's two clauses)
+    or stated in fork PR #780's body as unpinnable with the reason (the loop-variable read after the peel, held by the
+    bare-mention rule; `Object.hasOwn` at the assignment-only head read, which no reserved-word head can be a prototype
+    key of). THE DOCUMENTS LENS: the interpreter test's assertion that the untracked twin landed sits inside its bash leg,
+    the prefix-script rows ask the probe for the inner bash they run, the catch count above says two rethrow and the
+    process-level one refuses in place, the census method is named the same way here and on the header, and the corpus
+    movement at c7d7505a9 was two readable rows and one cost row, three, 293 to 296, where the body had said four.
+    Round 5's second addendum (2026-09-20; the round's verifier, driving the addendum's rows and rows of its own through the
+    hook and unguarded in the three shells): two live false allows in zsh alone, both a `}` that shares a segment with the
+    command before it. A brace body written on one line, `if (( 0 )) { cd ../scratch }; cp ../base/report.md report.md` from
+    docs/ (the `for y ()`, `while`, `until`, `select`, `case a { b) .. }` and `for y in; { .. }` spellings the same), had
+    `compoundBody` close its frame at the brace BEFORE the cd in the same segment was read, so the cd zsh skipped was followed
+    and the write resolved to scratch/ while zsh wrote the tracked file; pre-existing at round 4's head and claimed closed by
+    the addendum's F6 and F7, whose rows put the brace on its own segment. The brace is read after the segment's command now
+    (`oneSegment`, the brace dropped from the words), so the cd makes the directory unknown at the close and an assignment in
+    the body is unreadable with the body's own reason. And the trailing `}` of zsh's `{ cmd }` was read as the command's LAST
+    OPERAND, the destination of cp, mv, install and ln, so `{ cp ../base/report.md report.md }` (in a plain group, a `then` or
+    `do` body, a function body, a group after `&&`) read the tracked file as a source and was allowed while zsh performed it:
+    every writer is judged with the trailing braces and without them (`variants`), a write under either reading refused. The
+    one new cost is the priced class's zsh one-line spelling (`if (( 1 )) { cd .. }`, `for y (a) { cd .. }`, refused as an
+    unknown directory like `if true; then cd ..; fi`), priced in the corpus. Beside them: the census reads a declaration with
+    any spacing after its keyword (`const  NAME = ..` was not enumerated and not among the stated blind spots), and the
+    vendored README's row for patch 0009 states the addendum's declaration rule the right way round (no declaration flag and
+    no `declare`, `typeset` or `local` keeps a name readable, nor does a group opened after `&&`, `||` or `|`; the row had
+    said they keep it readable).
+    Round 5's third addendum (2026-09-20; the round's verifier, on the second addendum's head): twenty live false allows in
+    the family that addendum claimed closed, a `}` sharing a segment with the words before it, in the frames its fix did not
+    reach. The function-body scan (`braces`) popped its frame at the brace before the cd sharing the segment was read, so
+    `f() { cd ../scratch }; cp ../base/report.md report.md` from docs/ followed the cd as plain sequence and was allowed while
+    zsh wrote docs/report.md, in thirteen spellings (`function f { .. }`, which dash runs too, `function f() { .. }`, `f g ()
+    { .. }`, `! f() { .. }`, nested, two commands, a newline, an `&&` join, a redirect after the brace, a quoted operand,
+    pushd, a group holding the definition); after `compoundBody` spliced a shared-segment brace, the words after it (`else {
+    .. }`, `always { .. }`, a while's condition group) became operands of the body's command, so `if (( 1 )) { cp .. } else {
+    : }`, `if (( 0 )) { : } else { cp .. }`, `{ cp .. } always { : }`, `{ : } always { cp .. }` and `while { cp .. } { break
+    }` were allowed while zsh copied; and `repeat 1 { cp .. }` read the brace body as repeat's operands. So the second
+    addendum's claims above, the operand face closed in a plain group, a `then` or `do` body, a function body and a group
+    after `&&`, and the cd face closed for every head of `BODY_CLOSER`, were false while those were live. THE RULE, stated
+    once at the lexer (`splitAtClosers`) and read by every frame kind through the segments it produces: an unquoted `}` that
+    follows other words in its segment ends its construct only after those words are read as the construct's own command,
+    and every word after it begins a new command; the lexer cuts the segment before such a brace, so a compound body, a
+    condition group, a function body, a plain group, a repeat body and the `else`, `elif` and `always` continuations each
+    read a one-line brace form as its `;` twin, through the code they had, and no frame kind carries a reading of its own.
+    Beside the cut: `compoundBody` keeps an `if` frame open across `else` and `elif` on the closer's segment, reads a `{`
+    first after `if`, `while` or `until` with no `(( ))` between (`arithAt`, recorded by the lexer) as a condition group whose
+    `}` leaves the frame waiting for its body, reads zsh's one-command body after `))`, `]]` or a condition group's `}` (`if
+    (( 0 )) cd ../scratch; cp ..` had walked the skipped cd as plain sequence), and drops a condition's words before the body
+    so `commandOf` reads the body's command (`if [[ 1 = 1 ]] { cp .. }` had read `[[` as the command and the copy as its
+    operand); the head branch drops `repeat N` before either body form; `braces` reads from the index a compound closer
+    handed it and stops at a compound head inside the body; and a closer segment's redirections are judged in the directory
+    saved when its construct opened (`closedConstruct`, `addRedirects`), since every shell opens them before the construct
+    runs (`{ cd ../scratch; } > report.md` and `if true; then cd ../scratch; fi > report.md` from docs/ truncated
+    docs/report.md in bash, zsh and dash while the guard judged the target after the cd it had followed inside). Gone with
+    it: the second addendum's `oneSegment` splice and its trailing-brace cut at the writer (the cut braces travel on the
+    segment as `closerTail`, so a writer is still judged with them as operands, bash's and dash's reading of `cp a }`), the
+    group scan's `always` splice (the lexer drops `} always {`: one group, closed by the last brace) and the seventh pass's
+    `pendingClose`. The cost: a condition group's cd (`if { cd ../scratch } { : }`, which zsh runs) is read as a body's and
+    the directory after it is unknown, the class `if true; then cd ..; fi` prices, one corpus row. Pinned with the verifier's
+    twenty rows and the rows found beside them, each run through the hook as a process and unguarded in the three shells with
+    the writers asserted, and with a generated matrix over frame kind, brace placement, face and position whose rows are the
+    pin (a row a shell writes must refuse; the refusals where no shell writes are counted and listed as the cost): 2912 rows,
+    2845 refused, 67 allowed, 0 a shell writes while the hook allows (213 at the second addendum's head), 470 spellings no
+    shell parses, 955 refusals of a face in a body no shell runs (the standing rules), 182 of the priced classes (88 a cd in a
+    construct that runs, 88 an assignment there, 6 a writer in a piped definition whose call finds no function), the fixture
+    `tools/romp-track-bash-guard-brace-matrix.json` beside the test.
+    Round 5's fourth addendum (2026-09-20; the round's verifier, on the third addendum's head): the function body's count
+    (`braces`) read a quoted brace word as a brace of the body, against the rule's own text, so `f() { echo "}"; cd
+    ../scratch; }; cp ../base/report.md report.md` from docs/ popped the frame at the quoted word, followed the cd as plain
+    sequence and was allowed while bash, zsh and dash wrote docs/report.md (present at round 4's head), and the census of
+    the hook's brace reads found the same gap in the reserved-word reads that hold `{` and `}` (the lexer took `[[` after
+    any word spelled as a reserved word for the test keyword, so `echo "{" [[ x > report.md ]]` was allowed while bash and
+    dash redirected; `commandOf` and `rawHeadIndexOf` skipped a quoted reserved word, so `"{" cd ../scratch; cp ..` followed
+    a cd that was the operand of a command named `{`), so every brace read checks `plainWord` now, pinned with the
+    verifier's rows in bash, zsh and dash by execution and five matrix kinds (3152 rows, 3065 refused, 87 allowed, 0 a shell
+    writes while the hook allows, the 2912 rows before unchanged).
+    Round 5's fifth addendum (2026-09-20; the fourth addendum's builder measured it, and the reviewer ruled it fixed before
+    the round): `[[ x > report.md ]]` from docs/, alone, in an if or in a group, was allowed while dash, which has no `[[`,
+    ran a command named so and performed the redirection (writers=[dash]); the hook read the test under bash and zsh
+    grammar, where a `>` between `[[` and `]]` compares. The reviewer's rule: a construct must be read on the safe side for
+    every shell the guard claims (bash, zsh and dash), not for the grammar it was written against. THE RULE, stated once at
+    the lexer's `closeTest` and read here in the same words: a construct the hook reads under bash and zsh grammar (`[[ ... ]]`, `(( ... ))`, a `$(( ... ))`) contributes, in addition, its dash reading to the write set: where dash reads the construct as a plain command (`[[`), the words after the head are its operands and every redirection operator among them a redirection dash performs before the command is looked up, and the words after a `&&` or `||` among them a further command; where dash reads it as a subshell (`((`, two nested `(`), its body is a command list dash runs; and each target so found is judged exactly as any redirection or writer the hook already judges. Beside it: a substitution inside an arithmetic body (`$(...)`, a backtick) runs in every shell and is read as a command, and a `$((` whose first `(` closes before the last is a command substitution in bash and zsh and is read as one. The derivation over the lexer's non-redirecting reads (every path where a `>`, `>>`, `&>`, `>|` or `<>` is read as
+    something other than a redirection, by execution in bash 5.2, zsh 5.9 and dash 0.5.12): the `[[ ]]` comparison (a
+    command in dash: `closeTest`, the dash pieces spliced into the walk by `withDashPieces`, a cd there an unknown
+    directory and an assignment there unreadable, as after any `||`); the `(( ))` arithmetic (a subshell in dash, its body
+    a command list, `skipArithmetic` and `viaSubs`; `(( cp a b ))` copies in dash); the `$(( ))` expansion (arithmetic in
+    dash, `$( (` in bash and zsh when its first `(` closes before the last, `parenCloseAt`; `echo $((x > report.md);(y))`
+    truncated the file in both); the substitutions inside any arithmetic body (never read before; `(( $(echo x >
+    report.md) ))` wrote in all three, `for (( i=$(..); .. ))` in bash and zsh, `expansionsOf`); and the reads that diverge
+    in no way that writes (a here-doc body is data in all three once expanded, its expansions performed alike and read since the
+    third fix-up; a here-string and a process substitution are syntax
+    errors in dash, though bash performs a process substitution inside `[[ ]]` (the fix-up below); quotes read alike; a brace list dash writes as one literal name, `{a,b}.md`, a residual named below).
+    Where dash parses nothing, no dash reading is due, measured: a `for (( ))` head ("Bad for loop variable"), a `((`
+    after any word but a reserved one (`time ((`, `echo ((`, `x=1 ((`, `} ((`), an unquoted parenthesis between `[[` and
+    `]]`. The shell facts live in `TEST_ARITH_SHELLS` (bash, zsh and ksh read the test keyword and arithmetic; a script
+    handed to dash or `sh` takes the dash reading, one handed to bash the test alone: `dash -c '[[ x > report.md ]]'` was
+    allowed while every shell spawned dash and wrote) and `CONSTRUCT_HEADS` (each construct's closer, both readings and
+    the text the refusal appends to the write's `how`, so a refusal names dash and the construct). The reserved-word
+    derivation ran every word of `RESERVED`, `BODY_CLOSER`, its closers and openers, `function`, `coproc`, `always`,
+    `time`, `[[`, `]]`, `((` and `))`, quoted and unquoted, with a `>` operand and a writer operand, through the hook and
+    the three shells (112 rows): the two constructs, unquoted, were the only rows a shell wrote that the hook allowed; the
+    change turns those three rows to refusals and no other. THE COSTS, each measured with no shell writing: `[[ $a > $b ]]`
+    with `$b` unreadable from a tracked cwd is refused as not literal (the non-literal rule for a redirection target; the
+    refusal adds the comparison's remedy, `expr` or a directory outside the project; a `$b` the command set to a plain
+    string resolves and is judged by its value); the words after a `&&` inside the test (dash skips them when `[[` is not
+    found, and they are read as running since a command named `[[` on PATH would run them); `>>` and `<>` onto an
+    existing tracked file through a command that is not found (the operator opens the file and writes no byte; the same
+    spelling onto a name that does not exist yet under a tracked folder creates it, measured); and the dead spellings no
+    shell parses (`} (( x > report.md ))`). THE CONSTRUCT MATRIX (`tools/romp-track-bash-guard-construct-matrix.json`,
+    its population stated in the fixture: head, from `CONSTRUCT_HEADS`'s command-position entries, x twelve positions x
+    seven operator forms x three targets, 456 rows, run through the hook as a process and unguarded in the three shells):
+    456 rows, 299 refused, 157 allowed, dash the only writer (200 rows), 0 a shell writes while the hook allows; the
+    refusals where no shell writes by class: 13 dead, 26 a definition never called, 40 the append or read-write operator
+    onto the existing file, 20 the unset name, 0 other. The brace matrix's 3152 rows are unchanged by the change (its
+    fixture now states its population, which has no `>` inside a test or arithmetic). OUTSIDE BOTH POPULATIONS, named: a
+    construct nested in a construct, a target through `~`, a glob or a brace list inside a construct, a construct inside a
+    script beyond the three `-c` rows, every position the twelve do not spell (a case or select body, zsh's brace bodies, a
+    coproc), and dash's literal reading of a brace list (`> docs/{a,b}.md` writes `docs/{a,b}.md` in dash: judged only when
+    an alternative is tracked).
+    THE FIX-UP (2026-09-20; the addendum's verifier, on its head): two reads at the test's boundaries failed toward allowing,
+    both inside the addendum's own construct and both present at the fourth addendum's head too. A process substitution
+    among the operands was read as the test's `<` and a `(`, the test's own operators being read before the expansion, so
+    `[[ -f <(echo x > report.md) ]]` from docs/ was allowed while bash performed it and wrote, in every position (alone,
+    `!`, if, while, a group, a called function, after `&&`, inside `$(...)`; through `bash -c` and a heredoc-fed bash every
+    shell wrote; zsh performs it after `!`, in a pipeline, with `&`, `|&` and under coproc, and rejects it alone, in `( )`, in a
+    group, in if, in a called function, in `$(...)` and via `zsh -c`; dash rejects it as a syntax error; the addendum's
+    own row had measured the substitution outside a test only). An operator glued to the closing `]]` was read as a word
+    of the test, the operator read running before the `]]` under way had ended the word, so `[[ a ]]>report.md`,
+    `[[ a ]]>|report.md`, `[[ -n a ]]&&cp ../base/report.md report.md`, `[[ -z a ]]||cp ..` and `[[ -z a ]]||cd ..; cp
+    base/report.md docs/report.md` were allowed while bash, zsh and dash wrote (`>>`, `<>`, `2>` and `&>` glued were
+    refused by accident, their second character reaching the ordinary path). The two families' 42 rows through the hook
+    as a process from docs/ and the three shells, before the change: `rows 42 refused 8 allowed 34 other 0 writes bash=39
+    zsh=23 dash=20 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 34`; after: `rows 42 refused 42 allowed 0 other 0
+    writes bash=39 zsh=23 dash=20 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 0`. THE TEST'S BOUNDARIES, stated
+    beside the rule at the lexer and here in the same words: the test's grammar covers the words between `[[` and the
+    unquoted `]]` that closes it and only the test's own operators among them; an expansion among the operands (a
+    `$(...)`, a backtick, a `<(...)` or `>(...)`) is performed by the shell before the test reads a word and is read as the
+    command it runs, where it is lexed; and an operator glued to the closing `]]` is outside the test, the redirection or
+    list operator it is anywhere else, read after the test has closed. Both are made at the lexer's operator read (the
+    `]]` under way ends the test first; `<(` and `>(` are read before the test's own `<` and `>`, under the test grammar
+    alone, since dash reads them as `<` and an unquoted `(`, the syntax error `closeTest` already reads as no dash
+    reading), so they hold in every position. THE POPULATION, widened by the property the verifier named: the construct
+    matrix crosses the PLACEMENT of the write against the construct with head, position, operator and target, the
+    placements being the regions a construct has (before the head is the position; among the operands; inside an
+    expansion among the operands, a `$(...)` in every shell and a `<(...)` in bash; after the closer, glued or spaced):
+    five placements, 2280 rows, through the hook as a process and unguarded in the three shells: `rows 2280 refused 1547
+    allowed 733 other 0 writes bash=741 zsh=653 dash=820 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 0`; the
+    addendum's 456 rows are the operand placement, `existing rows: 456 unchanged, 0 changed`; the refusals where no shell
+    writes by class: `dead 91 doctrine 130 opens 173 unset 102 arith-procsub 110 other 0` (arith-procsub: a process
+    substitution as an operand of `(( ))`, an arithmetic error in bash and zsh and a syntax error in dash, the expansion
+    read as the command a shell would run). Outside it still: the `$((` family, a backtick among the operands (the path a
+    `$(...)` takes), the further commands after `&&` or `||` inside the test, nested constructs, `~`, glob and brace
+    targets, scripts beyond the `-c` rows, positions beyond the twelve, and a redirection before the head or with a
+    descriptor number (the rows test pins `2>` glued and a triple `]]]`, dash's operand and redirection). THE COSTS,
+    each measured with no shell writing: `[[ -f <(echo x > $n) ]]` and `[[ a ]]>$n` with `$n` unset (the non-literal
+    rule; bash reports an ambiguous redirect); `(( <(echo x > report.md) ))` (an arithmetic error in bash and zsh, dash's
+    syntax error; the body's expansion read as a command); `[[ -f <([[ x > report.md ]]) ]]` (the inner test's dash
+    reading inside a substitution dash never performs); `dash -c '[[ -f <(echo x > report.md) ]]'` (dash's `<` and `(`, a
+    subshell running the echo in the hook's reading, a syntax error in dash); and `[[ a ]]>>report.md` and
+    `[[ a ]]<>report.md` (the test prints nothing: the operator opens the file and writes no byte, where the notes/ twin
+    creates its file). One verdict widened toward allowing: `dash -c 'tee >(cat) report.md'`, refused before under the
+    bash reading of a dash script, allowed now, dash rejecting `>(` and running nothing (measured, every shell spawning
+    dash). The twins stay allowed: `[[ -f <(echo x > ../scratch/keep.md) ]]`, `[[ a ]]>../scratch/keep.md`,
+    `[[ -f <(cat report.md) ]]`, `[[ -f <(true) || cp ../base/report.md report.md ]]` (a syntax error in every shell,
+    dash's reading seeing the parenthesis), `[[ a ]]<report.md`, and `[[ a ]]>report.md]]` (the target `report.md]]`,
+    untracked, in every shell). Pinned: the rows test's group (11), 61 rows (the two families, the twins, the costs), the
+    construct matrix's fixture with its placement dimension, the lexer's three reads in their order (the plan test), and
+    the shapes tests' targets and hook-process rows.
+    THE SECOND FIX-UP (2026-09-20; the fix-up's verifiers, on its head): two more reads failing toward allowing, each a class,
+    one at the lexer and one present since the guard's first commit. (1) THE NESTED EXPANSION: a `$(...)`, a backtick or a
+    `<(...)` inside a `${...}` word was never lexed (the `${` read skipped its inner text whole), so `echo ${x:-$(cp
+    ../base/report.md report.md)}` from docs/ was `ALLOWED writers=[bash,zsh,dash]`, and so were `${x-..}`, `${x:=..}`, the
+    double-quoted word, the backtick, `${x:-${y:-..}}`, `[[ -n ${x:-$(echo x > report.md)} ]]`, `(( ${x:-$(echo x >
+    report.md; echo 1)} ))` and `dash -c 'echo ${x:-$(cp ..)}'` (`writers=[bash,zsh,dash]`), `${x:?..}`
+    (`writers=[bash,dash]`), `${x[$(..)]}` (`writers=[bash,zsh]`), `${x#..}` and `${x/b/..}` with x unset (`writers=[zsh]`;
+    with x set every shell but dash's `/`), `[[ -n ${x:-<(echo x > report.md)} ]]` and `cat ${x:-<(echo x > report.md)}`
+    (`writers=[bash]`), and the same from notes/, the project root and out/; the verifiers' 21 param-word rows and the three
+    `${...}`-as-target rows (W31 to W33, refused by the non-literal rule before and still) through the hook as a process from
+    each row's cwd with ROMP_SID set, then bash 5.2, zsh 5.9 and dash 0.5.12 unguarded over a fresh world (the shells the
+    guard claims; busybox sh and ash are outside them and outside every count here), before: `rows 24 refused 3 allowed 21
+    other 0 writes bash=21 zsh=20 dash=18 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 20` (the 24 rows; the one
+    param-word row no shell writes is `${x:+..}` with x unset); after: `rows 24 refused 24 allowed 0 other 0 writes bash=21
+    zsh=20 dash=18 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 0`. THE RULE, stated at the lexer's `nestedExpansions`
+    and here in the same words: an expansion nested inside a parameter-expansion word is read as the command it runs, recursively, in every position (an operand, inside `[[ ]]`, inside `(( ))`, a redirection target, a quoted word), exactly as an expansion among plain operands is read; the `${` read descends. The inner text is lexed with the same lexer under the same shell, with
+    no comment (a `#` is a character there: `${x:-a #$(cmd)}` runs cmd in every shell, measured) and in the quoting the word
+    stands in (inside double quotes a single quote is a character, `"${x:-'$(cmd)'}"` runs cmd in every shell where the
+    unquoted `${x:-'$(cmd)'}` runs nothing; a `<(` is read in both quotings, since bash performs it unquoted anywhere in the
+    word and double-quoted in the pattern, replacement and message parts, `"${x#<(cmd)}"`, `"${x/b/<(cmd)}"`, `"${x:?<(cmd)}"`,
+    each measured writing; a backslash escapes the dollar in both), and every substitution it finds joins the segment's
+    `viaSubs` with the word named (`BRACE_WORD_VIA`), where the walk reads it as any `$(...)` of the command; the `${...}` word
+    itself keeps the non-literal rule. The skip over the brace's inner text (`skipNested`) reads a `$(...)` inside a `${...}`, a
+    `${...}` inside a `$(...)` and a backtick inside either as the units the shells parse, so a closer inside them is their own
+    (`${x:-$(echo } > report.md)}` runs the echo in bash and dash, a parse error in zsh), and a single quote is a character in a
+    double-quoted brace, as the shells read it. (2) THE PIPED SCRIPT: `echo 'cp ../base/report.md report.md' | bash`, `echo
+    'echo x > report.md' | sh`, `echo '[[ x > report.md ]]' | dash`, `printf '%s\n' '[[ a ]]>report.md' | bash`, from docs/,
+    notes/ and the project root, through `bash -s`, `sh -` and the double-quoted script, were `ALLOWED
+    writers=[bash,zsh,dash]`: the heredoc-fed shell (`bash <<EOF`, `bash -s`, `sh -`, `cat <<'EOF' | bash`) and the
+    here-string were read as `sh -c` is, a pipe from echo or printf appeared neither as read nor as a residual. The 13 rows
+    (the verifiers' spellings, the heredoc and here-string twins, a `cat f` and a `"$s"` producer) before: `rows 13 refused 2
+    allowed 11 other 0 writes bash=12 zsh=12 dash=11 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 10`; after: `rows
+    13 refused 11 allowed 2 other 0 writes bash=12 zsh=12 dash=11 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes): 1`
+    (the 13 rows; the one is `s='cp ..'; echo "$s" | bash`, the residual below). THE RULE, stated at extract's `stdinBodies`
+    (`pipedScripts`, `echoOutput`, `printfOutput`, `shellEscapes`) and here in the same words: when a pipeline's last command is a shell of SHELLS reading its script from stdin (no `-c`, no script operand: `bash`, `bash -s`, `sh -`, dash) and the command piped into it is an echo or a printf, the words echo or printf would print are the script, read as the here-string form already is, under the grammar the shell named uses (dash's for `sh` and `dash`, TEST_ARITH_SHELLS); each
+    word as the lexer read it, so a quoted script is literal and an expansion in it keeps its spelling and takes the
+    non-literal rules, as a here-string's does. echo's output is read once as spelled and once with the escapes interpreted
+    (bash's default and its `-e`, zsh's and dash's default), its leading option words dropped (dash prints them, a reading
+    whose writes the stripped one covers); printf's format has its escapes interpreted and its conversions take the operands
+    in order, `%b` with escapes, the format reused while operands remain, `-v` printing nothing. THE RESIDUAL, named here and
+    on the hook header beside the heredoc-fed forms: a producer the guard cannot see stays unread and its script passes (`cat f
+    | bash`; `s='cp ..'; echo "$s" | bash`, since a value with whitespace is never resolved, the readability rule, exactly as
+    `bash <<< "$s"` is not read; a tee, a subshell, a group or a function before the pipe), and so does a script handed to a
+    shell outside `SHELLS` (busybox `sh` or `ash`: `busybox sh -c 'cp ../base/report.md report.md'`, `busybox ash -c '[[ x >
+    report.md ]]'`, whose `[[` is a builtin performing the redirection, and `echo 'cp ..' | busybox sh` each `ALLOWED
+    writers=[bash,zsh,dash]`, measured; eval and xargs the same, as named before); the rows test pins each allowed, so a
+    residual the guard starts reading shows as a rule to state. THE POPULATIONS, each through the hook as a process from the
+    row's cwd and the three shells unguarded, the fixtures stating them: the param-word matrix
+    (`tools/romp-track-bash-guard-param-word-matrix.json`: 17 operator forms x 3 nested expansions x 5 positions x 4 cwds),
+    `rows 1020 refused 1020 allowed 0 other 0 writes bash=936 zsh=608 dash=572 timeouts 0`, `FALSE ALLOWS (allowed, a shell
+    writes; the 1020 rows not marked residual): 0`, `refused with no writer: arith-procsub 32 quoted-procsub 32
+    subscript-procsub 20` (its first run, with a double-quoted `<(` still read as text, printed `FALSE ALLOWS 32`, the pattern,
+    replacement and message forms bash performs: the matrix's own find, folded in before the fixture was written); the
+    piped-script matrix (`tools/romp-track-bash-guard-piped-script-matrix.json`: 3 producers x 2 quotings x 3 scripts x the 5
+    shells of SHELLS x 3 forms, plus 6 residual producers x 5 consumers), `rows 300 refused 216 allowed 84 other 0 writes
+    bash=200 zsh=200 dash=200 timeouts 0`, `FALSE ALLOWS (allowed, a shell writes; the 270 rows not marked residual): 0`,
+    `residual rows 30, refused 0; residual rows a shell writes: 20`, `refused with no writer: absent 36` (ksh is not installed
+    here). THE COSTS, each measured with no shell writing: the word's command is read whatever the parameter's state (`x=1;
+    echo ${x:-$(cp ..)}`, `${x:+$(cp ..)}` with x unset); a double-quoted `<(...)` in the `:-` family (`"${x:-<(cp ..)}"`,
+    32 matrix rows); a `<(...)` as a subscript (`${x[<(cp ..)]}`, a syntax error in bash, a bad math expression in zsh, a bad
+    substitution in dash, 20 rows); a `<(...)` inside a `${...}` operand of `(( ))` (an arithmetic error in bash and zsh, a
+    syntax error in dash, 32 rows); a script piped into a consumer that is not installed (ksh, 36 rows); and an expansion in a
+    piped script (`echo 'cp ../base/report.md' $t | bash`: the non-literal rule, while bash's copy fails on one operand). The
+    verdicts of the addendum's and the fix-up's fixtures are unchanged (`existing rows: 2280 unchanged, 0 changed, 0
+    missing` for the construct matrix at this commit). Pinned: the rows test's second fix-up group (79 rows: the verifiers'
+    rows with exact writers, W31 to W34, the quoting corners, the costs, the piped forms, the residuals, the heredoc twins), the
+    two matrix fixtures, the lexer's descent and the piped script in-process, and the plan test (both rules on both surfaces in
+    the same words, the functions, the fixtures' populations, the residual named on the header, here and hooks/README.md).
+    Mutation on scratch copies: with the `${` descent removed, the verifiers' rows print `FALSE ALLOWS (allowed, a shell
+    writes): 20` and the param-word matrix and the rows tests go red (`the param-word matrix: no row a shell writes is
+    allowed`, `P-colon-minus: refused`); with the piped-script read removed, `FALSE ALLOWS (allowed, a shell writes): 10` and
+    the piped-script matrix and the rows tests go red (`the piped-script matrix: no row a shell writes is allowed`,
+    `S-echo-bash: refused`).
+    THE THIRD FIX-UP (2026-09-20; the second fix-up's two verifiers, on its head): seven live classes, each present at the pushed
+    head, four of them written by bash, zsh and dash, and three more found while pinning them, every one reproduced by execution
+    before the code changed (the hook as a process from the synthetic project's docs/, notes/, the project root and out/ with
+    ROMP_SID set, then bash 5.2, zsh 5.9 and dash 0.5.12 unguarded over a fresh world, the tracked subset fingerprinted before and
+    after; busybox sh and ash are outside the claimed shells and outside every count here). THE VERIFIERS' ROWS (274, their own
+    spellings, the same harness) at the second fix-up's head: `SUMMARY rows 274 refused 224 allowed 50 other 0 writes bash=243
+    zsh=235 dash=193 busybox=229 timeouts 0`, `FALSE ALLOWS (allowed, one of bash/zsh/dash writes): 45`; at this commit: `SUMMARY
+    rows 274 refused 244 allowed 30 other 0 writes bash=243 zsh=235 dash=193 busybox=229 timeouts 0`, `FALSE ALLOWS (allowed, one of
+    bash/zsh/dash writes): 25`, the 25 the residuals named here and before (a command whose name is an expansion, `${SHELL} -c
+    '..'`, `echo '..' | $SHELL`, 15 rows; a producer the guard cannot read, `| tee /dev/null | bash`, `| sed '' | bash`, `| cat |
+    bash`, `"$s" | bash`, `yes '..' | head -1 | bash`, 6 rows; a script written to a file and run, 2 rows; eval, 1 row; zsh's
+    `${(e)x}`, the eval class, 1 row), `COSTS (refused, no claimed shell writes): 11` before and after, 20 verdicts changed, each
+    from allowed to refused. (1) THE UNQUOTED BODY: `cat <<EOF` with `$(cp ../base/report.md report.md)` on the body's line, and
+    with `${x:-$(cp ..)}`, from docs/ were `ALLOWED writers=[bash,zsh,dash]`: the body was kept as the consumer's data and never
+    lexed, though every shell performs its expansions before any consumer reads it (measured: the backtick, `<<-`, `<< EOF`, from
+    notes/ and out/, a python consumer, and the quote as a character in the body, `${x:-'$(cp ..)'}`, each writing in all three;
+    `<<'EOF'`, `<<"EOF"`, `<<\EOF`, `<<E"O"F` and the escaped `\$(` writing in none). THE RULE, stated at `readHeredocBodies` in
+    the lexer and here in the same words: a here-document whose delimiter has no quoted character has its body expanded by the shell before the command reads it, so a `$(...)`, a backtick, a `${...}` and a `$name` in the body are read as they are anywhere else and the body the consumer reads is the text after those expansions; a delimiter with any quoted character keeps the body as written and runs nothing. The expanded body is the consumer's stdin text, so a shell fed by it reads
+    the script the shell will run: `bash <<EOF` with `$(echo 'echo x > report.md')` on a line wrote report.md in all three (the
+    printed text parsed as a redirection) while the same body after `<<'EOF'` runs the echo and prints; `<<'EOF'` with `$(echo 'cp
+    ..')` copies in all three (bash splits the printed text and runs it), read as any script. (2) THE RESOLVED SUBSTITUTION: `bash
+    -c "$(echo 'cp ../base/report.md report.md')"`, `bash <<< "$(echo '..')"`, that line inside a here-document fed to bash and
+    `echo "$(echo '..')" | bash` from docs/ were `ALLOWED writers=[bash,zsh,dash]` (`writers=[bash,zsh]` for the here-string, which
+    dash rejects): the `$(...)` was read as the command it runs, an echo that writes nothing, and the text it prints, which the
+    guard could see, was never the script. THE RULE, stated at `resolvedSub` in the lexer (`literalOutput` reads the command) and
+    here in the same words: a `$(...)` or a backtick whose command is one echo or printf with literal operands and no redirection prints text the guard can see, and that text stands in the word where the shell puts it, whole where no shell splits an expansion's result (inside double quotes, as a here-string, in a here-document body, as the word of a `${...}` operator), split at blanks into the words the shell makes among unquoted operands, and at a redirection target both, the whole text as dash opens it and each blank-separated field as zsh opens it (bash opens the one field, or none of several), each a redirection of its own, so the word is literal and a script it forms is read as the here-string form already is; when echo's two readings differ, a word that is the substitution alone keeps both texts and a script formed from it is read under each. Measured: `bash -c "$(echo 'echo x > report.md')"` writes in all three; `$(echo cp)
+    ../base/report.md report.md` and the substitution alone as the command line copy in all three, split into the words the shell
+    runs; `x=$(echo 'report.md'); cp ../base/report.md $x` copies in all three (the value resolves); `bash -c $(echo 'cp a b')`,
+    split, hands `cp` alone to bash and `"$(echo 'cp a b')"` is a command named so (no shell writes: both allowed); `bash -c
+    "$(echo 'cp a b\c')"` copies in zsh and dash and not in bash (`writers=[zsh,dash]`, the two readings), `echo -e` in bash and
+    zsh (dash's echo prints the `-e`, which bash rejects); `sed -i .. $(echo '*.md')` rewrites in bash and dash (the glob) and not
+    in zsh; `> $(echo '{a,b}.md')` writes the literal name in all three (no brace list); `IFS=:; cp $(echo 'a:b')` is not resolved
+    (the split follows a rule the guard does not read) and takes THE SPLIT OPERAND below. The text carries the mark 'e' (`isGlobMark`):
+    unquoted for a glob, never a brace list, never a reserved word. (3) THE DEFAULT WORD (found while reproducing the verifiers'
+    rows): `bash -c "${x:-$(echo 'cp ../base/report.md report.md')}"` from docs/ was `ALLOWED writers=[bash,zsh,dash]`, the `${...}`
+    word the residual "a script held in a variable" while its word was text the guard could read. THE RULE, stated at
+    `defaultReading` in the lexer (from the same descent as `nestedExpansions`: a second lex per level was exponential in the
+    nesting, the cap test's 70 levels never returning) and here in the same words: `${name:-word}`, `${name-word}`, `${name:=word}` and `${name=word}` stand for word when the name is unset, and `${name:+word}` and `${name+word}` when it is set, so when word lexes to one literal text under the word's quoting that text is a reading of the word, read as a script where the word is one (a `-c` operand, a here-string, a here-document body fed to a shell), in every position, since zsh splits no expansion's result. Measured: `bash -c ${x:-'cp a
+    b'}` unquoted copies in all three (the quotes quote) and `bash -c "${x:-'cp a b'}"` in none (inside double quotes the quotes are
+    characters: a command named `cp a b`); `bash -c "${x:-cp a b}"` copies in all three and `bash -c ${x:-cp a b}` unquoted in zsh
+    alone (bash and dash split the word and hand `cp` alone to bash); `${x-..}`, `${x:=..}` and `${x:+..}` with x set copy in all
+    three; `${x:?..}` (a message) and `${x}` give no reading; in a here-document body `${x:-'cp a b'}` runs nothing (the quotes are
+    characters there too). (4) ZSH'S `=(cmd)`: `echo ${x:-=(cp ../base/report.md report.md)}` from docs/ was `ALLOWED writers=[zsh]`,
+    `=(` appearing nowhere in the hook, while the bare `cat =(cp ..)` and `: =(cp ..)` were refused by accident (the parenthesis read
+    as a subshell). THE RULE, stated at `eqProcsubStart` in the lexer and here in the same words: zsh performs `=(cmd)` where a word begins, unquoted (an operand, an assignment's value, the word of a `${...}` operator, a replacement part), and nowhere else, so it is read as `<(cmd)` is, cmd running and read like a `$(...)`, for the Bash tool's command and for a script handed to zsh. Measured writing in
+    zsh: the operand, `x==(cp ..)`, `${x:-=(..)}`, `${x:-${y:-=(..)}}`, `${(e)x:-=(..)}`, `${x/b/=(..)}`, `zsh =(echo 'cp ..')` as a
+    script operand; writing in none: `${x:-a=(..)}`, `[[ -n =(..) ]]`, `"${x:-=(..)}"`, `${x:-"=(..)"}`, `bash -c 'cat =(..)'` (a
+    syntax error in bash, whose parenthesis the guard still reads as a subshell, a cost that predates this fix-up), `x=abc; echo
+    ${x#=(..)}` (read all the same, a priced cost). (5) THE CONSUMER'S STDIN: `echo 'cp ../base/report.md report.md' | (bash)`, `|
+    if true; then bash; fi`, `| bash /dev/stdin`, `| bash /dev/fd/0`, `| bash -c 'bash'`, `| sh -c sh`, `| bash -c 'exec bash'` and
+    `| bash -c 'bash -s'` from docs/ were `ALLOWED writers=[bash,zsh,dash]`, `bash <(echo '..')`, `bash < <(echo '..')` and `bash -s
+    < <(echo '..')` `ALLOWED writers=[bash,zsh]`, while `| { bash; }` was refused by accident (the brace sharing the shell's
+    segment); found beside them, `(bash) <<'EOF'`, `{ bash; } <<'EOF'` and `if true; then bash; fi <<'EOF'` with the copy in the
+    body, `ALLOWED writers=[bash,zsh,dash]`. THE RULE, stated at extract's `stdinBodies` (`producerAt` through the frames'
+    `stdinFrom`, `closerStdin` into their `stdinText`, THE INHERITED STDIN in `recurse`, `STDIN_NAMES` in `shellScript` and the
+    interpreter walk, `procsubOf` and `literalOutput` for the substitution) and here in the same words: a compound command's standard input is the pipeline's, and so is what a redirection on its closer feeds it, so every command inside it that reads its script from stdin reads what was piped into the compound or redirected onto its closer; a `<` into the standard input feeds the command what it names, read when it is a process substitution whose command is a literal echo or printf, as a script operand that is one is read; a script operand naming the standard input (`-`, `/dev/stdin`, `/dev/fd/0`, `/proc/self/fd/0`) reads it; and a `-c` script, a `$(...)` and a script the shell reads from a file run with their caller's standard input. Measured:
+    every compound kind, the nesting, a here-string and a `<(echo ..)` on the closer, `bash 3</dev/null` (the pipe still read) and
+    `echo '..' | bash </dev/null` (zsh's multios feeds the pipe too: `writers=[zsh]`, both read); a definition (`| f() { bash; }`)
+    reads nothing; the costs, refused with no shell writing: `| while read -r l; do bash; done` and `| bash -c 'cat; bash'` (the
+    input drained before the shell), `| if true; then :; else bash; fi` (the branch not taken), `bash <(cat f)` allowed (a producer
+    the guard cannot read, the residual). (6) THE SPLIT OPERAND (found while pinning the IFS cost): `IFS=:; cp $(echo
+    '../base/report.md:report.md')` from docs/ was `ALLOWED writers=[bash,zsh,dash]`, `cp $1` and `cp $(cat f)` the same shape, a
+    form present since the guard's first commit: a writer with fewer operands than it needs named no target. THE RULE, stated at the
+    copying writers' case in extract and here in the same words: when a copying writer (cp, mv, install, ln) has fewer operands than its two and one of them is an unquoted expansion the guard did not resolve, the shell may split it into the operands the writer needs, so that operand is a target the hook cannot read (`cp "$(cat f)"`, double-quoted, never splits and
+    stays allowed). THE POPULATIONS, each through the hook as a process from the row's cwd and the three shells unguarded, the
+    fixtures stating them: the stdin-script matrix (`tools/romp-track-bash-guard-stdin-script-matrix.json`: 6 roads x 10 shapes
+    around the shell x the 5 shells of SHELLS x 2 scripts), `rows 600 refused 600 allowed 0 other 0 writes bash=480 zsh=480 dash=320
+    timeouts 0`, `FALSE ALLOWS (allowed, a shell writes; the 600 rows not marked residual): 0`, `refused with no writer: absent 120`
+    (ksh is not installed here); the heredoc-body matrix (`tools/romp-track-bash-guard-heredoc-body-matrix.json`: 6 delimiter
+    quotings x 5 body lines x 6 consumers), `rows 180 refused 156 allowed 24 other 0 writes bash=116 zsh=116 dash=116 timeouts 0`,
+    `FALSE ALLOWS (allowed, a shell writes; the 180 rows not marked residual): 0`, `refused with no writer: absent 24 escaped-paren
+    16` (the 16: a quoted body's `\$(cp ..)` handed to a shell, a syntax error every shell stops on, read as a subshell running the
+    copy, the parenthesis read that predates this fix-up). The verdicts of the earlier fixtures are unchanged at this commit:
+    `existing rows: 1020 unchanged, 0 changed, 0 missing` (the param-word matrix), `existing rows: 300 unchanged, 0 changed, 0
+    missing` (the piped-script matrix), `existing rows: 2280 unchanged, 0 changed, 0 missing` (the construct matrix). THE RESIDUALS, named here and on the hook
+    header beside the earlier ones: a script a `${...}` word stands for when the guard cannot read the word (`bash -c
+    "${x:-$(cat f)}"`), one fed by a redirection on the closing brace of zsh's brace-body compound (`if [[ a ]] { bash } <<'EOF'`,
+    a `}` closer the frame counts and closerStdin does not match), a producer behind a pipe the guard cannot read (the second fix-up's list, `yes '..' | head -1 | bash` and `| sed '' | bash` among them; relabelled by round 6's second commit as a producer outside THE OUTPUT MODEL, which reads a subshell or a group of echo, printf and silent commands), and a command whose name is an expansion (named
+    among the writers since round 4: the verifiers' `${SHELL} -c '..'`, `$SHELL <<< '..'`, `echo '..' | ${x:-bash}`, 15 rows, while
+    `env ${SHELL} -c '..'` is refused by the wrapper's unknown-option rule, an inconsistency stated, not a rule). Pinned: the rows
+    test's third fix-up group (139 rows: the verifiers' spellings, the three classes found beside them, the quotings, the costs, the
+    residuals, and the twins of the legacy rows whose `$(echo ..)` stand-in the fix-up resolves, each by name now, the legacy rows
+    keeping their intent through a pipeline the guard does not read), the two fixtures, the lexer's reads in
+    `tools/romp-track-bash-guard-shapes.test.mjs`, and the plan test (the six rules on both surfaces in the same words, the
+    functions, the fixtures' populations, the residuals named here, on the header and in hooks/README.md, the surfaces' sentence).
+    Mutation on scratch copies: with the unquoted body kept raw, the four tests the third fix-up's name selects (the lexer's shapes, the stdin-script matrix, the
+    heredoc-body matrix, the rows) print `# pass 0 # fail 4` (`H-sub: refused`, `the heredoc-body matrix: no row a shell writes is
+    allowed`); with the resolved substitution disabled, `# pass 0 # fail 4` (`H-script-expanded: refused`, `the stdin-script matrix:
+    no row a shell writes is allowed`); with the default word's reading removed, `# pass 2 # fail 2` (`H-script-default-word:
+    refused`); with the `=(` read removed, `# pass 2 # fail 2` (`E-brace: refused`); with the compound's piped producer not read
+    through the frames, `# pass 1 # fail 3` (`C-subshell: refused`, the stdin-script matrix red); with the closer's redirection not
+    fed to the compound, `# pass 1 # fail 3` (`C-heredoc-on-subshell: refused`); with a script operand naming stdin read as a
+    file, `# pass 1 # fail 3` (`N-dev-stdin: refused`); with the inherited stdin dropped, `# pass 1 # fail 3` (the inner-shell
+    group's first row, `echo '..' | bash -c 'bash'`: `refused`; the row's label is not spelled here, since its leading letter reads
+    as a first-person pronoun to the plan tests' quoted-utterance pin); with the split operand removed, `# pass 2 # fail 2`
+    (`S-ifs-named: refused`); with the process-substitution script operand not read, `# pass 2 # fail 2` (`E-script-operand:
+    refused`).
+    ROUND 6 (2026-09-20; round 5's ruling on the third fix-up's head): THE RESOLVER'S CONTRACT. Round 5 found four readings of the
+    third fix-up that turned a refusal of the base into an allow, each a text the machinery computed, believed and trusted: printf's
+    width and precision ignored (`echo x > $(printf '%.9s' report.mdXX)` from docs/ judged on report.mdXX while bash, zsh and dash
+    wrote report.md), an unquoted glob character switching the readings off (`bash -c "${x:-cp ../base/*.md report.md}"` handed to
+    the shell unread), the octal escape without a leading zero missing from the union (`$(echo 'repor\164.md')` judged on the
+    spelling while dash wrote report.md; `$(printf '%b' ..)` while bash and dash did), and THE SPLIT OPERAND exempting every
+    double-quoted word (`cp "$@"` copying in every shell). The contract, stated at the reading functions in the hook and consumed in
+    two places (lex's `placeReading`, extract's `scriptTexts`): a reading function answers sound texts (every text some shell could
+    produce), UNRESOLVABLE (the resolver looked and cannot establish the text), or null (the resolver does not apply), and nothing
+    else; a reading takes the text road, the word's literal characters judged as a target, only when plain, one text from no
+    interpretation, so nothing a reader could get wrong reaches a target judgement; every other reading travels the script road,
+    where a reading the union lacks can at worst leave a script as unread as the base left it; and UNRESOLVABLE refuses in both
+    places, never the residual pass. printf's `%s` and `%b` are read with the `-` flag, a width and a precision, `%%` and each shell's
+    escapes; every other conversion, flag, a `*` from a non-digit operand, a non-ASCII operand under a width or precision, an option
+    word and a missing format are UNRESOLVABLE, and `-v` is the empty text every shell prints. Nine escape readers (echo, a printf format and `%b`, in bash, zsh and dash) are
+    derived from the manuals and pinned by execution. A glob character, a brace list, a shell-dependent quoting or an expansion the
+    resolver does not read in an echo operand or the default word is UNRESOLVABLE, so `s='cp ..'; echo "$s" | bash`, the piped-script
+    matrix's residual-value producer, is refused now and its five rows moved out of the residual set (ids `value-unread/..`,
+    verdict r, the same writers). `dqSingleField` exempts a double-quoted operand from the split rule only when proven one field
+    (the `@` forms, `[@]`, `${!..}` and zsh's `(`, `=`, `~` and `^` openers may split). The crash round 5's correctness-3 found (`printf`
+    with no format, `printf --`, `printf -v`: an empty reading, a TypeError, a refusal inside a project and an allow outside one
+    while every shell wrote) is closed by the same rule (the missing format UNRESOLVABLE, `-v` the empty text, so
+    `$(printf -v x a)report.md` is judged by name from any cwd), and the catch-all refuses from every cwd, because the walk throws before
+    the hook knows what a command reaches and the cwd bounds nothing (a `cd <project>/docs && cp .. $(printf)report.md` from a
+    scratch directory wrote the tracked file). Pinned: a structural test deriving the reading functions from the hook's source
+    (called outside the two places, or a word's readings read elsewhere, reds), the readers and the printf forms by execution in the
+    three shells, the rows test's round-6 group, the shapes test's single-field rows and the catch-all's three stages from a cwd in
+    no project. Stated, not closed: zsh's glob grouping (`cp ../base/(r)eport.md report.md` handed to zsh, literal or through a
+    reading) is read as a subshell by the lexer's zsh grammar and allowed while zsh copies, a lexer gap outside the resolver.
+    ROUND 6, SECOND COMMIT (2026-09-21; round 5's rulings C, D, E, F and G). THE ALIAS ROAD (extra7-2): a writer behind a shell
+    alias the command defines was read as an unknown command and allowed while its text stood in the command; measured by the
+    shells' grammars (bash: the first unquoted word of a simple command, under `expand_aliases` when not interactive, never on the
+    line that defines it, a trailing blank chaining; dash: wherever a reserved word may occur, in the input stream, so through
+    `-c` on the next line; zsh: command position, `-g` in every position, `-s` a suffix, from a file or a pipe and never through
+    `zsh -c`), dash copied through `-c`, zsh and dash through a here-document or a pipe, bash under the option. THE HEAD SPLICE
+    reads a command name that stands for a text the shell runs in its place, the text spliced in and the segment re-lexed with its
+    tail as spelled: an alias body bound on an earlier line (`aliases`; a `-g` alias makes every later unquoted word spelled so a
+    target the hook cannot read; `unalias` is not read, the safe side), a hashed path (`hash -p PATH NAME`, `hash NAME=PATH`), a
+    path the command made by copying or linking another command (`bound`: `cp /usr/bin/cp ../scratch/c2; ../scratch/c2 a b`), and
+    the readings of an expansion the resolver established (`${x:-cp} a b` ran the copy in every shell while the reading `cp` went
+    unused in head position: the contract's head role yields the readings now); a binding the resolver cannot read makes the name
+    a target the hook cannot read, and an alias whose NAME it cannot read makes every later command name one. `eval` and `trap`
+    with text the resolver reads are scripts of this shell (`eval 'cp a b'`, `trap 'cp a b' EXIT` ran the copy while allowed);
+    `source` and `.` of the standard input read what the command reads. THE OUTPUT MODEL (tests-1): a subshell or a `{ }` group
+    before a pipe, and the list inside a `$(...)`, a backtick or a `<(...)`, prints what its echo, printf and silent commands
+    print (listOutput; a `cat` fed one here-document prints its body), the text placed on the closer that carries the pipe and
+    read as the consumer's script; a command the model does not read beside a printer makes the list UNRESOLVABLE, refused, its
+    commands still read; a list with no printer is outside the model, the residual relabelled honestly on every surface (a
+    producer outside the output model: a function call, a tee, a further pipe, a cat of a file), and the piped-script matrix's
+    residual set is keyed on the model, not on a hand list. THE RESIDUAL PROPERTY (C, extra7-3), below, replaces the closing hand
+    list: the classes it states are those THE RESIDUAL TABLE measures, and the reviewer's narrower sentence (the hook cannot read
+    a command whose text it cannot statically resolve) is withdrawn with the alias road, since the property must cover a command
+    the hook can read and still does not resolve to a writer. THE EVIDENCE A ROW NEEDS (E, regression-3): the matrices' NOT RUN
+    skip is keyed on the fixture's `needs`, the programs a row's evidence needs, derived by hiding each named program behind a
+    scratch PATH, so a row the running shell writes before the named consumer is reached is measured on a runner without that
+    consumer; a runner lacking zsh is reproduced in the test file itself. The construct matrix pins the key set of CONSTRUCT_HEADS
+    by kind (F), derives its population sentence from its tables (G), and the four constructs the param-word note named without a
+    row have rows.
+    ROUND 6, THIRD COMMIT (2026-09-21; the round's three verifiers on the second commit's head, every finding a command a shell
+    wrote onto the tracked file while the guard allowed it, each closed by refusing and none relabelled). ZSH'S UNBRACED FLAGS:
+    `$=name`, `$^name` and `$~name` are zsh's `${=name}`, `${^name}` and `${~name}` without the braces (zshexpn), and the lexer
+    read a `$` before `=`, `^` or `~` as a literal dollar, so `cp "$=X"` with two paths in X was a one-operand cp the split rule
+    never saw, and `cp ../base/report.md $~X` a copy onto the literal name `$~X`, both allowed while zsh split, or substituted,
+    and copied; expansionAt reads the three as expansions under zsh's grammar (a script handed to bash or dash keeps the literal
+    dollar) and dqSingleField proves none of them one field. THE SPLIT TARGET: the resolved substitution's rule called a
+    redirection target a place no shell splits, and bash and zsh split it (zsh opens every blank-separated field under MULTIOS,
+    bash the one field or none of several, an ambiguous redirect) while dash opens the whole text, so `echo x > $(echo
+    'report.md ')` was judged on the untracked name `report.md ` and allowed while bash and zsh wrote report.md, and `> $(echo x
+    report.md)` while zsh wrote x and report.md; endWord records each field the resolver's blanks cut as a redirection of its
+    own beside the whole text (expandedFields), and the rule's sentence on decision 47 says so. THE ALIAS ROAD INTO A TEXT
+    PARSED LATER: a text the shell parses after the segment handing it over has run (eval's and trap's operands, a sourced
+    standard input, a `$(...)`, a backtick, a `<(...)`) was lexed as its own text, its line count starting at 1, so an alias
+    bound on line 1 never stood on an earlier line and `alias c=cp; eval 'c ../base/report.md report.md'` copied in zsh and dash
+    (bash under `expand_aliases`) while allowed, as did `trap`, `. /dev/stdin`, `echo $(c ..)` and a backtick; lineOf gives such
+    a text coordinates strictly between the outer segment's line and the next (`lineBase`, `lineStep`; recurse), so a binding on
+    or before the outer line is seen inside it, a binding made inside it is seen on its later lines and on every later outer
+    line, and never on the outer line itself, as the shells parse (`eval 'alias c=cp'; c a b` expands in none of them). A
+    SOURCED PROCESS SUBSTITUTION and A DESCRIPTOR AS THE SCRIPT: `. <(echo 'cp a b')` and `source <(..)` (bash and zsh; zsh's `.
+    =(..)` too) are read as `bash <(..)` is; a script operand naming a numbered descriptor (`/dev/fd/N`, `/proc/self/fd/N`:
+    `bash /dev/fd/3 3<<'EOF'` ran the body in every shell, `bash /dev/fd/9 9<<< '..'` and `. /dev/fd/3 3<<< '..'` in bash and
+    zsh) reads every body the command carries (isStdinName; the lexer keeps no descriptor on a body, so the over-read is the
+    safe side); and a `--rcfile` or `--init-file` process substitution is read whether or not `-i` is spelled (bash reads it
+    only when interactive: the refusal without `-i` is a stated cost). THE SED SCRIPT: sed's `w` and `W` commands and the `w`
+    flag of `s` write the file they name, and sed was a writer through `-i` alone, so `sed -n 'w report.md' ../base/report.md`
+    and `sed 's/x/y/w report.md' ..` wrote in every shell while allowed; sedWriteFiles reads a literal script over GNU sed's
+    command grammar and sedScriptWrites judges each file by name (a plain-string name in the script resolves first:
+    `f=report.md; sed -n "w $f"` refuses by name), a script whose reader stops at a letter the grammar lacks refuses naming the
+    letter (sed itself rejects such a script; a reader that misread an address would stop the same way, so it does not guess),
+    and a script the resolver cannot read stays the residual, named in the property. A GLOB IN THE COMMAND NAME: `/usr/bin/[c]p
+    a b` ran cp in every shell while the walk read an unknown command; the sorted matches stand in the name's place through THE
+    HEAD SPLICE (several make the first the command and the rest its leading operands, as the shells do), a pattern the guard
+    cannot expand is a name it cannot read, and one matching nothing stands as spelled. ZSH'S OTHER HEADS: `=cp a b` (zsh's
+    `=cmd`, the path of cp) is spliced under zsh's grammar, `emulate sh -c TEXT` runs TEXT as a script of zsh, and `zf_mv`,
+    `zf_ln`, `zf_rm` and `zf_rmdir` (zsh/files) are the coreutils commands by another name. A CAT OF THE STANDARD INPUT inside a
+    `$(...)` with nothing in the list feeding it (`echo 'cp a b' | { bash -c "$(cat)"; }`, `| bash -c 'eval "$(cat)"'`: every
+    shell ran the piped text) is UNRESOLVABLE under THE OUTPUT MODEL, refused where a script is built from it; a cat after a
+    pipe inside the list stays the producer outside the model. THE RESIDUAL TABLE gains the members of its classes the verifier
+    found (a `$(which cp)` head and the `${...}` operator heads, setarch and linux64, uniq, awk's redirect, scp, openssl, shred,
+    bash's history -w, zsh's sysopen and mapfile, a sed script the resolver cannot read, a written sed -f file), the writer
+    class is restated to cover a write form of a program the hook models, and the child test that reproduces a runner lacking
+    zsh counts the rows' NOT RUN line, not the probe's. Stated, not decided here: deleting or moving a tracked file (`rm
+    report.md`, `mv report.md other.md`) is allowed, since the guard's contract is the write that lands on a tracked file;
+    whether the tracked set shrinking is a write for it to refuse is a scope question raised with the round.
+    ROUND 6, FOURTH COMMIT (2026-09-21; the round's three verifiers on the third commit's head, every finding a command
+    a shell wrote onto the tracked file while the guard allowed it, each closed by refusing and none relabelled, and
+    each rule keyed on the shells' grammars rather than on the spelling that found it). THE DESCRIPTOR FEED: a script
+    operand naming a numbered descriptor reads a `<` on that descriptor too (`bash /dev/fd/3 3< <(echo 'cp a b')`,
+    `python3 /dev/fd/3 3< <(..)` and `. /dev/fd/3 3< <(..)` ran the printed text in bash and zsh while textsOf skipped
+    every `<` off the standard input; shellScript answers the descriptor named, fdOfName, and stdinBodies reads it; a
+    `<` on a descriptor no operand names stays unread, since the shell reads its script elsewhere). THE EXEC FEED: a
+    bare `exec` with redirections alone opens them for the rest of this shell and for the processes it starts (`exec
+    3<<< 'cp a b'; . /dev/fd/3` and `exec < <(echo 'cp a b'); bash` ran the text in bash and zsh), so its bodies feed
+    every later consumer (execFeeds, shared by every recursion). THE ALIAS BODY: a body holding a `$` or a backtick
+    after quote removal is expanded when the alias is USED (`alias c='$x'`, then `x=cp`, then `c a b` copied in dash,
+    and through a here-document in every shell), so it binds null, refused as a text the resolver does not read, as an
+    expansion at the definition already did; a `-g` alias at a redirection target is refused as one among the words is
+    (`alias -g R=report.md` then `echo x > R` wrote in zsh); zsh's `functions[NAME]=BODY` binds NAME as an alias does.
+    THE BOUND PATH: a path the command made by copying or linking a command is looked up by the head's text however
+    spelled (`'../scratch/c2'`, `"$PWD/../scratch/c2"`, `$x` resolved to it: the lookup read the unquoted literal
+    spelling alone), by a pattern's matches among the paths bound (`../scratch/c?`: the file is made when the command
+    runs, so the filesystem cannot expand the pattern at check time), through PATH for a bare name (`ln -s /usr/bin/cp
+    ../scratch/c2; PATH=../scratch c2 a b`), and a `cat FILE > DEST` binds DEST as cp does; a head through a HOME the
+    command reassigns, or through a PATH set to a value the resolver does not read, is one the hook cannot read while a
+    path is bound. THE COMPOUND PRODUCER: a keyword compound before the pipe (`for i in 1; do echo 'cp a b'; done |
+    bash`; while, until, if and case alike) prints what the list from its head to its closer prints, and the head runs
+    the body a number of times the model does not count, so a printer inside it makes the list UNRESOLVABLE (placed on
+    the closer segment that carries the pipe, listOutput naming the head) and a body with no printer stays outside the
+    model; dash reads `(( list ))` in command position as a subshell in a subshell, so `((echo 'cp a b')) | bash` prints
+    the list's text there (bash and zsh read arithmetic and stop), the reading placed as the producer's. THE OPTION
+    TERMINATOR: `eval -- TEXT` (bash and zsh), `. -- FILE` and `source -- FILE` read past the `--`. THE HEAD CANDIDATES
+    (extract): every plain-string value ANY assignment word of the command gives a name, in every scope and form,
+    whitespace included, shared by every recursion; a word that is one `$name` expansion the readability rule did not
+    resolve stands for each value where it is a command name or a script (scriptTexts, roles 'head' and 'text'), the
+    script road's union, so `c=cp; export c; $c a b`, `(c=mv); c=cp; $c a b`, `c=cp; echo '$c'; $c a b`, `declare c=cp;
+    $c a b`, `eval c=cp` then `$c a b`, `c=cp bash -c '$c a b'`, `env c=cp bash -c '..'`, `f() { local c=cp; $c a b; };
+    f`, `c='cp a b'; $c`, `bash -c "$c"` and `eval "$c"` refuse (the last three were the residual "a script held in a
+    variable", whose class is restated to the names a construct the resolver does not read fills in); a target keeps the
+    readability rule, whose safe side is the refusal it already gives an unreadable name; the glued default word
+    (`${c:-c}p a b` ran cp in every shell while the reading `c` was dropped for the glued `p`) carries its reading with
+    the literal text around it (THE GLUED READING, readingsOf in lex). THE IFS RULE: while the command names IFS, an
+    expansion not inside one pair of double quotes splits at IFS's characters, a rule the resolver does not compute, so
+    the readability rule does not read it there (a target refuses as one the hook cannot read, a copying writer's one
+    operand as split, a command name through scriptTexts) and lex declines to resolve a substitution at a redirection
+    target too (`IFS=:; echo x > $(echo 'report.md:x')` opened report.md in zsh under MULTIOS; `x=a:report.md; IFS=:;
+    tee $x`, `cp $x` and `IFS=: eval '..'` wrote in bash and dash), the rule holding in every text the command hands
+    over. THE FED SUBSTITUTION: a `$(...)`, a backtick or a `<(...)` whose list the resolver does not read runs a
+    command outside the output model, which may read the standard input, so where this command feeds that input with a
+    text the guard read (a pipe from a producer it reads, a closer's redirection, an exec feed, the caller's) the word
+    is UNRESOLVABLE (`echo 'cp a b' | bash -c "$(head -1)"`, `$(sed '')`, `$(tr a a)`, `$(awk 1)`, `$(dd)`,
+    `$(</dev/stdin)`, `$(command cat)`, `$(busybox cat)` and `bash <(cat)` each ran the piped text while the rule that
+    refused `$(cat)` was keyed on the spelling `cat`); with nothing fed the text is not in the command and the word
+    keeps the residual; a process substitution so marked is recorded (cannotRead dropped every `<(..)` before); the
+    cost, stated and pinned: a cat of a FILE in a fed segment refuses too. THE SED FILE: sed's `-f FILE` naming the
+    standard input or a descriptor this command feeds stands for the bodies fed, a `<(..)` for the text it prints, each
+    read over the sed grammar (`sed -n -f /dev/stdin f <<< 'w report.md'`, `-f <(echo 'w report.md')`, `-f /dev/fd/3 ..
+    3<<< '..'`, `--file=<(..)` and the here-document form wrote in bash and zsh, dash through the here-document). THE
+    VALUED NAMES: the value of PS0, PS1, PS2, PS3, PS4 and PROMPT_COMMAND is a script of this shell (bash runs a prompt
+    string's `$(..)` when it prints the prompt or traces a command: `PS4='$(cp a b)'; set -x; :`, `PS4='..' bash -xc :`,
+    `export PS4=..` and `PROMPT_COMMAND='cp a b' bash -i` ran the copy), ENV and BASH_ENV name a file the shell sources,
+    read when it is a `<(..)` the resolver reads (`ENV=<(echo 'cp a b') dash -i`; the lexer keeps a glued `<(..)` in its
+    word as bash does, `ENV=/dev/fd/63`), bash's `${name@P}` runs the value's `$(..)` (each candidate value read), and
+    `mapfile -C CALLBACK` runs the callback (SCRIPT_VALUED_NAMES, STARTUP_FILE_NAMES, readValuedWords). ENV'S OPERAND:
+    after env an assignment operand however quoted is env's (`env 'X=a b' cp a b` copied in every shell while the quoted
+    word was read as the command name). THE RESIDUAL TABLE gains the members its classes lacked (unshare, setpriv, perf
+    and prlimit, wrappers outside the set; parallel, a reader like xargs; an alias in a sourced written file; an eval
+    printing before the pipe; perl's File::Copy) and loses the two THE HEAD CANDIDATES read.
+    ROUND 6, FIFTH COMMIT (2026-09-21; the round's three verifiers on the fourth commit's head: every finding a command
+    a shell wrote onto the tracked file while the guard allowed it, each closed by a rule fitted to its class, none
+    relabelled, and the table gaining the members its classes lacked). THE PARAMETER'S VALUE (defaultWordReading, lex's
+    defaultReading, extract's scriptTexts): a default word's text is the parameter's value when it is set and the word
+    otherwise, and the reading was the word alone, so `c=cp; ${c:-cat} a b` ran the copy in every shell (and `${c-cat}`,
+    `${c:-}`, `${c:-''}`, `"${c:-}"`, `${c:?}`, `${c?}`, `${c:=cat}`, through `eval "${c:-cat} a b"`, as a piped
+    script's consumer and as a here-string's); the reading carries the name (`params`, with the literal text glued
+    around the expansion, so the value stands where the expansion stands) and scriptTexts joins the value the
+    readability rule and THE HEAD CANDIDATES hold for it, refusing the word as UNRESOLVABLE where that value is not
+    readable: a name a construct the resolver does not follow wrote (`read c`, `c=$(which cp)`), one a value the
+    resolver could not establish was given, or one the command never sets, whose value is the shell's own (a
+    `${X:-default}` command name or script from a tracked cwd with X untouched refuses, a stated cost; the `+` forms
+    depend on no value and keep the word alone; a default word glued to another expansion is UNRESOLVABLE). THE MOVED
+    SHELL (extract's return, recurse's adopt): a cd inside a text this shell ran in place (eval's text, a sourced
+    standard input, here-string or `<(..)`, a head splice, emulate's and mapfile's texts) moved nothing for the rest of
+    the command, so `eval 'cd ../notes'; cp ../base/report.md n1.md` landed on the tracked notes/ in every shell while
+    the copy was judged from docs/ (with `eval "cd $d"`, `pushd`, `. /dev/stdin`, `source /dev/stdin <<< ..`, `. <(echo
+    ..)`, an alias whose body is a cd, `alias c=cd`, `c=cd; $c ..`, inside a function, and the copy through cp, mv, tee,
+    a `>`, sed -i, python or `bash -c`); the sub-walk's directory state comes back and is adopted, recorded on the
+    frames and on a function body around it, and a trap action that moves leaves the directory unknown (`trap 'cd
+    ../notes' DEBUG; cp ..` moved bash and zsh before the cp). THE DUPLICATED DESCRIPTOR (lex's dups, fdsFor): `[n]<&m`
+    was skipped, so `exec 3< <(echo 'cp a b'); bash <&3`, `bash 0<&3`, `bash 3< <(..) <&3`, `{ bash; } 3< <(..) <&3`,
+    `bash /dev/fd/4 4<&3` and `exec <&3; bash` ran the text in bash and zsh; a consumer reads every descriptor a dup on
+    its segment or on an exec feed reaches, to a fixpoint, and a dup from a word the lexer cannot read reads every
+    descriptor fed. THE PASSED-THROUGH TEXT (passthroughCat, pipedScripts): a plain `cat` of its standard input before a
+    pipe prints what feeds it (`echo 'cp a b' | cat | bash`, `cat < <(echo ..) | bash`, `exec 3< <(..); cat <&3 | bash`,
+    `(echo ..) | cat | bash` and `| (cat | bash)` each ran the text in the shells named), so that text is the consumer's
+    script; a cat with an option word is UNRESOLVABLE where a text is fed (`cat -s` passes a script unchanged), a cat of
+    a file stays the residual, and the property's fifth class says so. THE STARTUP FEED (the shells' branch): a BASH_ENV
+    or ENV value naming the standard input or a descriptor the shell is fed is the text fed, sourced at startup
+    (`BASH_ENV=/dev/stdin bash -c : <<< 'cp a b'`, `echo '..' | BASH_ENV=/dev/stdin bash -c :`, `BASH_ENV=/dev/fd/3 ..
+    3< <(..)`, through export, env and a nested `bash -c`, and `ENV=/dev/stdin dash -i -c :`), read whether or not this
+    shell would. THE EXPORTED FUNCTION (the walk; commandOf's env operand): env sets any operand holding a `=`, and a
+    bash the command starts imports `BASH_FUNC_NAME%%=() { .. }` as the function NAME, so the quoted word was read as a
+    command name while `env 'BASH_FUNC_c%%=() { cp "$@"; }' bash -c 'c a b'` (and through `env -i`, `echo c | env ..
+    bash`, `bash -s <<< c`, a `BASH_FUNC_cat%%` shadowing cat) copied in every shell; the word is a definition, its body
+    read as `export -f`'s is. THE SPLICED DEFINITION (defLineOf): a definition made inside a head splice bound at
+    Infinity, after every later use, so `alias a=alias`, then `a c=cp`, then `c a b` copied in dash (and, through a
+    here-document or a pipe, in every shell); it binds at the spliced segment's line. THE CALLED BODY (functionBodies,
+    popFunction, the walk, recurse's runFunction and callArgs): a function the command defines, called where a text the
+    guard holds feeds it, was an unknown command while its body ran a shell on that text (`f() { bash; }; echo 'cp a b'
+    | f`, `f <<< ..`, `f <<'EOF'`, `f < <(..)`, bodies of `sh`, `cat | bash`, `. /dev/stdin` and `bash "$@"` called with
+    /dev/stdin, the call inside a subshell or a group); the definition's text is kept by name and replayed at the call
+    with the fed text on its standard input and the call's operands, a call inside its own body not followed again. THE
+    HEAD CANDIDATES' three gaps (noteCandidate, candidateTexts, scriptTexts): `+=` appends (`c=c; c+=p; $c a b` copied
+    in bash and zsh), a value's newline is a blank where the value is a command name (`c='cp<newline>a b'; $c` copied in
+    bash and dash), and two names in one quoted text compose (`a=cp; b='a b'; eval "$a $b"`, `bash -c "$a $b"` and `sh
+    -c "$a $b"` copied in every shell); and THE ASSIGNMENT VALUE (lex's assignmentValue, noteCandidate's value road): no
+    shell splits an expansion's result in an assignment's value, while the lexer cut `x=$(echo 'cp a b')` into three
+    words and the candidates read `cp` alone (`$x` then copied in bash and dash), so the value is one text, and a value
+    that is a reading on the script road (`x=$(printf '%s' 'cp a b')`) is a candidate through scriptTexts, one the
+    resolver could not establish marking the name (unreadValues), refused where the name is a command name or a script.
+    THE RESIDUAL TABLE gains the members its classes lacked that the verifiers measured: zsh's `${=c}`, `${~c}`,
+    `${(z)c}`, `$=c`, `${(L)c}`, `${c:s/x/p/}` and `${c:q}`; bash's `${c:0:2}`, `${c:0}`, `${c,}`, `${c@P}`, `${c@E}`,
+    `${c//x}`, `${c#}` and `${c%?}`; arrays by every spelling; getopts's OPTARG, REPLY, select and a loop variable after
+    its loop; a function's positionals and its `eval "$*"`; `${d:=$c}`, `declare d=$c` and `set -- $c`; a `read` or
+    `mapfile` of a fed text, inside a called body too; the loader `/lib64/ld-linux-x86-64.so.2`; xargs by every
+    spelling; a written `.zshenv` read through ZDOTDIR or HOME; a name glued to another expansion in head position; an
+    eval, a backgrounded echo, `time`, `yes | head`, a second `| bash` and a tee before the pipe; python's `os.truncate`
+    and `os.write`, and its `os.system` through a called body or a descriptor. The contract paragraph says on its four
+    surfaces that deleting or moving a tracked file away is not a write the guard refuses, a scope question raised with
+    the round's review. Stated costs, each pinned with no shell writing: an untouched `${X:-word}` command name or
+    script from a tracked cwd; `cat -n` before a pipe fed a text; `exec 3<<< ..; BASH_ENV=/dev/fd/3 bash -c :` (bash
+    does not read it there); `env 'BASH_FUNC_..' sh -c c` (dash imports nothing); a function calling itself before its
+    shell.
+    ROUND 6, SIXTH COMMIT (2026-09-21; the round's three verifiers on the fifth commit's head, an attack lens, a
+    residuals lens and the body auditor: every finding a command a shell wrote onto the tracked file while the guard
+    allowed it, three of them roads by which a text the hook could not establish reached an allow through a null; the
+    mechanism is fixed once, stated here, and the rows follow from it). THE APPLIED RESOLVER (printerOf,
+    shapeOnPrinter, segmentOutput, listOutput, closerOutput): once the resolver applies to a segment (its head is a
+    literal echo or printf, or a cat fed a here-document, alone or in a list or group of them), every shape it does
+    not model is UNRESOLVABLE, never null: a redirection, a here-document, a `<`, a substitution or an arithmetic body
+    on the printer (`echo 'cp a b' 2>/dev/null | bash`, `</dev/null`, `3>/dev/null`, `>/dev/stdout`, `2>>`, `2>|`,
+    `2<>`, zsh's MULTIOS write forms, the same inside `$(..)`, a here-string, a `<(..)` and a here-document, each ran
+    the text in the shells named while the printer was dropped as outside the model and the list read as
+    printer-less), a `&&`, `||`, `&` or `|` after it inside a list (`(echo 'cp a b' && true) | bash` and its `||`, `&
+    wait` and `| cat` forms ran the text in every shell), and a redirection on the closer of the subshell or group
+    holding it (`(echo ..) 2>/dev/null | bash`, `(time echo ..) 2>/dev/null | bash`); null is reserved for a segment
+    whose head is no printer at all, the residual the property names; pinned by execution over every list operator and
+    every redirection operator the lexer has. THE UNREAD SCRIPT WORD (scriptTexts): a script word that is no expansion
+    and still not literal (a glob character, a brace list past the cap, a quoting whose reading depends on the shell)
+    is a text the resolver cannot establish, refused (`bash -c cp\ ../base/*.md\ report.md`, `[r]eport.md`,
+    `?eport.md`, the same through `sh -c`, `dash -c` and `eval`, python's and node's inline words holding a `*`, each
+    ran in bash and dash while no text was read and nothing was refused). THE SPECIAL PARAMETER (lex's braceParameter,
+    defaultWordReading): a default word over a digit run or a special parameter is a default word too; the `+` forms
+    stand for the word alone, a `-`, `=` or `?` form over `#`, `?`, `0`, `$`, `!`, `-`, `@` or `*` stands for a value
+    that is the shell's own, UNRESOLVABLE, and one over a positional parameter carries the name to THE POSITIONAL
+    VALUE (`${#:+cp} a b`, `${0:+cp}`, `${$:+bash} -c '..'`, `${1:-cp} a b`, `${@:-cp}`, `${!:-cp}`, `${0:-x} -c '..'`
+    ran the copy in the shells named while the grammar read names alone). THE ASSIGNED DEFAULT (lex's paramAssigns,
+    extract's noteCandidates): `${name:=word}` and `${name=word}` give name word's texts as candidates, a word the
+    resolver cannot establish marking the name (`: ${e:=cp}; $e a b`, `true ${e:=cp}`, `x=${e:=cp}`, `: ${e:=cd}; $e
+    ../notes; cp ..`, `: ${e:='cp a b'}; eval "$e"` ran in every shell while the assignment was recorded nowhere). THE
+    SHELL'S OPTION WORD (shellScript's optionWord, the walk's readShell): a word in option position of a shell in
+    SHELLS, with words after it, that the resolver did not read stands for each text it can (its readings, a
+    candidate, a positional), the shell read again with each in its place, and for none is refused on the side
+    WRAPPER_OPT takes for an option a wrapper's table does not know, every later word a target the hook cannot read;
+    as the last word it is the operand, so `bash -c "$x"` keeps the residual (`set -- -c; bash "$1" 'cp a b'`, `bash
+    "${f:--c}" ..`, `f=-c; bash ${f-x} ..`, `a=(-c); bash "${a[@]}" ..`, `bash {-c,} ..` ran the script in the shells
+    named while the expansion was taken as the script FILE operand and the `-c` it stood for was never seen). THE
+    POSITIONAL VALUE (bindPositionals, positionalWords, expandPositionals, setOperands, positionalsApply, the walk;
+    CANDIDATE_TOKEN and RESOLVED_NAME take a digit, `$@` and `$*`): THE CALLED BODY's replay runs for every call, fed
+    or not (`f() { bash "$@"; }; f -c 'cp a b'`, `f() { bash -c "$1"; }`, `"$*"`, `eval "$1"`, `"$@"` and `$1` as the
+    command name, a nested call, `f() { bash <<< "$1"; }`, `eval "cp $1 $2"` ran in every shell while the replay ran
+    for a fed call alone), and the positional parameters this shell holds are the replayed call's operands or those a
+    `set` with no option word gave (`set -- 'cp a b'; eval "$1"`, `set -- cp a b; "$@"`, `$*`, `set -- x cp; shift;
+    "$@" ..`), standing in place of a whole word that is one of them, read through the readability rule and THE HEAD
+    CANDIDATES for a `$N` inside a word, and joined by one blank for `"$*"` and `"$@"` in a here-string or an unquoted
+    here-document body; a `shift` by a count not read, a `set` whose operands or option words the resolver does not
+    read (`set -A` is zsh's array assignment), an `eval` of a text it does not read or a sourced file rebinds them to
+    values not known, after which a positional word is UNRESOLVABLE; a body being defined has positionals of its own
+    (`set -- cp; f() { $1 a b; }; f cat` runs cat, allowed), the replay reads a body's aliases as of the definition's
+    line (functionLines: `f() { c a b; }`, then `alias c=cp`, then `f` expands in no shell), and a fresh or fed
+    shell's positional parameters are its own, not read (`bash -c '$1 a b' _ cp`, the residual). THE EMPTY ALTERNATIVE
+    (lex's braceEmpty, the walk's variants): bash drops an unquoted empty word a brace list expands to and zsh keeps
+    it, so a writer's operands are judged under both readings and an empty word in command position is dropped (`{cp,}
+    a b`, `{mv,} a b`, `{bash,} -c '..'`, `{,cp} a b` copied in bash while the lexer's empty operand was judged as `cp
+    '' a b`, a copy no shell performs). THE RESIDUAL TABLE loses the fifteen rows these rules refuse (the positional
+    rows, the function-body rows, the inner pipe, the backgrounded and the timed echo, `${d:=$c}`) and gains the
+    members the verifiers measured that no rule reads: a function's call of itself, zsh's autoload of a written file,
+    a `.` reached through a value, nsenter, tmux, an alias in a sourced written file, a fresh shell's own positional
+    parameters, a `read` value as a trap action or inside a `-c` script; the property's second, third and fourth
+    classes are restated for them. Stated costs, each pinned with no shell writing: `echo "$(cat f)" | bash` (a
+    substitution in a printer's operand), `bash -c "$x" _ a b` (an expansion before further words), `${#-cp} a b` (a
+    `-` form over a special parameter); `bash -c "$x"` alone stays the residual and `bash -c "${x:-..}"` the fifth
+    commit's stated cost: two spellings, two rules, each stated.
+    ROUND 6, SEVENTH COMMIT (2026-09-21; the round's three verifiers on the sixth commit's head, an attack lens, a
+    residuals lens and the body auditor). A regression, an unsound reading and the round's pre-existing allows, the
+    mechanism fixed and the rest disclosed as rows. THE SPLICED PRINTER (printerOf, splicedPrinter, splicedOutput):
+    the sixth commit read printerOf on the raw words, so a command name that is an expansion was a head no printer,
+    a null the caller read as no printer, and `e=echo; $e 'cp a b' | bash` was allowed while every shell ran the
+    printed text, where the round-5 head had refused it by name; the head candidate is resolved and the segment
+    read again with each text spliced BEFORE printer-ness is decided (the order the writer, consumer and passthrough
+    heads already had), so a resolved echo or printf head is the printer and its printed text is read, a text no
+    candidate makes a printer staying null. THE UNSOUND UNICODE (shellEscapes): zsh renders a bare `\u` or `\U` (no
+    hex digit) as a NUL that command substitution drops, so the script the shell ran was the text before it while the
+    reader modelled the two characters; every `\u` and `\U`, bare or with hex, is now Undecodable for every reader.
+    THE SHADOWED BUILTIN and THE DEFINITION'S NAME: a function the command defines under a builtin's name (cd, pushd,
+    popd, chdir) runs through THE CALLED BODY, not the builtin, and the name of a `name()` definition moves nothing.
+    THE PARAMETER TABLES: zsh's `aliases`, `galiases` and `saliases` bind an alias as `alias`, `alias -g` and
+    `alias -s` do and `commands` a hashed path as `hash` does, keyed and whole-array forms. THE COMPOSED VALUE: a
+    value whose expansions are names the command gives values (`c=$1`, `c="$*"`, `c=$d`) stands for their
+    composition, so a positional laundered through a name and split by the shell is read, a top-level `set` seeded
+    into the candidates. THE POSITIONAL LIST'S SPELLINGS: `${@:N}`, `${@:N:M}`, zsh's `$argv` and `${@[N,M]}` read
+    as the list. THE EMPTY ALTERNATIVE among a call's operands is judged under bash's reading and zsh's. The head
+    splice reconstructs its siblings from a resolved word's text, not its raw spelling, so a `"$@"` already expanded
+    is not re-expanded. Every remaining allow-and-write the verifiers measured is a residual table row with its
+    writers: the positional operator forms, a file the command writes then runs through a substitution or a
+    process substitution, a decode, an inner shell's output, fakeroot and rbash, a producer outside the output
+    model (a `bash -c cat` in a pipe, zsh's `print`, a NULLCMD here-string, a cat of a process substitution), and
+    python's os.rename, os.replace, an exec'd write and an aliased open.
+    ROUND 6, EIGHTH COMMIT (2026-09-22; the round's three verifiers on the seventh commit's head, an attack lens, a
+    residuals lens and the body auditor). The regression closed through every wrapper, two mechanism defects that let
+    a shell write while the guard allowed, and the rest disclosed as rows. THE WRAPPED PRINTER (commandOf, printerOf):
+    the seventh commit's splice restored the bare `$e 'cp a b' | bash` refusal and left the same printer behind a
+    wrapper allowed (`e=echo; command $e 'cp a b' | bash`, and env, nice, exec, builtin, time, nohup, timeout,
+    stdbuf, setsid, ionice, taskset, chrt, flock, numactl, sudo and zsh's modifiers, piped and substituted), where the
+    round-5 head had refused each as a wrapper option it did not read; commandOf records the word its walk stopped at
+    (`at`), and printerOf splices an expansion standing there through THE SPLICED PRINTER, the segment re-lexed and the
+    wrapper peeled again on the spliced text: one road for the printer, as the writer, consumer and passthrough heads
+    have. THE VANISHING OPERAND (mayVanish, vanishVariants, the copying writers' case, recordMutations): a copying
+    writer with three or more operands, one an unquoted expansion the shell may make no word of (an unset or empty
+    name, `${c:-}`, an empty substitution, `$*`, `$@` and `"$@"` with no positional parameter, an empty array, a
+    pattern under nullglob or null_glob with the directory unknown), was read as a copy into a directory named by the
+    tracked file and allowed while every shell ran the two-operand copy onto it; by the resolver's contract an operand
+    whose presence the guard cannot establish makes the operand COUNT a set, so the destination is judged under the
+    list as spelled and under every list with such operands dropped, a write under any of them refused naming the
+    operand dropped, the bound paths and class H recorded under each list, a rename or a hard link with such an
+    operand marking every literal operand as a path the command may have changed, and more than VANISH_CAP such
+    operands a target the hook cannot read; the never-empty forms (an arithmetic expansion, a `${#name}` length,
+    `$?`, `$$`, `$#`, `$0`, a double-quoted word the guard proves one field, a literal character beside the
+    expansion) stay one operand. THE PAREN RULE (parenCloses; the lexer's scope markers, skipNested, closeSubshell):
+    an unparenthesised case pattern's `)` inside `( .. )` or `$( .. )` closed the lexer's subshell or substitution, so
+    the producer after it was lost and `(case x in x) echo 'cp a b';; esac) | bash`, `bash -c "$(case ..)"`, the
+    here-string, the here-document and the process substitution were allowed while every shell ran the text, where
+    the walk's closeSubshell already knew that in a case body a `)` ends a pattern; the rule has one home now, asked
+    by the walk over its frames and by the lexer over the scopes it tracks (a `(` marker, a segment headed by `case`,
+    its `esac`), so such a `)` is a marker that pairs with no `(` and a substitution reads past it, and the case beside
+    its printer is UNRESOLVABLE (THE COMPOUND PRODUCER). The residual table gains the names the shell itself sets
+    (`$0`, `${0}`, `"$0"`, `$BASH`, `$SHELL` and `$ZSH_ARGZERO` as the command, with `-c`, a here-document and a pipe,
+    and `$_` after a command), zsh's hook functions (`chpwd` and `chpwd_functions`, whose body runs where the cd lands
+    while the definition is judged where it stands) and zsh's `(N)` glob qualifier; the property's third class names
+    the shell-set names and an eighth class the hook functions. The piped-script matrix names, in a field of its own,
+    the allowed rows whose writer evidence needs ksh, a shell no box running the matrix has, so their allow rests on
+    ksh's `[[` grammar (TEST_ARITH_SHELLS) and on no measured writer.
+    ROUND 6, NINTH COMMIT (2026-09-22; the round's three verifiers on the eighth commit's head, an attack lens,
+    a residuals lens and the body auditor). Four defects of the round's own class, a reading that resolves a
+    word wrongly and thereby allows, each fixed at the mechanism, and the rest disclosed as rows. THE POSITIONAL
+    TARGET (positionalWords' target mode, expandPositionals): a redirection whose target is a positional list of
+    several elements was joined into one quoted name, so `set -- a.md report.md; echo x > $@` wrote report.md in
+    zsh, which opens every element under MULTIOS, while the guard judged the name `a.md report.md` and allowed;
+    `"$@"` kept the first element alone; a single unquoted element's pattern went unexpanded while bash expands
+    it at a target. The list stands now for the joined name dash opens (measured from notes/: the file `a.md
+    n1.md`) beside each element zsh opens, a single unquoted element for itself with its pattern read, an
+    element that is an expansion for a target the hook cannot read, one redirection per word, under every write
+    operator, on a closer's and an `exec`'s redirection. THE PEELED NAME (commandOf's wrapperIdx; nameRoads,
+    boundRoad): the alias, hash and bound-path roads were asked of the head the wrapper walk left, so a binding
+    of a wrapper's own name was never seen once operands followed it: `alias command=cp`, then `command a b`,
+    copied in dash, and every name of the wrapper set, zsh's modifiers, `[` and `[[`, through a here-document or
+    a pipe in every shell; `hash -p /usr/bin/cp env` then `env a b` in bash, `hash env=/usr/bin/cp` in zsh; a
+    copy or link of cp at `../scratch/env` on PATH, as `env a b`, as `../scratch/env a b` and behind `nice`, in
+    every shell. Every word the walk peeled is asked the three roads, the binding spliced at that word with the
+    words around it as spelled and the wrapper peeled again on the spliced text, an unreadable binding refused
+    as the head's is; `[` and `[[` take the alias and hash roads by their text, and an alias whose name the
+    lexer marks a pattern keeps its plain body. THE VANISHED TEXT (candidateTexts' vanish, scriptTexts,
+    noteCandidate): an expansion the command never gives a value may be empty, and the shell drops the empty
+    text before a script is handed over, so `eval cp $c a b`, `eval cp "$c" a b` (eval joins its operands and
+    parses the join), `eval cp $(true) a b`, `eval cp "$@" a b`, mv, install and `ln -f` the same, `trap "cp $c
+    a b" EXIT`, `bash -c "cp $c a b"` through sh, dash and zsh, behind nice and command, in a subshell, a group,
+    an if and after `&&`, `flock -c`, zsh's `emulate -c`, python's inline code, and `x="cp $c a b"` run as `$x`,
+    `eval $x`, `sh -c "$x"`, `bash <<< "$x"`, through declare and export, each ran the two-operand copy in every
+    shell while allowed (the single-quoted spellings, the default words and a value the command gives c were
+    refused). The text with every such expansion removed is one script the shell may run, read beside the
+    residual (the word stays opaque, its other values not read), and never in THE SHELL'S OPTION WORD's place,
+    where an empty answer is the refusal (`a=(-c); bash "${a[@]}" 'cp a b'` would read as a script file and
+    pass). THE WRITTEN PROCESS SUBSTITUTION (lex's streamSite and procsubFeeds, streamOutput, outDups and the
+    descriptor of a write; extract's recurseSubs and inheritedTexts): a write redirection whose target is
+    `>(cmd)` is a pipe into cmd, so what the command prints (or a subshell's or group's list before the
+    redirection) is cmd's standard input where the redirection is on the standard output or on a descriptor a
+    `>&` of the command routes it to, UNRESOLVABLE where an `exec` opens it for every later command, and outside
+    the model on another descriptor or from a command that is no printer (a cat of a file, the residual); zsh's
+    `>>(cmd)` reads as `>` and the substitution. `echo 'cp a b' > >(bash)` and thirty-nine forms (printf, `1>`,
+    `>|`, `>>`, `&>`, sh, zsh, dash, env bash, command bash, `bash -s`, `cat | bash`, a subshell, a group, exec,
+    `3> >(bash) >&3`, a resolved `$e` printer bare and behind command, a redirection and a `sed -i` in the text)
+    ran in bash and zsh while allowed, where the same `>(bash)` fed by a tee or a cat was read. The residual
+    table gains sed's `s///e` flag and bare `e`, logsave, script's typescript, node's writeFileSync under
+    another name, python's Path held in a name, dbus-run-session and capsh, and through `>(..)` a cat of a file,
+    a `while read` and a python; the property's fifth class names the write redirection into a process
+    substitution. The eighth commit's records on the hook header, this decision, the piped-script fixture and
+    the tests date it 2026-09-22, the day of its commit. Every fix is pinned by execution in the ninth commit's
+    rows test, the writers measured in bash, zsh and dash, red on the eighth commit's head.
+    ROUND 6, TENTH COMMIT (2026-09-22; the round's three verifiers on the ninth commit's head): eight defects of the
+    round's own class (a reading that resolves a word wrongly and thereby allows), each fixed at the mechanism. THE IFS
+    RULE over a positional list (positionalWords): `"$*"` joins the parameters by the first character of IFS, and dash
+    joins `"$@"` at a redirection target, so a named IFS the resolver does not read leaves the joined name unknown (`set
+    -- .. docs report.md; IFS=/; echo x > "$*"` wrote ../docs/report.md in every shell while allowed). THE MULTI-DIGIT
+    POSITIONAL (resolveWord, positionalSpelling): an unbraced `$10` is `${1}0` in bash and dash and the tenth positional
+    in zsh, so the word is left unread where zsh may run the line; `${10}` is the tenth in every shell. THE ALTERNATE
+    VALUE (defaultWordReading, scriptTexts): `${name:+word}` stands for the word when the name is set and for nothing
+    otherwise, so the dropped form joins the readings where the name may be unset (`eval cp ${c:+x} a b` ran the
+    two-operand copy while the three-operand reading allowed). THE VANISHED TEXT on a prompt road (readValuedWords): a
+    prompt name's value is read through scriptTexts, the expansions the command never values removed. THE VANISHING HEAD
+    (the head splice): a command name that is an expansion the command never values may be empty, so the next word is the
+    command and the segment is read again with the head dropped (`$c cp a b` copied in every shell while `$c` was the
+    command name). THE ROUTED STANDARD OUTPUT (lex's onStdout): the standard output reaches a process substitution along a
+    chain of `>&` dups and out of a subshell's, group's or compound's body. THE PEELED NAME's two roads: `[[` is searched
+    through PATH, since dash runs a bound one, and an unquoted glob-shaped name after `function` is the function's name.
+    The residual table: RT-glued-plus-head is refused now and RT-run-written-prefix added (199 rows). Every fix pinned by
+    execution in the tenth commit's rows test (49 rows, the writers measured in bash, zsh and dash), red on the ninth
+    commit's head.
+    ROUND 6, ELEVENTH COMMIT (2026-09-22; the round's two verifiers on the tenth commit's head): a regression of the
+    round's own class, a fix not fitted to its class, a crash in the tenth's code, and the tenth commit's deferred list
+    closed, fixed or filed. THE COUNTED SLICE (positionalSpelling, positionalWords): an offset `$#` in a positional slice
+    was read as a slice from past the end, so nothing was picked and `set -- other.md report.md; echo x > ${@:$#}` allowed
+    while bash and zsh wrote, where the round-5 head refused; `$#`, `${#}`, `${#@}` and `${#*}` as an offset or a length
+    are the count of the parameters, resolved against the list where the walk holds it (the offset that is the count is
+    the last element; with no parameter, the slice from 0 the resolver does not compute; the length that is the count
+    reaches the end), and a slice of a list the walk does not hold stays unknown. THE VANISHING HEAD's one home
+    (headMayVanish, vanishedHeadTexts, activeHeadTexts, passthroughCat): the tenth commit's dropped-head reading reached
+    the writer and consumer heads in the walk and not the printer, which lex reads through activeHeadTexts, nor the
+    passthrough cat, so `$c echo 'cp a b' | bash` and twenty-five printer forms ran the text in every shell while allowed;
+    the predicate has one home, every consumer of a head word reads it, the printer reads the head as THE VANISHED TEXT
+    reads a script word (the empty text where the command never gives the name a value, so `e=echo; $e .. | bash` keeps
+    its one text and its refusal by name), and a command holding an expansion is read again once its values are noted. THE
+    ALTERNATE VALUE at the top level (posKnown): the positional parameters are not modelled there (null), so the count
+    read threw and `eval cp ${1:+x} a b` refused through the catch-all as an error of the guard's own; the list is read
+    only where it is modelled, the dropped form joins the readings and the refusal is the rule's, by name. THE BOUND NAME
+    (boundRoad, recordMutations' absSpelled): under a PATH the resolver cannot read, or a directory it does not know,
+    every bound path whose last component is the name is spliced, so the bound writer's operands are judged by their own
+    project from any cwd (`cp /usr/bin/cp <out>/scratch/env; PATH=<out>/scratch:$PATH; env <proj>/base/report.md
+    <proj>/docs/report.md` from a cwd in no project allowed while every shell copied, where the same line from the
+    project's directory and the alias and hash roads from that cwd refused); and a made path is bound under its spelled
+    name beside the path a link the command makes resolves to (an `ln -s` binding was keyed on its target and found by no
+    name). THE KEYWORD DASH RUNS (dashCommandRoads at the function, coproc and repeat sites; the head's roads defined
+    before any keyword is read): a word bash and zsh reserve and dash runs as a command name is asked the alias and
+    bound-path roads before the walk consumes it, the binding spliced beside the construct's own reading (`alias
+    function=cp`, then `function a b`, copied in dash while allowed, and so did coproc and repeat, where select, foreach,
+    time, `[[`, `]]`, end, always and declare aliased so took the roads at the head and refused). The residual table gains
+    51 rows (250 rows over the same 8 classes): the FIFO a command makes with a shell reading it in the background, the
+    coprocess zsh starts and feeds, a call of a function the command defines before `>(bash)`, and the members of stated
+    classes the verifiers measured writing with no row (creation under the tracked notes/ folder by touch, mktemp, split
+    and csplit; ruby -i; mawk's and nawk's system; unzip -o, cpio -p, xxd, iconv -o, cpp, gpg -o, find -fprint, fallocate;
+    eatmydata; busybox's sed -i and dd; a written startup file read by bash --rcfile, --init-file and -l, dash -i with ENV
+    and zsh -i with ZDOTDIR; a pipe through rev, tr, envsubst, sed, awk or head into bash; `$(type -P cp)`, `$(realpath
+    ..)`, `$(readlink -f ..)` and `$(basename ..)` as the command name; `> >(tee /dev/null | bash)`; python's popen,
+    shell=True and an open on an operand or an environment name), each keyed on the shells measured writing; the prompt
+    roads with a vanished operand, the deferred list's last item, measured refused since the tenth commit and pinned as
+    rows. Every fix pinned by execution in the eleventh commit's rows test (93 rows, the writers measured in bash, zsh and
+    dash), red on the tenth commit's head, and the record list on this header and decision 47 is derived by the plan test
+    from the commits the hook's own text names, so a missing record for the newest commit reds.
+    ROUND 6, TWELFTH COMMIT (2026-09-22; the round's two verifiers on the eleventh commit's head): three allows with a
+    writer on no surface, each a reading fitted to its class now, members of stated classes filed, and a B2 boundary case
+    named. THE SUBSCRIPTED POSITIONAL (mayVanish, positionalWords, candidateTexts): under zsh's grammar an unbraced
+    `$argv[N]`, `$argv[-N]`, `$@[N]`, `$*[N]` or `$argv[N,M]` is an element or a range of the positional list, no field
+    past its end, while bash and dash read a literal `[N]` after the parameter and the lexer marked the subscript so, so
+    `$argv[1] cp a b` kept its head and copied in zsh while allowed (and so did the printer, here-string, sed and tee
+    forms, `$@[1]`, `set --`, a function's body, eval, `zsh -c '..'` from every shell, the tracked notes/ folder, a cwd
+    in no project and the operand road `cp $argv[1] a b`); where zsh may run the line the word may vanish, the walk's
+    positional rewrite reads the element where it holds the list, and the head candidates carry the text with the
+    subscript removed beside bash's reading. THE VANISHED HEAD TEXT (vanishedHeadTexts, scriptTexts' head role): a head
+    word whose expansions the command never gives a value, glued to literal characters, stands for the text with them
+    removed, one command the shell may run (`${c}cp a b`, `$c"cp" a b`, `"$c"cp a b` and the verifiers' `$argv[1]cp a b`
+    copied while allowed, the first three at the round-5 head too); the empty text is kept only where headMayVanish says
+    the whole word may stand for no field. The residual table's three glued-unset-head rows and its `$argv[1] $argv[2]
+    $argv[3]` call are refused by name now and pinned as rows. THE STALE POSITIONAL CANDIDATE (scriptTexts' candKnown):
+    bindPositionals notes each bind's values into the candidates and removes no earlier bind's, so after `set -- a;
+    shift` the candidates still held `a` for `1` and `eval cp ${1:+x} a b` read the word alone and copied in every shell
+    while allowed (and so did `shift 2`, a second `set`, `bash -c`, `sh -c`, `${1+x}`, `${@+x}` and `${*+x}` in bash, a
+    head and every cwd); a positional's alternate value is read from the list the walk holds alone (posKnown, and vars,
+    which bindPositionals rebinds), never from the candidates. THE BODY'S OWN LIST (the walk's set and shift): a `set` or
+    `shift` inside a function body being defined rebinds the body's list, the call's, not this shell's (`f() { set -- a;
+    }; eval cp ${1:+x} a b` copied in every shell while the body's `set` had bound `1` here). THE OPTION FLAGS
+    (defaultWordReading's NEVER_EMPTY): `$-` is set in every shell but holds no flag in dash under `-c` (measured), so
+    `${-:+word}` stands for nothing there and its dropped form joins the readings (`eval cp ${-:+x} a b` copied in dash
+    while allowed), while `${-+word}` and the `#`, `$`, `0` and `?` forms keep the word alone. The residual table: 22
+    rows added for a command substitution over a producer outside the output model handed to eval, a shell's -c or a
+    here-string (an inner eval or shell -c, a call of a function, a written file read through the substitution, a value
+    so made and run), the fifth class's gloss naming that conduit beside the pipe and the process substitution on every
+    surface, and 4 rows removed as refused (268 rows over the same 8 classes). The B2 boundary (recordMutations): a path
+    made from a source the resolver does not read is refused at the bound name while a project is in play; from a cwd in
+    no project `cp "$(which cp)" <out>/scratch/c2; PATH=<out>/scratch:$PATH; c2 <proj>/base/report.md
+    <proj>/docs/report.md` copies while allowed, an opaque operand after a literal head outside every project (the
+    eighth class), pinned as a row with the shells that write. Every fix pinned by execution in the twelfth commit's rows
+    test (114 rows, the writers measured in bash, zsh and dash), red on the eleventh commit's head.
+    ROUND 6, THIRTEENTH COMMIT (2026-09-22; the round's two verifiers on the twelfth commit's head): three populations
+    measured allowing while a shell writes, each pre-existing at the round-5 head and standing on no surface, filed on
+    the residual table as rows keyed on evidence (the shells that write and the hook's verdict, re-measured every run)
+    under one class named for the mechanism, a positional the resolver reads at the word by a model the shell does not
+    keep, with no change to the hook; whether the class is fixed at the mechanism or accepted as allow-by-default is the
+    round's ruling. THE EMPTY POSITIONAL (scriptTexts' posKnown): the colon form is read as set when the list the walk
+    holds is long enough, never whether the element is non-empty, so `set -- ''; eval cp ${1:+x} a b` copies in bash,
+    zsh and dash while allowed; 30 rows (a second or empty element, `bash -c`, `sh -c`, a double-quoted word or text,
+    install, mv, `ln -f`, a redirection target, a subshell, a group, a list, a shift onto the empty element, a second
+    set, `${@:+x}` and `${*:+x}` in bash and dash, the tracked notes/ folder, the project root, scratch/, a cwd in no
+    project). THE STALE POSITIONAL CANDIDATE (candidateTexts, bindPositionals): each bind's values are noted into the
+    candidates and none cleared, so after `set -- a; shift` a head word or a script text still reads `a` for `1` (`set
+    -- a; shift; ${1}cp a b` is read as `acp`, no writer, while every shell runs cp; `eval "cp a ${1}report.md"` as the
+    untracked `areport.md`); 31 rows (`$1cp`, `shift 2`, a second positional, `set --`, a double-quoted head, eval,
+    `bash -c`, sed, tee, a pipe's or a process substitution's consumer, the eval, `bash -c` and `sh -c` script roads, a
+    redirection target, notes/, the root, a cwd in no project, a PATH-bound name). THE KNOWN SET (scriptTexts' setKnown,
+    candKnown and posKnown): a name's or the list's binding is read as this shell's where the shell does not hold it at
+    the word, a value an `unset`, a `read`, a body's `local` or a reassignment to an empty default dropped, and a `c=a`
+    or a `set -- a` in a subshell, a pipeline, a background job, a command substitution, an untaken if, `&&`, `||`,
+    case, for or while body, a prefix position or behind `env`, `nice` or zsh's `command` (`c=a; unset c; eval cp
+    ${c:+x} a b` and `(set -- a); eval cp ${1:+x} a b` copy in every shell while allowed); 31 rows, the shells named
+    writing (bash and dash for a pipeline's last member and a background assignment, zsh for `command set`). THE
+    SUBSCRIPTED POSITIONAL beyond one numeric index (ZSH_POSITIONAL_SUBSCRIPT, mayVanish): the regex takes one numeric
+    subscript on the whole word while under zsh's grammar every `[..]` after the unbraced `$argv`, `$@` or `$*` selects
+    from the list (`[@]`, `[*]`, an arithmetic, flagged or quoted subscript), and a word of several such expansions is
+    not one subscript, so the head keeps its place and `$argv[*] cp a b` copies in zsh while allowed; 60 rows, zsh
+    writing (every shell through `zsh -c`): the head, glued to the command, the printer, `zsh -c`, a function body,
+    eval, sed, tee, `set --`, the operand road, notes/, the root, a cwd in no project. Three members of stated classes
+    beside their witness rows (`$c printf -v x '..'; $x` in bash, `cat <(echo '..') | bash` and `f() { cat; }; echo '..'
+    > >(f | bash)` in bash and zsh). The table's rows name their cwd where it is not docs/ (a sixth element); 423 rows
+    over 9 classes, the class on every surface the property stands on, pinned by the plan test with the record and the
+    count.
+    ROUND 7 OF FORK PR #780 REVIEW, TWENTY-FIFTH COMMIT (2026-09-23; the reviewer's extra5-2 as ruled, option (a), and
+    the reviewer's Q1): that ninth class was keyed on readings the resolver made and got wrong, so it is gone from
+    every surface and from RESIDUAL_CLASSES, the four readings sound or unresolvable: the colon form reads the
+    element's text (`$@` and `$*` under it set only where their elements joined by one blank are not empty); a name is
+    known set from the readability rule alone, never from THE HEAD CANDIDATES; a positional parameter is read from the
+    list the walk holds, the pre-walk read a union with values not read beside it, and each assignment's value noted
+    again where the walk performs it; a subscript of the unbraced list name that is not numeric, or a subscripted list
+    glued to another expansion, is unresolvable where zsh may run the line. And a command whose name, script or piped
+    script is a text the resolver does not read is refused by name where a literal operand names a tracked file (the
+    target known, the writer not), after the command's own reading, and stays allowed where none does: a directory
+    operand or one the resolver does not read. 190 rows left the residual table, pinned as refusals with the shells
+    that write in the twenty-fifth commit's rows test.
+    THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
+    writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a
+    road it reads (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads),
+    with a target it can place or cannot read, or when a command whose name, script or piped script it does not read
+    names a tracked file as a literal operand. Every write that still reaches a tracked file is one the guard does not
+    resolve to such a writer through such a road, whether or not its text stands in the command, and falls in one of
+    these classes, each measured by execution in tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows
+    are the population this statement is over): a writer outside the model, a program, or a write form of a program
+    the hook models, that writes the file by its own nature and is not among the write forms the hook reads (rsync,
+    patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk's print redirect, uniq, scp, openssl -out, shred,
+    curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, bash's history -w, zsh's sysopen
+    and mapfile modules, sed's e command and a w command in a sed script the resolver cannot read, busybox's applets);
+    a reader outside the roads, a program that runs a command or a script the hook does not follow into it (xargs, an
+    interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the
+    command writes and then runs or sources, a function's call of itself, which the replay does not follow again); a
+    command name the resolver never reads, a command whose name is an expansion of a kind the resolver does not read
+    ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself
+    sets (${SHELL}, $0, $BASH, $ZSH_ARGZERO, $_ after a command), a substitution outside the output model such as
+    $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script handed to a
+    fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a `set`
+    this shell ran since round 6's sixth commit), handed no literal operand that names a tracked file (the operand a
+    directory, or a word the resolver does not read): since round 7's twenty-fifth commit a command so named, or a
+    script or piped script the resolver does not read, whose literal operand names a tracked file is refused by name
+    (the reviewer's Q1: the target known, the writer not); a script held in a variable, a value the command gives a
+    name through a construct the resolver does not read (`read`, `printf -v`, a positional parameter of a fresh
+    shell's script), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"` inside a `bash -c` given
+    arguments, `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read
+    through THE HEAD CANDIDATES since round 6's fourth commit, and a `${name:=word}` gives word since the sixth); a
+    producer outside the output model, a pipe into a shell, or a write redirection into a process substitution running
+    one, from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat
+    passing such a text through, or a command substitution over such a producer handed to a shell, an eval or a
+    here-string (a call of a function the command defines, a tee or a pipe through another command, a cat of a file,
+    an eval or a shell -c inside the substitution); zsh's glob grouping, a `(..)` inside a word handed to zsh, read as
+    a subshell by the lexer's zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this
+    round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd,
+    preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves,
+    prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands;
+    an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a literal head
+    outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes
+    that reaches a tracked file is a rule to state, not a
+    residual.
+    ROUND 7 OF FORK PR #780 REVIEW, THIRTY-FIFTH COMMIT (2026-09-24; the reviewer's regression-2, extra7-3 and extra6-4):
+    THE RESIDUAL PROPERTY stands identical on five surfaces, the developer ones: this decision, the hook header,
+    hooks/README.md, docs/install.md and the ledger entry, pinned so by the plan test. The user-facing surfaces had
+    carried the developer paragraph, review provenance and the hook's internal names included: the vendored SKILL.md
+    now states the classes in its reader's words, each under its own name and held to RESIDUAL_CLASSES by name,
+    and docs/guide.md keeps its sentences on the refusal and points at docs/install.md for the statement. THE
+    RESIDUAL TABLE holds 225 rows over 8 classes, a figure tools/romp-track-bash-guard.test.mjs asserts from the table's
+    own length and class count on this decision, the hook header and the ledger entry.
+    ROUND 7 OF FORK PR #780 REVIEW, THIRTY-SIXTH COMMIT (2026-09-24; the reviewer's verifier on the thirty-fifth commit,
+    by execution): THE NAMEREF. A nameref declaration's operand had been read as the name's value, a text no shell gives
+    it, so a command name over the reference read as the target's name and `c=cp; declare -n r=c; $r ../base/report.md
+    report.md` was allowed while bash copied; the operand now gives the name no value, a word over a reference or its
+    target stands for the other's values beside a text not read, and the literal tracked operand is refused by name
+    (the row left the residual table). THE OPERAND'S VALUE: a command
+    whose name, script or piped script is not read has a tracked file in a key's value (`of=FILE`) or a short option's
+    glued value (`-oFILE`, `-uoFILE`) read as a separate operand is. The guide's pointer names the installer's section
+    without the verb the About entry of CONTEXT.md avoids in that paragraph, and the skill's list of known writers
+    reads as examples.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the
