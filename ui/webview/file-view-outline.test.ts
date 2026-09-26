@@ -1792,17 +1792,22 @@ test("the one gate's later events of one gesture, a guard CI runs (the file revi
 // ── how a click finds its press, the guards CI runs (the file review's round 17, tests-1 with regression-1; the browser cells that
 // drive each engine's own tap skip in CI) ── The gate records a press's verdict at the window's pointerdown and fills its one-click
 // slot at the window's pointerup, both in the capture phase, and a click by a pointer reads the record under its own pointerId or,
-// with none, the press the slot handed it, while a key's or a script's click reads neither and is read at the click. The stand-in's
+// with none, the press the slot handed it, while a key's or a script's click reads neither and is read at the click. A record ends
+// at its own pointerup, which hands it to the slot, at its pointercancel and at the next primary press, and every record ends at a
+// dragstart and at a mousedown with no pointerdown of a mouse or a pen before it, which takes no verdict and leaves the slot alone
+// (the file review's round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them). The stand-in's
 // dispatch never reaches the window, so each pointer event is dispatched on the window here, its target the element a press there
 // would land on, as a browser delivers it to the capture listener before the page's own; a click is dispatched on the window, which
 // hands it the slot, and then on its element with the fields the gate reads (pointerId, detail, and isTrusted, which a node Event
 // cannot carry and the stand-in's click can, so the gate reads it as trusted). WebKit's tap, as measured under Playwright's touch
 // emulation on Linux: a pointerdown and a pointerup under the touch's pointerId (2), the capture and boundary events after them
 // (lostpointercapture, pointerout), the compatibility mousedown, then a trusted click under pointerId 1 of type mouse, detail 1; and
-// the mouse's own next press after WebKit's drag of the picture: a mousedown with no pointerdown before it, a pointerup under
-// pointerId 1, and the click. Each cell opens a viewer of its
-// own, so no cell's record or slot reaches the next; the executed proof in each engine is the browser cells
-// (file-figure-open-engines-browser.test.ts for WebKit and Firefox, file-figure-open-browser.test.ts for Chromium).
+// the mouse's own next press after WebKit's drag of the picture, and after a drag in another pane that this window never hears:
+// a mousedown with no pointerdown before it, a pointerup under pointerId 1, and the click. Firefox's chord: a left press's
+// pointerdown and mousedown, then the chorded button's mousedown with no pointerdown of its own, then the left press's pointerup and
+// its click, under pointerId 0. Each cell opens a viewer of its own, so no cell's record or slot reaches the next; the executed
+// proof in each engine is the browser cells (file-figure-open-engines-browser.test.ts for WebKit and Firefox,
+// file-figure-open-browser.test.ts for Chromium).
 type GatePtr = { pointerId: number; pointerType: string; isPrimary?: boolean; button?: number };
 /** An event on the window, its target `target` and its fields `props`, as the gate's capture listeners hear it. */
 const onWindow = (type: string, target: El, props: Record<string, unknown> = {}): void => {
@@ -1907,7 +1912,7 @@ test("how a click finds its press, the stale records, a guard CI runs (the file 
   assert.deepEqual(got, { rightPress: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], drag: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }] },
     "the tap after the stale press opens nothing and reveals the control, and the next tap opens once, [the tap, the next] (a property pin over window.open's calls and the scrollIntoView record)");
 });
-test("how a click finds its press, the mouse's own next press after WebKit's drag of the picture, a guard CI runs (the file review's round 17, regression-1): a mouse press on the picture with the control shown that a drag ends with no pointerup and no pointercancel, then another element laid over the control, then the mouse's next click on the picture, whose mousedown comes with no pointerdown before it: the click opens nothing and reveals the control, its press read at the mousedown as a primary press, and, that element gone, the next click opens once; and the same drag begun with the control out of view, then the control in view, then that click opens once, read at its own start; while a mouse click whose cover goes between its pointerdown and its mousedown, as the Outline popover closes itself on the document after the window's listeners, opens nothing, the press read at the pointerdown and the mousedown after it read as no press (a property pin over window.open's calls and the scrollIntoView record; the drag's cells red at 0ab74924c, where the click read the drag's record under its own pointerId, the reads of that red a private witness kept out of the tree, and the last cell green there by design, red under a gate that reads every mousedown as a press)", async (t) => {
+test("how a click finds its press, the mouse's own next press after WebKit's drag of the picture, a guard CI runs (the file review's round 17, regression-1; its round 18, correctness-1, with the coordinator's decisions on it): a mouse press on the picture with the control shown that a drag ends with no pointerup and no pointercancel, then another element laid over the control, then the mouse's next click on the picture, whose mousedown comes with no pointerdown before it: the click opens nothing and reveals the control, the drag's dragstart and that mousedown each having ended the drag's record, and, that element gone, the next click opens once; the same drag begun with the control out of view, then the control in view, then that click opens nothing and reveals the control, a stated cost, and the next click opens once; and, the window capture read's pin, a click of the mouse whose cover goes between its pointerdown and its mousedown, as the Outline popover closes itself on the document after the window's listeners, opens nothing, the press read at the pointerdown (a property pin over window.open's calls and the scrollIntoView record; the covered cells red under A18-R, the gate with the file review's round 18 rule reverted and no clear put in its place, where the click read the drag's record, the out-of-view cells red at ef686b029, whose gate took a verdict at that mousedown, and the last cell green at every head by design)", async (t) => {
   const got: Record<string, unknown> = {};
   got.covered = await gateCell(t, "a drag with the control shown, then the control covered, then the mouse's next click", (g, opens) => {
     g.place(IN_BOX);
@@ -1919,16 +1924,16 @@ test("how a click finds its press, the mouse's own next press after WebKit's dra
     mouseClick(g.img);
     return [first, opens()];
   });
-  got.outOfView = await gateCell(t, "a drag with the control out of view, then the control in view, then the mouse's next click", (g, opens) => {
+  got.outOfView = await gateCell(t, "a drag with the control out of view, then the control in view, then the mouse's next click, then the click after it", (g, opens) => {
     g.place(OUT_BOX);
     webkitDrag(g.img);
     const drag = opens();
     g.place(IN_BOX);
     mouseClick(g.img, true);
-    return [drag, opens()];
+    const first = opens();
+    mouseClick(g.img);
+    return [drag, first, opens()];
   });
-  // a mousedown after its pointerdown is no press of its own: a cover that goes between the two, as the Outline popover closes itself
-  // in its capture listener on the document after the window's, leaves the click refused, read at the pointerdown
   got.goneAtPress = await gateCell(t, "a click of the mouse whose cover goes between its pointerdown and its mousedown", (g, opens) => {
     g.place(IN_BOX);
     g.cover(new El("div"));
@@ -1940,8 +1945,149 @@ test("how a click finds its press, the mouse's own next press after WebKit's dra
     return opens();
   });
   t.diagnostic("record " + JSON.stringify(got));
-  assert.deepEqual(got, { covered: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], outOfView: [{ opened: 0, reveals: 0 }, { opened: 1, reveals: 0 }], goneAtPress: { opened: 0, reveals: 1 } },
-    "the mouse's next click after the drag is read at its own mousedown: refused and revealing under the cover, then the next click opening once; opening once when the control stands in view at it; and a mousedown that follows its pointerdown read as no press, [the drag or the click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
+  assert.deepEqual(got, { covered: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], outOfView: [{ opened: 0, reveals: 0 }, { opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], goneAtPress: { opened: 0, reveals: 1 } },
+    "the mouse's next click after the drag finds no press, the drag's record ended: refused and revealing under the cover and in view alike, then the next click opening once; and a click read at its pointerdown, [the drag or the click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
+});
+test("how a click finds its press, the records a lost pointerup leaves, a guard CI runs (the file review's round 18, with the coordinator's decisions on open item 1): the dashboard's panes are same-origin frames, and a drag in another one sends this window nothing, while WebKit keeps the button's pressed state, so the mouse's next click here is a mousedown with no pointerdown before it, a pointerup under pointerId 1 and the click. A right press on the picture with the control shown, its pointerdown, mousedown and pointerup and no click, then another element over the control, then that click: it opens nothing and reveals the control, the right press's record having ended at its own pointerup; the same after a press on the control with it shown released on the body; and a press on the picture with the control shown whose pointerup never comes and no dragstart, then another element over the control, then that click: it opens nothing and reveals the control, its mousedown having ended every record; in each, that element gone, the next click opens once (a property pin over window.open's calls and the scrollIntoView record; the first two cells red at X, the gate with a dragstart clear and records ended at no pointerup, where the click read the old record, and the third red under A18-C, the fix with the mousedown's clear removed, where the pointerup handed the old record to the slot)", async (t) => {
+  const got: Record<string, unknown> = {};
+  const mouse: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
+  got.rightPress = await gateCell(t, "a right press with the control shown, then the control covered, then the mouse's click as WebKit sends it after a drag in another pane", (g, opens) => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.img, { ...mouse, button: 2 });
+    onWindow("mousedown", g.img, { button: 2 });
+    onWindow("pointerup", g.img, { ...mouse, button: 2 });           // a right press: no click
+    g.cover(new El("div"));
+    mouseClick(g.img, true);
+    const first = opens();
+    g.cover(null);
+    mouseClick(g.img);
+    return [first, opens()];
+  });
+  got.releasedOff = await gateCell(t, "a press on the control with it shown released on the body, then the control covered, then that click", (g, opens) => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.ctl, { ...mouse });
+    onWindow("mousedown", g.ctl, { button: 0 });
+    onWindow("pointerup", g.body, { ...mouse });                       // released off the control: no click on the picture or the control
+    g.cover(new El("div"));
+    mouseClick(g.img, true);
+    const first = opens();
+    g.cover(null);
+    mouseClick(g.img);
+    return [first, opens()];
+  });
+  got.lostUp = await gateCell(t, "a press on the picture with the control shown whose pointerup never comes, then the control covered, then that click", (g, opens) => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.img, { ...mouse });
+    onWindow("mousedown", g.img, { button: 0 });                       // no pointerup, no pointercancel and no dragstart after it
+    g.cover(new El("div"));
+    mouseClick(g.img, true);
+    const first = opens();
+    g.cover(null);
+    mouseClick(g.img);
+    return [first, opens()];
+  });
+  t.diagnostic("record " + JSON.stringify(got));
+  const want = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
+  assert.deepEqual(got, { rightPress: want, releasedOff: want, lostUp: want }, "the click after the lost pointerup finds no press and is refused, revealing the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
+});
+test("how a click finds its press, Firefox's chord, a guard CI runs (the file review's round 18, extra5-1): a left press on the picture begun with another element over the control, which goes at the press's mousedown as the text-size flyout closes at the document's, then a middle or a right press chorded into it, whose mousedown comes with no pointerdown of its own, then the left press's pointerup and its click under pointerId 0: the click opens nothing and reveals the control; the same with the control out of view at the left press and scrolled into view before the chord; in each the next click opens once (a property pin over window.open's calls and the scrollIntoView record; each chord cell red at ef686b029, whose gate read the chord's mousedown as a press and took its verdict, and under A18-M, that gate restored, and green under A18-R by design)", async (t) => {
+  const got: Record<string, unknown> = {};
+  const left: GatePtr = { pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0 };
+  const chord = (g: KeyGate, button: number, before: () => void, between: () => void): void => {
+    before();
+    onWindow("pointerdown", g.img, { ...left });
+    onWindow("mousedown", g.img, { button: 0 });
+    between();
+    onWindow("mousedown", g.img, { button });                          // the chorded button: no pointerdown of its own
+    onWindow("pointerup", g.img, { ...left });
+    gateClick(g.img, 0, 1);
+  };
+  const next = (g: KeyGate): void => { onWindow("pointerdown", g.img, { ...left }); onWindow("mousedown", g.img, { button: 0 }); onWindow("pointerup", g.img, { ...left }); gateClick(g.img, 0, 1); };
+  for (const [name, button] of [["middle", 1], ["right", 2]] as const) {
+    got["covered " + name] = await gateCell(t, "a left press under a cover that goes at its mousedown, chorded by a " + name + " press", (g, opens) => {
+      chord(g, button, () => { g.place(IN_BOX); g.cover(new El("div")); }, () => { g.cover(null); });
+      const first = opens();
+      next(g);
+      return [first, opens()];
+    });
+    got["out of view " + name] = await gateCell(t, "a left press with the control out of view, the control then in view, chorded by a " + name + " press", (g, opens) => {
+      chord(g, button, () => { g.place(OUT_BOX); }, () => { g.place(IN_BOX); });
+      const first = opens();
+      next(g);
+      return [first, opens()];
+    });
+  }
+  t.diagnostic("record " + JSON.stringify(got));
+  const want = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
+  assert.deepEqual(got, { "covered middle": want, "out of view middle": want, "covered right": want, "out of view right": want }, "the chorded left press's click opens nothing and reveals the control, and the next click opens once, [the chord's click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
+});
+test("how a click finds its press, Chromium's order on a hybrid page, a guard CI runs (the file review's round 18, extra5-2): a finger held on the picture with the control shown, a mouse click on the body beside it, then the finger lifted, its compatibility mousedown and its click after its pointerup; then a mouse press on the picture with the control out of view, a finger's swipe beside it while the mouse is held (a touch's pointerdown and pointercancel, the swipe scrolling the control into view), and the mouse's release and click: the click opens nothing and reveals the control; the same with another element over the control at the mouse's press, gone at its mousedown; and each of the two with no finger and mouse click before it (a property pin over window.open's calls and the scrollIntoView record; the two cells after the finger red at ef686b029, whose gate took a verdict at that compatibility mousedown and handed it to the mouse's pointerup, and under A18-M, and the two without it green there by design)", async (t) => {
+  const got: Record<string, unknown> = {};
+  const mouse: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
+  const stale = (g: KeyGate): void => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.img, { pointerId: 4, pointerType: "touch", isPrimary: true, button: 0 });
+    onWindow("pointerdown", g.body, { ...mouse });
+    onWindow("mousedown", g.body, { button: 0 });
+    onWindow("pointerup", g.body, { ...mouse });
+    gateClick(g.body, 1, 1);
+    onWindow("pointerup", g.img, { pointerId: 4, pointerType: "touch", isPrimary: true, button: 0 });
+    onWindow("mousedown", g.img, { button: 0 });                       // the finger's compatibility mousedown, after its pointerup
+    gateClick(g.img, 4, 1);
+  };
+  const scene = (g: KeyGate, covered: boolean): void => {
+    if (covered) { g.place(IN_BOX); g.cover(new El("div")); } else g.place(OUT_BOX);
+    onWindow("pointerdown", g.img, { ...mouse });
+    if (covered) g.cover(null);
+    onWindow("mousedown", g.img, { button: 0 });
+    onWindow("pointerdown", g.body, { pointerId: 5, pointerType: "touch", isPrimary: true, button: 0 });
+    onWindow("pointercancel", g.body, { pointerId: 5, pointerType: "touch", isPrimary: true, button: 0 });
+    g.place(IN_BOX);                                                   // the swipe scrolled the control into view
+    onWindow("pointerup", g.img, { ...mouse });
+    gateClick(g.img, 1, 1);
+  };
+  for (const covered of [false, true]) for (const withStale of [false, true]) {
+    got[(withStale ? "after the finger, " : "") + (covered ? "covered" : "out of view")] = await gateCell(t, (withStale ? "the finger held, the mouse's click beside it, the finger lifted, then " : "") + "the mouse's press with the control " + (covered ? "covered" : "out of view") + ", a swipe while it is held, the release", (g, opens) => {
+      if (withStale) { stale(g); opens(); }
+      scene(g, covered);
+      return opens();
+    });
+  }
+  t.diagnostic("record " + JSON.stringify(got));
+  const want = { opened: 0, reveals: 1 };
+  assert.deepEqual(got, { "out of view": want, "after the finger, out of view": want, covered: want, "after the finger, covered": want }, "the mouse's click after the swipe opens nothing and reveals the control, with the finger's steps before it or without them (a property pin over window.open's calls and the scrollIntoView record)");
+});
+test("how a click finds its press, a second finger during WebKit's drag, a guard CI runs (the file review's round 18, correctness-1): a finger held on the body, a mouse drag of the picture with the control shown, a second finger's press and release on the body (isPrimary false), then another element over the control, then the mouse's next click on the picture as WebKit sends it after its drag: the click opens nothing and reveals the control, and, that element gone, the next click opens once (a property pin over window.open's calls and the scrollIntoView record; red at ef686b029, where the second finger's pointerdown left the mousedown it never sent due, so the mouse's mousedown ended nothing and the click read the drag's record, and under A18-R)", async (t) => {
+  const got = await gateCell(t, "a finger held, a drag, a second finger, the control covered, then the mouse's click", (g, opens) => {
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.body, { pointerId: 2, pointerType: "touch", isPrimary: true, button: 0 });
+    webkitDrag(g.img);
+    onWindow("pointerdown", g.body, { pointerId: 3, pointerType: "touch", isPrimary: false, button: 0 });
+    onWindow("pointerup", g.body, { pointerId: 3, pointerType: "touch", isPrimary: false, button: 0 });
+    g.cover(new El("div"));
+    mouseClick(g.img, true);
+    const first = opens();
+    g.cover(null);
+    mouseClick(g.img);
+    return [first, opens()];
+  });
+  t.diagnostic("record " + JSON.stringify(got));
+  assert.deepEqual(got, [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], "the mouse's click after the drag and the second finger opens nothing and reveals the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
+});
+test("how a click finds its press, a pen's press, a guard CI runs (the file review's round 18, with the coordinator's decisions on open item 1): a pen's press on the picture with the control shown, its pointerdown of type pen, its own mousedown, its pointerup and its click, opens once; and a pen's press whose cover goes between its pointerdown and its mousedown opens nothing and reveals the control, read at the pointerdown (a property pin over window.open's calls and the scrollIntoView record; the first cell red under A18-P, a gate whose mousedown finds its press's own pointerdown only when that pointerdown is a mouse's, where the pen's own mousedown ended its record, and the second green there by design)", async (t) => {
+  const got: Record<string, unknown> = {};
+  const pen: GatePtr = { pointerId: 3, pointerType: "pen", isPrimary: true, button: 0 };
+  const press = (g: KeyGate, between: () => void): void => {
+    onWindow("pointerdown", g.img, { ...pen });
+    between();
+    onWindow("mousedown", g.img, { button: 0 });
+    onWindow("pointerup", g.img, { ...pen });
+    gateClick(g.img, 3, 1);
+  };
+  got.shown = await gateCell(t, "a pen's press with the control shown", (g, opens) => { g.place(IN_BOX); press(g, () => {}); return opens(); });
+  got.goneAtPress = await gateCell(t, "a pen's press whose cover goes between its pointerdown and its mousedown", (g, opens) => { g.place(IN_BOX); g.cover(new El("div")); press(g, () => { g.cover(null); }); return opens(); });
+  t.diagnostic("record " + JSON.stringify(got));
+  assert.deepEqual(got, { shown: { opened: 1, reveals: 0 }, goneAtPress: { opened: 0, reveals: 1 } }, "the pen's press opens once with the control shown and is read at its pointerdown (a property pin over window.open's calls and the scrollIntoView record)");
 });
 test("how a click finds its press, the clicks by no pointer, a guard CI runs (the file review's round 17, tests-1 with regression-1): Enter on the control in view opens once, and so does Enter after WebKit's tap refused under a covered control; a press and its release on the picture with no click after them, begun with the control out of view, then the control in view, then Enter on it opens once; the same press begun with the control shown, then another element over the control, then a script's click on the picture opens nothing and reveals the control, the script's click read at the click (a property pin over window.open's calls and the scrollIntoView record; green at 0ab74924c by design, where no click by no pointer read a press; the Enter cells red under a gate that reads a key's click as a pointer's, and the press cells red under a gate that lets a key's or a script's click read the slot with the keydown's clear dropped)", async (t) => {
   const got: Record<string, unknown> = {};
@@ -2037,8 +2183,8 @@ test("the one gate reads a held key in view again at each repeat, a guard CI run
   t.diagnostic("record " + JSON.stringify(got));
   assert.deepEqual(got, [[false, { opened: 1, reveals: 0 }], [[true, { opened: 0, reveals: 0 }], [true, { opened: 0, reveals: 0 }]]], "the first Enter opens once and each repeat after the scroll is cancelled with nothing opened or revealed, [[the first keydown cancelled, its opens], [[each repeat cancelled, its opens]]] (a property pin over defaultPrevented, window.open's calls and the scrollIntoView record)");
 });
-test("the one gate's window listeners go with the viewer, a guard CI runs (the file review's round 17, tests-1 with regression-1): an open adds six listeners of the gate on the window in its capture phase, pointerdown, mousedown, pointerup, pointercancel, keydown and click, and the viewer's close removes each of them, the same function with the capture flag its add carried (a property pin over the window's add and remove calls; red at 0ab74924c, which added three, and red under a close that removes the three it added before the slot)", async (t) => {
-  const TYPES = ["click", "keydown", "mousedown", "pointercancel", "pointerdown", "pointerup"];
+test("the one gate's window listeners go with the viewer, a guard CI runs (the file review's round 17, tests-1 with regression-1; its round 18, with the coordinator's decisions on open item 1): an open adds seven listeners of the gate on the window in its capture phase, pointerdown, mousedown, pointerup, pointercancel, keydown, dragstart and click, and the viewer's close removes each of them, the same function with the capture flag its add carried (a property pin over the window's add and remove calls; red at 0ab74924c, which added three, at ef686b029, which added six with no dragstart, and under A18-R, which adds five, and red under a close that removes the three it added before the slot)", async (t) => {
+  const TYPES = ["click", "dragstart", "keydown", "mousedown", "pointercancel", "pointerdown", "pointerup"];
   const calls: { add: Array<[string, unknown, boolean]>; remove: Array<[string, unknown, boolean]> } = { add: [], remove: [] };
   const capOf = (o: unknown): boolean => (typeof o === "boolean" ? o : !!(o && (o as { capture?: boolean }).capture));
   win.addEventListener = function (type: string, cb: unknown, o?: unknown) { calls.add.push([type, cb, capOf(o)]); return EventTarget.prototype.addEventListener.call(this, type, cb as EventListener, o as boolean); };

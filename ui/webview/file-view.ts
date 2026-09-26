@@ -2784,75 +2784,86 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // screen, with nothing shown, on every device. A pointer's or a finger's press is read here, in the window's capture phase,
   // before any listener of the page runs: the Outline popover closes itself in its own capture listener on the document, so a
   // read on the body came after that close and saw the sign uncovered, and a click on the picture under the popover opened the
-  // tab; the text-size flyout closes later, at the document's mousedown. How a click finds its press, keyed on six events of
-  // the window's capture phase and never on time (the file review's round 17, tests-1 with regression-1):
+  // tab; the text-size flyout closes later, at the document's mousedown. How a click finds its press, keyed on seven events of
+  // the window's capture phase and never on time (the file review's round 17, tests-1 with regression-1; its round 18, extra5-1,
+  // extra5-2 and correctness-1, with the coordinator's decisions on them):
   // - a pointerdown records the press's verdict under its pointerId, a primary one first ending every earlier record whatever its
-  //   pointer type, since a new primary contact means every earlier one has ended; a pointercancel (a swipe that scrolls, and in
-  //   Chromium and Firefox the picture's own drag) ends its pointer's record, and in WebKit, whose drag of the picture sends no
-  //   pointercancel and no pointerup, the next primary press ends it, the mouse's own next press among them: WebKit sends that
-  //   press's mousedown with no pointerdown before it, so a mousedown that no pointerdown announced is read as a primary press, which
-  //   ends every record, and its verdict, taken there, fills the slot at the pointerup after it, which takes it. The cost of the
-  //   clear, on a device with a mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type
-  //   lands elsewhere loses its record, a mouse held while a finger presses or a finger held while the mouse presses, so its click
-  //   opens nothing and reveals;
+  //   pointer type, since a new primary contact means every earlier one has ended. A record ends at its own pointerup, which hands
+  //   it to the slot, and at its own pointercancel (a swipe that scrolls, and in Chromium and Firefox the picture's own drag); a
+  //   dragstart ends every record, since WebKit's drag of the picture sends no pointerup and no pointercancel; and a mousedown with
+  //   no pointerdown of a mouse or a pen before it ends every record, takes no verdict and leaves the slot alone. A mouse's press and
+  //   a pen's send their own mousedown after their pointerdown and before their pointerup, and a tap's compatibility mousedown comes
+  //   after its pointerup, so such a mousedown is a tap's, a chorded button's, or WebKit's next press of the mouse after a press
+  //   whose pointerup never came: a drag in another pane, whose dragstart this window never hears (the dashboard's panes are
+  //   same-origin frames, and WebKit keeps the button's pressed state across them), and presumably a native context menu or a
+  //   middle press's autoscroll, not measured. Ending a record can only refuse a click, never open one. The dragstart's clear and the
+  //   pointerup's end of its own record are defensive once the mousedown's clear stands: the mouse's next press after a lost pointerup
+  //   reaches this window as a mousedown with no pointerdown, or with a pointerdown, and either ends the record, so dropping either
+  //   alone changes no gesture a test drives, while dropping the mousedown's clear alone lets a press whose pointerup never came hand
+  //   its record to the next click's pointerup, which its node guard reds. The cost, measured in WebKit
+  //   (Playwright's, on Linux: a mouse drag of a web picture, and a drag in a same-origin frame standing in for another pane): after
+  //   a drag anywhere in the page, another pane's included, the mouse's next click on a web picture opens nothing and reveals its
+  //   sign, whatever covers or shows it, a right click before that drag included, and the click after it opens; where a press's
+  //   pointerup never comes, the mouse's next click is refused the same way; a first press elsewhere costs nothing. Chromium and
+  //   Firefox end such a drag with a pointercancel and send the next press's pointerdown, so they carry no cost. The cost of the
+  //   primary clear, on a device with a mouse and a touchscreen: a contact held on a picture while a primary press of the other
+  //   pointer type lands elsewhere loses its record, a mouse held while a finger presses or a finger held while the mouse presses,
+  //   so its click opens nothing and reveals;
   // - a pointerup fills the one-click slot with the record under its own pointerId, or with nothing when that pointer recorded
   //   none; any pointerdown, pointercancel or keydown empties the slot, and the first click after it takes it, whatever the click
   //   lands on, so one slot serves one click; the boundary and capture events a browser sends between a pointerup and its click
   //   (lostpointercapture, pointerout) leave it alone;
   // - a click by a pointer (trusted, and its pointerId other than -1, or none with a detail above 0) reads the record under its own
-  //   pointerId, and with none the press the slot handed it; that press must be this picture's, its verdict shown, and the sign in
-  //   view again at the click (controlInView), and with neither the click opens nothing and reveals;
+  //   pointerId, which stands only until that pointer's pointerup, and with none the press the slot handed it; that press must be
+  //   this picture's, its verdict shown, and the sign in view again at the click (controlInView), and with neither the click opens
+  //   nothing and reveals;
   // - a click by no pointer, a key's (pointerId -1, detail 0) or a script's (untrusted), reads no record and no slot: it is read at
   //   the click by signShown, a key's after the key gate has let its press through.
-  // The engines measured: Chromium gives a tap's click the touch's own pointerId and Firefox its press's (0, for a mouse and a
-  // touch alike), so each finds its own record; WebKit under Playwright's touch emulation on Linux (a stand-in for WebKitGTK, and
-  // presumably WPE, on a touchscreen) gives the click pointerId 1 of type mouse while its press carried the touch's, so the click
-  // finds its press in the slot. WebKit's iOS source gives an iPhone tap's click the touch's own pointerId, so the own record serves
-  // there, read and not run on a device. A browser whose click carries no pointerId finds its press in the slot too. The slot's
-  // four clears (a pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive: the slot is refilled at
-  // every pointerup, a tap's click follows its own pointerup, and a key's or a script's click never reads the slot, so dropping any
-  // one clear alone changes no gesture a test drives; the press cells (a press with no click, then a key's click or a script's) are
-  // red under a gate that lets a key's or a script's click read the slot with the keydown's clear dropped. One physical gesture's
-  // later events are closed by their own fields and never by time: a click whose detail is above 1, following a refused click of
-  // its run (the second click of a double click, and in Chromium the second tap of a double tap, whose click carries detail 2),
-  // opens nothing, since the first click's reveal put the sign on the screen between the two; in Firefox and WebKit each tap's click
-  // carries detail 1, so a second tap is read at its own start and opens once the first tap's reveal has shown the sign; a held
-  // key's repeats and Space's release are the key gate's.
+  // The engines measured: Chromium gives a tap's click the touch's own pointerId, Firefox its press's (0, for a mouse and a touch
+  // alike), and WebKit under Playwright's touch emulation on Linux (a stand-in for WebKitGTK, and presumably WPE, on a
+  // touchscreen) pointerId 1 of type mouse while its press carried the touch's. A click after its press's pointerup finds that
+  // press in the slot in each of them, whatever pointerId it carries, and so does an iPhone tap's click, which WebKit's iOS source
+  // gives the touch's own pointerId, read and not run on a device. A browser whose click carries no pointerId finds its press in
+  // the slot too. The slot's four clears (a pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive:
+  // the slot is refilled at every pointerup, a tap's click follows its own pointerup, and a key's or a script's click never reads
+  // the slot, so dropping any one clear alone changes no gesture a test drives; the press cells (a press with no click, then a
+  // key's click or a script's) are red under a gate that lets a key's or a script's click read the slot with the keydown's clear
+  // dropped. One physical gesture's later events are closed by their own fields and never by time: a click whose detail is above
+  // 1, following a refused click of its run (the second click of a double click, and in Chromium the second tap of a double tap,
+  // whose click carries detail 2), opens nothing, since the first click's reveal put the sign on the screen between the two; in
+  // Firefox and WebKit each tap's click carries detail 1, so a second tap is read at its own start and opens once the first tap's
+  // reveal has shown the sign; a held key's repeats and Space's release are the key gate's.
   type FigurePress = { img: Element; ok: boolean };
-  const presses = new Map<number, FigurePress>();        // the press records, by pointerId
+  const presses = new Map<number, FigurePress>();        // the press records, by pointerId, each until its pointerup or its pointercancel, a primary press, a dragstart or a mousedown no mouse's or pen's pointerdown came before
   let slot: FigurePress | null = null;                   // the one-click slot: the record of the last pointerup, until a pointerdown, a pointercancel, a keydown or the click that takes it
   let slotted: FigurePress | null = null;                // what the current click took from the slot at the window, read by webGestureShown
-  let unannounced: FigurePress | null = null;            // the verdict of a mousedown no pointerdown announced, until the pointerup after it takes it
-  let announced = false;                                  // a pointerdown came that no mousedown has followed yet
+  let mouseDownDue = false;                               // a mouse's or a pen's pointerdown came and its own mousedown has not, until that mousedown, its pointerup or its pointercancel
   let refusedRun = false;                                 // the last click on a web figure in the current run of clicks was refused
-  /** The press's verdict on the web figure under `t`, its control's or its own, or null off one. */
-  const pressAt = (t: Element | null): FigurePress | null => {
+  const onFigurePress = (ev: PointerEvent): void => {
+    slot = null;
+    mouseDownDue = ev.pointerType !== "touch";            // a mouse's and a pen's press send their own mousedown before their pointerup; a tap's comes after its pointerup
+    if (ev.isPrimary) presses.clear();                    // a primary press: every earlier contact has ended, whatever its pointer type
+    const t = ev.target as Element | null;
     const control = figureControlOf(t, body);
     const img = control ? figureOfControl(control) : bareFigureOf(t, body);
     const sign = img ? figureSign(img) : null;
-    return img && sign ? { img, ok: signShown(sign) } : null;
+    if (img && sign) presses.set(ev.pointerId, { img, ok: signShown(sign) });
   };
-  const onFigurePress = (ev: PointerEvent): void => {
-    slot = null; announced = true;
-    if (ev.isPrimary) presses.clear();                    // a primary press: every earlier contact has ended, whatever its pointer type
-    const press = pressAt(ev.target as Element | null);
-    if (press) presses.set(ev.pointerId, press);
+  const onFigureMouseDown = (): void => {                 // ends records and nothing else: it takes no verdict and leaves the slot alone
+    if (mouseDownDue) { mouseDownDue = false; return; }   // the mousedown of the mouse's or the pen's press just recorded
+    presses.clear();                                      // a mousedown no mouse's or pen's pointerdown came before: every record ends
   };
-  const onFigureMouseDown = (ev: MouseEvent): void => {
-    if (announced) { announced = false; return; }         // the mousedown that follows a pointerdown, a mouse's own or a tap's compatibility event
-    presses.clear();                                      // a mouse press no pointerdown announced: a primary press all the same
-    unannounced = pressAt(ev.target as Element | null);
-  };
-  const onFigureUp = (ev: PointerEvent): void => { slot = presses.get(ev.pointerId) ?? unannounced; unannounced = null; };
-  const onFigureCancel = (ev: PointerEvent): void => { presses.delete(ev.pointerId); slot = null; };
+  const onFigureUp = (ev: PointerEvent): void => { slot = presses.get(ev.pointerId) ?? null; presses.delete(ev.pointerId); mouseDownDue = false; };   // the record ends at its own pointerup, handed to the slot
+  const onFigureCancel = (ev: PointerEvent): void => { presses.delete(ev.pointerId); slot = null; mouseDownDue = false; };
   const onFigureKey = (): void => { slot = null; };
+  const onFigureDragStart = (): void => { presses.clear(); };   // a drag ends every record: WebKit's drag of the picture sends no pointerup and no pointercancel, and no click follows a drag
   const onClickRun = (ev: MouseEvent): void => { slotted = slot; slot = null; if (ev.detail === 1) refusedRun = false; };   // the click takes the slot, and a click of detail 1 begins a new run
-  const gateListeners: Array<[string, (ev: any) => void]> = [["pointerdown", onFigurePress], ["mousedown", onFigureMouseDown], ["pointerup", onFigureUp], ["pointercancel", onFigureCancel], ["keydown", onFigureKey], ["click", onClickRun]];
+  const gateListeners: Array<[string, (ev: any) => void]> = [["pointerdown", onFigurePress], ["mousedown", onFigureMouseDown], ["pointerup", onFigureUp], ["pointercancel", onFigureCancel], ["keydown", onFigureKey], ["dragstart", onFigureDragStart], ["click", onClickRun]];
   for (const [type, cb] of gateListeners) window.addEventListener(type, cb, true);
   closeHooks.push(() => { for (const [type, cb] of gateListeners) window.removeEventListener(type, cb, true); });   // every window listener of the gate goes with the viewer, the capture flag its add carried
   /** The gate's verdict at a click that would open a web picture's tab, the refusal's reveal made here: a click by a pointer takes
-   *  the press the recorder above matched to it (the record under its own pointerId, else the slot's), a click by no pointer is read
-   *  at the click by signShown, and a later click of a refused run opens nothing. */
+   *  the press the recorder above matched to it (the record under its own pointerId while it stands, until that pointer's pointerup,
+   *  else the slot's), a click by no pointer is read at the click by signShown, and a later click of a refused run opens nothing. */
   const webGestureShown = (img: Element, ev: MouseEvent): boolean => {
     const sign = figureSign(img);
     const pid = (ev as PointerEvent).pointerId;
