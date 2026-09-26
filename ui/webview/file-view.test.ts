@@ -215,11 +215,11 @@ test("composerWindow, executed: own composer → the same-origin shell's chat pa
 // into the gutters (a left over the column, since the file review's round 17, the coordinator's decision 4: the translate it
 // replaced made every top-level table a stacking context); what the function promises them is run here: nothing before the
 // first report, the body's content width on EACH TOP-LEVEL TABLE (never a nested one, never the prose) after one, the same
-// width on the fresh tables a paint brings (the returned stamp: mdBlock rebuilds the root and no report follows a paint), a
-// repeated width no write, the tables' observer watching exactly the top-level tables of the root last stamped and writing
-// each one's border-box width on it as its report comes, one watch at a time with both observers dropped, and no watch at all
-// without ResizeObserver.
-test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after a report and, through the stamp, on a fresh root's tables; a nested table and the prose get nothing; a repeated width writes nothing; the tables' observer watches the stamped root's top-level tables alone and writes each one's border-box width as --fv-table-w; the next watch and the drop disconnect both observers; no ResizeObserver, no writes", () => {
+// width on the fresh tables a paint brings (the returned stamp: mdBlock rebuilds the root and no report follows a paint), each
+// table's own width written by the stamp with its cap, read once every cap is written, a repeated width no write, the tables'
+// observer watching exactly the top-level tables of the root last stamped and writing each one's border-box width on it as its
+// report comes, one watch at a time with both observers dropped, and no watch at all without ResizeObserver.
+test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after a report and, through the stamp, on a fresh root's tables, the stamp writing each one's own width as --fv-table-w with its cap, read once every cap is written; a nested table and the prose get nothing; a repeated width writes nothing; the tables' observer watches the stamped root's top-level tables alone and writes each one's border-box width as --fv-table-w; the next watch and the drop disconnect both observers; no ResizeObserver, no writes", () => {
   const head = "function watchBodyWidth(body: HTMLElement, onWidth?: (width: number) => void): () => void {";   // the seam's reflow hangs on onWidth (undefined here: the stamp alone runs)
   const at = VIEW.indexOf("let dropWidthWatch: () => void = ");
   const end = VIEW.indexOf("\n}\n", VIEW.indexOf(head, at)) + 3;
@@ -253,6 +253,8 @@ test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after 
   const run = new Function("ResizeObserver", js + "\nreturn { watchBodyWidth, drop: () => dropWidthWatch() };") as (ro: unknown) => { watchBodyWidth: (body: Node) => () => void; drop: () => void };
   /** A rendered root as mdBlock leaves it: prose, a table inside a paragraph (as inside a quote or a list item), two top-level tables. */
   const fresh = () => { const nested = node("TABLE"); const p = node("P", "", [nested]); const t1 = node("TABLE"); const t2 = node("TABLE"); return { md: node("DIV", "fileview-md", [p, t1, t2]), p, nested, t1, t2 }; };
+  /** A table whose own width, read, is `px` and records whether both top-level tables of `r` held their cap at that read. */
+  const sized = (r: ReturnType<typeof fresh>, t: Node, px: number, capped: boolean[]): void => { Object.defineProperty(t, "offsetWidth", { get: () => { capped.push(w(r.t1) !== "" && w(r.t2) !== ""); return px; }, configurable: true }); };
   const w = (n: Node) => n.style.getPropertyValue("--fv-body-w");
   const tw = (n: Node) => n.style.getPropertyValue("--fv-table-w");
   const lib = run(FakeResizeObserver);
@@ -266,14 +268,18 @@ test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after 
   stamp();
   assert.equal(w(root.t1) + w(root.t2), "", "before the first report nothing is written: the sheet's fallback holds (the cap is the column)");
   assert.deepEqual(tableObs.targets, [], "...and the tables' observer still watches nothing (the shift's fallback holds: none)");
+  const capped: boolean[] = [];
+  sized(root, root.t1, 1000, capped); sized(root, root.t2, 480, capped);
   report(body, [{ contentRect: { width: 900 } }]);
   assert.equal(w(root.t1), "900px"); assert.equal(w(root.t2), "900px");
+  assert.deepEqual([tw(root.t1), tw(root.t2)], ["1000px", "480px"], "the stamp writes each top-level table's own width with its cap, so the shift a new width asks for lands in the layout that width makes, never left to the tables' observer (WebKit raised a loop of undelivered notifications while it waited for that later delivery)");
+  assert.deepEqual(capped, [true, true], "each table's width is read once every cap is written, [both capped at each read]");
   assert.equal(w(root.nested), "", "a table inside a paragraph is not the document's own: it keeps the prose width");
   assert.equal(w(root.p), "", "the prose is never written to (the property is non-inherited; a write there would reach nothing anyway)");
   assert.deepEqual(tableObs.targets, [root.t1, root.t2], "after the report the tables' observer watches the two top-level tables and neither the nested table nor the prose");
   // the tables' reports: each table's own border-box width on it, the inline size of its border box, and its offsetWidth where the
   // entry carries no border-box size (an engine before that field)
-  root.t2.offsetWidth = 611;
+  sized(root, root.t2, 611, []);
   tableObs.cb([{ target: root.t1, borderBoxSize: [{ inlineSize: 1234.5 }] }, { target: root.t2 }]);
   assert.equal(tw(root.t1), "1234.5px", "a table's report writes its border-box inline size as --fv-table-w");
   assert.equal(tw(root.t2), "611px", "an entry with no border-box size reads the table's offsetWidth");
@@ -291,7 +297,7 @@ test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after 
   assert.equal(w(root.t1), "", "a repeated width writes nothing");
   report(body, [{ contentRect: { width: 700 } }]);
   assert.equal(w(root.t1), "700px"); assert.equal(w(root.t2), "700px");
-  assert.equal(root.t1.writes, 1, "one write per change");
+  assert.equal(root.t1.writes, 2, "one write of the cap and one of the table's own width per change");
   assert.deepEqual(tableObs.targets, [root.t1, root.t2], "a changed width's stamp hands the tables' observer the root it stamped");
   // the last of a callback's entries is the newest; a callback with no entry reads the body itself
   report(body, [{ contentRect: { width: 300 } }, { contentRect: { width: 800 } }]);

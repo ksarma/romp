@@ -779,7 +779,11 @@ export type FileViewRenderWhy = "paint" | "reflow";
 // a picture loading in a cell each moves it, and none is a paint). mdBlock rebuilds
 // the root on every paint and no report follows a paint, so renderBody stamps the fresh tables itself (the returned
 // function) with the body's width last reported and hands them to the tables' observer in place of the last root's; before
-// the first report both properties are unset and the sheet's fallbacks hold (the cap is the column and the shift none).
+// the first report both properties are unset and the sheet's fallbacks hold (the cap is the column and the shift none). The
+// stamp, which the body's report runs as well, writes each table's own width with its cap, read after every cap is written, so
+// the shift a new width asks for lands in the layout the new width makes and the tables' observer, delivered after the body's in
+// the same round, finds the width already written (with the width left to that later delivery, WebKit raised a window error, a
+// loop of undelivered notifications, at a pane's width change).
 // Absent ResizeObserver (a stand-in, an old engine) nothing is written and the fallbacks hold. One watch at a time: the next
 // open, or the close, drops the last, both observers with it. An optional `onWidth` runs after each changed report of the
 // body's width with the new width: the local viewer's reflow, which re-places the comments panel's cards once per animation
@@ -794,10 +798,11 @@ function watchBodyWidth(body: HTMLElement, onWidth?: (width: number) => void): (
     if (tables) tables.disconnect();                   // the last root's tables are gone (a Raw paint has none) or these same ones, observed again below
     const md = body.querySelector(".fileview-md");
     if (!md) return;
-    for (const n of Array.from(md.children)) if (n.tagName === "TABLE") {
-      (n as HTMLElement).style.setProperty("--fv-body-w", width + "px");
-      if (tables) tables.observe(n);
-    }
+    const top = Array.from(md.children).filter((n) => n.tagName === "TABLE");
+    for (const n of top) (n as HTMLElement).style.setProperty("--fv-body-w", width + "px");
+    const widths = top.map((n) => (n as HTMLElement).offsetWidth);   // each table's own width, read once every cap is written
+    top.forEach((n, i) => (n as HTMLElement).style.setProperty("--fv-table-w", widths[i] + "px"));
+    if (tables) for (const n of top) tables.observe(n);
   };
   if (typeof ResizeObserver === "function") {
     const ro = new ResizeObserver((entries) => {
@@ -4626,8 +4631,8 @@ const SHEET_STACK_CLASSES: ReadonlySet<string> = new Set([
  *  review's round 17, extra9-1, and the coordinator's decision 4 on it): each class a rule of a sheet some page of either host loads
  *  (ui/webview/host-sheets.mjs hostSheets) names where that rule, whatever state pseudo-class its subject carries (a hover's, a
  *  press's), gives the element a property that makes it a stacking context: a transform, translate, rotate, scale or perspective
- *  other than none; a filter, backdrop-filter, clip-path, mask, mask-image or mask-border other than none; an opacity under 1; a
- *  mix-blend-mode other than normal; an isolation other than auto; contain with layout or paint (strict and content hold both); a
+ *  other than none; a filter, backdrop-filter, clip-path, mask, mask-image, mask-border, mask-box-image, view-transition-name or
+ *  offset-path other than none, each under its -webkit- name too; an opacity under 1; a mix-blend-mode other than normal; an isolation other than auto; contain with layout or paint (strict and content hold both); a
  *  content-visibility other than visible; a position of fixed or sticky; a z-index other than auto; a will-change naming one of
  *  these; or an animation whose keyframes set one; a value the reader cannot read counted (the safe side). container-type is none of
  *  them: it applies style and size containment, which make no stacking context (measured in Chromium, Firefox and WebKit). Taken
