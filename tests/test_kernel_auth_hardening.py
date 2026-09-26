@@ -502,13 +502,17 @@ def _run_head_script(href):
 
 
 class TokenLeavesTheUrl(unittest.TestCase):
-    """The token a browser presents as ?token= is spent by the response that serves the page: that
-    response turns it into the cookie every later request rides. The URL copy must not outlive it: a
-    document URL is what a Referer carries, what a same-origin iframe reads as document.referrer and
-    what the address bar shows. Two guards, both executed: the shell drops the param from its address
-    in its head script, before the manifest link or the first iframe can make a request, and every
-    page the kernel serves declares Referrer-Policy: same-origin, so no browser default decides
-    whether a cross-origin load (an <img> in a transcript) learns the page URL."""
+    """The token a browser presents as ?token= is spent by the response that serves the page: on a
+    navigation that response signs the browser in with a session cookie and a page key. The URL copy
+    must not outlive it: a document URL is what a Referer carries, what a same-origin iframe reads as
+    document.referrer and what the address bar shows. On a sign-in the seed at the top of the page's
+    head drops token= and c= from the address (test_session_cookie_auth's LoginHandoff pins the seed;
+    the sign-in scenes of test_file_caps_browser and test_page_key_dashboard_browser run it, a /chat
+    page having no scrub of its own). Two further guards, both executed here: the shell's head script
+    drops token= from its address before the manifest link or the first iframe can make a request, the
+    one step that does so for a shell loaded by a load that is not a navigation, which gets no seed;
+    and every page the kernel serves declares Referrer-Policy: same-origin, so no browser default
+    decides whether a cross-origin load (an <img> in a transcript) learns the page URL."""
 
     def test_the_shell_drops_the_token_from_its_address_before_any_request(self):
         cases = (

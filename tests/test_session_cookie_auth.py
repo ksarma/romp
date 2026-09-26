@@ -213,7 +213,10 @@ class CookieOpensPageAndStaticOnly(_Server):
         self.assertEqual(self._ws_status("app=chat", cookie=SESS, origin=self.origin), 403)
 
     def test_a_forged_foreign_origin_is_refused_even_on_a_page(self):
-        # the cookie still passes the Origin gate; an in-browser page on another origin is refused
+        # the cookie still passes the Origin gate: a request that names a foreign Origin is refused, even on a
+        # page. A request that names none passes it with the cookie (a browser names none on a navigation or on a
+        # load made without CORS, whichever page made it; test_the_cookie_alone_opens_the_page_and_static_classes
+        # sends none), which is why the page and static classes hold no session data
         self.assertEqual(self._status("/chat", cookie=SESS, origin="http://evil.example"), 403)
 
     def test_a_session_cookie_whose_tag_does_not_match_opens_no_page_and_no_static_read(self):

@@ -3857,8 +3857,10 @@ def _load_token():
     set, else a stable random token persisted under the state dir at 0600 — file perms are the
     same-user gate (Jupyter's model). Required on EVERY request, loopback included: loopback is
     reachable by any local user, so a token-free loopback would let a same-host co-tenant drive
-    sessions. Local clients read the file (same user) and send X-Romp-Token; browsers carry
-    ?token= once and ride the auto-set cookie. The file is read or minted by
+    sessions. Local clients read the file (same user) and send X-Romp-Token; a browser presents
+    ?token= (or a one-time ?c= code) once, on a page navigation, which signs it in with a session
+    cookie that opens the page documents and static files, and a page key for every other request (a
+    /file load carries a capability made from it; Handler._authorize). The file is read or minted by
     _serve_token_read_or_mint (locked, born 0600, never rotated by a read fault); a fault there at
     import refuses to start the kernel rather than hand out a token no client holds (under
     bin/romp-manager the respawn backoff repeats that refusal until the file is repaired, then the
@@ -72023,15 +72025,18 @@ def _landing():
             "if(navigator.standalone){document.documentElement.className+=' ios-standalone';"
             "var _vp=document.querySelector('meta[name=viewport]');"
             "_vp.setAttribute('content',_vp.getAttribute('content')+',viewport-fit=cover');}"
-            # The token this page was opened with (`/?token=`: the login page, `romp url`, the CLI's open) is
-            # spent by the time this runs: the response that served the page signed this browser in (_authorize,
-            # then _send's session cookie and the page key's seed). The URL copy would otherwise outlive
-            # it for the page's lifetime, as what a Referer carries, what every same-origin pane iframe reads
-            # as document.referrer, and what the address bar shows. Dropped HERE, in the head, before the
-            # manifest link or the first <iframe> can make a request, so no request this document makes ever
-            # carries it; the other params (panes, wid, a push deep link the reveal script strips later) and
-            # the hash stay, re-serialized by URLSearchParams (a comma becomes %2C, which every reader's
-            # searchParams.get decodes). A reload rides the session cookie, as the pane iframes already do.
+            # The token this page was opened with (`/?token=`: the login page, `romp url`, the CLI's open) must
+            # not outlive the response that spent it, as what a Referer carries, what every same-origin pane
+            # iframe reads as document.referrer, and what the address bar shows. On a sign-in navigation the
+            # sign-in seed, which _send puts first in the head, has already dropped token= and c= before this
+            # runs, so this finds nothing there. This is the fallback for a shell served on ?token= without a
+            # sign-in: a load _is_navigation does not count (into an object, embed or frame element) gets no
+            # session and no seed, and this is the one step that drops the token from that document's address.
+            # It runs HERE, in the head, before the manifest link or the first <iframe> can make a request, so
+            # no request this document makes carries it; the other params (panes, wid, a push deep link the
+            # reveal script strips later) and the hash stay, re-serialized by URLSearchParams (a comma becomes
+            # %2C, which every reader's searchParams.get decodes). After a sign-in, a reload rides the session
+            # cookie, as the pane iframes do.
             "try{var _u=new URL(location.href);if(_u.searchParams.has('token')){_u.searchParams['delete']('token');"
             "history.replaceState(null,'',_u.pathname+(_u.searchParams.toString()?'?'+_u.searchParams.toString():'')+_u.hash);}}"
             "catch(e){}</script>"
@@ -73508,14 +73513,18 @@ class Handler(BaseHTTPRequestHandler):
         # Phone and tailnet frame the kernel's own origin, which 'self' permits.
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
-        # Referrer policy: a document's URL is what its requests send as Referer, and the shell's URL is
-        # `/?token=` on its first load (the address scrub in _landing's head script drops it; a pane page
-        # opened bare as `/chat?token=` keeps it). same-origin sends the full Referer on requests to this
-        # origin and nothing cross-origin (a transcript's <img> from another host, a link out), whatever
-        # the browser's default, on every page the kernel serves: the SECURITY.md claim that a cross-site
-        # page cannot obtain the token then holds by construction. same-origin and not no-referrer: a
-        # same-origin GET carries no Origin header, so the Referer is the one header that names the page
-        # origin behind it to the kernel, and this keeps it.
+        # Referrer policy: a document's URL is what its requests send as Referer, and a page's URL holds
+        # `?token=` (or `?c=`) on the load that signs a browser in. The sign-in seed, which this method puts
+        # first in the head of the page a sign-in response serves (above), drops token= and c= from the
+        # address before the page makes a request, and _landing's head script drops token= from the shell's
+        # address on a load that is not a navigation and so gets no seed. Neither reaches a speculative
+        # preload the parser starts before a head script runs, or a page other than the shell loaded on
+        # `?token=` by a load that is not a navigation; this header covers those. same-origin sends the
+        # full Referer on requests to this origin and nothing cross-origin (a transcript's <img> from
+        # another host, a link out), whatever the browser's default, on every page the kernel serves: the
+        # SECURITY.md claim that a cross-site page cannot obtain the token then holds by construction.
+        # same-origin and not no-referrer: a same-origin GET carries no Origin header, so the Referer is
+        # the one header that names the page origin behind it to the kernel, and this keeps it.
         self.send_header("Referrer-Policy", "same-origin")
         if getattr(self, "_reauth", False):
             # A valid session whose stored page key no longer matches: the page-key script reads this
@@ -73611,8 +73620,11 @@ class Handler(BaseHTTPRequestHandler):
         alone opens only the page and static classes (a page document, /dist, /media, /sw.js: code, no
         session data). The full and socket classes additionally need the page key (the X-Romp-Key
         header, or k= on a socket dial); the file class additionally needs a per-file cap. The cookie
-        still passes through the Origin gate (_origin_ok), which keeps in-browser pages on other origins
-        out of the page and static classes too. session_to_set is the session a login mints or keeps: a
+        still passes through the Origin gate (_origin_ok), which refuses a request that names a foreign
+        Origin. A request that names none passes it with the cookie, and a browser names none on a GET
+        navigation (a frame's included) or on a subresource load made without CORS (a script, an image),
+        whichever page made it: that is why the page and static classes carry code and no session data.
+        session_to_set is the session a login mints or keeps: a
         GET navigation to a page authorized by ?token=, ?c=, or the old romp_token cookie (which held
         the serve token itself, migrated once here); every other authorized response sets no cookie."""
         need, fhost = self._need(urlparse(getattr(self, "path", "") or "").path)

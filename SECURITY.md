@@ -76,8 +76,11 @@ sign-ins. The session cookie is honoured only when the request's Origin is one
 the gate accepts: the dashboard's own origin (the `Host` the request arrived
 at, or the kernel's own port on `127.0.0.1` or `localhost`), any
 `vscode-webview://` origin (every VS Code webview, not only romp's own), or no
-`Origin` header at all, which a same-origin navigation and non-browser clients
-send; the WebSocket upgrade is checked the same way. A page whose stored key
+`Origin` header at all, which non-browser clients send and a browser sends on a
+`GET` navigation (a frame's included) and on a load made without CORS (a
+script, an image), whichever page made it. That is why the cookie alone opens
+only the page documents and static files, which hold no session data. The
+WebSocket upgrade is checked the same way. A page whose stored key
 no longer matches its session (two sign-ins that overlapped, or storage cleared
 while the tab was open) gets a refusal of its own and moves to the sign-in
 page, as does a page whose origin holds no key. A browser that refuses site
