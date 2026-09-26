@@ -1572,8 +1572,8 @@ def _born(before):
     (_held_alive, read earlier and held since, so none of it has died and no id among it was reused): the objects made
     since `before` was read and still alive, whatever holds them (a tree, a list of its statements, a closure), by
     class. It changes no collector state, so an object only a collection would free is counted while no collection has
-    run; the module docstring names the scans that release their bindings, which leave no such cycle holding a tree,
-    and the tests that hold those releases."""
+    run; the module docstring names the scans whose releases two tests hold with automatic collection off, and those
+    tests; those scans leave no such cycle holding a tree."""
     seen = {id(o) for o in before}
     return dict(collections.Counter(type(o).__name__ for o in gc.get_objects() if isinstance(o, _HELD_TYPES) and id(o) not in seen))
 
