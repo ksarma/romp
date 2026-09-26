@@ -4256,15 +4256,19 @@ def _bg_row_may_be_agent(row) -> bool:
     in the session's own subagents tree is found there (0.12 to 0.15 ms measured), and an id that tree lacks walks every
     sibling session's subagents tree in the project directory. On the largest project directory measured (2026-09-25,
     the decision-6 measurement logs kept with the PR's round-1 notes), that walk cost 87 to 134 ms the first time
-    (sixteen runs), once after a restart, and a median of 21 to 49 ms at each later cycle (three runs of ten walks; the
+    (sixteen runs), once after a restart, and a median of 21 to 49 ms each later time (three runs of ten walks; the
     longest single walk 53.5 ms, in the run whose median was 49 ms) with every session that has a subagents tree there
     alive, as on the measured box, since the jobs pass (_subagent_trees_forget) keeps an alive session's tree. A tree no
-    alive session owns is dropped by that pass and walked again at each later cycle's miss: with no sibling alive, a
-    later cycle cost a median of 88 to 97 ms in the same measurement. The 50 ms bound set for one cycle's resolution
-    governs the steady cycle (the coordinator's reading), and each run's median steady cycle is inside it, though one
-    walk of the thirty went 3.5 ms past it; the first walk is paid once, and only after a kernel restart, on the roads
-    where this kernel never saw the agent start. So the row's end is queued rather than left as a residual. Each id's
-    resolution, a miss included, is memoized until a directory it read changes (_subagent_file)."""
+    alive session owns is dropped by that pass and walked again at each later miss: with no sibling alive, a later walk
+    cost a median of 88 to 97 ms in the same measurement. The drain pays one walk for each end whose agent id the
+    session's own subagents tree lacks, whatever road queued the end (a typed row's end and a SubagentStop's resolve the
+    same way). The 50 ms bound set for one cycle's resolution governs the steady cycle (the coordinator's reading): each
+    run's median walk is inside it, though one walk of the thirty went 3.5 ms past it, so the bound holds at the median
+    for a later cycle that carries at most one such end, and a cycle that carries two is at or over it. A first cycle
+    after a kernel restart pays the first walk for one such end and a later walk for each further one; the first walk
+    comes only on the roads where this kernel never saw the agent start. So the row's end is queued rather than left as
+    a residual. Each id's resolution, a miss included, is memoized until a directory it read changes or the memo passes
+    its 1024-key bound and is cleared (_subagent_file)."""
     return isinstance(row, dict) and _bg_type_discriminant(row.get("type")) in ("local_agent", "")
 
 
@@ -12394,10 +12398,11 @@ class SdkSession:
         # agent only through a row: one seeded from the reg's mirror, which carries a Task agent under its agent id, or,
         # when the mirror lacked it, the row minted above from the agent's progress frame, whose type is never learned.
         # That end is queued by (sid, agent id) and the kernel resolves the id at the drain; when the id is not in the
-        # session's own subagents tree the resolution walks the project directory's sibling subagents trees, 87 to 134
-        # ms the first time after a restart and a median of 21 to 49 ms at a later cycle on the largest directory
-        # measured (_bg_row_may_be_agent states the measurement and its conditions). Never for another task type: its id
-        # names no agent transcript
+        # session's own subagents tree the resolution walks the project directory's sibling subagents trees, once for
+        # each such end: 87 to 134 ms the first time after a restart and a median of 21 to 49 ms each later time on the
+        # largest directory measured, so a cycle that carries two such ends is at or over the 50 ms bound set for one
+        # cycle's resolution (_bg_row_may_be_agent states the measurement and its conditions). Never for another task
+        # type: its id names no agent transcript
         if sub_changed or (ended and _bg_row_may_be_agent(gone)):
             self._note_live_agents([tid], False)
         if wf and (ended or isinstance(d.get("workflow_progress"), list)):
@@ -20961,10 +20966,13 @@ class SdkBackend:
         (_bg_row_may_be_agent): the object that reattached after a kernel restart mints one from the agent's progress
         frame when the mirror lacked the agent's row, and a mirror written from it carries it untyped. Its end is queued
         by (sid, agent id), and the kernel resolves the id at the drain. When the id is not in the session's own
-        subagents tree the resolution walks every sibling session's subagents tree in the project directory: on the
-        largest one measured, 87 to 134 ms the first time, once after a restart, and a median of 21 to 49 ms at each
-        later cycle with every session that has a tree there alive, a median inside the 50 ms bound set for one cycle's
-        resolution (the longest single walk 53.5 ms; _bg_row_may_be_agent states the measurement and its conditions).
+        subagents tree the resolution walks every sibling session's subagents tree in the project directory, once for
+        each such end, whatever its road: on the largest one measured, 87 to 134 ms the first time, once after a
+        restart, and a median of 21 to 49 ms each later time with every session that has a tree there alive, a median
+        inside the 50 ms bound set for one cycle's resolution (the longest single walk 53.5 ms). So the bound holds at
+        the median for a cycle that carries at most one such end, and a cycle that carries two is at or over it; a first
+        cycle after a restart with several such ends pays the first walk and a later walk for each further one
+        (_bg_row_may_be_agent states the measurement and its conditions).
         An agent can be queued as ended more than once (its stop and its task's end). In one batch the kernel acts on the
         agent's last event only. A later end, in a later cycle, finds the entry gone or a restored tail weighing nothing when
         the earlier release was taken, unless a reader pulled the file whole in between (the end then releases that read's

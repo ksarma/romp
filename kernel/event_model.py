@@ -1108,8 +1108,11 @@ _DROP_OWED = {}                   # path -> when its quiescence drop was deferre
 _DROP_OWED_MAX = 4096             # over it the OLDEST owed entry is popped unwritten (its memory released), never the table cleared
 _RELEASE_OWED = {}                # path -> reason: a release at an agent's end deferred to the next cycle (release_entry: the cycle's
 #                                   budget refused its write, or a read replaced the entry before the pop); paid at the next cycle's
-#                                   start (checkpoint_pay_owed_releases) unless that cycle drains the agent's start first
-#                                   (cancel_owed_release). At most _DROP_OWED_MAX: over it the oldest is given up (releaseLost)
+#                                   start (checkpoint_pay_owed_releases) unless that cycle drains the agent's start first while
+#                                   the kernel still holds the agent's end in its table of released ends (cancel_owed_release); a
+#                                   start queued after that drain, dropped past the queue's bound, or drained after the end left
+#                                   that table does not cancel it, and a release taken then pops the running agent's entry. At most
+#                                   _DROP_OWED_MAX: over it the oldest is given up (releaseLost)
 _DROP_HOLD = threading.local()    # the converge pass holds this thread's quiescence drops while it heals and primes a leaf, then pays
 #                                   them once (T362 follow-up review, low 2): {path: pop} of the drops held, or absent
 _CKPT_LOCK = threading.Lock()
