@@ -1395,16 +1395,16 @@ def _flag_census():
     reference; its tearDownClass drops it, so the facts and the trees are freed before the next module's first test.
     No test instance keeps a reference of its own.
     WHY NOT tests/parse_cache.py's derived(): derived() memoises the value for the whole process and calls gc.freeze()
-    after a build, and the freeze is process-global. In a serial run of the suite this module sorts at about 61
-    percent (in collection order, 11060 of the 18056 items sort before its first at 909e3ced5, and 11060 of 18026 at
-    7e5e74e95), so at the heads that built the census through derived() its build was the run's first freeze, and
-    every later read of the kernel's perf snapshot (_PerfStats.snapshot reads gc.get_freeze_count(), which walks the
-    permanent generation on every call) paid per read for everything frozen here. At bc9790a14, the last of those
-    heads, the PR's own Python 3.10 cell (CI run 35942065383) took 58 s longer than main's at the same base
-    (fa3ef54b5, CI run 35890814789), most of it in the snapshot readers that sort after this module and in the
-    thread-stop census, which reads the frozen count itself (the reviewer's ruling on round 1 of fork PR #909). So,
-    as that ruling directs, the module changes no collector state at all: no gc.freeze or gc.disable, which change the
-    collector's state for the whole process, and no gc.collect, which walks every tracked object.
+    after a build, and the freeze is process-global. In a serial run of the suite (CI's cells until 2026-09-25, its
+    macOS cells since) this module sorts at about 61 percent (in collection order, 11060 of the 18056 items sort before
+    its first at 909e3ced5, and 11060 of 18026 at 7e5e74e95), so at the heads that built the census through derived()
+    its build was the run's first freeze, and every later read of the kernel's perf snapshot (_PerfStats.snapshot reads
+    gc.get_freeze_count(), which walks the permanent generation on every call) paid per read for everything frozen here.
+    At bc9790a14, the last of those heads, the PR's own Python 3.10 cell (CI run 35942065383) took 58 s longer than
+    main's at the same base (fa3ef54b5, CI run 35890814789), most of it in the snapshot readers that sort after this
+    module and in the thread-stop census, which reads the frozen count itself (the reviewer's ruling on round 1 of fork
+    PR #909). So, as that ruling directs, the module changes no collector state at all: no gc.freeze or gc.disable,
+    which change the collector's state for the whole process, and no gc.collect, which walks every tracked object.
     WHY NOT THE CACHE'S SHARED PARSE EITHER, this census's exception to tests/parse_cache.py's one-cache rule: read
     through source_and_tree, which freezes nothing, the trees stayed in the cache, tracked, from this module until the
     thread-stop census froze them, and every full collection in between walked them. Measured at 565043897 against
@@ -1451,8 +1451,9 @@ def setUpModule():
     kernel modules _parse_kernel_module has parsed so far in the process (_CENSUS_BUILDS, _PARSES), both counted per
     process, so a build at import would count as the module's one build. That pin requires both to be 0 here: a census
     or a tree made at import would be held, tracked, through every module that sorts before this one, the retention
-    that ruled out the cache's shared parse (_flag_census), over the first 61 percent of a serial run (in collection
-    order at 909e3ced5, 11060 of the suite's 18056 items sort before this module's first)."""
+    that ruled out the cache's shared parse (_flag_census), over the first 61 percent of a serial run (CI's cells until
+    2026-09-25, its macOS cells since; in collection order at 909e3ced5, 11060 of the suite's 18056 items sort before
+    this module's first)."""
     global _FROZEN_BEFORE, _BUILT_BEFORE
     _FROZEN_BEFORE = gc.get_freeze_count()
     _BUILT_BEFORE = (_CENSUS_BUILDS, sum(_PARSES.values()))
@@ -1468,9 +1469,10 @@ def tearDownModule():
     bc9790a14, the last head that built the census through derived()).
     (2) The census is gone: the weak reference setUpClass took is dead, read with no gc.collect(), since with no cycle
     reference counting has already freed it, and a collection walks every tracked object (at d809087fc, shape E, the
-    one full collection inside a build over 6 million tracked objects standing in for a serial cell's heap took 0.36 s
-    on Python 3.10 and 0.67 to 0.82 s on 3.12). Red under a module-scope cache that keeps the census and under a build
-    whose value refers back to itself. It does not see a cycle among the inner containers that does not pass through
+    one full collection inside a build took 0.36 s on Python 3.10 and 0.67 to 0.82 s on 3.12 over 6 million tracked
+    objects, which stood in for the heap of a serial cell, as CI's cells were until 2026-09-25 and its macOS cells
+    still are). Red under a module-scope cache that keeps the census and under a build whose value refers back to
+    itself. It does not see a cycle among the inner containers that does not pass through
     the held object (_flag_census states that half as a measurement), nor an inner container kept by another name,
     which stays reachable, so that measurement does not see it either (a limit, stated in _flag_census). Not
     read through gc.get_objects(), which does not list frozen objects, so under a derived() build it would find
