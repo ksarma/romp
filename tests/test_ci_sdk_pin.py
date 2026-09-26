@@ -100,7 +100,8 @@ This module holds five things, and it never skips: a pin that skips reports gree
    Nothing here held that pytest's failure reaches the cell until round 5's ruling C (2026-09-24; with an if:, a
    continue-on-error, `|| true` or --collect-only on the Run pytest step the module read green): run_pytest_status,
    whose docstring is the rule, holds the Run pytest step's exit status to pytest's and the cell's to the step's, and
-   refuses at its line, among others, an if: or a continue-on-error on the step or its job, the command followed by
+   refuses at its line, among others, an if: or a continue-on-error on the step or its job, a key of its job outside
+   RUN_PYTEST_JOB_KEYS (a container: among them: round 6's ruling A, 2026-09-25), the command followed by
    `||`, a pipe or a trailing `&`, a second command or command line (an earlier `trap 'exit 0' EXIT` among them), an
    argument word outside RUN_PYTEST_OPTIONS (--collect-only, --co and --setup-plan among the refused), a step's shell:
    or a job's or the workflow's defaults:, a key of the step's merged env outside RUN_PYTEST_ENV (PYTEST_ADDOPTS and
@@ -2117,9 +2118,10 @@ def _positional_paths(inv):
 MATRIX_STEP = ("python", "Run pytest")
 SERVED_STEP = ("vscode-extension", "Browser-backed served-page tests (pytest)")
 
-# The Run pytest step's two allowlists (round 5's ruling C, 2026-09-24; run_pytest_status's docstring is the rule). Every
-# argument word of its command is an entry of the first, keyed on its full spelling (a new value is a new entry, with its
-# reason), and every key of its merged env an entry of the second; every exception lives in one of the two
+# The Run pytest step's three allowlists (round 5's ruling C, 2026-09-24, and round 6's ruling A, 2026-09-25, the third;
+# run_pytest_status's docstring is the rule). Every argument word of its command is an entry of the first, keyed on its
+# full spelling (a new value is a new entry, with its reason), every key of its merged env an entry of the second, and
+# every key of its job an entry of the third (RUN_PYTEST_JOB_KEYS, below); every exception lives in one of the three
 RUN_PYTEST_OPTIONS = {
     "-q": "quieter output: it changes what pytest prints, not what it runs or its exit status",
     "-p no:anyio": ("the flag (FLAG_SPELLING), which blocks anyio's plugin; keyed on both words, since -p with another value "
@@ -2142,6 +2144,28 @@ _STATUS_KEY_WHY = {
     "continue-on-error": "a continue-on-error: lets the job, or the run, pass over a failure",
     "shell": "a shell: sets the shell the run text runs under, which this check does not read (the default is bash -e)",
     "defaults": "a defaults: can set the shell the run text runs under, which this check does not read (the default is bash -e)",
+}
+# the job keys run_pytest_status refuses on the Run pytest step's job once it has read them (part 1)
+_STATUS_JOB_KEYS_REFUSED = ("if", "continue-on-error", "defaults")
+# The third allowlist (round 6's ruling A, 2026-09-25): the keys of the Run pytest step's job that run_pytest_status reads
+# or knows to be inert, each with its reason; any other key of the job is refused by name. Until the ruling part 1 read
+# three job keys by name, and a container: whose env: or options: set PYTEST_ADDOPTS made pytest exit 0 with no test run
+# while the module read green (both refuters' prototypes)
+RUN_PYTEST_JOB_KEYS = {
+    "name": "the job's display name, its check's label: it names the cells, not what the step runs or its exit status",
+    "runs-on": ("the machine the job runs on: which runner, not the step's command or its env; what the runner's own "
+                "environment sets is not read (a self-hosted runner's can set variables: the residual)"),
+    "timeout-minutes": ("a cap on the job's minutes: a job that runs past it ends cancelled, not passed, so it can end the run "
+                        "early and never turns a failure into a pass"),
+    "strategy": ("the matrix of cells and fail-fast: which cells run and on which python, not what a cell's step runs; a "
+                 "matrix value reaches the step only through a ${{ matrix }} expression, never as an environment variable"),
+    "steps": "read: the Run pytest step by parts 1 to 4, and every step's run text by part 5",
+    "if": "read, and refused (part 1): " + _STATUS_KEY_WHY["if"],
+    "continue-on-error": "read, and refused (part 1): " + _STATUS_KEY_WHY["continue-on-error"],
+    "defaults": "read, and refused (part 1): " + _STATUS_KEY_WHY["defaults"],
+    "env": "read (part 4): each of its keys is a key of the step's merged env, which must be an entry of RUN_PYTEST_ENV",
+    "permissions": ("the GITHUB_TOKEN's scopes: what the token may do through GitHub's API, not what the step's command runs "
+                    "or its exit status"),
 }
 
 
@@ -2180,8 +2204,14 @@ def run_pytest_status(src):
     without pipefail, so a pipe's status is its last command's) or a trailing `&`, each of which drops pytest's status.
     Until the ruling nothing held this: with any of those on the step the module read green (the refuter's mutants, 89
     passed). The check reads five parts:
-    1. no if:, continue-on-error: or shell: key on the step; no if:, continue-on-error: or defaults: key on the job; and
-       no defaults: at the top level, since a shell: or a defaults: sets the shell the run text runs under.
+    1. no if:, continue-on-error: or shell: key on the step; every line at the job's key indent (4) is a key, spelled as
+       YAML_KEY_RE reads one, and an entry of RUN_PYTEST_JOB_KEYS, the job keys this check reads or knows to be inert,
+       each entry with its reason (round 6's ruling A, 2026-09-25); of the keys it reads, an if:, a continue-on-error:
+       or a defaults: on the job is refused, and so is every key that is not an entry, by name, among them a
+       container:, whose env: and options: set the environment the step runs in, a services: and any key GitHub adds
+       later, and a line at that indent it cannot read as a key, such as a quoted key or a merge key; and no defaults:
+       at the top level, since a shell: or a defaults: sets the shell the run text runs under. Until ruling A part 1
+       read three job keys by name, and a container: whose env: set PYTEST_ADDOPTS to --co left the module green.
     2. The run text is one command line (blank lines and comment lines aside, a backslash continuation joined as the
        shell joins it) whose one shell command (_shell_commands) is the whole line with its comment cut, read by
        PYTEST_CMD_RE. So `||`, a pipe and a trailing `&` are refused, and so are a `;`, a second command and a second
@@ -2204,7 +2234,9 @@ def run_pytest_status(src):
     step calls (actions/setup-python writes both) or one through `${{ github.env }}`; a command that names its
     interpreter or pytest by a path, which may be a script; and an earlier step whose run text changes the runner
     without spelling those names, such as one that replaces or shadows the python on PATH, reinstalls pytest, or deletes
-    or edits test files, since the five parts read the job's other steps only for those names. Returns (the file line of
+    or edits test files, since the five parts read the job's other steps only for those names; and what the runner's
+    own environment sets, since runs-on, an entry of RUN_PYTEST_JOB_KEYS, is read as a key and not as a value (a
+    self-hosted runner's environment can set PYTEST_ADDOPTS). Returns (the file line of
     the step's command line that PYTEST_CMD_RE reads as pytest, whatever else is refused on it, [(line, text, reason)]
     refused); a missing job, step or run text is a refusal."""
     lines_of = src.splitlines()
@@ -2221,8 +2253,24 @@ def run_pytest_status(src):
     if not jobs:
         refused.append((0, "", "no job %r in the workflow: re-anchor this check" % MATRIX_STEP[0]))
     for jb in jobs:
-        for km in re.finditer(r"^    (if|continue-on-error|defaults):", jb["text"], re.M):
-            refuse(jb["base"] + km.start(), "a %s: key on the Run pytest step's job: %s" % (km.group(1), _STATUS_KEY_WHY[km.group(1)]))
+        pos = 0
+        for line in jb["text"].splitlines(keepends=True):
+            off, pos = pos, pos + len(line)
+            body = line.rstrip("\n")
+            if not body.strip() or body.lstrip().startswith("#") or len(body) - len(body.lstrip(" ")) != 4:
+                continue
+            km = YAML_KEY_RE.match(body, 4)
+            if km is None:
+                refuse(jb["base"] + off, "a line at the key indent of the Run pytest step's job that this check does not read "
+                                         "as a key (a quoted key or a merge key among them), so it is not an entry of "
+                                         "RUN_PYTEST_JOB_KEYS")
+            elif km.group(1) in _STATUS_JOB_KEYS_REFUSED:
+                refuse(jb["base"] + off, "a %s: key on the Run pytest step's job: %s" % (km.group(1), _STATUS_KEY_WHY[km.group(1)]))
+            elif km.group(1) not in RUN_PYTEST_JOB_KEYS:
+                refuse(jb["base"] + off, "the key %s: on the Run pytest step's job, not an entry of RUN_PYTEST_JOB_KEYS, the job "
+                                         "keys this check reads or knows to be inert (an entry needs its reason: a container: "
+                                         "runs the steps in an image whose env: and options: set the step's environment)"
+                       % km.group(1))
         for st in jb["steps"]:
             for o, text, _e in _step_run(st["text"]) or []:
                 names = [n for n in RUN_PYTEST_WRITE_NAMES if n in text]
@@ -2437,7 +2485,8 @@ class PytestPopulation(unittest.TestCase):
         read, refused = run_pytest_status(self.src)
         self.assertEqual(refused, [], "on the Run pytest step, its job or the workflow, something that can discard pytest's "
                          "failure or let it exit 0 without running the suite (run_pytest_status's docstring is the rule; "
-                         "RUN_PYTEST_OPTIONS and RUN_PYTEST_ENV are its two allowlists, each entry with its reason):\n  "
+                         "RUN_PYTEST_OPTIONS, RUN_PYTEST_ENV and RUN_PYTEST_JOB_KEYS are its three allowlists, each entry with its "
+                         "reason):\n  "
                          + "\n  ".join("line %d: %s (%s)" % r for r in refused))
         matrix = [i["line"] for i in self.found if (i["job"], i["step"]) == MATRIX_STEP]
         self.assertEqual(read, matrix, "the check read no Run pytest command, or another line than the population's: an empty "
@@ -3218,6 +3267,29 @@ class PopulationCheckReds(unittest.TestCase):
              splice(name, '      - name: Set bash env\n'
                           '        run: echo "BASH_ENV=$HOME/pre.sh" >> "${{ github.env }}"\n' + name, 1),
              "spells BASH_ENV"),
+            # round 6's ruling A (2026-09-25): the job's keys are read against RUN_PYTEST_JOB_KEYS. At the ruling's head
+            # each container: plant below, the services: and the unknown key read clean here (the hole: a container's
+            # env: or options: --env set PYTEST_ADDOPTS to --co and the module read green), and each is refused at its
+            # key's line now, the container: after the job's steps included
+            ("a container: whose env: sets PYTEST_ADDOPTS",
+             splice(job, job + '    container:\n      image: python:3.12\n      env:\n        PYTEST_ADDOPTS: "--co"\n', 2),
+             "the key container: on the Run pytest step's job, not an entry of RUN_PYTEST_JOB_KEYS"),
+            ("a container: whose options: --env sets PYTEST_ADDOPTS",
+             splice(job, job + '    container:\n      image: python:3.12\n      options: "--env PYTEST_ADDOPTS=--co"\n', 2),
+             "the key container: on the Run pytest step's job, not an entry of RUN_PYTEST_JOB_KEYS"),
+            ("a container: as a bare image", splice(job, job + "    container: python:3.12\n", 2),
+             "the key container: on the Run pytest step's job"),
+            ("a container: after the job's steps",
+             splice(run, run + '    container:\n      image: python:3.12\n      env:\n        PYTEST_ADDOPTS: "--co"\n', 1),
+             "the key container: on the Run pytest step's job"),
+            ("a services: on the job", splice(job, job + "    services:\n      db:\n        image: postgres\n", 2),
+             "the key services: on the Run pytest step's job"),
+            ("a job key GitHub does not define today", splice(job, job + "    sandbox: strict\n", 2),
+             "the key sandbox: on the Run pytest step's job, not an entry of RUN_PYTEST_JOB_KEYS"),
+            # tests-2 (round 6): the job's own env: scope, which no plant above reached; red under a mutant that drops the
+            # job's scope from the merged env
+            ("PYTEST_ADDOPTS in the job's env", splice(job, job + '    env:\n      PYTEST_ADDOPTS: "--co"\n', 3),
+             "the env key PYTEST_ADDOPTS in the Run pytest step's merged env"),
         )
         for label, (src, line), why in plants:
             with self.subTest(plant=label):
@@ -3228,6 +3300,16 @@ class PopulationCheckReds(unittest.TestCase):
                 self.assertEqual(refused[0][1], src.splitlines()[line - 1].strip(), label)
                 self.assertEqual([verdict(i) for i in pytest_invocations(src) if (i["job"], i["step"]) == MATRIX_STEP], ["ok"], label)
                 self.assertEqual(yaml_line_forms(src)[1], [], "%s: in the forms the scan accepts" % label)
+        # a line at the job's key indent that the check does not read as a key is refused at its line; the scan refuses
+        # each form too (yaml_line_forms), so these two are held on run_pytest_status's own read
+        for label, (src, line) in (("a quoted job key", splice(job, job + '    "container":\n      image: python:3.12\n', 2)),
+                                   ("a merge key on the job", splice(job, job + "    <<: *base\n", 2))):
+            with self.subTest(plant=label):
+                refused = run_pytest_status(src)[1]
+                self.assertEqual([r[0] for r in refused], [line], "%s: %r" % (label, refused))
+                self.assertIn("does not read as a key", refused[0][2], label)
+        # every entry of the job-key allowlist carries its reason
+        self.assertEqual([k for k, why in RUN_PYTEST_JOB_KEYS.items() if not why.strip()], [])
         # the live file is read and refuses nothing
         self.assertEqual(run_pytest_status(self.src)[1], [])
 

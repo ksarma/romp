@@ -72,7 +72,7 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `-p anyio.pytest_plugin` after the flag, `PYTEST_PLUGINS`, `plugins=` on
   `pytest.main`), which the module reads only on the "Run pytest" step, where
   `run_pytest_status` refuses a `-p` re-load on its line and `PYTEST_PLUGINS` in
-  its merged env as outside its two allowlists (the install step's comment in
+  its merged env as outside its option and env allowlists (the install step's comment in
   `ci.yml` has the reasons and the measurement; the module holds the flag on
   both populations, the workflow's lines and the launchers under `tests/` in the
   forms its launcher census reads, and `_launchers_in`'s docstring in it states

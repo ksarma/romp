@@ -290,7 +290,8 @@ jobs:
           # action a step calls, and the other workflow files. It also holds this step's failure to the
           # cell: this step's exit status is pytest's and the cell's is the step's (run_pytest_status in
           # tests/test_ci_sdk_pin.py; its docstring is the rule). So each of these is red at its line,
-          # among others: an if: or a continue-on-error on this step or its job; the command followed by
+          # among others: an if: or a continue-on-error on this step or its job; a key of its job outside
+          # its job-key allowlist (a container: among them); the command followed by
           # ||, a pipe or a trailing &; a second command or command line (an earlier trap 'exit 0' EXIT
           # among them); an argument outside its option allowlist (--collect-only, --co and --setup-plan
           # among the refused); a shell: here, or a defaults: on the job or the workflow; a key of this
