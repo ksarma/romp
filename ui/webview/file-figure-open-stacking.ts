@@ -1,0 +1,247 @@
+// The one gate's stacking cells, one set for every engine (the file review's round 17, extra9-1, and the coordinator's decision 4 on
+// it), for the link-navigation follow-on of plans/markdown-viewer.md: file-figure-open-browser.test.ts runs them in Chromium, and
+// file-figure-open-engines-browser.test.ts in WebKit and Firefox, the leg that stays off the shared roster of browser legs, since the
+// job that runs the roster installs Chromium alone. The picture's web control rests positioned at z-index 1, and that z-index keeps it
+// above author content at z-index auto or 0 only where no stacking context stands around the picture; so the viewer's rule for a
+// top-level table shifts it with a position and a left, which make no stacking context, and file-view.ts dropStackClasses takes off
+// each figure and every element above it the page classes the sheets would make a stacking context there (SHEET_CONTEXT_CLASSES,
+// held to the sheets both ways by file-figure-open.test.ts). The cells, on the chat modal and the Files pane at 900 by 700 on a page
+// with a touchscreen beside the mouse, each a reading off the page or a count of [popups, document requests], the pictures from the
+// web routed at the context and every value synthetic:
+// - the table road, two scenes: a loaded remote picture in a plain top-level table, then a kept positioned author element after the
+//   table (fc-overlay, absolute over the Rendered box); and the same table, then a later author svg whose shadow is placed over
+//   the control. In the first the table is positioned relative with no translate, no transform and z-index auto, a press at the
+//   control's centre reaches the control, and a click on it, a tap on it, Enter and Space each open once; in the second no red pixel
+//   of the shadow shows inside the control's box, the shadow standing there with the control hidden, and a click and Enter open once;
+// - the class road, three scenes, each a remote picture inside an author element of a page class the list takes: a div of
+//   romp-lightbox-img (a will-change of transform) before the positioned element, a div of meta-held-mark (a translate) before the
+//   svg, and a span of path-full-wait (a min-width of 200px) inside a div of rail-hit (absolute at z-index 0) before the positioned
+//   element, where the span holds the picture above the floor inside the narrow strip, so it wears its control; each element after
+//   the paint holds none of those classes, and the cells read as the table's;
+// - a class the sheets scale under :active (ask-btn), around the picture before the svg: with the mouse held on the control no red
+//   pixel of the shadow shows inside the control's box, and the release opens once.
+// Every scene is red at 0ab74924c in every engine and on both surfaces, where the table's shift was a translate and the page classes
+// stood; which of its cells, and their reads there, are a private witness kept out of the tree.
+import * as assert from "node:assert/strict";
+import * as zlib from "node:zlib";
+import { openViewer, frames, PARA, REPORT } from "./real-viewer-leg";
+
+export type StackEngine = "chromium" | "firefox" | "webkit";
+export type StackSurface = "chat" | "pane";
+/** One cell's reading: its name, the wanted value and the value read. */
+export type StackCell = [string, unknown, unknown];
+
+const WEB = "http://example.test";
+const PIC = '<img alt="pic" src="' + WEB + '/pic.svg">';
+const sized = (w: number, h: number, fill: string): string => '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><rect width="' + w + '" height="' + h + '" fill="' + fill + '"/></svg>';
+const OVERLAY = '<div id="later" class="fc-overlay"></div>';
+const COVER = (dx: number, dy: number): string => 'Words <svg id="cover" width="50" height="50" filter="drop-shadow(' + dx + "px " + dy + 'px 0 rgb(255,0,0))"><rect width="50" height="50" fill="rgb(255,0,0)"/></svg> end.';
+const TAIL = Array.from({ length: 12 }, (_, i) => PARA(i + 3)).join("\n\n");
+const doc = (around: string, after: string): string => "# Report\n\n" + PARA(1) + "\n\n" + around + "\n\n" + after + "\n\n" + TAIL + "\n";
+type Around = { key: string; what: string; md: string; wrapper: string | null; classes: string | null };
+const TABLE: Around = { key: "table", what: "a remote picture in a plain top-level table", md: "| Figure |\n|---|\n| ![pic](" + WEB + "/pic.svg) |", wrapper: null, classes: null };
+const LIGHTBOX: Around = { key: "lightbox", what: "a remote picture inside an author's div of romp-lightbox-img", md: '<div id="wrap" class="romp-lightbox-img keep">' + PIC + "</div>", wrapper: "wrap", classes: "keep" };
+const HELD: Around = { key: "held", what: "a remote picture inside an author's div of meta-held-mark", md: '<div id="wrap" class="meta-held-mark keep">' + PIC + "</div>", wrapper: "wrap", classes: "keep" };
+const RAIL: Around = { key: "rail", what: "a remote picture inside an author's span of path-full-wait inside a div of rail-hit", md: '<div id="wrap" class="rail-hit keep"><span class="path-full-wait">' + PIC + "</span></div>", wrapper: "wrap", classes: "keep" };
+const PRESS: Around = { key: "press", what: "a remote picture inside an author's div of ask-btn", md: '<div id="wrap" class="ask-btn keep">' + PIC + "</div>", wrapper: "wrap", classes: "keep" };
+
+/** In the viewer's document: the picture, its control, the reading of a scene (`__sread`: the control's box, what a press at its
+ *  centre reaches, the table's or the wrapper's state) and `__scentre`, which scrolls the control to the body's middle. */
+const INSTALL = (): void => {
+  const w = window as any;
+  w.__simg = () => document.querySelector('.fileview-md img[alt="pic"]') as HTMLElement;
+  w.__sctl = () => { let a: Element = w.__simg(); for (let p = a.parentElement; p && p.localName === "a" && p.children.length === 1; p = a.parentElement) a = p; const n = a.nextElementSibling; return n && n.hasAttribute("data-fv-figopen") ? n as HTMLElement : null; };
+  w.__scentre = () => { const c = w.__sctl() as HTMLElement; c.scrollIntoView({ block: "center" }); };
+  w.__sread = (wrapper: string | null) => {
+    const c = w.__sctl() as HTMLElement | null, img = w.__simg() as HTMLElement;
+    const r = c ? c.getBoundingClientRect() : null;
+    const later = document.getElementById("user-content-later");
+    const e = r ? document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2) : null;
+    const table = img.closest("table") as HTMLElement | null, tcs = table ? getComputedStyle(table) : null;
+    const wrap = wrapper ? document.getElementById("user-content-" + wrapper) : null;
+    return {
+      control: !!c, loaded: (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0, web: !!c && c.classList.contains("fv-figopen-web"),
+      box: r ? { x: r.left, y: r.top, w: r.width, h: r.height, cx: (r.left + r.right) / 2, cy: (r.top + r.bottom) / 2 } : null,
+      hit: !e || !c ? "null" : e === c || c.contains(e) ? "the control" : later && (e === later || later.contains(e)) ? "the later element" : e.localName,
+      topTable: !!table && !!table.parentElement && table.parentElement.classList.contains("fileview-md"),
+      table: tcs ? [tcs.position, tcs.translate, tcs.transform, tcs.zIndex] : null,
+      wrapper: wrap ? wrap.getAttribute("class") : null,
+      later: later ? getComputedStyle(later).position : null,
+      cover: (() => { const s = document.getElementById("user-content-cover"); if (!s) return null; const b = s.getBoundingClientRect(); return { x: b.left, y: b.top }; })(),
+    };
+  };
+};
+type Read = { control: boolean; loaded: boolean; web: boolean; box: { x: number; y: number; w: number; h: number; cx: number; cy: number } | null; hit: string; topTable: boolean; table: string[] | null; wrapper: string | null; later: string | null; cover: { x: number; y: number } | null };
+
+/** A screenshot's pixels, as [r, g, b] each: the PNG Playwright writes (8 bits a channel, RGB or RGBA, no interlace) read here, in
+ *  node, so no page policy on image sources stands between the read and the pixels. */
+function pngPixels(buf: Buffer): number[][] {
+  assert.equal(buf.readUInt32BE(0), 0x89504e47, "a PNG");
+  let pos = 8, width = 0, height = 0, bitDepth = 0, colorType = 0, interlace = 0;
+  const idat: Buffer[] = [];
+  while (pos + 8 <= buf.length) {
+    const len = buf.readUInt32BE(pos), type = buf.toString("ascii", pos + 4, pos + 8), data = buf.subarray(pos + 8, pos + 8 + len);
+    if (type === "IHDR") { width = data.readUInt32BE(0); height = data.readUInt32BE(4); bitDepth = data[8]; colorType = data[9]; interlace = data[12]; }
+    else if (type === "IDAT") idat.push(data);
+    else if (type === "IEND") break;
+    pos += 12 + len;
+  }
+  assert.ok(bitDepth === 8 && interlace === 0 && (colorType === 6 || colorType === 2), "an 8-bit RGB or RGBA PNG with no interlace");
+  const bpp = colorType === 6 ? 4 : 3, raw = zlib.inflateSync(Buffer.concat(idat)), stride = width * bpp, out = Buffer.alloc(stride * height);
+  let p = 0;
+  for (let y = 0; y < height; y++) {
+    const f = raw[p++], row = y * stride, prev = row - stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? out[row + x - bpp] : 0, b = y > 0 ? out[prev + x] : 0, c = x >= bpp && y > 0 ? out[prev + x - bpp] : 0, v = raw[p++];
+      const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
+      const r = f === 0 ? v : f === 1 ? v + a : f === 2 ? v + b : f === 3 ? v + ((a + b) >> 1) : f === 4 ? v + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c) : NaN;
+      assert.ok(!Number.isNaN(r), "a PNG filter of 0 to 4");
+      out[row + x] = r & 255;
+    }
+  }
+  const px: number[][] = [];
+  for (let i = 0; i < out.length; i += bpp) px.push([out[i], out[i + 1], out[i + 2]]);
+  return px;
+}
+/** The red pixels of the shadow inside the control's box, 4px in from each edge (clear of its rounded corners and its dashed line), and
+ *  the pixels read. */
+async function redInside(page: any, box: NonNullable<Read["box"]>): Promise<[number, number]> {
+  const clip = { x: Math.ceil(box.x) + 4, y: Math.ceil(box.y) + 4, width: Math.floor(box.w) - 8, height: Math.floor(box.h) - 8 };
+  assert.ok(clip.width > 4 && clip.height > 4, "the control's box leaves an inside to read (a precondition): " + JSON.stringify(box));
+  const px = pngPixels(await page.screenshot({ clip }));
+  return [px.filter(([r, g, b]) => r > 200 && g < 60 && b < 60).length, px.length];
+}
+
+/** `text` open on the surface in a page with a touchscreen beside the mouse, the remote picture routed and loaded through the gate, the
+ *  helpers installed and the control scrolled to the body's middle, and `body` run with the page and an opens counter; the page errors
+ *  asserted empty after it. */
+async function stackScene(browser: any, engine: StackEngine, surface: StackSurface, text: string, body: (page: any, opens: () => Promise<[number, number]>, read: () => Promise<Read>) => Promise<void>, wrapper: string | null): Promise<void> {
+  const docReqs: string[] = [], popups: any[] = [];
+  const before = async (pg: any): Promise<void> => {
+    await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+      const req = route.request();
+      if (req.resourceType() === "document") { docReqs.push(req.url()); return route.fulfill({ status: 200, contentType: "text/html", body: "<p>third party</p>" }); }
+      return route.fulfill({ status: 200, contentType: "image/svg+xml", body: sized(300, 200, "#6a3d9a") });
+    });
+  };
+  const host = { newPage: (o: any) => browser.newPage({ ...o, hasTouch: true }) };
+  const { page, errors } = await openViewer(host, surface, 900, 700, { docs: { [REPORT]: text }, before });
+  try {
+    for (let i = 0; i < 20 && await page.evaluate(() => !!document.querySelector('.fileview-md [data-act="fv-load"]')); i++) { await page.evaluate(() => { (document.querySelector('.fileview-md [data-act="fv-load"]') as HTMLElement).click(); }); await frames(page, 3); }
+    await page.waitForFunction(() => { const i = document.querySelector('.fileview-md img[alt="pic"]') as HTMLImageElement | null; return !!i && i.complete && i.naturalWidth > 0; }, null, { timeout: 15000 });
+    await frames(page, 4);
+    await page.evaluate(INSTALL);
+    await page.evaluate(() => (window as any).__scentre());
+    await page.mouse.move(2, 690);
+    await frames(page, 4);
+    page.context().on("page", (p: any) => { popups.push(p); });
+    let p0 = 0, d0 = 0;
+    const opens = async (): Promise<[number, number]> => {
+      for (let i = 0; i < 12; i++) await frames(page, 2);
+      await new Promise((r) => setTimeout(r, 350));   // a bounded settle for an open that must not come (a popup is a new page, no event of this one)
+      const np = popups.slice(p0), nd = docReqs.slice(d0);
+      p0 = popups.length; d0 = docReqs.length;
+      for (const p of np) await p.close().catch(() => null);
+      await page.bringToFront().catch(() => null);
+      return [np.length, nd.length];
+    };
+    const read = (): Promise<Read> => page.evaluate((w: string | null) => (window as any).__sread(w), wrapper);
+    await body(page, opens, read);
+  } finally {
+    await page.close();
+  }
+  assert.deepEqual(errors, [], engine + ", " + surface + ": no page errors");
+}
+
+/** Every cell for an engine on a surface, run in `browser`, each reading returned beside its wanted value; `note` receives each scene's
+ *  record. The preconditions are asserted as they are read. */
+export async function stackCells(browser: any, engine: StackEngine, surface: StackSurface, note: (m: string) => void): Promise<StackCell[]> {
+  const cells: StackCell[] = [];
+  const cell = (what: string, want: unknown, got: unknown): void => { cells.push([what, want, got]); };
+  const at = engine + ", " + surface + ": ";
+  const again = async (page: any): Promise<void> => { await page.evaluate(() => (window as any).__scentre()); await page.mouse.move(2, 690); await frames(page, 3); };
+  // the positioned element after the picture: the element's state, the hit at the control's centre, and each gesture on the control
+  for (const s of [TABLE, LIGHTBOX, RAIL]) {
+    await stackScene(browser, engine, surface, doc(s.md, OVERLAY), async (page, opens, read) => {
+      const r = await read();
+      const rec: Record<string, unknown> = { read: r };
+      assert.ok(r.loaded && r.control && r.web && r.box && r.later === "absolute", at + s.key + ": the loaded picture wears its web control and the later element is positioned (a precondition): " + JSON.stringify(r));
+      if (s === TABLE) {
+        assert.ok(r.topTable, at + "the picture stands in a top-level table (a precondition)");
+        cell(s.what + ", then a positioned element: the table's [position, translate, transform, z-index]", ["relative", "none", "none", "auto"], r.table);
+      } else cell(s.what + ", then a positioned element: the element's classes after the paint", s.classes, r.wrapper);
+      cell(s.what + ", then a positioned element: what a press at the control's centre reaches", "the control", r.hit);
+      await page.mouse.click(r.box!.cx, r.box!.cy);
+      cell(s.what + ", then a positioned element: a click on the control opens", [1, 1], await opens());
+      await again(page);
+      const r2 = await read();
+      await page.touchscreen.tap(r2.box!.cx, r2.box!.cy);
+      cell(s.what + ", then a positioned element: a tap on the control opens", [1, 1], await opens());
+      for (const key of ["Enter", " "]) {
+        await again(page);
+        await page.evaluate(() => ((window as any).__sctl() as HTMLElement).focus({ preventScroll: true }));
+        await frames(page, 2);
+        await page.keyboard.press(key);
+        cell(s.what + ", then a positioned element: " + (key === " " ? "Space" : key) + " on the control opens", [1, 1], await opens());
+      }
+      // the picture's own body under the positioned element (the coordinator's decision 6): recorded, no cell
+      await again(page);
+      const img = await page.evaluate(() => { const b = (window as any).__simg().getBoundingClientRect(); return { x: Math.round(b.left + 40), y: Math.round(b.bottom - 30) }; });
+      await page.mouse.click(img.x, img.y);
+      rec.pictureBodyClick = await opens();
+      note("record " + JSON.stringify({ engine, surface, scene: s.key + "+later", ...rec }));
+    }, s.wrapper);
+  }
+  // the svg whose shadow is placed over the control: first read where the control and the svg stand, then open with the shadow moved
+  const place = async (s: Around): Promise<[number, number]> => {
+    let off: [number, number] = [0, 0];
+    await stackScene(browser, engine, surface, doc(s.md, COVER(0, 0)), async (page, _opens, read) => {
+      const r = await read();
+      assert.ok(r.box && r.cover, at + s.key + ": the control and the svg stand in the document (a precondition): " + JSON.stringify(r));
+      off = [Math.round(r.box!.cx - r.cover!.x - 25), Math.round(r.box!.cy - r.cover!.y - 25)];
+    }, s.wrapper);
+    return off;
+  };
+  for (const s of [TABLE, HELD, PRESS]) {
+    const off = await place(s);
+    await stackScene(browser, engine, surface, doc(s.md, COVER(off[0], off[1])), async (page, opens, read) => {
+      const r = await read();
+      const rec: Record<string, unknown> = { off, read: r };
+      assert.ok(r.loaded && r.control && r.web && r.box && r.cover, at + s.key + ": the loaded picture wears its web control and the svg stands in the document (a precondition): " + JSON.stringify(r));
+      await page.evaluate(() => { ((window as any).__sctl() as HTMLElement).style.visibility = "hidden"; });
+      await frames(page, 3);
+      const under = await redInside(page, r.box!);
+      await page.evaluate(() => { ((window as any).__sctl() as HTMLElement).style.visibility = ""; });
+      await frames(page, 3);
+      rec.underHidden = under;
+      assert.ok(under[0] >= under[1] * 0.9, at + s.key + ": with the control hidden the shadow fills the inside of its box, so it is placed over the control (a precondition): " + JSON.stringify(under));
+      if (s === TABLE) cell(s.what + ", then an svg's shadow over the control: the table's [position, translate, transform, z-index]", ["relative", "none", "none", "auto"], r.table);
+      else cell(s.what + ", then an svg's shadow over the control: the element's classes after the paint", s.classes, r.wrapper);
+      if (s === PRESS) {
+        cell(s.what + ", then an svg's shadow over the control: the shadow's red pixels inside the control's box at rest", 0, (await redInside(page, r.box!))[0]);
+        await page.mouse.move(r.box!.cx, r.box!.cy);
+        await page.mouse.down();
+        await frames(page, 6);
+        await new Promise((res) => setTimeout(res, 150));   // the class's 0.08 s transition of its scale ends
+        const held = await redInside(page, r.box!);
+        rec.held = held;
+        cell(s.what + ", then an svg's shadow over the control: the shadow's red pixels inside the control's box with the mouse held on the control", 0, held[0]);
+        await page.mouse.up();
+        cell(s.what + ", then an svg's shadow over the control: the release opens", [1, 1], await opens());
+      } else {
+        const shown = await redInside(page, r.box!);
+        rec.shown = shown;
+        cell(s.what + ", then an svg's shadow over the control: the shadow's red pixels inside the control's box", 0, shown[0]);
+        await page.mouse.click(r.box!.cx, r.box!.cy);
+        cell(s.what + ", then an svg's shadow over the control: a click on the control opens", [1, 1], await opens());
+        await again(page);
+        await page.evaluate(() => ((window as any).__sctl() as HTMLElement).focus({ preventScroll: true }));
+        await frames(page, 2);
+        await page.keyboard.press("Enter");
+        cell(s.what + ", then an svg's shadow over the control: Enter on the control opens", [1, 1], await opens());
+      }
+      note("record " + JSON.stringify({ engine, surface, scene: s.key + "+cover", ...rec }));
+    }, s.wrapper);
+  }
+  return cells;
+}

@@ -153,6 +153,7 @@ export const CREATED = [
   "ui/webview/css-rules.mjs",
   "ui/webview/file-figure-open-browser.test.ts",
   "ui/webview/file-figure-open-engines-browser.test.ts",
+  "ui/webview/file-figure-open-stacking.ts",
   "ui/webview/file-figure-open-taps.ts",
   "ui/webview/file-figure-open.test.ts",
   "ui/webview/file-trail-browser.test.ts",
@@ -789,9 +790,12 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
  *  which takes them, the inert attribute and a pointer-events declaration off a file document's author markup, each names that round);
  *  thirty-seven since the same round's extra5-1 was continued by the author's closing pass (the docstrings of SHEET_STACK_CLASSES, the
  *  classes the sheets would raise to the control's stacking level, and of dropStackClasses, which takes them off a file document's
- *  author markup so the control stays on top, each names that round).
+ *  author markup, each names that round); thirty-nine since the fixes for the file review's round 17, extra9-1, with the coordinator's
+ *  decision 4 on it (the comment over the body's width watch, whose observer of the top-level tables writes the width their shift reads,
+ *  and the docstring of SHEET_CONTEXT_CLASSES, the classes that would make an element around a picture a stacking context, which
+ *  dropStackClasses takes off a figure's ancestors, each names that round).
  *  A property pin: the count is compared to the derived list, whose lines the message prints. */
-const VIEWER_UNITS = 37;
+const VIEWER_UNITS = 39;
 
 test("road 1, every checkout, a rule over the tree: every file git lists at the repo root, tracked or untracked and not ignored, whose text names the file review or carries an id of the author's family, plus the files the branch created, the plan's section, the guide's Links paragraph and the browser plan's pointer; the created files and the three records in full, the rest keyed on the review named, so another review's rounds are left alone; no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, the working tree against the merge-base", (t) => {
   const reviews = convention();

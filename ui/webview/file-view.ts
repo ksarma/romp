@@ -771,22 +771,33 @@ export type FileViewRenderWhy = "paint" | "reflow";
 // says how). The value is the body's content width as its ResizeObserver reports it (the layout's own event, never a
 // timer; a scrollbar's width is taken), written on EACH TOP-LEVEL TABLE rather than on the body it describes: the property
 // is registered non-inherited (`@property --fv-body-w { inherits: false }`), so a write restyles the tables alone and not
-// every node under the body, as a write to an inherited property on the body would. mdBlock rebuilds the root on every
-// paint and no report follows a paint, so renderBody stamps the fresh tables itself (the returned function)
-// with the width last reported; before the first report the property is unset and the sheet's fallback holds (the cap is
-// the column). Absent ResizeObserver (a stand-in, an old engine) nothing is written and the fallback holds. One watch at a
-// time: the next open, or the close, drops the last. An optional `onWidth` runs after each changed report with the new
-// width: the local viewer's reflow, which re-places the comments panel's cards once per animation frame, hangs on it; the
-// URL viewer passes none.
+// every node under the body, as a write to an inherited property on the body would. The same rule shifts such a table by
+// half of what it exceeds the column by with a position and a left, not a translate, so no top-level table is a stacking
+// context around a picture control inside it (the file review's round 17, the coordinator's decision 4); a left's percentage
+// is of the column, not of the table, so each top-level table's own border-box width reaches the rule as --fv-table-w,
+// registered non-inherited too, from a second ResizeObserver over the tables (their own event: a pane's width, a text size,
+// a picture loading in a cell each moves it, and none is a paint). mdBlock rebuilds
+// the root on every paint and no report follows a paint, so renderBody stamps the fresh tables itself (the returned
+// function) with the body's width last reported and hands them to the tables' observer in place of the last root's; before
+// the first report both properties are unset and the sheet's fallbacks hold (the cap is the column and the shift none).
+// Absent ResizeObserver (a stand-in, an old engine) nothing is written and the fallbacks hold. One watch at a time: the next
+// open, or the close, drops the last, both observers with it. An optional `onWidth` runs after each changed report of the
+// body's width with the new width: the local viewer's reflow, which re-places the comments panel's cards once per animation
+// frame, hangs on it; the URL viewer passes none.
 let dropWidthWatch: () => void = () => { /* no watch up */ };
 function watchBodyWidth(body: HTMLElement, onWidth?: (width: number) => void): () => void {
   dropWidthWatch();
   let width = -1;                                      // the body's content width as last reported, -1 before the first report
+  let tables: ResizeObserver | null = null;            // the tables' observer: each top-level table's own width, for its shift
   const stamp = (): void => {
     if (width < 0) return;
+    if (tables) tables.disconnect();                   // the last root's tables are gone (a Raw paint has none) or these same ones, observed again below
     const md = body.querySelector(".fileview-md");
     if (!md) return;
-    for (const n of Array.from(md.children)) if (n.tagName === "TABLE") (n as HTMLElement).style.setProperty("--fv-body-w", width + "px");
+    for (const n of Array.from(md.children)) if (n.tagName === "TABLE") {
+      (n as HTMLElement).style.setProperty("--fv-body-w", width + "px");
+      if (tables) tables.observe(n);
+    }
   };
   if (typeof ResizeObserver === "function") {
     const ro = new ResizeObserver((entries) => {
@@ -796,8 +807,15 @@ function watchBodyWidth(body: HTMLElement, onWidth?: (width: number) => void): (
       stamp();
       if (onWidth) onWidth(w);
     });
+    tables = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const box = e.borderBoxSize && e.borderBoxSize[0];
+        (e.target as HTMLElement).style.setProperty("--fv-table-w", (box ? box.inlineSize : (e.target as HTMLElement).offsetWidth) + "px");
+      }
+    });
+    const own = tables;
     ro.observe(body);
-    dropWidthWatch = () => { ro.disconnect(); dropWidthWatch = () => { /* dropped */ }; };
+    dropWidthWatch = () => { ro.disconnect(); own.disconnect(); dropWidthWatch = () => { /* dropped */ }; };
   }
   return stamp;
 }
@@ -4495,7 +4513,8 @@ const SHEET_DIM_CLASSES: ReadonlySet<string> = new Set([
  *  picture loses what that class gave it. The chat's md() does not run it (md-sanitize.ts is unchanged), and an author element laid
  *  over a figure rather than around it is the one gate's to read: signUncovered refuses a sign where a press would reach such an
  *  element, dropPressThrough takes off the author's markup what would let a press pass through one, and dropStackClasses takes off the
- *  classes that would raise an author element to the control's stacking level, so the control stays on top. */
+ *  classes that would raise an author element to the control's stacking level and, from a figure's ancestors, the classes that would
+ *  make one a stacking context around it (SHEET_STACK_CLASSES's docstring says what then holds, and where it does not). */
 function dropDimmingClasses(root: Element): void {
   root.querySelectorAll("img, image").forEach((fig) => {
     for (let e: Element | null = fig; e && e !== root; e = e.parentElement) {
@@ -4561,16 +4580,23 @@ function dropPressThrough(root: Element): void {
  *  extra5-1, the covered sign): each class a rule of a sheet some page of either host loads (ui/webview/host-sheets.mjs hostSheets)
  *  gives a z-index at or above the control's, or an animation whose keyframes do, a value the reader cannot read as an integer
  *  counted as at or above (the safe side); taken from the rule's subject as SHEET_PRESS_THROUGH_CLASSES's are (the classes of its
- *  last compound outside :not() and :has(), or, where that names none, the classes of its other compounds). The control rests at
- *  z-index 1 (these sheets' `.fileview-md .fv-figopen` rule) and later in document order than an author's markup, so it stays on top
- *  of any author element the sheets leave at z-index auto or 0; only a page class that gives an author element a z-index at or above
- *  the control's leaves it at or above the control (measured in Chromium, Firefox and WebKit on the chat modal and the Files pane:
- *  with these classes gone, no author-reachable rule leaves an author element at or above the control). So dropStackClasses takes
- *  them off every element of a file document's author markup, so the control stays on top. Held to the sheets both ways by
- *  file-figure-open.test.ts, which derives the list by this rule, names each class the sheets would raise that the list lacks and each
- *  listed class they no longer raise, and names each rule that gives the z-index with no class to take and no id in its subject: an
- *  author's id is prefixed user-content-, so an id-keyed rule reaches no author element, while an element- or attribute-keyed one
- *  would reach one, and no drop of a class undoes it. */
+ *  last compound outside :not() and :has(), or, where that names none, the classes of its other compounds). What holds (the file
+ *  review's round 17, extra9-1, and the coordinator's decision 4 on it): the control rests positioned at z-index 1 (these sheets'
+ *  `.fileview-md .fv-figopen` rule), and that z-index, not its place in the document, keeps it above every author element the
+ *  sheets leave at z-index auto or 0, before the picture or after it, wherever no stacking context stands around the picture
+ *  inside the Rendered box's own. What keeps it so: dropStackClasses takes these classes off every element of a
+ *  file document's author markup, so no author element is left at or above the control's level (measured in Chromium, Firefox and
+ *  WebKit on the chat modal and the Files pane: with these classes gone, no author-reachable rule leaves an author element at or
+ *  above the control), and takes SHEET_CONTEXT_CLASSES, the classes that would make an element around the picture a stacking
+ *  context, off each figure and every element above it; and the viewer's own rule for a top-level table shifts it with a position
+ *  and a left, which make no stacking context. A stacking context around the picture would hold the control's z-index inside it,
+ *  and author paint the hit test does not see could then cover the control. None of this holds for the outbound mark a picture
+ *  with no control wears, which has no stacking level of its own (the file review's round 17, fresh-1 and extra7-1), nor for a
+ *  sheet hostSheets does not read (katex's vendored one). Held to the sheets both ways by file-figure-open.test.ts, which derives
+ *  the list by this rule, names each class the sheets would raise that the list lacks and each listed class they no longer raise,
+ *  and names each rule that gives the z-index with no class to take and no id in its subject: an author's id is prefixed
+ *  user-content-, so an id-keyed rule reaches no author element, while an element- or attribute-keyed one would reach one, and no
+ *  drop of a class undoes it. */
 const SHEET_STACK_CLASSES: ReadonlySet<string> = new Set([
   "branch-chips", "chat-theme-yatharth", "cite-preview", "cmt-pop", "cmt-rail", "cmt-tick", "code-copy", "col-dragging",
   "ctx-menu", "ctx-sub", "ctx-text", "dot", "dot-nav", "drop-over", "emoji-sec-h", "fc-float", "fconfirm-back", "feed-col",
@@ -4580,16 +4606,52 @@ const SHEET_STACK_CLASSES: ReadonlySet<string> = new Set([
   "rail-sticky", "romp-tip", "romp-tl-tip", "rs-sub", "scroll-marks", "slash-pop", "tab-tip", "time-marker", "tx-landing-notice",
   "tx-loading-anchor", "unread"
 ]);
-/** A file document's author markup with the classes that would raise an element to the picture's control's stacking level or past it
- *  taken off it (the file review's round 16, extra5-1, the covered sign), so an author element the sheets would leave at or above the
- *  control drops below it and the control stays on top: on the sanitizer's body, before any pass of the viewer's own, every element
- *  loses the classes of SHEET_STACK_CLASSES. Every element, not a figure's ancestors alone: an element the sheets would raise may
- *  stand anywhere in the document. Its cost: an author's element of one of these page classes loses the stacking that class gave it.
- *  The chat's md() does not run it (md-sanitize.ts is unchanged). */
+/** The classes the page's sheets would make a stacking context around a picture, beyond the classes the other lists take (the file
+ *  review's round 17, extra9-1, and the coordinator's decision 4 on it): each class a rule of a sheet some page of either host loads
+ *  (ui/webview/host-sheets.mjs hostSheets) names where that rule, whatever state pseudo-class its subject carries (a hover's, a
+ *  press's), gives the element a property that makes it a stacking context: a transform, translate, rotate, scale or perspective
+ *  other than none; a filter, backdrop-filter, clip-path, mask, mask-image or mask-border other than none; an opacity under 1; a
+ *  mix-blend-mode other than normal; an isolation other than auto; contain with layout or paint (strict and content hold both); a
+ *  content-visibility other than visible; a position of fixed or sticky; a z-index other than auto; a will-change naming one of
+ *  these; or an animation whose keyframes set one; a value the reader cannot read counted (the safe side). container-type is none of
+ *  them: it applies style and size containment, which make no stacking context (measured in Chromium, Firefox and WebKit). Taken
+ *  from the rule's subject as SHEET_STACK_CLASSES's are, less a rule whose subject is a pseudo-element, whose box holds no picture,
+ *  and a rule under print media, where no gesture reaches the page and no control prints; and less the classes SHEET_STACK_CLASSES
+ *  and SHEET_PRESS_THROUGH_CLASSES take off every element and SHEET_DIM_CLASSES off a figure's ancestors. A stacking context around
+ *  a picture holds its control's z-index 1 inside it (SHEET_STACK_CLASSES's docstring says what that z-index keeps), so
+ *  dropStackClasses takes these off each figure and every element above it. The rule counts on the safe side: a class whose only
+ *  rules no element around a picture can match (a subject that also needs a class another list takes, an id, a data- attribute the
+ *  sanitizer strips, a form control it removes, the body) is listed too, and its drop takes nothing from what an author's markup
+ *  shows. Held to the sheets both ways by file-figure-open.test.ts, which derives the list by this rule, names each class the sheets
+ *  would make a stacking context around a picture that the list lacks and each listed class they no longer do, and names each rule
+ *  that would make an element a stacking context with no class in its subject, an element that could hold a picture's control
+ *  (no void element and no tag the sanitizer removes) and no id: no drop of a class undoes such a rule's reach. */
+const SHEET_CONTEXT_CLASSES: ReadonlySet<string> = new Set([
+  "ask-btn", "composer-stage-btn", "ctx-swatch", "fask-secbtn", "fc-arrivals", "fc-clip", "fc-replies", "fc-sec", "fconfirm-btn",
+  "feed-cols", "fileview-load", "fl-prov-swirl", "fold-caret", "host-dial-swirl", "meta-held-mark", "path-load-spin",
+  "picker-dir-hint", "pulse", "ra-group", "ra-metric", "ra-openbtn", "ra-periods", "rail-hit", "rl-o", "romp-lightbox-img",
+  "rs-lifted", "rs-nudge", "show", "slash-spin", "stop-btn", "tab-group-caret", "tab-ph-swirl", "tab-widgets-gear", "wt-hostload"
+]);
+/** A file document's author markup with the classes that would lift an element over the picture's control taken off it: on the
+ *  sanitizer's body, before any pass of the viewer's own, every element loses the classes of SHEET_STACK_CLASSES, which the sheets
+ *  would raise to the control's stacking level or past it (the file review's round 16, extra5-1, the covered sign), and each img
+ *  and each svg image, and every element above it up to the body, loses the classes of SHEET_CONTEXT_CLASSES, which would make it
+ *  a stacking context around the picture that holds the control's z-index inside it (the file review's round 17, extra9-1, and the
+ *  coordinator's decision 4 on it). Every element for the first list, since an element the sheets would raise may stand anywhere in
+ *  the document; a figure's ancestors for the second, the dimming drop's scope, since the control stands beside the figure's anchor
+ *  and a stacking context holds it only from an element above it (an svg image as dropDimmingClasses reads one, since the fence
+ *  pass can make an HTML img of it). Its cost: an author's element of one of these page classes loses the stacking, the shift, the
+ *  turn or the press and hover scale that class gave it. The chat's md() does not run it (md-sanitize.ts is unchanged). */
 function dropStackClasses(root: Element): void {
   root.querySelectorAll("[class]").forEach((e) => {
     const stack = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_STACK_CLASSES.has(c));
     if (stack.length) e.classList.remove(...stack);
+  });
+  root.querySelectorAll("img, image").forEach((fig) => {
+    for (let e: Element | null = fig; e && e !== root; e = e.parentElement) {
+      const ctx = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_CONTEXT_CLASSES.has(c));
+      if (ctx.length) e.classList.remove(...ctx);
+    }
   });
 }
 // Markdown rendered as the prose it means (the user 2026-08-09: Rendered is the default, Raw one click
@@ -4640,7 +4702,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const clean = sanitizeMd(dirty, mintHeadingIds);   // the sanitized <body>: DOMPurify's own document's, which never loads (below)
   if (doc && doc.kind === "file") dropDimmingClasses(clean);   // an author's dimming class off every figure's ancestors, before any pass of the viewer's own (dropDimmingClasses)
   if (doc && doc.kind === "file") dropPressThrough(clean);     // and off every author element what would let a press pass through it, so the hit test reads it (dropPressThrough)
-  if (doc && doc.kind === "file") dropStackClasses(clean);     // and off every author element the classes that would raise it to the control's stacking level, so the control stays on top (dropStackClasses)
+  if (doc && doc.kind === "file") dropStackClasses(clean);     // and off every author element the classes that would raise it to the control's stacking level, and off a figure's ancestors the classes that would make one a stacking context around it (dropStackClasses)
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers (the same no-guessing rule as
   // langFor; an unnamed block stays plain rather than being painted at random). Then, for EVERY fence, named or not, the
   // chat's own dress (code-block.ts): the per-line rows that number the lines and make a soft-wrap read distinctly from a
@@ -5618,7 +5680,9 @@ function signShown(sign: Element): boolean {
  *  a press there would reach, so it sees the viewer's Outline popover, the text-size flyout and an author's element laid over the
  *  figure, from whose markup dropPressThrough has taken the page classes, the inert attribute and the style declarations that would
  *  let a press pass through it, while a control transparent at rest still counts as its own; author content the hit test does not see
- *  stays below the control, since dropStackClasses took off the classes that would have raised it to the control's stacking level).
+ *  stays below the control, whose z-index keeps it on top where no stacking context stands around the picture, since dropStackClasses
+ *  took off the classes that would have raised that content to the control's level or made such a context, and SHEET_STACK_CLASSES's
+ *  docstring says what holds and where it does not, the outbound mark among them).
  *  The samples are the part's centre and its four quarter points:
  *  inside the part, since a sign partly in view is in view and samples over its whole box meet the chrome above the body where
  *  the box leaves it (the sliver of a control's bottom inside the body); and a quarter of the way in, since the control's corners

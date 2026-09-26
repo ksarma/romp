@@ -372,8 +372,10 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
     // element (the file review's round 16, extra5-1, the covered sign), no hover class among them either: dropPressThrough removes the classes
     // of SHEET_PRESS_THROUGH_CLASSES any element of the sanitizer's body carries, read the same way; and beside that the drop of the classes
     // that would raise an author element to the control's stacking level (the same round and finding), no hover class among them either:
-    // dropStackClasses removes the classes of SHEET_STACK_CLASSES any element of the sanitizer's body carries, read the same way
-    "file-view.ts:dropDimmingClasses:classList.remove", "file-view.ts:dropPressThrough:classList.remove", "file-view.ts:dropStackClasses:classList.remove",
+    // dropStackClasses removes the classes of SHEET_STACK_CLASSES any element of the sanitizer's body carries, read the same way, and in a
+    // second call the classes of SHEET_CONTEXT_CLASSES a figure or an element above it carries (the file review's round 17, extra9-1, and
+    // the coordinator's decision 4 on it), no hover class among them either
+    "file-view.ts:dropDimmingClasses:classList.remove", "file-view.ts:dropPressThrough:classList.remove", "file-view.ts:dropStackClasses:classList.remove", "file-view.ts:dropStackClasses:classList.remove",
     "file-view.ts:el:className=", "path-links.ts:el:className=", "path-links.ts:markPathLink:setAttribute(class)",
     "pinned-notes.ts:make:className=", "preview.ts:say:classList.add",
     "render.ts:applyFold:classList.add", "render.ts:applyTabStatus:classList.add", "render.ts:dress:className=", "render.ts:el:className=",

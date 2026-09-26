@@ -802,13 +802,17 @@ test("both sheets: the measure is the root's own inline padding; a table takes t
       ["border-collapse: collapse", "margin: 0.6em 0", "display: block", "width: max-content", "max-width: 100%", "overflow-x: auto", "overflow-wrap: normal"],
       name + ": a table is a block as wide as its columns need up to its container, scrolling inside beyond it, whole words kept");
     // a table of the page's own may grow out of the column, evenly into both gutters, up to the body's content width less
-    // the root's 18px inset (--fv-body-w, written by the viewer's width observer on each top-level table); unset, both
-    // declarations read the column and the shift is none
+    // the root's 18px inset (--fv-body-w, written by the viewer's width observer on each top-level table), shifted by a
+    // position and a left over its own width (--fv-table-w, written by the same watch's observer of the tables), never a
+    // translate, which made every top-level table a stacking context (the file review's round 17, the coordinator's decision
+    // 4); unset, both declarations read the column and the shift is none
     const top = decls(ruleOf(css, ".fileview-md > table {"));
     assert.equal(top[0], "max-width: calc(var(--fv-body-w, calc(100% + 36px)) - 36px)", name + ": the cap is the body less the inset, the column before the first report");
-    assert.equal(top[1], "translate: min(0px, round(calc(var(--fv-body-w, calc(100% + 36px)) / 2 - max(18px, round(down, (var(--fv-body-w, calc(100% + 36px)) - 80ch) / 2, 1px)) - 50%), 1px))", name + ": the shift left is half of what the table exceeds the column by, whole pixels, never right");
-    assert.equal(top.length, 2);
+    assert.equal(top[1], "position: relative", name + ": the table is positioned with no z-index, which makes no stacking context");
+    assert.equal(top[2], "left: min(0px, round(calc((100% - var(--fv-table-w, 100%)) / 2), 1px))", name + ": the shift left is half of what the table exceeds the column by (a left's percentage is of the column), whole pixels, never right, and none before the table's width is reported");
+    assert.equal(top.length, 3, name + ": no translate, transform, z-index or other declaration on the rule");
     assert.match(css, /^@property --fv-body-w \{ syntax: "\*"; inherits: false; \}$/m, name + ": the property is registered non-inherited, so a write restyles the tables alone");
+    assert.match(css, /^@property --fv-table-w \{ syntax: "\*"; inherits: false; \}$/m, name + ": the table's width is registered non-inherited too");
     assert.deepEqual(decls(ruleOf(css, ".fileview-body {")), ["flex: 1 1 auto", "min-height: 0", "overflow: auto"], name + ": the body reserves no scrollbar gutter and is no size container (review round 2 of Slice 3 of plans/markdown-viewer.md: the gutter was a blank strip beside every body that does not scroll; the cap reads the observer's width instead)");
     assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("overflow-wrap: anywhere"), name + ": prose still breaks an unbreakable string");
     assert.ok(decls(ruleOf(css, ".fileview-md pre {")).includes("overflow-x: auto"), name + ": a code block scrolls on its own");
@@ -964,9 +968,10 @@ type Step = { width?: number; size?: number; prep?: string; media?: string; meas
 type Case = { name: string; html: string; width: number; measure: string; steps: Step[]; inline?: string[] };   // inline: script text added to the page after its HTML
 type Rows = Record<string, { rows: Array<{ step: Step; got: any }>; errors: string[] }>;
 /** A step, and the body's content width written on each top-level table the way the viewer's width observer writes it
- *  (file-view.ts watchBodyWidth: --fv-body-w on the tables themselves, after every paint and every width change); the
- *  page here carries no script, so the prep stands in for the observer. */
-const step = (n: number) => `(() => { document.getElementById("root").dataset.fvText = "${n}"; const w = document.getElementById("body").clientWidth + "px"; for (const t of document.querySelectorAll("#md > table")) t.style.setProperty("--fv-body-w", w); })()`;
+ *  (file-view.ts watchBodyWidth: --fv-body-w on the tables themselves, after every paint and every width change), then
+ *  each such table's own border-box width as --fv-table-w, read after the cap has taken, the way the same watch's observer
+ *  of the tables writes it; the page here carries no script, so the prep stands in for both observers. */
+const step = (n: number) => `(() => { document.getElementById("root").dataset.fvText = "${n}"; const w = document.getElementById("body").clientWidth + "px"; const ts = Array.from(document.querySelectorAll("#md > table")); for (const t of ts) t.style.setProperty("--fv-body-w", w); for (const t of ts) t.style.setProperty("--fv-table-w", t.getBoundingClientRect().width + "px"); })()`;
 function cases(): Case[] {
   const out: Case[] = [];
   const sanitizer = sanitizerJs();

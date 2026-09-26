@@ -119,7 +119,9 @@
 // the Outline popover, the text-size flyout and an author's element, the mark, the anchors, the row, a local picture and a pinch zoom,
 // each opening nothing where the sign is off the screen or covered and revealing it, the next gesture opening, the section's own
 // header naming each cell's red; and the one gate's tap cells in Chromium (the file review's round 17, tests-1 with regression-1),
-// the set file-figure-open-taps.ts holds and file-figure-open-engines-browser.test.ts runs in WebKit and Firefox. The predicate that gate and the key gate read is read for its accuracy in cases of their own after
+// the set file-figure-open-taps.ts holds and file-figure-open-engines-browser.test.ts runs in WebKit and Firefox, and its stacking
+// cells in Chromium (the file review's round 17, extra9-1, and the coordinator's decision 4 on it), the set
+// file-figure-open-stacking.ts holds and the same leg runs in WebKit and Firefox. The predicate that gate and the key gate read is read for its accuracy in cases of their own after
 // those (the file review's round 16, regression-1 with the coordinator's decision 1, and fresh-1): the dashboard's pane wrapper in its
 // narrow and touch layout and an author's span around the picture, on which overflow clips nothing, and a body zoom of 1.25, 0.8 and
 // 14/13 beside the zoom-1 twins, the floor among them, the section's own header naming each cell's red. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
@@ -132,6 +134,7 @@ import * as fs from "node:fs";       // the dashboard's pane wrapper, its rules 
 import * as path from "node:path";
 import { inBrowser, openViewer, openPanel, frames, topBlock, putAtTop, pageHtml, ROOT, REPORT, SID, PARA, ORIGIN } from "./real-viewer-leg";
 import { phonePages, tapCells, type TapDevice as TapCellDevice, type TapSurface } from "./file-figure-open-taps";   // a phone's pages, and the one gate's tap cells, one set for the three engines
+import { stackCells, type StackSurface } from "./file-figure-open-stacking";   // the one gate's stacking cells, one set for the three engines
 
 const NOTES = ROOT + "/docs/notes.md";
 const PLOT = ROOT + "/docs/figs/plot.svg";
@@ -3056,7 +3059,11 @@ for (const surface of ["chat", "feed", "pane"] as Surface[]) for (const width of
 // - the tap cells (the file review's round 17, tests-1 with regression-1): file-figure-open-taps.ts's set, run here in Chromium on a
 //   phone's pages and on a hybrid page, after the covered signs, where each tap's click carries its press's pointerId and every cell
 //   reads the same at 0ab74924c as at the fix, by design; its header names each cell and the reds in WebKit, which
-//   file-figure-open-engines-browser.test.ts runs with Firefox.
+//   file-figure-open-engines-browser.test.ts runs with Firefox;
+// - the stacking cells (the file review's round 17, extra9-1, and the coordinator's decision 4 on it): file-figure-open-stacking.ts's
+//   set, run here in Chromium on the chat modal and the Files pane after the stacking shapes, a picture in a top-level table and inside
+//   author elements of page classes that would make a stacking context around it, each red at 0ab74924c; its header names each cell,
+//   and file-figure-open-engines-browser.test.ts runs the set in WebKit and Firefox.
 // Each case collects its cells and asserts them once, so a red names every cell that differs; property pins read off the page, and
 // file-view-outline.test.ts runs the gate's click and key guards in CI over the stand-in, WebKit's tap order among them.
 const GATE_SIZES: Record<string, [number, number]> = { "/tall.svg": [300, 1400], "/w490.svg": [490, 900], "/tiny.svg": [20, 20], "/pp.svg": [300, 1400], "/dl.svg": [300, 1400], "/ov.svg": [300, 200] };
@@ -3453,10 +3460,10 @@ for (const surface of ["chat", "pane"] as Surface[]) for (const device of ["fine
   });
 }
 // ── the classes that would raise author content to the control's stacking level, off the markup (the file review's round 16, extra5-1,
-// the covered sign) ── The control rests at z-index 1 and later in document order than an author's markup, so it stays on top of author
-// content the sheets leave at z-index auto. An author's element of a page class that gives it a z-index at or above the control's is left
-// at or above the control; file-view.ts dropStackClasses takes every such class off a file document's author markup before any pass of
-// the viewer's own, so the control stays on top. Four scenes, each an author's svg of a stacking page class (ctx-text: position relative,
+// the covered sign) ── The control rests positioned at z-index 1, and that z-index, not its place in the document, keeps it above author
+// content the sheets leave at z-index auto where no stacking context stands around the picture (the stacking cells below read that part).
+// An author's element of a page class that gives it a z-index at or above the control's is left at or above the control; file-view.ts
+// dropStackClasses takes every such class off a file document's author markup before any pass of the viewer's own, so none is. Four scenes, each an author's svg of a stacking page class (ctx-text: position relative,
 // z-index 1, later in document order) after a loaded remote picture, the four svg shapes differing only in their own markup. After the
 // viewer's passes the element holds no class the sheets would raise and rests at z-index auto, so it is below the control; the gesture on
 // the picture and Enter on the control open with the control shown, and a tap does too. Whether a shape's own content stands above the
@@ -3491,6 +3498,25 @@ for (const surface of ["chat", "pane"] as Surface[]) for (const device of ["fine
         g.cell("Enter on the control: its opens", [1, 1], opensOf(await g.opens()));
       }
     });
+  });
+}
+// ── the one gate's stacking cells in Chromium (the file review's round 17, extra9-1, and the coordinator's decision 4 on it) ──
+// file-figure-open-stacking.ts holds the cells and says what each reads; file-figure-open-engines-browser.test.ts runs the same set in
+// WebKit and Firefox. The picture's control keeps its z-index 1 over author content at z-index auto or 0 only where no stacking context
+// stands around the picture: the top-level table's shift is a position and a left, and dropStackClasses takes SHEET_CONTEXT_CLASSES off
+// each figure and every element above it.
+for (const surface of ["chat", "pane"] as StackSurface[]) {
+  test("in Chromium on a page with a touchscreen beside the mouse, the " + (surface === "chat" ? "chat modal" : "Files pane") + ": the one gate's stacking cells (the file review's round 17, extra9-1, and the coordinator's decision 4 on it): a remote picture in a top-level table, the table positioned with no translate, then a positioned author element: the control takes the press at its centre, and a click, a tap, Enter and Space on it each open once; the same with the picture inside an author's div of romp-lightbox-img, and inside a span of path-full-wait inside a div of rail-hit, each element holding neither class after the paint; the table, then an svg's shadow placed over the control, and the same with the picture inside a div of meta-held-mark: no red pixel inside the control's box, and a click and Enter open once; the picture inside a div of ask-btn, then the shadow: no red pixel inside the control's box with the mouse held on it, and the release opens once (each scene red at 0ab74924c)", { timeout: 300000 }, async (t) => {
+    let cells: Array<[string, unknown, unknown]> = [];
+    let ran = false;
+    await inBrowser(t, async (browser) => {
+      ran = true;
+      cells = await stackCells(browser, "chromium", surface, (m) => t.diagnostic(m));
+    });
+    if (!ran) return;   // no browser: inBrowser skipped the case loudly
+    for (const [what, , got] of cells) t.diagnostic("cell " + what + ": " + JSON.stringify(got));
+    assert.ok(cells.length > 0, "the case ran its cells");
+    assert.deepEqual(cells.map(([what, , got]) => [what, got]), cells.map(([what, want]) => [what, want]), "each cell's reading, [cell, reading] (property pins read off the page)");
   });
 }
 for (const surface of ["chat", "pane"] as Surface[]) {

@@ -211,12 +211,15 @@ test("composerWindow, executed: own composer → the same-origin shell's chat pa
 // composerWindow lift above; a hand copy would drift), run over a fake ResizeObserver and stand-in nodes whose edges hide
 // through the shared shim's hideEdges (the ratchet in ui/test-dom-shim.test.ts: a fake's enumerable children edge is the
 // shape a failing assertion's dump walks). Both sheets'
-// `.fileview-md > table` read --fv-body-w for a top-level table's cap and its shift into the gutters; what the function
-// promises them is run here: nothing before the first report, the body's content width on EACH TOP-LEVEL TABLE (never a
-// nested one, never the prose) after one, the same width on the fresh tables a paint brings (the returned stamp: mdBlock
-// rebuilds the root and no report follows a paint), a repeated width no write, one watch at a time, and no watch at all
+// `.fileview-md > table` read --fv-body-w for a top-level table's cap and --fv-table-w, the table's own width, for its shift
+// into the gutters (a left over the column, since the file review's round 17, the coordinator's decision 4: the translate it
+// replaced made every top-level table a stacking context); what the function promises them is run here: nothing before the
+// first report, the body's content width on EACH TOP-LEVEL TABLE (never a nested one, never the prose) after one, the same
+// width on the fresh tables a paint brings (the returned stamp: mdBlock rebuilds the root and no report follows a paint), a
+// repeated width no write, the tables' observer watching exactly the top-level tables of the root last stamped and writing
+// each one's border-box width on it as its report comes, one watch at a time with both observers dropped, and no watch at all
 // without ResizeObserver.
-test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after a report and, through the stamp, on a fresh root's tables; a nested table and the prose get nothing; a repeated width writes nothing; the next watch and the drop disconnect; no ResizeObserver, no writes", () => {
+test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after a report and, through the stamp, on a fresh root's tables; a nested table and the prose get nothing; a repeated width writes nothing; the tables' observer watches the stamped root's top-level tables alone and writes each one's border-box width as --fv-table-w; the next watch and the drop disconnect both observers; no ResizeObserver, no writes", () => {
   const head = "function watchBodyWidth(body: HTMLElement, onWidth?: (width: number) => void): () => void {";   // the seam's reflow hangs on onWidth (undefined here: the stamp alone runs)
   const at = VIEW.indexOf("let dropWidthWatch: () => void = ");
   const end = VIEW.indexOf("\n}\n", VIEW.indexOf(head, at)) + 3;
@@ -225,70 +228,95 @@ test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after 
     .replace(/: \(\) => void/g, "")                                    // the let's type and the function's return type
     .replace("(body: HTMLElement, onWidth?: (width: number) => void)", "(body, onWidth)")
     .replace("const stamp = (): void =>", "const stamp = () =>")
+    .replace("let tables: ResizeObserver | null = null;", "let tables = null;")
     .replace(/ as HTMLElement\)/g, ")");
-  assert.doesNotMatch(js, /HTMLElement|: void/, "every annotation the lift knows is gone (a new one needs its strip here)");
-  type Node = { tagName: string; className: string; children: Node[]; clientWidth: number; writes: number; style: { setProperty(k: string, v: string): void; getPropertyValue(k: string): string }; querySelector(sel: string): Node | null };
+  assert.doesNotMatch(js, /HTMLElement|ResizeObserver \||: void/, "every annotation the lift knows is gone (a new one needs its strip here)");
+  type Node = { tagName: string; className: string; children: Node[]; clientWidth: number; offsetWidth: number; writes: number; style: { setProperty(k: string, v: string): void; getPropertyValue(k: string): string }; querySelector(sel: string): Node | null };
   const node = (tagName: string, className = "", children: Node[] = []): Node => {
     const props = new Map<string, string>();
-    const n: Node = { tagName, className, children, clientWidth: 0, writes: 0,
+    const n: Node = { tagName, className, children, clientWidth: 0, offsetWidth: 0, writes: 0,
       style: { setProperty: (k, v) => { props.set(k, v); n.writes++; }, getPropertyValue: (k) => props.get(k) ?? "" },
       querySelector: (sel) => { const walk = (m: Node): Node | null => { for (const c of m.children) { if (c.className === sel.slice(1)) return c; const d = walk(c); if (d) return d; } return null; }; return walk(n); } };
     return hideEdges(n);   // the shared rule (ui/test-dom-shim.ts): children, style and querySelector hide, so a failing dump names the node's primitives alone
   };
-  type Rec = { cb: (entries: Array<{ contentRect: { width: number } }>) => void; targets: unknown[]; live: boolean };
+  type Entry = { contentRect?: { width: number }; target?: Node; borderBoxSize?: Array<{ inlineSize: number }> };
+  type Rec = { cb: (entries: Entry[]) => void; targets: unknown[]; disconnects: number };
   const observers: Rec[] = [];
   class FakeResizeObserver {
     private rec: Rec;
-    constructor(cb: Rec["cb"]) { this.rec = { cb, targets: [], live: true }; observers.push(this.rec); }
+    constructor(cb: Rec["cb"]) { this.rec = { cb, targets: [], disconnects: 0 }; observers.push(this.rec); }
     observe(t: unknown): void { this.rec.targets.push(t); }
-    disconnect(): void { this.rec.live = false; }
+    disconnect(): void { this.rec.targets = []; this.rec.disconnects++; }   // a real observer's disconnect ends every observation and leaves it free to observe again
   }
-  const report = (entries: Array<{ contentRect: { width: number } }>) => { const live = observers.filter((o) => o.live); assert.equal(live.length, 1, "one live observer"); live[0].cb(entries); };
+  const watching = (t: unknown): Rec[] => observers.filter((o) => o.targets.includes(t));
+  const report = (body: Node, entries: Entry[]) => { const w = watching(body); assert.equal(w.length, 1, "one observer watches the body"); w[0].cb(entries); };
   const run = new Function("ResizeObserver", js + "\nreturn { watchBodyWidth, drop: () => dropWidthWatch() };") as (ro: unknown) => { watchBodyWidth: (body: Node) => () => void; drop: () => void };
   /** A rendered root as mdBlock leaves it: prose, a table inside a paragraph (as inside a quote or a list item), two top-level tables. */
   const fresh = () => { const nested = node("TABLE"); const p = node("P", "", [nested]); const t1 = node("TABLE"); const t2 = node("TABLE"); return { md: node("DIV", "fileview-md", [p, t1, t2]), p, nested, t1, t2 }; };
   const w = (n: Node) => n.style.getPropertyValue("--fv-body-w");
+  const tw = (n: Node) => n.style.getPropertyValue("--fv-table-w");
   const lib = run(FakeResizeObserver);
   let root = fresh();
   const body = node("DIV", "fileview-body", [root.md]);
   const stamp = lib.watchBodyWidth(body);
-  assert.equal(observers.length, 1); assert.deepEqual(observers[0].targets, [body], "the body is what the observer watches");
+  assert.equal(observers.length, 2, "two observers: the body's and the tables'");
+  const [bodyObs, tableObs] = observers;
+  assert.deepEqual(bodyObs.targets, [body], "the body is what the first observer watches");
+  assert.deepEqual(tableObs.targets, [], "the tables' observer watches nothing before the first report");
   stamp();
   assert.equal(w(root.t1) + w(root.t2), "", "before the first report nothing is written: the sheet's fallback holds (the cap is the column)");
-  report([{ contentRect: { width: 900 } }]);
+  assert.deepEqual(tableObs.targets, [], "...and the tables' observer still watches nothing (the shift's fallback holds: none)");
+  report(body, [{ contentRect: { width: 900 } }]);
   assert.equal(w(root.t1), "900px"); assert.equal(w(root.t2), "900px");
   assert.equal(w(root.nested), "", "a table inside a paragraph is not the document's own: it keeps the prose width");
   assert.equal(w(root.p), "", "the prose is never written to (the property is non-inherited; a write there would reach nothing anyway)");
+  assert.deepEqual(tableObs.targets, [root.t1, root.t2], "after the report the tables' observer watches the two top-level tables and neither the nested table nor the prose");
+  // the tables' reports: each table's own border-box width on it, the inline size of its border box, and its offsetWidth where the
+  // entry carries no border-box size (an engine before that field)
+  root.t2.offsetWidth = 611;
+  tableObs.cb([{ target: root.t1, borderBoxSize: [{ inlineSize: 1234.5 }] }, { target: root.t2 }]);
+  assert.equal(tw(root.t1), "1234.5px", "a table's report writes its border-box inline size as --fv-table-w");
+  assert.equal(tw(root.t2), "611px", "an entry with no border-box size reads the table's offsetWidth");
+  assert.equal(tw(root.nested) + tw(root.p) + tw(root.md) + tw(body), "", "nothing else carries the table's width");
   // a paint: mdBlock rebuilt the root, no report follows; renderBody's stamp writes the width last reported on the fresh tables
+  const old = root;
   root = fresh(); body.children = [root.md];
   assert.equal(w(root.t1), "", "a fresh root starts unset");
   stamp();
   assert.equal(w(root.t1), "900px"); assert.equal(w(root.t2), "900px"); assert.equal(w(root.nested), "");
+  assert.deepEqual(tableObs.targets, [root.t1, root.t2], "the stamp hands the fresh root's top-level tables to the tables' observer in place of the last root's (" + JSON.stringify(tableObs.targets.map((x) => x === old.t1 || x === old.t2 ? "old" : "fresh")) + ")");
   // a report of the width already held is a no-op: a root rebuilt between the two reports is not touched by it
   root = fresh(); body.children = [root.md];
-  report([{ contentRect: { width: 900 } }]);
+  report(body, [{ contentRect: { width: 900 } }]);
   assert.equal(w(root.t1), "", "a repeated width writes nothing");
-  report([{ contentRect: { width: 700 } }]);
+  report(body, [{ contentRect: { width: 700 } }]);
   assert.equal(w(root.t1), "700px"); assert.equal(w(root.t2), "700px");
   assert.equal(root.t1.writes, 1, "one write per change");
+  assert.deepEqual(tableObs.targets, [root.t1, root.t2], "a changed width's stamp hands the tables' observer the root it stamped");
   // the last of a callback's entries is the newest; a callback with no entry reads the body itself
-  report([{ contentRect: { width: 300 } }, { contentRect: { width: 800 } }]);
+  report(body, [{ contentRect: { width: 300 } }, { contentRect: { width: 800 } }]);
   assert.equal(w(root.t1), "800px", "the last of the entries is the width kept");
-  body.clientWidth = 640; report([]);
+  body.clientWidth = 640; report(body, []);
   assert.equal(w(root.t1), "640px", "a callback with no entry reads the body's clientWidth");
-  // one watch at a time: the next open's watch drops the last, and the close drops the watch up
+  // a Raw paint: no Rendered root, so the stamp writes nothing and the tables' observer lets the last root's tables go
+  body.children = [];
+  stamp();
+  assert.deepEqual(tableObs.targets, [], "after a paint with no Rendered root (the Raw view) the tables' observer watches nothing");
+  // one watch at a time: the next open's watch drops the last, both its observers, and the close drops the watch up
   const body2 = node("DIV", "fileview-body", []);
+  const bodyDrops = bodyObs.disconnects, tableDrops = tableObs.disconnects;
   lib.watchBodyWidth(body2);
-  assert.equal(observers[0].live, false, "the second watch disconnects the first observer");
-  assert.equal(observers.length, 2); assert.deepEqual(observers[1].targets, [body2]);
+  assert.ok(bodyObs.disconnects === bodyDrops + 1 && bodyObs.targets.length === 0, "the second watch disconnects the first body observer");
+  assert.ok(tableObs.disconnects === tableDrops + 1 && tableObs.targets.length === 0, "...and the first tables' observer");
+  assert.equal(observers.length, 4); assert.deepEqual(observers[2].targets, [body2]);
   lib.drop();
-  assert.equal(observers[1].live, false, "the drop disconnects");
+  assert.ok(observers[2].disconnects === 1 && observers[3].disconnects === 1, "the drop disconnects both observers");
   assert.doesNotThrow(() => lib.drop(), "a second drop is nothing to do");
   // no ResizeObserver (a stand-in, an old engine): no observer, and the stamp writes nothing
   const bare = run(undefined);
   root = fresh(); const body3 = node("DIV", "fileview-body", [root.md]);
   bare.watchBodyWidth(body3)();
-  assert.equal(observers.length, 2, "no observer was made"); assert.equal(w(root.t1) + w(root.t2), "", "nothing written: the sheet's fallback holds");
+  assert.equal(observers.length, 4, "no observer was made"); assert.equal(w(root.t1) + w(root.t2) + tw(root.t1) + tw(root.t2), "", "nothing written: the sheet's fallbacks hold");
 });
 
 test("the width watch is wired: each viewer opens one on the body it builds, each rendered paint stamps the fresh root's tables, and the close drops it", () => {

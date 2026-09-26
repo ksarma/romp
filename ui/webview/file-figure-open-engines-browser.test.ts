@@ -1,8 +1,12 @@
-// The one gate's tap cells in WebKit and Firefox, for the link-navigation follow-on of plans/markdown-viewer.md (the file review's
-// round 17, tests-1 with regression-1, and the coordinator's decisions 1 to 3 on it): the cells are file-figure-open-taps.ts's, the
-// set file-figure-open-browser.test.ts runs in Chromium, each engine launched through real-viewer-leg.ts's inBrowser with the engine
-// named. WebKit runs them on a phone's pages and on a hybrid page (hasTouch with a mouse), on the chat modal and the Files pane, and
-// Firefox on the hybrid page alone, since Playwright's Firefox takes no isMobile. The WebKit engine is Playwright's on Linux under
+// The one gate's tap cells and stacking cells in WebKit and Firefox, for the link-navigation follow-on of plans/markdown-viewer.md (the
+// file review's round 17, tests-1 with regression-1, and the coordinator's decisions 1 to 3 on it; its extra9-1, and the coordinator's
+// decision 4 on it): the cells are file-figure-open-taps.ts's and file-figure-open-stacking.ts's, the sets
+// file-figure-open-browser.test.ts runs in Chromium, each engine launched through real-viewer-leg.ts's inBrowser with the engine
+// named. The stacking cells run in both engines on a page with a touchscreen beside the mouse, on the chat modal and the Files pane:
+// a picture in a top-level table and inside author elements of page classes that would make a stacking context around it, each
+// scene red at 0ab74924c, its header naming each cell. The tap cells: WebKit runs them on a phone's pages and on a hybrid page
+// (hasTouch with a mouse), on the chat modal and the Files pane, and Firefox on the hybrid page alone, since Playwright's Firefox
+// takes no isMobile. The WebKit engine is Playwright's on Linux under
 // touch emulation, a stand-in for WebKitGTK, and presumably WPE, on a touchscreen; no cell claims iOS Safari or the iPhone, a cell
 // run under a phone's pages included (WebKit's iOS source gives an iPhone tap's click the touch's own pointerId, so the gate's own
 // record serves there, read and not run on a device). In that WebKit a tap's click carries pointerId 1 of type mouse while its press
@@ -22,6 +26,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser } from "./real-viewer-leg";
 import { tapCells, type TapDevice, type TapEngine, type TapSurface } from "./file-figure-open-taps";
+import { stackCells, type StackEngine, type StackSurface } from "./file-figure-open-stacking";
 
 const ON: Record<TapDevice, string> = { phone: "a phone's pages (hasTouch and isMobile at a device scale of 1, the kernel's viewport meta)", hybrid: "a hybrid page (hasTouch with a mouse)" };
 for (const [engine, devices] of [["webkit", ["phone", "hybrid"]], ["firefox", ["hybrid"]]] as Array<[TapEngine, TapDevice[]]>) for (const device of devices) for (const surface of ["chat", "pane"] as TapSurface[]) {
@@ -35,6 +40,21 @@ for (const [engine, devices] of [["webkit", ["phone", "hybrid"]], ["firefox", ["
     await inBrowser(t, async (browser) => {
       ran = true;
       cells = await tapCells(browser, engine, device, surface, (m) => t.diagnostic(m));
+    }, { engine });
+    if (!ran) return;   // no browser: inBrowser skipped the case loudly
+    for (const [what, , got] of cells) t.diagnostic("cell " + what + ": " + JSON.stringify(got));
+    assert.ok(cells.length > 0, "the case ran its cells");
+    assert.deepEqual(cells.map(([what, , got]) => [what, got]), cells.map(([what, want]) => [what, want]), "each cell's reading, [cell, reading] (property pins read off the page)");
+  });
+}
+for (const engine of ["webkit", "firefox"] as StackEngine[]) for (const surface of ["chat", "pane"] as StackSurface[]) {
+  const named = engine === "webkit" ? "WebKit (Playwright's, on Linux under touch emulation)" : "Firefox";
+  test("in " + named + " on a page with a touchscreen beside the mouse, the " + (surface === "chat" ? "chat modal" : "Files pane") + ": the one gate's stacking cells (the file review's round 17, extra9-1, and the coordinator's decision 4 on it): a remote picture in a top-level table, the table positioned with no translate, then a positioned author element: the control takes the press at its centre, and a click, a tap, Enter and Space on it each open once; the same with the picture inside an author's div of romp-lightbox-img, and inside a span of path-full-wait inside a div of rail-hit, each element holding neither class after the paint; the table, then an svg's shadow placed over the control, and the same with the picture inside a div of meta-held-mark: no red pixel inside the control's box, and a click and Enter open once; the picture inside a div of ask-btn, then the shadow: no red pixel inside the control's box with the mouse held on it, and the release opens once (each scene red at 0ab74924c)", { timeout: 300000 }, async (t) => {
+    let cells: Array<[string, unknown, unknown]> = [];
+    let ran = false;
+    await inBrowser(t, async (browser) => {
+      ran = true;
+      cells = await stackCells(browser, engine, surface, (m) => t.diagnostic(m));
     }, { engine });
     if (!ran) return;   // no browser: inBrowser skipped the case loudly
     for (const [what, , got] of cells) t.diagnostic("cell " + what + ": " + JSON.stringify(got));

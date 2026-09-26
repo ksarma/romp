@@ -880,7 +880,11 @@ build's. Where the code as built departs from the text, why, and which test hold
    and sits at the column's left edge with the prose, as on GitHub, and a wider one is moved left by half of what it
    exceeds the column by, so it grows out of the column evenly into both gutters until it meets the body's inset, and
    scrolls in its own box past that. The table's layout box stays where the layout put it, so the body never scrolls
-   sideways (`contain: layout` on the root). Before the observer's first report, or without one, both declarations
+   sideways (`contain: layout` on the root). (Since the link-navigation follow-on, the file review's round 17 and the
+   coordinator's decision 4 on it, the shift is a position and a left, `left: min(0px, round(calc((100% - var(--fv-table-w,
+   100%)) / 2), 1px))`, a left's percentage being of the column, with the table's own border-box width written on it as
+   `--fv-table-w` by the same watch's observer of the top-level tables: a translate made every top-level table a stacking
+   context. The layout is the same, and file-view-typescale-browser.test.ts holds it; see L3.) Before the observer's first report, or without one, both declarations
    read the same stand-in, 100% plus the inset the cap takes back: the cap is then the column and the shift exactly
    none (the padding term rounds down to its 18px floor for any table the column holds), so the table sits at the
    column's left edge, as it does in a browser without `round()`. `display: grid` on the table, the other way to
@@ -8623,8 +8627,11 @@ pointer-events on at any value but auto, the inert attribute and a pointer-event
 `SHEET_PRESS_THROUGH_CLASSES`, held to the sheets both ways by file-figure-open.test.ts; the file review's round 16, extra5-1: an
 author's div of locate-toast, fixed, opaque and letting a press through, painted over the control while a gesture opened the tab, and
 elementsFromPoint skips such an element as elementFromPoint does, measured in Chromium, Firefox and WebKit); author content the hit test
-does not see stays below the control, the viewer having taken off the classes the sheets would raise it to the control's stacking level
-(`dropStackClasses`, below); a same-origin parent's own
+does not see stays below the control, whose z-index keeps it on top where no stacking context stands around the picture, the viewer
+having taken off the classes the sheets would raise it to the control's stacking level and, from a figure's ancestors, the classes that
+would make one a stacking context around it, and a top-level table's shift into the gutters being a position and a left, which make no
+stacking context (`dropStackClasses`, below; the file review's round 17, extra9-1, and the coordinator's decision 4 on it), the outbound
+mark of a picture with no control excepted, which has no stacking level of its own (its round 17, fresh-1 and extra7-1); a same-origin parent's own
 chrome over the frame is not read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
 and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click: a click by a pointer reads the
 record under its own pointerId or, with none, the press a one-click slot took at the last pointerup, the slot emptied by any
@@ -8665,9 +8672,12 @@ class the sheets dim off the author's markup there before the dress is laid (`dr
 the sheets both ways by file-figure-open.test.ts; the file review's round 16, extra5-2: an author's span of tag-chip-off, 0.45, had
 painted the dress at 2.00:1 dark and 1.86:1 light while a tap opened the tab), while an author's element laid over the figure is the
 one gate's to read, which refuses a sign where a press would reach such an element, the viewer taking off it what would let a press
-pass through it (`dropPressThrough`) and the classes the sheets would raise it to the control's stacking level, so author content the
-hit test does not see stays below the control (`dropStackClasses` over `SHEET_STACK_CLASSES`, held to the sheets both ways by
-file-figure-open.test.ts; the file review's round 16, extra5-1), and an author's own link opens its address with no dress, as before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
+pass through it (`dropPressThrough`) and the classes the sheets would raise it to the control's stacking level, and off a figure's
+ancestors the classes that would make one a stacking context around it, so author content the hit test does not see stays below the
+control (`dropStackClasses` over `SHEET_STACK_CLASSES` and `SHEET_CONTEXT_CLASSES`, each held to the sheets both ways by
+file-figure-open.test.ts; the file review's round 16, extra5-1, and its round 17, extra9-1, with the coordinator's decision 4 on it,
+under which a top-level table's shift into the gutters is a position and a left, not a translate, since a translate made every
+top-level table a stacking context), and an author's own link opens its address with no dress, as before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
 where at 0.8 the control read 2.46:1 by pixels on a
 VS Code editor ground of #404040 and, at 0.8 x 0.7 inside a captioned dead link, 2.47:1 dark and 2.40:1 light), measured in its own
 CSS pixels from the loaded picture's laid-out box while it is in the document (the box divided by the picture's zoom, so a body zoom
@@ -8868,11 +8878,13 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests alone (57 files, the ledger entry's where line; run 2026-09-26 at the head that carries the fixes for the
-file review's round 17, tests-1 with regression-1,
+upstream or tests alone (58 files, the ledger entry's where line; run 2026-09-26 at the head that carries the fixes for the
+file review's round 17, tests-1 with regression-1 and extra9-1,
 where the merge-base is fa3ef54b5, the fork's main the
 branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch PR 907, and the listing is the
-branch's whole delta over it; the run at the head that carries the fixes ruled in the file review's round 16, the author's closing
+branch's whole delta over it; the run at the head that carries the fixes for that round's tests-1 with regression-1, from the
+merge-base fa3ef54b5, listed 57, before ui/webview/file-figure-open-stacking.ts, the one gate's stacking cells, joined the delta;
+the run at the head that carries the fixes ruled in the file review's round 16, the author's closing
 pass over them and the re-aimed containment test of the sanitizer's browser leg, from the merge-base fa3ef54b5, listed 55, before
 ui/webview/file-figure-open-taps.ts and ui/webview/file-figure-open-engines-browser.test.ts, the one gate's tap cells, joined the
 delta; the run at the head before that test was re-aimed, from the merge-base fa3ef54b5, listed 54, before
@@ -8944,7 +8956,11 @@ ui/webview/file-view-place-blocks.test.ts stands in for with a fixture box) and,
 (tests-1 with regression-1), ui/webview/file-figure-open-engines-browser.test.ts (the one gate's tap cells in WebKit, on a
 phone's pages and a hybrid page, and in Firefox, on the hybrid page, each engine launched through real-viewer-leg.ts's inBrowser
 with the engine named; the cells are ui/webview/file-figure-open-taps.ts's, a module of the cells alone that the Chromium leg
-runs too, so one set reads all three engines). The review's round 1 added two modules outside those two stems:
+runs too, so one set reads all three engines) and, since the fixes for that round's extra9-1 (with the coordinator's decision 4),
+ui/webview/file-figure-open-stacking.ts (the one gate's stacking cells, a module of the cells alone that the same two legs run in
+the three engines, on the chat modal and the Files pane: a remote picture in a top-level table and inside author elements of page
+classes that would make a stacking context around it, each followed by a positioned author element or by an svg whose shadow is
+placed over the control). The review's round 1 added two modules outside those two stems:
 ui/webview/file-view-figure-shapes.test.ts (the source pins for L3's round-1 rules: figureTarget's web test before
 the model's join, the one decision's order in figureWantsControl (the state, the floor, the target, any link above),
 the measure's reads, the bare
@@ -9099,10 +9115,13 @@ classList.add, the control's float side read off the figure's align, and dressFi
 declared by a concatenation the census's constant reader does not fold, and since the fixes for the file review's round 16,
 extra5-2, dropDimmingClasses's classList.remove, the classes the sheets dim read at run time off an author's markup around a
 figure, and since its extra5-1, dropPressThrough's, the classes that let a press pass through read the same way off every author
-element, and dropStackClasses's, the classes the sheets would raise to the control's stacking level read the same way) and ui/webview/spacer-measure.test.ts (its roster of
+element, and dropStackClasses's two, the classes the sheets would raise to the control's stacking level read the same way and,
+since the fixes for the file review's round 17, extra9-1, the classes that would make an element around a picture a stacking
+context read off a figure's ancestors) and ui/webview/spacer-measure.test.ts (its roster of
 the modules under ui/webview that no page bundle loads names css-rules.mjs, host-sheets.mjs and source-units.ts, the readers
 this follow-on's tests import, and since the fixes for the file review's round 17, tests-1 with regression-1,
-file-figure-open-taps.ts, the one gate's tap cells the two open legs run, and its closed multiset of the writes of a view property names the trail's two, trailSetView's
+file-figure-open-taps.ts, the one gate's tap cells the two open legs run, and since that round's extra9-1
+file-figure-open-stacking.ts, its stacking cells the same two legs run, and its closed multiset of the writes of a view property names the trail's two, trailSetView's
 and moveTrail's, each kept in the page's trail state and never posted), and since the fixes for the file review's round 16,
 extra5-2, ui/webview/file-view-decisions.test.ts (its pin on the word the viewer no longer uses for the editor's decisions lets
 the one quoted page class inside SHEET_DIM_CLASSES's literal through by value, since the list holds another page's tree-node

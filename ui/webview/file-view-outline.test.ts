@@ -1403,7 +1403,7 @@ test("what lets a press pass through an author element, off a file document's ma
 // ── the classes that would raise author content to the control's stacking level, off a file document's markup (the file review's round
 // 16, extra5-1, the covered sign): the render path takes off every author element the classes the sheets give a z-index at or above the
 // control's (file-view.ts SHEET_STACK_CLASSES), before any pass of the viewer's own, so an author element the sheets would leave at or
-// above the control drops below it and the control stays on top. A class the sheets give a z-index below the control's stays. The two-way
+// above the control drops below its level. A class the sheets give a z-index below the control's stays. The two-way
 // pin holding the list to the sheets is file-figure-open.test.ts's; the open leg reads the drop's effect on the stacking.
 test("the classes that would raise author content to the control's stacking level, off a file document's markup over the render path (the file review's round 16, extra5-1, the covered sign): an author's div of a page class the sheets would raise (ctx-text) keeps its other class alone; a div of a class the sheets give a z-index below the control's (rail-hit, z-index 0) keeps both; the control's own class (fv-figopen) on an element nested inside another author element goes and its other class stays; a div of another raising class (branch-chips) keeps its other class; an element the sheets do not name is untouched (a property pin over each element's classes after the paint; red at the head the file review's round 16 read, which kept every author class)", async (t) => {
   const md = '# R\n\n<div class="ctx-text keep">a card</div>\n\n<div class="rail-hit other">a rail</div>\n\n'
@@ -1423,6 +1423,41 @@ test("the classes that would raise author content to the control's stacking leve
     "chips": "only",
     "plain": "untouched",
   }, "each element's classes after the paint: a raising class off, a z-index below the control's kept, the rest kept (a property pin over the classes)");
+});
+
+// ── the classes that would make an element around a picture a stacking context, off a figure's ancestors (the file review's round 17,
+// extra9-1, and the coordinator's decision 4 on it): the render path takes off each figure and every element above it the classes the
+// sheets would make a stacking context there (file-view.ts SHEET_CONTEXT_CLASSES), before any pass of the viewer's own, and leaves an
+// author element that holds no figure as the author wrote it. The two-way pin holding the list to the sheets is file-figure-open.test.ts's;
+// the open leg and the engines leg read the drop's effect on the gate.
+test("the classes that would make an element around a picture a stacking context, off a figure's ancestors over the render path (the file review's round 17, extra9-1, and the coordinator's decision 4 on it): an author's div of such a class (romp-lightbox-img) around a picture keeps its other class alone; a span of a class under a kept parent class (fold-caret under fold open) loses it and the parent keeps both of its own; a div of a class the sheets scale under :active (stop-btn) two levels above a picture loses it; a span of a z-index-0 class (feed-cols) around an svg holding an svg image loses it, the fence pass's img counted; the same classes on elements that hold no picture stay (a property pin over each element's classes after the paint; red at 0ab74924c, which kept every author class)", async (t) => {
+  const md = '# R\n\nOne <span class="romp-lightbox-img keep"><img src="figs/p.png" alt="inside"></span> words.\n\n'
+    + 'Two <span class="fold open"><span class="fold-caret x"><img src="figs/q.png" alt="caret"></span></span> words.\n\n'
+    + 'Three <span class="stop-btn y"><em><img src="figs/r.png" alt="deep"></em></span> words.\n\n'
+    + 'Four <span class="feed-cols z"><svg class="plain" width="40" height="40"><image href="figs/s.png" width="40" height="40"/></svg></span> words.\n\n'
+    + 'Five <span class="romp-lightbox-img keep">no picture</span> and <span class="rail-hit w">no picture either</span> words.\n';
+  const o = await open(REPORT, md, t);
+  const box = o.body.querySelector(".fileview-md")!;
+  const spans = box.querySelectorAll("span");
+  const byClass = (c: string): El[] => spans.filter((x) => x.classes.includes(c));
+  const read = {
+    one: byClass("keep").map((x) => x.classes),
+    fold: byClass("open").map((x) => x.classes),
+    caret: byClass("x").map((x) => x.classes),
+    deep: byClass("y").map((x) => x.classes),
+    svg: byClass("z").map((x) => x.classes),
+    rail: byClass("w").map((x) => x.classes),
+  };
+  t.diagnostic("classes after the paint: " + JSON.stringify(read));
+  assert.ok(box.querySelectorAll("img").length === 3 && box.querySelectorAll("image").length === 1, "the three pictures and the svg image painted (the case's premise)");
+  assert.deepEqual(read, {
+    one: [["keep"], ["romp-lightbox-img", "keep"]],
+    fold: [["fold", "open"]],
+    caret: [["x"]],
+    deep: [["y"]],
+    svg: [["z"]],
+    rail: [["rail-hit", "w"]],
+  }, "each element's classes after the paint: a listed class off each figure's ancestors, the svg image's included, the parent's own classes and every class of an element holding no picture kept (a property pin over the classes)");
 });
 
 // ── the sign-in rule's decode, bounded (the file review's round 16, regression-2): the decode ran to its fixed point, and a `%25` chain

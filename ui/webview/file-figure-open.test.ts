@@ -619,14 +619,15 @@ test("the classes that let a press pass through, a two-way pin (the file review'
 });
 
 // ── the classes that would raise author content to the control's stacking level, both ways (the file review's round 16, extra5-1, the
-// covered sign) ── The picture's control rests at z-index 1 (the dressing sheets' `.fileview-md .fv-figopen` rule) and later in document
-// order than an author's markup, so it stays on top of any author element the sheets leave at z-index auto or 0. An author's element of
-// a page class that gives it a z-index at or above the control's is left at or above the control, so file-view.ts takes every such class
-// off a file document's author markup (dropStackClasses over SHEET_STACK_CLASSES), and the list is held here to every sheet a page of
-// either host loads (SHEETS), derived by the rule the list's docstring states and compared both ways, as the press-through classes are
-// above, with the same read for a rule that gives the z-index with no class to take (its subject and its other compounds name none) and
-// no id in its subject, which reaches author markup no drop of a class undoes, and is named. The open leg reads the drop's effect on the
-// gate and file-view-outline.test.ts runs it over the stand-in.
+// covered sign) ── The picture's control rests positioned at z-index 1 (the dressing sheets' `.fileview-md .fv-figopen` rule), and that
+// z-index, not its place in the document, keeps it above the author elements the sheets leave at z-index auto or 0, wherever no stacking
+// context stands around the picture (the next pin's list, and the table's shift, which is no translate). An author's element of a page
+// class that gives it a z-index at or above the control's is left at or above the control, so file-view.ts takes every such class off a
+// file document's author markup (dropStackClasses over SHEET_STACK_CLASSES), and the list is held here to every sheet a page of either
+// host loads (SHEETS), derived by the rule the list's docstring states and compared both ways, as the press-through classes are above,
+// with the same read for a rule that gives the z-index with no class to take (its subject and its other compounds name none) and no id
+// in its subject, which reaches author markup no drop of a class undoes, and is named. The open leg reads the drop's effect on the gate
+// and file-view-outline.test.ts runs it over the stand-in.
 /** The declarations of a block that leave what they apply to at or above the control's stacking level: a z-index at or above the
  *  control's (one the reader cannot read as an integer, a var(), counted, the safe side; auto, initial, inherit, unset and revert are
  *  not, they resolve to auto), and an animation naming keyframes that set such a z-index (`keyframes`). */
@@ -699,4 +700,121 @@ test("the classes that would raise author content to the control's stacking leve
   const cut = new Set(listed); cut.delete("ctx-text");
   assert.deepEqual(dimDrift(derived, cut).missing.map((m) => m.split(" ")[0]), ["ctx-text"], "a class taken off the list is named missing (a property pin over the drift)");
   assert.deepEqual(dimDrift(derived, new Set([...listed, "plant-never-stacks"])).stale, ["plant-never-stacks"], "a class put on the list that no sheet raises is named (a property pin over the drift)");
+});
+
+// ── the classes that would make an element around a picture a stacking context, both ways (the file review's round 17, extra9-1, and the
+// coordinator's decision 4 on it) ── A stacking context around a picture holds its control's z-index 1 inside it, and the z-index then
+// keeps the control above nothing outside that context, so file-view.ts takes off each figure and every element above it the page
+// classes the sheets would make a stacking context there (dropStackClasses over SHEET_CONTEXT_CLASSES), and the list is held here to
+// every sheet a page of either host loads (SHEETS), derived by the rule its docstring states and compared both ways, as the lists
+// above are. The same derivation names each rule with no class in its subject that would make a stacking context of an element that
+// could hold a picture's control, keyed on nothing but the viewer's own chrome, the fileview family (the Rendered box fileview-md and
+// every element above it in the viewer and the page, fileview-body, fileview, fileview-open, fileview-pane, whose classes no drop takes,
+// since the drops run inside the sanitizer's body): such a rule reaches every author element of its shape, and no drop of a class undoes
+// it. The viewer's own `.fileview-md > table` rule was one while the table's shift was a translate (red at 0ab74924c by that rule, and by
+// the absent list); the shift is a position and a left now. The census's bound: a rule keyed on another class of the page's body, which
+// stands above the viewer, would reach author markup too, and it reads no such class. The open leg and the engines leg read the drop's
+// effect on the gate in three engines, and file-view-outline.test.ts runs it over the stand-in.
+/** The declarations of a block that make what they apply to a stacking context, by SHEET_CONTEXT_CLASSES's rule: a transform, translate,
+ *  rotate, scale or perspective, a filter, backdrop-filter, clip-path, mask, mask-image, mask-border, mask-box-image, view-transition-name
+ *  or offset-path other than none, each under its -webkit- name too; an opacity under 1 (one not read as a number counted); a
+ *  mix-blend-mode other than normal; an isolation other than auto; contain with layout or paint, strict or content (a value naming
+ *  neither, size, inline-size and style alone, counted out); a content-visibility other than visible; a position other than static,
+ *  relative and absolute (fixed, sticky, one not read); a z-index other than auto; a will-change naming one of these or a value not
+ *  read; and an animation naming keyframes that set one (`keyframes`). initial, unset, revert and revert-layer count as none; container-type
+ *  is no such property. */
+function contextOf(body: string, keyframes: ReadonlySet<string>): string[] {
+  const NONE_TAKERS = ["transform", "translate", "rotate", "scale", "perspective", "filter", "backdrop-filter", "clip-path", "mask", "mask-image", "mask-border", "mask-box-image", "view-transition-name", "offset-path"];
+  const WILL = [...NONE_TAKERS, "opacity", "mix-blend-mode", "isolation", "contain", "content-visibility", "position", "z-index"];
+  const hits: string[] = [];
+  for (const d of splitTop(body, ";")) {
+    const at = d.indexOf(":");
+    if (at < 0) continue;
+    const p = d.slice(0, at).trim().toLowerCase().replace(/^-webkit-/, ""), v = d.slice(at + 1).trim().toLowerCase().replace("!important", "").trim();
+    if (["initial", "unset", "revert", "revert-layer"].includes(v)) continue;
+    if (NONE_TAKERS.includes(p)) { if (v !== "none") hits.push(p + " " + v); }
+    else if (p === "opacity") { const m = /^([0-9.]+)(%?)$/.exec(v); if (!m || parseFloat(m[1]) / (m[2] ? 100 : 1) < 1) hits.push("opacity " + v); }
+    else if (p === "mix-blend-mode") { if (v !== "normal") hits.push(p + " " + v); }
+    else if (p === "isolation") { if (v !== "auto") hits.push(p + " " + v); }
+    else if (p === "contain") { if (v !== "none" && !/^(?:size|inline-size|style|\s)+$/.test(v)) hits.push(p + " " + v); }
+    else if (p === "content-visibility") { if (v !== "visible") hits.push(p + " " + v); }
+    else if (p === "position") { if (!["static", "relative", "absolute"].includes(v)) hits.push(p + " " + v); }
+    else if (p === "z-index") { if (v !== "auto") hits.push("z-index " + v); }
+    else if (p === "will-change") { if (v !== "auto" && v.split(/\s*,\s*/).some((x) => WILL.includes(x.replace(/^-webkit-/, "")) || !/^[a-z-]+$/.test(x))) hits.push(p + " " + v); }
+    else if (p === "animation" || p === "animation-name") { for (const k of v.split(/[\s,]+/)) if (keyframes.has(k)) hits.push("animation " + k); }
+  }
+  return hits;
+}
+/** A subject compound on a pseudo-element, whose box holds no picture. */
+const PSEUDO_ELEMENT = /::?(?:before|after|marker|placeholder|selection|backdrop|first-line|first-letter|file-selector-button|cue|-webkit-[\w-]+|-moz-[\w-]+)/i;
+/** The tags whose element can hold no picture's control: the void elements, and every tag the sanitizer removes (md-sanitize.ts
+ *  MD_FORBID_TAGS, read off its source), with the body and the root, which no author markup is. */
+const HOLDS_NOTHING = ((): Set<string> => {
+  const m = /export const MD_FORBID_TAGS: readonly string\[\] = \[([\s\S]*?)\];/.exec(web("md-sanitize.ts"));
+  assert.ok(m, "md-sanitize.ts holds MD_FORBID_TAGS as one array literal (a sentence pin on the shape this read takes)");
+  const forbid: string[] = JSON.parse("[" + m![1].trim().replace(/,\s*$/, "") + "]");
+  assert.ok(forbid.includes("button") && forbid.includes("form"), "the sanitizer's forbidden tags read: " + forbid.join(" "));
+  return new Set([...forbid, "img", "input", "br", "hr", "wbr", "area", "col", "embed", "source", "track", "meta", "link", "base", "param", "body", "html"]);
+})();
+/** Every class the sheets would make a stacking context around a picture by SHEET_CONTEXT_CLASSES's rule, before the other lists are
+ *  taken out, each with its rules (sheet, selector, what makes it one), and apart from them the rules whose subject names no class,
+ *  holds a control, names no id and is keyed on nothing but the viewer's own chrome, the fileview family (`reach`), which give the list
+ *  no class since no drop could take one; a rule under print media, or on a pseudo-element, left out. */
+function contextClasses(sheets: Array<{ name: string; css: string }>): { classes: Map<string, string[]>; reach: string[] } {
+  const rules = sheets.flatMap((s) => cssRules(s.css).map((r) => ({ ...r, sheet: s.name })));
+  const keyframes = new Set<string>();
+  for (const r of rules) { const k = keyframesOf(r.chain); if (k && contextOf(r.body, new Set()).length) keyframes.add(k); }
+  const classes = new Map<string, string[]>(), reach: string[] = [];
+  const CLASS = /\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g;
+  for (const r of rules) {
+    if (keyframesOf(r.chain)) continue;
+    if (r.chain.some((c) => /^@media\s+print\b/i.test(c))) continue;
+    const hits = contextOf(r.body, keyframes);
+    if (!hits.length) continue;
+    for (const one of splitTop(r.selector, ",")) {
+      const sel = one.trim(), compounds = withoutNotHas(sel).trim().split(/\s*[>+~]\s*|\s+/).filter(Boolean);
+      const last = compounds[compounds.length - 1] || "";
+      if (PSEUDO_ELEMENT.test(last)) continue;
+      const subject = [...last.matchAll(CLASS)].map((m) => m[1]);
+      const others = compounds.slice(0, -1).flatMap((c) => [...c.matchAll(CLASS)].map((m) => m[1]));
+      const why = r.sheet + ": " + sel + " (" + hits.join(", ") + ")";
+      const tag = (/^([a-zA-Z][\w-]*)/.exec(last) || [])[1];
+      if (!subject.length && !(tag && HOLDS_NOTHING.has(tag.toLowerCase())) && !/#-?[_a-zA-Z]/.test(last) && others.every((c) => /^fileview(?:-|$)/.test(c))) { reach.push(why); continue; }   // no class a drop could take: named, not listed
+      for (const c of subject.length ? subject : others) classes.set(c, [...(classes.get(c) || []), why]);
+    }
+  }
+  return { classes, reach };
+}
+/** SHEET_CONTEXT_CLASSES read off file-view.ts's source: one array of string literals inside `new Set([` and `]);`. */
+function listedContextClasses(): Set<string> {
+  const m = /\nconst SHEET_CONTEXT_CLASSES: ReadonlySet<string> = new Set\(\[\n([\s\S]*?)\n\]\);\n/.exec(VIEW);
+  assert.ok(m, "file-view.ts holds SHEET_CONTEXT_CLASSES as one array of string literals (a sentence pin on the shape this read takes)");
+  const names: unknown[] = JSON.parse("[" + m![1] + "]");
+  assert.ok(names.every((n) => typeof n === "string"), "every member a string literal");
+  assert.equal(new Set(names).size, names.length, "no class listed twice");
+  return new Set(names as string[]);
+}
+/** The derived classes less the ones the other three lists take (SHEET_STACK_CLASSES and SHEET_PRESS_THROUGH_CLASSES off every element,
+ *  SHEET_DIM_CLASSES off a figure's ancestors). */
+const contextKept = (classes: Map<string, string[]>, others: ReadonlySet<string>): Map<string, string[]> => new Map([...classes].filter(([c]) => !others.has(c)));
+test("the classes that would make an element around a picture a stacking context, a two-way pin (the file review's round 17, extra9-1, and the coordinator's decision 4 on it): SHEET_CONTEXT_CLASSES in file-view.ts, the classes dropStackClasses takes off each figure and every element above it, equals the classes every sheet a page of either host loads would make a stacking context, whatever state pseudo-class the rule's subject carries (a transform, a filter, a clip-path or a mask other than none, an opacity under 1, a blend, an isolation, a paint or layout containment, a content-visibility, a fixed or sticky position, a z-index other than auto, a will-change naming one, or an animation whose keyframes set one; container-type none of them), derived by the rule its docstring states (the subject's classes outside :not() and :has(), else the other compounds'; a pseudo-element's rule and a print rule left out), less the classes the other three lists take; each class that the list lacks and each listed class the sheets no longer make one is named, and so is each rule with no class in its subject that would make a stacking context of an element that could hold a control, keyed on nothing but the viewer's own chrome, whose reach no drop of a class undoes; no listed class is one the markdown renderers write before the sanitizer; the derivation's reads are armed by planted rules, one per property, a hover, the keyframes, a subject that names no class, and the classless shapes named as reaching beside the ones that are not, with controls that make no stacking context, and by a class taken off the list and one put on it (a property pin over the derived set against the list; red at 0ab74924c, where the list was absent and the viewer's `.fileview-md > table` rule, a translate, is named as reaching)", () => {
+  const listed = listedContextClasses();
+  const others = new Set([...listedStackClasses(), ...listedPressThroughClasses(), ...listedDimClasses()]);
+  const { classes, reach } = contextClasses(SHEETS);
+  assert.ok(classes.size >= 200, "the derivation reads the sheets: " + classes.size + " classes before the other lists are taken out (a derivation that reads nothing is red; a property pin over the derived set's size)");
+  const derived = contextKept(classes, others);
+  const drift = dimDrift(derived, listed);
+  assert.deepEqual(drift.missing, [], "each class a sheet would make a stacking context around a picture that SHEET_CONTEXT_CLASSES lacks, with the rule that does it: add it to the list, in the same change as the rule (a property pin over the derived set against the list)");
+  assert.deepEqual(drift.stale, [], "each class SHEET_CONTEXT_CLASSES lists that no sheet makes a stacking context now, or that another list now takes: take it off the list, in the same change (a property pin over the derived set against the list)");
+  assert.deepEqual([...listed].filter((c) => others.has(c)), [], "no listed class is one another list already takes (a property pin over the four lists)");
+  assert.deepEqual(reach, [], "each rule that would make a stacking context of an element that could hold a picture's control, with no class in its subject, no id, and keyed on nothing but the viewer's own chrome, which reaches every author element of its shape and no drop of a class undoes: take the property off, or key it where a drop reaches (a property pin over the sheets' rules)");
+  const RENDERED = new Set<string>(["fv-dead", ...[web("md-config.ts"), web("math.ts")].flatMap((src) => [...src.matchAll(/\nexport const \w+_CLASS = "([\w-]+)";/g)].map((m) => m[1]))]);
+  assert.deepEqual([...listed].filter((c) => RENDERED.has(c)), [], "no listed class is one a markdown renderer writes before the sanitizer, which the drop would strip from the viewer's own markup (a property pin over the two sets)");
+  const planted = { name: "planted", css: ".plant-tf { transform: rotate(1deg); } .plant-none { transform: none; } .plant-wk { -webkit-transform: scale(2); } .plant-op { opacity: 0.5; } .plant-op1 { opacity: 1; } .plant-var { opacity: var(--x); } .plant-sticky { position: sticky; } .plant-rel { position: relative; } .plant-z0 { z-index: 0; } .plant-zauto { z-index: auto; } .plant-wc { will-change: transform; } .plant-wccolor { will-change: color; } .plant-ct { container-type: inline-size; } .plant-contain { contain: paint; } .plant-csize { contain: size style; } .plant-iso { isolation: isolate; } .plant-blend { mix-blend-mode: multiply; } .plant-mask { mask-image: linear-gradient(black, transparent); } .plant-cv { content-visibility: auto; } .plant-init { transform: initial; } .plant-hover:hover { transform: scale(1.1); } .plant-psd::after { transform: rotate(1deg); } @media print { .plant-print { transform: rotate(1deg); } } @keyframes plant-kf { from { transform: rotate(0deg); } } .plant-anim { animation: plant-kf 1s; } .plant-sub span { filter: blur(1px); } .fileview-md > section { translate: 10px 0; } .fileview-body div { opacity: 0.9; } [data-plant] { filter: blur(1px); } img { transform: rotate(1deg); } button { opacity: 0.5; } #plant-id { transform: rotate(1deg); } .plant-kept aside { transform: rotate(1deg); }" };
+  const withPlant = contextClasses([...SHEETS, planted]);
+  assert.deepEqual(dimDrift(contextKept(withPlant.classes, others), listed).missing.map((m) => m.split(" ")[0]), ["plant-anim", "plant-blend", "plant-contain", "plant-cv", "plant-hover", "plant-iso", "plant-kept", "plant-mask", "plant-op", "plant-sticky", "plant-sub", "plant-tf", "plant-var", "plant-wc", "plant-wk", "plant-z0"], "a planted sheet's classes are named missing, one per property, the -webkit- name, the hover's, the animation's and a subject that names no class among them, and neither a transform of none or initial, an opacity of 1, a relative position, a z-index of auto, a will-change of color, a container-type, a size and style containment, a pseudo-element's rule nor a print rule is (a property pin over the drift)");
+  assert.deepEqual(withPlant.reach, ["planted: .fileview-md > section (translate 10px 0)", "planted: .fileview-body div (opacity 0.9)", "planted: [data-plant] (filter blur(1px))"], "the rules keyed on the viewer's own chrome with a classless subject, and an attribute-keyed one, are named as reaching, and the void img, the button the sanitizer removes, the id-keyed rule and a classless subject under a class a drop can take are not (a property pin over the read)");
+  const cut = new Set(listed); cut.delete("romp-lightbox-img");
+  assert.deepEqual(dimDrift(derived, cut).missing.map((m) => m.split(" ")[0]), ["romp-lightbox-img"], "a class taken off the list is named missing (a property pin over the drift)");
+  assert.deepEqual(dimDrift(derived, new Set([...listed, "plant-never-contexts"])).stale, ["plant-never-contexts"], "a class put on the list that no sheet makes a stacking context is named (a property pin over the drift)");
 });
