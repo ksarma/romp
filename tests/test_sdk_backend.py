@@ -4188,8 +4188,10 @@ class InterruptSettlesStall(unittest.TestCase):
                 self.interrupted = True
 
             async def receive_messages(self):
+                # the turn's init, streamed once the turn is read, as the CLI does (one init per turn:
+                # _turn_frame in kernel/sdk_backend.py); this fake streamed it at stream open until 2026-09-26
+                await self._turnq.get()              # read the turn romp fed (inflight went to 1 at the feed)...
                 yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
-                await self._turnq.get()              # consume the turn → inflight goes to 1...
                 while True:
                     await _aio.sleep(3600)            # ...then STALL forever (never a ResultMessage)
 
@@ -4405,12 +4407,17 @@ class PendingQueueLoop(unittest.TestCase):
             async def set_permission_mode(self, mode): pass
 
             async def receive_messages(self):
-                yield _sdk.SystemMessage("init", {
-                    "model": "claude-x", "permissionMode": "acceptEdits",
-                    "session_id": (self.options.session_id or "fsid")})
+                # one init per turn, streamed once the turn is read, as the CLI does (_turn_frame in
+                # kernel/sdk_backend.py). A single init at stream open made
+                # test_second_turn_forwarded_immediately_mid_flight a flake (2026-09-25): when that init
+                # reached romp before A was fed, romp counted it as a turn the CLI started on its own, A
+                # went in mid-turn, and nothing released A's hold before A's result, so B stayed queued.
                 while True:
                     turn = await self._turnq.get()
                     GatedClient.received.append(turn["message"]["content"][0]["text"])
+                    yield _sdk.SystemMessage("init", {
+                        "model": "claude-x", "permissionMode": "acceptEdits",
+                        "session_id": (self.options.session_id or "fsid")})
                     while not GatedClient.release.is_set():
                         await _aio.sleep(0.01)            # hold the turn 'in flight' until released
                     GatedClient.release.clear()
@@ -4452,6 +4459,49 @@ class PendingQueueLoop(unittest.TestCase):
         self.assertTrue(self._wait(lambda: self.Gated.received == ["A", "B"]),
                         "B is delivered after A, in order")
 
+    def test_second_turn_forwarded_immediately_when_the_first_is_sent_after_connect(self):
+        # The test above with the order that made it flake forced (2026-09-25). The first send starts the
+        # session, so A's enqueue is what waits: until the receive loop has handled every frame the stream
+        # sends before a turn and waits on the client's turn queue. With the fake's old single init at
+        # stream open, this order failed every time: the init reached romp before A and read as a turn the
+        # CLI started on its own (inflight 0 to 1), so A went in mid-turn, its hold waited for a take,
+        # nothing streamed until A's release, and B stayed queued. The CLI streams an init for each turn it
+        # reads (_turn_frame in kernel/sdk_backend.py), and so does GatedClient now. GatedClient is built
+        # fresh in each setUp, so the __init__ patch ends with the test.
+        waiting = threading.Event()   # set when the receive loop first waits on the client for a turn
+
+        class SignallingQueue(asyncio.Queue):
+            async def get(self):
+                waiting.set()
+                return await super().get()
+
+        orig_init = self.Gated.__init__
+
+        def __init__(gself, *a, **k):
+            orig_init(gself, *a, **k)
+            gself._turnq = SignallingQueue()
+
+        self.Gated.__init__ = __init__
+        orig_enqueue = sb.SdkSession.enqueue
+        waited = []
+
+        def enqueue(s, text, *a, **k):
+            if text == "A" and not waited:
+                waited.append(waiting.wait(6.0))
+            return orig_enqueue(s, text, *a, **k)
+
+        sid = self.backend.spawn("q", self.d)
+        with mock.patch.object(sb.SdkSession, "enqueue", enqueue):
+            self.assertTrue(self.backend.send(sid, "A"))
+        self.assertEqual(waited, [True], "A's enqueue never waited for the receive loop to wait on the client")
+        self.assertTrue(self._wait(lambda: self.Gated.received == ["A"]), "A never reached the SDK")
+        self.assertTrue(self.backend.send(sid, "B"))
+        self.assertTrue(self._wait(lambda: self.backend.pending_queued(sid) == []),
+                        "B should be forwarded to the SDK at once, not held in romp's queue")
+        self.Gated.release.set()
+        self.assertTrue(self._wait(lambda: self.Gated.received == ["A", "B"]),
+                        "B is delivered after A, in order")
+
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
 class InterruptWithQueue(unittest.TestCase):
@@ -4473,6 +4523,7 @@ class InterruptWithQueue(unittest.TestCase):
         class StallClient:
             instances = []
             received = []                  # turn texts actually fed to the SDK, in order
+            fed = []                       # turn texts romp's input stream handed to query(), in order
 
             def __init__(self, options=None, transport=None):
                 self.options = options
@@ -4485,22 +4536,28 @@ class InterruptWithQueue(unittest.TestCase):
 
             async def query(self, prompt, session_id="default"):
                 async for turn in prompt:
+                    StallClient.fed.append(turn["message"]["content"][0]["text"])
                     await self._turnq.put(turn)
 
             async def interrupt(self):
                 self.interrupted = True    # interrupt sent, but the wedged turn never produces a result
 
             async def receive_messages(self):
-                yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
+                # one init per turn, streamed once the turn is read, as the CLI does (_turn_frame in
+                # kernel/sdk_backend.py). A's init releases A's one-fed-text hold, so only the interrupt gate
+                # can hold B; the forced-order test below says what an init at stream open let through
+                # (2026-09-26).
                 while True:
                     turn = await self._turnq.get()
                     StallClient.received.append(turn["message"]["content"][0]["text"])
+                    yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
                     await _aio.sleep(3600)           # stall this turn forever (never a ResultMessage)
 
         _sdk.ClaudeSDKClient = StallClient
         self.Fake = StallClient
         StallClient.instances = []
         StallClient.received = []
+        StallClient.fed = []
         self.backend = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
 
     def tearDown(self):
@@ -4534,6 +4591,51 @@ class InterruptWithQueue(unittest.TestCase):
         self.assertEqual(self.Fake.received, ["A"], "B was NOT fed to the SDK while interrupted")
         self.assertEqual(self.backend.live_sessions().get(sid, {}).get("state"), "waiting",
                          "still 'waiting' — inflight held, not double-counted")
+
+    def test_interrupt_holds_a_turn_queued_after_it_when_the_first_is_sent_after_connect(self):
+        # The test above with A's enqueue made to wait until the receive loop waits on the client for a turn,
+        # the same forcing as PendingQueueLoop's forced-order test (2026-09-26). While StallClient streamed
+        # one init at stream open, this order passed with the interrupt gate in inputs() removed: the init
+        # reached romp before A and read as a turn the CLI started on its own, A went in mid-turn, nothing
+        # streamed after it, and A's one-fed-text hold kept B queued in the gate's place. StallClient is built
+        # fresh in each setUp, so the __init__ patch ends with the test.
+        waiting = threading.Event()   # set when the receive loop first waits on the client for a turn
+
+        class SignallingQueue(asyncio.Queue):
+            async def get(self):
+                waiting.set()
+                return await super().get()
+
+        orig_init = self.Fake.__init__
+
+        def __init__(fself, *a, **k):
+            orig_init(fself, *a, **k)
+            fself._turnq = SignallingQueue()
+
+        self.Fake.__init__ = __init__
+        orig_enqueue = sb.SdkSession.enqueue
+        waited = []
+
+        def enqueue(s, text, *a, **k):
+            if text == "A" and not waited:
+                waited.append(waiting.wait(6.0))
+            return orig_enqueue(s, text, *a, **k)
+
+        sid = self.backend.spawn("x", self.d)
+        with mock.patch.object(sb.SdkSession, "enqueue", enqueue):
+            self.backend.send(sid, "A")
+        self.assertEqual(waited, [True], "A's enqueue never waited for the receive loop to wait on the client")
+        self.assertTrue(self._wait(lambda: self.Fake.received == ["A"]), "A never reached the SDK")
+        self.assertTrue(self.backend.interrupt(sid))
+        self.assertTrue(self._wait(lambda: self.backend.live_sessions().get(sid, {}).get("state") == "waiting"),
+                        "the interrupted turn reads 'waiting'")
+        self.backend.send(sid, "B")
+        time.sleep(0.3)
+        self.assertEqual(self.backend.pending_queued(sid), ["B"],
+                         "B stays queued behind the interrupted turn")
+        self.assertEqual(self.Fake.fed, ["A"], "B was not fed to the SDK while interrupted")
+        self.assertEqual(self.backend.live_sessions().get(sid, {}).get("state"), "waiting",
+                         "the session still reads 'waiting' after B was sent")
 
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
