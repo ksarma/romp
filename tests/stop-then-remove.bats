@@ -8,12 +8,13 @@
 # checks that tests/romp-manager-origin.bats's teardown goes through the helper. Nothing below starts a
 # manager.
 #
-# Among the parts of the helper no case pins (changing each leaves every case green): the branch for a
-# pid still running five seconds after its KILL, which no case reaches, since a KILL cannot be caught or
-# ignored; the `wait` that reaps a pid that is this shell's child, which case 1 runs, though no case
-# reads a status that `wait` could change; when the KILL comes, and which stream its message goes to
-# (case 3 reads the message in run's merged output); the default bound's value (a default of 4 s leaves
-# every case green); and a pid whose TERM fails, one already gone at the call or one that kill -0 is
+# Among the parts of the helper no case pins (each has a change that leaves every case green): the branch
+# for a pid still running five seconds after its KILL, which no case reaches, since a KILL cannot be
+# caught or ignored; the `wait` that reaps a pid that is this shell's child, which case 1 runs, though no
+# case reads a status that `wait` could change; how late the KILL comes, once it comes after case 5's
+# three-second burst has ended (a KILL before then turns case 5 red), so nothing checks that the default
+# bound stays above the manager's 8 s grace; which stream the KILL's message goes to (case 3 reads it in
+# run's merged output); and a pid whose TERM fails, one already gone at the call or one that kill -0 is
 # refused on, which no case passes: the helper swallows the failure, the poll ends at once and the
 # directory is removed, and a helper that returned at the failed TERM instead, leaving the directory,
 # keeps every case green.
