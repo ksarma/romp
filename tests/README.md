@@ -182,7 +182,12 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   child collects those four modules and no other: it runs from the copy's root
   with no `--rootdir` and is handed the four as files, so it collects the first
   probe module first, then the two dummy modules, then the second probe module
-  fourth. Each run is made in two forms of command line. CI's form has the
+  fourth. Each run is made in two forms of command line. What this account of
+  the proof says of CI's form, its options and its runs with and without a
+  worker, holds where pytest-xdist and pytest-timeout are installed, as they are
+  in each of CI's cells; on a machine that lacks one of them,
+  `_proof_mode_options` in `tests/test_hermetic_kernel_postal.py` leaves out of
+  CI's form what that machine cannot pass. CI's form has the
   options of CI's `Run pytest` step as a runner runs it, read from
   `.github/workflows/ci.yml` with the step's expressions valued for each runner
   label by fork PR #916's evaluator, as GitHub values them, so the cache plugin
@@ -192,11 +197,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   developer's form has none of those options but `-n`, and has
   `-p no:cacheprovider -k reassert`, which blocks the cache plugin and
   deselects none of the four, and `-n 2` in its run with workers. Where
-  pytest-xdist is installed, as it is in each of CI's cells, the run makes
-  four children per case, whatever run of the suite it is in: the two forms,
-  each with no worker and with two. On a machine without pytest-xdist it makes
-  two, one in each form with no worker, and leaves `-n` and its count out of
-  CI's options. The run's limit comes in three tiers. It refuses
+  pytest-xdist is installed the run makes four children per case, whatever run
+  of the suite it is in: the two forms, each with no worker and with two. On a
+  machine without pytest-xdist it makes two, one in each form with no worker.
+  The run's limit comes in three tiers. It refuses
   an unconditional removal of the fixture (from every test), which is the class
   of the bug, and any removal keyed on a fact of the first tier. First, matched
   by construction: the conftest and the probe modules in a directory named
@@ -207,9 +211,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   run with no xdist worker (and none of the variables pytest-xdist sets in one)
   and, where pytest-xdist is installed, one with `-n 2`; and the pair of forms,
   each of those runs made in both: whether each option that one run gives and
-  another does not is given (CI's `-q`, `--durations`, `--timeout` and
-  `--timeout-method`, the last two where pytest-timeout is installed, and `-n`,
-  where pytest-xdist is installed, which every run gives but the developer's
+  another does not is given (CI's `-q`, `--durations`, `--timeout`,
+  `--timeout-method` and `-n`, the last given by every run but the developer's
   with no worker; and the developer's `-p no:cacheprovider` and `-k`). The pair
   covers whether an option is given, not its value. Code that stops the fixture
   from running in any of those tests, keyed on those facts alone or on facts one

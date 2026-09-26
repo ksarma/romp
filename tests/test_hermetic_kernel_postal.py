@@ -3445,14 +3445,14 @@ def _conftest_reasserted_names(src=None, where=None):
     FIRST, MATCHED, by construction, the child's context: V1, a directory named tests; the package;
     the start, the conftest loaded when pytest starts; V3, the first module collected and the fourth, and so a condition
     on a module's place that holds at either (the fourth is third or later, where the verifier's X7 keyed its road); V4,
-    in each, function tests and a unittest TestCase; V5, a run with no xdist worker (CI's with -n 0 where pytest-xdist
-    is installed, the developer's with no -n), none of this process's PYTEST_XDIST_* variables in its environment, and,
-    where pytest-xdist is installed, a run with -n 2; and THE PAIR OF FORMS, each run of V5 made in both: whether each
-    option that one run gives and another does not is given, CI's -q, --durations, --timeout and --timeout-method (the
-    last two where pytest-timeout is installed) and -n (where pytest-xdist is installed; every run gives it but the
-    developer's with no worker), and the developer's -p no:cacheprovider and -k, read as words of the command line and,
-    all but -n, as pytest reads them (the cache plugin loaded or not, a -k or none, --durations or none, --timeout or
-    none, -q by the verbosity). The pair covers whether an option is given, and no condition on its value. A road in
+    in each, function tests and a unittest TestCase; V5, a run with no xdist worker (CI's with -n 0, the developer's
+    with no -n), none of this process's PYTEST_XDIST_* variables in its environment, and, where pytest-xdist is
+    installed, a run with -n 2; and THE PAIR OF FORMS, each run of V5 made in both: whether each option that one run
+    gives and another does not is given, CI's -q, --durations, --timeout, --timeout-method and -n (the last given by
+    every run but the developer's with no worker), and the developer's -p no:cacheprovider and -k, read as words of
+    the command line and, all but -n, as pytest reads them (the cache plugin loaded or not, a -k or none, --durations
+    or none, --timeout or none, -q by the verbosity). The pair covers whether an option is given, and no condition on
+    its value. A road in
     the conftest's own code, in the code that runs before it or in pytest that keeps pytest from running that re-assert
     in a test of that context, keyed on those facts alone, or together where one read has them all (V1, the package,
     the start, V3, V4 and V5 with either form, and one run's options with one another), is refused, named above or not
@@ -3649,10 +3649,9 @@ _PROOF_MODE_RUNS = {"serial": ("ci", False), "xdist": ("ci", True), "developer":
                     "developer-xdist": ("developer", True)}
 #   THE RUNS THE PROOF MAKES, by mode (_proof_modes): the form of each run's command line, "ci" (CI's Run pytest step
 #   as a runner runs it, _proof_ci_forms) or "developer" (_proof_developer_options), and whether it has xdist workers;
-#   each run's options are _proof_mode_options'. The two forms are a matched pair, as the runs with and without a
-#   worker are (the reviewer's ruling of 2026-09-25 09:17Z on round 2 of fork PR #894, (11)), and every form runs with
-#   and without a worker: in CI's form, as the step runs on its runners with none (-n 0 on macos-latest) and on those
-#   with workers (-n 2 on ubuntu-latest), and in the developer's, with no -n and with -n 2
+#   each run's options are _proof_mode_options'. The two forms are a matched pair (the reviewer's ruling of 2026-09-25
+#   09:17Z on round 2 of fork PR #894, (11), in the shape of V5's runs with and without a worker): whichever of the
+#   runs with and without a worker _proof_modes makes, it makes in both forms
 _PROOF_READS = tuple(((module, cls, test), "the %s test of %s, %s" % (when, where, kind))
                      for module, where in (("a", "the first module collected"), ("b", "the fourth module collected"))
                      for cls, kind in (("", "a function test"), ("ProbeCase", "a unittest TestCase test"))
@@ -3666,8 +3665,9 @@ _PROOF_READS = tuple(((module, cls, test), "the %s test of %s, %s" % (when, wher
 #   _proof_module_files (test_the_added_modules_names_sort_in_the_order_of_proof_module_files), and a run in the copy is
 #   handed the four added modules as files in that order; it collects them so, the first probe module first and the
 #   second fourth, after two dummy modules (V3; the ruling of 2026-09-25 04:01Z, (8)), each probe read as
-#   function tests and as a unittest TestCase (V4), and the run is made with no xdist worker and with two (V5): every
-#   combination of V3, V4 and V5 is read, _proof_context_roads plants a road keyed on each fact, and the copy test's
+#   function tests and as a unittest TestCase (V4), and the run is made with no xdist worker and, where _proof_modes
+#   makes that run, with two (V5): every combination of V3, V4 and V5 is read, _proof_context_roads plants a road
+#   keyed on each fact, and the copy test's
 #   roads one keyed on the verifier's three facts of the package, on every entry of the checkout in its place in the
 #   copy, on the child's command line and on a test module's place in the order; each run is made in each form of
 #   command line, CI's and a developer's (_PROOF_MODE_RUNS), and _proof_option_roads plants a road keyed on each option
@@ -3769,14 +3769,16 @@ def _proof_ci_forms(root=None):
 
 
 def _proof_mode_options(mode, root=None):
-    """The options of the proof's run in `mode` (_PROOF_MODE_RUNS), as words in their order. In CI's form, the options
-    of the runners of _proof_ci_forms with no worker for "serial" and of those with workers for "xdist", as the step
-    passes them, its -n and count included: today the macos-latest cells' -n 0 and the ubuntu-latest cells' -n 2. In
-    the developer's form, _proof_developer_options, and -n 2 after them for its run with workers. Left out of CI's
-    form, since no run of the suite in this interpreter can pass them: the words that begin --timeout where
-    pytest-timeout is not installed, and -n with the word after it where pytest-xdist is not (pytest would refuse
-    each; a worker count spelled otherwise refuses there, by name, planted by -n with its count attached). `root` is
-    _proof_ci_forms'."""
+    """The options of the proof's run in `mode` (_PROOF_MODE_RUNS), as words in their order. THE SCOPE of what this
+    module says of CI's form, its options and its runs with and without a worker: it holds where pytest-xdist and
+    pytest-timeout are installed, as they are in each of CI's cells; on a machine that lacks one of them, this function
+    leaves out of CI's form what that machine cannot pass (below). In CI's form, the options of the runners of
+    _proof_ci_forms with no worker for "serial" and of those with workers for "xdist", as the step passes them, its -n
+    and count included: today the macos-latest cells' -n 0 and the ubuntu-latest cells' -n 2. In the developer's form,
+    _proof_developer_options, and -n 2 after them for its run with workers. Left out of CI's form, since no run of the
+    suite in this interpreter can pass them: the words that begin --timeout where pytest-timeout is not installed, and
+    -n with the word after it where pytest-xdist is not (pytest would refuse each; a worker count spelled otherwise
+    refuses there, by name, planted by -n with its count attached). `root` is _proof_ci_forms'."""
     form, worker = _PROOF_MODE_RUNS[mode]
     if form == "developer":
         return _proof_developer_options() + (["-n", "2"] if worker else [])
