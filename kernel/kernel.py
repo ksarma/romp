@@ -4082,12 +4082,14 @@ _PAGE_KEY_SLOT = "romp.pageKey." + _SESSION_COOKIE
 # distinct re-sign-in 403 (X-Romp-Reauth: a valid session whose stored key no longer matches, as when
 # two sign-ins race and leave the cookie of one beside the key of the other, or a session with no key
 # stored at all), in which case it drops the stale key and hops the top frame. Before either hop it
-# checks that this origin's storage takes a write (stores()). A browser that keeps cookies but refuses
-# site storage cannot keep the key a sign-in hands it, so each sign-in would come back keyless, be
-# refused and hop to /login again; that browser gets a sentence in the top frame's document instead
-# (refused()) and no hop. The sentence is styled like /login and sets its own background, since this
-# script runs in every top-level page. Neither hop can loop: nothing is sent from /login itself, and
-# /login navigates only when the person submits it.
+# checks that this origin's storage takes a write (stores()). The re-sign-in branch drops the key
+# before that check, so on an origin whose storage is full the check's write fits in the room the key
+# held and the tab still reaches /login, where a sign-in seeds the key into that room again. A browser
+# that keeps cookies but refuses site storage cannot keep the key a sign-in hands it, so each sign-in
+# would come back keyless, be refused and hop to /login again; that browser gets a sentence in the top
+# frame's document instead (refused()) and no hop. The sentence is styled like /login and sets its own
+# background, since this script runs in every top-level page. Neither hop can loop: nothing is sent
+# from /login itself, and /login navigates only when the person submits it.
 _PAGE_KEY_JS = ("(function(){if(window.__rompPageKey)return;var KN=" + json.dumps(_PAGE_KEY_SLOT) + ";"
     "function key(){try{return localStorage.getItem(KN)||''}catch(e){return ''}}"
     "function stores(){try{localStorage.setItem(KN+'.probe','1');localStorage.removeItem(KN+'.probe');return true}catch(e){return false}}"
@@ -4105,8 +4107,8 @@ _PAGE_KEY_JS = ("(function(){if(window.__rompPageKey)return;var KN=" + json.dump
     "h.set('X-Romp-Key',k);init=Object.assign({},init||{},{headers:h});}}}catch(e){}"
     "return f.call(window,input,init).then(function(r){try{"
     "if(r&&r.status===403&&r.headers&&r.headers.get('X-Romp-Reauth')){var t=window.top;"
-    "if(t.location.pathname!=='/login'){if(!stores())refused(t.document);"
-    "else{try{localStorage.removeItem(KN)}catch(e){}t.location.replace('/login');}}}}catch(e){}return r;});};"
+    "if(t.location.pathname!=='/login'){try{localStorage.removeItem(KN)}catch(e){}"
+    "if(stores())t.location.replace('/login');else refused(t.document);}}}catch(e){}return r;});};"
     "if(!key()&&window===window.top&&location.pathname!=='/login'){if(stores())location.replace('/login');else refused(document);}})();")
 
 

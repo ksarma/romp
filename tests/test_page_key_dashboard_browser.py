@@ -22,7 +22,10 @@ fails, never skips, when that engine is missing):
   3. A stale tab: the dashboard is open and the key in its storage changes to another sign-in's (the state two racing
      sign-ins can leave). Its next request, a POST, is refused with the re-sign-in 403 and changes nothing; the tab goes to
      /login and drops the stale key; signing in through the form brings the dashboard back, with every pane loading and the
-     POST answered again.
+     POST answered again. The same tab on an origin whose storage is full, filled until the storage probe's own write no
+     longer fits, does the same: the re-sign-in branch drops the stale key before it probes, the probe's write fits in the
+     room the key left, the tab goes to /login with no storage-refused sentence, and signing in through the form seeds the
+     key again and the dashboard's requests are answered, with the rest of the storage still full.
   4. A browser that keeps cookies but refuses site storage (Firefox with dom.storage.enabled off; on the other engines an
      init script that makes localStorage throw) signs in through the /login form: the boot's requests come back with the
      re-sign-in 403, and the tab stays on the dashboard's address showing the sentence that says why, with no hop back to
@@ -429,6 +432,63 @@ await browser.close();
 process.exit(0);
 """
 
+# An origin whose storage is full: the dashboard is signed in, then, in one task of the page (so no response is handled in
+# between), its key changes to another sign-in's of the same length, this origin's storage is filled in halving chunks until
+# not one more character fits, and the storage probe's own write is tried and refused. A request with the stale key comes
+# back with the re-sign-in 403. The state is read once the tab has gone to /login or shows the storage-refused sentence;
+# then, from /login, the form signs in again. The fill stays in place throughout.
+FULL_QUOTA = HEAD + r"""
+const ctx = await browser.newContext(VIEW);
+let mine = "", stale = "";
+const label = (k) => k === undefined || k === null ? "none" : (mine && k === mine ? "mine" : (stale && k === stale ? "stale" : "other"));
+const held = async (page, slot) => { const k = await keyIn(page, slot).catch(() => undefined); return k === undefined ? "unread" : (k === null ? "dropped" : label(k)); };
+const says = (page) => page.evaluate(() => !!document.body && (document.body.innerText || "").includes("which this browser refuses")).catch(() => false);
+const fillKept = (page, n) => page.evaluate((n) => { let c = 0; for (let i = 0; i < localStorage.length; i++) if (String(localStorage.key(i)).startsWith("romp.fill.")) c++; return c === n; }, n).catch(() => "unread");
+const rec = recorder(ctx, label);
+const page = await ctx.newPage();
+const navs = [];
+page.on("framenavigated", (f) => { if (f === page.mainFrame()) navs.push(pathOf(f.url())); });
+await page.goto(cfg.origin + "/?token=" + encodeURIComponent(cfg.token));
+await page.waitForFunction(() => !!window.__rompPaneToggle, null, { timeout: cfg.deadline });
+const slot = await slotOf(ctx);
+mine = (await keyIn(page, slot)) || "";
+stale = Array.from(mine, (c) => c === "A" ? "B" : "A").join("");   // every character differs, the length is the same
+out.keyLen = mine.length;
+const t0 = Date.now();
+out.fill = await page.evaluate(([s, v]) => {
+  const was = localStorage.getItem(s);
+  localStorage.setItem(s, v);
+  let n = 0;
+  for (let c = "x".repeat(1 << 20); c.length && n < 10000; ) { try { localStorage.setItem("romp.fill." + n, c); n++; } catch (e) { c = c.slice(0, c.length >> 1); } }
+  let probe = "took";
+  try { localStorage.setItem(s + ".probe", "1"); localStorage.removeItem(s + ".probe"); } catch (e) { probe = e.name; }
+  return { items: n, probe, swapped: was !== v && localStorage.getItem(s) === v };
+}, [slot, stale]);
+out.request = await page.evaluate(async () => { const r = await fetch("/sessions"); return { status: r.status, reauth: !!r.headers.get("X-Romp-Reauth") }; })
+  .catch(() => "navigated");
+const decided = async () => pathOf(page.url()) === "/login" || (await says(page));
+for (const end = Date.now() + cfg.deadline; Date.now() < end && !(await decided()); ) await page.waitForTimeout(200);
+await page.waitForTimeout(2000);
+out.refusals = rec.log.filter((r) => r.t >= t0 && r.status === 403 && r.reauth && r.key === "stale").length;
+out.navs = navs.slice();
+out.at = pathOf(page.url());
+out.says = await says(page);
+out.key = await held(page, slot);
+out.fillKept = await fillKept(page, out.fill.items);
+out.back = null;
+if (out.at === "/login") {
+  await page.fill("#t", cfg.token);
+  await page.click("form button");
+  const at = await page.waitForURL((u) => new URL(u).pathname === "/", { timeout: cfg.deadline }).then(() => pathOf(page.url()), () => pathOf(page.url()));
+  await page.waitForFunction(() => !!window.__rompPaneToggle, null, { timeout: cfg.deadline }).catch(() => {});
+  out.back = { at, key: await held(page, slot), answered: await page.evaluate(async () => (await fetch("/sessions")).status).catch(() => "navigated"),
+               says: await says(page), fillKept: await fillKept(page, out.fill.items) };
+}
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
 # A browser that keeps cookies but refuses site storage, and the storage-refused sentence as a page shows it. Firefox runs
 # it for real, with dom.storage.enabled off; the other engines take an init script that makes localStorage throw the
 # SecurityError a refusing browser throws.
@@ -789,6 +849,24 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
         self.assertEqual([s for s in r["afterSockets"] if s["key"] != "mine" or not s["heard"]], [], "the sockets carry the key again and are answered")
         self.assertEqual(r["post"]["status"], 200, "the POST is answered again")
         self.assertTrue(r["post"]["flipped"] and r["post"]["held"], "and takes effect")
+
+    def test_a_stale_tab_on_an_origin_whose_storage_is_full_drops_the_key_and_signs_in_again(self):
+        r = self._drive(FULL_QUOTA)
+        self.assertGreater(r["keyLen"], 20, "the dashboard signed in and holds its key")
+        self.assertTrue(r["fill"]["swapped"], "the stored key changed to another sign-in's")
+        self.assertEqual(r["fill"]["probe"], "QuotaExceededError",
+                         "the origin's storage is full: the storage probe's own write does not fit before the refusal: %r" % r["fill"])
+        self.assertGreater(r["refusals"], 0, "a request with the stale key came back with the re-sign-in 403: %r" % (r["request"],))
+        self.assertEqual((r["at"], r["says"], r["key"]), ("/login", False, "dropped"),
+                         "the re-sign-in branch dropped the stale key, the storage probe's write fit in the room it left, and the tab "
+                         "went to /login with no storage-refused sentence (at, sentence, key; navs %r)" % r["navs"])
+        self.assertIs(r["fillKept"], True, "the rest of the storage is still full")
+        b = r["back"]
+        self.assertEqual(b["at"], "/", "the /login form signs in and lands the dashboard: %r" % b)
+        self.assertEqual(b["key"], "mine", "the sign-in seeded this browser's key into the room the stale key left: %r" % b)
+        self.assertEqual(b["answered"], 200, "and the dashboard's requests are answered: %r" % b)
+        self.assertIs(b["says"], False, "with no storage-refused sentence: %r" % b)
+        self.assertIs(b["fillKept"], True, "while the rest of the storage is still full: %r" % b)
 
     def _assert_legible(self, look, shot, where):
         """The storage-refused sentence reads: its ink on the first opaque background behind it clears 4.5:1 by the computed
