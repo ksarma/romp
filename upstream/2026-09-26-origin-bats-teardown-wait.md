@@ -3,7 +3,7 @@ title: tests/romp-manager-origin.bats's teardown waits for the killed manager to
 status: candidate
 where: tests/stop-then-remove.bash (new: stop_then_remove, TERM then a bounded poll for the exit, KILL at the bound, then rm -rf), tests/stop-then-remove.bats (new: the stand-in pins and the teardown's source pin), tests/romp-manager-origin.bats (teardown), tests/README.md (the bats cleanup paragraph), upstream/2026-09-26-origin-bats-teardown-wait.md (this entry)
 added: 2026-09-26
-pr:
+pr: 920
 tier: docs
 offered:
 closed:
