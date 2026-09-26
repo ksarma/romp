@@ -4523,6 +4523,7 @@ class InterruptWithQueue(unittest.TestCase):
         class StallClient:
             instances = []
             received = []                  # turn texts actually fed to the SDK, in order
+            fed = []                       # turn texts romp's input stream handed to query(), in order
 
             def __init__(self, options=None, transport=None):
                 self.options = options
@@ -4535,6 +4536,7 @@ class InterruptWithQueue(unittest.TestCase):
 
             async def query(self, prompt, session_id="default"):
                 async for turn in prompt:
+                    StallClient.fed.append(turn["message"]["content"][0]["text"])
                     await self._turnq.put(turn)
 
             async def interrupt(self):
@@ -4555,6 +4557,7 @@ class InterruptWithQueue(unittest.TestCase):
         self.Fake = StallClient
         StallClient.instances = []
         StallClient.received = []
+        StallClient.fed = []
         self.backend = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
 
     def tearDown(self):
@@ -4630,7 +4633,7 @@ class InterruptWithQueue(unittest.TestCase):
         time.sleep(0.3)
         self.assertEqual(self.backend.pending_queued(sid), ["B"],
                          "B stays queued behind the interrupted turn")
-        self.assertEqual(self.Fake.received, ["A"], "B was not fed to the SDK while interrupted")
+        self.assertEqual(self.Fake.fed, ["A"], "B was not fed to the SDK while interrupted")
         self.assertEqual(self.backend.live_sessions().get(sid, {}).get("state"), "waiting",
                          "the session still reads 'waiting' after B was sent")
 
