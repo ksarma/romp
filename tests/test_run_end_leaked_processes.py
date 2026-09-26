@@ -45,11 +45,11 @@ is not (the residual's witness); a non-dumpable process of the run is listed as 
 process a non-daemon thread starts after its test returned is named, and a daemon thread still running is reported; an
 idle pool a test left is waited the whole bound and reported as still running (the join's named cost, timed up to the
 check's first read of /proc); without procfs the check says so once and leaves the exit status alone, and Scanner's
-roots test, which reads no /proc, runs there; a test that leaves nothing ends the run green. The child runs set
-ROMP_TESTS_LEAK_EXIT_BOUND_S so a holder that never exits costs a fraction of a second rather than the whole bound; one
-run keeps the default, and a holder that exits inside it ends that run green. Guard holds the pytest guard: Scanner
-skips under `python -m unittest` after tests.conftest was imported, and runs under pytest. Synthetic throughout: the
-leaked processes are `sleep`s and Python sleepers this module starts and stops by the pid it recorded."""
+roots test, which reads no /proc, runs there; a test that leaves nothing ends the run green with no holder line. The
+child runs set ROMP_TESTS_LEAK_EXIT_BOUND_S so a holder that never exits costs a fraction of a second rather than the
+whole bound; one run keeps the default, and a holder that exits inside it ends that run green. Guard holds the pytest
+guard: Scanner skips under `python -m unittest` after tests.conftest was imported, and runs under pytest. Synthetic
+throughout: the leaked processes are `sleep`s and Python sleepers this module starts and stops by the pid it recorded."""
 import importlib.util
 import json
 import os
@@ -956,7 +956,10 @@ class RunEnd(unittest.TestCase):
         self.assertEqual(out.count("[tests] the run-end process check reads /proc and did not run on this platform"), 1, out)
         self.assertEqual(out.count("[tests]"), 1, "the notice and nothing else: " + out)
 
-    def test_a_run_that_leaves_nothing_ends_green_and_says_nothing(self):
+    def test_a_run_that_leaves_nothing_ends_green_and_names_no_holder(self):
+        """A child run whose test leaves no process records none, ends 0 with its test passed, and prints no holder line.
+        Not "nothing said": the run may list another run's non-dumpable process in its cgroup as not judged
+        (_named_nowhere's docstring names that class), and this test does not read that listing."""
         r, pids, _ = self._child_run("test_leaves_nothing")
         out = r.stdout + r.stderr
         self.assertEqual(pids, {})

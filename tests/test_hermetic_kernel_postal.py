@@ -3708,6 +3708,40 @@ def _proof_ci_yml(root=None):
     return os.path.join(os.path.dirname(HERE) if root is None else root, ".github", "workflows", "ci.yml")
 
 
+_PROOF_SHELL_READ = re.compile(r"""'[^']*'?|"(?:\\.|[^"\\])*"?|\\.?|[;&|<>()]+|[$`]|[^'"\\;&|<>()$`]+""", re.S)
+#   A COMMAND AS THE SHELL READS IT, in pieces (_proof_shell_syntax): a single-quoted string, a double-quoted string (a
+#   backslash in it escaping the character after it), a backslash and the character it escapes, a run of the operator
+#   characters ;&|<>(), a $ or a backtick, and any other text; together the pieces are the whole command
+
+
+def _proof_shell_syntax(cmd):
+    """None, or (its kind, its text) for the first piece of shell syntax in `cmd`, a command as the shell runs it, that
+    is not a pytest argument (correctness-1 of round 2 of fork PR #894): a comment, a # after a space, quoted or not
+    (YAML drops such a # and the rest of the line from a plain scalar before the shell runs it, and the shell drops an
+    unquoted one the same way), its text the # and the rest of the line; an expansion, a $ or a backtick outside single
+    quotes; and outside quotes, a run of the characters ;&|<>() (_PROOF_SHELL_READ): a redirect where the run has < or
+    >, else the operator &&, || or ;, or another shell operator. The text of an expansion or an operator is the run of
+    text between spaces that holds it. Quotes and backslashes are read as the shell reads them: in single quotes
+    nothing is syntax, in double quotes a $ or a backtick is, and a backslash outside single quotes escapes the
+    character after it."""
+    comment = re.search(r"\s(#.*)$", cmd)
+    if comment:
+        return "a comment", comment.group(1)
+
+    def word(at):
+        return next(w.group(0) for w in re.finditer(r"\S+", cmd) if w.start() <= at < w.end())
+    for m in _PROOF_SHELL_READ.finditer(cmd):
+        piece = m.group(0)
+        expands = piece.startswith('"') and any(e.group(0) in ("$", "`") for e in re.finditer(r"\\.|[$`]", piece, re.S))
+        if piece in ("$", "`") or expands:
+            return "an expansion ($ or a backtick)", word(m.start())
+        if piece[0] in ";&|<>()" and piece != "|":       # the pipe, a lone |, is not refused here
+            if set(piece) & set("<>"):
+                return "a redirect", word(m.start())
+            return ("the operator %s" % piece if piece in ("&&", "||", ";") else "another shell operator"), word(m.start())
+    return None
+
+
 def _proof_options(os_label, root=None):
     """CI'S FORM, EVALUATED (the reviewer's hold of 2026-09-25 22:24Z on round 2 of fork PR #894, after fork PR #916 put
     an expression on matrix.os in the step's -n): the options of CI's Run pytest step on a cell whose matrix.os is
@@ -3717,17 +3751,31 @@ def _proof_options(os_label, root=None):
     `python -m pytest` are returned, today with -n 2 on ubuntu-latest and with -n 0 on macos-latest. REFUSED by name
     (AssertionError): an expression of a shape command_on does not read, which its LookupError names (planted: an
     expression on matrix.python-version), a python job with no single Run pytest step with a one-line command (planted:
-    the step renamed), and a command whose first three words are not `python -m pytest` (planted: `pytest` run bare)."""
+    the step renamed), shell syntax on the valued command that is not a pytest argument, named with its kind and its
+    text (_proof_shell_syntax; each kind planted in
+    test_the_proofs_ci_form_refuses_by_name_a_shell_word_that_is_not_a_pytest_argument), a valued command shlex cannot
+    split into words (planted there: an unclosed quote), and a command whose first three words are not
+    `python -m pytest` (planted: `pytest` run bare)."""
     path = _proof_ci_yml(root)
     try:
         runs = [run for name, run in python_job_steps(path) if name == "Run pytest"]
         if len(runs) != 1 or not runs[0]:
             raise LookupError("the python job has %d steps named Run pytest with a one-line command (%r); the proof reads "
                               "one" % (len([r for r in runs if r]), runs))
-        words = shlex.split(command_on(runs[0], os_label))
+        valued = command_on(runs[0], os_label)
     except LookupError as e:
         raise AssertionError("the execution proof reads CI's form from the Run pytest step of %s, as a cell on %s runs it, "
                              "and refuses what fork PR #916's evaluator does not read: %s" % (path, os_label, e))
+    syntax = _proof_shell_syntax(valued)
+    if syntax:
+        raise AssertionError("the execution proof reads CI's form from the Run pytest step of %s, and on %s its command "
+                             "carries %s, %r, shell syntax and not a pytest argument, which the proof does not read: %s"
+                             % (path, os_label, syntax[0], syntax[1], valued))
+    try:
+        words = shlex.split(valued)
+    except ValueError as e:
+        raise AssertionError("the execution proof reads CI's form from the Run pytest step of %s, and on %s its command "
+                             "does not split into words as the shell reads it (%s): %s" % (path, os_label, e, valued))
     if words[:3] != ["python", "-m", "pytest"]:
         raise AssertionError("the execution proof reads CI's form from the Run pytest step of %s, and on %s its command is "
                              "not one `python -m pytest` line: %r" % (path, os_label, words))
@@ -7333,6 +7381,72 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertIn("sets its worker count by a spelling the proof does not leave out", str(caught.exception),
                       "with pytest-xdist out of reach, -n0 is refused by name")
 
+    def test_the_proofs_ci_form_refuses_by_name_a_shell_word_that_is_not_a_pytest_argument(self):
+        """SHELL SYNTAX ON THE STEP'S LINE (correctness-1 of round 2 of fork PR #894: the proof handed every word after
+        `python -m pytest` on the Run pytest line to its children as a pytest argument, so a comment, an operator, a
+        redirect or an expansion there made every child in CI's form fail for a reason that named neither the shape nor
+        ci.yml, and an unclosed quote raised shlex's bare ValueError). Over a copy of the real ci.yml whose Run pytest
+        line gains one piece of shell syntax at its end, _proof_ci_forms refuses it by name (_proof_shell_syntax,
+        _proof_options), with its kind, its text and ci.yml's path: a comment, after a space and inside double quotes;
+        an expansion, $NAME, ${NAME}, a backtick, and $NAME inside double quotes; the operators &&, || and ;; a redirect,
+        >, >>, <, 2>, 2>&1, and > with its file attached; another shell operator, a background & and a subshell; and
+        a line shlex cannot split, an unclosed quote. Over a copy whose line gains words that carry the same characters
+        where the shell reads none of them as syntax (a # inside a word; operators and a $ inside single quotes;
+        operators and redirects inside double quotes, with a backslash before a double quote there; a backslash before
+        $ and before ;), each of CI's forms passes those words to pytest as the shell would."""
+        with open(_proof_ci_yml(), encoding="utf-8") as f:
+            real = f.read()
+        line = re.compile(r"^(        run: python -m pytest -q -n .*)$", re.M)
+        self.assertEqual(len(line.findall(real)), 1, "the Run pytest line, whose end the plants below change")
+        ubuntu, macos = _proof_options("ubuntu-latest"), _proof_options("macos-latest")
+        root = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        os.makedirs(os.path.join(root, ".github", "workflows"))
+        path = _proof_ci_yml(root)
+
+        def plant(end):
+            text = line.sub(lambda m: m.group(1) + " " + end, real)
+            self.assertNotEqual(text, real, "the plant %r changes ci.yml" % end)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        plants = (("a comment after a space", "# the flags are explained above", "a comment", "# the flags are explained above"),
+                  ("a comment inside double quotes", '-k "x #y"', "a comment", '#y"'),
+                  ("$NAME", "$PYTEST_EXTRA", "an expansion ($ or a backtick)", "$PYTEST_EXTRA"),
+                  ("${NAME}", "${PYTEST_EXTRA}", "an expansion ($ or a backtick)", "${PYTEST_EXTRA}"),
+                  ("a backtick", "`echo -x`", "an expansion ($ or a backtick)", "`echo"),
+                  ("$NAME inside double quotes", '-k "$PYTEST_K"', "an expansion ($ or a backtick)", '"$PYTEST_K"'),
+                  ("&&", "&& echo done", "the operator &&", "&&"),
+                  ("||", "|| true", "the operator ||", "||"),
+                  (";", "; echo done", "the operator ;", ";"),
+                  (">", "> pytest.log", "a redirect", ">"),
+                  (">>", ">> pytest.log", "a redirect", ">>"),
+                  ("<", "< /dev/null", "a redirect", "<"),
+                  ("2>", "2> errors.log", "a redirect", "2>"),
+                  ("2>&1", "2>&1", "a redirect", "2>&1"),
+                  ("> with its file attached", ">pytest.log", "a redirect", ">pytest.log"),
+                  ("a background &", "&", "another shell operator", "&"),
+                  ("a subshell", "(echo x)", "another shell operator", "(echo"))
+        for label, end, kind, text in plants:
+            plant(end)
+            with self.subTest(plant=label):
+                with self.assertRaises(AssertionError) as caught:
+                    _proof_ci_forms(root)
+                self.assertIn("its command carries %s, %r, shell syntax and not a pytest argument" % (kind, text),
+                              str(caught.exception), "%s: refused by name, with its kind and its text" % label)
+                self.assertIn(path, str(caught.exception), "%s: the refusal names ci.yml" % label)
+        plant("-k 'unclosed")
+        with self.subTest(plant="an unclosed quote"):
+            with self.assertRaises(AssertionError) as caught:
+                _proof_ci_forms(root)
+            self.assertIn("does not split into words as the shell reads it (No closing quotation)", str(caught.exception),
+                          "an unclosed quote: refused by name")
+            self.assertIn(path, str(caught.exception), "an unclosed quote: the refusal names ci.yml")
+        plant(r'''-k 'x#y' -k 'a&&b $X' -k "a;b(c)>d|e&f" -k "a\"b;c" -k \$Y -k \;''')
+        words = ["-k", "x#y", "-k", "a&&b $X", "-k", "a;b(c)>d|e&f", "-k", 'a"b;c', "-k", "$Y", "-k", ";"]
+        self.assertEqual(_proof_ci_forms(root), {"serial": (["macos-latest"], macos + words),
+                                                 "xdist": (["ubuntu-latest"], ubuntu + words)},
+                         "the same characters where the shell reads none of them as syntax: passed to pytest as words")
+
     def test_each_run_of_the_proof_has_a_temporary_directory_of_its_own(self):
         """EACH RUN'S OWN TEMPORARY DIRECTORY (the builder's red at round 2's forty-fourth commit of fork PR #894, and
         the verifier's F1 at that commit). A spy on subprocess.run answers each pytest child of a call of
@@ -7707,16 +7821,21 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_the_copys_population_is_the_package_whole_and_the_files_git_does_not_ignore(self):
         """THE COPY'S POPULATION (_proof_checkout_files), over a synthetic checkout, both roads. With a repository: tests/
         and every entry under it, walked: a file git ignores there, a directory holding nothing, one nested in another,
-        and one holding only a __pycache__ directory, less what a __pycache__ directory holds; outside tests/, a tracked
-        file (one that matches .gitignore included, by --cached), an untracked file git does not ignore (--others), a
-        link, as a link, and every directory git does not ignore, an empty one and a nested one included, and not a file
-        git ignores (--exclude-standard), a directory git ignores (--ignored --directory), one holding only a __pycache__
-        or only ignored files, which git names as ignored, nor anything under .git; read with the environment's GIT_*
-        variables dropped (a GIT_DIR pointing elsewhere is set here and does not reach git). With no git to run, and with
-        no repository (the tree unpacked from an archive): every entry but .git and what a __pycache__ directory holds.
+        and one holding only a __pycache__ directory, less what a __pycache__ directory holds, and a link held as a link
+        and not followed (extra5-4 of round 2 of fork PR #894): a link to a file, a link to a directory by a relative
+        path, and one by an absolute path to a directory outside the checkout, each listed, and nothing under either
+        directory link; outside tests/, a tracked file (one that matches .gitignore included, by --cached), an untracked
+        file git does not ignore (--others), a tracked link to a file and an untracked link to a directory, each as a
+        link and nothing under the second, and every directory git does not ignore, an empty one and a nested one
+        included, and not a file git ignores (--exclude-standard), a directory git ignores (--ignored --directory), one
+        holding only a __pycache__ or only ignored files, which git names as ignored, nor anything under .git; read with
+        the environment's GIT_* variables dropped (a GIT_DIR pointing elsewhere is set here and does not reach git).
+        With no git to run, and with no repository (the tree unpacked from an archive): every entry but .git and what a
+        __pycache__ directory holds, each link as a link and nothing under a link to a directory.
         THE COPY STEP (_proof_copy_into) over the same tree holds each entry of the population and nothing else, a
-        directory as a directory with its mode, a file with its bytes and mode, a link as a link. And a `real` proof
-        refuses a case with a helper file: the copy's package is the checkout's own."""
+        directory as a directory with its mode, a file with its bytes and mode, a link as a link, a link to a directory
+        among them, with nothing under it. And a `real` proof refuses a case with a helper file: the copy's package is
+        the checkout's own."""
         root = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, True)
         files = {"tests/a.py": "", "tests/sub/b.txt": "", "tests/__pycache__/a.cpython-312.pyc": "", "tests/ignored.log": "",
@@ -7732,23 +7851,32 @@ class HermeticKernelPostal(unittest.TestCase):
         os.chmod(os.path.join(root, "tests", "empty"), 0o750)
         os.chmod(os.path.join(root, "kept.txt"), 0o640)
         os.symlink("kept.txt", os.path.join(root, "link"))
+        away = os.path.realpath(tempfile.mkdtemp())      # a directory outside the checkout, one file in it
+        self.addCleanup(shutil.rmtree, away, True)
+        with open(os.path.join(away, "far.txt"), "w", encoding="utf-8") as f:
+            f.write("")
+        os.symlink("a.py", os.path.join(root, "tests", "filelink"))
+        os.symlink("sub", os.path.join(root, "tests", "dirlink"))
+        os.symlink(away, os.path.join(root, "tests", "abslink"))
+        os.symlink("lib", os.path.join(root, "outlink"))
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
         for args in (["init", "-q"], ["add", "kept.txt", "link", ".gitignore", "tests/a.py"], ["add", "-f", "build/tracked.bin"]):
             subprocess.run(["git", "-C", root] + args, env=env, stdin=subprocess.DEVNULL, capture_output=True, check=True, timeout=60)
-        tests = ["tests", "tests/a.py", "tests/empty", "tests/ignored.log", "tests/only_cache", "tests/sub", "tests/sub/b.txt",
-                 "tests/sub/nested", "tests/sub/nested/deeper"]
+        tests = ["tests", "tests/a.py", "tests/abslink", "tests/dirlink", "tests/empty", "tests/filelink", "tests/ignored.log",
+                 "tests/only_cache", "tests/sub", "tests/sub/b.txt", "tests/sub/nested", "tests/sub/nested/deeper"]
         from unittest import mock
         with mock.patch.dict(os.environ, {"GIT_DIR": os.path.join(root, "no-such-repository"), "GIT_WORK_TREE": root}):
             got = _proof_checkout_files(root)
         self.assertEqual(got, sorted(os.path.normpath(p) for p in tests + [".gitignore", "build", "build/tracked.bin", "kept.txt",
                                                                             "lib", "lib/deep", "lib/deep/empty", "link",
-                                                                            "new.txt", "outside_empty"]),
-                         "with a repository: tests/ whole but __pycache__, and outside it what git does not ignore")
+                                                                            "new.txt", "outlink", "outside_empty"]),
+                         "with a repository: tests/ whole but __pycache__, its links as links, and outside it what git "
+                         "does not ignore")
         whole = sorted(os.path.normpath(p) for p in tests + [".gitignore", "bin", "build", "build/out.bin", "build/tracked.bin",
                                                              "cache", "cache/inner", "kept.txt", "lib", "lib/deep",
                                                              "lib/deep/empty", "link", "logs", "logs/a.log", "new.txt",
-                                                             "outside_empty"])
+                                                             "outlink", "outside_empty"])
         with mock.patch.dict(os.environ, {"PATH": root}):     # no git to run: the tree's own entries, the repository's left out
             self.assertEqual(_proof_checkout_files(root), whole, "with no git to run: every entry but .git and __pycache__")
         shutil.rmtree(os.path.join(root, ".git"))
