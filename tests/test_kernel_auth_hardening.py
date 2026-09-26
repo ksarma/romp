@@ -580,12 +580,14 @@ class BusyDrainWriteGate(unittest.TestCase):
     """The /busy READ stays auth-EXEMPT (a bare count leaks nothing and healthz-style probes rely
     on it), but the ?drain=1 arm is a WRITE — it arms a lease that holds EVERY session's new turn
     starts (T121) — so it is gated on an EXPLICITLY PRESENTED serve token (?token= or the manager's
-    X-Romp-Token), never the ambient romp_token cookie. Before this gate the arm ran
+    X-Romp-Token), never an ambient cookie (the session cookie, with or without its page key, or the
+    legacy romp_token). Before this gate the arm ran
     unconditionally in the exempt block: a drive-by loopback page's no-cors GET, or any tailnet
     client, could loop /busy?drain=1 and freeze all turn starts — the exact drive-by-loopback
     adversary _authorize's docstring names. The cookie is NOT sufficient here because a cross-origin
     subresource GET (an <img>/<script> to this route) carries it with no Origin, and _authorize
-    accepts that pair for a READ; a state-changing GET must demand a token no such load can attach.
+    accepts that pair for a page or a static file; a state-changing GET must demand a token no such
+    load can attach.
     Synthetic only — the gate touches no session state."""
 
     def setUp(self):
@@ -604,12 +606,19 @@ class BusyDrainWriteGate(unittest.TestCase):
                          "a token-less drive-by GET must not arm the turn-start hold")
 
     def test_the_cookie_alone_does_not_arm_the_drain(self):
-        # the <img>/subresource drive-by: cookies are host- not port-scoped, so a page served by
-        # anything else on loopback rides the dashboard's romp_token cookie with NO Origin header.
-        status, body = _serve_get("/busy?drain=1", headers={"Cookie": "romp_token=" + TOK})
-        self.assertEqual(status, 200)
-        self.assertEqual(self.spy.refreshed, 0,
-                         "the ambient cookie is not proof the caller is not a drive-by page")
+        # the <img>/subresource drive-by: a load made without CORS sends the host's cookies with NO
+        # Origin header, so neither of the cookies a browser holds for this kernel, nor the session
+        # cookie with its page key, proves the caller holds the serve token.
+        sess = km._mint_session()
+        cases = _cookies() + (("the session cookie with its page key",
+                               {"Cookie": _session_cookie(sess), "X-Romp-Key": km._page_key(sess)}),)
+        for what, cookie in cases:
+            with self.subTest(what):
+                headers, before = (cookie if isinstance(cookie, dict) else {"Cookie": cookie}), self.spy.refreshed
+                status, body = _serve_get("/busy?drain=1", headers=headers)
+                self.assertEqual(status, 200, what + ": the read still answers")
+                self.assertEqual(self.spy.refreshed - before, 0,
+                                 what + ": an ambient credential is not proof the caller is not a drive-by page")
 
     def test_a_cross_origin_fetch_does_not_arm_the_drain(self):
         # the no-cors fetch() form: it DOES carry a cross-site Origin (and cannot set X-Romp-Token —

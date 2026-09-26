@@ -28,9 +28,9 @@ fails, never skips, when that engine is missing):
      re-sign-in 403, and the tab stays on the dashboard's address showing the sentence that says why, with no hop back to
      /login once they have come back. A pane that finds storage refused while the top frame does not writes the sentence
      into the top frame's document, and nothing navigates.
-  5. That sentence is legible on every top-level page it can land on (the dashboard and a pane page opened on its own): a
-     contrast of at least 4.5:1, measured twice, from the computed styles and from the pixels of a screenshot, and set in
-     from the window's edge.
+  5. That sentence is legible on every top-level page it can land on (every page route the kernel's table names: the
+     dashboard and each pane page opened on its own): a contrast of at least 4.5:1, measured twice, from the computed
+     styles and from the pixels of a screenshot, and set in from the window's edge.
   6. /login on a phone-sized screen (320x568 and 375x667) shows its default view with nothing to scroll: the sentence,
      the form and the pointer to `romp url`, with every fold closed; a click on a fold's summary opens it with the page's
      scripts turned off.
@@ -39,6 +39,7 @@ Nothing here prints a token, a session id or a key: the driver compares them in 
 counts. The lab token is minted at run time. Skips LOUDLY without the extension deps or a Chromium; the CI extension job
 installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any skip into a failure there.
 SYNTHETIC fixtures only (session web, the notes-api demo world, placeholder uuids)."""
+import ast
 import json
 import os
 import re
@@ -529,9 +530,24 @@ process.exit(0);
 """
 
 # The sentence as each page's own load check shows it, with the kernel's data requests held back, so no refusal reaches the
-# page and the sentence stays whatever the re-sign-in branch does: the dashboard, and a pane page opened on its own, whose
-# stylesheets differ.
-SENTENCE_PAGES = ("/", "/chat")
+# page and the sentence stays whatever the re-sign-in branch does. It runs on every page route the kernel's table names
+# (_PAGE_RENDERERS, read from kernel.py's source), since the page-key script runs in each of them and their stylesheets
+# differ: the settings page's ground is light, so ink set without its own background reads at about 1.25:1 there.
+
+
+def _sentence_pages():
+    """Every page route in kernel.py's _PAGE_RENDERERS, the bare path aside (it classes as "/"), read by ast so the kernel
+    is not imported. An empty or shellless table is an error, never a shorter list."""
+    tree = ast.parse(Path(ROOT, "kernel", "kernel.py").read_text())
+    tables = [n.value for n in tree.body if isinstance(n, ast.Assign) and isinstance(n.value, ast.Dict)
+              and any(isinstance(t, ast.Name) and t.id == "_PAGE_RENDERERS" for t in n.targets)]
+    assert len(tables) == 1, "kernel.py assigns _PAGE_RENDERERS once, as a dict literal: %d found" % len(tables)
+    routes = [k.value for k in tables[0].keys if isinstance(k, ast.Constant) and isinstance(k.value, str) and k.value]
+    assert len(routes) == len(tables[0].keys) - 1, "every key of _PAGE_RENDERERS but the bare path is a string route"
+    assert "/" in routes and "/chat" in routes, "the table names the shell and the chat page: %r" % routes
+    return routes
+
+
 SENTENCE = HEAD + REFUSING + r"""
 out.pages = {};
 for (const p of cfg.pages) {
@@ -805,8 +821,10 @@ class ServedDashboardOverThePageKey(unittest.TestCase):
         self.assertIs(r["topSays"], True, "the top frame's document shows the sentence the pane's branch wrote there")
 
     def test_the_storage_refused_sentence_is_legible_on_every_top_level_page(self):
-        r = self._drive(SENTENCE, pages=list(SENTENCE_PAGES))
-        for p in SENTENCE_PAGES:
+        pages = _sentence_pages()
+        r = self._drive(SENTENCE, pages=pages)
+        self.assertEqual(sorted(r["pages"]), sorted(pages), "the driver measured every page route")
+        for p in pages:
             m = r["pages"][p]
             self.assertIs(m["refused"], True, p + ": the browser refuses site storage")
             self.assertEqual(m["at"], p, p + ": the page stays where it was opened")
