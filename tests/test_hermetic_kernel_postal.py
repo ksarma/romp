@@ -3709,21 +3709,24 @@ def _proof_ci_yml(root=None):
 
 
 _PROOF_SHELL_READ = re.compile(r"""'[^']*'?|"(?:\\.|[^"\\])*"?|\\.?|[;&|<>()]+|[$`]|[^'"\\;&|<>()$`]+""", re.S)
-#   A COMMAND AS THE SHELL READS IT, in pieces (_proof_shell_syntax): a single-quoted string, a double-quoted string (a
-#   backslash in it escaping the character after it), a backslash and the character it escapes, a run of the operator
-#   characters ;&|<>(), a $ or a backtick, and any other text; together the pieces are the whole command
+#   A COMMAND AS THE SHELL READS IT, in pieces (_proof_shell_syntax): a single-quoted string, a double-quoted string
+#   (which a double quote escaped by a backslash does not end), a backslash and the character it escapes, a run of the
+#   operator characters ;&|<>(), a $ or a backtick, and any other text; together the pieces are the whole command
 
 
 def _proof_shell_syntax(cmd):
-    """None, or (its kind, its text) for the first piece of shell syntax in `cmd`, a command as the shell runs it, that
-    is not a pytest argument (correctness-1 of round 2 of fork PR #894): a comment, a # after a space, quoted or not
-    (YAML drops such a # and the rest of the line from a plain scalar before the shell runs it, and the shell drops an
-    unquoted one the same way), its text the # and the rest of the line; an expansion, a $ or a backtick outside single
-    quotes; and outside quotes, a run of the characters ;&|<>() (_PROOF_SHELL_READ): a redirect where the run has < or
-    >, else the operator &&, || or ;, or another shell operator. The text of an expansion or an operator is the run of
-    text between spaces that holds it. Quotes and backslashes are read as the shell reads them: in single quotes
-    nothing is syntax, in double quotes a $ or a backtick is, and a backslash outside single quotes escapes the
-    character after it."""
+    """None, or (its kind, its text) for a piece of shell syntax in `cmd`, a command as the shell runs it, that is not a
+    pytest argument (correctness-1 of round 2 of fork PR #894), a comment wherever it stands and otherwise the first
+    piece: a comment, a # after a space, quoted or not (YAML drops such a # and the rest of the line from a plain scalar
+    before the shell runs it, and the shell drops an unquoted one the same way), its text the # and the rest of the
+    line; an expansion, a $ or a backtick outside single quotes; and outside quotes, a run of the characters ;&|<>()
+    other than a lone | (_PROOF_SHELL_READ): a redirect where the run has < or >, else the operator &&, || or ;, or
+    another shell operator. A lone |, the pipe, is not returned, so _proof_options does not refuse it. The text of an
+    expansion or an operator is the run of text between spaces in which its piece starts: for an expansion inside
+    double quotes, the run in which the string opens, which may end before the $ or the backtick. Apart from a comment,
+    quotes and backslashes are read as the shell reads them for $, the backtick and ;&|<>(): in single quotes none is
+    syntax, in double quotes a $ or a backtick is unless a backslash escapes it, and outside quotes a backslash escapes
+    the character after it."""
     comment = re.search(r"\s(#.*)$", cmd)
     if comment:
         return "a comment", comment.group(1)
@@ -3751,8 +3754,9 @@ def _proof_options(os_label, root=None):
     `python -m pytest` are returned, today with -n 2 on ubuntu-latest and with -n 0 on macos-latest. REFUSED by name
     (AssertionError): an expression of a shape command_on does not read, which its LookupError names (planted: an
     expression on matrix.python-version), a python job with no single Run pytest step with a one-line command (planted:
-    the step renamed), shell syntax on the valued command that is not a pytest argument, named with its kind and its
-    text (_proof_shell_syntax; each kind planted in
+    the step renamed), shell syntax on the valued command of a kind _proof_shell_syntax returns (a comment, an
+    expansion, a redirect, the operator &&, || or ;, or another shell operator; not a lone |, the pipe, which is not
+    refused), named with its kind and its text (each kind planted in
     test_the_proofs_ci_form_refuses_by_name_a_shell_word_that_is_not_a_pytest_argument), a valued command shlex cannot
     split into words (planted there: an unclosed quote), and a command whose first three words are not
     `python -m pytest` (planted: `pytest` run bare)."""
