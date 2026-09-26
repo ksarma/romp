@@ -4660,9 +4660,10 @@ def _tree_file_names(root):
 
 
 def _in_the_tree(name, root, file_names, literals):
-    """A file a record names is in the tree when its path, a glob allowed, matches a file under the repository root;
-    or, a bare file name, when a file in the tree carries it or a string constant of the product (literals) is that
-    name or ends in it, a state file the product reads or writes. A home path is never in the tree."""
+    """A file a record names is in the tree when its path, read from the repository root, a glob allowed (a bare glob
+    too), matches a file there; or, a bare file name, when a file in the tree carries it or a string constant of the
+    product (literals) is that name or ends in it after a slash, a state file the product reads or writes. A home path
+    is never in the tree."""
     if name.startswith(("~", "$", "/")):
         return False
     if "/" in name or "*" in name:
@@ -4683,12 +4684,22 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
     and kernel/judge.py carry, the writer's and the judge's docstrings among them, names a test that exists in tests/, or
     stands in a history clause with a pointer to the test's current name: a ledger paragraph keeps the name its commit
     knew, followed by where the test went (regression-2, the refuter's shape). Both scans read text, so they pin what
-    the records name, not what the tests assert. The plants pin the scans: a scan that loses a rule turns a plant red.
+    the records name, not what the tests assert. The plants pin the scans: a scan that loses a rule turns a plant red,
+    for every rule the helpers above state (each stop of _history_clause among them) and every extension the file
+    pattern lists. Dropping the ~ or the $ from the home-path test changes nothing the scan returns here, since no file
+    or directory in the tree and no string constant of kernel/ or postal/ carries a name that begins with either.
     THE LIMITS: the history rule reads the words renamed, split or named ... until and a current test name in the
-    clause, not whether the pointer names the right successor, which a reader checks against the commit it cites; the
-    file scan reads names with a file extension, so a record named without one is not seen; and a runtime file that the
-    product names only in prose (a Python docstring or comment, or a file another language writes) reads as outside the
-    tree, the restricted side, a file the two homes do not name."""
+    clause, not whether the pointer names the right successor, which a reader checks against the commit it cites. The
+    file scan reads names with one of the extensions its pattern lists, so a record named without one, or with another
+    (the plant an extension the pattern does not list), is not seen. A name the tree also carries reads as in the tree
+    even when the record means a notes-directory file of that name, since a text scan cannot tell the two apart: a bare
+    name that a file anywhere in the tree carries (the plant a bare name a file in the tree carries) or that a string
+    constant of kernel/ or postal/ is or ends in after a slash (the plants a state file the product writes and a state
+    file the product names by a path), and a path or glob that matches a file under the root (the plant a glob over the
+    tree). On the restricted side, where the two homes name no such file: a path is read from the repository root, so a
+    tree file named by its path from a subdirectory reads as outside the tree (the plant a tree path from a
+    subdirectory); and a runtime file that no such string constant names (one named only in a docstring or comment,
+    only outside kernel/ and postal/, or only by another language) reads as outside the tree."""
 
     maxDiff = None                                  # a refusal lists every name it refuses
 
@@ -4743,6 +4754,21 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
             ("a parenthetical with no history word", "test_now (the release; test_gone).", ["test_gone"]),
             ("no pointer across a blank line", "(renamed to test_now\n\ntest_gone).", ["test_gone"]),
             ("no pointer across a docstring's quotes", '(renamed to test_now """ test_gone).', ["test_gone"]),
+            ("no pointer across a comma", "test_gone, and the fold (renamed at the fifth commit to test_now).",
+             ["test_gone"]),
+            ("no pointer across a semicolon", "test_gone; the fold (renamed at the fifth commit to test_now).",
+             ["test_gone"]),
+            ("no pointer across a colon", "test_gone: the fold (renamed at the fifth commit to test_now).",
+             ["test_gone"]),
+            ("no pointer across a sentence end",
+             "The witness test_gone. The fold (renamed at the fifth commit to test_now) holds.", ["test_gone"]),
+            ("a dot inside a file name is no sentence end",
+             "test_gone of notes_api.py (renamed at the fifth commit to test_now).", []),
+            ("named with no until is no history word", "test_now (the witness named test_gone).", ["test_gone"]),
+            ("a parenthetical's name does not borrow from after it",
+             "test_now (the fold; test_gone) and test_old (renamed at the fifth commit to test_now).", ["test_gone"]),
+            ("a closed parenthetical before a name is not its own",
+             "(renamed at the fifth commit to test_now) and test_gone.", ["test_gone"]),
             ("a module and a module glob", "tests/test_mod.py and tests/test_mo*.py", []),
             ("a glob that matches no module", "tests/test_zz*.py", ["test_zz"]),
         ]
@@ -4752,9 +4778,19 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
 
     def test_the_file_scan_refuses_a_notes_directory_record_by_name(self):
         literals = _product_literals(['def write():\n    """Appends its line to STATE/probe-recur-summary.log"""\n'
-                                      '    return STATE / "notes-api-state.json"\n'])
+                                      '    return STATE / "notes-api-state.json"\n'
+                                      'FLAGS = "postal/notes-api-flags.json"\n'])
         names = _tree_file_names(_REPO)
+        exts = ("bats", "css", "csv", "html", "js", "json", "jsonl", "log", "md", "mjs", "out", "py", "sh", "toml",
+                "ts", "txt", "yaml", "yml")
+        every = ["r4-x-notes." + e for e in exts]
         cases = [
+            ("every extension the pattern lists", " ".join(every), sorted(every)),
+            ("an extension the pattern does not list", "its figure r4-x-notes.png", []),
+            ("a bare glob over the tree's root", "READ*.md", []),
+            ("a state file the product names by a path", "notes-api-flags.json", []),
+            ("a tree path from a subdirectory", "ci/tier_policy.py and scripts/ci/tier_policy.py",
+             ["ci/tier_policy.py"]),
             ("a notes-directory log", "its log r4-x-probe-summary.log", ["r4-x-probe-summary.log"]),
             ("a notes-directory log glob", "its logs r4-x-probe-*-py312.log", ["r4-x-probe-*-py312.log"]),
             ("a notes-directory tool", "its tool r4-x-tools/add_road.py", ["r4-x-tools/add_road.py"]),
@@ -4771,6 +4807,10 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
             with self.subTest(plant=label):
                 self.assertEqual(_files_outside_the_tree(text, lambda n: _in_the_tree(n, _REPO, names, literals)), want,
                                  label)
+        listed = {v for a in re.search(r"\(\?:([^)]*)\)", _RECORD_FILE_NAME.pattern).group(1).split("|")
+                  for v in (a.replace("?", ""), re.sub(r".\?", "", a))}
+        self.assertEqual(sorted(listed), list(exts), "the plant every extension the pattern lists names each extension "
+                         "the file pattern lists, no more and no fewer: name a new one in exts")
 
 
 if __name__ == "__main__":
