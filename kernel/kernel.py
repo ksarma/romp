@@ -15548,9 +15548,9 @@ def _begin_checkpoint_cycle():
     builds' quiescence-drop writes and the converge pass near the cycle's end (the boot's first builds are capped where the
     volume is; before, the pass began the cycle and the first cycle's drops ran uncapped), and the drops an earlier cycle
     deferred are paid with this cycle's room, oldest first, no fold over their files needed; then the releases at an agent's
-    end, against the same room (_release_ended_agents: the cycle's live-set events drained, the owed release of an agent that
-    started again cancelled, the owed releases paid, the ends an earlier cycle saw while nothing was held released again,
-    then the batch's ends).
+    end, against the same room (_release_ended_agents: the cycle's live-set events drained, the owed release of an agent whose
+    start that drain carries cancelled while the kernel holds the agent's end, the owed releases paid, the ends an earlier
+    cycle saw while nothing was held released again, then the batch's ends).
     The order carries a property: each cycle pays what an earlier cycle deferred before any end that is new to it, so the
     owed quiescent drops and the owed releases are each paid before the batch's ends. They take their writes from one budget,
     each in one step (em.checkpoint_cycle_take), so whichever runs first gets the room when only one document fits. An owed
@@ -15568,9 +15568,11 @@ _AGENT_RELEASED = {}                # (sid, agent id) -> [path, taken] for the e
 #                                     (taken True) or owed a release (taken False until checkpoint_pay_owed_releases takes it; at a
 #                                     cycle that paid any owed release, an owed end whose release was not taken and is no longer
 #                                     owed is dropped, or moved to _AGENT_ENDED_UNHELD when the pay found nothing held), oldest
-#                                     first, at most _AGENT_RELEASED_MAX: the agent entering its session's live set again after its
+#                                     first, at most _AGENT_RELEASED_MAX: a start of the agent that a cycle drains after its
 #                                     release was taken is a false end (recordCache.falseEnds), after a release still owed it
-#                                     cancels that release, and after one never taken it counts nothing. The pusher thread's alone
+#                                     cancels that release, and after one never taken it counts nothing. A start dropped past the
+#                                     queue's bound is never drained, and one drained after the end left this table finds nothing,
+#                                     so neither cancels an owed release nor counts a false end. The pusher thread's alone
 _AGENT_RELEASED_MAX = 4096
 _AGENT_ENDED_UNHELD = {}            # (sid, agent id) -> path for the ends seen while the record cache held nothing for the agent's
 #                                     file (release_entry answered "absent", at the batch or at the owed releases' pay: no entry
@@ -15580,8 +15582,11 @@ _AGENT_ENDED_UNHELD = {}            # (sid, agent id) -> path for the ends seen 
 #                                     the first whole re-read after that end is released at the next cycle), oldest first, at most
 #                                     _AGENT_RELEASED_MAX (past it the oldest is forgotten and not counted: it held nothing when it
 #                                     was last paid). Released again at each cycle, so a read that holds the file after the end is
-#                                     released at the first cycle after it; a start for the agent, a release that pops the path,
-#                                     and every outcome but absent of the pair's own release forget it. The pusher thread's alone
+#                                     released at the first cycle after it; a start of the agent that a cycle drains, a release
+#                                     that pops the path, and every outcome but absent of the pair's own release forget it (a start
+#                                     queued after the drain of the cycle that releases the file, or dropped past the queue's
+#                                     bound, does not, and a release taken then pops the running agent's entry). The pusher
+#                                     thread's alone
 
 
 def _note_agent_released(pair, path, taken):
@@ -15622,7 +15627,10 @@ def _release_ended_agents():
     - An agent that entered the live set in this batch and whose earlier end is still owed its release (an earlier cycle's
       budget refused the document, or a read raced the pop) has that release cancelled (em.cancel_owed_release, under the
       path the release was owed for). Its entry was never popped, so that start is not a false end, as for an end and a
-      start in one batch. Its end remembered as unheld (below) is forgotten: the file is live again.
+      start in one batch. Its end remembered as unheld (below) is forgotten: the file is live again. A start that is not in
+      the batch (queued after the drain of the cycle that pays the owed release, or dropped past the queue's bound), or one
+      drained after the end left _AGENT_RELEASED, cancels nothing, and a release taken then pops the running agent's entry
+      (em.checkpoint_pay_owed_releases).
     - The releases still owed are paid (em.checkpoint_pay_owed_releases). An owed end whose release is taken now is marked
       taken, and every remembered end for that path is forgotten. When any was paid, an owed end whose release was not
       taken and is no longer owed (paid as absent or lost, raised, given up at the owed table's bound, forgotten at a
@@ -15634,14 +15642,15 @@ def _release_ended_agents():
       releaseLost), it is given up. Every outcome but absent forgets it. So a read that holds the file after the end,
       before any other event about the agent, is released at the first cycle after the read.
     - Each agent whose last event in the batch is an end is released. An end followed in the same batch by the agent
-      entering the live set again releases nothing. An agent entering the live set after its release was taken is a false
-      end, counted (recordCache.falseEnds); after a release that was only owed, it is not. An end that finds nothing held
-      is remembered as unheld; any other outcome forgets a remembered end of the agent. That includes an agent's later end
-      acted on after its earlier release was taken (its task's end or its workflow slot's done state after its stop, in a
-      later cycle, or in this cycle after the owed pay took a deferred release): if a re-read holds the file at that end,
-      the end releases it; if nothing is held, the end is remembered, so the first whole re-read after it is released at
-      the next cycle. A whole re-read after that release, with no later end of the agent, stays whole until the count cap,
-      the byte budget or a quiescent drop reaches it (the residual stated beside em.RECORD_CACHE_BUDGET_FLOOR_BYTES).
+      entering the live set again releases nothing. A start in the batch for an agent whose release was taken, while
+      _AGENT_RELEASED still holds that end, is a false end, counted (recordCache.falseEnds); after a release that was only
+      owed, it is not. An end that finds nothing held is remembered as unheld; any other outcome forgets a remembered end of
+      the agent. That includes an agent's later end acted on after its earlier release was taken (its task's end or its
+      workflow slot's done state after its stop, in a later cycle, or in this cycle after the owed pay took a deferred
+      release): if a re-read holds the file at that end, the end releases it; if nothing is held, the end is remembered, so
+      the first whole re-read after it is released at the next cycle. A whole re-read after that release, with no later end
+      of the agent, stays whole until the count cap, the byte budget or a quiescent drop reaches it (the residual stated
+      beside em.RECORD_CACHE_BUDGET_FLOOR_BYTES).
     An end, remembered or in the batch, whose resolution or release raises is given up, counted in releaseLost, and
     written to stderr at every raise with the session, the agent, the file when it resolved and the traceback
     (em.say_release_raised), as the pusher's other stage failures are; the rest are still released. The release counters

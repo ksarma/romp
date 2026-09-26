@@ -3125,7 +3125,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   left the cache before its pay, and an agent's later end after its
   earlier release was taken, such as its task's end or its workflow slot's
   done state after its stop) is remembered, and the file released at the
-  first cycle after a read holds it, unless the agent starts again first;
+  first cycle after a read holds it, unless a cycle drains the agent's
+  start first (a start queued after the drain of the cycle that releases
+  the file, or one dropped past the queue's bound, does not forget the
+  end, and a release taken then pops the running agent's entry; only the
+  first of those counts in `falseEnds`, at the next cycle);
   a whole re-read of a file after its release was taken is held whole
   until the count cap, the byte budget or a quiescent drop reaches it,
   unless a later end of the agent comes after that release: one that finds
@@ -3164,10 +3168,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   release that raises also writes its own line with the traceback at every
   raise),
   `falseEnds` (agents whose release at their end was taken, the entry
-  popped, that entered the live set again; a release that was only owed,
-  then cancelled, forgotten, given up or paid without being taken, counts
-  none) and `releasedReread` (`count` and `bytes` of the first whole read
-  of a path after a release popped it, when no other pop of the path came in
+  popped, that entered the live set again, counted at the cycle that
+  drains the start while the kernel still holds the end in its table of
+  released ends: a start queued after the drain of the cycle that took the
+  release counts at the next cycle, while a start dropped past the queue's
+  bound, or drained after the end left that table, counts none; a release
+  that was only owed, then cancelled, forgotten, given up or paid without
+  being taken, counts none) and `releasedReread` (`count` and `bytes` of
+  the first whole read of a path after a release popped it, when no other pop of the path came in
   between: what releasing cost; at most `countCap` marks are outstanding,
   the oldest dropped first, and a mark leaves when it is taken or cleared,
   which frees its slot, so the bound is on outstanding marks, not on the

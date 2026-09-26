@@ -738,7 +738,10 @@ _RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2
     #                             or resolving or paying one raised. With the drop writes off, an agent whose two ends (its stop
     #                             and its task's end) reach two cycles counts two
     "falseEnds": 0,            #  agents whose release at their end was taken (the entry popped) that entered their session's live
-    #                             set again (a resumed agent, or an end reported early): note_false_end, counted by the kernel; a
+    #                             set again (a resumed agent, or an end reported early): note_false_end, counted by the kernel at
+    #                             the cycle that drains the start while it still holds the end in its table of released ends, so
+    #                             a start queued after the drain of the cycle that took the release counts at the next cycle, and
+    #                             a start dropped past the queue's bound, or drained after the end left that table, counts none; a
     #                             release only owed, then cancelled, forgotten, given up or paid without being taken, counts none
     "releasedReread": {"count": 0, "bytes": 0}})   # the first whole read of a path after a release popped it, when no other pop
 #                                                    of the path came in between: what releasing cost. At most _JSONL_CACHE_MAX
@@ -842,7 +845,9 @@ def _stat_table_locked(key, empty=dict):
 
 
 def note_false_end():
-    """The kernel saw an agent whose release at its end was taken enter its session's live set again (recordCache.falseEnds)."""
+    """The kernel drained the start of an agent whose release at its end was taken, while its table of released ends still
+    held that end (recordCache.falseEnds). A start dropped past the queue's bound, or drained after the end left that table,
+    is never counted."""
     with _JSONL_CACHE_LOCK:
         _RECORD_CACHE_STATS["falseEnds"] = int(_RECORD_CACHE_STATS.get("falseEnds") or 0) + 1
 
@@ -1577,8 +1582,8 @@ def checkpoint_pay_owed_releases():
 
 
 def cancel_owed_release(path):
-    """Forget `path`'s owed release (the agent entered its session's live set again before the release was paid): True when
-    one was owed."""
+    """Forget `path`'s owed release (the kernel drained the agent's start before the release was paid): True when one was
+    owed."""
     with _CKPT_LOCK:
         return _RELEASE_OWED.pop(str(path), None) is not None
 
