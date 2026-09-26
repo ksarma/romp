@@ -1192,7 +1192,7 @@ test("every module the page bundles load, read with the compiler: the only write
     "ui/webview/css-rules.mjs",                  // a sheet read as rules with their enclosing at-rules, imported by four webview tests (file-figure-open, fileview-parity, file-view-outline, theme-parity) and tools/markdown-viewer-plan-linknav.test.mjs
     "ui/webview/feed-flip.ts",                   // the feed's FLIP-pass predicate, executed by feed-flip.test.ts
     "ui/webview/file-view-outline-fixture.ts",   // the Outline's synthetic fixture, shared by file-view-outline.test.ts and its browser leg
-    "ui/webview/host-sheets.mjs",                // every sheet a page of either host loads, derived from the page assembly, imported by three webview tests (file-figure-open, fileview-parity, file-view-outline) and tools/markdown-viewer-plan-linknav.test.mjs
+    "ui/webview/host-sheets.mjs",                // every sheet a page of either host loads, derived from the page assembly, imported by four webview tests (file-figure-open, fileview-parity, file-view-outline, md-sanitize-browser) and tools/markdown-viewer-plan-linknav.test.mjs
     "ui/webview/md-wiki.ts",                     // wikilink and callout extensions to the markdown grammar, executed by md-wiki.test.ts
     "ui/webview/real-viewer-leg.ts",             // the real viewer mounted in a served page for the browser legs (*-browser.test.ts), shell-drag-leg and the bench
     "ui/webview/scroll-journal-audit.ts",        // the scroll journal's reader, executed by scroll-journal-audit.test.ts

@@ -8858,10 +8858,13 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests alone (54 files, the ledger entry's where line; run 2026-09-25 at the head that carries the fixes ruled in the
-file review's round 16 and the author's closing pass over them, where the merge-base is fa3ef54b5, the fork's main the
+upstream or tests alone (55 files, the ledger entry's where line; run 2026-09-26 at the head that carries the fixes ruled in the
+file review's round 16, the author's closing pass over them and the re-aimed containment test of the sanitizer's browser leg,
+where the merge-base is fa3ef54b5, the fork's main the
 branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch PR 907, and the listing is the
-branch's whole delta over it; the run at the head that carries the fixes ruled in the file review's round 16, from the
+branch's whole delta over it; the run at the head before that test was re-aimed, from the merge-base fa3ef54b5, listed 54, before
+ui/webview/md-sanitize-browser.test.ts, a module of main whose containment test the drop of the stacking page classes re-aimed,
+joined the delta; the run at the head that carries the fixes ruled in the file review's round 16, from the
 merge-base fa3ef54b5, listed 53, before ui/webview/file-view-decisions.test.ts, a module of main whose pin that pass re-aimed,
 joined the delta; the run at the head that carries the fixes ruled in the file review's round 15, from the
 merge-base fa3ef54b5, listed the same 53; the run at the head that carries the fixes ruled in the file review's round 14, from the
@@ -9026,7 +9029,7 @@ that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE,
 ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
 four it holds every leg to a roster line outside the exclusions and the roster's own tree test to exist, and a tree with
 some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
-landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-one standing suites were re-aimed, not undone:
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-two standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -9083,7 +9086,13 @@ this follow-on's tests import, and its closed multiset of the writes of a view p
 and moveTrail's, each kept in the page's trail state and never posted), and since the fixes for the file review's round 16,
 extra5-2, ui/webview/file-view-decisions.test.ts (its pin on the word the viewer no longer uses for the editor's decisions lets
 the one quoted page class inside SHEET_DIM_CLASSES's literal through by value, since the list holds another page's tree-node
-class as the sheets spell it). The guide's Links in a file paragraph gained two sentences, the trail's and
+class as the sheets spell it), and since the drop of the stacking page classes, for the file review's round 16, extra5-1,
+ui/webview/md-sanitize-browser.test.ts (its layout-containment test's author element of a fixed page class, .cite-preview,
+loses the class, so the test reads the class gone and the element in the note's flow, inside the note's box and scrolling with
+it, reads the class's fixed position on an element of the page's own, and keeps the fixed box put into the note after render as
+the box whose containment it measures, read again where the body scrolled to, since no page class the viewer keeps on a file
+document's author markup makes an element fixed, which the test reads at run time over every sheet a page of either host loads;
+the leg launches through real-viewer-leg.ts's inBrowser, as this follow-on's legs do). The guide's Links in a file paragraph gained two sentences, the trail's and
 the figure control's, and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
 scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail
