@@ -4341,14 +4341,16 @@ def _direct_row_speaks(peers, far, far_bus, table, links):
 
 def _heard_answering(row):
     """Note in _ANSWERED_BUSES the far bus ids `row`, a PEER_STATE row as a recorder stores it, shows ANSWERING: the
-    row's own busId when its exchange carried presenceAnswered True, and each gossip row's viaBus whose viaAnswered is
+    row's own busId when its stored presenceAnswered is True, and each gossip row's viaBus whose stored viaAnswered is
     True (a hub stamps a far host's bit on that host's session rows, presence_payload). Called by both recorders, under
-    _PEER_STATE_LOCK, with the row they store, in the hold that stores it and before _drop_peer_name_dupes, so the
-    evidence is what every reader of the row reads (round 6 of fork PR #897, the reviewer's round-5 ruling B). JSON
-    true alone counts, as at every read of the two bits, and a row with no bus id, or a gossip row with no viaBus,
-    notes nothing: there is no id to find later. Nothing is ever
-    removed: a bus id is one process of one far bus, and a process does not change release, so the evidence holds
-    across a hub's restart, and a far bus restarted on an older release carries a new id and no evidence."""
+    _PEER_STATE_LOCK, with the row they store, in the hold that stores it, so the evidence is what every reader of the
+    row reads (round 6 of fork PR #897, the reviewer's round-5 ruling B): a roster held under the order (_order_row, its
+    ruling C) stores its bits False and notes nothing, so a far bus heard only on rosters this bus holds, its own dials
+    or a hub's, is not heard answering until an answer placed after the hold. JSON true alone counts, as at every read
+    of the two bits, and a row with no bus id, or a gossip row with no viaBus, notes nothing: there is no id to find
+    later. Nothing is ever removed: a bus id is one process of one far bus, and a process does not change release, so
+    the evidence holds across a hub's restart, and a far bus restarted on an older release carries a new id and no
+    evidence."""
     presence = row.get("presence")
     if row.get("presenceAnswered") is True and row.get("busId"):
         _ANSWERED_BUSES.add(str(row["busId"]))
@@ -4357,110 +4359,214 @@ def _heard_answering(row):
             _ANSWERED_BUSES.add(str(pa["viaBus"]))
 
 
-def _via_held(presence, bus, road, *prevs):
+def _placed(built, mark):
+    """Whether an answer to a dial this bus BUILT when the recording sequence stood at `built` (_PEER_SEQ as the
+    build read it, handed to the fold the way `flight` is; None for a dial, or for an answer whose fold was handed no
+    capture) is NEWER, in the far side's own time, than the roster this bus recorded at `mark` (0 is this bus
+    process's start, before any roster). The far side builds its answer at the end of its handler, after our request
+    arrived, so after we built it, so after every roster we recorded before the build: the one exact order this bus
+    has on a source's rosters, for any number of loops on either side, with no wire field (round 6 of fork PR #897,
+    the reviewer's round-5 ruling C). Nothing orders a dial: the far side's requests are recorded here in the order
+    they land, and a request it gave up on can land after its next."""
+    return built is not None and int(mark or 0) <= int(built)
+
+
+def _roster_key(pa):
+    """The name one presence row is kept under when a source's rosters merge (_order_row): its far host (a hub's
+    gossip row) and its session id. None for a row with no id, which only the roster carrying it names, as before."""
+    if not isinstance(pa, dict) or not pa.get("id"):
+        return None
+    return "%s\n%s" % (str(pa.get("via") or ""), str(pa["id"]))
+
+
+def _fold_rows(rows):
+    """The ORDER STATE of the PEER_STATE rows in `rows`, one bus's (the row a recorder replaces, and each row the
+    same bus left under another name, which the recorder then forgets: _drop_peer_name_dupes), merged on the
+    restricted side (round 6 of fork PR #897, the reviewer's round-5 ruling C): the names of every row, each at the
+    latest recording that carried it, with the bus id of the roster that did (`namedAt`, [recording, bus id], which
+    tells a hub process's own word from an earlier process's when an answer drops it: _via_held); answered only if
+    every row is (`presenceAnswered`); the latest
+    unanswered roster of any of them (`mark`); and per far host, the latest unanswered word and whether every row
+    has released it (`viaMark`). No row, the start of this bus process: nothing named, held, the mark at 0, so a
+    source's first roster in this process releases only on this bus's own dial's answer (residual (3c), closed in
+    the held direction by the reviewer's decision 4 of round 5: no release from state this process does not hold)."""
+    out = {"presence": [], "presenceAnswered": False, "mark": 0, "namedAt": {}, "viaMark": {}}
+    rows = [r for r in rows if isinstance(r, dict)]
+    if not rows:
+        return out
+    out["presenceAnswered"] = all(r.get("presenceAnswered") is True for r in rows)
+    out["mark"] = max(int(r.get("mark") or 0) for r in rows)
+    seen = {}
+    for r in rows:
+        for pa in r.get("presence") if isinstance(r.get("presence"), list) else []:
+            k = _roster_key(pa)
+            if k is not None:
+                at = _named_at(r, pa)
+                if k not in seen or at[0] > seen[k][0][0]:
+                    seen[k] = (at, pa)
+        for far, v in (r.get("viaMark") if isinstance(r.get("viaMark"), dict) else {}).items():
+            m, freed = (list(v) + [0, False])[:2] if isinstance(v, (list, tuple)) else (0, False)
+            pm, pf = out["viaMark"].get(far, (int(m or 0), True))
+            out["viaMark"][far] = [max(pm, int(m or 0)), bool(pf) and bool(freed)]
+    out["presence"] = [pa for _, pa in seen.values()]
+    out["namedAt"] = {k: at for k, (at, _) in seen.items()}
+    return out
+
+
+def _named_at(row, pa):
+    """[the recording, the roster's bus id] of the last roster that named presence row `pa` of PEER_STATE row `row`
+    (_order_row's `namedAt`); a row no recorder ordered (none since round 6 of fork PR #897) reads [0, its busId]."""
+    at = (row.get("namedAt") if isinstance(row.get("namedAt"), dict) else {}).get(_roster_key(pa))
+    if isinstance(at, (list, tuple)) and len(at) == 2:
+        return [int(at[0] or 0), str(at[1] or "")]
+    return [0, str(row.get("busId") or "")]
+
+
+def _order_row(row, prev, folded, built):
+    """ORDER a source's roster (round 6 of fork PR #897, the reviewer's round-5 ruling C and the decisions at its end:
+    ONE RELEASE RULE, the hold released on the ANSWER road alone). `row` is the row a recorder files, as the
+    roster came (its own bit raw); `prev` the row it replaces and `folded` the rows the same bus left under other
+    names, forgotten after the store (_drop_peer_name_dupes): their order state moves to this row (_fold_rows).
+    `built` is the recording sequence this bus's dial read when it was built, for an answer (_placed); None for a
+    dial. Mints this recording's number in _PEER_SEQ and stores on `row`:
+    - `presenceAnswered` as every reader reads it: True only once the row's hold is released. An unanswered roster
+      holds the row and moves its `mark` to this recording; an answered one releases the hold only if it answers a
+      dial this bus built after the mark, and otherwise leaves the bit as it was. So the far side's answered dials
+      landing while our dial is out do not push the release back, and a late cached roster (a request the far side
+      gave up on) pushes it one dial further. A held row, stored False, is gossiped viaAnswered False
+      (presence_payload), never speaks for its host (_direct_row_speaks) and notes no bus answering
+      (_heard_answering).
+    - `presence`, the UNION of the rosters this bus cannot place: an answer drops a name only when its dial was built
+      after the last roster that named it, each name kept at that recording (`namedAt`); every other roster (every
+      dial, and an answer to a dial built before) adds its names and drops none. So an older roster recorded after
+      a newer one never drops a live session's name (the reviewer's X1 and X2), and a heard source's names are
+      never dropped. The union is gossiped too, and reaches routing (peer_route) and the /agents listing.
+    - per far host of a hub's gossip rows, `viaMark` [mark, released], the same rule: an unanswered word holds the
+      host at this recording, an answered one releases it only on an answer placed after that mark, and every word
+      of the host in `presence` carries viaAnswered as released, so the mirror's via row is unanswered while the
+      host is held. A word the answer drops unanswered is the hub's held word (_via_held), released by omission only
+      on an answer placed after the host's mark.
+    Returns `row`, which the recorder stores (bound from this call, the census follows the stored row back to `prev`'s
+    read: one hold). It runs under _PEER_STATE_LOCK, held by the two recorders, in the hold that reads `prev` and
+    stores `row`."""
+    _PEER_SEQ[0] += 1
+    seq = _PEER_SEQ[0]
+    base = _fold_rows([prev] + list(folded))
+    if row.get("presenceAnswered") is not True:       # a cache: the row holds, its mark at this recording
+        row["presenceAnswered"], row["mark"] = False, seq
+    else:                                             # answered: released only by an answer placed after the mark
+        row["presenceAnswered"], row["mark"] = base["presenceAnswered"] or _placed(built, base["mark"]), base["mark"]
+    presence = row.get("presence")
+    fresh = [pa for pa in (presence if isinstance(presence, list) else []) if isinstance(pa, dict)]
+    keys = {_roster_key(pa) for pa in fresh} - {None}
+    kept = [pa for pa in base["presence"] if _roster_key(pa) not in keys
+            and (built is None or base["namedAt"][_roster_key(pa)][0] > int(built))]
+    named = {_roster_key(pa): base["namedAt"][_roster_key(pa)] for pa in kept}
+    named.update((k, [seq, str(row.get("busId") or "")]) for k in keys)
+    marks = {far: list(v) for far, v in base["viaMark"].items()}
+    carried = {}
+    for pa in fresh:
+        if pa.get("via"):
+            carried[str(pa["via"])] = carried.get(str(pa["via"]), True) and pa.get("viaAnswered") is True
+    for far, ok in carried.items():
+        m, freed = marks.get(far, [0, False])
+        marks[far] = [m, bool(freed) or _placed(built, m)] if ok else [seq, False]
+    row["presence"] = [dict(pa, viaAnswered=bool(marks.get(str(pa["via"]), [0, False])[1])) if pa.get("via") else pa
+                       for pa in fresh + kept]
+    row["namedAt"], row["viaMark"] = named, marks
+    return row
+
+
+def _via_held(presence, bus, road, *prevs, built=None):
     """The HELD WORDS a hub's PEER_STATE row keeps as `viaHeld`: the gossip rows of each far host whose last word
-    through that hub, heard in this bus process, was UNANSWERED (`viaAnswered` not True: the far host's exchange with
-    the hub served a cache) and that the hub's current `presence` does not name, by the hub's name for the host or by
-    the host's bus id (viaBus), unless the hub is the bus PROCESS whose roster last named it, `presence` came by the
-    ROAD that roster came by, and the host's bus (the word's viaBus) has been heard ANSWERING in this process
-    (_ANSWERED_BUSES; round 6 of fork PR #897, the reviewer's round-5 ruling B). `bus` is the hub's bus id as the
-    exchange bringing `presence` carries it ("" when it
-    sends none); `road` is that exchange's road, "dial" for the hub's dial to this bus (peer_exchange_handle) or
-    "answer" for its answer to this bus's dial (peer_exchange_apply), each recorder stamping its own on the row it
-    files. `prevs` are the rows the words come from: the hub's row before this exchange, at both recorders, and a row
-    _drop_peer_name_dupes forgets as the same bus under another name (its words move to the row that stays, whose road
-    is the exchange's that filed it). Round 4 of fork PR #897, the thirty-first commit (the reviewer's verifier at the
-    thirtieth, by execution through the real builders, handlers, folds, this writer and the reader, under both root
-    shapes), the thirty-second and the thirty-third. The listing-unanswered arm holds rule 5 on every row heard in
-    this bus process whose last exchange served a cache, and releases it on that host's next answering exchange or
-    this bus's restart alone (the reviewer's ruling of 00:27Z). A RESTARTED hub's silence about a far host is neither:
-    its PEER_STATE starts empty and it has not heard the host yet, and until the thirty-first commit its first exchange
-    here dropped the host's rows from the hub's row, so the via row was carried, heard false and out of the arm, and a
-    session started on the far host during its kernel's blink, whose mail the hub had relayed here on that host's
-    cached exchange, was presumed closed while another row vouched (a second hub's older answered word about the same
-    host among them). So each such word stays on the hub's row, and _remote_sids_document writes it as the hub's word,
-    heard, its bit False, until the hub's word names the host again (the far host's next exchange with the hub, relayed
-    here: answered, the release; a cache, the new word, in the arm as any current word is), the SAME hub process omits
-    the host on the road that last named it and the host's bus has been heard ANSWERING in this process (below), the
-    far host's own row speaks for it here (_direct_row_speaks, the fold, while that row speaks), or this bus restarts
-    (PEER_STATE starts empty, and the carry makes the via row not heard).
+    through that hub, heard in this bus process, was UNANSWERED (`viaAnswered` not True as the row stored it: the far
+    host's exchange with the hub served a cache, or the word is held under the order, _order_row) and that the hub's
+    merged roster `presence` no longer names, by the hub's name for the host or by the host's bus id (viaBus), unless
+    `presence` is the hub's ANSWER to a dial this bus built after the host's last unanswered word (`road` "answer", and
+    `built`, the capture that dial's build read, placed after the host's mark in the rows' viaMark: _placed), the hub
+    is the bus PROCESS whose roster last named the word (its `hubBus`, the bus id of the roster that named it, from
+    _order_row's namedAt), and the host's bus (the word's viaBus) has been heard ANSWERING in this process
+    (_ANSWERED_BUSES; round 6 of fork PR #897, the reviewer's round-5 ruling B). `bus` is the hub's bus id as the exchange
+    bringing `presence` carries it ("" when it sends none); `road` is that exchange's road, "dial" for the hub's dial to
+    this bus (peer_exchange_handle) or "answer" for its answer to this bus's dial (peer_exchange_apply); `built` is None
+    for a dial and for an answer whose fold was handed no capture. `prevs` are the rows the words come from: the hub's
+    row before this exchange, at both recorders, and each row the same bus left under another name, which the recorder
+    forgets after its store (_drop_peer_name_dupes) and whose words move to the row it files. Round 4 of fork PR #897,
+    the thirty-first commit to the thirty-third, and round 6's rulings B and C.
+    A RESTARTED hub's silence about a far host is not the host's word: its PEER_STATE starts empty and it has not heard
+    the host yet. Until the thirty-first commit its first exchange here dropped the host's rows from the hub's row, so
+    the via row was carried, heard false and out of the arm, and a session started on the far host during its kernel's
+    blink, whose mail the hub had relayed here on that host's cached exchange, was presumed closed while another row
+    vouched (a second hub's older answered word about the same host among them). So each such word stays on the hub's
+    row, and _remote_sids_document writes it as the hub's word, heard, its bit False, until the hub names the host again
+    (that word stands, held or released by its own order: _order_row), the SAME hub process omits it in its answer to a
+    dial this bus built after the host's last unanswered word and the host's bus has been heard answering here (below),
+    or the far host's own row speaks for it here (_direct_row_speaks, the fold, while that row speaks). This bus's
+    restart releases nothing: the via row is carried with its bit False and holds the arm (the reviewer's decision 4 on
+    round 5).
     The same process's silence IS the far host's word: a hub gossips a far host only through that host's session rows
     (presence_payload) and forgets a far host's PEER_STATE only at its own fold, whose rows then name the host's bus
     under the other name, so a hub process that named the host and now omits it has recorded the host's next exchange,
-    carrying no session row, provided the far bus's blink does not gossip an empty roster (below) and this bus records
-    the two rosters in the order the hub took them. One road keeps
-    that order: the hub dials this bus from one loop and builds each request after the answer to the last, and this bus
-    dials the hub from one loop and folds each answer before its next dial (the exceptions close this docstring). The
-    two roads together do not: the hub
-    takes its answer to our dial when that dial reaches it, so an answer taken before the hub's own later dial can be
-    folded here after the dial is recorded (the reviewer's verifier at the thirty-second commit, by execution: that
-    answer's omission released the word, and a session whose mail the hub's dial had carried answered rule 5). So each
-    word carries `hubRoad`, the road of the roster that last named it, and an omission by the other road holds it
-    until the naming road's next exchange omits the host too (cost (h) of _remote_sids_document, the restricted side).
-    The two roads' recorders run at once, and each calls this under _PEER_STATE_LOCK, held from its read of the row it
-    replaces (a `prevs` entry) through its store, so no roster is stored between them and its words lost (round 6 of
-    fork PR #897, the reviewer's round-5 ruling A).
-    That omission is the host's answering exchange with an EMPTY listing, its sessions all ended: the release (until
-    the thirty-second commit the word stayed held for the process's life, every sid on this machine at
-    cannot-determine; the reviewer's verifier at the thirty-first, by execution); or an empty cache, the host's bus
-    restarted during its kernel's blink with no twin: residual (3a)'s second face in _remote_sids_document, which
-    nothing here can tell from the answer; or, from a far bus from before the blink honesty of 2026-09-01 (every
-    release up to v0.14.0), its kernel's BLINK, since such a bus gossips an EMPTY roster while its listing does not
-    answer: a session started there during the blink, whose mail rode through the hub, answered rule 5 while the hub
-    vouched, and a courier completion in the window settled its card for good, at every blink of such a host (round 6
-    of fork PR #897, the reviewer's round-5 ruling B on its refuters' extra5-2, driven by execution with a real v0.14.0
-    bus as the far host). Nothing on the wire marks the honesty (PEER_PROTO is 1 before and after it), and a via row
-    alone cannot tell an older far host from a current one serving a cache, so the evidence is remembered: the release
-    counts only for a far bus HEARD ANSWERING in this process (_ANSWERED_BUSES, which _heard_answering fills from each
-    recorder's row: that bus's own exchange here carrying presenceAnswered True and its busId, or a gossip row from any
-    hub, by either road, carrying viaAnswered True and that viaBus), keyed on the far bus id, since the property belongs
-    to one far bus process: the evidence holds across a hub's restart, and a far host restarted on an older release
-    carries a new id and no evidence. Every other far bus's omitted word stays held, cost (a) of _remote_sids_document
-    (the reviewer's round-5 ruling B amends the 10:19Z ruling that kept the release and the 11:08Z trade over it; (3a)'s
-    second face and the third race below are unchanged where the far bus has been heard answering here, and where it
-    has not, a current bus heard only over caches or a far bus from a release before this PR, the same roads now hold
-    the word, cost (a): the reviewer's verifier at the fifty-fourth commit, by execution). Each word carries
-    `hubBus`, the bus id of the hub process whose roster last named it, and the release by omission needs both ids,
-    equal, the same road, and the word's viaBus among the ids heard answering: a restarted hub carries a new id (BUS_ID
-    is minted per process), and a hub that sends none (from before busId) cannot say it is the same process, so its
-    omission holds (the restricted side). A word with no viaBus never qualifies, since there is no bus id to find in
-    that set: it comes from a far bus from before busId, through a hub from before viaBus, or through a hub whose row
-    was stored before its busId stamp (this bus stores its row whole since round 6, but a hub on an earlier build may
-    not), and the far bus behind it may be current; it stays held, cost (a) (from the thirty-second commit until round
-    6 such a word was released the same way: the verifier's mutant that released only a word carrying a viaBus had
-    passed every module at the thirty-second commit). A word whose bit was True is not held: an
-    answered word the hub stops naming is carried as before, heard false, vouching for nothing. Each held row carries
+    carrying no session row, provided the far bus's blink does not gossip an empty roster (below) and the omitting
+    roster is newer than the naming one. The one exact order this bus has on a hub's rosters is the hub's answer to a
+    dial this bus built after it recorded the naming roster, which the hub builds after the request arrived (_placed):
+    the hub's dials land in whatever order (a hub that links this bus under two names dials it from two loops, and a
+    request it gave up on can land after its next: residual (3d)'s face (1), closed so), and an answer to a dial built
+    before can be taken before the hub's later dial and folded here after it (the reviewer's verifier at the
+    thirty-second commit, by execution: that answer's omission released the word, and a session whose mail the hub's
+    dial had carried answered rule 5). So a dial never releases, and an answer releases only when placed after the
+    host's mark, whatever road named the host (round 6 of fork PR #897, the reviewer's round-5 ruling C and its decision
+    1, ONE RELEASE RULE; from the thirty-third commit until then the release keyed on the road that last named the host,
+    `hubRoad`, still stamped on each word, which held a word the other road omitted, cost (h), closed since). The two
+    roads' recorders run at once, and each calls this under _PEER_STATE_LOCK, held from its read of the rows it replaces
+    and forgets (the `prevs`) through its store, so no roster is stored between them and its words lost (the reviewer's
+    round-5 ruling A).
+    That omission is the host's answering exchange with an EMPTY listing, its sessions all ended: the release (until the
+    thirty-second commit the word stayed held for the process's life, every sid on this machine at cannot-determine; the
+    reviewer's verifier at the thirty-first, by execution); or an empty cache, the host's bus restarted during its
+    kernel's blink with no twin: residual (3a)'s second face in _remote_sids_document, which nothing here can tell from
+    the answer; or, from a far bus from before the blink honesty of 2026-09-01 (every release up to v0.14.0), its
+    kernel's BLINK, since such a bus gossips an EMPTY roster while its listing does not answer: a session started there
+    during the blink, whose mail rode through the hub, answered rule 5 while the hub vouched, and a courier completion in
+    the window settled its card for good, at every blink of such a host (the reviewer's round-5 ruling B on its
+    refuters' extra5-2, driven by execution with a real v0.14.0 bus as the far host). Nothing on the wire marks the
+    honesty (PEER_PROTO is 1 before and after it), and a via row alone cannot tell an older far host from a current one
+    serving a cache, so the evidence is remembered: the release counts only for a far bus HEARD ANSWERING in this
+    process (_ANSWERED_BUSES, which _heard_answering fills from each recorder's STORED row: that bus's own row here
+    carrying presenceAnswered True and its busId, or a hub's gossip row carrying viaAnswered True and that viaBus, so a
+    roster this bus holds under the order notes nothing), keyed on the far bus id, since the property belongs to one far
+    bus process: the evidence holds across a hub's restart, and a far host restarted on an older release carries a new
+    id and no evidence. Every other far bus's omitted word stays held, cost (a) of _remote_sids_document. The release by
+    omission needs the word's `hubBus` equal to `bus`: a restarted hub carries a new id (BUS_ID is minted per process),
+    and a hub that sends none (from before busId) cannot say it is the same process, so its omission holds (the
+    restricted side). A word with no viaBus never qualifies, since there is no bus id to find in that set: it comes from
+    a far bus from before busId, through a hub from before viaBus, or through a hub whose row was stored before its busId
+    stamp (this bus stores its row whole since round 6, but a hub on an earlier build may not), and the far bus behind
+    it may be current; it stays held, cost (a). A word whose bit was True is not held: an answered word the hub's
+    answer, placed after it, stops naming is carried as before, heard false, vouching for nothing. Each held row carries
     `heldAt`, the second the hub's word was last heard here, which the via row's seenAt reads. The display and routing
-    consumers read `presence` alone, so a held word is never listed, addressed or gossiped onward. What stays open:
-    a hub from before viaBus that renames a far host leaves the old name's word held until this bus restarts or the
-    host's own row speaks for it here, within one process since round 6 (its gossip carries no viaBus, so no word of
-    it is a far bus heard answering; until then the old name's omission on the road that named it released that word)
-    and across its own restart, since the restarted process did not name the host and no bus id matches the two
-    names; such a hub predates presenceAnswered, so while it is heard here its own row holds every sid at
-    cannot-determine anyway, cost (a) (the witness, tests/test_postal_remote_sids_mirror.py
-    test_a_hub_from_before_viabus_renaming_a_far_host_holds_the_old_names_word_within_one_process_and_across_its_restart),
-    and a hub from before busId holds every word its roster omits; a far host that answers a RESTARTED hub with an
-    empty listing leaves its word held until the hub names it again or this bus restarts, since the restarted hub's
-    omission of a host it has not heard reads the same (cost (g)); a word the other road omits stays held until the
-    naming road omits it too, and if that road carries no further exchange, until the hub names the host again, the
-    host's own row speaks for it here or this bus restarts (cost (h)); all three the restricted side, and (g) closed by
-    the carrier fix, each heard far host's answered bit carried independent of session rows. And a roster that reaches
-    this bus after a NEWER one by the SAME road (a hub that links this bus under two names dials it from two loops, and
-    a request the hub gave up on can arrive after the next one) releases a word the newer one named, where the word's
-    far bus has been heard answering here: residual (3d)'s face (1) in _remote_sids_document, a false rule 5 left open
-    that this release causes (at the thirty-first commit the word stayed held); for any other far bus the older
-    roster's omission holds the word, cost (a), and the face does not open. A second machine the hub files under the
-    host's name, answering the hub with an empty listing, reads the same as the host's own empty answer: it releases
-    the word too where the host's bus has been heard answering here (the reviewer's verifier at the forty-fifth
-    commit, by execution; held at the thirty-first commit), and holds it, cost (a), where it has not (its verifier at
-    the fifty-fourth commit, by execution). With (3a)'s second face these are the
-    release's three races, each reading a far bus heard answering here, its cost under the reviewer's ruling of round
-    4 to keep it (stated under (3d) there), whose population since round 6 is the far buses heard answering: a
-    race's window ends at the next word about the host, but a completion, reply or resolve for the sender inside it
-    settles the live session's card wrong for good, a rare permanent wrong settle the ruling weighs against the
-    common frozen machine that holding the word leaves (a second machine that keeps exchanging under the host's name
-    is THE PREMISE's violation, which reopens the window at each of its exchanges: THE PREMISE in
-    _remote_sids_document)."""
+    consumers read `presence` alone, so a held word is never listed, addressed or gossiped onward (a word the merged
+    roster still keeps is listed and addressed, as the recorders' docstrings say). What stays open: a hub from before viaBus that renames a
+    far host leaves the old name's word held until the hub names the host under the old name again or the host's own row
+    speaks for it here, within one process and across its own restart, since no bus id matches the two names; such a
+    hub predates presenceAnswered, so while it is heard here its own row holds every sid at cannot-determine anyway,
+    cost (a) (the witness, tests/test_postal_remote_sids_mirror.py
+    test_a_hub_from_before_viabus_renaming_a_far_host_holds_the_old_names_word_within_one_process_and_across_its_restart);
+    a hub from before busId holds every word its roster omits; and a far host that answers a RESTARTED hub with an
+    empty listing leaves its word held until the hub names it again, since the restarted hub's omission of a host it
+    has not heard reads the same (cost (g)); all three the restricted side, and (g) closed by the carrier fix, each
+    heard far host's answered bit carried independent of session rows. A second machine a hub on a build before round
+    6 files under the host's name, answering that hub with an empty listing, reads the same as the host's own empty
+    answer: it releases the word too, in the hub's answer to our dial, where the host's bus has been heard answering
+    here (the reviewer's verifier at the forty-fifth commit, by execution; held at the thirty-first commit), and holds
+    it, cost (a), where it has not (its verifier at the fifty-fourth commit, by execution); a hub on this build merges
+    that machine's dial into the host's row and never omits the host (_order_row). With (3a)'s second face these are the
+    release's two races, each reading a far bus heard answering here, its cost under the reviewer's ruling of round 4 to
+    keep it (stated under (3d) there), whose population since round 6 is the far buses heard answering: a race's window
+    ends at the next word about the host, but a completion, reply or resolve for the sender inside it settles the live
+    session's card wrong for good, a rare permanent wrong settle the ruling weighs against the common frozen machine
+    that holding the word leaves (a second machine that keeps exchanging under the host's name is THE PREMISE's
+    violation, which reopens the window at each of its exchanges: THE PREMISE in _remote_sids_document)."""
     def rows(v):                                      # a roster that is not a list names nothing (the peer's bytes)
         return v if isinstance(v, list) else []
     named, named_bus = set(), set()
@@ -4469,26 +4575,29 @@ def _via_held(presence, bus, road, *prevs):
             named.add(str(pa["via"]))
             if pa.get("viaBus"):
                 named_bus.add(str(pa["viaBus"]))
-    words = []
+    words, marks = [], {}
     for prev in prevs:
         if not isinstance(prev, dict):
             continue
         words += [pa for pa in rows(prev.get("viaHeld")) if isinstance(pa, dict)]
-        words += [dict(pa, heldAt=int(prev.get("seenAt") or 0), hubBus=str(prev.get("busId") or ""),
+        words += [dict(pa, heldAt=int(prev.get("seenAt") or 0), hubBus=_named_at(prev, pa)[1],
                        hubRoad=str(prev.get("road") or ""))
                   for pa in rows(prev.get("presence"))
                   if isinstance(pa, dict) and pa.get("via") and pa.get("id") and pa.get("viaAnswered") is not True]
+        for far, v in (prev.get("viaMark") if isinstance(prev.get("viaMark"), dict) else {}).items():
+            marks[far] = max(marks.get(far, 0), int((list(v) + [0])[0] or 0) if isinstance(v, (list, tuple)) else 0)
     held, kept = [], set()
     for pa in words:
         far, far_bus, one = str(pa["via"]), str(pa.get("viaBus") or ""), (str(pa["via"]), str(pa.get("id")))
         if far in named or (far_bus and far_bus in named_bus) or one in kept:
             continue                                  # the hub's word names the host again: that word stands
-        if (bus and str(pa.get("hubBus") or "") == str(bus) and str(pa.get("hubRoad") or "") == str(road)
+        if (road == "answer" and _placed(built, marks.get(far, 0)) and bus and str(pa.get("hubBus") or "") == str(bus)
                 and far_bus and far_bus in _ANSWERED_BUSES):
-            continue                                  # the SAME hub process omits the host on the road that named it, and
-        #                                               the host's bus has answered in this process: its next exchange with
-        #                                               the hub carried no session row (an empty answered listing, or
-        #                                               residual (3a)'s second face), never an older bus's blink
+            continue                                  # the SAME hub process omits the host in its answer to a dial this bus
+        #                                               built after the host's last unanswered word, and the host's bus has
+        #                                               answered in this process: its next exchange with the hub carried no
+        #                                               session row (an empty answered listing, or residual (3a)'s second
+        #                                               face), never an older bus's blink; a dial releases nothing
         kept.add(one)
         held.append(pa)
     return held
@@ -4527,9 +4636,10 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
                a via row, the hub's word about the far host arrived in this process: the hub's current roster, or
                a HELD word, the far host's unanswered word that a RESTARTED hub's rosters omit (_via_held; round 4
                of fork PR #897, the thirty-first commit: a hub whose bus restarts has not heard the host yet, and
-               its silence is not the host's answer; the same hub process's omission on the road that last named
-               the host is, and releases the word, the thirty-second commit, on that road since the thirty-third,
-               for a far bus heard answering in this process since round 6, the reviewer's round-5 ruling B)
+               its silence is not the host's answer; the same hub process's omission in its answer to a dial this
+               bus built after the host's last unanswered word is, and releases the word, for a far bus heard
+               answering in this process: the thirty-second commit, the reviewer's round-5 ruling B, and the answer
+               road alone since its ruling C, where the thirty-third commit keyed it on the road that named the host)
       expired  its presence is past HEARTBEAT_TTL; legacy heartbeats only: a peer's presence has no TTL, its
                age is shown to the user as staleness and its roster stands until the next exchange
       linkDown the kernel holds its link down, or has since it was last heard (_source_link_down: a peer
@@ -4541,11 +4651,15 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
                the hostname it declares before this bus's own dial folds it under the alias the kernel
                notifies)
       answered the roster is an ANSWERED listing (round 3 of fork PR #897, the reviewer's ruling): for a peer
-               host the `presenceAnswered` its last exchange carried (both recorders keep it on the PEER_STATE
-               row; the sender computes it in _local_presence_checked, False while its kernel listing does not
-               answer and it serves the last answered rows), for a hub's word about a far host the FAR host's
-               bit as the hub stamped it on every gossiped row (`viaAnswered`, presence_payload: the roster is
-               that host's word, so whether it was answered is that host's word too), True for a legacy
+               host the bit its PEER_STATE row STORES, the `presenceAnswered` its exchanges carried (the sender
+               computes it in _local_presence_checked, False while its kernel listing does not answer and it
+               serves the last answered rows) as the recorders order them, held False from the row's last
+               unanswered roster, and from this bus process's start, until an answer to a dial this bus built
+               after that roster (_order_row; round 6 of fork PR #897, the reviewer's round-5 ruling C: every
+               other roster, the host's own dials among them, merges into the row and releases nothing), for a
+               hub's word about a far host the FAR host's bit as the hub stamped it on every gossiped row
+               (`viaAnswered`, presence_payload: the roster is that host's word, so whether it was answered is
+               that host's word too), held False here by the same rule per far host (_order_row's viaMark), True for a legacy
                heartbeat (the session's own beat is its own answer), False for the legacy list (no listing this
                process can speak for answered for it) and for a row carried from a file that predates the field
                (the restricted side); a payload lacking the field is unanswered, so an older peer cannot reopen
@@ -4553,17 +4667,20 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
                since the release by the same hub process's omission counts only for a far bus heard answering in
                this process (round 6 of fork PR #897, the reviewer's round-5 ruling B; from the thirty-second
                commit until then an older far host's blink, an empty roster, released its word there). A row HEARD
-               in this process whose bit is False, whatever its link state,
-               held down included, holds rule 5 at cannot-determine for every sid no row names, whatever another
-               row vouches: the reader's listing-unanswered arm (round 4 of fork PR #897, the reviewer's ruling on
-               its round-3 refuters' finding, the twenty-ninth commit, which read reachable rows alone, and the
-               thirtieth; THE LISTING-UNANSWERED ARM, below), until the source's next answering exchange replaces
-               the bit; a hub's word about a far host stays heard, its bit False, across a RESTARTED hub's rosters
-               that omit that host (_via_held, the thirty-first commit), until the hub names the host again or the
-               same hub process omits it on the road that last named it (the host's next exchange with the hub
-               carried no session row, the thirty-second commit; the road, the thirty-third; a far bus heard
-               answering in this process, round 6). A carried row's bit
-               holds nothing (residual (3c), below).
+               in this process whose bit is False, whatever its link state, held down included, and a host's row
+               CARRIED from before this bus's restart whose bit is False (residual (3c), closed below by the
+               reviewer's decision 4 on round 5), holds rule 5 at cannot-determine for every sid no row names,
+               whatever another row vouches: the reader's listing-unanswered arm (round 4 of fork PR #897, the
+               reviewer's ruling on its round-3 refuters' finding, the twenty-ninth commit, which read reachable
+               rows alone, and the thirtieth; THE LISTING-UNANSWERED ARM, below), until the source's answer to a
+               dial this bus built after its last unanswered roster releases the bit; a hub's word about a far host
+               stays heard, its bit False, across the hub's rosters that omit that host and cannot release it
+               (_via_held, the thirty-first commit), until the hub names the host again with an answered word on
+               an answer placed after the hold, or the same hub process omits it in its answer to a dial this bus
+               built after the host's last unanswered word (the host's next exchange with the hub carried no session
+               row, the thirty-second commit; a far bus heard answering in this process, the reviewer's round-5
+               ruling B; the answer road, its ruling C). A carried hub's word this process heard and has seen leave
+               the hub's roster, released or answered, is written with its bit True, and holds nothing.
                The bit is also the fold's gate: a heard row over a cache does not speak
                for its host, so a hub's word about that host stands as a via row beside it (_direct_row_speaks; the
                reviewer's verifier at the eleventh commit). A row kept across processes keeps its bit; a carried row
@@ -4596,8 +4713,9 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
                listing does not answer, and its mail rides the same exchange, so a host the kernel held up
                vouching for absence over that cache let rule 5 presume the session closed (round 3 of fork PR
                #897, the reviewer's refuters, by execution through the real handler and this writer). The event
-               that releases it is the host's next exchange that carries an answered listing, which replaces the
-               row and its bit (both recorders); no grace period anywhere. Withholding the cached row's own vouch
+               that releases it is the host's answer to a dial this bus built after its last unanswered roster
+               (_order_row; round 6 of fork PR #897, the reviewer's round-5 ruling C: its own dials, and an answer to
+               a dial built before that roster, merge into the row and release nothing); no grace period anywhere. Withholding the cached row's own vouch
                was not enough: while another row vouched, rule 5 still presumed such a session closed (the
                reviewer's round-3 refuters, on four roads through the real builders, handler, this writer and the
                reader), so since the twenty-ninth commit the reader holds a sid no row names at cannot-determine
@@ -4606,20 +4724,24 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
       seenAt   the last heartbeat or exchange time, kept across processes
     The reader (kernel/judge.py _presumed_closed_verdict) reads `reachable`, `vouchesAbsence`, `heard` and
     `answered` per row: a sid a reachable source names is live on another host (rule 4); a sid no source names is
-    presumed closed only when a source vouches for absence, no source heard in this process has an unanswered
-    roster (held down or not) and no lost-carry mark stands (rule 5); a sid only an unreachable source names, a
-    mirror in which no source vouches for absence, or one in which a source heard in this process has an
-    unanswered roster, is cannot-determine (its reason naming each source it turns on with why it cannot vouch,
+    presumed closed only when a source vouches for absence, no source heard in this process (held down or not), and
+    no host's row carried from before the restart, has an unanswered roster, and no lost-carry mark stands (rule 5);
+    a sid only an unreachable source names, a mirror in which no source vouches for absence, or one in which such a
+    source has an unanswered roster, is cannot-determine (its reason naming each source it turns on with why it cannot vouch,
     the cached roster among the causes: "listing unanswered", beside "link down" for a held-down source; a
     peer-mode heartbeat row: "no link state"; the last arm's token "listing-unanswered", since the twenty-ninth
-    commit, its population heard rather than reachable since the thirtieth).
+    commit, its population heard rather than reachable since the thirtieth, and the carried host rows since round 6
+    of fork PR #897, the reviewer's decision 4 on round 5).
     THE PREMISE of rule 5's reach through a hub: A HUB KNOWS ONE MACHINE BY A NAME (round 4 of fork PR #897, the
     reviewer's ruling of 11:08Z, the forty-seventh commit). A hub files every exchange under the name its sender
     declares (its PEER_STATE is keyed by name) and gossips each far host by that name, and this bus reads the hub's
     word about a far host as that one machine's; bus ids are unique by construction (BUS_ID is minted per process),
     so two machines exchanging with one hub under one host name is a misconfiguration, outside the model. What a
     violation does, its witness: a second machine naming a session of its own to the hub under a far host's name
-    replaces the host's word there, so every session the host last named, one whose mail rode its cached exchange
+    replaces the host's word there (at a hub on a build before round 6 of fork PR #897: a hub on this build cannot
+    place a second machine's dial after the host's roster and merges it, the host's names and its hold kept, the
+    reviewer's round-5 ruling C; the witnesses stand a hub on an earlier build in, and each window opens here at the
+    hub's answer to this bus's dial, the one road that releases), so every session the host last named, one whose mail rode its cached exchange
     among them, answers rule 5 while another row vouches (at the thirty-first commit and the round's base as well:
     the release below does not cause it), and once the host's kernel answers, each exchange by either machine
     presumes the other's sessions closed, for as long as both exchange with the hub (the reviewer's verifier at the
@@ -4629,7 +4751,7 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     that KEEPS EXCHANGING with the hub under a far host's name violates the premise WHATEVER ITS LISTING (the
     reviewer's ruling of 12:43Z, the forty-ninth commit). With an EMPTY listing, each of its exchanges replaces the
     host's word at the hub, and while that word is a cache (the host's kernel not answering) the same hub process's
-    roster omits the host on the road that named it and the release by that omission (under residual (3d) below)
+    answer to this bus's dial omits the host and the release by that omission (under residual (3d) below)
     frees the held word wherever the host's bus has been heard answering in this process (where it has not, the
     omission holds the word, cost (a) below, and no window opens until the host's answered word reaches this bus):
     the violation REOPENS THE WINDOW AT EACH OF ITS EXCHANGES, a false rule 5 for the session
@@ -4726,13 +4848,16 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     name for the host or folded into the host's own row). A heard hub gossiping nothing about a far host
     under the SAME name still leaves its via row carried (its silence is not a word about the host: a
     restarted hub has not heard it yet), when the hub's last word about the host was ANSWERED; an unanswered
-    last word is not carried but HELD, heard, on the hub's row (_via_held, the thirty-first commit of round 4)
-    unless the hub is the bus process whose roster named it, this roster came by the same road as that one and the
-    far bus has been heard answering in this process (the same process's silence is then the far host's next
-    exchange with it, carrying no session row, which releases the word, and the via row is then carried as an
-    answered one is: the thirty-second commit, the road since the thirty-third, the far bus heard answering since
-    round 6), and a row _drop_peer_name_dupes forgets as the same bus under another name hands its
-    held words to the row that stays, so the rename drop above never takes one. RESIDUAL (2), what no identity in
+    last word is not carried but HELD, heard, on the hub's row (in the hub's merged roster while no answer placed
+    after it has come, then in its held words: _order_row, _via_held; the thirty-first commit of round 4) unless the
+    hub is the bus process whose roster named it, this roster is its answer to a dial this bus built after the
+    host's last unanswered word, and the far bus has been heard answering in this process (the same process's
+    silence is then the far host's next exchange with it, carrying no session row, which releases the word, and the
+    via row is then carried with its bit written True: the thirty-second commit; the far bus heard answering since
+    round 6's ruling B; the answer road since its ruling C, where the thirty-third commit keyed it on the road that
+    named the host), and a row _drop_peer_name_dupes forgets as the same bus under another name hands its order
+    state and its held words to the row that stays (the recorder folds it in before it orders the roster:
+    _fold_rows), so the rename drop above never takes one. RESIDUAL (2), what no identity in
     the file reaches, the class the ruling leaves disclosed rather than closed by a timer. (2a) A hub restarted under
     a new bus id AND heard under another name (its dial landing here under the hostname it declares, before this
     bus's own dial folds it) leaves its old row and that row's via rows carried, so a session that ended on the far
@@ -4747,7 +4872,8 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     answered word about a far host it has not heard since its restart stays carried (an unanswered one is held, as for
     any hub); its named witness:
     test_residual_2b_a_hub_stamping_no_viabus_that_renames_a_far_host_leaves_the_old_names_row_carried_and_its_restarts_silence_is_no_word.
-    Each witness asserts the carried rows beside a host that vouches, every heard row answered, and turns red when its
+    Each witness asserts the carried rows beside a host that vouches (for (2a) beside the declared-name rows as well,
+    which this bus does not dial and so holds, cost (ii) below; for (2b) every heard row answered), and turns red when its
     residual closes (a carry dropping the old via row once a heard via row from a hub with no link here names the same
     far bus; one dropping a carried via row with no viaBus while its hub gossips any via row, which also takes the
     restarted hub's word about the second far host, a live session presumed closed). The
@@ -4780,11 +4906,11 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     the real builders, handler, notify handler, this writer and the reader; heard, held down or not, since the
     thirtieth; until the twenty-ninth such a session was presumed closed whenever another row vouched, disclosed
     as residual (3) under a comparison with round 2's down host that failed on reachability). RESIDUAL (3), what
-    the arm leaves open, is two far-host sub-cases that no exchange field in this fix-tier PR closes, one restart
-    sub-case, and one of order, (3d), which the source's own order on its rosters would close (its face (1), which
-    the release by the same hub process's omission causes, the carrier fix as well wherever the older roster carries
-    no answered word of the host); the release's third race, a second machine answering a hub under a far host's
-    name with an empty listing, one window, is stated under (3d), and a second machine naming its own sessions there,
+    the arm leaves open, is two far-host sub-cases that no exchange field in this fix-tier PR closes; a restart
+    sub-case, (3c), and one of order, (3d), are CLOSED since round 6 of fork PR #897 (the reviewer's round-5 ruling C
+    and its decisions 1 and 4), each stated below with its witnesses; the release's third race, a second machine
+    answering a hub on an earlier build under a far host's name with an empty listing, one window, is stated under
+    (3d), and a second machine naming its own sessions there,
     or one that keeps exchanging there whatever its listing, is outside the model (THE PREMISE above, which states
     that the latter reopens the window at each of its exchanges). Each
     false rule 5 below is the reader's answer, and its window ends at the event
@@ -4803,15 +4929,18 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     tests/test_dead_session_staleness.py ReaderFollowsTheWriter test_residual_3a_a_far_host_whose_cached_roster_is_empty_behind_a_heard_hub_still_answers_rule_5).
     Its second face: a far host whose cached exchange with the hub named sessions and carried a new session's mail
     here, and whose bus then restarts during its kernel's blink with no twin, so its next exchange with the SAME hub
-    process carries no session row; the hub's roster omits the host on the road that named it, which reads as the
-    host's empty answer and, for a far bus heard answering in this process, releases its held word (_via_held), and
+    process carries no session row (its answer to the hub's dial, placed there after its cached roster: a hub on this
+    build merges the host's own dial, its names kept); the hub's answer to this bus's dial, built after the host's
+    cached word, omits the host, which reads as the host's empty answer and, for a far bus heard answering in this
+    process, releases its held word (_via_held; the hub's dial omitting it merges here and releases nothing), and
     the session answers rule 5: a false rule 5 whose window ends at the far host's answering exchange with the hub
     and the hub's next exchange here, a settle inside it standing. For a far bus heard only over caches here, or one
     from a release before this PR, the same omission holds the word, cost (a) below, and the session stays
     cannot-determine, so this face does not open for it (the reviewer's verifier at the fifty-fourth commit, by
     execution, its road vfy3aSecondFaceHeardOnlyOverCaches). The release by the same hub process's omission below
     causes this face (the thirty-second commit;
-    until then the word stayed held), one of the release's three races, its cost under the reviewer's ruling to keep
+    until then the word stayed held), one of the release's two races since round 6 of fork PR #897 ((3d)'s face (1) is
+    closed), its cost under the reviewer's ruling to keep
     it (under (3d) below), and its closure is
     the carrier fix below (the witness, asserting that rule-5 answer: test_residual_3a_a_far_hosts_empty_cache_after_its_bus_restarts_releases_its_held_word_and_its_session_answers_rule_5). (3b) A far
     host whose last exchange with the hub served a cache and that then stops exchanging with the hub, whether or not
@@ -4820,8 +4949,9 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     last word with viaAnswered False; the via row here stays reachable (the hub's link) and unanswered, and the arm
     holds every sid on this machine at cannot-determine until that host answers the hub again and the hub's next
     exchange reaches here, or this bus holds that host directly and its own answering exchange lands here (the
-    fold consumes the via row while that host's row speaks; held down after, the hub's word stands again), or this
-    bus restarts: the restricted side, no false settle (the witness:
+    fold consumes the via row while that host's row speaks; held down after, the hub's word stands again); this
+    bus's restart releases nothing since round 6 of fork PR #897 (the reviewer's decision 4 on round 5: the via row is
+    carried with its bit False and holds the arm): the restricted side, no false settle (the witness:
     tests/test_dead_session_staleness.py ReaderFollowsTheWriter test_residual_3b_a_far_host_gone_after_a_cached_exchange_with_its_hub_holds_every_sid_while_the_hub_gossips_it).
     The hub's restart is no release: a restarted hub's rosters omit the host until the host exchanges with it again,
     and the host's word stays held on the hub's row (_via_held; until the thirty-first commit the hub's first exchange after its
@@ -4829,18 +4959,20 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     cached exchange answered rule 5 while another row vouched, the reviewer's verifier at the thirtieth, by
     execution; the witnesses:
     test_a_far_hosts_cached_word_stays_held_when_its_hub_restarts_until_the_far_host_answers,
-    test_a_second_hubs_older_answered_word_does_not_release_the_first_hubs_held_word_and_our_restart_does and
+    test_a_second_hubs_older_answered_word_does_not_release_the_first_hubs_held_word_and_neither_does_our_restart (named
+    ..._and_our_restart_does until round 6 of fork PR #897) and
     test_a_hub_known_by_its_declared_name_that_restarts_and_then_folds_keeps_the_held_word there, and
     tests/test_postal_remote_sids_mirror.py test_a_hubs_held_word_about_a_far_host_stays_heard_until_the_hub_names_that_host_again).
-    The SAME hub process's omission, on the road that last named the host, is the release: a hub gossips a far host
+    The SAME hub process's omission, in its answer to a dial this bus built after the host's last unanswered word, is
+    the release: a hub gossips a far host
     only through that host's session rows and forgets a far host's PEER_STATE only at its own fold, whose rows then
     name the host's bus under the other name, so a hub process that named the host and now omits it has recorded the
     host's next exchange, carrying no session row: an answering exchange with an EMPTY listing, the host's sessions
     all ended, or an empty cache, (3a)'s second face above (until the thirty-second commit the word stayed held for
     this bus process's life, every sid on this machine at cannot-determine; the reviewer's verifier at the
     thirty-first, by execution). Since round 6 of fork PR #897 (the reviewer's round-5 ruling B) it is the release
-    only for a far bus HEARD ANSWERING in this process (_ANSWERED_BUSES: that bus's own exchange here, or a hub's
-    gossip row, by either road, carrying its answered bit): a far bus from before the blink honesty of 2026-09-01
+    only for a far bus HEARD ANSWERING in this process (_ANSWERED_BUSES: that bus's own row here, or a hub's gossip
+    row, carrying its answered bit as the row STORES it, so a roster this bus holds notes nothing: ruling C): a far bus from before the blink honesty of 2026-09-01
     (every release up to v0.14.0) gossips an EMPTY roster while its kernel listing does not answer, and the omission
     read that blink as the empty answer, so a session started there during the blink, whose mail rode through the
     hub, answered rule 5 while the hub vouched, and a courier completion in the window settled its card for good, at
@@ -4852,95 +4984,104 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     from a current one serving a cache, so the evidence is remembered, per far bus id; a word with no viaBus never
     qualifies. Every other far bus's omitted word stays held: cost (a) below, which the ruling accepts on the
     restricted side (a hold is visible, a false rule 5 is silently wrong). The reviewer ruled to keep this release
-    (round 4), over the far buses heard answering since round 6. Its cost is three races, each reading a far bus
-    heard answering here, (3a)'s
-    second face above, (3d)'s face (1) below and a third, a second machine the hub files under the host's name
+    (round 4), over the far buses heard answering since round 6, and on the answer road alone since its round-5 ruling C
+    and decision 1, which close (3d)'s face (1) below. Its cost is two races, each reading a far bus heard answering
+    here, (3a)'s second face above and a second machine a hub on a build before round 6 files under the host's name
     answering it with an empty listing, which reads as the host's own; each is a false rule 5 whose window ends at
     the next word about the host (a second machine that keeps exchanging under the host's name is THE PREMISE's
     violation, which reopens the window at each of its exchanges: THE PREMISE above), and a completion, reply or
     resolve for the sender inside a window settles it wrong for good: a rare permanent wrong settle, which the ruling
     weighs against holding the word, a common frozen machine (the ruling, its trade and the third race are stated
     under (3d)). That reading needs the omitting
-    roster taken after the naming one, and this bus
-    records one hub process's rosters by two roads, the hub's dial (peer_exchange_handle) and its answer to our dial
-    (peer_exchange_apply): each road keeps the hub's order (one dialing loop each way, each exchange finished before
-    the next; residual (3d)'s face (1) below names where one road does not), the two together do not, since the hub takes its answer to our dial when that dial reaches it, and an
-    answer taken before the hub's later dial can be folded here after that dial is recorded (the reviewer's verifier
-    at the thirty-second commit, by execution: the answer's omission released the word, and a session whose mail the
-    hub's dial had carried answered rule 5 while another row vouched). So each held word keeps the road whose roster
-    last named it (`hubRoad`, _via_held), and an omission by the other road holds it, cost (h) below. The witnesses:
+    roster taken after the naming one, and the one exact order this bus has on a hub's rosters is the hub's answer to
+    a dial this bus built after it recorded the naming roster (the hub builds that answer after the request arrived:
+    _placed). The hub's dials land in whatever order (a hub that links this bus under two names dials it from two
+    loops, and a request it gave up on can land after its next), and an answer to a dial built before the naming
+    roster was recorded can be taken before the hub's later dial and folded here after it (the reviewer's verifier at
+    the thirty-second commit, by execution: the answer's omission released the word, and a session whose mail the
+    hub's dial had carried answered rule 5 while another row vouched). So the release fires only in the hub's answer
+    to a dial this bus built after the host's last unanswered word (_via_held, reading the host's mark in _order_row's
+    viaMark; round 6 of fork PR #897, the reviewer's round-5 ruling C and decision 1), whatever road named the host;
+    from the thirty-third commit until then it keyed on the road whose roster last named the host (`hubRoad`, still
+    stamped on each held word), which held a word the other road omitted, cost (h), closed since. The witnesses:
     tests/test_dead_session_staleness.py ReaderFollowsTheWriter
-    test_a_far_hosts_empty_answer_through_the_same_hub_process_releases_its_held_word (the hub's dial),
-    test_a_far_hosts_empty_answer_releases_its_held_word_through_our_dial_to_the_same_hub_process (our dial, once
-    its answer named the host), test_a_far_hosts_empty_answer_holds_its_word_through_the_fold_and_the_same_hub_processs_next_dial_releases_it
-    (our dial's fold of the hub's declared-name row holds it, the hub's next dial releases it; until the
-    thirty-third commit ..._releases_its_held_word_through_the_fold_of_the_same_hub_process, released at the fold),
-    test_a_far_hosts_empty_answer_releases_its_word_through_the_fold_by_the_hubs_own_dial_under_a_new_name and
-    test_an_older_answer_folded_after_the_hubs_newer_dial_keeps_the_far_hosts_word_held (the verifier's road), and
-    tests/test_postal_remote_sids_mirror.py
+    test_a_far_hosts_empty_answer_through_the_same_hub_process_releases_its_held_word (the hub's dial holds, our dial's
+    answer releases), test_a_far_hosts_empty_answer_releases_its_held_word_through_our_dial_to_the_same_hub_process
+    (our dial, once its answer named the host),
+    test_cost_h_closed_a_far_hosts_word_named_on_the_hubs_dial_is_released_by_the_answer_to_our_next_dial,
+    test_a_far_hosts_empty_answer_holds_its_word_through_the_fold_and_after_while_its_answered_word_came_only_on_rosters_held_here
+    (named ..._through_the_fold_and_the_same_hub_processs_next_dial_releases_it until round 6, and
+    ..._releases_its_held_word_through_the_fold_of_the_same_hub_process until the thirty-third commit) and
+    test_a_far_hosts_empty_answer_holds_its_word_through_the_fold_by_the_hubs_own_dial_under_a_new_name (named
+    ..._releases_its_word_through_the_fold_by_the_hubs_own_dial_under_a_new_name until round 6): a hub known here by
+    the name it declares alone, whose rosters no answer of this bus placed, so its far host is never heard answering
+    through it, cost (a) below; test_an_older_answer_folded_after_the_hubs_newer_dial_keeps_the_far_hosts_word_held (the
+    verifier's road), and tests/test_postal_remote_sids_mirror.py
     test_a_hubs_held_word_is_released_by_the_same_hub_process_omitting_a_far_host_heard_answering_and_held_by_a_hub_that_cannot_say,
-    test_a_hubs_held_word_is_released_on_the_road_that_named_it_only_for_a_far_bus_heard_answering and
-    test_a_far_bus_is_heard_answering_by_its_own_exchange_here_or_by_any_hubs_gossip_on_either_road_and_by_json_true_alone
-    (from the thirty-third commit until round 6 the list also carried
+    test_a_hubs_held_word_is_released_only_by_an_answer_placed_after_it_and_only_for_a_far_bus_heard_answering (named
+    ..._released_on_the_road_that_named_it_only_for_a_far_bus_heard_answering until round 6) and
+    test_a_far_bus_is_heard_answering_by_its_own_answer_here_or_by_a_hubs_gossip_this_bus_released_and_by_json_true_alone
+    (named ..._by_its_own_exchange_here_or_by_any_hubs_gossip_on_either_road_and_by_json_true_alone until round 6; from
+    the thirty-third commit until round 6 the list also carried
     test_a_far_host_with_no_bus_id_is_released_by_the_same_hub_processs_omission_on_the_road_that_named_it, renamed at
     round 6 to test_a_far_host_with_no_bus_id_keeps_its_word_held_when_the_same_hub_process_omits_it_on_the_road_that_named_it,
-    a witness of cost (a) below). The follow-up for (3a), both faces, (3b), (3d)'s face (1) wherever the older roster
-    carries no answered word of the host, cost (g) and cost (a)'s two current-far-bus cases below is the carrier fix,
+    a witness of cost (a) below). The follow-up for (3a), both faces, (3b), cost (g) and cost (a)'s two current-far-bus
+    cases below is the carrier fix,
     each heard far host's answered bit
-    carried independent of session rows: an exchange-field change outside this fix-tier PR. (3c) A session whose mail landed on a host's cached
-    exchange in this bus's PREVIOUS process: after the restart the host's row is carried, heard false, and a
-    carried row holds nothing (its bit is its last process's, and a hold on it would hold every sid for the file's
-    life for a host never heard again, whose only release would be the kernel's word that the host is gone, the
-    forget notify below, which no notify carries yet), so the session, in no row, answers rule 5 while another
-    host vouches: a false rule 5 left open, from this bus's restart until that host's first exchange in the new
-    process, over its cache (the arm) or answered (rule 4 by its roster). A far host's cached word through a hub
-    is the same: a held word lives in this process's memory, and after the restart the via row is carried and
-    holds nothing, until the host's next word reaches here. The witnesses assert that rule-5 answer and turn red
-    when the residual closes: tests/test_dead_session_staleness.py ReaderFollowsTheWriter
-    test_residual_3c_a_session_whose_mail_landed_on_a_cached_exchange_before_this_bus_restarted_answers_rule_5,
-    and for the far host's face the last step of
-    test_a_second_hubs_older_answered_word_does_not_release_the_first_hubs_held_word_and_our_restart_does.
-    (3d) A roster that reaches this bus after a NEWER one from the same source: the latest roster RECORDED stands,
-    so a session whose mail rode the newer, cached roster (the arm) answers rule 5 once the older one lands, while
-    another row vouches, its window ending at the source's next exchange here. Three faces: (1) by the SAME road and
-    hub process, a word the newer roster named is released by the older one's omission (a hub that links this bus under two names dials it from
-    two loops, and a request the hub gave up on can arrive after its next one: the road and the hub process match,
-    and nothing here tells the order), where the word's far bus has been heard answering in this process; where it
-    has not, that omission holds the word, cost (a) below, and this face does not open (the reviewer's round-5
-    ruling B; by execution at round 6 in each of the three shapes below); (2) by EITHER road, an older roster
-    naming the far host's ANSWERED word
-    recorded after the newer one naming its cached word replaces that word (across the two roads, the reviewer's
-    verifier's control at the thirty-second commit, an older answer folded after the hub's dial; by the same road,
-    the hub's older dial naming the host's answered word, another session, the reviewer's re-verifier at the
-    forty-sixth); (3) the same for a peer's own row, an older answered roster folded after its cached dial. All three
-    answer rule 5 at the round's base, where no arm existed (each already at the newer roster), and face (2) by the
-    same road at the thirty-first commit too. The release by the same hub process's omission above CAUSES face (1)
-    (the thirty-second commit; the reviewer's verifier at the thirty-third, by execution): at the thirty-first commit
-    the word stayed held, and the session answered cannot-determine once the older roster landed, as it does under a
-    writer without that release. A false rule 5 left open. Face (1)'s shape is what the older roster carries about the
-    host, which is what the hub had heard from it when it built that roster: nothing, a restarted hub's roster built
-    before it heard the host (the reviewer's verifier at the thirty-third commit); an EMPTY CACHE, one hub process's
-    roster built after the host's bus restarted during its kernel's blink with no twin (the reviewer's re-verifier at
-    the forty-sixth), which since round 6 releases only where the restarted process has been heard answering in this
-    process by the time the older roster lands (the witness relays its answered word before the newer roster, and
-    another hub's gossip of that word landing between the two rosters releases the word too, the reviewer's verifier
-    at the fifty-fifth commit, by execution; over an empty cache from a restarted far process not heard answering here
-    by then the word is held, the reviewer's round-5 ruling B: tests/test_dead_session_staleness.py
-    ReaderFollowsTheWriter
-    test_residual_3d_face_1_over_an_empty_cache_from_a_far_process_never_heard_answering_here_holds_the_word); or the
-    host's ANSWERED EMPTY listing, one hub process's roster built after the host's sessions
-    all ended (the reviewer's verifier at the forty-fifth), the host in the last two naming a session and blinking
-    before the newer roster; each driven by execution and held at the thirty-first commit. The source's own order on
-    its rosters closes all three faces, face (1) in every shape. The carrier fix above closes face (1) wherever the
-    older roster carries no answered word of the host (the hub had not heard it, or its word there was a cache): the
-    release then keys on the far host's own answered word, and such a roster carries none, its carried bit absent or
-    unanswered, the reason the carrier closes (3a)'s second face. Only where the older roster carries the host's
-    answered EMPTY listing does the source's own order alone close it, since a release keyed on that word still
-    fires. Both are exchange-field changes outside this fix-tier PR. THE RELEASE'S THIRD RACE: a hub files every
+    carried independent of session rows: an exchange-field change outside this fix-tier PR. (3c), CLOSED in the held direction (round 6 of
+    fork PR #897, the reviewer's decision 4 on round 5): a session whose mail landed on a host's cached exchange in this
+    bus's PREVIOUS process, a bus restart overlapping a kernel blink (the self-update path). The restarted bus does not
+    hold what that exchange carried, so it releases nothing: the host's row is carried with its bit False and holds the
+    listing-unanswered arm (kernel/judge.py _holds_the_arm reads a carried host row, `kind` peer or via, whose bit is
+    False), and the host's first rosters in the new process hold its row, as every row starts held there (_fold_rows),
+    until the host's answer to a dial this bus built after them; a far host's cached word through a hub is carried the
+    same way, its via row holding the arm until the hub names the host again with an answered word on an answer placed
+    after it. Until round 6 a carried row held nothing, and the session, in no row, answered rule 5 while another host
+    vouched, from this bus's restart until that host's first exchange in the new process. The cost, on the restricted
+    side: a host whose last exchange before the restart served a cache and that never returns holds every sid for the
+    file's life (costs (c) and (f) below), and a row this bus never dials stays held across restarts (cost (ii) below).
+    The witnesses: tests/test_dead_session_staleness.py ReaderFollowsTheWriter
+    test_residual_3c_a_session_whose_mail_landed_on_a_cached_exchange_before_this_bus_restarted_holds_until_its_host_answers_our_dial
+    (named ..._answers_rule_5 until round 6, when it witnessed the residual left open), for the far host's face the
+    last step of test_a_second_hubs_older_answered_word_does_not_release_the_first_hubs_held_word_and_neither_does_our_restart,
+    and the reader's arm, PresumedClosed test_the_deadness_ladder.
+    (3d), CLOSED (round 6 of fork PR #897, the reviewer's round-5 ruling C and its decision 1, ONE RELEASE RULE): a
+    roster that reaches this bus after a NEWER one from the same source. Until round 6 the latest roster RECORDED
+    stood, so a session whose mail rode the newer, cached roster (the arm) answered rule 5 once the older one landed,
+    while another row vouched, in three faces, each rule 5 at the forty-ninth commit (at the round's base the judge
+    never reached rule 5 at all): (1) by the same road and hub process, a word the newer roster named, released by
+    the older one's omission (a hub that links this bus under two names dials it from two loops, and a request the
+    hub gave up on can arrive after its next one); (2) by either road, an older roster naming the far host's ANSWERED
+    word, which replaced its cached word; (3) the same for a peer's own row, by either road. The order closes all
+    three: only an answer to a dial this bus built after it recorded a roster is placed after that roster, and only
+    such an answer releases a hold or drops a name (_order_row: a row's mark at its last unanswered roster, each far
+    host's in viaMark, each name at the last recording that carried it); every other roster, every dial and an answer
+    to a dial built before, merges into the row, its names joining and its bits held, and the omission release fires
+    on the answer road alone (_via_held). The same order keeps an older ANSWERED roster over a newer answered one from
+    dropping a name the newer named (the reviewer's X1 and X2, the merge its decision 1 takes), moves a forgotten row's
+    hold with its names and marks to the row that stays (X3), and, the held state being what a row stores, holds a
+    hub's own face (3) one hop out, the hub on this build gossiping its held row unanswered (X4). The witnesses, each red
+    at the forty-ninth commit: tests/test_dead_session_staleness.py ReaderFollowsTheWriter
+    test_residual_3d_closed_an_older_roster_recorded_after_a_newer_one_merges_and_the_session_its_mail_rode_stays_held
+    (face (2) by the older answer after the newer dial, the older dial after the newer answer and the older dial after
+    the newer dial; face (3) by the answer after the dial, the dial after the answer and the dial after the dial; face
+    (1) by the older dial omitting the host; named test_residual_3d_an_older_roster_recorded_after_a_newer_one_stands_and_its_session_answers_rule_5
+    until round 6, when it witnessed the residual left open),
+    test_residual_3d_face_1_in_one_hub_process_an_older_dial_carrying_the_far_hosts_empty_answer_holds_the_word and
+    test_residual_3d_face_1_in_one_hub_process_an_older_dial_over_the_far_hosts_empty_cache_holds_the_word (each named
+    ..._answers_rule_5 until round 6),
+    test_residual_3d_face_1_over_an_empty_cache_from_a_far_process_never_heard_answering_here_holds_the_word,
+    test_x1_an_older_answered_roster_recorded_after_a_newer_one_keeps_the_session_the_newer_named_in_both_orders,
+    test_x2_a_hubs_older_answered_word_recorded_after_its_newer_one_keeps_the_session_the_newer_named,
+    test_x3_the_fold_of_a_declared_name_row_by_an_older_answer_moves_its_hold_to_the_alias and
+    test_x4_a_hubs_own_face_3_one_hop_out_holds_through_two_buses_on_this_build; the release,
+    test_the_release_is_the_sources_next_answering_exchange, and the mark's rule,
+    test_the_mark_an_answered_dial_landing_while_our_dial_is_out_does_not_push_the_release_back. THE RELEASE'S THIRD RACE: a hub files every
     exchange under the name its sender declares (its PEER_STATE is keyed by name), so a second machine, its own bus,
-    answering the hub under a far host's name with an EMPTY listing replaces the host's word there, and the same hub
-    process's roster omits the host on the road that named it, which this bus cannot tell from the host's own empty
-    answer: after the host's cached word and a new session's mail were relayed here, where the host's bus has been
+    answering the hub under a far host's name with an EMPTY listing replaces the host's word there at a hub on a build
+    before round 6 of fork PR #897 (a hub on this build cannot place the second machine's dial and merges it, the
+    host's names and hold kept: the reviewer's round-5 ruling C), and the same hub process's answer to this bus's dial
+    omits the host, which this bus cannot tell from the host's own empty answer: after the host's cached word and a new session's mail were relayed here, where the host's bus has been
     heard answering in this process, the release frees the held word and the session live on the host answers rule
     5 while another row vouches, a false rule 5 whose window ends at the real host's next exchange with the hub and
     the hub's next exchange here (the reviewer's verifier at the forty-fifth commit, by execution); where it has
@@ -4955,7 +5096,7 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     the host's, and the order does not tell two machines apart. Nor is it the violation of THE PREMISE above by a
     second machine naming its own sessions, which the release does not cause and which is outside the model. THE REVIEWER'S
     RULING ON THE RELEASE (round 4, restated at 11:08Z): it stays, since round 6 for the far buses heard answering in
-    this process alone (the reviewer's round-5 ruling B amends the 10:19Z ruling and the 11:08Z trade: for every other
+    this process alone and, since its ruling C and decision 1, on the answer road alone (the reviewer's round-5 ruling B amends the 10:19Z ruling and the 11:08Z trade: for every other
     far bus the hold is accepted as cost (a), a freeze confined to those hosts and visible, and the reviewer's decision
     3 on round 5's open items accepts that population, the hosts on v0.15.0 to v0.17.1 among them, as wider than a
     marker for the honesty would give; the trade below is weighed over the far buses heard answering). Holding the word
@@ -4964,9 +5105,10 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     named it over a cache) answering the hub with an empty listing once its sessions all end: every sid on this
     machine stays at cannot-determine, cleared only by this bus's restart while the host stays empty (the host's next
     session, or its own row speaking here, _direct_row_speaks, ends it sooner), and nothing tells the reader it is
-    happening. The release's cost is its three races, face (1) here, (3a)'s second face above and the third race
-    above, each a false rule 5 whose window ends at the next word about the host, face (1)'s at the hub's next roster,
-    which names the host again, and the third race's at the real host's next exchange with the hub and the hub's next
+    happening. The release's cost is its two races since round 6, (3a)'s second face above and the third race above
+    (face (1), a third until then, closes with (3d)), each a false rule 5 whose window ends at the next word about the
+    host, (3a)'s second face's at the far host's answering exchange with the hub and the hub's next exchange here, and
+    the third race's at the real host's next exchange with the hub and the hub's next
     exchange here (a second machine that keeps exchanging under the host's name is THE PREMISE's violation, which
     reopens the window at each of its exchanges: THE PREMISE above). A settle decided inside a window does not end
     with it: a completion, reply or
@@ -4977,21 +5119,15 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     race AND a completion, reply or resolve for the sender landing inside its window, while HOLD's freeze is the
     common empty-peer state, cleared only by a restart. The ruling's first reason, that each race is a wrong answer
     the next event corrects, is withdrawn: the next word corrects the reader's answer, not a settle decided on it. The
-    carrier fix closes (3a)'s second face and face (1) wherever the older roster carries no answered word of the host;
-    the source's own order closes face (1) in every shape; no follow-up named here closes the third race. The
-    witnesses, in tests/test_dead_session_staleness.py ReaderFollowsTheWriter:
-    test_residual_3d_an_older_roster_recorded_after_a_newer_one_stands_and_its_session_answers_rule_5 (the three
-    faces' rule-5 answers, face (2) by both roads, face (1)'s cause beside its answer and the hub's next roster ending
-    its window), test_residual_3d_face_1_in_one_hub_process_an_older_dial_carrying_the_far_hosts_empty_answer_answers_rule_5
-    (the host's answered empty listing on the older dial pinned) and
-    test_residual_3d_face_1_in_one_hub_process_an_older_dial_over_the_far_hosts_empty_cache_answers_rule_5 (the
-    hub's word about the host a cache, empty, when it built the older dial), each turning red when the residual
-    closes;
-    test_the_releases_third_race_a_second_machine_answering_the_hub_under_a_far_hosts_name_with_an_empty_listing_answers_rule_5,
-    turning red when the race closes; and
+    carrier fix closes (3a)'s second face; no follow-up named here closes the third race. The witnesses, in
+    tests/test_dead_session_staleness.py ReaderFollowsTheWriter:
+    test_residual_3a_a_far_hosts_empty_cache_after_its_bus_restarts_releases_its_held_word_and_its_session_answers_rule_5
+    and test_the_releases_third_race_a_second_machine_answering_the_hub_under_a_far_hosts_name_with_an_empty_listing_answers_rule_5,
+    each turning red when its race closes, and
     test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word (a completion in each
-    window of the release's three races: face (1) in its three shapes, (3a)'s second face and the third race; and in
-    the reopened window of THE PREMISE's violation above, its window settleAgain).
+    window of the two races and in the reopened window of THE PREMISE's violation above, its window settleAgain, each
+    'completed' for good; and in each of face (1)'s three shapes, 'working' since round 6, 'completed' at the
+    forty-ninth commit).
     The display and routing
     consumers keep their own fold (_via_duplicate: a direct
     link wins over a relay hop on screen and on the wire); the mirror does not use it, because what the
@@ -4999,10 +5135,12 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     THE LISTING-UNANSWERED ARM AND WHAT IT COSTS (round 4 of fork PR #897, the reviewer's ruling on its round-3
     refuters' finding, the twenty-ninth commit, the thirtieth, the thirty-first, the thirty-second and the thirty-third). The reader answers cannot-determine,
     "listing-unanswered", for a sid no row names while any row HEARD in this process is unanswered (`heard` True and
-    `answered` False: a peer row or a via row whose last exchange here served a cache, whatever its link state, held
-    down included, a via row's word held across a restarted hub's rosters that omit the far host included), whatever another
-    row vouches, so rule 5 fires only when a row vouches for absence, no row names the sid, no heard row is
-    unanswered and no lost-carry mark stands. The twenty-ninth commit's arm read `reachable`
+    `answered` False: a peer row or a via row whose last exchange here served a cache, or is held under the order,
+    whatever its link state, held down included, a via row's word held across a hub's rosters that omit the far host
+    included), or a host's row CARRIED from before this bus's restart is (`kind` peer or via, `answered` False: the
+    reviewer's decision 4 on round 5, kernel/judge.py _holds_the_arm), whatever another row vouches, so rule 5 fires
+    only when a row vouches for absence, no row names the sid, no heard or carried host row is unanswered and no
+    lost-carry mark stands. The twenty-ninth commit's arm read `reachable`
     in place of `heard`, so a held-down row released the hold: the kernel's down notify after the exchange that
     carried a session's mail, or a held-down host's own dial over its cache carrying it, let rule 5 presume the live
     session closed and run_propagate settle its card (the reviewer's verifier, by execution; closed by the
@@ -5010,12 +5148,13 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     hub's first roster omitted the far host, the via row was carried out of the population, and the session whose
     mail the hub had relayed here answered rule 5 (the reviewer's verifier at the thirtieth, by execution; closed by
     the held word, _via_held, residual (3b) below). A heartbeat row carries answered True, expired or not, and never
-    trips it. The release is that source's next answering exchange, which both recorders already record by replacing
-    the row's bit (for a via row, the far host's answering exchange with its hub and then the hub's next exchange
-    here, whose word replaces the current or held one, or, for an answer with an empty listing, omits the host from
-    the same hub process's roster on the road that last named it, for a far bus heard answering in this process since
-    round 6), or this bus's restart, whose carry makes the row not heard: no new event, no
-    timer. The ruling asked for no new writer state; the population needs one piece (and since round 6 the far bus
+    trips it. The release is that source's answer to a dial this bus built after its last unanswered roster (round 6
+    of fork PR #897, the reviewer's round-5 ruling C and its decision 1: the order this bus keeps on a source's
+    rosters, _order_row; a dial, and an answer to a dial built before, releases nothing; for a via row, the far host's
+    answering exchange with its hub and then the hub's answer to a dial of this bus built after the host's last
+    unanswered word, whose word releases the held one, or, for an answer with an empty listing, omits the host, for a
+    far bus heard answering in this process); this bus's restart releases nothing (the reviewer's decision 4 on round
+    5: a carried host row keeps its bit and holds the arm): no timer. The ruling asked for no new writer state; the population needs one piece (and since round 6 the far bus
     ids heard answering, _ANSWERED_BUSES, in memory, gone with the process, which the reviewer's round-5 ruling B
     approves), the hub's held word (`viaHeld`
     on its PEER_STATE row, in memory, gone with the process), since without it a restarted hub's silence released
@@ -5023,7 +5162,10 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     since the same process's silence is the far host's empty answer and a restarted one's is not (the
     thirty-second; until then an empty answer released nothing), and with the road that roster came by (`hubRoad`),
     since this bus's two roads can record one hub process's rosters out of the order the hub took them (the
-    thirty-third). The arm only adds a cannot-determine answer, so it creates no rule 5. The four roads
+    thirty-third; since round 6's ruling C the release places an answer by the dialer's capture instead, and reads
+    no road); and since that ruling C, which approves it, the ORDER STATE: the recording sequence (_PEER_SEQ), each
+    row's mark and each name's recording and roster bus id (`mark`, `namedAt`), each far host's mark and release
+    (`viaMark`), and each dial's capture of the sequence handed to its fold, all in memory and gone with the process. The arm only adds a cannot-determine answer, so it creates no rule 5. The four roads
     it closes, each driven through the real builders, handler, fold, this writer and the reader under both root
     shapes, are tests/test_dead_session_staleness.py ReaderFollowsTheWriter test_a_session_started_on_a_hub_during_its_blink_is_cannot_determine_while_its_word_about_another_host_vouches,
     test_a_cached_hosts_session_is_cannot_determine_while_another_host_vouches_until_its_listing_answers,
@@ -5038,10 +5180,11 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     witness is test_the_release_is_the_sources_next_answering_exchange. Its costs, all on the restricted side (a card that stays
     unsettled, never a live session presumed closed), each with its named witness; heard means heard in this bus
     process: a peer that stops exchanging stays heard, held down or not, until this bus restarts, whose carry makes
-    its row not heard (the kernel's down notify makes it unreachable, never unheard), and a hub's word about a far
-    host whose last word was unanswered stays heard the same way across a restarted hub's rosters that omit that
-    host, until the hub names it again or the same hub process omits it on the road that last named it (a far bus
-    heard answering in this process; for any other far bus the omission holds it, cost (a)):
+    its row not heard (the kernel's down notify makes it unreachable, never unheard), and whose carried row, its bit
+    False, still holds the arm (the reviewer's decision 4 on round 5); and a hub's word about a far host whose last
+    word was unanswered stays heard the same way across the hub's rosters that omit that host and cannot release it,
+    until the hub names it again or the same hub process omits it in its answer to a dial this bus built after that
+    word (a far bus heard answering in this process; for any other far bus the omission holds it, cost (a)):
       (a) a peer that lacks the field (an older bus, the project's own included), heard here or gossiped by a heard
           hub, holds rule 5 at cannot-determine for every sid (test_cost_a_a_peer_lacking_the_field_holds_every_sid_beside_a_vouching_host);
           and since round 6 (the reviewer's round-5 ruling B) through the same hub process's omission as well: a far
@@ -5049,9 +5192,11 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           caches), whose word a heard hub last gossiped unanswered, keeps that word held after the hub omits it, so for
           such a host whose sessions have really ended every sid on this machine stays at cannot-determine. How long,
           by population: a far bus from a release before this PR (the hosts on v0.15.0 to v0.17.1, blink-honest but
-          sending no presenceAnswered, among them), until this bus restarts, or until the hub names that host again
-          with an answered word, which needs the host on a release carrying presenceAnswered, with a session of it in
-          that hub's roster. While the host stays on its release the hub naming it again gives another unanswered
+          sending no presenceAnswered, among them), until the hub names that host again with an answered word on an
+          answer to a dial of this bus built after the hold, which needs the host on a release carrying
+          presenceAnswered, with a session of it in that hub's roster; this bus's restart ends nothing since round 6
+          (the via row is carried with its bit False and holds the arm: the reviewer's decision 4 on round 5, which
+          governs its decision 3's restart clause). While the host stays on its release the hub naming it again gives another unanswered
           word, and its own row never speaks here, since _direct_row_speaks needs presenceAnswered True. Once it runs
           such a release (a new process, with a new bus id), being heard answering by another road (its own exchange
           here, another hub's gossip) does not end it: the held word carries the older process's bus id, never heard
@@ -5060,13 +5205,16 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           word the new process's, held or released on that process's own evidence (round 6 of fork PR #897, the
           reviewer's verifier at the fifty-sixth commit, by execution; the witnesses, tests/test_dead_session_staleness.py
           ReaderFollowsTheWriter
-          test_cost_a_a_far_host_on_a_release_before_this_pr_whose_sessions_end_holds_its_word_until_the_hub_names_it_again_or_our_bus_restarts,
-          with its leg after the host upgrades, and for a far host with no bus id
+          test_cost_a_a_far_host_on_a_release_before_this_pr_whose_sessions_end_holds_its_word_until_the_hub_names_it_again_answered
+          (named ..._until_the_hub_names_it_again_or_our_bus_restarts until round 6's decision 4), with its leg after
+          the host upgrades, and for a far host with no bus id
           test_a_far_host_with_no_bus_id_keeps_its_word_held_when_the_same_hub_process_omits_it_on_the_road_that_named_it
-          there); a current bus heard only over caches, until the hub relays its answered word, its own row speaks for
-          it here (_direct_row_speaks), this bus restarts, or, once any hub relays its answered word or its own
-          exchange here answers, the same hub process's next omission of it on the road that named it, the release for
-          a far bus heard answering (the same verifier; the witness,
+          there); a current bus heard only over caches, or only on rosters this bus holds (the far bus's own dials, a
+          hub's dials, a hub it does not dial: cost (ii) below; the answered-bus set reads the stored rows, the
+          reviewer's round-5 ruling C), until a hub's answer to a dial of this bus built after the hold relays its
+          answered word, its own row speaks for it here (_direct_row_speaks), or, once such an answer or its own answer
+          here is heard, the same hub process's next omission of it in its answer to a dial built after its word, the
+          release for a far bus heard answering; this bus's restart ends nothing (the same verifier; the witness,
           test_cost_a_a_current_far_host_heard_here_only_over_caches_that_answers_its_hub_empty_holds_its_word_until_its_answer_is_relayed
           there, with its leg where another hub relays); and a current far host whose first answered exchange with the
           hub carries an empty listing reads the same, since a hub stamps a far host's bit only on that host's session
@@ -5077,9 +5225,12 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
       (c) so does a heard row with no link state (an origin-only row, a host the kernel never notified, a far bus
           under its declared name before the fold) whose last exchange served a cache and that then stops
           exchanging: a peer's presence has no TTL and a row with no link state has no down event
-          (_source_link_down), so the arm holds every sid until that host's next answering exchange or this bus's
-          restart, whose carry makes the row not heard, and for a host that never returns the restart is the only
-          release (test_cost_c_a_host_with_no_link_state_that_dials_once_over_a_cache_and_falls_silent_holds_every_sid_until_a_restart);
+          (_source_link_down), so the arm holds every sid until that host's answer to a dial of this bus built after
+          its cached roster (a row this bus never dials has none: cost (ii) below), and since round 6 this bus's restart
+          releases nothing (the reviewer's decision 4 on round 5: the carried row keeps its bit False and holds the
+          arm), so for a host that never returns the hold lasts for the file's life
+          (test_cost_c_a_host_with_no_link_state_that_dials_once_over_a_cache_and_falls_silent_holds_every_sid_across_our_restart,
+          named ..._until_a_restart until round 6);
       (d) residual (3b) above, with its witness, for a far host that never returns whether or not its hub restarts;
       (e) the settle: the release reaches the reader's answer, not a settle already decided. The judge reads
           _presumed_closed only at a courier write, a reply or a user resolve, and a dead sender has no pass of its
@@ -5089,13 +5240,17 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           test_cost_e_a_dead_sender_rolled_up_while_a_reachable_row_is_unanswered_stays_unsettled_after_the_release);
       (f) so does a heard row whose last exchange served a cache and whose host the kernel then holds down and that
           never answers again (its machine went away during its kernel's blink), the same shape as (c): the down
-          notify does not release the arm, so it holds every sid until that host's next answering exchange or this
-          bus's restart, whose carry makes the row not heard, the only release for a host that never returns
-          (test_cost_f_a_host_held_down_after_a_cached_exchange_that_never_returns_holds_every_sid_until_a_restart);
+          notify does not release the arm, so it holds every sid until that host's answer to a dial of this bus built
+          after its cached roster, and since round 6 across this bus's restart too, so for a host that never returns
+          for the file's life (test_cost_f_a_host_held_down_after_a_cached_exchange_that_never_returns_holds_every_sid_across_our_restart,
+          named ..._until_a_restart until round 6);
       (g) so does a far host whose word is held across its hub's restart and that then answers the restarted hub with
           an EMPTY listing, its sessions all ended: the restarted hub's omission of a host it has not heard reads the
           same as that answer, so the word stays held and the arm holds every sid until the hub names the host again
-          or this bus restarts (the thirty-second commit; test_cost_g_a_far_host_that_answers_a_restarted_hub_with_an_empty_listing_holds_every_sid_until_a_restart); a hub from
+          with an answered word on an answer placed after the hold, and since round 6 across this bus's restart too
+          (the reviewer's decision 4 on round 5: the via row is carried with its bit False) (the thirty-second commit;
+          test_cost_g_a_far_host_that_answers_a_restarted_hub_with_an_empty_listing_holds_every_sid_across_our_restart,
+          named ..._until_a_restart until round 6); a hub from
           before busId, which cannot say that it is the same process, holds its omitted words the same way
           (tests/test_postal_remote_sids_mirror.py
           test_a_hubs_held_word_is_released_by_the_same_hub_process_omitting_a_far_host_heard_answering_and_held_by_a_hub_that_cannot_say),
@@ -5103,14 +5258,15 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           restart and, since round 6, within one process too (_via_held;
           test_a_hub_from_before_viabus_renaming_a_far_host_holds_the_old_names_word_within_one_process_and_across_its_restart
           there; such a hub predates presenceAnswered, so cost (a) already holds every sid while it is heard);
-      (h) so does a far host's word that one of this bus's two roads named and the other omits, the hub's dial and
-          its answer to our dial (the thirty-third commit: the two roads can record one hub process's rosters out of
-          the order the hub took them, _via_held): the word stays held, every sid at cannot-determine, until the
-          naming road's next exchange omits the host too, one exchange of that road later, or, if that road carries
-          no further exchange, until the hub names the host again, the host's own row speaks for it here or this bus
-          restarts (tests/test_dead_session_staleness.py ReaderFollowsTheWriter
-          test_cost_h_a_far_hosts_word_named_on_the_hubs_dial_stays_held_across_our_dials_until_the_hubs_next_dial_omits_it).
-          The hold rests on each roster being recorded whole, one road after the other, and the two recorders run at
+      (h) CLOSED since round 6 of fork PR #897 (the reviewer's round-5 ruling C and its decision 1): from the
+          thirty-third commit a far host's word that one of this bus's two roads named and the other omitted stayed
+          held, every sid at cannot-determine, until the naming road omitted it too; the release now fires in the hub's
+          answer to a dial this bus built after the host's last unanswered word, whatever road named it, and the hub's
+          dial releases nothing (tests/test_dead_session_staleness.py ReaderFollowsTheWriter
+          test_cost_h_closed_a_far_hosts_word_named_on_the_hubs_dial_is_released_by_the_answer_to_our_next_dial, named
+          test_cost_h_a_far_hosts_word_named_on_the_hubs_dial_stays_held_across_our_dials_until_the_hubs_next_dial_omits_it
+          until then).
+          The order rests on each roster being recorded whole, one road after the other, and the two recorders run at
           once: each holds _PEER_STATE_LOCK from its read of the hub's row through its store and the fold, so the
           other road's roster is never stored between them and its word lost (round 6 of fork PR #897, the
           reviewer's round-5 ruling A; before it, a race of the two recorders dropped the word from both the
@@ -5118,14 +5274,36 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           test_the_recorders_race_the_fold_holding_inside_its_read_while_the_hubs_dial_is_recorded_keeps_the_word_held,
           test_the_recorders_race_the_handler_holding_inside_its_read_while_our_dials_answer_is_folded_keeps_the_word_held
           and test_the_recorders_race_the_fold_of_a_restarted_hubs_declared_row_holding_inside_the_move_while_its_next_dial_is_recorded_keeps_the_word_held).
-    Costs (c) and (e) are ACCEPTED as restricted-side costs (the reviewer's ruling): at the branch's base the judge
+      (i) a release waits for this bus's own dial built after the row's last unanswered roster (round 6 of fork PR
+          #897, the reviewer's round-5 ruling C): the far side's answered dials hold the row, a late cached roster of
+          the far side (a request it gave up on) pushes the release one dial further, and every row starts held in a
+          new process, so a host's first rosters after this bus's start hold until its answer to a dial of this bus
+          (tests/test_dead_session_staleness.py ReaderFollowsTheWriter test_the_release_is_the_sources_next_answering_exchange
+          and test_the_mark_an_answered_dial_landing_while_our_dial_is_out_does_not_push_the_release_back); and a session
+          that ended stays named, rule 4, until the answer to this bus's first dial built after the last roster that
+          named it (the merge: test_x1_an_older_answered_roster_recorded_after_a_newer_one_keeps_the_session_the_newer_named_in_both_orders
+          and test_x2_a_hubs_older_answered_word_recorded_after_its_newer_one_keeps_the_session_the_newer_named there);
+          the merged names reach routing (peer_route), the /agents listing and this bus's gossip onward
+          (presence_payload) the same while;
+      (ii) every heard row with no dialer on this bus (a dialer runs only for a PEERS row with a port that is up: a
+          host the kernel never notified, an origin-only row, a host whose link the kernel holds down, a far bus under
+          the name it declares before the fold, a host whose dial from this side is refused) stays held after its
+          answered dials, every sid nothing names at cannot-determine, until a dialer runs for it and its first answer
+          lands, and a hub's words about its far hosts are held with it, so those far buses are not heard answering
+          through it (cost (a) above). This bus's restart releases nothing: the carried row keeps its bit, and the
+          row's first roster in the new process is a dial (the reviewer's decision 2 on round 5 accepts this cost
+          knowingly against the 10:19Z trade and names the restart as one end of it; its decision 4, which governs a
+          restart, closes that end) (tests/test_dead_session_staleness.py ReaderFollowsTheWriter
+          test_cost_ii_a_host_this_bus_never_dials_stays_held_across_its_answered_dials_and_our_restart). Its closure is
+          the source's own order, a far-side sequence on each roster, which would let a dial release too.
+    Costs (c), (e), (i) and (ii) are ACCEPTED as restricted-side costs (the reviewer's rulings; (i) and (ii) its round-5
+    ruling C and decision 2): at the branch's base the judge
     never reached rule 5 at all, so every state the arm holds at cannot-determine was unsettled there too, and the
     arm trades a false rule 5, a live session presumed closed, for a card that stays unsettled until the user
     resolves it or the next courier write. The follow-ups, outside this fix-tier PR: the carrier fix (residuals (3a)
-    and (3b) above, (3d)'s face (1) wherever the older roster carries no answered word of the host, cost (g), and
-    cost (a)'s two current-far-bus cases),
-    the source's own order on its rosters (residual (3d) above, all three faces, face (1) in every shape, and cost
-    (h)), and
+    and (3b) above, cost (g), and cost (a)'s two current-far-bus cases), the source's own order on its rosters, a
+    far-side sequence on each roster (cost (ii), and cost (a)'s far buses not heard answering, the reviewer's decisions
+    2 and 3 on round 5; residual (3d) and cost (h) close without it since round 6), and
     settle-on-release, which re-runs the settle of each dead sender a courier write rolled up
     unsettled under the arm, keyed on the release event, with no timer. None of them closes the release's third race
     (under (3d) above), and a second machine naming its own sessions under a far host's name, or one that keeps
@@ -5285,6 +5463,13 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
         row.setdefault("expired", False)
         row.setdefault("answered", False)             # a file from before the field: the restricted side
         row.setdefault("seenAt", 0)
+        if row["kind"] == "via" and str(prev.get("host") or "") in ((table.get(str(prev.get("via") or "")) or {}).get("viaMark")
+                                                                     or {}):
+            row["answered"] = True                    # this process heard the hub's word about the far host (_order_row's
+        #                                                viaMark) and the word has left the hub's roster, answered or released:
+        #                                                nothing of it to hold. A carried row with its bit False holds the
+        #                                                judge's listing-unanswered arm only from before this bus's restart
+        #                                                (round 6 of fork PR #897, the reviewer's decision 4 on round 5)
         if key == REMOTE_SIDS_LEGACY:
             row["sids"] = [s for s in row["sids"] if s not in named]
             if not row["sids"]:
@@ -5469,6 +5654,11 @@ _SEEN_CAP = 4000
 _seen_ids = None                           # lazy in-memory mirror of PEER_SEEN's tail
 EXCHANGE_WAIT = int(os.environ.get("ROMP_POSTAL_EXCHANGE_WAIT", "20"))
 PEER_STATE = {}                            # host -> {"presence": [...], "presenceAnswered": bool, "epoch": int, "seenAt": t, "drift": str}
+#                                            and the order state (round 6 of fork PR #897, the reviewer's round-5 ruling C, which
+#                                            approves it; _order_row): "mark", the recording of the row's last unanswered roster (0,
+#                                            this process's start); "namedAt", {name: [the recording that last carried it, that
+#                                            roster's bus id]}; "viaMark", {far host: [its mark, released]}. `presence` is then the
+#                                            union of the rosters this bus could not place, `presenceAnswered` the stored bit
 _peer_wakes = {}                           # host -> threading.Event (long-poll release + dialer poke)
 _peer_threads = {}                         # host -> Thread (one dialer loop per up peer)
 _peer_pending = {}                         # host -> {"acks": [mid], "bounces": [{mid, why}]} for the NEXT request
@@ -5507,15 +5697,25 @@ _PEER_STATE_LOCK = threading.Lock()        # PEER_STATE's one lock (round 6 of f
 #                                            the lock and writes the table
 _ANSWERED_BUSES = set()                    # the far bus ids heard ANSWERING in this bus process (round 6 of fork PR #897, the
 #                                            reviewer's round-5 ruling B): a bus id whose own exchange here carried presenceAnswered
-#                                            True, or that a hub's gossip row carried as viaBus with viaAnswered True, by either road
-#                                            (_heard_answering, from each recorder's stored row). _via_held releases a far host's held
+#                                            True, or that a hub's gossip row carried as viaBus with viaAnswered True, as each
+#                                            recorder STORES the row (_heard_answering: a roster held under the order, round 6's
+#                                            ruling C, notes nothing). _via_held releases a far host's held
 #                                            word on the same hub process's omission only when the word's viaBus is here: a far bus
 #                                            from before the blink honesty of 2026-09-01 gossips an EMPTY roster at each kernel blink,
 #                                            which that omission cannot tell from an empty answer, and nothing on the wire marks the
 #                                            honesty, so an answered word is the one evidence of a far bus later than it. In memory
 #                                            only, gone with the process, written and read under _PEER_STATE_LOCK alone (the census:
 #                                            tests/test_postal_remote_sids_mirror.py PeerStateLock, THE ANSWERED SET)
-_outbox_lock = threading.Lock()            # serializes an outbox record's listing-into-flight, carry mark and
+_PEER_SEQ = [0]                            # the RECORDING SEQUENCE (round 6 of fork PR #897, the reviewer's round-5 ruling C):
+#                                            each recorder mints the next number for the roster it records (_order_row),
+#                                            and each dial's build reads the current one (build_exchange_request's `built`),
+#                                            handed to the fold of its answer, so an answer is placed after every roster
+#                                            recorded before its dial was built (_placed), the one exact order this bus
+#                                            has on a source's rosters. A row's `mark` and each far host's in `viaMark` are
+#                                            numbers from it. In memory only, from 0 at each process start, gone with the
+#                                            process, written and read under _PEER_STATE_LOCK alone (the census:
+#                                            tests/test_postal_remote_sids_mirror.py PeerStateLock, THE RECORDING SEQUENCE)
+_outbox_lock = threading.Lock()           # serializes an outbox record's listing-into-flight, carry mark and
 #                                            unlink (recall, ack, bounce): none interleaves (_relays_for, _flight_done)
 _inflight = {}                             # host -> {flight id: {mid}}: the records each OPEN exchange is carrying, from
 #                                            its listing to its outcome; a recall meanwhile is "on its way" (_recall). Two
@@ -6474,37 +6674,38 @@ def _canon_peer_name(host, bus_id):
 
 
 def _drop_peer_name_dupes(host, bus_id):
-    """Forget PEER_STATE rows that are the SAME bus as `host` under another, non-dialable name — the
-    stale half of a fold (e.g. the self-declared hostname row left from before the alias attached).
-    Never drops a dialable row: two dialable names for one bus is a kernel-level duplicate with its
-    own fix (attach_remote's token dedupe), and dropping either here would fight the kernel. The forgotten
-    row's HELD WORDS (_via_held: a far host's unanswered word through this bus, heard in this process, that
-    its roster no longer names) move to the row that stays, unless that row's roster names the host or omits it
-    on the road that last named it (_via_held's release by the same process's silence, the thirty-second commit,
-    on that road alone since the thirty-third, the staying row's road being the exchange's that filed it, and for a
-    far bus heard answering in this process alone since round 6 of fork PR #897): they
-    are this bus's words under its other name, and dropped with the row they would release the deadness mirror's
-    listing-unanswered arm with no answering exchange (a hub known here only by the name it declares,
-    restarted, then folded under the alias by this bus's own dial; round 4 of fork PR #897, the thirty-first
-    commit). A forgotten row is one the hub's dial filed under the name it declares, since a dialable row is
-    never forgotten; so when this bus's own dial to the alias folds it, a different road whose roster the hub
-    may have taken before the forgotten row's, the words move held (at the thirty-second commit released
-    there) and the hub's next dial, filed under the alias, releases them if it omits the host; when the hub's
-    own dial under a new name folds it (its hostname changed within its process, which self_host reads live),
-    the same road, its omission releases them. It runs under _PEER_STATE_LOCK, held by its two callers (the
-    recorders) through the row's store and this fold, and does not take the lock itself (it does not re-enter):
-    the pop, the staying row's read and its store are one step, so the other recorder cannot replace the staying
-    row between them and leave the moved words on a row no longer in the table (round 6 of fork PR #897, the
-    reviewer's round-5 ruling A)."""
+    """Forget PEER_STATE rows that are the SAME bus as `host` under another, non-dialable name (_peer_name_dupes), the
+    stale half of a fold (e.g. the self-declared hostname row left from before the alias attached). Never drops a
+    dialable row: two dialable names for one bus is a kernel-level duplicate with its own fix (attach_remote's token
+    dedupe), and dropping either here would fight the kernel. A forgotten row's state moves to the row that stays, as
+    this bus's word about that bus under its other name: dropped with the row, its held words and its hold would
+    release the deadness mirror's listing-unanswered arm with no answering exchange (a hub known here only by the name
+    it declares, restarted, then folded under the alias by this bus's own dial; round 4 of fork PR #897, the thirty-first
+    commit). Since round 6 of fork PR #897 (the reviewer's round-5 ruling C) the recorder moves it BEFORE it orders the
+    roster it records, reading these rows first: their names, their unanswered state and marks and each far host's mark
+    fold into the row the roster is ordered after (_order_row, _fold_rows), and their held words into the staying row's
+    (_via_held), so the staying row is released only by an answer to a dial this bus built after the moved marks (the
+    reviewer's X3, by execution at the forty-ninth commit: the hub's cached dial filed under its declared name, then this
+    bus's older answer from the alias folded, and the session whose mail rode that dial answered rule 5, the same under a
+    mark that did not move with the row). A forgotten row is one the hub's dial filed under the name it declares, since a
+    dialable row is never forgotten. It runs under _PEER_STATE_LOCK, held by its two callers (the recorders) from their
+    read of these rows through the row's store and this forget, and does not take the lock itself (it does not
+    re-enter): the read, the store and the forget are one step, so the other recorder cannot replace the staying row
+    between them and leave the moved state on a row no longer in the table (round 6 of fork PR #897, the reviewer's
+    round-5 ruling A)."""
+    for k in _peer_name_dupes(host, bus_id):
+        PEER_STATE.pop(k, None)
+
+
+def _peer_name_dupes(host, bus_id):
+    """The names of the PEER_STATE rows that are the SAME bus as `host` (`bus_id`) under another, non-dialable name,
+    the rows _drop_peer_name_dupes forgets; none for a bus with no id. Each recorder reads them before it orders its
+    roster, so their holds move to the row it files (_order_row, _via_held), and forgets them after the store, in the
+    one hold under _PEER_STATE_LOCK (round 6 of fork PR #897, the reviewer's round-5 ruling C)."""
     if not bus_id:
-        return
-    for k in [k for k, st in PEER_STATE.items()
-              if k != host and st.get("busId") == bus_id and not (PEERS.get(k) or {}).get("port")]:
-        gone = PEER_STATE.pop(k, None)
-        stays = PEER_STATE.get(host)
-        if isinstance(stays, dict) and isinstance(gone, dict):   # the staying row's road: the exchange that filed it
-            stays["viaHeld"] = _via_held(stays.get("presence") or [], bus_id, str(stays.get("road") or ""),
-                                         {"viaHeld": stays.get("viaHeld")}, gone)
+        return []
+    return [k for k, st in PEER_STATE.items()
+            if k != host and st.get("busId") == bus_id and not (PEERS.get(k) or {}).get("port")]
 
 
 # The most of one host's outbox a single exchange carries (review find, 2026-09-08). The dialed bus reads
@@ -6585,15 +6786,18 @@ def peer_exchange_handle(data, flight=None):
     relays it hands out are IN FLIGHT from the listing (_relays_for, which appends the flight's id to
     `flight`, a list the route passes); the departure event is the response write, so the route ends
     the flight carried once _send returned (2026-09-08), and freed when it raised — nothing here
-    touches the record or the wire form. The dialer's `presenceAnswered` (whether its listing answered for
-    the roster it sent; round 3 of fork PR #897) is recorded on its PEER_STATE row for the deadness mirror,
-    JSON true alone counting, and our own bit rides the response beside our presence (presence_payload). This
-    recorder and peer_exchange_apply run at once by design, this one on the handler's thread for a peer's dial
-    and that one on the dialer's thread for the fold of the same peer's answer, and each derives the hub's held
-    words (_via_held) from the row it replaces; each holds _PEER_STATE_LOCK from its canonicalization (here) or
-    its previous-row read (there) through its store and _drop_peer_name_dupes, and releases it before the
-    mirror's write, which is why a far host's word one recorder records is not lost to the other (round 6 of fork
-    PR #897, the reviewer's round-5 ruling A)."""
+    touches the record or the wire form. The dialer's `presenceAnswered` (whether its listing answered for the
+    roster it sent; round 3 of fork PR #897) is recorded on its PEER_STATE row for the deadness mirror,
+    JSON true alone counting, and our own bit rides the response beside our presence (presence_payload). A dial is a
+    roster this bus cannot place after any roster it recorded, so the row it records is ordered as a MERGE (_order_row;
+    round 6 of fork PR #897, the reviewer's round-5 ruling C and its decision 1): its names join the row's and drop none,
+    and its answered bits release no hold, so a dial releases nothing, and the stored presence, the union, is what
+    routing (peer_route), the /agents listing and this bus's gossip onward (presence_payload) read. This recorder and
+    peer_exchange_apply run at once by design, this one on the handler's thread for a peer's dial and that one on the
+    dialer's thread for the fold of the same peer's answer, and each orders its roster after the row it replaces; each
+    holds _PEER_STATE_LOCK from its canonicalization (here) or its previous-row read (there) through its store and
+    _drop_peer_name_dupes, and releases it before the mirror's write, which is why a far host's word one recorder
+    records is not lost to the other (round 6 of fork PR #897, the reviewer's round-5 ruling A)."""
     host = str((data or {}).get("host") or "").strip()
     if not host:
         return {"error": "host required"}, 400
@@ -6617,6 +6821,8 @@ def peer_exchange_handle(data, flight=None):
             # declare such a name (self_host falls back); this guards against un-updated ones.
             return {"error": "unsafe host name %r — this machine's hostname fails path-safety; fix its "
                              "hostname (or set ROMP_POSTAL_HOST) and redial" % host}, 400
+        prev = PEER_STATE.get(host)                  # the row this dial's roster merges into, and the rows the same bus
+        gone = [PEER_STATE[k] for k in _peer_name_dupes(host, bus_id)]   # left under other names, forgotten below
         row = {"presence": data.get("presence") or [], "epoch": data.get("epoch"),
                "holds": data.get("holds") or [], "seenAt": int(time.time()),
                # whether the dialer's listing answered for this roster (round 3 of fork PR #897): JSON true
@@ -6625,15 +6831,18 @@ def peer_exchange_handle(data, flight=None):
                "presenceAnswered": data.get("presenceAnswered") is True,
                # the road this roster came by, the dialer's request, which _via_held stamps on the words it
                # names (round 4, the thirty-third commit)
-               "road": "dial",
-               # a far host's unanswered word this roster no longer names stays held, heard in this process,
-               # until the hub names that host again, the same hub process omits it on the road that named
-               # it, or this bus restarts (_via_held; round 4, the thirty-first commit to the thirty-third)
-               "viaHeld": _via_held(data.get("presence") or [], bus_id, "dial", PEER_STATE.get(host))}
+               "road": "dial"}
         if bus_id:                                   # the busId and theirTier stamps join the row, so it is stored whole
             row["busId"] = bus_id
         if data.get("tier"):                         # the dialer's declared tier-of-us (additive; older peers omit it)
             row["theirTier"] = str(data["tier"])
+        row = _order_row(row, prev, gone, None)      # a dial: this bus cannot place it after any roster, so it merges
+        #                                              and releases nothing (round 6 of fork PR #897, the reviewer's
+        #                                              round-5 ruling C and its decision 1: ONE RELEASE RULE)
+        # a far host's unanswered word the merged roster no longer names stays held, heard in this process, until
+        # the hub names that host again or the same hub process omits it in its answer to a dial this bus built after
+        # the host's last unanswered word; after this bus restarts its via row is carried unanswered and holds (_via_held)
+        row["viaHeld"] = _via_held(row["presence"], bus_id, "dial", prev, *gone)
         _heard_answering(row)                        # the far bus ids this roster shows answering (the reviewer's round-5
         #                                              ruling B), in the hold that stores the row, before the fold
         PEER_STATE[host] = row
@@ -6692,12 +6901,19 @@ def peer_exchange_handle(data, flight=None):
             _flight_done(host, fid, carried=False)   # no response will carry them: freed, they ride next time
         raise
 
-def build_exchange_request(host, wait=True, flight=None):
+def build_exchange_request(host, wait=True, flight=None, built=None):
     """The DIALER's request for one exchange. The relays are the outbox's oldest-first prefix under
     _RELAY_BUDGET_BYTES (_budget_relays); the rest ride the next round, so a backlog drains over a few
     exchanges instead of being refused whole. `presenceAnswered` rides beside `presence` (presence_payload):
     whether our listing answered for the rows we send, the same bit the response builder rides (round 3 of
-    fork PR #897)."""
+    fork PR #897). `built`, a list the caller passes, receives the recording sequence (_PEER_SEQ) as this build
+    reads it, first, under _PEER_STATE_LOCK; the caller hands it to the fold of this dial's answer
+    (peer_exchange_apply), which orders that answer after every roster recorded before the build (_placed). An
+    out-parameter the way `flight` is, so the wire gains nothing (round 6 of fork PR #897, the reviewer's round-5
+    ruling C)."""
+    if built is not None:
+        with _PEER_STATE_LOCK:                       # the capture: the recordings this dial's answer is newer than
+            built.append(_PEER_SEQ[0])
     p = _pending(host)
     with _peer_lock:
         acks, bounces, read_acks = list(p["acks"]), list(p["bounces"]), list(p.get("readAcks") or [])
@@ -6716,7 +6932,7 @@ def build_exchange_request(host, wait=True, flight=None):
     #                                              leave a record in flight with no outcome to free it
     return req
 
-def peer_exchange_apply(host, req_sent, resp, flight=None):
+def peer_exchange_apply(host, req_sent, resp, flight=None, built=None):
     """The DIALER's half: fold one exchange response in. `req_sent` is the request that produced it —
     its included acks/bounces/readAcks are now delivered and leave the pending queue (kept on send
     failure), and its reads leave the readbox: a response means the dialed side processed the whole
@@ -6725,13 +6941,17 @@ def peer_exchange_apply(host, req_sent, resp, flight=None):
     stay parked for the next request. Likewise a response-carried read WE could not apply gets no
     readAck, so the dialed side keeps it and re-sends it. The response's `presenceAnswered` is recorded on the
     PEER_STATE row as the handler records the request's (round 3 of fork PR #897): the two recorders are the
-    whole population of the bit's writers, and the mirror reads the row. The two recorders run at once by design,
-    this one on the dialer's thread and peer_exchange_handle on the handler's for the same peer's dial, and each
-    derives the hub's held words (_via_held) from the row it replaces; each holds _PEER_STATE_LOCK from that read
-    through its store and _drop_peer_name_dupes, and releases it before the mirror's write, which is why a far
-    host's word one recorder records is not lost to the other (round 6 of fork PR #897, the reviewer's round-5
-    ruling A: before it, a roster stored between the other's read and its store was in neither the stored
-    presence nor the held words)."""
+    whole population of the bit's writers, and the mirror reads the row. `built` is the list the dial's build filled
+    with the recording sequence (build_exchange_request, _peer_exchange_once): the answer is ordered after every roster
+    recorded before that build (_order_row, _placed; round 6 of fork PR #897, the reviewer's round-5 ruling C and its
+    decision 1), the one road that releases a hold or drops a name, only what was recorded after the build staying in
+    the row's union; with no capture handed (a caller driving build, handle and fold directly without one) the answer
+    cannot be placed and merges as a dial does, releasing nothing. The two recorders run at once by design, this one on
+    the dialer's thread and peer_exchange_handle on the handler's for the same peer's dial, and each orders its roster
+    after the row it replaces; each holds _PEER_STATE_LOCK from that read through its store and _drop_peer_name_dupes,
+    and releases it before the mirror's write, which is why a far host's word one recorder records is not lost to the
+    other (round 6 of fork PR #897, the reviewer's round-5 ruling A: before it, a roster stored between the other's read
+    and its store was in neither the stored presence nor the held words)."""
     p = _pending(host)
     with _peer_lock:
         p["acks"] = [a for a in p["acks"] if a not in (req_sent.get("acks") or [])]
@@ -6748,16 +6968,22 @@ def peer_exchange_apply(host, req_sent, resp, flight=None):
         #                                              the handler of the peer's own dial (another thread) cannot store its
         #                                              roster between them (round 6 of fork PR #897, the reviewer's round-5
         #                                              ruling A)
+        prev = PEER_STATE.get(host)                  # the row this answer is ordered after, and the rows the same bus left
+        gone = [PEER_STATE[k] for k in _peer_name_dupes(host, bus_id)]   # under other names, forgotten below
         row = {"presence": resp.get("presence") or [], "epoch": resp.get("epoch"),
                "holds": resp.get("holds") or [], "seenAt": int(time.time()),
                "presenceAnswered": resp.get("presenceAnswered") is True,   # the dialed side's bit: the same
                #                                                            rule as the handler's recorder
-               "road": "answer",                            # this roster's road, its answer to our dial (_via_held)
-               "viaHeld": _via_held(resp.get("presence") or [], bus_id, "answer", PEER_STATE.get(host))}   # ...and its held words
+               "road": "answer"}                            # this roster's road, its answer to our dial (_via_held)
         if bus_id:                                   # the dialed alias is canonical for this bus: the stamps join the
             row["busId"] = bus_id                    # row, so it is stored whole
         if resp.get("tier"):                         # the dialed side's declared tier-of-us
             row["theirTier"] = str(resp["tier"])
+        cap = int(built[0]) if built else None       # the recording sequence as our dial's build read it: None when the
+        #                                              caller handed no capture, a fold this bus cannot place
+        row = _order_row(row, prev, gone, cap)       # ordered after every roster recorded before our dial was built: the
+        #                                              one release (round 6 of fork PR #897, the reviewer's round-5 ruling C)
+        row["viaHeld"] = _via_held(row["presence"], bus_id, "answer", prev, *gone, built=cap)   # ...and its held words
         _heard_answering(row)                        # the far bus ids this roster shows answering (the reviewer's round-5
         #                                              ruling B), in the hold that stores the row, before the fold
         PEER_STATE[host] = row
@@ -6880,7 +7106,9 @@ def _peer_exchange_once(host, port, token):
       status); nothing marked. Each distinct refusal is said once.
     _peer_loop keys its waits on the return."""
     flight = []                                  # the id of the flight the build registers (out-parameter)
-    req = build_exchange_request(host, wait=True, flight=flight)
+    built = []                                   # the recording sequence as the build read it (out-parameter): the fold
+    #                                              orders this dial's answer after every roster recorded before it
+    req = build_exchange_request(host, wait=True, flight=flight, built=built)
 
     def _end(carried):
         for fid in flight:
@@ -6929,7 +7157,7 @@ def _peer_exchange_once(host, port, token):
         _end(True)                                   # it went out; the answer was lost
         return "lost"
     try:
-        peer_exchange_apply(host, req, resp, flight=flight)
+        peer_exchange_apply(host, req, resp, flight=flight, built=built)
     except Exception as e:
         _log("peer %s: apply failed: %s" % (host, e))
         _end(True)                                   # the far bus answered: the relays reached it (a no-op

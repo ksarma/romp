@@ -245,6 +245,12 @@ def _names_an_exception_class(name):
     return isinstance(cls, type) and issubclass(cls, BaseException)
 
 
+def _cap():
+    """The capture of this bus's dial, built now, for a fold of its answer (round 6 of fork PR #897, the reviewer's round-5
+    ruling C: the answer placed after every roster recorded so far); a bus with no capture takes no keyword."""
+    return {"built": [pm._PEER_SEQ[0]]} if hasattr(pm, "_PEER_SEQ") else {}
+
+
 def _answered_buses():
     """The bus's set of far bus ids heard answering in this process (postal_service.py _ANSWERED_BUSES; round 6 of fork PR
     #897, the reviewer's round-5 ruling B), or a fresh empty set where the bus keeps none (the forty-ninth commit, under
@@ -366,11 +372,12 @@ class Mirror(unittest.TestCase):
         """The dialer's half of one exchange, through the real builder and the real fold (peer_exchange_apply): this bus
         dials `dialed`, whose answer carries `presence`, its bus id `bus_id` and presenceAnswered `answered`, the road a
         hub's answer to our dial takes (round 4 of fork PR #897, the thirty-third commit)."""
+        kw = _cap()                                   # the build's capture (round 6 of fork PR #897): taken as the build does
         req = pm.build_exchange_request(dialed, wait=False)
         resp = {"host": dialed, "epoch": 1, "proto": pm.PEER_PROTO, "busId": bus_id, "presence": presence,
                 "presenceAnswered": answered, "holds": [], "relays": [], "acks": [], "bounces": [], "reads": [],
                 "readsKept": []}
-        pm.peer_exchange_apply(dialed, req, resp)
+        pm.peer_exchange_apply(dialed, req, resp, **kw)
 
     def _local_listing_answered(self, rows):
         """The local sessions listing, answered with `rows`, through the ROMP_SESSIONS_FILE seam; put back as found."""
@@ -1210,7 +1217,7 @@ class Mirror(unittest.TestCase):
         self.assertEqual(self._reach(), {HUB_DECL: (True, False, False, True, []), via_decl: (True, False, False, True, [C, D])},
                          "the hub under the name it declared, and its word about the far host under that name")
         self.assertEqual(self._vouch()[via_decl], (True, False, False), "the via row follows the hub's link: none under the declared name")
-        pm.peer_exchange_apply(HUB, {}, {"presence": gossip(C), "epoch": 1, "holds": [], "busId": "hub-bus", "presenceAnswered": True})   # our dial lands: D ended
+        pm.peer_exchange_apply(HUB, {}, {"presence": gossip(C), "epoch": 1, "holds": [], "busId": "hub-bus", "presenceAnswered": True}, **_cap())   # our dial lands: D ended
         self.assertEqual(sorted(pm.PEER_STATE), [HUB], "the fold: the declared row left PEER_STATE")
         self.assertEqual(self._reach(), {HUB: (True, False, False, True, []), VIA_FAR: (True, False, False, True, [C])},
                          "THE RULE: the hub's bus is heard under the alias, so its row under the declared name is dropped (the "
@@ -1219,7 +1226,7 @@ class Mirror(unittest.TestCase):
                          "vouches: rule 5 (a carry keyed on the via key alone carries the declared name's row heard=false for the "
                          "file's life, and D is cannot-determine by it)")
         self.assertEqual(self._vouch()[VIA_FAR], (True, True, True), "the via row now follows the alias's link: known up")
-        pm.peer_exchange_apply(HUB, {}, {"presence": gossip(C), "epoch": 1, "holds": [], "busId": "hub-bus", "presenceAnswered": True})
+        pm.peer_exchange_apply(HUB, {}, {"presence": gossip(C), "epoch": 1, "holds": [], "busId": "hub-bus", "presenceAnswered": True}, **_cap())
         self.assertEqual(sorted(self._rows()), sorted([HUB, VIA_FAR]), "and it stays dropped at the hub's next exchange")
         # the same fold with the hub now gossiping NOTHING about the far host: the same bus, its silence under its new name
         # its word (no sessions there), so the declared name's row leaves with the hub's own
@@ -1229,11 +1236,15 @@ class Mirror(unittest.TestCase):
         self._notify(HUB, up=True)
         self._far_dials_us(HUB_DECL, gossip(C, D), "hub-bus")
         self.assertEqual(sorted(self._rows()), sorted([HUB_DECL, via_decl]))
-        pm.peer_exchange_apply(HUB, {}, {"presence": [], "epoch": 1, "holds": [], "busId": "hub-bus", "presenceAnswered": True})
-        self.assertEqual(self._rows(), {HUB: (True, False, [])},
+        pm.peer_exchange_apply(HUB, {}, {"presence": [], "epoch": 1, "holds": [], "busId": "hub-bus", "presenceAnswered": True}, **_cap())
+        self.assertEqual(self._rows(), {HUB: (True, False, []), VIA_FAR: (True, False, [C, D])},
                          "the hub's bus heard under another name: its earlier word under the declared name is dropped whatever it "
                          "now says about the far host (a carry that keeps it while the hub is silent names C and D for the file's "
-                         "life; the SAME name silent is the standing pin's carry, a restarted hub that has not heard the host yet)")
+                         "life; the SAME name silent is the standing pin's carry, a restarted hub that has not heard the host yet). "
+                         "The words themselves move to the alias's row HELD (round 6 of fork PR #897): the declared row, never "
+                         "dialed by this bus, held the far host's answered word unanswered, so the far bus was never heard "
+                         "answering here and the same hub process's omission releases nothing (the reviewer's round-5 rulings B "
+                         "and C; costs (a) and (ii))")
 
     def test_a_hubs_word_follows_its_own_name_for_the_far_host_and_its_earlier_word_under_the_old_name_is_dropped(self):
         """The second name axis of a via key (round 3 of fork PR #897, the reviewer's verifier, by execution): the hub's
@@ -1304,7 +1315,8 @@ class Mirror(unittest.TestCase):
         pm.PEERS.clear()
         self._notify(HUB, up=True)                         # the kernel's seeds: both links up, nothing heard yet (each writes)
         self._notify(X, up=True)
-        self._far_dials_us(X, [{"id": E, "name": "tests"}], "x-bus")   # X heard with its link up: it vouches for absence
+        self._far_dials_us(X, [{"id": E, "name": "tests"}], "x-bus")   # X heard with its link up; its answer to our dial
+        self._hub_answers_our_dial(X, [{"id": E, "name": "tests"}], "x-bus")   # releases its row: it vouches for absence
         for _ in range(2):                                 # the hub, restarted under a new bus id, under its declared name; D ended
             self._far_dials_us(HUB_DECL, gossip(C), "hub-bus-2")
             self.assertEqual(self._reach(), {HUB: (False, False, False, False, [A]), X: (True, False, False, True, [E]),
@@ -1316,8 +1328,10 @@ class Mirror(unittest.TestCase):
                              "unreachable host, cannot-determine, where rule 5 would otherwise fire (a carry that drops the old "
                              "via row on a heard via row naming the same far bus from a hub with no link here closes this, and D "
                              "reads rule 5)")
-            self.assertEqual((self._vouch()[X], self._answered()[HUB_DECL], self._answered()[via_decl]), ((True, True, True), True, True),
-                             "X vouches for absence, and every heard row is answered: the carried via row alone keeps D from rule 5")
+            self.assertEqual((self._vouch()[X], self._answered()[HUB_DECL], self._answered()[via_decl]), ((True, True, True), False, False),
+                             "X vouches for absence; the declared-name rows, which this bus never dials, are held (round 6 of fork "
+                             "PR #897, the reviewer's round-5 ruling C, cost (ii)), so the arm holds too, beside the carried via row "
+                             "that names D")
         self._hub_answers_our_dial(HUB, gossip(C), "hub-bus-2")   # this bus's own dial reaches the hub under the old name
         self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), X: (True, False, False, True, [E]),
                                          VIA_FAR: (True, False, False, True, [C])},
@@ -1343,7 +1357,8 @@ class Mirror(unittest.TestCase):
         unanswered and are held, not carried, across its restart
         (test_a_hub_from_before_viabus_renaming_a_far_host_holds_the_old_names_word_within_one_process_and_across_its_restart),
         while the listing-unanswered arm holds every sid (cost (a)). The fixture takes the answered bit so that the carried
-        rows alone decide each verdict. Through the real handler and this writer."""
+        rows alone decide each verdict. Through the real handler and this writer. Each roster by the answer road, where this bus places it after the last (round 6 of fork PR
+        #897, the reviewer's round-5 ruling C: a dial merges and releases nothing)."""
         X, FAR2 = "TESTHOST-x", "TESTHOST-far2"
         self._forget_presence_cache()
         self._local_listing_answered_empty()
@@ -1352,14 +1367,14 @@ class Mirror(unittest.TestCase):
         via_decl, via2 = VIA + HUB + "/" + FAR_DECL, VIA + HUB + "/" + FAR2
         self._notify(HUB, up=True)
         self._notify(X, up=True)
-        self._far_dials_us(X, [{"id": E, "name": "tests"}], "x-bus")
-        self._far_dials_us(HUB, [web] + word(FAR_DECL, C, D) + word(FAR2, B), "hub-bus")
+        self._hub_answers_our_dial(X, [{"id": E, "name": "tests"}], "x-bus")
+        self._hub_answers_our_dial(HUB, [web] + word(FAR_DECL, C, D) + word(FAR2, B), "hub-bus")
         self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), X: (True, False, False, True, [E]),
                                          via_decl: (True, False, False, True, [C, D]), via2: (True, False, False, True, [B])},
                          "the hub's word about the far host under the name the far bus declared to it, and about the second far host")
         self.assertEqual({k: r.get("viaBus") for k, r in self._doc()["hosts"].items() if k.startswith(VIA)}, {via_decl: "", via2: ""},
                          "no bus id on either word")
-        self._far_dials_us(HUB, [web] + word(FAR, C) + word(FAR2, B), "hub-bus")   # the same process renames the far host; D ended
+        self._hub_answers_our_dial(HUB, [web] + word(FAR, C) + word(FAR2, B), "hub-bus")   # the same process renames the far host; D ended
         self.assertEqual(self._reach(), {HUB: (True, False, False, True, [A]), X: (True, False, False, True, [E]),
                                          via_decl: (False, False, False, False, [C, D]), VIA_FAR: (True, False, False, True, [C]),
                                          via2: (True, False, False, True, [B])},
@@ -1370,7 +1385,7 @@ class Mirror(unittest.TestCase):
         self.assertEqual((self._vouch()[X], self._answered()[HUB], self._answered()[VIA_FAR], self._answered()[via2]),
                          ((True, True, True), True, True, True),
                          "X vouches for absence, and every heard row is answered: the carried via row alone keeps D from rule 5")
-        self._far_dials_us(HUB, [web] + word(FAR, C), "hub-bus-2")   # the hub restarted: it has heard the far host, not FAR2 yet
+        self._hub_answers_our_dial(HUB, [web] + word(FAR, C), "hub-bus-2")   # the hub restarted: it has heard the far host, not FAR2 yet
         self.assertEqual(self._reach().get(via2), (False, False, False, False, [B]),
                          "A RESTARTED HUB'S SILENCE IS NOT A WORD, for a hub that stamps no viaBus too: its word about the second "
                          "far host is carried, heard false, and still names B, live there, so B is cannot-determine (a carry that "
@@ -1922,7 +1937,7 @@ class Mirror(unittest.TestCase):
         gossip = lambda far_sids, bus_id: pm.peer_exchange_apply(HUB, {}, {
             "epoch": 1, "holds": [], "busId": bus_id, "presenceAnswered": True,
             "presence": [{"id": C, "name": "api"}] + [{"id": s, "name": "api", "via": FAR, "viaBus": "bus-far", "viaAnswered": True}
-                                                      for s in far_sids]})
+                                                      for s in far_sids]}, **_cap())
         rows = {}
         for road in ("intact", "lost", "first"):
             with self.subTest(road=road):
@@ -2113,7 +2128,7 @@ class Mirror(unittest.TestCase):
         self.assertEqual(self._reach()[HOST], (True, False, True, False, [B]))
         self.assertEqual(self._vouch()[HOST], (False, False, False))
         self._notify(HOST, up=True)
-        pm.peer_exchange_apply(HOST, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [], "presenceAnswered": True})
+        pm.peer_exchange_apply(HOST, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [], "presenceAnswered": True}, **_cap())
         self.assertEqual(self._reach()[HOST], (True, False, False, True, [B]),
                          "the dialer's fold replaced the row (the mark with it) and wrote: reachable")
         self.assertEqual(self._vouch()[HOST], (True, True, True), "...and, PEERS up, vouching for absence again")
@@ -2169,7 +2184,7 @@ class Mirror(unittest.TestCase):
                          "absence, so the down notify has nothing to withdraw)")
         # the fold: this bus's own dial lands under the alias with the busId, the event that files the row under the alias
         self._notify(alias, up=True)
-        pm.peer_exchange_apply(alias, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [], "busId": "bus-c", "presenceAnswered": True})
+        pm.peer_exchange_apply(alias, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [], "busId": "bus-c", "presenceAnswered": True}, **_cap())
         self.assertEqual(sorted(pm.PEER_STATE), [alias], "the declared row is the same bus (busId), dropped by the fold")
         self.assertEqual(self._reach(), {alias: (True, False, False, True, [B])},
                          "the fold's own write has one row per bus, under the alias: the recorder writes AFTER the busId "
@@ -2204,7 +2219,7 @@ class Mirror(unittest.TestCase):
                          "dial, when the link comes up and the token arrives, folds it back under the alias")
         self._notify(alias, up=True)
         pm.peer_exchange_apply(alias, {}, {"presence": [{"id": B, "name": "api"}, {"id": C, "name": "tests"}], "epoch": 1,
-                                           "holds": [], "busId": "bus-c", "presenceAnswered": True})
+                                           "holds": [], "busId": "bus-c", "presenceAnswered": True}, **_cap())
         self.assertEqual((self._reach(), self._vouch()), ({alias: (True, False, False, True, [B, C])}, {alias: (True, True, True)}),
                          "folded again: one row, under the alias, vouching for absence")
 
@@ -2305,6 +2320,8 @@ class Mirror(unittest.TestCase):
             return req
         self._local_listing_answered([{"id": B, "name": "api"}])
         req_answered = x_dials_us()
+        dial_held = (self._vouch()[X], pm.PEER_STATE[X].get("presenceAnswered"))
+        self._hub_answers_our_dial(X, [{"id": B, "name": "api"}], "x-bus")   # X's answer to our dial releases its row
         answered_row = (self._reach()[X], self._vouch()[X], self._answered()[X], pm.PEER_STATE[X].get("presenceAnswered"))
         # X's kernel restarts: its listing does not answer, and a session starts there meanwhile (in no roster yet)
         self._local_listing_unanswered()
@@ -2325,22 +2342,31 @@ class Mirror(unittest.TestCase):
         # and the exchange before the blink: the bit True through the builder, the recorder and the writer
         self.assertEqual((req_answered.get("presenceAnswered"), [a["id"] for a in req_answered["presence"]]), (True, [B]),
                          "the request builder rides the bit beside the rows: an answered listing")
+        self.assertEqual(dial_held, ((True, True, False), False),
+                         "X's answered DIAL, its first roster in this process, holds its row (round 6 of fork PR #897, the "
+                         "reviewer's round-5 ruling C and its decision 4): presence alone")
         self.assertEqual(answered_row, ((True, False, False, True, [B]), (True, True, True), True, True),
-                         "heard with its link up on an answered roster: it vouches for presence and absence, the recorder's bit True")
+                         "released by X's answer to our dial: it vouches for presence and absence, the recorder's bit True")
         # the event: X's next exchange with an answered listing, which now names the session started during the blink
         self._local_listing_answered([{"id": B, "name": "api"}, {"id": C, "name": "tests"}])
         req = x_dials_us()
         self.assertEqual(req.get("presenceAnswered"), True)
         self.assertEqual((self._reach()[X], self._vouch()[X], self._answered()[X]),
+                         ((True, False, False, True, [B, C]), (True, True, False), False),
+                         "X's answered DIAL names the session and holds the row: a dial releases nothing (round 6 of fork "
+                         "PR #897, the reviewer's round-5 ruling C)")
+        self._hub_answers_our_dial(X, [{"id": B, "name": "api"}, {"id": C, "name": "tests"}], "x-bus")
+        self.assertEqual((self._reach()[X], self._vouch()[X], self._answered()[X]),
                          ((True, False, False, True, [B, C]), (True, True, True), True),
-                         "released by the exchange that answers, on that write and nothing else: no grace period")
+                         "released by X's answer to our dial built after its cached roster, on that write and nothing else: "
+                         "no grace period")
         # the dialer's half, the same road: OUR response, built by the real handler while OUR listing does not answer,
         # folded by the real dialer's fold as X's word
         self._local_listing_unanswered()
         resp = self._far_dials_us(X, [{"id": B, "name": "api"}, {"id": C, "name": "tests"}], "x-bus")
         self.assertEqual((resp.get("presenceAnswered"), [a["id"] for a in resp["presence"]]), (False, [B, C]),
                          "the response builder rides the bit too: the last answered rows, marked a cache")
-        pm.peer_exchange_apply(X, {}, resp)
+        pm.peer_exchange_apply(X, {}, resp, **_cap())
         self.assertIs(pm.PEER_STATE[X].get("presenceAnswered"), False, "the dialer's fold keeps it on the row")
         self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, False), False),
                          "recorded by the dialer's fold: presence alone (a fold that drops the bit leaves the row unanswered "
@@ -2348,7 +2374,7 @@ class Mirror(unittest.TestCase):
         self._local_listing_answered([{"id": B, "name": "api"}, {"id": C, "name": "tests"}])
         resp = self._far_dials_us(X, [{"id": B, "name": "api"}, {"id": C, "name": "tests"}], "x-bus")
         self.assertEqual(resp.get("presenceAnswered"), True)
-        pm.peer_exchange_apply(X, {}, resp)
+        pm.peer_exchange_apply(X, {}, resp, **_cap())
         self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, True), True), "the answering response releases it")
         # the default for a payload without the field (a peer from before it), and for one that spells it as anything but
         # JSON true
@@ -2359,23 +2385,23 @@ class Mirror(unittest.TestCase):
                          "roster vouches for presence alone (a recorder defaulting to answered lets an older peer reopen the road)")
         for junk in TRUTHY_NOT_TRUE:                          # each after an answered exchange, so the pin reads a transition
             with self.subTest(reader="the handler's recorder", presenceAnswered=junk):
-                self._far_dials_us(X, [{"id": B, "name": "api"}], "x-bus", answered=True)
+                self._hub_answers_our_dial(X, [{"id": B, "name": "api"}], "x-bus")   # released first, so the pin reads a transition
                 self.assertEqual(self._answered()[X], True)
                 self._far_dials_us(X, [{"id": B, "name": "api"}], "x-bus", answered=junk)
                 self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, False), False),
                                  "JSON true alone counts: %r is not it (bool() reads the string True, == True reads 1 and 1.0 "
                                  "True; the numbers since the thirty-fifth commit, round 4 of fork PR #897)" % (junk,))
                 self.assertIs(pm.PEER_STATE[X].get("presenceAnswered"), False, "the handler records %r as unanswered" % (junk,))
-        pm.peer_exchange_apply(X, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [], "busId": "x-bus"})
+        pm.peer_exchange_apply(X, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [], "busId": "x-bus"}, **_cap())
         self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, False), False),
                          "the same default in the dialer's fold: a response lacking the field is unanswered")
         for junk in TRUTHY_NOT_TRUE:
             with self.subTest(reader="the dialer's fold", presenceAnswered=junk):
                 pm.peer_exchange_apply(X, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [],
-                                               "busId": "x-bus", "presenceAnswered": True})
+                                               "busId": "x-bus", "presenceAnswered": True}, **_cap())
                 self.assertEqual(self._answered()[X], True)
                 pm.peer_exchange_apply(X, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [],
-                                               "busId": "x-bus", "presenceAnswered": junk})
+                                               "busId": "x-bus", "presenceAnswered": junk}, **_cap())
                 self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, False), False),
                                  "JSON true alone counts in the dialer's fold too: %r is not it (round 4 of fork PR #897: a fold "
                                  "reading bool() of the field passed every pin until the thirty-fourth commit, one reading == "
@@ -2383,7 +2409,11 @@ class Mirror(unittest.TestCase):
                 self.assertIs(pm.PEER_STATE[X].get("presenceAnswered"), False,
                               "the dialer's fold records %r as unanswered" % (junk,))
         self._far_dials_us(X, [{"id": B, "name": "api"}], "x-bus", answered=True)
-        self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, True), True))
+        self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, False), False),
+                         "an answered DIAL after the unanswered rosters holds the row")
+        self._hub_answers_our_dial(X, [{"id": B, "name": "api"}], "x-bus")
+        self.assertEqual((self._vouch()[X], self._answered()[X]), ((True, True, True), True),
+                         "and the answer to our dial built after them releases it")
 
     def test_a_via_row_carries_the_far_hosts_answered_bit_and_not_the_hubs(self):
         """A hub's gossip about a far host is that host's roster as it reported it to the hub, so whether that roster was an
@@ -2407,8 +2437,13 @@ class Mirror(unittest.TestCase):
                          "our gossip about the far host carries ITS bit, as its exchange recorded it: a cache (a builder "
                          "stamping our own listing's bit says True here, our listing having answered)")
         self._far_dials_us(FAR, [{"id": C, "name": "tests"}], "far-bus", answered=True)
+        self.assertEqual([pa.get("viaAnswered") for pa in pm.presence_payload(HOST)[0] if pa.get("via")], [False],
+                         "the far host's answered DIAL holds its row (round 6 of fork PR #897, the reviewer's round-5 ruling C: "
+                         "the held state is what the row stores), so our gossip still says a cache")
+        self._hub_answers_our_dial(FAR, [{"id": C, "name": "tests"}], "far-bus", answered=True)
         gossip_answered = [pa for pa in pm.presence_payload(HOST)[0] if pa.get("via")]
-        self.assertEqual([pa.get("viaAnswered") for pa in gossip_answered], [True], "...and True once the far host answers")
+        self.assertEqual([pa.get("viaAnswered") for pa in gossip_answered], [True],
+                         "...and True once the far host's answer to our dial releases its row")
         # now this bus is the spoke: the hub's gossip lands here (the hub's own listing answered), and the writer files it
         pm.PEER_STATE.clear(); pm.PEERS.clear(); self.path.unlink()
         self._notify(HUB, up=True)
@@ -2466,18 +2501,18 @@ class Mirror(unittest.TestCase):
         unanswered, so the reader's listing-unanswered arm keeps holding; each held row carries the second its word was
         last heard (`heldAt`), which the via row's seenAt reads. The hub's word naming the host again releases it, under
         the hub's name for the host or under a new name by the host's bus id (the hub's own fold). A word whose bit was
-        True is NOT held: carried, heard false, as before. Through the real handler (the recorder) and this writer."""
+        True is NOT held: carried, heard false, as before. Through the real builder and fold of this bus's dial (the answer road, where this bus places each of the hub's rosters after the last: round 6 of fork PR #897, the reviewer's round-5 ruling C; the hub's dials merge and release nothing) and this writer."""
         self._forget_presence_cache()
         self._local_listing_answered_empty()
         self._notify(HUB, up=True)
         far_cached = {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus", "viaAnswered": False}
-        self._far_dials_us(HUB, [{"id": A, "name": "web"}, far_cached], "hub-bus")
+        self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}, far_cached], "hub-bus")
         self.assertEqual((self._rows()[VIA_FAR], self._answered()[VIA_FAR]), ((True, False, [B]), False),
                          "the hub's word about FAR, the far host's cache: heard, unanswered")
         pm.PEER_STATE[HUB]["seenAt"] -= 100                                 # that exchange landed 100 s before the next
         first_seen = pm.PEER_STATE[HUB]["seenAt"]
         for _ in range(2):                                                  # the hub's bus restarted; then its next exchange
-            self._far_dials_us(HUB, [{"id": A, "name": "web"}], "hub-bus-restarted")
+            self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}], "hub-bus-restarted")
             self.assertEqual((self._rows()[VIA_FAR], self._answered()[VIA_FAR]), ((True, False, [B]), False),
                              "HELD: the hub's roster omits FAR, and the far host's unanswered word stays heard (until the "
                              "thirty-first commit carried: (False, False, [B]), out of the arm)")
@@ -2490,38 +2525,38 @@ class Mirror(unittest.TestCase):
         for junk in ([{"id": A, "name": "web"}, "not an object"], {"not": "a list"}, 5):   # rosters in shapes no bus sends
             err = io.StringIO()
             with contextlib.redirect_stderr(err):                           # (the writer's own read of them is not under test)
-                self._far_dials_us(HUB, junk, "hub-bus-restarted")          # the exchange still lands: 200
+                self._hub_answers_our_dial(HUB, junk, "hub-bus-restarted")          # the exchange still lands: 200
             self.assertEqual([(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"]], [(B, FAR)],
                              "a roster in a shape no bus sends names no far host, and the recorder, reading what it can, keeps "
                              "the held word (%r)" % (junk,))
-        self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(far_cached, via=FAR_ALIAS, id=C, viaAnswered=True)],
+        self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}, dict(far_cached, via=FAR_ALIAS, id=C, viaAnswered=True)],
                            "hub-bus-restarted")                             # the hub now calls the far bus FAR_ALIAS
         self.assertEqual(pm.PEER_STATE[HUB]["viaHeld"], [], "the hub's word names the far bus again: the held word is released")
         self.assertNotIn(VIA_FAR, self._rows(), "...and the old name's row is gone (the carry's drop by the hub's current word)")
         self.assertEqual((self._rows()[VIA + HUB + "/" + FAR_ALIAS], self._answered()[VIA + HUB + "/" + FAR_ALIAS]),
                          ((True, False, [C]), True))
-        self._far_dials_us(HUB, [{"id": A, "name": "web"}], "hub-bus-restarted-again")   # an ANSWERED word the hub omits
+        self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}], "hub-bus-restarted-again")   # an ANSWERED word the hub omits
         self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._rows()[VIA + HUB + "/" + FAR_ALIAS]), ([], (False, False, [C])),
                          "a word whose bit was True is not held: carried, heard false, vouching for nothing")
-        self._far_dials_us(HUB, [{"id": A, "name": "web"}, far_cached], "hub-bus-restarted-again")
-        self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=True)], "hub-bus-restarted-again")
+        self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}, far_cached], "hub-bus-restarted-again")
+        self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=True)], "hub-bus-restarted-again")
         self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR]), ([], True),
                          "the hub's word naming the host under the same name, answered: the release")
         no_bus = dict(far_cached, viaBus="")                                # a far bus that sends no bus id: the hub stamps ""
-        self._far_dials_us(HUB, [{"id": A, "name": "web"}, no_bus], "hub-bus-restarted-again")
-        self._far_dials_us(HUB, [{"id": A, "name": "web"}], "hub-bus-restarted-thrice")
+        self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}, no_bus], "hub-bus-restarted-again")
+        self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}], "hub-bus-restarted-thrice")
         self.assertEqual([(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"]], [(B, FAR)], "held, with no bus id")
-        self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(no_bus, viaAnswered=True)], "hub-bus-restarted-thrice")
+        self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}, dict(no_bus, viaAnswered=True)], "hub-bus-restarted-thrice")
         self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR]), ([], True),
                          "with no bus id on either word the hub's name for the host is the only match, and it releases")
         for n, junk in enumerate(TRUTHY_NOT_TRUE):            # each from a released, answered word, so the pin reads a transition
             with self.subTest(reader="the held-word read", viaAnswered=junk):
                 hub_bus = "hub-bus-junk-%d" % n
-                self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=True)], hub_bus)
+                self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=True)], hub_bus)
                 self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR]), ([], True),
                                  "a new hub process names the host, answered: nothing held (whatever an earlier subtest left)")
-                self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=junk)], hub_bus)
-                self._far_dials_us(HUB, [{"id": A, "name": "web"}], hub_bus + "-restarted")
+                self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=junk)], hub_bus)
+                self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}], hub_bus + "-restarted")
                 self.assertEqual([(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"]], [(B, FAR)],
                                  "a word whose viaAnswered is %r is not an answered word: held when a restarted hub omits the "
                                  "host (round 4 of fork PR #897: the recorder reading bool() of it carried a string's word heard "
@@ -2529,7 +2564,7 @@ class Mirror(unittest.TestCase):
                                  "which reads 1 and 1.0 True, every pin until the thirty-fifth)" % (junk,))
                 self.assertEqual((self._rows()[VIA_FAR], self._answered()[VIA_FAR]), ((True, False, [B]), False),
                                  "...and written heard, unanswered")
-                self._far_dials_us(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=True)], hub_bus + "-restarted")
+                self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}, dict(far_cached, viaAnswered=True)], hub_bus + "-restarted")
                 self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR]), ([], True),
                                  "the restarted hub names the host again, answered: released")
 
@@ -2547,108 +2582,111 @@ class Mirror(unittest.TestCase):
         hub (a new bus id) omitting it has not heard the host yet, so the word stays held, and it keeps the process that
         last named it (`hubBus`) across the restarted hub's later exchanges, so a second omission by the restarted process
         holds it too. A hub that sends no bus id (from before busId) cannot say it is the same process, so its omission
-        holds (the restricted side; cost (g) of the writer's docstring names it). Through the real handler (the recorder)
-        and this writer."""
+        holds (the restricted side; cost (g) of the writer's docstring names it). Through the real builder and fold of
+        this bus's dial (the answer road, where this bus places each of the hub's rosters after the last: round 6 of fork
+        PR #897, the reviewer's round-5 ruling C, which moves the release to that road; the hub's dials merge and release
+        nothing) and this writer."""
         self._forget_presence_cache()
         self._local_listing_answered_empty()
         self._notify(HUB, up=True)
         web = {"id": A, "name": "web"}
         far_cached = {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus", "viaAnswered": False}
-        self._far_dials_us(HUB, [web, far_cached], "hub-bus")
+        self._hub_answers_our_dial(HUB, [web, far_cached], "hub-bus")
         self.assertEqual((self._rows()[VIA_FAR], self._answered()[VIA_FAR]), ((True, False, [B]), False))
-        self._far_dials_us(HUB, [web], "hub-bus")                           # the same hub process: a far bus never heard answering
+        self._hub_answers_our_dial(HUB, [web], "hub-bus")                           # the same hub process: a far bus never heard answering
         self.assertEqual(([(pa["id"], pa["via"], pa.get("hubBus")) for pa in pm.PEER_STATE[HUB]["viaHeld"]], self._rows()[VIA_FAR]),
                          ([(B, FAR, "hub-bus")], (True, False, [B])),
                          "HELD: the same hub process omits FAR, but FAR's bus has not been heard answering here, so the "
                          "omission may be an older far bus's blink (at the forty-ninth commit released: ([], (False, False, [B])))")
-        self._far_dials_us(HUB, [web, far_cached], "hub-bus-2")             # the hub, restarted, names FAR over its cache
-        self._far_dials_us(HUB, [web], "hub-bus-3")                         # ...restarted again: it has not heard FAR
+        self._hub_answers_our_dial(HUB, [web, far_cached], "hub-bus-2")             # the hub, restarted, names FAR over its cache
+        self._hub_answers_our_dial(HUB, [web], "hub-bus-3")                         # ...restarted again: it has not heard FAR
         self.assertEqual([(pa["id"], pa["via"], pa.get("hubBus")) for pa in pm.PEER_STATE[HUB]["viaHeld"]], [(B, FAR, "hub-bus-2")],
                          "HELD across the hub's restart, stamped with the hub process whose roster last named it")
-        self._far_dials_us(HUB, [web], "hub-bus-3")                         # the restarted process's next exchange
+        self._hub_answers_our_dial(HUB, [web], "hub-bus-3")                         # the restarted process's next exchange
         self.assertEqual(([(pa["id"], pa["via"], pa.get("hubBus")) for pa in pm.PEER_STATE[HUB]["viaHeld"]], self._rows()[VIA_FAR]),
                          ([(B, FAR, "hub-bus-2")], (True, False, [B])),
                          "still HELD: the process that omits FAR is not the one that named it (a stamp refreshed at each "
                          "exchange would release the word here, with no word from the far host)")
-        self._far_dials_us(HUB, [web, dict(far_cached, viaAnswered=True)], "hub-bus-3")
+        self._hub_answers_our_dial(HUB, [web, dict(far_cached, viaAnswered=True)], "hub-bus-3")
         self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._answered()[VIA_FAR], "far-bus" in _answered_buses()),
                          ([], True, True), "named again, answered: released, and FAR's bus is now heard answering")
-        self._far_dials_us(HUB, [web, far_cached], "hub-bus-3")             # FAR's cache again, then the same process omits it
-        self._far_dials_us(HUB, [web], "hub-bus-3")
+        self._hub_answers_our_dial(HUB, [web, far_cached], "hub-bus-3")             # FAR's cache again, then the same process omits it
+        self._hub_answers_our_dial(HUB, [web], "hub-bus-3")
         self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._rows()[VIA_FAR]), ([], (False, False, [B])),
                          "RELEASED: the same hub process omits FAR, a far bus heard answering, the far host's empty answer; "
                          "the word is carried, heard false (at the thirty-first commit held: ([(B, FAR)], (True, False, [B])))")
-        self._far_dials_us(HUB, [web, far_cached], "")                      # a hub that sends no bus id
-        self._far_dials_us(HUB, [web], "")
+        self._hub_answers_our_dial(HUB, [web, far_cached], "")                      # a hub that sends no bus id
+        self._hub_answers_our_dial(HUB, [web], "")
         self.assertEqual(([(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"]], self._rows()[VIA_FAR]),
                          ([(B, FAR)], (True, False, [B])),
                          "HELD: a hub with no bus id cannot say it is the process that named FAR (two empty ids are no "
                          "identity)")
 
-    def test_a_hubs_held_word_is_released_on_the_road_that_named_it_only_for_a_far_bus_heard_answering(self):
-        """Round 4 of fork PR #897, the thirty-third commit (the reviewer's verifier at the thirty-second, by execution),
-        named test_a_hubs_held_word_is_released_on_the_road_that_named_it_whatever_bus_id_the_far_host_carries until
-        round 6. THE ROAD: this bus hears a hub's rosters by two roads, the hub's dial (the handler) and the hub's answer
-        to this bus's dial (the fold), and the hub can take its answer to our dial before its own later dial while our fold
-        of that answer runs after the dial is recorded; so the same hub process's omission releases a held word only on
-        the road whose roster last named the host (`hubRoad`). For a far bus heard answering here (its answered word
-        relayed by the hub first): the hub's dial names FAR's cached word and two of the same process's answers to our
-        dial omit it: the word stays held (at the thirty-second commit released, carried heard false); the hub's next dial
-        omits FAR: released. Then the answer to our dial names FAR's cached word and the next answer omits it: released on
-        that road. Until round 6 a far host with NO bus id (the hub stamps no viaBus: a far bus from before busId) was
-        released the same way (the verifier's mutant that released only a word carrying a viaBus stayed green at the
-        thirty-second commit); the reviewer's round-5 ruling B counts the release only for a far bus heard answering in
-        this process (_ANSWERED_BUSES), so a word with no viaBus, and a word whose viaBus has never answered here, stay
-        held on every omission, on either road (at the forty-ninth commit released on the naming road). Through the real
-        handler, the real builder and fold, and this writer."""
+    def test_a_hubs_held_word_is_released_only_by_an_answer_placed_after_it_and_only_for_a_far_bus_heard_answering(self):
+        """Named test_a_hubs_held_word_is_released_on_the_road_that_named_it_whatever_bus_id_the_far_host_carries from the
+        thirty-third commit and test_a_hubs_held_word_is_released_on_the_road_that_named_it_only_for_a_far_bus_heard_answering
+        from round 6's fifty-fourth commit, until round 6's C commit (the reviewer's round-5 ruling C and its decision 1,
+        ONE RELEASE RULE). The same hub process's omission of a far host releases its held word only in the hub's answer
+        to a dial this bus built after it recorded the host's last unanswered word, the one exact order it has on the
+        hub's rosters, whatever road named the host (the road rule of the thirty-third commit, `hubRoad`, released on the
+        naming road and held on the other); the hub's dial, and an answer to a dial built before that word, merge and
+        release nothing. And only for a far bus heard answering in this process (the reviewer's round-5 ruling B), heard
+        on a roster this bus has released, so a word with no viaBus, and a word whose viaBus has never answered here,
+        stay held on every omission. For each far host: the hub's answer to our dial relays FAR's answered word first
+        where FAR is to be heard answering; the hub's DIAL names FAR's cached word; our dial is built; the hub's next DIAL
+        omits FAR (merged, the word kept in the hub's roster, held); the answer to our dial built BEFORE the cached word
+        omits FAR (merged, held); the answer to our dial built after it omits FAR: released for a far bus heard answering,
+        held in the hub's held words for any other. Through the real handler, the real builder and fold, and this
+        writer."""
         self._forget_presence_cache()
         self._local_listing_answered_empty()
         self._notify(HUB, up=True)
         web = {"id": A, "name": "web"}
+        omitting = {"host": HUB, "epoch": 1, "proto": pm.PEER_PROTO, "busId": "hub-bus", "presence": [web],
+                    "presenceAnswered": True, "holds": [], "relays": [], "acks": [], "bounces": [], "reads": [], "readsKept": []}
         for label, far_cached, heard in (
                 ("heard answering", {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus", "viaAnswered": False}, True),
                 ("never heard answering", {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus-never", "viaAnswered": False}, False),
                 ("with no viaBus", {"id": B, "name": "api", "via": FAR, "viaBus": "", "viaAnswered": False}, False)):
             with self.subTest(far=label):
-                if heard:                                                       # the hub relays FAR's answered word first
-                    self._far_dials_us(HUB, [web, dict(far_cached, viaAnswered=True)], "hub-bus")
+                if heard:                                                       # the hub's answer relays FAR's answered word first
+                    self._hub_answers_our_dial(HUB, [web, dict(far_cached, viaAnswered=True)], "hub-bus")
+                early = _cap()                                                  # our dial built BEFORE the cached word is recorded
                 self._far_dials_us(HUB, [web, far_cached], "hub-bus")           # the hub's DIAL names FAR's cached word
                 self.assertEqual((self._rows()[VIA_FAR], self._answered()[VIA_FAR]), ((True, False, [B]), False))
-                for _ in range(2):                                              # the same process's ANSWERS to our dial omit FAR
-                    self._hub_answers_our_dial(HUB, [web], "hub-bus")
-                    self.assertEqual(([(pa["id"], pa["via"], pa.get("hubBus"), pa.get("hubRoad")) for pa in pm.PEER_STATE[HUB]["viaHeld"]],
-                                      self._rows()[VIA_FAR]),
-                                     ([(B, FAR, "hub-bus", "dial")], (True, False, [B])),
-                                     "HELD: the omission came by our dial's road, and the hub's dial named FAR (at the "
-                                     "thirty-second commit released: ([], (False, False, [B])))")
-                self._far_dials_us(HUB, [web], "hub-bus")                       # the hub's next DIAL omits FAR: the road that named it
+                self._far_dials_us(HUB, [web], "hub-bus")                       # the hub's next DIAL omits FAR: merged
+                self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._rows()[VIA_FAR], self._answered()[VIA_FAR]),
+                                 ([], (True, False, [B]), False),
+                                 "HELD by the dial: the word stays in the hub's merged roster, unanswered (at the forty-ninth "
+                                 "commit released on this road for a far bus heard answering)")
+                pm.peer_exchange_apply(HUB, {}, dict(omitting), **early)        # the answer to the dial built before the word
+                self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._rows()[VIA_FAR]), ([], (True, False, [B])),
+                                 "HELD by an answer this bus cannot place after the word: merged")
+                self._hub_answers_our_dial(HUB, [web], "hub-bus")               # the answer to a dial built after the word omits FAR
                 if heard:
                     self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._rows()[VIA_FAR]), ([], (False, False, [B])),
-                                     "RELEASED on the road that named FAR, the hub's dial")
+                                     "RELEASED: the same hub process's answer, placed after FAR's cached word, omits it")
                 else:
-                    self.assertEqual(([(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"]], self._rows()[VIA_FAR]),
-                                     ([(B, FAR)], (True, False, [B])),
-                                     "HELD on the road that named FAR too: FAR's word is not a far bus heard answering (at the "
-                                     "forty-ninth commit released: ([], (False, False, [B])))")
-                self._hub_answers_our_dial(HUB, [web, far_cached], "hub-bus")   # the answer to our dial names FAR's cached word
-                self.assertEqual((self._rows()[VIA_FAR], self._answered()[VIA_FAR]), ((True, False, [B]), False))
-                self._hub_answers_our_dial(HUB, [web], "hub-bus")               # ...and the next answer omits it: the same road
-                if heard:
-                    self.assertEqual((pm.PEER_STATE[HUB]["viaHeld"], self._rows()[VIA_FAR]), ([], (False, False, [B])),
-                                     "RELEASED on our dial's road, which named FAR this time")
-                else:
-                    self.assertEqual(([(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"]], self._rows()[VIA_FAR]),
-                                     ([(B, FAR)], (True, False, [B])), "HELD on our dial's road as well")
+                    self.assertEqual(([(pa["id"], pa["via"], pa.get("hubBus")) for pa in pm.PEER_STATE[HUB]["viaHeld"]],
+                                      self._rows()[VIA_FAR]), ([(B, FAR, "hub-bus")], (True, False, [B])),
+                                     "HELD on the answer road as well: FAR's word is not a far bus heard answering, and it moves "
+                                     "to the held words")
+                    self._hub_answers_our_dial(HUB, [web, dict(far_cached, viaAnswered=True)], "hub-bus")   # names FAR again
+                self._hub_answers_our_dial(HUB, [web], "hub-bus")               # (a clean row for the next far host)
 
-    def test_a_far_bus_is_heard_answering_by_its_own_exchange_here_or_by_any_hubs_gossip_on_either_road_and_by_json_true_alone(self):
-        """Round 6 of fork PR #897, the reviewer's round-5 ruling B: this bus remembers the far bus ids it has heard answer
-        in this process (_ANSWERED_BUSES, filled by _heard_answering from each recorder's row): a far bus's own exchange
-        here carrying presenceAnswered True and its busId, or a gossip row carrying viaAnswered True and that viaBus, from
-        any hub, by either road. _via_held's release by the same hub process's omission needs the omitted word's viaBus
-        there. Each source is driven through the real handler or the real fold, and then HUB's cached word about that far
-        bus, omitted by the same HUB process on the road that named it (HUB's dial), is released. A far bus whose own
-        exchange here carried presenceAnswered False, or whose bit, on its exchange or on a gossip row, is a value other
-        than JSON true, is not heard answering, and its word stays held."""
+    def test_a_far_bus_is_heard_answering_by_its_own_answer_here_or_by_a_hubs_gossip_this_bus_released_and_by_json_true_alone(self):
+        """Round 6 of fork PR #897, the reviewer's round-5 ruling B, with ruling C: this bus remembers the far bus ids it has
+        heard answer in this process (_ANSWERED_BUSES, filled by _heard_answering from each recorder's STORED row): a far
+        bus's own row carrying presenceAnswered True and its busId, or a gossip row carrying viaAnswered True and that
+        viaBus, from any hub. The stored row is what every reader reads, so a roster this bus holds (a dial, which it
+        cannot place after its row's last unanswered roster, nor, in this process, after its start) stores its bits False
+        and notes nothing: the far bus's own answered DIAL, or a hub's DIAL relaying its answered word, is not yet heard
+        answering; the answer to this bus's dial, placed, is (named ..._by_its_own_exchange_here_or_by_any_hubs_gossip_on_either_road_and_by_json_true_alone
+        until ruling C's commit, when either road counted). _via_held's release by the same hub process's omission needs
+        the omitted word's viaBus there: HUB's dial names that far bus's cached word, and the same HUB process's answer to
+        our dial, built after it, omits it: released for a far bus heard answering, held for any other. A far bus whose
+        own row carried presenceAnswered False, or whose bit, on its exchange or on a gossip row, is a value other than
+        JSON true, is not heard answering, and its word stays held."""
         self._forget_presence_cache()
         self._local_listing_answered_empty()
         self._notify(HUB, up=True)
@@ -2656,30 +2694,39 @@ class Mirror(unittest.TestCase):
 
         def omitted(far, bus):                                              # HUB's dial names the far bus's cached word, then
             self._far_dials_us(HUB, [web, {"id": B, "name": "api", "via": far, "viaBus": bus, "viaAnswered": False}], "hub-bus")
-            self._far_dials_us(HUB, [web], "hub-bus")                       # the same HUB process's dial omits it
+            self._hub_answers_our_dial(HUB, [web], "hub-bus")               # the same HUB process's answer to our dial omits it
             return [(pa["id"], pa["via"]) for pa in pm.PEER_STATE[HUB]["viaHeld"] if pa.get("via") == far]
 
         def gossip(far, bus, answered):                                     # a gossip row about `far`, its bit as `answered`
             return {"id": D, "name": "docs", "via": far, "viaBus": bus, "viaAnswered": answered}
 
         self._far_dials_us("TESTHOST-far1", [{"id": C, "name": "tests"}], "far1-bus", answered=True)
+        self.assertEqual("far1-bus" in _answered_buses(), False,
+                         "the far bus's own answered DIAL holds its row (its first roster here): not heard answering")
+        self._hub_answers_our_dial("TESTHOST-far1", [{"id": C, "name": "tests"}], "far1-bus", answered=True)
         self.assertEqual(omitted("TESTHOST-far1", "far1-bus"), [],
-                         "RELEASED: the far bus's own exchange here carried presenceAnswered True and its bus id")
+                         "RELEASED: the far bus's own answer to our dial carried presenceAnswered True and its bus id")
         self._far_dials_us(hub2, [gossip("TESTHOST-far2", "far2-bus", True)], "hub2-bus")
+        self.assertEqual("far2-bus" in _answered_buses(), False,
+                         "another hub's DIAL relaying the far bus's answered word: held here, not heard answering")
+        self._hub_answers_our_dial(hub2, [gossip("TESTHOST-far2", "far2-bus", True)], "hub2-bus")
         self.assertEqual(omitted("TESTHOST-far2", "far2-bus"), [],
-                         "RELEASED: another hub's gossip on its dial carried the far bus's answered bit")
+                         "RELEASED: another hub's answer to our dial carried the far bus's answered bit")
         self._hub_answers_our_dial(hub2, [gossip("TESTHOST-far3", "far3-bus", True)], "hub2-bus")
         self.assertEqual(omitted("TESTHOST-far3", "far3-bus"), [],
-                         "RELEASED: another hub's gossip on its answer to our dial carried the far bus's answered bit")
+                         "RELEASED: another hub's answer to our dial carried the far bus's answered bit, its first word here")
         self._far_dials_us("TESTHOST-far4", [{"id": C, "name": "tests"}], "far4-bus", answered=False)
+        self._hub_answers_our_dial("TESTHOST-far4", [{"id": C, "name": "tests"}], "far4-bus", answered=False)
         self._far_dials_us(hub2, [gossip("TESTHOST-far4", "far4-bus", False)], "hub2-bus")
+        self._hub_answers_our_dial(hub2, [gossip("TESTHOST-far4", "far4-bus", False)], "hub2-bus")
         self.assertEqual(omitted("TESTHOST-far4", "far4-bus"), [(B, "TESTHOST-far4")],
-                         "HELD: the far bus's own exchange and a hub's gossip each carried its bit False (at the forty-ninth "
+                         "HELD: the far bus's own exchanges and a hub's gossip each carried its bit False (at the forty-ninth "
                          "commit released)")
         for n, junk in enumerate(TRUTHY_NOT_TRUE):
             with self.subTest(reader="the answered-bus read", bit=junk):
                 far, bus = "TESTHOST-far-junk-%d" % n, "far-junk-%d-bus" % n
                 self._far_dials_us(far, [{"id": C, "name": "tests"}], bus, answered=junk)
+                self._hub_answers_our_dial(far, [{"id": C, "name": "tests"}], bus, answered=junk)
                 self._far_dials_us(hub2, [gossip(far, bus, junk)], "hub2-bus")
                 self._hub_answers_our_dial(hub2, [gossip(far, bus, junk)], "hub2-bus")
                 self.assertEqual((omitted(far, bus), bus in _answered_buses()), ([(B, far)], False),
@@ -2697,30 +2744,31 @@ class Mirror(unittest.TestCase):
         heard false; the reviewer's round-5 ruling B counts the release only for a far bus heard answering in this
         process, and a word with no viaBus never qualifies, so the old name's word stays held, heard, beside the new
         name's. ACROSS the hub's restart it stays held the same way, since the restarted process did not name the host
-        and no bus id matches the two names: until this bus restarts (or the far host's own row speaks for it here). The
+        and no bus id matches the two names: within this process until the far host's own row speaks for it here, and
+        after this bus restarts its via row is carried unanswered and holds the arm (the reviewer's decision 4 on round 5). The
         verdicts do not move with it: while such a hub is heard here its own row is unanswered, and the arm holds every sid
-        (cost (a)). Through the real handler and this writer."""
+        (cost (a)). Through the real builder and fold of this bus's dial (the answer road, where this bus places each of the hub's rosters after the last: round 6 of fork PR #897, the reviewer's round-5 ruling C; the hub's dials merge and release nothing) and this writer."""
         self._forget_presence_cache()
         self._local_listing_answered_empty()
         self._notify(HUB, up=True)
         web = {"id": A, "name": "web"}
         via_alias = VIA + HUB + "/" + FAR_ALIAS
         old = {"id": B, "name": "api", "via": FAR}                          # an old hub's gossip row: no viaBus, no viaAnswered
-        self._far_dials_us(HUB, [web, old], "hub-bus", answered=None)
-        self._far_dials_us(HUB, [web, dict(old, via=FAR_ALIAS)], "hub-bus", answered=None)   # the same process renames FAR
+        self._hub_answers_our_dial(HUB, [web, old], "hub-bus", answered=None)
+        self._hub_answers_our_dial(HUB, [web, dict(old, via=FAR_ALIAS)], "hub-bus", answered=None)   # the same process renames FAR
         self.assertEqual(([(pa["id"], pa["via"], pa.get("hubBus")) for pa in pm.PEER_STATE[HUB]["viaHeld"]],
                           self._rows()[VIA_FAR], self._rows()[via_alias]),
                          ([(B, FAR, "hub-bus")], (True, False, [B]), (True, False, [B])),
                          "WITHIN ONE PROCESS: the old name's word stays held, heard, beside the new name's (at the forty-ninth "
                          "commit released: ([], (False, False, [B]), (True, False, [B])))")
-        self._far_dials_us(HUB, [web, old], "hub-bus-2", answered=None)            # the hub restarts and names FAR again
-        self._far_dials_us(HUB, [web, dict(old, via=FAR_ALIAS)], "hub-bus-3", answered=None)   # ...restarts, and renames it
+        self._hub_answers_our_dial(HUB, [web, old], "hub-bus-2", answered=None)            # the hub restarts and names FAR again
+        self._hub_answers_our_dial(HUB, [web, dict(old, via=FAR_ALIAS)], "hub-bus-3", answered=None)   # ...restarts, and renames it
         for _ in range(2):
             self.assertEqual(([(pa["id"], pa["via"], pa.get("hubBus")) for pa in pm.PEER_STATE[HUB]["viaHeld"]],
                               self._rows()[VIA_FAR], self._rows()[via_alias]),
                              ([(B, FAR, "hub-bus-2")], (True, False, [B]), (True, False, [B])),
                              "ACROSS THE HUB'S RESTART: the old name's word stays held, heard, beside the new name's")
-            self._far_dials_us(HUB, [web, dict(old, via=FAR_ALIAS)], "hub-bus-3", answered=None)
+            self._hub_answers_our_dial(HUB, [web, dict(old, via=FAR_ALIAS)], "hub-bus-3", answered=None)
 
     def test_a_hubs_answered_word_about_a_directly_held_host_stands_beside_that_hosts_cached_row_until_it_answers(self):
         """Round 3 of fork PR #897, the reviewer's verifier at the eleventh commit, by execution through the real builder,
@@ -2751,6 +2799,7 @@ class Mirror(unittest.TestCase):
         gossip = lambda *sids: [{"id": s, "name": "api", "via": FAR, "viaBus": "far-bus", "viaAnswered": True} for s in sids]
         self._local_listing_answered([{"id": C, "name": "tests"}])
         far_dials_us()
+        self._hub_answers_our_dial(FAR, [{"id": C, "name": "tests"}], "far-bus")   # its answer to our dial releases its row
         self._peer(HUB, gossip(C), answered=True)             # the hub's word about the far host as it reported it, answered
         pm._write_remote_sids()
         self.assertEqual(self._reach(), {HUB: (True, False, False, True, []), FAR: (True, False, False, True, [C])},
@@ -2795,6 +2844,10 @@ class Mirror(unittest.TestCase):
         self._local_listing_answered([{"id": C, "name": "tests"}, {"id": D, "name": "api"}])
         req = far_dials_us()
         self.assertEqual(req.get("presenceAnswered"), True)
+        self.assertEqual((self._answered()[FAR], VIA_FAR in self._reach()), (False, True),
+                         "the far host's answered DIAL holds its row, so it does not speak yet: the via row stands (round 6 of "
+                         "fork PR #897, the reviewer's round-5 ruling C)")
+        self._hub_answers_our_dial(FAR, [{"id": C, "name": "tests"}, {"id": D, "name": "api"}], "far-bus")   # the answer to our dial
         self.assertEqual(self._reach(), {HUB: (False, False, False, False, []), FAR: (True, False, False, True, [C, D])},
                          "the direct row speaks again on an answered listing: the via row is DROPPED by the carry (a carry "
                          "that keeps it leaves the hub's older word naming D for the file's life once D ends there)")
@@ -2853,6 +2906,7 @@ _TABLE, _TABLE_LOCK = "PEER_STATE", "_PEER_STATE_LOCK"
 _ORDER_LOCK, _ORDER_WRITER = "_REMOTE_SIDS_LOCK", "_write_remote_sids"
 _LINK_STATE = ("PEERS", "_PEERS_SEEDED")          # the link state one mirror write reads beside the table
 _ANSWERED_SET = "_ANSWERED_BUSES"                  # the far bus ids heard answering (the reviewer's round-5 ruling B)
+_SEQUENCE = "_PEER_SEQ"                            # the recording sequence (the reviewer's round-5 ruling C)
 _ROW_KINDS = ("row", "rowsdict", "rows", "items", "pair")
 _MUTATORS = frozenset({"pop", "popitem", "setdefault", "update", "clear", "append", "extend", "insert", "remove", "add",
                        "discard", "sort", "reverse", "__setitem__", "__delitem__", "__ior__"})
@@ -2939,7 +2993,14 @@ def _peer_state_lock_census(source):
         lock alone (ruling A's bullet on the state groups B and C add), and no reference hands it, or a copy of it, out
         of a hold: a name bound to the set, the set handed to a call, a loop over it, a rebinding or any other method is
         refused. Refused: "answered set outside the lock in <function>, ..." and "answered set handed on in <function>
-        ...", each naming the function and line."""
+        ...", each naming the function and line.
+      THE RECORDING SEQUENCE: every reference of the name _PEER_SEQ, the recording sequence each recorder mints and each
+        dial's build reads (round 6 of fork PR #897, the reviewer's round-5 ruling C), outside the module scope is
+        PROTECTED as above, and is its one cell, `_PEER_SEQ[0]`, read or written (a row's marks, which hold its numbers,
+        live in PEER_STATE and are covered by the rules above). So the sequence is minted and read under the lock alone,
+        a number minted in one recording is the order of that recording, and no reference hands the list out of a
+        hold. Refused: "recording sequence outside the lock in <function>, ..." and "recording sequence handed on in
+        <function> ...", each naming the function and line."""
     tree = ast.parse(source)
     nodes = list(ast.walk(tree))
     parent, scopes = {}, {}
@@ -3467,6 +3528,25 @@ def _peer_state_lock_census(source):
                 "; its references outside it: " + ", ".join(outside) if outside else
                 ("; no call site" if isinstance(sc, _DEFS) and not refs.get(sc.name) else "")))
 
+    # THE RECORDING SEQUENCE (round 6 of fork PR #897, the reviewer's round-5 ruling C, and ruling A's bullet on the state
+    # groups B and C add): minted and read under the table's lock alone, each reference its one cell
+    sequence_refs = [n for n in nodes if isinstance(n, ast.Name) and n.id == _SEQUENCE and scope(n) is not None]
+    for n in sequence_refs:
+        p = parent.get(n)
+        if not (isinstance(p, ast.Subscript) and p.value is n and isinstance(p.slice, ast.Constant) and p.slice.value == 0):
+            refused.append("recording sequence handed on in %s (line %d: %s): a reference is its one cell, _PEER_SEQ[0]"
+                           % (line(n)[0], n.lineno, line(n)[2]))
+        if not locked(n):
+            sc = scope(n)
+            outside = []
+            if isinstance(sc, _DEFS) and not lexically_in(n, _TABLE_LOCK):
+                outside = ["%s line %d" % (fname(scope(r)), r.lineno) for r in refs.get(sc.name, ())
+                           if not (is_call(r) and locked(r))]
+            refused.append("recording sequence outside the lock in %s (line %d: %s)%s" % (
+                line(n)[0], n.lineno, line(n)[2],
+                "; its references outside it: " + ", ".join(outside) if outside else
+                ("; no call site" if isinstance(sc, _DEFS) and not refs.get(sc.name) else "")))
+
     # ONE MIRROR WRITE, ONE COPY: every function the mirror write reaches (_write_remote_sids and, to a fixpoint, every
     # function a reference in a reached function names, by name, a method by its attribute name) reads the table only
     # inside ONE `with` on the lock, taken once per write (not under a loop, in a function the write reaches by one call
@@ -3515,7 +3595,7 @@ def _peer_state_lock_census(source):
             "mirrorTree": sorted({d.name for d in tree}), "mirrorHolds": [line(h)[:2] for h in holds],
             "mirrorReads": [line(n) for n in mirror_reads], "mirrorLinkReads": [line(n) for n in link_reads],
             "holdBound": [list(x) for x in hold_bound], "handoffTakers": sorted(handoff),
-            "answered": [line(n) for n in answered_refs], "refused": refused}
+            "answered": [line(n) for n in answered_refs], "sequence": [line(n) for n in sequence_refs], "refused": refused}
 
 
 class PeerStateLock(unittest.TestCase):
@@ -3544,7 +3624,9 @@ class PeerStateLock(unittest.TestCase):
     capture, or by a def's default called in the second hold, was accepted); the forms it does not follow are stated
     as limits, each with a witness. On the reviewer's round-5 ruling B (the fifty-fourth commit), the far bus ids heard
     answering (_ANSWERED_BUSES) are written and read under the lock alone, each reference a membership test or an add
-    (THE ANSWERED SET)."""
+    (THE ANSWERED SET). On its ruling C, the recording sequence each recorder mints and each dial's build reads
+    (_PEER_SEQ) is read and written under the lock alone, each reference its one cell (THE RECORDING SEQUENCE); the rows'
+    marks live in PEER_STATE, under the rules above."""
 
     SOURCE = Path(os.path.realpath(os.path.join(BIN, "romp-postal-service"))).read_text()
     BASE = None                                       # the bus's own refusals, read once (the plants add to them)
@@ -3588,6 +3670,10 @@ class PeerStateLock(unittest.TestCase):
                          "membership test (the reviewer's round-5 ruling B): %r" % got["answered"])
         self.assertTrue({"_heard_answering", "_via_held"} <= set(got["protected"]),
                         "each reached only through call sites that hold the lock")
+        self.assertEqual(sorted({fn for fn, _, _ in got["sequence"]}), ["_order_row", "build_exchange_request"],
+                         "THE RECORDING SEQUENCE's population, derived from the source: the recorders' mint and the dial's "
+                         "capture (the reviewer's round-5 ruling C): %r" % got["sequence"])
+        self.assertIn("_order_row", got["protected"], "the mint, reached only through the recorders' holds")
         self.assertIsInstance(pm._PEER_STATE_LOCK, type(threading.Lock()), "a plain lock (it does not re-enter)")
         for other in ("_REMOTE_SIDS_LOCK", "_peer_lock", "_outbox_lock"):
             self.assertIsNot(pm._PEER_STATE_LOCK, getattr(pm, other), "one lock per subject: not %s" % other)
@@ -3642,6 +3728,25 @@ class PeerStateLock(unittest.TestCase):
                 self.assertTrue(any("answered set handed on in _planted_form" in r for r in got["refused"]), got["refused"])
         got = self._plant("def _planted_member(bus):\n    with _PEER_STATE_LOCK:\n        return bus not in _ANSWERED_BUSES\n")
         self.assertEqual(got["refused"], [], "the control: a membership test under the lock")
+
+    def test_the_census_refuses_the_recording_sequence_read_outside_the_lock_or_handed_on_by_name(self):
+        """THE RECORDING SEQUENCE (round 6 of fork PR #897, the reviewer's round-5 ruling C): the sequence each recorder
+        mints and each dial's build reads is read and written under the lock alone, each reference its one cell. Refused
+        by name: a read outside the lock, a helper with one call site outside it, the list bound to a name in a hold and
+        returned, and the list handed to a call; accepted: the cell minted and read inside a hold."""
+        got = self._plant("def _planted_capture():\n    return _PEER_SEQ[0]\n")
+        self.assertTrue(any(r.startswith("recording sequence outside the lock in _planted_capture") for r in got["refused"]),
+                        got["refused"])
+        helper = "def _planted_mint():\n    _PEER_SEQ[0] += 1\n"
+        got = self._plant(helper + "def _planted_mint_caller():\n    _planted_mint()\n")
+        self.assertTrue(any(r.startswith("recording sequence outside the lock in _planted_mint") and "_planted_mint_caller" in r
+                            for r in got["refused"]), got["refused"])
+        got = self._plant("def _planted_hand():\n    with _PEER_STATE_LOCK:\n        seq = _PEER_SEQ\n    return seq\n")
+        self.assertTrue(any(r.startswith("recording sequence handed on in _planted_hand") for r in got["refused"]), got["refused"])
+        got = self._plant("def _planted_list():\n    with _PEER_STATE_LOCK:\n        return list(_PEER_SEQ)\n")
+        self.assertTrue(any(r.startswith("recording sequence handed on in _planted_list") for r in got["refused"]), got["refused"])
+        got = self._plant("def _planted_ok():\n    with _PEER_STATE_LOCK:\n        _PEER_SEQ[0] += 1\n        return _PEER_SEQ[0]\n")
+        self.assertEqual(got["refused"], [], "the control: the cell minted and read inside a hold")
 
     def test_the_census_refuses_a_copied_row_written_outside_the_lock_and_a_row_handed_to_a_function_that_writes_it(self):
         got = self._plant("def _planted_copy_writer():\n    with _PEER_STATE_LOCK:\n        rows = list(PEER_STATE.items())\n"
@@ -3706,8 +3811,8 @@ class PeerStateLock(unittest.TestCase):
             ("    with _PEER_STATE_LOCK:                           # the previous row's read, the row's store and the fold: one step, so",
              "    prev_row = PEER_STATE.get(host)\n"
              "    with _PEER_STATE_LOCK:                           # the previous row's read, the row's store and the fold: one step, so"),
-            ('_via_held(resp.get("presence") or [], bus_id, "answer", PEER_STATE.get(host))}',
-             '_via_held(resp.get("presence") or [], bus_id, "answer", prev_row)}'))
+            ('        prev = PEER_STATE.get(host)                  # the row this answer is ordered after, and the rows the same bus left',
+             '        prev = prev_row              # the row this answer is ordered after, and the rows the same bus left'))
         self.assertTrue(any(r.startswith("read outside the lock in peer_exchange_apply,") for r in got["refused"]),
                         "the verifier's hoisted read: %r" % got["refused"])
         hoisted = ("def _planted_hoisted(host, row):\n    prev = PEER_STATE.get(host)\n    with _PEER_STATE_LOCK:\n"
@@ -3873,8 +3978,8 @@ class PeerStateLock(unittest.TestCase):
             "M14": ([(hand_store, "    with _PEER_STATE_LOCK:\n" + hand_store)],
                     "split hold in peer_exchange_handle: row, bound from a read of the table in the hold at line"),
             "M15": ([(fold_hold, "    with _PEER_STATE_LOCK:\n        prev_row = PEER_STATE.get(host)\n" + fold_hold),
-                     ('_via_held(resp.get("presence") or [], bus_id, "answer", PEER_STATE.get(host))}',
-                      '_via_held(resp.get("presence") or [], bus_id, "answer", prev_row)}')],
+                     ('        prev = PEER_STATE.get(host)                  # the row this answer is ordered after, and the rows the same bus left',
+                      '        prev = prev_row              # the row this answer is ordered after, and the rows the same bus left')],
                     "split hold in peer_exchange_apply: prev_row, bound from a read of the table in the hold at line"),
             "M16": ([(mark, "    with _PEER_STATE_LOCK:\n        marked = not up and host in PEER_STATE\n"
                             "    with _PEER_STATE_LOCK:\n        if marked:\n")],

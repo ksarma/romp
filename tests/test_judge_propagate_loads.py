@@ -736,11 +736,23 @@ def _dials_us(bus, host, answered):
     return status
 
 
+def _answers_our_dial(bus, host, answered):
+    """`host`'s answer to this bus's dial landing through the real fold (peer_exchange_apply), handed the dial's capture of
+    the recording sequence: the answer road, where this bus places a roster after every one recorded before the dial was
+    built, the one road that releases a hold (round 6 of fork PR #897, the reviewer's round-5 ruling C: a dial releases
+    nothing, and a host's first roster in this process holds its row until such an answer). Its roster names no session."""
+    kw = {"built": [bus._PEER_SEQ[0]]} if hasattr(bus, "_PEER_SEQ") else {}
+    bus.peer_exchange_apply(host, {}, {"host": host, "epoch": 1, "proto": bus.PEER_PROTO, "busId": "bus-" + host.lower(),
+                                       "holds": [], "presence": [], "presenceAnswered": answered, "relays": [], "acks": [],
+                                       "bounces": [], "reads": [], "readsKept": []}, **kw)
+
+
 class SettleUnderTheUnansweredArm(World):
     """Round 4 of fork PR #897, the reviewer's ruling on its round-3 refuters' finding (section A), the twenty-ninth commit:
     the reader answers cannot-determine, listing-unanswered, for a sid nothing names while any row of the mirror HEARD in
     the bus's current process is unanswered (a reachable one here; held down or not since the thirtieth commit), whatever
-    another row vouches. The release is that source's next answering exchange, and it reaches the READER's answer, not a
+    another row vouches. The release is that source's answer to this bus's dial built after the cached roster (round 6
+    of fork PR #897, the reviewer's round-5 ruling C: its answered dial releases nothing), and it reaches the READER's answer, not a
     settle already decided: the judge reads _presumed_closed only at a courier write, a reply or a user resolve, and a
     dead sender has no pass of its own. So a dead sender whose recipient completes while a heard row anywhere is
     unanswered stays unsettled after the release, until the next completion, reply or resolve for it.
@@ -754,7 +766,8 @@ class SettleUnderTheUnansweredArm(World):
         self.assertEqual(bus.STATE / "remote-sids", _mirror(), "the real writer's file is the one the reader reads")
         for host, port in ((LISTED, 50002), (CACHED, 50003)):
             list(bus.peer_update({"host": host, "port": port, "up": True}))   # the kernel's notify: both links up
-        self.assertEqual(_dials_us(bus, LISTED, True), 200)    # heard, answered, its link up: it vouches for absence
+        self.assertEqual(_dials_us(bus, LISTED, True), 200)    # heard, answered, its link up; its answer to our dial
+        _answers_our_dial(bus, LISTED, True)                   # releases its row (a first dial holds): it vouches for absence
         self.assertEqual(_dials_us(bus, CACHED, False), 200)   # heard, its link up, its exchange a cache (a kernel restart)
         t1 = _tracker(DEAD, 1, RECIP, MID)
         st = _store(DEAD, {t1["id"]: t1})
@@ -774,7 +787,11 @@ class SettleUnderTheUnansweredArm(World):
         self.assertEqual(at_completion, (None, "listing-unanswered: " + CACHED + " (listing unanswered)"),
                          "the arm: a host vouches for absence and none names the dead sender, but a reachable row is "
                          "unanswered, so the reader cannot determine")
-        self.assertEqual(_dials_us(bus, CACHED, True), 200)    # the release: the cached host's next answering exchange
+        self.assertEqual(_dials_us(bus, CACHED, True), 200)    # the cached host's answered DIAL: a dial releases nothing
+        self.assertEqual(_verdict(DEAD, T + 901), (None, "listing-unanswered: " + CACHED + " (listing unanswered)"),
+                         "the cached host's answered dial holds its row (round 6 of fork PR #897, the reviewer's round-5 "
+                         "ruling C; rule 5 at the forty-ninth commit)")
+        _answers_our_dial(bus, CACHED, True)                   # the release: the cached host's answer to our dial built after
         self.assertEqual(_verdict(DEAD, T + 901), (5, "no-reachable-host-names-it"),
                          "the release reaches the reader's answer: rule 5 for the dead sender")
         jd.run_propagate(now=T + 901)                     # a second pass, no new completion, reply or resolve for the sender
@@ -828,6 +845,7 @@ class SettleWhenTheCachedHostIsHeldDown(World):
         for host, port in ((LISTED, 50002), (CACHED, 50003)):
             list(bus.peer_update({"host": host, "port": port, "up": True}))   # the kernel's notify: both links up
         self.assertEqual(_dials_us(bus, LISTED, True), 200)
+        _answers_our_dial(bus, LISTED, True)                   # its answer to our dial releases its row: it vouches
         self.assertEqual(_dials_us(bus, CACHED, False), 200)   # the exchange that carried the live sender's mail
         self._plant()                                          # the courier plants the sender's tracker here
         self.assertEqual(_verdict(LIVE_ON_CACHED, T + 10), (None, "listing-unanswered: " + CACHED + " (listing unanswered)"))
@@ -839,7 +857,9 @@ class SettleWhenTheCachedHostIsHeldDown(World):
         for host, port in ((LISTED, 50002), (CACHED, 50003)):
             list(bus.peer_update({"host": host, "port": port, "up": True}))
         self.assertEqual(_dials_us(bus, LISTED, True), 200)
+        _answers_our_dial(bus, LISTED, True)                   # its answer to our dial releases its row: it vouches
         self.assertEqual(_dials_us(bus, CACHED, True), 200)
+        _answers_our_dial(bus, CACHED, True)                   # CACHED answered and released before our kernel holds it down
         list(bus.peer_update({"host": CACHED, "port": 50003, "up": False}))   # held down by our kernel
         self.assertEqual(_dials_us(bus, CACHED, False), 200)  # CACHED's own dial to us, over its cache, with the mail
         self._plant()
