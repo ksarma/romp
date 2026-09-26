@@ -108,14 +108,24 @@ _await_ready() {   # the stand-in has set its TERM disposition, so the TERM belo
 @test "a zombie counts as exited: the call neither waits out the bound nor sends a KILL" {
     # A zombie still answers kill -0, and a parent that never reaps (here a sleep that bash exec'd into
     # after starting the child) keeps it one. It can write nothing, so the poll must stop at it.
-    bash -c 'true & printf "%s\n" "$!" > "$1"; exec sleep 30' _ "$TEST_DIR/zombie.pid" &
+    # The child exits only on a flag raised once its parent has become the sleep: a child that exits
+    # before the exec can be reaped by bash first, and then no zombie is left (seen in CI).
+    bash -c 'while [ ! -e "$2" ]; do sleep 0.02; done & printf "%s\n" "$!" > "$1"; exec sleep 30' \
+        _ "$TEST_DIR/zombie.pid" "$TEST_DIR/zombie.go" &
     STANDIN_PID=$!   # the sleep, which teardown KILLs; the zombie goes with it
-    local zpid="" st="" i
-    for ((i = 0; i < 50; i++)); do
+    local zpid="" comm="" st="" i
+    for ((i = 0; i < 100; i++)); do
+        comm="$(ps -o comm= -p "$STANDIN_PID" 2>/dev/null | tr -d ' ')"
         zpid="$(cat "$TEST_DIR/zombie.pid" 2>/dev/null || true)"
-        [ -n "$zpid" ] && st="$(ps -o stat= -p "$zpid" 2>/dev/null | tr -d ' ')"
+        [[ "$comm" == sleep && -n "$zpid" ]] && break
+        sleep 0.05
+    done
+    [[ "$comm" == sleep && -n "$zpid" ]]  # the parent has exec'd into the sleep, and the child's pid is known
+    : > "$TEST_DIR/zombie.go"
+    for ((i = 0; i < 100; i++)); do
+        st="$(ps -o stat= -p "$zpid" 2>/dev/null | tr -d ' ')"
         [[ "$st" == Z* ]] && break
-        sleep 0.1
+        sleep 0.05
     done
     [[ "$st" == Z* ]]                     # the premise: the pid handed over is a zombie
     SECONDS=0
