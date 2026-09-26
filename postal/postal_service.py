@@ -4841,9 +4841,18 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     that has since ended for the file's life, heard=false, where rule 5 is due. So the carry drops a carried
     via row by IDENTITY as well as by key: when the hub's bus is heard in this process under another name
     (`renamed`: the previous file's row under the hub's old name carries a busId a heard row carries, the
-    same test that drops that row itself, so the two leave together, whatever the hub now says about the far
-    host, since a hub in the same process gossiping nothing about a host it gossiped before reports no
-    sessions there), and when a hub's current gossip at this write names the far host's bus, by viaBus,
+    same test that drops that row itself; the via row leaves with it once this process HOLDS the hub's word
+    about the far host, the hub's row under the name its bus is heard under now carrying that host's mark,
+    `viaMark` (a recorder marks every far host a roster names), or its current word naming the host's bus under
+    another far name, as it always does for a word this process heard, since the fold hands the old row's words
+    and marks to the row that stays; a row carried from before THIS bus's restart, whose word the restarted
+    process does not hold, instead FOLLOWS the hub to the name its bus is heard under, carried with its bit, and
+    a bit False holds the reader's arm there as it would under the old name: the reviewer's decision 4 on round
+    5, and its verifier at the fifty-eighth commit, where such a far host's cached word, dropped by the rename
+    when the hub's dial landed first under the name it declares, as at every start of this bus, left no row, and
+    a session whose mail it carried answered rule 5; a carried row already under the new key is one source with
+    the moved one, their names joined and unanswered if either is), and when a hub's current gossip at this
+    write names the far host's bus, by viaBus,
     under any name (`current_word`: the hub's word about that bus stands, as a via row under its current
     name for the host or folded into the host's own row). A heard hub gossiping nothing about a far host
     under the SAME name still leaves its via row carried (its silence is not a word about the host: a
@@ -5036,14 +5045,20 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     False), and the host's first rosters in the new process hold its row, as every row starts held there (_fold_rows),
     until the host's answer to a dial this bus built after them; a far host's cached word through a hub is carried the
     same way, its via row holding the arm until the hub names the host again with an answered word on an answer placed
-    after it. Until round 6 a carried row held nothing, and the session, in no row, answered rule 5 while another host
-    vouched, from this bus's restart until that host's first exchange in the new process. The cost, on the restricted
+    after it, and following the hub when this process hears the hub's bus under another name first (the hub's dial
+    landing under the name it declares before this bus's dial folds it, as at every start of this bus: the carry's
+    `renamed` above). Until round 6 a carried row held nothing, and the session, in no row, answered rule 5 while
+    another host vouched, from this bus's restart until that host's first exchange in the new process. The cost, on the restricted
     side: a host whose last exchange before the restart served a cache and that never returns holds every sid for the
     file's life (costs (c) and (f) below), and a row this bus never dials stays held across restarts (cost (ii) below).
     The witnesses: tests/test_dead_session_staleness.py ReaderFollowsTheWriter
     test_residual_3c_a_session_whose_mail_landed_on_a_cached_exchange_before_this_bus_restarted_holds_until_its_host_answers_our_dial
     (named ..._answers_rule_5 until round 6, when it witnessed the residual left open), for the far host's face the
     last step of test_a_second_hubs_older_answered_word_does_not_release_the_first_hubs_held_word_and_neither_does_our_restart,
+    and with the hub dialing first under the name it declares
+    test_decision_4_after_our_restart_a_hub_dialing_first_under_its_declared_name_leaves_the_far_hosts_carried_word_holding
+    (its control, this bus's dial first, in the same test), with the carry itself in tests/test_postal_remote_sids_mirror.py
+    test_after_our_restart_a_carried_hubs_word_follows_the_hub_to_the_name_its_bus_is_heard_under,
     and the reader's arm, PresumedClosed test_the_deadness_ladder.
     (3d), CLOSED (round 6 of fork PR #897, the reviewer's round-5 ruling C and its decision 1, ONE RELEASE RULE): a
     roster that reaches this bus after a NEWER one from the same source. Until round 6 the latest roster RECORDED
@@ -5073,7 +5088,9 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     test_residual_3d_face_1_over_an_empty_cache_from_a_far_process_never_heard_answering_here_holds_the_word,
     test_x1_an_older_answered_roster_recorded_after_a_newer_one_keeps_the_session_the_newer_named_in_both_orders,
     test_x2_a_hubs_older_answered_word_recorded_after_its_newer_one_keeps_the_session_the_newer_named,
-    test_x3_the_fold_of_a_declared_name_row_by_an_older_answer_moves_its_hold_to_the_alias and
+    test_x3_the_fold_of_a_declared_name_row_by_an_older_answer_moves_its_hold_to_the_alias (its far hosts' marks
+    and its names: test_x3_the_fold_of_a_declared_name_row_moves_its_far_hosts_mark_to_the_alias and
+    test_x3_the_fold_of_a_declared_name_row_moves_its_names_to_the_alias) and
     test_x4_a_hubs_own_face_3_one_hop_out_holds_through_two_buses_on_this_build; the release,
     test_the_release_is_the_sources_next_answering_exchange, and the mark's rule,
     test_the_mark_an_answered_dial_landing_while_our_dial_is_out_does_not_push_the_release_back. THE RELEASE'S THIRD RACE: a hub files every
@@ -5438,9 +5455,12 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
             row["viaBus"] = row["viaBus"] or far_bus
             row["seenAt"] = max(row["seenAt"], seen)
     heard_bus = {row["busId"] for row in hosts.values() if row.get("busId")}
-    renamed = {key for key, prev in previous.items()  # the hosts whose bus this process heard under ANOTHER name: the same
-               if key not in hosts and prev.get("busId") and str(prev["busId"]) in heard_bus}   # test that drops their own rows below
+    renamed = {key: sorted(h for h, st in peers.items() if str(st.get("busId") or "") == str(prev["busId"]))
+               for key, prev in previous.items()      # the hosts whose bus this process heard under ANOTHER name, each with
+               if key not in hosts and prev.get("busId") and str(prev["busId"]) in heard_bus}   # the names it is heard under now:
+    #                                                  the same test that drops their own rows below
     named = {s for row in hosts.values() for s in row["sids"]}
+    moved = []                                        # (the hub's name now, the carried row) for a hub's word that follows it
     for key, prev in previous.items():
         if key in hosts:
             continue
@@ -5450,14 +5470,26 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
             continue                                  # the same bus, heard under its dialable name
         if prev.get("kind") == "via" and (key in folded
                                           or _direct_row_speaks(peers, prev.get("host"), prev.get("viaBus"), table, links)
-                                          or str(prev.get("via") or "") in renamed
                                           or (prev.get("viaBus")
                                               and (str(prev.get("via") or ""), str(prev["viaBus"])) in current_word)):
             continue                                  # the far host speaks for itself again; or the hub's current word about
-        #                                                it folded at this write; or the hub's bus is heard under another name;
-        #                                                or the hub's current word names the far host's bus under another
-        #                                                name: the hub's older word would otherwise name a sid for the file's
-        #                                                life (round 3 of fork PR #897)
+        #                                                it folded at this write; or the hub's current word names the far
+        #                                                host's bus under another name: the hub's older word would otherwise
+        #                                                name a sid for the file's life (round 3 of fork PR #897)
+        hub_now = renamed.get(str(prev.get("via") or "")) if prev.get("kind") == "via" else None
+        if hub_now:                                   # the hub's bus is heard under another name: its older word leaves with
+            far, far_bus = str(prev.get("host") or ""), str(prev.get("viaBus") or "")   # its old row once this process
+            if not any(far in ((table.get(h) or {}).get("viaMark") or {})                # HOLDS the hub's word about the
+                       or (far_bus and (h, far_bus) in current_word) for h in hub_now):  # far host: the hub's row, under
+                moved.append((hub_now[0], prev))      # the name its bus is heard under now, carries the host's mark (a
+            continue                                  # recorder marks every far host a roster names, _order_row), or its
+        #                                                current word names the host's bus under another far name. Until then
+        #                                                the row FOLLOWS the hub, carried with its bit: a row from before this
+        #                                                bus's restart holds what the restarted bus does not (round 6 of fork
+        #                                                PR #897, the reviewer's decision 4 on round 5, and its verifier at the
+        #                                                fifty-eighth commit: dropped by the rename while the hub dialed first
+        #                                                under the name it declares, a far host's cached word left no row and a
+        #                                                session its mail rode answered rule 5)
         row = dict(prev, heard=False)
         row.setdefault("kind", "peer")
         row.setdefault("expired", False)
@@ -5475,6 +5507,20 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
             if not row["sids"]:
                 continue
         hosts[key] = row
+    for hub, prev in moved:                           # a carried hub's word under the hub's name now (after the loop, so a row
+        key = _remote_sids_via_key(hub, prev.get("host"))   # the previous file kept under that key is carried first)
+        row = dict(prev, heard=False, via=str(hub))
+        row.setdefault("expired", False)
+        row.setdefault("answered", False)             # a file from before the field: the restricted side
+        row.setdefault("seenAt", 0)
+        have = hosts.get(key)                         # a row under the key already: carried (the hub's current word about
+        if have is None:                              # the host would have marked it, and moved nothing above), and one
+            hosts[key] = row                          # source with this one
+            continue
+        have["sids"] = list(have.get("sids") or []) + list(row.get("sids") or [])
+        have["answered"] = have.get("answered") is True and row["answered"] is True   # unanswered if either is
+        have["seenAt"] = max(int(have.get("seenAt") or 0), int(row.get("seenAt") or 0))
+        have["viaBus"] = have.get("viaBus") or row.get("viaBus") or ""
     legacy = not peers_on()                           # the legacy singleton scheme, read at this write: a heartbeat row
     for key, row in hosts.items():                    # vouches for absence by its TTL there and there alone
         row["sids"] = sorted({str(s) for s in row["sids"]})
@@ -6910,27 +6956,42 @@ def build_exchange_request(host, wait=True, flight=None, built=None):
     reads it, first, under _PEER_STATE_LOCK; the caller hands it to the fold of this dial's answer
     (peer_exchange_apply), which orders that answer after every roster recorded before the build (_placed). An
     out-parameter the way `flight` is, so the wire gains nothing (round 6 of fork PR #897, the reviewer's round-5
-    ruling C)."""
+    ruling C). The relays are listed BEFORE the roster is built, as the response builder does, so every relay the
+    request carries was parked before the listing its roster reads, and a roster build that raises frees the flight
+    the listing registered (round 6 of fork PR #897, the reviewer's verifier at the fifty-eighth commit)."""
     if built is not None:
         with _PEER_STATE_LOCK:                       # the capture: the recordings this dial's answer is newer than
             built.append(_PEER_SEQ[0])
     p = _pending(host)
     with _peer_lock:
         acks, bounces, read_acks = list(p["acks"]), list(p["bounces"]), list(p.get("readAcks") or [])
-    presence, answered = presence_payload(host)      # the answered bit rides beside the rows (round 3 of fork PR #897)
-    req = {"host": self_host(), "epoch": BUS_EPOCH, "proto": PEER_PROTO, "busId": BUS_ID,
-           "presence": presence, "presenceAnswered": answered, "holds": holds_payload(host),
-           "tier": my_tier_of(host),                 # how WE hold the dialed host's mail
-           "acks": acks, "bounces": bounces,
-           "reads": readbox_list(host), "readAcks": read_acks, "wait": bool(wait)}
-    req["relays"] = _relays_for(host, flight)    # may bounce (a backward bounce joins the origin's pending
+    reads = readbox_list(host)
+    rel = _relays_for(host, flight)                  # may bounce (a backward bounce joins the origin's pending
     #                                              queue): after the snapshot. Each relay is IN FLIGHT from
     #                                              here (a recall is told it is on its way) until the dial's
     #                                              outcome marks it carried or frees it (_peer_exchange_once,
     #                                              through the flight id `flight` receives; the wire gains nothing).
-    #                                              The LAST step on purpose: nothing after it can raise and
-    #                                              leave a record in flight with no outcome to free it
-    return req
+    #                                              BEFORE the roster, as the response builder lists its relays
+    #                                              before its roster (peer_exchange_handle): the roster's listing is
+    #                                              then read after every relay it carries was parked, so a session
+    #                                              whose mail rides this request is in its roster when its listing
+    #                                              answers. Built first, the roster read the kernel listing before a
+    #                                              session that started during that read (up to seconds) parked its
+    #                                              mail, and the request carried the mail with an answered roster
+    #                                              omitting its sender, a false rule 5 on the far side while another
+    #                                              host vouched (round 6 of fork PR #897, the reviewer's verifier at
+    #                                              the fifty-eighth commit)
+    try:
+        presence, answered = presence_payload(host)  # the answered bit rides beside the rows (round 3 of fork PR #897)
+        return {"host": self_host(), "epoch": BUS_EPOCH, "proto": PEER_PROTO, "busId": BUS_ID,
+                "presence": presence, "presenceAnswered": answered, "holds": holds_payload(host),
+                "tier": my_tier_of(host),            # how WE hold the dialed host's mail
+                "acks": acks, "bounces": bounces,
+                "reads": reads, "readAcks": read_acks, "wait": bool(wait), "relays": rel}
+    except Exception:
+        for fid in flight or []:
+            _flight_done(host, fid, carried=False)   # no request will carry them: freed, they ride next time (the
+        raise                                        # handler's shape: no record is left in flight with no outcome)
 
 def peer_exchange_apply(host, req_sent, resp, flight=None, built=None):
     """The DIALER's half: fold one exchange response in. `req_sent` is the request that produced it —
@@ -6946,7 +7007,10 @@ def peer_exchange_apply(host, req_sent, resp, flight=None, built=None):
     recorded before that build (_order_row, _placed; round 6 of fork PR #897, the reviewer's round-5 ruling C and its
     decision 1), the one road that releases a hold or drops a name, only what was recorded after the build staying in
     the row's union; with no capture handed (a caller driving build, handle and fold directly without one) the answer
-    cannot be placed and merges as a dial does, releasing nothing. The two recorders run at once by design, this one on
+    cannot be placed and merges as a dial does, releasing nothing. The stored presence is that union, the answer's
+    names with the names it keeps, and it is what routing (peer_route), the /agents listing and this bus's gossip
+    onward (presence_payload) read, as for a dial (round 6 of fork PR #897, the reviewer's round-5 ruling C, which
+    asked both recorders' docstrings to say so). The two recorders run at once by design, this one on
     the dialer's thread and peer_exchange_handle on the handler's for the same peer's dial, and each orders its roster
     after the row it replaces; each holds _PEER_STATE_LOCK from that read through its store and _drop_peer_name_dupes,
     and releases it before the mirror's write, which is why a far host's word one recorder records is not lost to the

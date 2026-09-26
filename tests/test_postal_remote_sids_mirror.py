@@ -1205,10 +1205,13 @@ class Mirror(unittest.TestCase):
         cannot-determine where rule 5 is due (at the sixth commit the via row was keyed by the far name alone, so the
         hub's rename did not duplicate it: the seventh commit's key opened this axis). The rule: a carried via row whose
         hub's bus this process heard under another name is dropped with the hub's own stale row, by the same test (its
-        busId among the heard rows'), whatever the hub now says about the far host: a hub in the same process gossiping
-        nothing about a host it gossiped before reports no sessions there (a hub heard under the SAME name and silent
-        leaves its via row carried: the standing pin above, its silence being a restarted hub's). The composition with the
-        reader's verdicts is tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the hub's two names phase)."""
+        busId among the heard rows'), whatever the hub now says about the far host, once this process holds the hub's
+        word about that host, as it does here: the declared row was heard in this process, and the fold handed its words
+        and marks to the alias's row (a hub heard under the SAME name and silent leaves its via row carried: the standing
+        pin above, its silence being a restarted hub's; and a row carried from before this bus's restart, whose word the
+        restarted process does not hold, follows the hub to its new name instead, the next test, round 6 of fork PR #897).
+        The composition with the reader's verdicts is tests/test_dead_session_staleness.py ReaderFollowsTheWriter (the
+        hub's two names phase)."""
         self._local_listing_answered_empty()
         gossip = lambda *sids: [{"id": s, "name": "api", "via": FAR, "viaBus": "far-bus", "viaAnswered": True} for s in sids]
         via_decl = VIA + HUB_DECL + "/" + FAR
@@ -1239,12 +1242,115 @@ class Mirror(unittest.TestCase):
         pm.peer_exchange_apply(HUB, {}, {"presence": [], "epoch": 1, "holds": [], "busId": "hub-bus", "presenceAnswered": True}, **_cap())
         self.assertEqual(self._rows(), {HUB: (True, False, []), VIA_FAR: (True, False, [C, D])},
                          "the hub's bus heard under another name: its earlier word under the declared name is dropped whatever it "
-                         "now says about the far host (a carry that keeps it while the hub is silent names C and D for the file's "
+                         "now says about the far host, this process holding its word (a carry that keeps it while the hub is "
+                         "silent names C and D for the file's "
                          "life; the SAME name silent is the standing pin's carry, a restarted hub that has not heard the host yet). "
                          "The words themselves move to the alias's row HELD (round 6 of fork PR #897): the declared row, never "
                          "dialed by this bus, held the far host's answered word unanswered, so the far bus was never heard "
                          "answering here and the same hub process's omission releases nothing (the reviewer's round-5 rulings B "
                          "and C; costs (a) and (ii))")
+
+    def test_after_our_restart_a_carried_hubs_word_follows_the_hub_to_the_name_its_bus_is_heard_under(self):
+        """The rename drop's reach after THIS bus restarts (round 6 of fork PR #897, the reviewer's decision 4 on round 5: no
+        release fires from state the restarted bus does not hold; its verifier at the fifty-eighth commit drove the road
+        through the real builders, handlers and reader, tests/test_dead_session_staleness.py ReaderFollowsTheWriter
+        test_decision_4_after_our_restart_a_hub_dialing_first_under_its_declared_name_leaves_the_far_hosts_carried_word_holding).
+        The previous process heard the hub, its bus id on its row, gossip two far hosts: FAR's word unanswered (C), FAR2's
+        answered (D). This bus restarts, and the hub's dial lands first under the hostname it declares, naming neither, as
+        at every start of this bus (no row carries its bus id yet). A word heard in this process is held at a rename, a
+        row heard under the old name having handed its words and marks to the row that stays (the next test). Here the
+        restarted process holds neither word, so each carried via row FOLLOWS the hub to the name its bus is heard
+        under, carried with its bit: FAR's, False, holds the reader's listing-unanswered arm, and FAR2's names D at
+        cannot-determine, as each would under the hub's old name (the carry above). At the fifty-eighth commit the rename
+        dropped both, C and D were in no row, and nothing held. This bus's dial to the alias then folds the hub there, and
+        the rows follow it back. A carried row already under the new key is ONE source with the moved one: their names
+        join and the row is unanswered if either is (a file carrying two rows with one bus id, which this build does not
+        write, reaches it)."""
+        FAR2 = "TESTHOST-far2"
+        word = lambda far, sid, ok: {"id": sid, "name": "api", "via": far, "viaBus": far + "-bus", "viaAnswered": ok}
+        via_decl, via_far2, via_decl_far2 = VIA + HUB_DECL + "/" + FAR, VIA + HUB + "/" + FAR2, VIA + HUB_DECL + "/" + FAR2
+        self._local_listing_answered_empty()
+        self._notify(HUB, up=True)
+        self._peer(HUB, [{"id": A, "name": "web"}, word(FAR, C, False), word(FAR2, D, True)], bus_id="hub-bus")
+        pm._write_remote_sids()
+        self.assertEqual((self._rows(), self._answered()),
+                         ({HUB: (True, False, [A]), VIA_FAR: (True, False, [C]), via_far2: (True, False, [D])},
+                          {HUB: True, VIA_FAR: False, via_far2: True}), "the previous process: FAR's word unanswered, FAR2's answered")
+        self._restart()
+        pm.PEERS.clear()
+        self._notify(HUB, up=True)
+        self._far_dials_us(HUB_DECL, [{"id": A, "name": "web"}], "hub-bus")   # the hub's dial first, under its declared name
+        self.assertEqual((self._rows(), self._answered()),
+                         ({HUB_DECL: (True, False, [A]), via_decl: (False, False, [C]), via_decl_far2: (False, False, [D])},
+                          {HUB_DECL: False, via_decl: False, via_decl_far2: True}),
+                         "THE RULE: the restarted process holds neither word, so each carried via row follows the hub to its "
+                         "declared name with its bit (at the fifty-eighth commit the rename drop took both: C and D in no row)")
+        self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}], "hub-bus")   # our dial to the alias folds the hub there
+        self.assertEqual((self._rows(), self._answered()),
+                         ({HUB: (True, False, [A]), VIA_FAR: (False, False, [C]), via_far2: (False, False, [D])},
+                          {HUB: True, VIA_FAR: False, via_far2: True}),
+                         "the fold: the rows follow the hub back to the alias, each with its bit")
+        # ONE SOURCE: a carried row already under the key the moved row takes (two rows with one bus id in the previous file)
+        self._restart()
+        pm.PEERS.clear()
+        self.path.unlink()
+        self._peer(HUB, [{"id": A, "name": "web"}, word(FAR, C, True), word(FAR2, D, False)], bus_id="hub-bus")
+        self._peer(HUB_DECL, [{"id": A, "name": "web"}, word(FAR, E, False), word(FAR2, B, True)], bus_id="hub-bus")
+        pm._write_remote_sids()
+        self.assertEqual(self._answered(), {HUB: True, HUB_DECL: True, VIA_FAR: True, via_far2: False, via_decl: False,
+                                            via_decl_far2: True},
+                         "a crafted state: the hub under both names with one bus id, each far host answered under one name and "
+                         "not the other")
+        self._restart()
+        pm.PEERS.clear()
+        self._far_dials_us(HUB_DECL, [{"id": A, "name": "web"}], "hub-bus")
+        self.assertEqual((self._rows(), self._answered()),
+                         ({HUB_DECL: (True, False, [A]), via_decl: (False, False, [C, E]), via_decl_far2: (False, False, [B, D])},
+                          {HUB_DECL: False, via_decl: False, via_decl_far2: False}),
+                         "each moved row joins the one carried under its new key: both names kept, and unanswered, since one "
+                         "of the two was, whichever (an overwrite loses a name either way, and a bit taken from either row "
+                         "alone reads one of the two answered)")
+
+    def test_the_rename_drops_a_hubs_older_word_once_this_process_holds_its_word_by_the_far_hosts_mark_or_bus(self):
+        """What "this process holds the hub's word about the far host" is, at the carry's rename (round 6 of fork PR #897,
+        the fifty-ninth commit; the test above has the row that follows the hub). Either of two: (1) the hub's row, under
+        the name its bus is heard under now, carries the far host's mark (`viaMark`, which a recorder stamps for every far
+        host a roster names and the fold hands to the row that stays), which holds even once the word has left the hub's
+        roster. Within ONE process: the hub's dial lands first under the name it declares, naming FAR's word; a second
+        hub's answer to our dial relays FAR answered, so FAR's bus is heard answering here; our dial to the alias then
+        folds the declared row, and the same hub process's answer, placed after FAR's word, omits it: the word is
+        released (the reviewer's round-5 rulings B and C), and the via row under the declared name leaves with the
+        declared row. A rename test blind to the mark would move that row to the alias still unanswered, holding every
+        sid nothing names at cannot-determine after a release. (2) The hub's current word names the far host's bus under
+        another far name. After this bus restarts, the hub's dial lands first under its declared name, gossiping FAR's bus
+        under the alias it now dials it by: the carried row under the old names leaves, the word standing under the new
+        key (a rename test blind to that pair would move the carried row beside it, naming C twice)."""
+        HUB2, word = "TESTHOST-hub2", lambda far, sid, ok: {"id": sid, "name": "api", "via": far, "viaBus": "far-bus",
+                                                             "viaAnswered": ok}
+        via_decl, via_hub2 = VIA + HUB_DECL + "/" + FAR, VIA + HUB2 + "/" + FAR
+        self._local_listing_answered_empty()
+        self._notify(HUB, up=True)
+        self._far_dials_us(HUB_DECL, [{"id": A, "name": "web"}, word(FAR, C, True)], "hub-bus")
+        self._hub_answers_our_dial(HUB2, [word(FAR, D, True)], "hub2-bus")   # FAR's bus heard answering here, by a gossip
+        self.assertEqual((self._rows(), "far-bus" in _answered_buses()),
+                         ({HUB_DECL: (True, False, [A]), via_decl: (True, False, [C]), HUB2: (True, False, []),
+                           via_hub2: (True, False, [D])}, True), "FAR's word through the hub under its declared name, held")
+        self._hub_answers_our_dial(HUB, [{"id": A, "name": "web"}], "hub-bus")   # our dial to the alias: the fold, FAR omitted
+        self.assertEqual(((pm.PEER_STATE.get(HUB) or {}).get("viaHeld"), FAR in ((pm.PEER_STATE.get(HUB) or {}).get("viaMark") or {}),
+                          self._rows()),
+                         ([], True, {HUB: (True, False, [A]), HUB2: (True, False, []), via_hub2: (True, False, [D])}),
+                         "(1) BY THE MARK: FAR's word released, the alias's row keeping its mark, and the via row under the "
+                         "declared name gone with the declared row (moved instead, it holds C and every sid nothing names)")
+        self._restart()
+        pm.PEERS.clear()
+        self.path.unlink()
+        self._peer(HUB, [{"id": A, "name": "web"}, word(FAR, C, False)], bus_id="hub-bus")
+        pm._write_remote_sids()
+        self._restart()
+        self._far_dials_us(HUB_DECL, [{"id": A, "name": "web"}, word(FAR_ALIAS, C, False)], "hub-bus")
+        self.assertEqual(self._rows(), {HUB_DECL: (True, False, [A]), VIA + HUB_DECL + "/" + FAR_ALIAS: (True, False, [C])},
+                         "(2) BY THE FAR BUS: after our restart the hub's current word names FAR's bus under another far "
+                         "name, so the carried row under the old names leaves (moved instead, it names C under a second key)")
 
     def test_a_hubs_word_follows_its_own_name_for_the_far_host_and_its_earlier_word_under_the_old_name_is_dropped(self):
         """The second name axis of a via key (round 3 of fork PR #897, the reviewer's verifier, by execution): the hub's

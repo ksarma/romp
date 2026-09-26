@@ -174,6 +174,8 @@ ROAD_SIDS = {                                        # private synthetic sids, t
     "x1": "a11f0001-1111-4222-8333-000000000180",        # a session started on B, named by B's newer roster and not its older one
     "x2": "a11f0001-1111-4222-8333-000000000181",        # a session started on F, named by the hub's newer word and not its older one
     "x3": "a11f0001-1111-4222-8333-000000000182",        # a session started on the hub during its kernel's blink, mailing ours
+    "x3named": "a11f0001-1111-4222-8333-000000000183",   # a session started on the hub after our dial to its alias was built
+    "midBuild": "a11f0001-1111-4222-8333-000000000184",  # a session started on B while B builds an exchange, mailing ours
 }
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
@@ -3797,6 +3799,152 @@ print(json.dumps(out))
         assert out.returncode == 0, "%s roads child failed: %s" % (shape, out.stderr[-2000:])
         got = json.loads(out.stdout.strip().splitlines()[-1])
         got["root"] = str(root)
+        # THE SECOND ROADS CHILD (round 6 of fork PR #897, the fifty-ninth commit): Linux holds one argv string to 128 KiB
+        # (MAX_ARG_STRLEN), and the first child's source is at that limit, so the roads added since run in a second fresh
+        # interpreter over the same root and the same machines' directory, once the first has exited, each road over its
+        # own buses as there. Its source names no session-hosts file (the hosts-on census the first child's comment names
+        # reads the first child's): it takes the first child's helpers it names in HELPERS from that child's source in this
+        # module, by AST, so both children run one copy of each, and a helper missing or defined twice there stops the
+        # child with the names it found
+        second = subprocess.run([sys.executable, "-c", r"""
+import ast, inspect, json, os, shutil, sys, time
+from pathlib import Path
+tests_dir, bin_dir, others_root = sys.argv[1:4]
+S = json.loads(sys.argv[4])
+US, B, C, HUB, F, HUB2, HUB_DECL, G, HUB_DECL2 = sys.argv[5:14]
+sys.path.insert(0, tests_dir)
+from romp_load import load_source
+jd = load_source("romp_judge_roads", os.path.join(bin_dir, "romp-judge"))
+out, LISTINGS, SEQ, CAPS, SETTLES = {"roads": {}}, {}, [0], {}, [0]
+HELPERS = ("load_bus", "fresh_us", "other", "As", "request", "fold", "dial", "hear", "notify", "rows", "step", "park",
+           "mail_dial", "mail_response", "b_and_c_answered", "far_behind_hub", "restart_hub", "split_dial", "pre_honesty",
+           "older_far_behind_hub", "held_words", "propagate", "tracker_status", "settle_in_window", "settle_after")
+first = [n.value for n in ast.walk(ast.parse(Path(tests_dir, "test_dead_session_staleness.py").read_text()))
+         if isinstance(n, ast.Constant) and isinstance(n.value, str)
+         and n.value.startswith("\nimport inspect, json, os, shutil, sys, time\n")]
+defs = [n for n in (ast.parse(first[0]).body if len(first) == 1 else [])
+        if isinstance(n, (ast.FunctionDef, ast.ClassDef)) and n.name in HELPERS]
+if sorted(n.name for n in defs) != sorted(HELPERS):
+    raise SystemExit("the first roads child's helpers: %d sources, defs %r" % (len(first), sorted(n.name for n in defs)))
+exec(compile(ast.Module(defs, []), "the first roads child's helpers", "exec"))
+# X3'S FAR MARKS AND NAMES (round 6 of fork PR #897, the reviewer's verifier at the fifty-eighth commit, its roads atk1 and
+# atk2): the fold of a declared-name row moves the row's per-far-host marks and its names to the row that stays, not only
+# its bit and its mark. (a) The hub's bus restarts and dials us under the name it declares, carrying F's cached word and a
+# new session's mail; our OLDER answer from the alias, taken before, then folds the declared row
+road = "x3FarMarkMovesWithTheForgottenRow"
+us, f, hub, c = far_behind_hub(road, HUB)          # the alias's row released, F's word released, F's bus heard answering
+hub, restart_dial = restart_hub(road, HUB_DECL)    # the hub's bus restarts (a new bus id) and dials us under its declared name
+out["roads"][road] = {"restartDial": restart_dial}
+hear(f, F, hub, HUB)                               # F answers the restarted hub, both ways
+out["roads"][road]["olderAnswerVia"], fold_older = split_dial(us, US, hub, HUB)   # our dial to the alias, answered NOW
+LISTINGS["f"] = None                               # F's kernel blinks; the new session starts on F and mails ours
+out["roads"][road]["park"] = park(f, S["new"], "px-x3far")
+out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
+out["roads"][road]["landingHere"] = mail_dial(hub, HUB_DECL, us, US)   # under its declared name: F's cached word and the mail
+out["roads"][road]["filedBeforeFold"] = sorted(h for h, st in us.PEER_STATE.items() if st.get("seenAt"))
+step(road, "declaredCachedWord", us, newOnFar=S["new"], nobody=S["nobody"])
+fold_older()                                       # the OLDER answer folds the declared row: F's mark moves with it
+out["roads"][road]["filedAfterFold"] = sorted(h for h, st in us.PEER_STATE.items() if st.get("seenAt"))
+step(road, "olderAnswerFolded", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+out["roads"][road]["settle"] = settle_in_window("px-x3far")
+LISTINGS["f"] = [S["other"], S["new"]]             # F's kernel answers, naming the new session; F answers the hub
+hear(f, F, hub, HUB)
+dial(us, US, hub, HUB)                             # our next dial, built after F's moved mark: its answer is the release
+step(road, "released", us, newOnFar=S["new"], nobody=S["nobody"])
+# (b) the same fold, a name: the restarted hub's answered dial under its declared name names a session started on the hub
+# after our dial to the alias was built; that older answer then folds the declared row
+road = "x3NameMovesWithTheForgottenRow"
+us, f, hub, c = far_behind_hub(road, HUB)
+hub = load_bus("hub", Path(others_root) / road / "hub")   # the hub's bus restarts over its own root: a new bus id
+LISTINGS["hub"] = [S["hubsid"]]
+with As(hub):
+    hub.peer_update({"host": US, "port": 50001, "up": True})
+    hub.peer_update({"host": F, "port": 50003, "up": True})
+hear(f, F, hub, HUB)
+out["roads"][road] = {}
+out["roads"][road]["olderAnswerVia"], fold_older = split_dial(us, US, hub, HUB)   # answered now: the hub's own listing
+LISTINGS["hub"] = [S["hubsid"], S["x3named"]]      # a session starts on the hub
+out["roads"][road]["declaredDial"] = dial(hub, HUB_DECL, us, US)   # its answered dial under the declared name names it
+step(road, "declaredNamesIt", us, x3named=S["x3named"], nobody=S["nobody"])
+fold_older()
+out["roads"][road]["filedAfterFold"] = sorted(h for h, st in us.PEER_STATE.items() if st.get("seenAt"))
+out["roads"][road]["aliasRoster"] = sorted(pa.get("id") for pa in (us.PEER_STATE.get(HUB) or {}).get("presence") or []
+                                           if not pa.get("via"))
+step(road, "olderAnswerFolded", us, x3named=S["x3named"], nobody=S["nobody"], other=S["other"])
+# THE BUILDERS' ORDER (round 6 of fork PR #897, the reviewer's verifier at the fifty-eighth commit, its road atk3): a request
+# lists its relays BEFORE it builds its roster, as the response does. B's session starts while B builds its dial, after the
+# builder's first step and before its relays are listed (B's _relays_for, wrapped to start it, no sleep), and mails ours;
+# B's listing names it from then on. Built first, B's answered roster omitted the session whose mail the dial carried
+def start_mid_build(bus, label, road, mid):        # wrap bus's _relays_for once: the session starts, mails ours, is listed
+    real = bus._relays_for
+    def relays_after_start(host, flight=None):
+        bus._relays_for = real
+        LISTINGS[label] = [S["other"], S["midBuild"]]
+        out["roads"][road]["park"] = park(bus, S["midBuild"], mid)
+        As(bus).__enter__()                        # the listing seam names it from here on (park's own As unset the seam;
+        return real(host, flight)                  # the exchange's As puts it back as found on its exit)
+    bus._relays_for = relays_after_start
+road = "dialListsItsRelaysBeforeItsRoster"
+us, b, c = b_and_c_answered(road)
+out["roads"][road] = {}
+step(road, "released", us, midBuild=S["midBuild"], nobody=S["nobody"])
+start_mid_build(b, "b", road, "px-midbuild1")
+out["roads"][road]["landing"] = mail_dial(b, B, us, US)   # B's answered dial carries the mail
+out["roads"][road]["bRoster"] = sorted(pa.get("id") for pa in (us.PEER_STATE.get(B) or {}).get("presence") or [])
+step(road, "mailLanded", us, midBuild=S["midBuild"], nobody=S["nobody"], other=S["other"])
+road = "answerListsItsRelaysBeforeItsRoster"       # the control: B's answer to our dial, whose builder listed its relays first
+us, b, c = b_and_c_answered(road)
+out["roads"][road] = {}
+start_mid_build(b, "b", road, "px-midbuild2")
+out["roads"][road]["landing"] = mail_response(us, US, b, B)   # B's answer carries the mail
+step(road, "mailLanded", us, midBuild=S["midBuild"], nobody=S["nobody"], other=S["other"])
+# DECISION 4 THROUGH A HUB'S DECLARED NAME (round 6 of fork PR #897, the reviewer's verifier at the fifty-eighth commit, its
+# road atk4): F, from before the blink honesty, sits behind the hub and blinks with an EMPTY roster while a session started
+# on it mails ours through the hub; our bus holds F's word; then OUR bus restarts. The hub's dial lands first, filed under
+# the name it declares (no row carries its bus id yet, as at every start of this bus), then our dial to the alias folds it.
+# The carried via row follows the hub to its name until this process holds the hub's word about F; dropped by the rename,
+# F's word was in no row and the session answered rule 5. The control: our dial lands first
+def carried_via(bus):                              # our mirror's via keys
+    try:
+        return sorted(k for k, r in json.loads((bus.STATE / "remote-sids").read_text())["hosts"].items() if r.get("kind") == "via")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        return type(e).__name__
+def our_restart_behind_hub(road, declared_first):
+    us, f, hub, c = older_far_behind_hub(road, False)   # F from before the blink honesty behind the hub
+    LISTINGS["f"] = None                               # F's kernel blinks: its roster goes EMPTY; a session starts there
+    out["roads"][road]["park"] = park(f, S["new"], "px-" + road)
+    out["roads"][road]["landingAtHub"] = mail_response(hub, HUB, f, F, strip_answered=True)
+    out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)   # the hub's dial omits F; the mail lands here
+    dial(us, US, hub, HUB)                             # our dial: the hub's answer omits F too; F's word held (ruling B)
+    out["roads"][road]["heldBefore"] = held_words(us, HUB)
+    step(road, "heldBeforeOurRestart", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+    us = load_bus("us2")                               # OUR bus restarts over the same root (the self-update path)
+    notify(us, HUB, True); notify(us, C, True)
+    dial(c, C, us, US); dial(us, US, c, C)             # C heard in the new process, released by our dial's answer
+    out["roads"][road]["viaRowsAfterRestart"] = carried_via(us)
+    step(road, "afterOurRestart", us, newOnFar=S["new"], nobody=S["nobody"])
+    if declared_first:                                 # the hub's dial lands first, filed under the name it declares
+        out["roads"][road]["declaredDial"] = dial(hub, HUB_DECL, us, US)
+        out["roads"][road]["viaRowsAfterDeclared"] = carried_via(us)
+        step(road, "hubDeclaredFirst", us, newOnFar=S["new"], nobody=S["nobody"])
+    dial(us, US, hub, HUB)                             # our dial to the alias: the hub's answer (F still blinking) omits F
+    out["roads"][road]["viaRowsAfterOurDial"] = carried_via(us)
+    out["roads"][road]["heard"] = sorted(h for h, st in us.PEER_STATE.items() if st.get("seenAt"))
+    step(road, "ourDialToTheAlias", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+    out["roads"][road]["settle"] = settle_in_window("px-" + road)
+    LISTINGS["f"] = [S["other"], S["new"]]             # F's kernel answers, naming the new session
+    hear(f, F, hub, HUB, strip_answered=True); dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+    step(road, "farAnswers", us, newOnFar=S["new"], nobody=S["nobody"])
+    settle_after(out["roads"][road]["settle"])
+our_restart_behind_hub("ourRestartHubDialsFirstUnderItsDeclaredName", True)
+our_restart_behind_hub("ourRestartOurDialFirst", False)
+print(json.dumps(out))
+""", HERE, BIN, str(others), json.dumps(ROAD_SIDS), R_US, R_B, R_C, R_HUB, R_F, R_HUB2, R_HUB_DECL, R_G, R_HUB_DECL2],
+                                capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
+        assert second.returncode == 0, "%s second roads child failed: %s" % (shape, second.stderr[-2000:])
+        added = json.loads(second.stdout.strip().splitlines()[-1])["roads"]
+        assert not set(added) & set(got["roads"]), "a road in both children: %r" % sorted(set(added) & set(got["roads"]))
+        got["roads"].update(added)
         return got
 
     HB = "heartbeat:"       # the bus keys a legacy heartbeat's row heartbeat:<sid> (postal_service.py REMOTE_SIDS_HEARTBEAT)
@@ -4273,7 +4421,10 @@ print(json.dumps(out))
         word is written under via:<alias>/<far>, and its earlier word under via:<declared>/<far>, carried by key alone,
         named a session that ended between the two heard=false for the file's life, cannot-determine where rule 5 was
         due (at the eighth commit). The rule: the hub's bus heard under another name drops its rows under the old name
-        together, its own and its via rows. The verdict is pinned first, so a carry by key alone reds on the linger."""
+        together, its own and its via rows, each via row once this process holds the hub's word about its far host, as
+        here, where the declared rows were heard in this process (a via row carried from before this bus's restart
+        follows the hub instead: round 6 of fork PR #897). The verdict is pinned first, so a carry by key alone reds on the
+        linger."""
         L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
         carried = (self.HB + REMOTE + " (not heard, expired)", self.HB + REMOTE2 + " (not heard)")
         for shape, got in self.got.items():
@@ -5114,8 +5265,8 @@ print(json.dumps(out))
         yet) when it relays F's cached word and the new session's mail; its bus restarts and dials us under that name
         (its new bus id matches no row, so it is filed there again); then this bus's own dial to the alias lands with the
         new bus id, and _drop_peer_name_dupes forgets the declared-name row. The held word moves to the alias's row with
-        it; dropped with the row, the carry's rename drop (the hub's bus heard under another name) would drop the via row
-        too, and the new session would answer rule 5 with no answering exchange of F's (the builder's road at the
+        it; dropped with the row, the carry's rename drop of that commit (the hub's bus heard under another name) dropped
+        the via row too, and the new session answered rule 5 with no answering exchange of F's (the builder's road at the
         thirty-first commit, by execution through the real builders, handlers, folds, this bus's writer and the reader;
         rule 5 at the thirtieth). The alias's row then carries the word under its key until F answers the restarted hub
         and the hub's word reaches here."""
@@ -5939,6 +6090,163 @@ print(json.dumps(out))
                                  "older answer does not release (at the forty-ninth commit [true, 5, no-reachable-host-names-it])")
                 self.assertEqual((self._road(got, name, "released", "x3"), self._road(got, name, "released", "nobody")),
                                  (RULE_4, RULE_5), "the answer to our next dial, built after the moved mark, is the release")
+
+    def test_x3_the_fold_of_a_declared_name_row_moves_its_far_hosts_mark_to_the_alias(self):
+        """X3's far-host half (round 6 of fork PR #897, the reviewer's round-5 ruling C: a forgotten row's hold moves with
+        its unanswered state, its names and its mark, WITH THE PER-FAR-HOST MARKS of the held words that move; the
+        reviewer's verifier at the fifty-eighth commit, its road atk1, found no pin of that last part). F answers
+        through the hub, released here; the hub's bus restarts and dials us under the name it declares (filed there: no
+        row carries its new bus id yet); F answers the restarted hub; this bus's dial to the alias is answered now and
+        folded later; F's kernel blinks, a session starts on F and mails ours on F's cached exchange with the hub, and the
+        hub's dial under its declared name carries F's cached word and the mail. The older answer then folds the declared
+        row. Its dial was built before F's cached word was recorded, so F's mark, moved from the declared row
+        (_fold_rows), places the answer before it and F's word stays held: the session stays cannot-determine, and a
+        courier pass in that window leaves the tracker 'working'. At the forty-ninth commit, and under a fold that reads
+        the far marks of the first row alone (the verifier's mutant V4), the older answer released F's word, the session
+        answered [true, 5, no-reachable-host-names-it] while C vouched, and the pass settled 'completed'. The answer to
+        this bus's next dial, built after the moved mark, is the release."""
+        S = ROAD_SIDS
+        name = "x3FarMarkMovesWithTheForgottenRow"
+        via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                road = got["roads"][name]
+                self.assertEqual((road["restartDial"][0], road["landingHere"]["acks"], road["filedBeforeFold"]),
+                                 (200, ["px-x3far"], [R_C, R_HUB, R_HUB_DECL]),
+                                 "the restarted hub's dials filed under the name it declares, the second carrying the mail")
+                self.assertEqual((self._road(got, name, "olderAnswerFolded", "newOnFar"),
+                                  self._road(got, name, "olderAnswerFolded", "nobody"),
+                                  self._road(got, name, "olderAnswerFolded", "other"), road["filedAfterFold"]),
+                                 (via, via, RULE_4, [R_C, R_HUB]),
+                                 "F's MARK MOVED WITH THE FORGOTTEN ROW: the older answer, placed before F's cached word, "
+                                 "leaves it held (at the forty-ninth commit and under a fold reading the first row's far "
+                                 "marks alone [true, 5, no-reachable-host-names-it])")
+                self.assertEqual((road["settle"]["pass1"], tuple(road["settle"]["verdictAtCompletion"])), ([1, "working"], via),
+                                 "a courier pass in the window leaves the tracker 'working' (at the forty-ninth commit and "
+                                 "under that fold, 'completed')")
+                self.assertEqual(self._road(got, name, "declaredCachedWord", "newOnFar"),
+                                 UNANSWERED(R_HUB_DECL + " (no link state, listing unanswered)",
+                                            R_VIA_F_DECL + " (no link state, listing unanswered)"),
+                                 "before the fold: the declared row, its first roster held, and F's cached word on it")
+                self.assertEqual((self._road(got, name, "released", "newOnFar"), self._road(got, name, "released", "nobody")),
+                                 (RULE_4, RULE_5), "the answer to our next dial, built after the moved mark, is the release")
+
+    def test_x3_the_fold_of_a_declared_name_row_moves_its_names_to_the_alias(self):
+        """X3's names half (round 6 of fork PR #897, the reviewer's round-5 ruling C: a forgotten row's NAMES move with its
+        hold; the reviewer's verifier at the fifty-eighth commit, its road atk2, found no pin of it). F answers through
+        the hub, released here; the hub's bus restarts; this bus's dial to the alias is answered now, naming the hub's
+        one session, and folded later; a session starts on the hub, and the restarted hub's answered dial under the name
+        it declares names it; the older answer then folds the declared row. Its dial was built before that dial was
+        recorded, so the name recorded after the build stays in the union the alias's row takes from the forgotten row:
+        rule 4. At the forty-ninth commit, and under a fold that reads the names of the first row alone (the verifier's
+        mutant V15), the older answer dropped it, and the session, live on the hub, answered [true, 5,
+        no-reachable-host-names-it] while C vouched."""
+        S = ROAD_SIDS
+        name = "x3NameMovesWithTheForgottenRow"
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                road = got["roads"][name]
+                self.assertEqual((road["declaredDial"], self._road(got, name, "declaredNamesIt", "x3named")),
+                                 ([200, True, sorted([S["hubsid"], S["x3named"]])], RULE_4),
+                                 "the restarted hub's answered dial under its declared name names the session started on it")
+                self.assertEqual((self._road(got, name, "olderAnswerFolded", "x3named"),
+                                  self._road(got, name, "olderAnswerFolded", "other"),
+                                  self._road(got, name, "olderAnswerFolded", "nobody"),
+                                  road["aliasRoster"], road["filedAfterFold"]),
+                                 (RULE_4, RULE_4, RULE_5, sorted([S["hubsid"], S["x3named"]]), [R_C, R_HUB]),
+                                 "THE NAME MOVED WITH THE FORGOTTEN ROW: the older answer, built before the declared dial was "
+                                 "recorded, keeps its name, rule 4 (at the forty-ninth commit and under a fold reading the "
+                                 "first row's names alone [true, 5, no-reachable-host-names-it])")
+
+    def test_a_request_lists_its_relays_before_its_roster_so_a_session_whose_mail_it_carries_is_in_its_roster(self):
+        """THE BUILDERS' ORDER (round 6 of fork PR #897, the reviewer's verifier at the fifty-eighth commit, its road atk3):
+        B answered and released, C vouching. A session starts on B while B builds its dial, after the builder's first
+        step and before its relays are listed (B's _relays_for, wrapped once to start it, park its mail to our session and
+        list it in B's kernel listing: a deterministic interleaving, no sleep), in the window of the listing call the
+        roster reads (the kernel's /sessions, measured p50 0.6 s, p90 3.5 s, max 4.9 s). build_exchange_request lists
+        the relays first and builds the roster after, as the response builder (peer_exchange_handle) does, so B's
+        answered dial that carries the mail names the session: rule 4. At the fifty-eighth and forty-ninth commits the
+        builder read the listing first, B's answered dial carried the mail with a roster that omitted the session, B's row
+        stayed answered (a dial merges, and B was released), and the session answered [true, 5,
+        no-reachable-host-names-it] while B and C vouched, until B's next dial. The control is B's answer to our dial,
+        whose builder already listed its relays first: rule 4 at every head."""
+        S = ROAD_SIDS
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape, road="B's dial"):
+                name = "dialListsItsRelaysBeforeItsRoster"
+                road = got["roads"][name]
+                self.assertEqual((self._road(got, name, "released", "midBuild"), self._road(got, name, "released", "nobody")),
+                                 (RULE_5, RULE_5), "B and C answered and released: a sid nothing names is rule 5")
+                self.assertEqual((road["park"]["parked"], road["landing"]["reqAnswered"], road["landing"]["reqRelays"],
+                                  road["landing"]["acks"]), (True, True, [S["midBuild"]], ["px-midbuild1"]),
+                                 "B's answered dial carried the mail of the session started while it was built")
+                self.assertEqual((road["bRoster"], self._road(got, name, "mailLanded", "midBuild"),
+                                  self._road(got, name, "mailLanded", "other")),
+                                 (sorted([S["other"], S["midBuild"]]), RULE_4, RULE_4),
+                                 "THE ORDER: the roster, built after the relays were listed, names the session whose mail the "
+                                 "dial carried (at the fifty-eighth and forty-ninth commits [true, 5, no-reachable-host-names-it])")
+            with self.subTest(shape=shape, road="B's answer, the control"):
+                name = "answerListsItsRelaysBeforeItsRoster"
+                road = got["roads"][name]
+                self.assertEqual((road["landing"]["respAnswered"], road["landing"]["landed"]), (True, [[S["midBuild"], "ack"]]),
+                                 "B's answer to our dial carried the mail of the session started while it was built")
+                self.assertEqual(self._road(got, name, "mailLanded", "midBuild"), RULE_4,
+                                 "the response builder lists its relays before its roster: rule 4 at every head")
+
+    def test_decision_4_after_our_restart_a_hub_dialing_first_under_its_declared_name_leaves_the_far_hosts_carried_word_holding(self):
+        """DECISION 4 THROUGH A HUB'S DECLARED NAME (round 6 of fork PR #897, the reviewer's decision 4 on round 5: after this
+        bus restarts, a far host's sessions stay cannot-determine until an answered roster from that host arrives on the
+        answer road, and no release fires from state the restarted bus does not hold; the reviewer's verifier at the
+        fifty-eighth commit, its road atk4). F, from before the blink honesty, sits behind the hub; its kernel blinks with
+        an EMPTY roster while a session started on F mails ours through the hub, and our bus holds F's word (ruling B).
+        OUR bus restarts: the via row is carried, its bit False, and holds. The hub's dial lands first, filed under the
+        name it declares, since no row carries its bus id yet (as at every start of this bus: _canon_peer_name); then this
+        bus's dial to the alias folds it, and the hub's answer omits F, still blinking. The carried via row follows the
+        hub to the name its bus is heard under until this process holds the hub's word about F (_remote_sids_document's
+        carry), so the session stays cannot-determine, and a courier pass leaves the tracker 'working', until F's kernel
+        answers. At the fifty-eighth commit the carry's rename drop took the via row at the hub's declared dial, F's word
+        was in no row, and the session (and every sid on F) answered [true, 5, no-reachable-host-names-it] while C and the
+        hub vouched, and the pass settled 'completed'. The control: this bus's dial lands first, and the via row stays
+        under its own key; the two read the same. At the forty-ninth commit both orders answered rule 5 from before the
+        restart on, the older far host's blink releasing its word (ruling B) and a carried row holding nothing ((3c))."""
+        S = ROAD_SIDS
+        held = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        carried = UNANSWERED(R_VIA_F + " (not heard, listing unanswered)")
+        for shape, got in self.roads.items():
+            for name, declared in (("ourRestartHubDialsFirstUnderItsDeclaredName", True), ("ourRestartOurDialFirst", False)):
+                with self.subTest(shape=shape, declared_first=declared):
+                    road = got["roads"][name]
+                    self.assertEqual((self._road(got, name, "ourDialToTheAlias", "newOnFar"),
+                                      self._road(got, name, "ourDialToTheAlias", "nobody"),
+                                      self._road(got, name, "ourDialToTheAlias", "other")),
+                                     (carried, carried, LOST(R_VIA_F + " (not heard, listing unanswered)")),
+                                     "DECISION 4: the carried word holds until F's answered roster arrives (at the fifty-eighth "
+                                     "commit, where the hub dialed first, [true, 5, no-reachable-host-names-it] for all three; at "
+                                     "the forty-ninth, in both orders, for the session and the sid nothing names)")
+                    self.assertEqual((road["settle"]["pass1"], road["settle"]["pass2"], road["settle"]["rolledUpAgain"],
+                                      tuple(road["settle"]["verdictAtCompletion"])),
+                                     ([1, "working"], [0, "working"], "working", carried),
+                                     "a courier pass in the window leaves the tracker 'working' (at the fifty-eighth commit, "
+                                     "where the hub dialed first, and at the forty-ninth, 'completed')")
+                    self.assertEqual((road["gossip"], road["landingHere"]["acks"], road["heldBefore"],
+                                      self._road(got, name, "heldBeforeOurRestart", "newOnFar")),
+                                     ([[R_F, S["other"], True, False]], ["px-" + name], [[R_F, S["other"]]], held),
+                                     "F's word unanswered through the hub, the session's mail landed here, and F's word held")
+                    self.assertEqual((road["viaRowsAfterRestart"], self._road(got, name, "afterOurRestart", "newOnFar")),
+                                     ([R_VIA_F], carried), "our restart carries the via row, its bit False: it holds")
+                    if declared:
+                        self.assertEqual((road["declaredDial"][0], road["viaRowsAfterDeclared"],
+                                          self._road(got, name, "hubDeclaredFirst", "newOnFar")),
+                                         (200, [R_VIA_F_DECL],
+                                          UNANSWERED(R_HUB_DECL + " (no link state, listing unanswered)",
+                                                     R_VIA_F_DECL + " (not heard, listing unanswered)")),
+                                         "the hub's dial filed under its declared name: the carried via row follows it "
+                                         "(at the fifty-eighth commit the rename drop took it, and no via row was left)")
+                    self.assertEqual((road["viaRowsAfterOurDial"], road["heard"]), ([R_VIA_F], [R_C, R_HUB]),
+                                     "our dial to the alias: the hub folded there, the carried via row with it")
+                    self.assertEqual((self._road(got, name, "farAnswers", "newOnFar"),
+                                      self._road(got, name, "farAnswers", "nobody")), (RULE_4, held),
+                                     "F's kernel answers and the hub names the session: rule 4")
 
     def test_x4_a_hubs_own_face_3_one_hop_out_holds_through_two_buses_on_this_build(self):
         """X4 (round 6 of fork PR #897, the reviewer's round-5 ruling C): the held state is what a row STORES, so a hub on
