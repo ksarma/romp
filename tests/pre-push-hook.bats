@@ -1257,9 +1257,11 @@ two_files_credential_second() {   # sha is the commit
 # a clean push), and a replace ref (both scans read a substitute while the push
 # transfers the original); log.showRoot set to false hid a root commit's diff.
 # The feed is plumbing given each option explicitly (--no-textconv, --text,
-# --no-color, --root), and the porcelain keys are ones diff-tree never reads,
-# so a credential under each is found and a clean push under each passes; the
-# cases stay as regression pins.
+# --no-color, --root), since round 11c with the two inputs that reach it from
+# outside its options pinned (env -u GIT_DIFF_OPTS, git -c
+# diff.suppressBlankEmpty=false: the round 11c section's witnesses), and the
+# porcelain keys are ones diff-tree never reads, so a credential under each is
+# found and a clean push under each passes; the cases stay as regression pins.
 # The identifier scan, when armed, refuses a TEXT file under a -diff attribute
 # before either scan reads it (the attribute section at the end), so the two
 # -diff cases here, the credential half's, run with the denylist absent.
@@ -1519,7 +1521,7 @@ git_recording_feed_pairs_and_scanner_calls() {   # <pairs file> <calls file>
     export PATH="$TEST_DIR/shim:$PATH"
 }
 
-@test "the hook exports no GIT_CONFIG pair of its own and gitleaks runs no git: with the caller's GIT_CONFIG_COUNT=1 (gc.auto) set, the feed's diff-tree sees exactly that pair and its own core.quotePath=true (git -c, round 9e) in its command scope, a git on PATH records no call made under the scanner, and a clean root-commit push under log.showRoot=false passes (round 9d: this slot held the scanner's own git log, which no longer runs)" {
+@test "the hook exports no GIT_CONFIG pair of its own and gitleaks runs no git: with the caller's GIT_CONFIG_COUNT=1 (gc.auto) set, the feed's diff-tree sees exactly that pair and its own core.quotePath=true (git -c, round 9e) and diff.suppressBlankEmpty=false (git -c, round 11c) in its command scope, a git on PATH records no call made under the scanner, and a clean root-commit push under log.showRoot=false passes (round 9d: this slot held the scanner's own git log, which no longer runs)" {
     real_gitleaks
     # the caller's environment: one pair of its own in place of the floor's five (the floor's global config file still carries those keys)
     export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=gc.auto GIT_CONFIG_VALUE_0=0
@@ -1532,10 +1534,11 @@ git_recording_feed_pairs_and_scanner_calls() {   # <pairs file> <calls file>
     run_hook
     [ "$status" -eq 0 ]
     [[ "$output" != *"romp pre-push"* ]]
-    # the caller's pair, then the feed's one pair on its own command line (git -c core.quotePath=true, so the path
-    # text is git's quoted form whatever the clone sets), nothing else appended (a negative pin)
+    # the caller's pair, then the feed's two pairs on its own command line (git -c core.quotePath=true, so the path
+    # text is git's quoted form whatever the clone sets, and since round 11c git -c diff.suppressBlankEmpty=false, so a
+    # blank context line is never printed empty), nothing else appended (a negative pin)
     run cat "$TEST_DIR/feed-git-pairs"
-    [ "$output" = "$(printf 'command\tgc.auto=0\ncommand\tcore.quotepath=true')" ]
+    [ "$output" = "$(printf 'command\tgc.auto=0\ncommand\tcore.quotepath=true\ncommand\tdiff.suppressblankempty=false')" ]
     # no git ran under the scanner: it read the pieces (at cad898dd2 its own git log is recorded here)
     [ ! -e "$TEST_DIR/calls.under-scanner" ]
 }
@@ -6069,7 +6072,7 @@ two_refs_second_leaking() {   # a base on the remote (BASE); main one clean comm
     [ "$status" -ne 0 ]
 }
 
-stdin_loops_running_tools() {   # <bash file>: prints "<first line>-<last line>: <tools>" for each while or until loop that runs a tool in its body (a reading tool, a judged_read call, or a call to a function the file defines whose body runs one, resolved transitively over the function extents undeclared_reads derives, a one-line function's header its body) and either reads on stdin at some read of its condition (from the keyword through its do, across lines: a read with no -u from a descriptor 1 to 9) or has no read in its condition while that condition is true or : or the loop is an until loop (such a loop reads its list, if it has one, where this census does not look, so it is refused whatever it reads); reads the census's helpers
+stdin_loops_running_tools() {   # <bash file>: prints "<first line>-<last line>: <tools>" for each select loop that runs a tool in its body, each for loop in either form that runs one and is fed its list by an input redirection on its done or a pipe while a read in its body takes that stdin (round 11c; the awk's comment), and each while or until loop that runs a tool in its body (a reading tool, a judged_read call, or a call to a function the file defines whose body runs one, resolved transitively over the function extents undeclared_reads derives, a one-line function's header its body) and either reads on stdin at some read of its condition (from the keyword through its do, across lines: a read with no -u from a descriptor 1 to 9) or has no read in its condition while that condition is true or : or the loop is an until loop (such a loop reads its list, if it has one, where this census does not look, so it is refused whatever it reads); reads the census's helpers
     local -a orig masked mw rw rec segln segwhat
     local -A fstart fend runs
     local i r tools cmd word rword wkind u ln fl et touch f g changed names kl el flag
@@ -6098,59 +6101,101 @@ stdin_loops_running_tools() {   # <bash file>: prints "<first line>-<last line>:
     done
     if [ ! -f "$TEST_DIR/loops.awk" ]; then
         cat > "$TEST_DIR/loops.awk" <<'AWK'
-# Reads the masked text and prints one line per while or until loop: its keyword's line, its done's line and its kind of
-# read, where stdin is a condition with a read that takes no -u from a descriptor 1 to 9, fd one whose every read does,
-# bare a condition with no read that is true or : or an until loop's, and other any other condition with no read. The
-# text is cut into words and the operators ; & | ( ) and a case pattern's close (the byte 001), each of which ends a
-# simple command; a line ending in a backslash runs on into the next, and any other line end ends a simple command. A read's options are read as bash reads them (-u 5, -u5, -ru 5, -d '' -u 6), so the
-# descriptor is found whatever option comes before it. Every do, a for loop's too, is matched with its done.
+# Reads the masked text and prints one line per loop: its keyword's line, its done's line, its kind of read and its
+# keyword. A while or until loop's read: stdin is a condition with a read that takes no -u from a descriptor 1 to 9, fd
+# one whose every read does, bare a condition with no read that is true or : or an until loop's, and other any other
+# condition with no read. A for loop, in either form (for NAME in ... and for ((...)); round 11c, the round 10 rulings'
+# G): stdin when its own stdin is a list (an input redirection on its done, or a pipe feeding the loop) and a read in
+# its body takes that same stdin (no -u from a descriptor 1 to 9, no input redirection or pipe of its own, and no
+# compound between it and the loop, a loop, brace group, subshell, if or case, with an input redirection or a pipe of
+# its own), fd otherwise. A select loop: bare, always, since select reads its reply from stdin itself. The text is cut
+# into words and the operators ; & | ( ) and a case pattern's close (the byte 001), each of which ends a simple command
+# (|| and && are told from a pipe; |& is one); a line ending in a backslash runs on into the next, and any other line
+# end ends a simple command. A read's options are read as bash reads them (-u 5, -u5, -ru 5, -d '' -u 6), so the
+# descriptor is found whatever option comes before it. Every do is matched with its done.
 function endread() { if (rd) { nread[cur]++; if (rdfd !~ /^[1-9]$/) stdin[cur] = 1; rd = 0 } }
-BEGIN { nl = 0; sp = 0; cur = 0; start = 1 }
+function endbread() { if (brd) { nb++; bfd[nb] = rdfd; bown[nb] = bredir; bpath[nb] = cpath(); brd = 0 } }
+function cpath(   i, s) { s = " "; for (i = 1; i <= csp; i++) s = s cs[i] " "; return s }
+function cpush(kind, piped) { nc++; ck[nc] = kind; cpiped[nc] = piped; credir[nc] = 0; cs[++csp] = nc; return nc }
+function cpop(kind,   id) { if (csp > 0 && (kind == "" || ck[cs[csp]] == kind)) { id = cs[csp--]; after = id; return id } return 0 }
+function isin(t) { return t ~ /^0?</ }
+BEGIN { nl = 0; sp = 0; cur = 0; start = 1; csp = 0; nc = 0; nb = 0; pfn = 0; lastsep = "nl"; after = 0 }
 {
     line = $0; gsub(/\001/, ";", line)
     cont = (line ~ /\\$/); if (cont) line = substr(line, 1, length(line) - 1)
+    gsub(/\|\|/, " ; ", line); gsub(/&&/, " ; ", line); gsub(/\|&/, " | ", line)   # || and && end a command as ; does, |& is a pipe
     gsub(/[;&|()]/, " & ", line)
     n = split(line, tok, /[ \t]+/)
     for (k = 1; k <= n; k++) {
         t = tok[k]; if (t == "") continue
-        if (t ~ /^[;&|()]$/) { if (cur) endread(); start = 1; continue }
-        if (cur && rd) {                                        # a read of the open condition: its options, then its names
-            if (want != "") { if (want == "u") rdfd = t; want = ""; continue }
-            if (ropt && t == "--") { ropt = 0; continue }
-            if (ropt && t ~ /^-./) {
+        if (after && t !~ /^[;&|()]$/ && isin(t)) credir[after] = 1   # an input redirection on a compound just closed
+        if (t == ")") {                                         # a paren's close, and a separator
+            if (cur) endread(); endbread(); cpop("p"); start = 1; lastsep = t; continue
+        }
+        if (t == "(") {                                         # a subshell at a command's start (fed by a pipe, maybe), or a substitution's, arithmetic's or array's paren
+            if (cur) endread(); endbread(); after = 0
+            cpush("p", start && lastsep == "|"); start = 1; lastsep = t; continue
+        }
+        if (t ~ /^[;&|]$/) { if (cur) endread(); endbread(); after = 0; start = 1; lastsep = t; continue }
+        if (brd) {                                              # a read's words: its options, then its names and redirections
+            if (isin(t)) { bredir = 1 }
+            else if (want != "") { if (want == "u") rdfd = t; want = "" }
+            else if (ropt && t == "--") ropt = 0
+            else if (ropt && t ~ /^-./) {
                 for (c = 2; c <= length(t); c++) {
                     ch = substr(t, c, 1)
                     if (index("adinNptu", ch)) { rest = substr(t, c + 1); if (rest != "") { if (ch == "u") rdfd = rest } else want = ch; break }
                 }
-                continue
-            }
-            ropt = 0; continue
+            } else ropt = 0
+            continue
         }
         if (cur) cw[cur] = cw[cur] (cw[cur] == "" ? "" : " ") t
         if (!start) continue
-        if (t == "while" || t == "until") { nl++; kl[nl] = NR; kind[nl] = t; up[nl] = cur; cur = nl; cw[cur] = ""; continue }
+        after = 0
+        if (t == "while" || t == "until") { nl++; kl[nl] = NR; kind[nl] = t; up[nl] = cur; cur = nl; cw[cur] = ""; lc[nl] = cpush("loop", lastsep == "|"); continue }
+        if (t == "for" || t == "select") { nl++; kl[nl] = NR; kind[nl] = t; lc[nl] = cpush("loop", lastsep == "|"); pf[++pfn] = nl; start = 0; continue }
         if (t == "do") {
-            if (cur) { endread(); sub(/ do$/, "", cw[cur]); stk[++sp] = cur; cur = up[cur] } else stk[++sp] = 0
+            if (cur) { endread(); sub(/ do$/, "", cw[cur]); stk[++sp] = cur; cur = up[cur] }
+            else if (pfn > 0) stk[++sp] = pf[pfn--]
+            else stk[++sp] = 0
             continue
         }
-        if (t == "done") { if (sp > 0) { if (stk[sp]) el[stk[sp]] = NR; sp-- }; start = 0; continue }
-        if (t ~ /^(if|then|else|elif|!|\{|\}|time)$/) continue
+        if (t == "done") { if (sp > 0) { if (stk[sp]) el[stk[sp]] = NR; sp-- }; cpop("loop"); start = 0; continue }
+        if (t == "if") { cpush("if", lastsep == "|"); continue }
+        if (t == "fi") { cpop("if"); start = 0; continue }
+        if (t == "case") { cpush("case", lastsep == "|"); start = 0; continue }
+        if (t == "esac") { cpop("case"); start = 0; continue }
+        if (t == "{") { cpush("brace", lastsep == "|"); continue }
+        if (t == "}") { cpop("brace"); start = 1; continue }
+        if (t ~ /^(then|else|elif|!|time)$/) continue
         if (cur && t ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=/) continue
-        if (cur && t == "read") { rd = 1; ropt = 1; rdfd = ""; want = ""; start = 0; continue }
+        if (t ~ /^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=/) continue
+        if (t == "read") { rd = cur ? 1 : 0; brd = 1; bredir = (lastsep == "|"); ropt = 1; rdfd = ""; want = ""; start = 0; continue }
         start = 0
     }
-    if (!cont) { if (cur) endread(); start = 1 }
+    if (!cont) { if (cur) endread(); endbread(); after = 0; start = 1; lastsep = "nl" }
 }
 END {
     for (i = 1; i <= nl; i++) {
-        if (nread[i]) f = stdin[i] ? "stdin" : "fd"
+        if (kind[i] == "for") {
+            f = "fd"; L = lc[i]
+            if (credir[L] || cpiped[L]) {
+                for (r = 1; r <= nb; r++) {
+                    if (bfd[r] ~ /^[1-9]$/ || bown[r]) continue
+                    m = split(bpath[r], pp, " "); seen = 0; shield = 0
+                    for (j = 1; j <= m; j++) { if (pp[j] == L) { seen = 1; continue } if (seen && (credir[pp[j]] || cpiped[pp[j]])) shield = 1 }
+                    if (seen && !shield) { f = "stdin"; break }
+                }
+            }
+        } else if (kind[i] == "select") f = "bare"
+        else if (nread[i]) f = stdin[i] ? "stdin" : "fd"
         else f = (kind[i] == "until" || cw[i] == "true" || cw[i] == ":") ? "bare" : "other"
-        print kl[i], (el[i] ? el[i] : kl[i]), f
+        print kl[i], (el[i] ? el[i] : kl[i]), f, kind[i]
     }
 }
 AWK
     fi
-    while read -r kl el flag; do
+    while read -r kl el flag _; do
         case "$flag" in stdin|bare) ;; *) continue ;; esac
         tools=""
         for ((r = 0; r < ${#segln[@]}; r++)); do
@@ -6162,6 +6207,10 @@ AWK
         done
         [ -z "$tools" ] || echo "$kl-$el:$tools"
     done < <(printf '%s\n' "${masked[@]}" | LC_ALL=C awk -f "$TEST_DIR/loops.awk")
+}
+loop_kinds() {   # <bash file>: the loop census's own list, one line per loop the awk reads: its keyword's line, its done's line, its kind of read (stdin, fd, bare or other) and its keyword (round 11c)
+    stdin_loops_running_tools "$1" > /dev/null
+    masked_text "$1" | LC_ALL=C awk -f "$TEST_DIR/loops.awk"
 }
 descriptor_loops() {   # <bash file>: the count of while-read loops that read their list with -u from a descriptor 1 to 9 (-u 0 is stdin), whatever IFS they set
     grep -cE 'while (IFS=[^[:space:]]* )?read -r -u [1-9]([^0-9]|$)' "$1" || true
@@ -6260,6 +6309,53 @@ descriptor_loops() {   # <bash file>: the count of while-read loops that read th
         [ "$status" -eq 0 ]
         [ "$output" = "${sflags[k]}" ]
     done
+    # round 11c (the round 10 rulings' G, extra7-2): the census recognizes for loops in both forms (for NAME in ...
+    # and for ((...))) and select loops beside while and until, by the refuter's corrected rule: a for loop is flagged
+    # when its own stdin is a list (an input redirection on its done, or a pipe feeding the loop) and a read in its
+    # body takes that stdin (no -u from 1 to 9, no redirection or pipe of its own, not inside a compound redirected or
+    # piped on its own), and a select loop whenever its body runs a tool, since select reads its reply from stdin
+    # itself. One plant per form, each reading the list on stdin and running git, each flagged once (each passed the
+    # round 11b census, which read while and until alone), and the while-colon control, flagged as before
+    local -a gloops=(
+        $'for x in 1 2; do\n    read -r y\n    git cat-file -t "$y"\ndone <<< "$refs"'
+        $'for ((;;)); do\n    read -r y || break\n    git cat-file -t "$y"\ndone <<< "$refs"'
+        $'printf \'%s\\n\' "$refs" | for x in 1 2; do\n    read -r y\n    git cat-file -t "$y"\ndone'
+        $'select y in a b; do\n    git cat-file -t "$y"\ndone <<< "$refs"'
+        $'while :; do\n    read -r y || break\n    git cat-file -t "$y"\ndone <<< "$refs"'
+    )
+    local -a gflags=('2-5: git' '2-5: git' '2-5: git' '2-4: git' '2-5: git')
+    for k in 0 1 2 3 4; do
+        { sed -n '1p' "$HOOK"; printf '%s\n' "${gloops[k]}"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/loop-r11c-$k.sh"
+        run stdin_loops_running_tools "$TEST_DIR/loop-r11c-$k.sh"
+        [ "$status" -eq 0 ]
+        [ "$output" = "${gflags[k]}" ]
+    done
+    # ... and passes a for loop fed no list, one fed its list on descriptor 5 and reading it there, one whose body read
+    # is inside a while loop redirected on its own, one whose body read carries its own redirection, and one whose
+    # body read is inside a redirected brace group: none of them reads a list on the loop's stdin (the naive rule, any
+    # read with no -u, flags such loops, and flagged the hook's as_lines loop and its identifier-commit loop, which
+    # this census reads as for loops fed no list, below)
+    local -a gpass=(
+        $'for x in 1 2; do\n    read -r y\n    git cat-file -t "$y"\ndone'
+        $'for x in 1 2; do\n    read -r -u 5 y\n    git cat-file -t "$y"\ndone 5<<< "$refs"'
+        $'for x in 1 2; do\n    while read -r y; do echo "$y"; done <<< "$x"\n    git cat-file -t "$x"\ndone <<< "$refs"'
+        $'for x in 1 2; do\n    read -r y < "$f"\n    git cat-file -t "$y"\ndone <<< "$refs"'
+        $'for x in 1 2; do\n    { read -r y; } <<< "$x"\n    git cat-file -t "$y"\ndone <<< "$refs"'
+    )
+    for k in 0 1 2 3 4; do
+        { sed -n '1p' "$HOOK"; printf '%s\n' "${gpass[k]}"; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/loop-r11c-pass$k.sh"
+        run stdin_loops_running_tools "$TEST_DIR/loop-r11c-pass$k.sh"
+        [ "$status" -eq 0 ]
+        [ -z "$output" ]
+        [ -n "$(loop_kinds "$TEST_DIR/loop-r11c-pass$k.sh" | awk '$1 == 2 && $3 == "fd" && $4 == "for"')" ]    # read as a for loop, and not flagged
+    done
+    # the hook's own as_lines loop and identifier-commit loop are read as for loops fed no list, and not flagged
+    n=$(grep -n '^as_lines() {' "$HOOK" | cut -d: -f1)
+    w=$(awk -v s="$n" 'NR > s && /^    for f in "\$@"; do$/ { print NR; exit }' "$HOOK")
+    d=$(awk '/^        for rev in \$revs; do$/ { l = NR; next } l && NR == l + 1 { if (/The parent count: rev-list --parents/) { print l; exit } l = 0 }' "$HOOK")
+    [ -n "$n" ] && [ -n "$w" ] && [ -n "$d" ]
+    [ -n "$(loop_kinds "$HOOK" | awk -v w="$w" '$1 == w && $3 == "fd" && $4 == "for"')" ]
+    [ -n "$(loop_kinds "$HOOK" | awk -v w="$d" '$1 == w && $3 == "fd" && $4 == "for"')" ]
     # ... and passes an until loop reading on a descriptor and a while-colon loop of builtins; and the disclosed shape,
     # a loop whose condition is a test (neither a read nor true or :) and reads its list in its body, passes although
     # its git drains the list: it is outside what this census reads (the tag peel's while [ "$kind" = tag ] is such a
@@ -9941,6 +10037,81 @@ r10a_octopus_scans() {   # <parents>: r10a_octopus, pushed twice for real, once 
     at_base
 }
 
+# Round 11c (the round 10 rulings' B, tests-1): the PARENT COUNTS read's three record checks, each driven by a push of
+# r10a_octopus 64 (a merge of 64 parents adding a credential, removed at the tip), whose combined diff prints no hunk
+# for what it adds, so the credential publishes wherever the arm is gone. Each asserts its line and the remote at
+# its base, and that its shim fired on parent_counts' program or its list, so no green comes from a shim that never
+# matched. A cut inside parent_counts' own rev-list does not reach the list-count arm: its awk reads the list in
+# BEGIN, alongside rev-list, and read it whole before the cut in 40 of 40 of the round 10 checkers' runs; so that
+# arm's case cuts the list itself, by a mkdir run after the list is written and before parent_counts.
+r11c_awk_on_program() {   # <calls name> <marker text of an awk program> <silent|mute>: for the program carrying the marker, an awk that appends one line (awk and the marker) to calls.<name> and then reads its input and exits 0 writing nothing (silent) or runs the real awk with its stdout discarded, its status kept (mute); the real awk for every other program
+    local real_awk real_cat
+    real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
+    real_cat="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v cat)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'marker=%q\n' "$2"
+        printf 'case "$*" in *"$marker"*)\n'
+        printf '    printf "%%s\\n" %q >> %q\n' "awk $2" "$TEST_DIR/calls.$1"
+        if [ "$3" = silent ]; then
+            printf '    %q > /dev/null; exit 0 ;;\n' "$real_cat"
+        else
+            printf '    %q "$@" > /dev/null; exit $? ;;\n' "$real_awk"
+        fi
+        printf 'esac\n'
+        printf 'exec %q "$@"\n' "$real_awk"
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+r11c_octopus_push() {   # r10a_octopus 64 with the real scanner armed and the identifier scan off, for a real push through the shims the caller makes after it (the merge and the tip removing evil.txt are the two commits it publishes)
+    r10a_octopus 64
+    real_gitleaks
+    export ROMP_PRIVATE_STRINGS="$TEST_DIR/no-denylist"
+    mkdir -p "$TEST_DIR/shim"
+}
+
+@test "round 11c (B, tests-1): the PARENT COUNTS read's record check: an awk silent on parent_counts' program (exit 0, nothing printed, no record written), through a real push of a merge of 64 parents adding a credential, is refused naming the empty record, not three counts, the shim fired once on that program, and the remote stays at its base (red by publication under the mutant deleting that arm)" {
+    r11c_octopus_push
+    r11c_awk_on_program pcounts 'ENVIRON["ROMP_COUNTS_FILE"]' silent
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.pcounts")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the PARENT COUNTS of the pushed commits could not be read for the credential scan (its awk exited 0 and recorded \"\", not three counts); the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 11c (B, tests-1): the PARENT COUNTS read's list count: the list cut to the tip by a mkdir run after the list is written and before parent_counts (the directories' mkdir, at creds.d), through a real push of a merge of 64 parents adding a credential, then the tip, is refused naming the lines its awk read against the count fed, the mkdir shim fired once, and the remote stays at its base (red by publication under the mutant deleting that arm)" {
+    r11c_octopus_push
+    local real_mkdir real_head real_mv
+    real_mkdir="$(command -v mkdir)"; real_head="$(command -v head)"; real_mv="$(command -v mv)"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'for a in "$@"; do\n'
+        printf '    case "$a" in */creds.d) r="${a%%/creds.d}/creds.revs"; %q -n 1 "$r" > "$r.cut" && %q "$r.cut" "$r"; printf "%%s\\n" "mkdir $a" >> %q ;; esac\n' "$real_head" "$real_mv" "$TEST_DIR/calls.cutrevs"
+        printf 'done\n'
+        printf 'exec %q "$@"\n' "$real_mkdir"
+    } > "$TEST_DIR/shim/mkdir"
+    chmod 755 "$TEST_DIR/shim/mkdir"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.cutrevs")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the PARENT COUNTS of the pushed commits were read short for the credential scan (its awk read 1 of the 2 lines of its list); the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 11c (B, tests-1): the PARENT COUNTS read's printed count: parent_counts' printed lines cut to nothing (its awk run whole, its record written, its stdout discarded), through a real push of a merge of 64 parents adding a credential, is refused naming the commits it recorded of 64 or more parents against the lines it printed, 0, the shim fired once on that program, and the remote stays at its base (red by publication under the mutant deleting that arm)" {
+    r11c_octopus_push
+    r11c_awk_on_program pcounts 'ENVIRON["ROMP_COUNTS_FILE"]' mute
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.pcounts")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the PARENT COUNTS of the pushed commits were read short for the credential scan (its awk recorded 1 commits of 64 or more parents and printed 0); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"it has 64 parents"* ]]                                  # the cut took the line that names the merge
+    at_base
+}
+
 @test "round 10a table case: the RESULT listing of a merge: a git silent on the merge's combined raw listing alone (-c --raw --no-commit-id --no-abbrev), through a real push of a merge whose binary path holds a credential, is refused naming the path the listing named no record for, and the remote stays at its base" {
     r9d_base
     r10a_merge_open
@@ -9980,7 +10151,7 @@ r10a_octopus_scans() {   # <parents>: r10a_octopus, pushed twice for real, once 
     at_base
 }
 
-@test "round 10a short case: the SIZE of a merge's binary blob: a git whose cat-file -s answers the first digit of the size (exit 0), through a real push of a merge whose binary path holds a credential, is refused naming both counts, the bytes read and the cut size, and the remote stays at its base" {
+@test "round 10a short case: the SIZE of a merge's binary blob: a git whose cat-file -s answers the first digit of the size (exit 0), through a real push of a merge whose binary path holds a credential, is refused naming the SIZE read with both counts, the cut size and the bytes read (round 11c: until then the line named the CONTENT read as short; red under the mutant restoring that one-direction text), and the remote stays at its base" {
     r9d_base
     r10a_merge_open
     r10a_evil nul
@@ -9990,7 +10161,10 @@ r10a_octopus_scans() {   # <parents>: r10a_octopus, pushed twice for real, once 
     push_main_through_hook_with_shim
     fired_short bsize "cat-file -s"
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: the CONTENT of evil.txt in merge ${merge:0:10} was read short for the credential scan (git cat-file -p exited 0 and answered $size bytes of the ${size:0:1} its SIZE read names); the scan is incomplete, so the push is refused"* ]]
+    # round 11c (the round 10 rulings' E): more bytes read than the size names refuses naming the SIZE read with both
+    # counts, and no more; until then this case pinned the CONTENT read's line, "answered $size bytes of the ${size:0:1}"
+    [[ "$output" == *"romp pre-push: the SIZE of evil.txt in merge ${merge:0:10}, a path the credential scan reads whole, disagrees with its CONTENT read (git cat-file -s exited 0 and answered ${size:0:1}, and git cat-file -p exited 0 and gave $size bytes); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"was read short for the credential scan (git cat-file -p"* ]]
     at_base
 }
 
@@ -10020,6 +10194,133 @@ r10a_octopus_scans() {   # <parents>: r10a_octopus, pushed twice for real, once 
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: the CONTENT of evil.txt in merge ${merge:0:10} was read short for the credential scan (git cat-file -p exited 0 and answered $((size - 5)) bytes of the $size its SIZE read names); the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"ADDS a credential"* ]]                                  # the cut took the credential: the refusal is the read's alone
+    at_base
+}
+
+# Round 11c (the round 10 rulings' B, tests-2, and decision 7's two shape checks): merge_binary_reads' refusals that
+# no case drove, each through a real push of a merge whose binary path holds a credential, each red under the mutant
+# that deletes its arm. The listing's cases rewrite the merge's combined raw listing (a git keyed on its options)
+# to name a clean blob, or none, so a deleted arm reads the clean blob, or skips the path, and the credential
+# publishes.
+r11c_listing_rewriting() {   # <awk program over the listing, the clean blob's id in the variable c>: a git whose merge's combined raw listing (-c --raw --no-commit-id --no-abbrev) is rewritten by the program, its status kept, the call recorded in calls.rlist; the real git for every other command
+    local real_git real_awk
+    real_git="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v git)"
+    real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [[ " $* " == *" -c --raw --no-commit-id --no-abbrev "* ]]; then\n'
+        printf '    w=$(mktemp %q); %q "$@" > "$w"; s=$?\n' "$TEST_DIR/rlist.XXXXXX" "$real_git"
+        printf '    LC_ALL=C %q -v c=%q %q "$w"\n' "$real_awk" "$clean" "$1"
+        printf '    printf "%%s\\n" "git $*" >> %q; rm -f "$w"; exit "$s"\n' "$TEST_DIR/calls.rlist"
+        printf 'fi\n'
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+r11c_binary_merge() {   # r9d_base, then a merge adding evil.txt, binary by a NUL, holding a credential (merge its sha), and clean a blob of clean bytes written to the store and named by no tree
+    r9d_base
+    r10a_merge_open
+    r10a_evil nul
+    r10a_merge_commit evil.txt
+    clean="$(printf 'x\0y\nnothing to see\n' | git -C "$REPO" hash-object -w --stdin)"
+    [ "$(git -C "$REPO" diff-tree -c --raw --no-commit-id --no-abbrev "$merge" | grep -c $'\tevil.txt$')" -eq 1 ]
+}
+
+@test "round 11c (B, tests-2): the RESULT listing of a merge answering a SECOND record for the binary path, naming a clean blob after the real one, through a real push, is refused naming the two records, and the remote stays at its base (red by publication under the mutant deleting that arm: the last record's clean blob is read)" {
+    r11c_binary_merge
+    r11c_listing_rewriting '{ print } /\tevil\.txt$/ { n = split($0, t, "\t"); split(t[1], w, " "); w[6] = c; s = w[1]; for (i = 2; i <= 7; i++) s = s " " w[i]; print s "\tevil.txt" }'
+    push_main_through_hook_with_shim
+    fired rlist "--no-abbrev"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the RESULT listing of merge ${merge:0:10} names 2 records for evil.txt, a path its combined diff calls binary, where a merge's listing holds one (git diff-tree exited 0), so that path cannot be read whole for the credential scan; the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 11c (B, tests-2): the RESULT listing of a merge answering the binary path's record with one object name dropped, so it names no result mode and blob, through a real push, is refused naming the record, and the remote stays at its base (red by publication under the mutant deleting that arm: the path is skipped as a deletion)" {
+    r11c_binary_merge
+    r11c_listing_rewriting '/\tevil\.txt$/ { n = split($0, t, "\t"); split(t[1], w, " "); print w[1] " " w[2] " " w[3] " " w[5] " " w[6] " " w[7] "\tevil.txt"; next } { print }'
+    push_main_through_hook_with_shim
+    fired rlist "--no-abbrev"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the RESULT listing of merge ${merge:0:10} answered a record for evil.txt that names no result mode and blob (git diff-tree exited 0), so that path cannot be read whole for the credential scan; the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 11c (decision 7, the mode shape check): the RESULT listing of a merge answering the binary path's result mode as seven digits, with a clean blob in the result's place, through a real push, is refused naming a record with no result mode and blob, and the remote stays at its base (red by publication under the mutant deleting the check that the mode is six octal digits: the clean blob is read)" {
+    r11c_binary_merge
+    r11c_listing_rewriting '/\tevil\.txt$/ { n = split($0, t, "\t"); split(t[1], w, " "); w[3] = w[3] "0"; w[6] = c; s = w[1]; for (i = 2; i <= 7; i++) s = s " " w[i]; print s "\tevil.txt"; next } { print }'
+    push_main_through_hook_with_shim
+    fired rlist "--no-abbrev"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the RESULT listing of merge ${merge:0:10} answered a record for evil.txt that names no result mode and blob (git diff-tree exited 0), so that path cannot be read whole for the credential scan; the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 11c (decision 7, the blob shape check): the RESULT listing of a merge answering the binary path's result blob as a clean blob's name cut to 12 hex digits, which git would resolve, through a real push, is refused naming a record with no result mode and blob, and the remote stays at its base (red by publication under the mutant deleting the check that the blob is hex of the object name's length: the clean blob is read)" {
+    r11c_binary_merge
+    r11c_listing_rewriting '/\tevil\.txt$/ { n = split($0, t, "\t"); split(t[1], w, " "); w[6] = substr(c, 1, 12); s = w[1]; for (i = 2; i <= 7; i++) s = s " " w[i]; print s "\tevil.txt"; next } { print }'
+    [ "$(git -C "$REPO" rev-parse "${clean:0:12}")" = "$clean" ]           # the cut name is one git resolves, to the clean blob
+    push_main_through_hook_with_shim
+    fired rlist "--no-abbrev"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the RESULT listing of merge ${merge:0:10} answered a record for evil.txt that names no result mode and blob (git diff-tree exited 0), so that path cannot be read whole for the credential scan; the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 11c (B, tests-2): blob_pieces' record: an awk silent on blob_pieces' program (exit 0, nothing printed, no record written, no piece), through a real push of a merge whose binary path holds a credential, is refused naming the empty record, not four counts, the shim fired once on that program, and the remote stays at its base (red by publication under the mutant deleting that arm)" {
+    r11c_binary_merge
+    r11c_awk_on_program bpieces 'ENVIRON["ROMP_BLOB_RECORD_FILE"]' silent
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.bpieces")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CONTENT of evil.txt in merge ${merge:0:10} could not be read whole for the credential scan (its awk exited 0 and recorded \"\", not four counts); the scan is incomplete, so the push is refused"* ]]
+    at_base
+}
+
+@test "round 11c (B, tests-2, flag 128's default): the size-plus-one end: a binary path whose blob has NO final newline and ends in the credential, its cat-file -p answer cut by exactly one byte (exit 0), through a real push of the merge, is refused naming the bytes read against the size, and the remote stays at its base (red by publication under the mutant deleting that arm, and under flag 128's other option, which also takes the bare size: the cut token is not a credential)" {
+    r9d_base
+    r10a_merge_open
+    printf 'x\0y\nk = %s' "$(probe_token)" > "$REPO/evil.txt"
+    [ "$(tail -c 6 "$REPO/evil.txt")" = abcdef ]                                # no final newline: the token's last bytes end the blob
+    r10a_merge_commit evil.txt
+    size="$(git -C "$REPO" cat-file -s "$merge:evil.txt")"
+    calls_short_on git bcontent '[ "${1:-}" = cat-file ] && [ "${2:-}" = -p ]' less:1
+    push_main_through_hook_with_shim
+    fired_short bcontent "cat-file -p"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CONTENT of evil.txt in merge ${merge:0:10} was read short for the credential scan (git cat-file -p exited 0 and answered $((size - 1)) bytes of the $size its SIZE read names); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"ADDS a credential"* ]]                                  # the cut took the token's last byte: the refusal is the read's alone
+    at_base
+}
+
+@test "round 11c (B, tests-2): the routed paths read back short: a merge with two binary paths, a.dat clean and evil.txt holding a credential, whose side file of routed paths is cut to its first line after the feed's awk writes it (a wrapper around that awk), through a real push, is refused naming the paths read back against the count its awk recorded, the wrapper fired once, and the remote stays at its base (red by publication under the mutant deleting that arm: evil.txt is never read)" {
+    r9d_base
+    r10a_merge_open
+    printf 'x\0y\nnothing to see\n' > "$REPO/a.dat"
+    r10a_evil nul
+    git -C "$REPO" add -- a.dat evil.txt
+    git -C "$REPO" commit -qm "the merge, with two binary paths of its own"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    [ "$(git -C "$REPO" diff-tree -p -c --text "$merge" | grep -c '^Binary files differ$')" -eq 2 ]
+    local real_awk real_head real_mv
+    real_awk="$(command -v awk)"; real_head="$(command -v head)"; real_mv="$(command -v mv)"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'case "$*" in *%q*)\n' 'ENVIRON["ROMP_BINARY_FILE"]'
+        printf '    %q "$@"; s=$?\n' "$real_awk"
+        printf '    b=$ROMP_BINARY_FILE; %q -n 1 "$b" > "$b.cut" && %q "$b.cut" "$b"\n' "$real_head" "$real_mv"
+        printf '    printf "%%s\\n" "awk cut $b" >> %q; exit "$s" ;;\n' "$TEST_DIR/calls.bincut"
+        printf 'esac\n'
+        printf 'exec %q "$@"\n' "$real_awk"
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.bincut")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the binary paths the CREDENTIAL FEED of the push routed were read back short (1 of the 2 its awk recorded), so the rest cannot be read whole; the scan is incomplete, so the push is refused"* ]]
     at_base
 }
 
@@ -10392,7 +10693,7 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     r10b_long_witness freemius-secret-key .php
 }
 
-@test "round 10b (G): the path-scoped copies' directories are made past the argument limit: 4,000 one-line .yaml files in one commit, pushed for real with the stack limit lowered to 512 KB in the case's own subshell (an exec's arguments then capped at 128 KB), pass, both byte figures agreeing (red at eee3938a8: one mkdir took every directory, exited 126 on Argument list too long, and set -e ended the hook with no romp line); and 4,000 more, pushed the same way under a TMPDIR three 80-character runs of CJK characters deep in a UTF-8 locale, pass too, each batch sized by the scratch path's length in bytes (round 10b2; red under the length in characters: mkdir's exec failed on Argument list too long, and set -e ended the hook with no romp line)" {
+@test "round 10b (G): the path-scoped copies' directories are made past the argument limit: 4,000 one-line .yaml files in one commit, pushed for real with the stack limit lowered to 512 KB in the case's own subshell (an exec's arguments and its environment then capped at 128 KB together), pass, both byte figures agreeing (red at eee3938a8: one mkdir took every directory, exited 126 on Argument list too long, and set -e ended the hook with no romp line); and 4,000 more, pushed the same way under a TMPDIR three 80-character runs of CJK characters deep in a UTF-8 locale, pass too, each mkdir's arguments sized in bytes (round 10b2; red under round 10b's batch sized by the path's length in characters: mkdir's exec failed on Argument list too long, and set -e ended the hook with no romp line); since round 11c the directories are made by xargs, which sizes each mkdir around the environment (the round 11c section's witness under an exported 80 KB variable)" {
     r9d_base
     mkdir -p "$REPO/k8s"
     for ((i = 1; i <= 4000; i++)); do printf 'name: probe\n' > "$REPO/k8s/f$i.yaml"; done
@@ -10413,11 +10714,13 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     [[ "$output" != *"Argument list too long"* ]]
     [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~56000 bytes\nINF scanned ~56000 bytes')" ]   # 4,000 pieces of 14 bytes, then their copies
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
-    # Round 10b2 (the r10b audit's probe): the batch is sized by the scratch path's length in BYTES. In a UTF-8
-    # locale bash's ${#scratch} counts characters, so a scratch path under a TMPDIR named past ASCII made a batch
-    # larger in bytes than it was counted. The locale is set for the push, the first of two that counts the run
-    # of CJK characters as 80, and the geometry is checked first: under the character count one batch's argument
-    # strings alone pass 128 KB, so the push below is red there whatever else the environment holds.
+    # Round 10b2 (the r10b audit's probe): the batch was sized by the scratch path's length in BYTES. In a UTF-8
+    # locale bash's ${#scratch} counts characters, so round 10b's count made a batch under a TMPDIR named past ASCII
+    # larger in bytes than it was counted. Since round 11c no batch is counted in the hook: xargs sizes each mkdir in
+    # bytes around the environment (piece_dirs), and the push stays a witness against any batch sized in characters.
+    # The locale is set for the push, the first of two that counts the run of CJK characters as 80, and the geometry
+    # is checked first: under a count in characters one batch's argument strings alone pass 128 KB, so the push
+    # below is red there whatever else the environment holds.
     c="$(printf '\344\270\255%.0s' $(seq 1 80))"                               # 80 CJK characters, 240 bytes
     td="$TEST_DIR/$c/$c/$c"
     mkdir -p "$td"
@@ -11368,4 +11671,309 @@ r11b_empty_path_case() {   # <the empty string, quoted>: S1's rule with that pat
 
 @test "round 11b (ITEM 5 (4)): a rule whose path is the empty LITERAL string passes a clean push with the reader silent, and the rule's credential is still named (the reader refused both pushes at round 11a's head)" {
     r11b_empty_path_case "''"
+}
+
+# ── round 11c (the round 10 rulings' C and D, and the 06:29Z ruling on round 11b's flag 7): the feed's diff inputs, the output encoding, the directories by xargs, the empty path's four forms ──
+# The round 10 rulings after rounds 11a and 11b. C (extra5-1, extra5-2): the feed's diff-tree runs under env -u
+# GIT_DIFF_OPTS with git -c diff.suppressBlankEmpty=false, and every git log or rev-list read given a format pins its
+# output encoding (--encoding=UTF-8), so a clean push under GIT_DIFF_OPTS=--unified=3 with the key true, or under a
+# UTF-16 log or commit encoding, passes where 93684a4d1 refused it; a census over the hook's git calls holds the pins,
+# its list of reads derived from the hook, each pin's removal planted and red. D (extra6-2): the per-piece
+# directories made by xargs (piece_dirs), which sizes each mkdir around the environment, its status judged and each
+# directory tested, so case 446's first push passes under an exported 80 KB variable where 93684a4d1 ended on bash's
+# Argument list too long line, and a mkdir that fails refuses with a romp line, never bash's; the new read's table
+# and short cases. And romp-manager's 06:29Z ruling on round 11b's flag 7: the empty path exempt in all four quote
+# forms, one pin per form. A title that says a witness is refused at 93684a4d1 records the run made against that
+# hook for the round's log; every credential-shaped string is assembled at run time.
+
+r11c_blank_context_history() {   # r9d_base, then a clean history whose edits sit beside blank lines: an edit, a rename with an edit, a mode change, a deletion, a file with no final newline edited, and a two-parent merge adding a clean line of its own beside blank lines while auto-merging a path under a committed -diff attribute (its combined diff a Binary notice, read whole)
+    r9d_base
+    printf 'one\n\ntwo\n\nthree\n' > "$REPO/a.txt"
+    printf 'alpha\n\nbeta\n' > "$REPO/b.txt"
+    printf '#!/bin/sh\n\necho hi\n' > "$REPO/run.sh"
+    printf 'gone\n\nsoon\n' > "$REPO/old.txt"
+    printf 'first\n\nlast' > "$REPO/nonl.txt"
+    printf 'd.dat -diff\n' > "$REPO/.gitattributes"
+    printf 'data one\n\nmiddle\n\nmore\n\ndata two\n' > "$REPO/d.dat"
+    git -C "$REPO" add -- a.txt b.txt run.sh old.txt nonl.txt .gitattributes d.dat
+    git -C "$REPO" commit -qm "files with blank lines"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'one\n\nTWO\n\nthree\n' > "$REPO/a.txt"; git -C "$REPO" commit -qam "an edit beside blank lines"
+    git -C "$REPO" mv b.txt c.txt; printf 'alpha\n\nBETA\n' > "$REPO/c.txt"; git -C "$REPO" add c.txt; git -C "$REPO" commit -qm "a rename with an edit"
+    chmod 755 "$REPO/run.sh"; git -C "$REPO" commit -qam "a mode change"
+    git -C "$REPO" rm -q old.txt; git -C "$REPO" commit -qm "a deletion"
+    printf 'first\n\nLAST' > "$REPO/nonl.txt"; git -C "$REPO" commit -qam "no final newline"
+    git -C "$REPO" checkout -q -b side
+    printf 'ONE\n\nTWO\n\nthree\n' > "$REPO/a.txt"; printf 'DATA one\n\nmiddle\n\nmore\n\ndata two\n' > "$REPO/d.dat"
+    git -C "$REPO" commit -qam "side"
+    git -C "$REPO" checkout -q main
+    printf 'one\n\nTWO\n\nTHREE\n' > "$REPO/a.txt"; printf 'data one\n\nmiddle\n\nmore\n\ndata TWO\n' > "$REPO/d.dat"
+    git -C "$REPO" commit -qam "main"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    printf 'ONE\n\nTWO\n\na clean line of the merge\n\nTHREE\n' > "$REPO/a.txt"
+    git -C "$REPO" add a.txt
+    git -C "$REPO" commit -qm "the merge, with a line of its own"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    [ "$(git -C "$REPO" diff-tree -p -c --text "$merge" | grep -c '^Binary files differ$')" -eq 1 ]       # d.dat, read whole
+    [ "$(git -C "$REPO" show "$merge:d.dat" | grep -c 'DATA one\|data TWO')" -eq 2 ]                     # auto-merged from both sides
+}
+r11c_blank_context_push() {   # the push of main under GIT_DIFF_OPTS=--unified=3, exported for it alone
+    export GIT_DIFF_OPTS=--unified=3
+    push_main_through_hook_with_shim
+    unset GIT_DIFF_OPTS
+}
+
+@test "round 11c (C, extra5-1, the witness): a clean multi-commit push whose edits sit beside blank lines (an edit, a rename with an edit, a mode change, a deletion, a missing final newline, a two-parent merge adding a line of its own and auto-merging a -diff path) under GIT_DIFF_OPTS=--unified=3 with diff.suppressBlankEmpty=true in the clone passes, and a credential beside blank lines under the same two is still refused naming it (the clean push refused at 93684a4d1: GIT_DIFF_OPTS moved the feed's -U0, and a blank context line printed empty was none of the shapes the feed reads; the witness is red under the mutant removing both pins, since either alone keeps it whole)" {
+    r11c_blank_context_history
+    git -C "$REPO" config diff.suppressBlankEmpty true
+    [ "$(GIT_DIFF_OPTS=--unified=3 git -C "$REPO" diff-tree -p -U0 "$(git -C "$REPO" rev-list --reverse "$BASE..main" | head -n 1)" | grep -c '^$')" -ge 1 ]   # the premise: under the two, plumbing's -U0 prints context, a blank line of it empty
+    r11c_blank_context_push
+    r10a_passes
+    printf 'x = 1\n\nk = "%s"\n\ny = 2\n' "$(probe_token)" > "$REPO/k.py"
+    git -C "$REPO" add k.py
+    git -C "$REPO" commit -qm "a credential beside blank lines"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    r11c_blank_context_push
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (github-pat) in: k.py"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    at_base
+}
+
+@test "round 11c (C, extra5-1, decision 7's execution item 5): the key's older spelling, diff.suppress-blank-empty=true in the clone, which git still reads, under GIT_DIFF_OPTS=--unified=3, prints a blank context line empty, and the same clean push passes: the feed's command-line -c diff.suppressBlankEmpty=false is read last and beats it (refused at 93684a4d1, as under the key's own spelling)" {
+    r11c_blank_context_history
+    git -C "$REPO" config diff.suppress-blank-empty true
+    [ "$(GIT_DIFF_OPTS=--unified=3 git -C "$REPO" diff-tree -p -U0 "$(git -C "$REPO" rev-list --reverse "$BASE..main" | head -n 1)" | grep -c '^$')" -ge 1 ]   # the premise: the older spelling takes effect
+    r11c_blank_context_push
+    r10a_passes
+}
+
+r11c_git_calls() {   # <bash file>: one line per git command the census finds (a judged_read call's tagged command among them): its line, the words ahead of its command word and its words from git on, raw, the three fields separated by the byte 037 (a tab, which read takes as whitespace, would drop an empty field)
+    local -a orig masked mw rw rec
+    local -A fstart fend
+    local ln fl et touch cmd word rword wkind u k
+    mapfile -t orig < "$1"
+    mapfile -t masked < <(masked_text "$1")
+    census_functions
+    while IFS=$'\x1f' read -r -a rec; do
+        census_rec "${rec[@]}"
+        census_command
+        [ "$cmd" = git ] || continue
+        k=0
+        while [ "$k" -lt "${#rw[@]}" ]; do census_unquote "${rw[k]}"; [ "${u##*/}" = git ] && break; k=$((k + 1)); done
+        printf '%s\037%s\037%s\n' "$ln" "${rw[*]:0:k}" "${rw[*]:k}"
+    done < <(census_records "$1" calls)
+}
+r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin and returns 1, 0 when every pin is carried: the feed's diff-tree (the one git read given diff-tree, --stdin and --text) runs under env -u GIT_DIFF_OPTS with -c diff.suppressBlankEmpty=false among git's own options; every git log or rev-list given --format or --pretty carries --encoding=UTF-8, or -c i18n.logOutputEncoding=UTF-8 among git's own options; any other git read given a format is a for-each-ref whose format is %(refname) alone, the stated exemption (ref names are not re-encoded); and the reads given a format number as many as the lines of the text that run git log or git rev-list with one, a second derivation
+    local ln pre args sub g n i x fmt enc feed=0 formats=0 lines
+    local -a a
+    while IFS=$'\037' read -r ln pre args; do
+        read -r -a a <<< "$args"
+        g=" "; n=1
+        while [ "$n" -lt "${#a[@]}" ]; do                       # git's own options: -c and -C take the next word
+            case "${a[n]}" in
+                -c|-C) census_unquote "${a[n + 1]:-}"; g="$g${a[n]} $u "; n=$((n + 2)) ;;
+                -*) g="$g${a[n]} "; n=$((n + 1)) ;;
+                *) break ;;
+            esac
+        done
+        sub=${a[n]:-}; fmt=""; enc=0
+        for ((i = n + 1; i < ${#a[@]}; i++)); do
+            census_unquote "${a[i]}"; x=$u
+            case "$x" in --format|--format=*|--pretty|--pretty=*) fmt=$x ;; --encoding=UTF-8) enc=1 ;; esac
+        done
+        [[ "$g" != *" -c i18n.logOutputEncoding=UTF-8 "* ]] || enc=1
+        if [ "$sub" = diff-tree ] && [[ " $args " == *" --stdin "* ]] && [[ " $args " == *" --text "* ]]; then
+            feed=$((feed + 1))
+            [[ " $pre " == *" env -u GIT_DIFF_OPTS "* ]] || { echo "the feed's git at line $ln runs without env -u GIT_DIFF_OPTS"; return 1; }
+            [[ "$g" == *" -c diff.suppressBlankEmpty=false "* ]] || { echo "the feed's git at line $ln carries no -c diff.suppressBlankEmpty=false"; return 1; }
+        fi
+        [ -n "$fmt" ] || continue
+        case "$sub" in
+            log|rev-list)
+                formats=$((formats + 1))
+                [ "$enc" -eq 1 ] || { echo "the git $sub at line $ln is given a format and pins no output encoding"; return 1; } ;;
+            for-each-ref)
+                [ "$fmt" = "--format=%(refname)" ] || { echo "the git for-each-ref at line $ln is given the format $fmt, not %(refname) alone"; return 1; } ;;
+            *) echo "the git $sub at line $ln is given a format, of no kind the encoding rule reads"; return 1 ;;
+        esac
+    done < <(r11c_git_calls "$1")
+    [ "$feed" -eq 1 ] || { echo "the hook holds $feed feed reads (git diff-tree given --stdin and --text), where it holds one"; return 1; }
+    [ "$formats" -ge 1 ] || { echo "no git log or rev-list read given a format was found"; return 1; }
+    lines=$(grep -cE '^[^#]*git (-c [^ ]+ )*(log|rev-list) .*--(format|pretty)' "$1" || true)
+    [ "$formats" -eq "$lines" ] || { echo "the census found $formats git log or rev-list reads given a format, where $lines lines of the text run one"; return 1; }
+    return 0
+}
+
+@test "round 11c (C, the census of the pins): over the hook's git calls, the feed's diff-tree runs under env -u GIT_DIFF_OPTS with -c diff.suppressBlankEmpty=false, and every git log or rev-list read given a format pins its output encoding (--encoding=UTF-8), the list of reads derived from the hook's git calls and equal to the lines that run one, the for-each-ref %(refname) reads the stated exemption; each pin removed in a copy, one at a time, reds the check, and so does a new format read of either kind" {
+    run r11c_pins_check "$HOOK"
+    [ "$output" = "" ]
+    [ "$status" -eq 0 ]
+    [ "$(r11c_git_calls "$HOOK" | awk -F $'\037' '$3 ~ /(^| )(log|rev-list) / && $3 ~ /--(format|pretty)/' | wc -l)" -ge 3 ]     # read, not assumed: the logs are judged_read's tagged commands
+    local -a drop=('s/env -u GIT_DIFF_OPTS git -c core.quotePath=true/git -c core.quotePath=true/'
+        's/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /'
+        's/rev-list --no-walk=unsorted --stdin --encoding=UTF-8 /rev-list --no-walk=unsorted --stdin /'
+        "/--format='authored/s/ --encoding=UTF-8 / /"
+        "/--format='message/s/ --encoding=UTF-8 / /")
+    local -a said=("runs without env -u GIT_DIFF_OPTS" "carries no -c diff.suppressBlankEmpty=false" "git rev-list at line" "git log at line" "git log at line")
+    local k
+    for k in 0 1 2 3 4; do
+        sed "${drop[k]}" "$HOOK" > "$TEST_DIR/pins-$k.sh"
+        run cmp -s "$HOOK" "$TEST_DIR/pins-$k.sh"
+        [ "$status" -ne 0 ]                                                    # the removal landed
+        run r11c_pins_check "$TEST_DIR/pins-$k.sh"
+        [ "$status" -ne 0 ]
+        [[ "$output" == *"${said[k]}"* ]]
+    done
+    { sed -n '1p' "$HOOK"; printf '%s\n' 'x=$(git log -1 --format=%s HEAD)'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/pins-new.sh"
+    run r11c_pins_check "$TEST_DIR/pins-new.sh"
+    [ "$output" = "the git log at line 2 is given a format and pins no output encoding" ]
+    { sed -n '1p' "$HOOK"; printf '%s\n' 'x=$(git show -s --format=%s HEAD)'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/pins-show.sh"
+    run r11c_pins_check "$TEST_DIR/pins-show.sh"
+    [ "$output" = "the git show at line 2 is given a format, of no kind the encoding rule reads" ]
+}
+
+@test "round 11c (C, extra5-2, the witness): a clean two-commit push under i18n.logOutputEncoding=UTF-16, the identifier scan off, passes (refused at 93684a4d1: parent_counts' rev-list answered in UTF-16, and its awk found no tail marker)" {
+    r9d_base
+    commit_file a.txt "nothing to see" "a clean commit"
+    commit_file b.txt "nothing more" "another clean commit"
+    git -C "$REPO" config i18n.logOutputEncoding UTF-16
+    [ "$(git -C "$REPO" log -1 --format=%H | LC_ALL=C grep -c "$(git -C "$REPO" rev-parse HEAD)" || true)" -eq 0 ]   # the premise: a format's output is re-encoded, the name no longer ASCII
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 11c (C, extra5-2, the witness with the identifier scan armed): the same clean push under i18n.logOutputEncoding=UTF-16, the denylist armed with strings the push does not hold, passes, the ADDRESSES and MESSAGE logs read as UTF-8; and a commit whose message names a banned string, under the same key, is still refused naming its message (the clean push refused at 93684a4d1: the ADDRESSES and the MESSAGE of each commit could not be read, their markers re-encoded, and neither could parent_counts' answer)" {
+    r9d_base
+    export ROMP_PRIVATE_STRINGS="$STRINGS"
+    commit_file a.txt "nothing to see" "a clean commit"
+    commit_file b.txt "nothing more" "another clean commit"
+    git -C "$REPO" config i18n.logOutputEncoding UTF-16
+    push_main_through_hook_with_shim
+    r10a_passes
+    commit_file c.txt "still nothing" "seen on TESTHOST"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the MESSAGE of commit ${sha:0:10} carries a personal identifier on line 1 (line 1 is the subject)"* ]]
+    [[ "$output" != *"could not be read"* ]]
+    at_base
+}
+
+@test "round 11c (C, extra5-2, the commit encoding): a clean push under i18n.commitEncoding=UTF-16, the key the log output falls back to with i18n.logOutputEncoding unset, the denylist armed with strings the push does not hold, passes: --encoding=UTF-8 on the three reads covers it (refused at 93684a4d1)" {
+    r9d_base
+    export ROMP_PRIVATE_STRINGS="$STRINGS"
+    commit_file a.txt "nothing to see" "a clean commit"
+    commit_file b.txt "nothing more" "another clean commit"
+    git -C "$REPO" config i18n.commitEncoding UTF-16
+    [ -z "$(git -C "$REPO" config i18n.logOutputEncoding || true)" ]
+    [ "$(git -C "$REPO" log -1 --format=%H | LC_ALL=C grep -c "$(git -C "$REPO" rev-parse HEAD)" || true)" -eq 0 ]   # the premise: the fallback re-encodes a format's output
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+r11c_yaml_files() {   # <directory> <count>: that many one-line .yaml files under it, committed as one commit
+    mkdir -p "$REPO/$1"
+    for ((i = 1; i <= $2; i++)); do printf 'name: probe\n' > "$REPO/$1/f$i.yaml"; done
+    git -C "$REPO" add -- "$1"
+    git -C "$REPO" commit -qm "$2 yaml files"
+}
+
+@test "round 11c (D, the witness): case 446's first push under an exported variable of about 80 KB: 4,000 one-line .yaml files in one commit, pushed for real with the stack limit lowered to 512 KB and an exported 80,000-byte variable, pass, both byte figures agreeing, xargs sizing each mkdir's arguments around the environment (refused at 93684a4d1 with bash's Argument list too long line and no romp line: its batches of 64 KB of arguments did not fit beside the environment)" {
+    r9d_base
+    r11c_yaml_files k8s 4000
+    R11C_PAD="$(head -c 80000 /dev/zero | tr '\0' x)"
+    export R11C_PAD
+    mkdir -p "$TEST_DIR/hooks"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'export PATH=%q:"$PATH"\n' "$TEST_DIR/shim"
+        printf 'exec %q "$@"\n' "$HOOK"
+    } > "$TEST_DIR/hooks/pre-push"
+    chmod 755 "$TEST_DIR/hooks/pre-push"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
+    run bash -c 'ulimit -s 512 && exec git -C "$1" push origin main' _ "$REPO"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+    unset R11C_PAD
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [[ "$output" != *"Argument list too long"* ]]
+    [ "$(grep -o 'INF scanned ~[0-9]* bytes' <<< "$output")" = "$(printf 'INF scanned ~56000 bytes\nINF scanned ~56000 bytes')" ]   # 4,000 pieces of 14 bytes, then their copies
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$(git -C "$REPO" rev-parse HEAD)" ]
+}
+
+r11c_password_commit() {   # r9d_base, then a password in prod.nuget.config, which only the path-scoped run catches, committed (sha)
+    r9d_base
+    r11b_nuget prod.nuget.config
+    git -C "$REPO" commit -qm "a password"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+}
+R11C_DIRS_TAIL="so neither the additive run nor the probe run can read its copies; free space or inodes where TMPDIR points, or point TMPDIR at a writable directory, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+
+@test "round 11c (D): a mkdir that fails under xargs (a shim exiting 1 for the per-piece directories, making none) is refused with the romp line naming the DIRECTORIES read, xargs' status and the directories it was given, and the remedies, bash's own line absent, no path-scoped run made, the remote at its base (red under the mutant dropping the pipeline's status check, which leaves the directories' test to refuse on another line, and under the mutant dropping the judgment, which ends the hook with no romp line)" {
+    r11c_password_commit
+    local real_mkdir
+    real_mkdir="$(command -v mkdir)"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'for a in "$@"; do case "$a" in */creds.p/*|*/creds.q/*) printf "%%s\\n" "mkdir $*" >> %q; echo "mkdir: shim refused" >&2; exit 1 ;; esac; done\n' "$TEST_DIR/calls.mkdirfail"
+        printf 'exec %q "$@"\n' "$real_mkdir"
+    } > "$TEST_DIR/shim/mkdir"
+    chmod 755 "$TEST_DIR/shim/mkdir"
+    push_main_through_hook_with_shim
+    [ -s "$TEST_DIR/calls.mkdirfail" ]
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the DIRECTORIES of the path-scoped copies could not be made (xargs, running mkdir, exited 123, given 2 directories, creds.p/<piece> and creds.q/<piece> for each selected piece, under "*"/romp-pre-push."*"), $R11C_DIRS_TAIL"* ]]
+    [[ "$output" != *"pre-push: line "* ]]                                    # bash's own line, which set -e would print ahead of ending the hook
+    [[ "$output" != *"ADDS a credential"* ]]                                  # neither path-scoped run was made
+    [ "$(grep -c 'INF scanned ~' <<< "$output")" -eq 1 ]                      # the scan of record alone
+    at_base
+}
+
+@test "round 11c table case: the DIRECTORIES of the path-scoped copies: an xargs silent on the directories' mkdir alone (exit 0, its input drained, nothing made), through a real push of a password in prod.nuget.config, is refused naming the directories it was given that do not exist, bash's own line absent, no path-scoped run made, and the remote stays at its base" {
+    r11c_password_commit
+    calls_silent_on xargs dirs '[ "${1:-}" = -0 ] && [ "${2:-}" = mkdir ]'
+    push_main_through_hook_with_shim
+    fired dirs "-0 mkdir"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the DIRECTORIES of the path-scoped copies were made short (xargs, running mkdir, exited 0, and 2 of the 2 directories it was given do not exist, the first "*"/creds.p/1), $R11C_DIRS_TAIL"* ]]
+    [[ "$output" != *"pre-push: line "* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 11c short case: the DIRECTORIES of the path-scoped copies: an xargs that makes the first half of the directories it is given and exits 0 (its answer, the directories on disk, cut short), through a real push of a password in prod.nuget.config, is refused naming the directories that do not exist, bash's own line absent, no path-scoped run made, and the remote stays at its base" {
+    r11c_password_commit
+    local real_xargs real_mkdir
+    real_xargs="$(command -v xargs)"; real_mkdir="$(command -v mkdir)"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = -0 ] && [ "${2:-}" = mkdir ]; then\n'
+        printf '    mapfile -d "" -t a; n=${#a[@]}; k=$((n / 2))\n'
+        printf '    %q -- "${a[@]:0:k}"\n' "$real_mkdir"
+        printf '    printf "%%s\\n" "xargs $* [whole $n cut $k]" >> %q; exit 0\n' "$TEST_DIR/calls.dirs"
+        printf 'fi\n'
+        printf 'exec %q "$@"\n' "$real_xargs"
+    } > "$TEST_DIR/shim/xargs"
+    chmod 755 "$TEST_DIR/shim/xargs"
+    export PATH="$TEST_DIR/shim:$PATH"
+    push_main_through_hook_with_shim
+    fired_short dirs "-0 mkdir"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the DIRECTORIES of the path-scoped copies were made short (xargs, running mkdir, exited 0, and 1 of the 2 directories it was given do not exist, the first "*"/creds.q/1), $R11C_DIRS_TAIL"* ]]
+    [[ "$output" != *"pre-push: line "* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 11c (the 06:29Z ruling on round 11b's flag 7): a rule whose path is the empty string in six SINGLE quotes on one line, a triple-quoted literal, passes a clean push with the reader silent, and the rule's credential is still named (the reader refused the clean push at round 11b's head)" {
+    r11b_empty_path_case "''''''"
+}
+
+@test "round 11c (the 06:29Z ruling on round 11b's flag 7): a rule whose path is the empty string in six DOUBLE quotes on one line, a triple-quoted basic string, passes a clean push with the reader silent, and the rule's credential is still named (the reader refused the clean push at round 11b's head)" {
+    r11b_empty_path_case '""""""'
 }

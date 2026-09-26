@@ -489,18 +489,20 @@
 #       parent, and the awk routes that line, in a diff --combined section
 #       with its path, to merge_binary_reads, which reads the merge's own
 #       version of the path whole (at the cost of refusing a merge whose
-#       binary path holds a credential a remote already published), and
-#       refuses it anywhere else; a commit of 64 or more parents is refused
-#       apart (the PARENT COUNTS read); its record, five counts or the word
-#       that says where the read fell short, refused when it is neither. Its
-#       end: each commit's TAIL marker, its name printed again after its diff
-#       for its second --stdin line (<rev> <rev>, an empty diff), without
-#       which the awk records untailed, refused naming the read, and a line
-#       after the last tail is refused too; the tr ahead of the awk carries
-#       both markers, so a tr silent or cut short loses them (round 8: the
-#       stream gitleaks' own git read for the scan, cut inside a commit,
-#       published a credential through a real push, the read inside gitleaks
-#       with no row until round 9 made it the hook's own)
+#       binary path holds a credential a remote already published; its witness
+#       is the round 10b case in tests/pre-push-hook.bats titled "round 10b
+#       (A.2's disclosed cost, with its witness)"), and refuses it anywhere
+#       else; a commit of 64 or more parents is refused apart (the PARENT
+#       COUNTS read); its record, five counts or the word that says where the
+#       read fell short, refused when it is neither. Its end: each commit's
+#       TAIL marker, its name printed again after its diff for its second
+#       --stdin line (<rev> <rev>, an empty diff), without which the awk
+#       records untailed, refused naming the read, and a line after the last
+#       tail is refused too; the tr ahead of the awk carries both markers, so
+#       a tr silent or cut short loses them (round 8: the stream gitleaks' own
+#       git read for the scan, cut inside a commit, published a credential
+#       through a real push, the read inside gitleaks with no row until round
+#       9 made it the hook's own)
 #   the RESULT listing of a merge
 #       the path the merge's diff --combined section named when it printed
 #       Binary files differ, git's quoted form, compared as a string with the
@@ -515,21 +517,24 @@
 #   the SIZE of a merge's binary blob
 #       a digit run, compared with the bytes the content read counted
 #       (merge_binary_reads): a non-count refuses naming the read, and another
-#       number refuses naming both. Its end: a cut size is a prefix of its
-#       digits, another number than the bytes read
+#       number refuses naming both, a size below the bytes the content read
+#       gave naming the SIZE read (round 11c: until then that case named the
+#       CONTENT read as short, with the bytes read above the size). Its end: a
+#       cut size is a prefix of its digits, another number than the bytes read
 #   the CONTENT of a merge's binary blob
 #       the blob's SIZE, read apart: the bytes blob_pieces' awk counted must
 #       be the size and one, the newline it appends after cat-file's answer
-#       when cat-file exited 0, another count refused naming both (round 10a:
-#       a credential in a merge's own lines in a path git calls binary was
-#       published with every count agreeing, for each of five causes, a NUL in
-#       the first 8000 bytes, a committed -diff, .git/info/attributes,
-#       core.attributesFile and a diff driver whose binary key is true, and is
-#       read whole since, from the result blob, pieced as the feed pieces
-#       added lines); its record, four counts, refused when it is not. Its
-#       end: the size, so any cut counts short, the last byte of a blob with
-#       no final newline included, since the newline appended ends every whole
-#       answer
+#       when cat-file exited 0, another count refused naming both, fewer as
+#       the CONTENT read answering short and more as a SIZE read that
+#       disagrees with it, since round 11c (round 10a: a credential in a
+#       merge's own lines in a path git calls binary was published with every
+#       count agreeing, for each of five causes, a NUL in the first 8000
+#       bytes, a committed -diff, .git/info/attributes, core.attributesFile
+#       and a diff driver whose binary key is true, and is read whole since,
+#       from the result blob, pieced as the feed pieces added lines); its
+#       record, four counts, refused when it is not. Its end: the size, so any
+#       cut counts short, the last byte of a blob with no final newline
+#       included, since the newline appended ends every whole answer
 #   the VERSION of the scanner
 #       a dotted version on one line, three numbers of at most nine digits (a
 #       release's own answer, 8.30.1; a leading v taken), compared with the
@@ -566,6 +571,19 @@
 #       config read, and a finding at a second copy is named as a credential.
 #       Its end: the closing line, the answer's last, which an answer cut
 #       anywhere loses or contradicts, refused naming the read
+#   the DIRECTORIES of the path-scoped copies
+#       each directory the shell hands xargs, tested by the shell after xargs
+#       exits 0 ([ -d ], a builtin: piece_dirs, round 11c), one missing
+#       refused naming how many and the first, and a status other than 0, a
+#       mkdir that failed among them, refused naming the read with the
+#       directories and the remedies, never bash's line (round 11c: until then
+#       the directories were made by mkdir in batches of 64 KB of arguments,
+#       which ignored the environment's share of the argument limit, and a
+#       clean push under an exported 80,000-byte variable and ulimit -s 512
+#       was refused with bash's Argument list too long line and no romp line).
+#       Its end: xargs and mkdir print nothing, and their answer is the
+#       directories on disk, so a run that stops early leaves a directory it
+#       was given absent, which the test counts
 #   the ERR line of the scanner log
 #       the answer is always a word: none for a log with no ERR line, or
 #       error, a tab and the first such line, the awk stripping colour codes
@@ -573,20 +591,23 @@
 #       8b3: read as own= until then, an awk silent here, beside a scanner
 #       that logged an error and counted a commit whole with its credential
 #       file unread, published the credential through a real push). Since
-#       round 9 gitleaks runs no git, in either run (the pieces, the
-#       path-scoped copies), so the line is any error gitleaks logs. Its end:
-#       the whole word none, no cut of which is an answer, or an error line,
-#       which refuses however short
+#       round 9 gitleaks runs no git, in any of its three runs (the pieces,
+#       the path-scoped copies, and since round 11b the probe run's probes and
+#       second copies, a third run), so the line is any error gitleaks logs.
+#       Its end: the whole word none, no cut of which is an answer, or an
+#       error line, which refuses however short
 #   the BYTE COUNT line of the scanner log
-#       the bytes the feed's awk recorded writing (the pieces for the scan of
-#       record, a merge's binary path read whole among them, the path-scoped
-#       copies for the additive run), compared with the one scanned ~N bytes
-#       line gitleaks logs, which the awk answers as a word, a tab and digits:
-#       no such line, or two, is refused naming the count of lines, any other
-#       answer naming it, and another number naming both (round 9: the commit
-#       count it replaces held a scan whole at the granularity of commits
-#       alone). Its end: a cut figure is a prefix of its digits, another
-#       number than the record's
+#       the bytes written for the run (the pieces for the scan of record and
+#       the path-scoped copies for the additive run, as the feed's awk
+#       recorded writing them, a merge's binary path read whole among them;
+#       for the probe run, a third run since round 11b, the probes the shell
+#       wrote for it and the second copies of the path-scoped pieces),
+#       compared with the one scanned ~N bytes line gitleaks logs, which the
+#       awk answers as a word, a tab and digits: no such line, or two, is
+#       refused naming the count of lines, any other answer naming it, and
+#       another number naming both (round 9: the commit count it replaces held
+#       a scan whole at the granularity of commits alone). Its end: a cut
+#       figure is a prefix of its digits, another number than the record's
 # Reads whose empty answer is the object's own (own=):
 #   the ADDRESS DOMAIN grep
 #       safe: the answer is the status alone (-q) and exit 0 is the hit, so a
@@ -784,8 +805,14 @@
 # feeds (creds.list, and once each in creds.revs for their parent counts,
 # whose record is creds.parents), the pieces (creds.d), the path-scoped
 # copies (creds.p) and the probe run's probes and second copies (creds.q),
-# each directory made by mkdir, a writer like the others, the two indexes
-# that name each piece's commit and file (creds.index, creds.pindex), the
+# those three directories made by one mkdir, a writer like the others; each
+# selected piece's directory in the last two is made by xargs running mkdir
+# (piece_dirs), a writer judged as a read since round 11c and so no longer
+# one that set -e ends the hook at: its status is judged and each directory
+# it was given is tested, so a failure there refuses the push with a romp
+# line naming the directories, never bash's line (the round 10 rulings' D,
+# 2026-09-26); the two indexes that name each piece's commit and file
+# (creds.index, creds.pindex), the
 # feed's record (creds.record), the merges' binary paths the feed routes
 # (creds.binary) and the record of each one's whole read (creds.brecord),
 # the report template, the three reports and the copies of the config's
@@ -801,11 +828,19 @@
 # ONE git diff-tree over the push (credential_feed): a merge by the lines in
 # none of its parents (-c), where a line typed into a conflict resolution
 # lands, so a merge that brings in content a remote already holds adds
-# nothing; a rename by its edits (-M), so a pure rename adds nothing; every
-# blob of a root or one-parent commit as text (--text), its NUL bytes mapped
-# to 0x01 so any awk carries the line; and no textconv, no colour and no
-# porcelain key, since diff-tree is plumbing given each option explicitly,
-# with core.quotePath=true on its command line (git -c), so a path comes in
+# nothing; a rename by its edits (-M), so a pure rename adds nothing (within
+# git's rename limit, diff.renameLimit: past it a rename is read as a new
+# file, more bytes, never fewer); every blob of a root or one-parent commit
+# as text (--text), its NUL bytes mapped to 0x01 so any awk carries the line;
+# and no textconv and no colour, each option given explicitly. Three inputs
+# that reach diff-tree from outside its options are pinned on its command
+# line: GIT_DIFF_OPTS unset for the read (env -u), since its --unified=<n>
+# replaces the -U0 given for a one-parent diff; diff.suppressBlankEmpty=false
+# (git -c), since that basic key, which diff-tree reads, prints a blank
+# context line as an empty one (until round 11c the two together refused a
+# clean push; the round 10 rulings' extra5-1, 2026-09-26, and the population
+# behind them, the rulings check's dated record, is listed at
+# credential_feed); and core.quotePath=true (git -c), so a path comes in
 # git's quoted form whatever the clone sets (under false a name with a byte
 # over 127 printed raw, and one gitleaks' allowlist case-folds to a name it
 # skips, pnpm-loc<U+212A>.yaml with the Kelvin sign, was selected for the
@@ -844,7 +879,9 @@
 # from printing one, or in a combined section with no path) refuses the push
 # as a foreign line. The cost: that path is read whole, not by the lines the
 # merge adds, so a merge whose binary path holds a credential a remote has
-# already published refuses the push.
+# already published refuses the push (its witness: tests/pre-push-hook.bats,
+# round 10b, the case titled
+# "round 10b (A.2's disclosed cost, with its witness)").
 # A commit of 64 or more parents refuses the push, naming it, in both scans
 # (parent_counts here, the PARENT COUNT read in the identifier scan): git's
 # combined diff prints no hunk for the lines such a merge adds at 64 parents
@@ -941,20 +978,24 @@
 # one push. A finding at a second copy refuses as a credential, named by
 # commit and file: it catches an AND-condition path allowlist, whose drop
 # depends on the content too, which no probe can see. The cost, with its
-# witnesses in tests/pre-push-hook.bats' round 11b section: a push adding a
-# selected file, under a config that drops the file's rule at the copy's
-# name, is refused even when the file is clean (a clean prod.nuget.config
-# under a per-rule allowlist on (^|/)nuget\.config$), and also where the
-# file's own path gets the same verdict (an unanchored per-rule
-# (?i)nuget\.config$ allowlist excuses the rule for every nuget.config, and
-# every push adding one is refused), each a push main's hook passes; a
-# narrower refusal is a held follow-up; and every push with a selected file
-# pays one more scanner run and one awk, no process per piece. The
-# residual, with its witness there: an AND-condition allowlist whose path
-# matches both the copy's name and the second copy's (^(?:[0-9]+/|romp-copy-))
-# and not the file's path, with value criteria matching the credential,
-# publishes it; such a path keys on the hook's synthetic names and has no
-# honest use, and what it publishes is a value the config excuses by value.
+# witnesses in tests/pre-push-hook.bats, round 11b, the cases titled
+# "round 11b (A, the cost witness)" and
+# "round 11b (A, the same-verdict witness)": a push adding a selected file,
+# under a config that drops the file's rule at the copy's name, is refused
+# even when the file is clean (a clean prod.nuget.config under a per-rule
+# allowlist on (^|/)nuget\.config$), and also where the file's own path gets
+# the same verdict (an unanchored per-rule (?i)nuget\.config$ allowlist
+# excuses the rule for every nuget.config, and every push adding one is
+# refused), each a push main's hook passes; a narrower refusal is a held
+# follow-up; and every push with a selected file pays one more scanner run,
+# no process running per piece. The residual, with its witness in the same
+# file, round 11b, the case titled
+# "round 11b (A, the residual, OUTSIDE the closed class)": an AND-condition
+# allowlist whose path matches both the copy's name and the second copy's
+# (^(?:[0-9]+/|romp-copy-)) and not the file's path, with value criteria
+# matching the credential, publishes it; such a path keys on the hook's
+# synthetic names and has no honest use, and what it publishes is a value
+# the config excuses by value.
 # A global path allowlist that matches a copy's name skips the copy and
 # refuses the push on the figure; one keyed on the file's real path
 # (^deploy/secret\.yaml$) matches neither name, so the copy is scanned and a
@@ -983,12 +1024,14 @@
 # path-scoped rules, the text the hook's own table gives that rule (the path
 # gitleaks' default config gives it, which the additive run's copies meet),
 # byte for byte in a literal string, so a config copied from gitleaks'
-# default passes; and on any rule, an empty string, which gitleaks reads as
-# no condition. The exemption is keyed on the hook's table, not on the
-# running gitleaks' default, which the hook cannot read. The reader fails
-# closed: a construct it does not parse (the rules written as a key, an
-# inline table or array of them; a string it cannot delimit; a table header
-# it does not recognize; a quoted key holding an escape or a byte outside
+# default passes; and on any rule, an empty string, exactly, in any of
+# TOML's four quote forms (basic, literal, and triple-quoted of either kind
+# on one line), which gitleaks reads as no condition. The exemption is keyed
+# on the hook's table, not on the running gitleaks' default, which the hook
+# cannot read. The reader fails closed: a construct it does not parse (the
+# rules written as a key, an inline table or array of them; a string it
+# cannot delimit; a table header it does not recognize; a quoted key
+# holding an escape or a byte outside
 # printable ASCII, which gitleaks decodes and case-folds; an [extend] path
 # that is not a one-line string; a file it cannot open) refuses the push
 # naming it and its line, and each file's bytes as the shell read them are
@@ -1029,7 +1072,8 @@
 # PATH or a real git killed partway, published a credential through a real
 # push under gitleaks 8.30.1 and 8.28.0 (the round 8 refuters, 2026-09-24).
 # The two halves differ in kind: the credential feed is plumbing given each
-# option explicitly, and gitleaks reads only the bytes the hook wrote, while
+# option explicitly, the inputs that reach it from outside its options
+# pinned, and gitleaks reads only the bytes the hook wrote, while
 # the identifier half reads a log and diff stream and is config-dependent by
 # construction. What can hide a blob from its two content reads is closed by a
 # derived property rather than key by key (refuse_hidden_paths: git's own
@@ -1037,9 +1081,10 @@
 # core.bigFileThreshold today and a key found tomorrow the same day, in a
 # one-parent commit's diff and in a merge's combined patch alike); the
 # identifier half's other reads are hardened key by key as keys are found
-# (colour on its grep, the signature report on its log, each by the option
-# that outranks the key). Reading the identifier half's input from the objects
-# is the long fix, not taken in this fold.
+# (colour on its grep, the signature report and, since round 11c, the output
+# encoding on its logs, each by the option that outranks the key). Reading
+# the identifier half's input from the objects is the long fix, not taken in
+# this fold.
 #
 # Both scans read the objects at the pushed shas, on the premise that what they
 # read is what the push transfers. A replace ref (git replace) breaks it: every
@@ -2941,7 +2986,15 @@ scan_identifiers() {
             # signed commit whose signer is on the denylist, as the author's own
             # name and address are, and numbered a real hit's line from the report's
             # first line rather than the subject. The flag keeps both reads to the
-            # commit's own fields. The log is captured in this shell (never a
+            # commit's own fields. --encoding=UTF-8 on both reads too (after the
+            # format, which the tests' shims find at its place): git log
+            # re-encodes its output into i18n.logOutputEncoding (or
+            # i18n.commitEncoding with that unset), and under a UTF-16 log
+            # encoding these two reads refused every push with a new commit,
+            # their markers unread, until round 11c (the round 10 rulings'
+            # extra5-2, 2026-09-26); a commit's message is then read as UTF-8
+            # whatever the clone sets, and a banned word in it is still
+            # refused. The log is captured in this shell (never a
             # process substitution, which gives the loop no status and loses a
             # counter set inside it) and its answer judged against the format asked
             # for: the two role lines, so an exit-0 answer of any other shape is
@@ -2954,7 +3007,7 @@ scan_identifiers() {
             # 0, passed a banned domain through a real push; the r8b2 audit,
             # 2026-09-23). Whatever was printed is judged either way, the tail
             # marker set aside. A herestring of an empty capture is one empty line.
-            judged_read gate="the ADDRESSES log of a commit" 0 "the ADDRESSES of commit ${rev:0:10} could not be read (git log exited {rc})" -- git log -1 --no-show-signature --format='authored%x09%ae%ncommitted%x09%ce%nend%x09%H' "$rev" || :
+            judged_read gate="the ADDRESSES log of a commit" 0 "the ADDRESSES of commit ${rev:0:10} could not be read (git log exited {rc})" -- git log -1 --no-show-signature --format='authored%x09%ae%ncommitted%x09%ce%nend%x09%H' --encoding=UTF-8 "$rev" || :
             addrs=$read_out
             if [ "$read_rc" -eq 0 ]; then
                 case "$addrs" in
@@ -3012,7 +3065,7 @@ scan_identifiers() {
             # fact: a commit object always has bytes, and an empty message is
             # legitimate. Whatever the read printed is grepped either way, so a
             # hit ahead of a failure is still named, numbered from the subject.
-            judged_read gate="the MESSAGE log of a commit" 0 "the MESSAGE of commit ${rev:0:10} could not be read (git log exited {rc})" -- git log -1 --no-show-signature --format='message%x09%H%n%B%nend%x09%H' "$rev" || :
+            judged_read gate="the MESSAGE log of a commit" 0 "the MESSAGE of commit ${rev:0:10} could not be read (git log exited {rc})" -- git log -1 --no-show-signature --format='message%x09%H%n%B%nend%x09%H' --encoding=UTF-8 "$rev" || :
             case "$read_out" in
                 message$'\t'"$rev"$'\n'*$'\n'end$'\t'"$rev")
                     msg=${read_out#message$'\t'"$rev"$'\n'}; msg=${msg%$'\n'end$'\t'"$rev"}
@@ -3247,7 +3300,7 @@ scan_identifiers() {
 # ref loop listed, each fed twice (<rev>, then <rev> <rev>, the commit as its
 # own parent), so --always prints the commit's name ahead of its diff and
 # again after it, for the empty diff: the head marker and the tail marker.
-# Each option is explicit, so no configuration key moves the read: -p -U0,
+# Each option is explicit: -p -U0,
 # the added lines alone; -r, into subtrees; -M, a rename by its edits; -c, a
 # merge by the lines in none of its parents (a combined hunk carries one
 # column per parent, the hunk header's @ count less one); --root, a root
@@ -3264,7 +3317,48 @@ scan_identifiers() {
 # with a byte over 127 printed raw, and pnpm-loc<U+212A>.yaml, the Kelvin
 # sign in place of lock's k, a name the path-scoped selection below takes and
 # gitleaks' case-folding allowlist skips, refused a clean push on that run's
-# figure; the round 9d audit, 2026-09-24). tr maps NUL to 0x01, byte for
+# figure; the round 9d audit, 2026-09-24). Two inputs reach the read from
+# outside its options, and both are pinned. GIT_DIFF_OPTS: its --unified=<n>
+# or -u<n> replaces the -U0 given here for a one-parent diff, plumbing or
+# not, so the read runs under env -u GIT_DIFF_OPTS (unset, not set empty: an
+# empty value is inert only by how git parses one). diff.suppressBlankEmpty,
+# a basic key diff-tree reads, prints a blank context line as an empty line,
+# so the read gives git -c diff.suppressBlankEmpty=false, which beats the
+# key's older spelling diff.suppress-blank-empty too, the command line's
+# value being read last. Until round 11c the read pinned neither, and a
+# clean push under GIT_DIFF_OPTS=--unified=3 with the key true was refused,
+# its empty context line a line of none of the shapes the feed reads (the
+# round 10 rulings' extra5-1, 2026-09-26); either pin alone keeps that push
+# whole, since diff-tree prints context only under GIT_DIFF_OPTS. The
+# population behind the two pins is the round 10 rulings check's record,
+# dated and not a closed claim (git 2.43.0's documentation: git(1)'s
+# environment, git-config(1)'s diff keys, gitattributes(5)'s diff drivers;
+# its builtin/diff-tree.c reads git_diff_basic_config alone; executed
+# 2026-09-26). Read by diff-tree and inert for this feed: diff.renameLimit
+# (past git's limit a rename is read as a new file, more bytes, never
+# fewer), diff.indentHeuristic, the colour keys (--no-color),
+# diff.wsErrorHighlight, diff.dirstat, a driver's textconv and command
+# (--no-textconv, --no-ext-diff), its binary key (the merge route below),
+# its xfuncname or funcname (a hunk header's tail), wordRegex, cachetextconv
+# and algorithm (a line in none of the parents is + under any algorithm),
+# core.abbrev, core.bigFileThreshold, core.attributesFile and
+# i18n.logOutputEncoding (diff-tree prints only commit names here). Porcelain
+# keys diff-tree does not read, each executed inert: diff.context,
+# diff.interHunkContext, diff.algorithm, diff.renames, diff.orderFile,
+# diff.noprefix, diff.mnemonicPrefix, diff.relative, diff.external,
+# diff.ignoreSubmodules, diff.submodule, diff.colorMoved, color.ui and
+# log.showSignature. Environment variables inert here: GIT_EXTERNAL_DIFF and
+# the diff path counters (--no-ext-diff); the config sources
+# (GIT_CONFIG_COUNT and its pairs, GIT_CONFIG_PARAMETERS, GIT_CONFIG_GLOBAL,
+# GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM), which the command line's -c
+# beats; GIT_ATTR_SOURCE, GIT_FLUSH, GIT_PAGER and PAGER, the pathspec
+# variables, GIT_PRINT_SHA1_ELLIPSIS and the locale. GIT_TRACE and its
+# family pointed at the read's own stdout put trace lines into the stream,
+# which the awk refuses as unmarked or foreign, never publishing: a crafted
+# environment, a stated limit. The variables that choose the repository and
+# its objects (GIT_DIR and the rest) change what is read, not how it is
+# printed, under the hook's premise that it reads the repository git runs it
+# in. tr maps NUL to 0x01, byte for
 # byte, ahead of the awk: an awk that ends a record at a NUL would lose the
 # rest of the line while every count stayed consistent, and no default rule
 # names either byte. The awk reads the list file diff-tree reads (through the
@@ -3388,7 +3482,7 @@ CRED_PIECES_AWK='
         }
         function letters(n,   s, i) { n = n ""; s = ""; for (i = 1; i <= length(n); i++) s = s substr("abcdefghij", substr(n, i, 1) + 1, 1); return s }'
 credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file> <binary paths file>
-    git -c core.quotePath=true diff-tree --stdin -p -U0 -r -M -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short < "$1" \
+    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r -M -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short < "$1" \
     | LC_ALL=C tr '\000' '\001' \
     | LC_ALL=C ROMP_LIST_FILE=$1 ROMP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 ROMP_BINARY_FILE=$6 awk "$CRED_PIECES_AWK"'
         BEGIN {
@@ -3498,9 +3592,15 @@ blob_pieces() {   # <blob> <record file> <piece directory> <index file> <path-sc
 # <done>, or nolist), or three counts (commits read whole, lines of the list
 # read, commits of 64 or more parents printed), which scan_credentials
 # compares with the count it fed and the lines it read back. Its status,
-# under pipefail, is rev-list's or the awk's.
+# under pipefail, is rev-list's or the awk's. rev-list re-encodes a format's
+# output into i18n.logOutputEncoding (or i18n.commitEncoding with that unset),
+# so its output encoding is pinned (--encoding=UTF-8), the tail marker then
+# read as written whatever the clone sets (until round 11c a clean push under
+# a UTF-16 or UTF-32 log encoding, or a UTF-16 commit encoding, was refused
+# as a commit not closed by its tail marker; the round 10 rulings' extra5-2,
+# 2026-09-26).
 parent_counts() {   # <list file: one commit per line> <record file>: prints "<commit> <parent count>" for each commit of 64 or more parents
-    git rev-list --no-walk=unsorted --stdin --format='%P%n%H' < "$1" \
+    git rev-list --no-walk=unsorted --stdin --encoding=UTF-8 --format='%P%n%H' < "$1" \
     | LC_ALL=C ROMP_REVS_FILE=$1 ROMP_COUNTS_FILE=$2 awk '
         BEGIN {
             list = ENVIRON["ROMP_REVS_FILE"]; rec = ENVIRON["ROMP_COUNTS_FILE"]; listed = 0
@@ -3625,9 +3725,11 @@ scanner_version() {   # <gitleaks>
 # the hook's own entry for that rule's id (tl_default_path: the path
 # gitleaks' default config gives the rule, the path the additive run's
 # copies meet), so a config copied from gitleaks' default passes and the
-# additive run applies exactly that path; and on any rule, the empty string
-# in basic or literal quotes, which gitleaks reads as no condition, so the
-# scan of record reads the rule on every piece. Any other path text refuses,
+# additive run applies exactly that path; and on any rule, the empty string,
+# exactly, in any of TOML's four quote forms ("", '', six single quotes or
+# six double quotes on one line; romp-manager's ruling, 06:29Z), which
+# gitleaks reads as no condition, so the scan of record reads the rule on
+# every piece. Any other path text refuses,
 # a copied default's path written with an escape among them. A construct the
 # reader does not parse refuses naming it and its line, as does a file it
 # cannot open. These refusals come before either scanner run, and each line
@@ -3836,12 +3938,17 @@ tl_key() {   # parses a key, dotted or not, at the start of tl_rest: tl_segs its
         case "$tl_rest" in .*) tl_rest=${tl_rest#.} ;; *) return 0 ;; esac
     done
 }
-tl_value() {   # parses one value at the start of tl_rest, reading on across lines where TOML lets one run on (a triple-quoted string, an array): tl_plain 1 and tl_str its text for a one-line string with no escape (tl_q basic or literal), tl_str the text of a triple-single-quoted string closed on its line by three quotes (tl_q mlliteral, tl_plain 0), tl_plain 0 and tl_q empty otherwise; status 1, tl_what set, when it is no value the reader reads
-    local re_basic='^"(([^"\\]|\\.)*)"(.*)$' re_lit="^'([^']*)'(.*)\$" re_ml1="^'''([^']*)'''([^'].*)?\$" re_scalar='^[A-Za-z0-9_:.+-]+( [0-9][0-9]:[A-Za-z0-9_:.+-]*)?(.*)$'
+tl_value() {   # parses one value at the start of tl_rest, reading on across lines where TOML lets one run on (a triple-quoted string, an array): tl_plain 1 and tl_str its text for a one-line string with no escape (tl_q basic or literal), tl_str the text of a triple-single-quoted string closed on its line by three quotes (tl_q mlliteral, tl_plain 0), tl_str empty and tl_q mlbasic for the empty triple-double-quoted string written on one line (six quotes), tl_plain 0 and tl_q empty otherwise; status 1, tl_what set, when it is no value the reader reads
+    local re_basic='^"(([^"\\]|\\.)*)"(.*)$' re_lit="^'([^']*)'(.*)\$" re_ml1="^'''([^']*)'''([^'].*)?\$" re_mlb0='^""""""([^"].*)?$' re_scalar='^[A-Za-z0-9_:.+-]+( [0-9][0-9]:[A-Za-z0-9_:.+-]*)?(.*)$'
     tl_plain=0; tl_str=""; tl_q=""
     tl_ws
     case "$tl_rest" in
-        '"""'*) tl_rest=${tl_rest:3}; tl_mlstring basic || return 1 ;;
+        '"""'*)
+            if [[ "$tl_rest" =~ $re_mlb0 ]]; then
+                tl_rest=${BASH_REMATCH[1]}; tl_q=mlbasic
+            else
+                tl_rest=${tl_rest:3}; tl_mlstring basic || return 1
+            fi ;;
         "'''"*)
             if [[ "$tl_rest" =~ $re_ml1 ]]; then
                 tl_str=${BASH_REMATCH[1]}; tl_rest=${BASH_REMATCH[2]}; tl_q=mlliteral
@@ -3983,10 +4090,10 @@ tl_file() {   # <the file's name, for its lines>: parses the current file's line
     tl_rule_end "$1"
     return 0
 }
-tl_rule_end() {   # <the file's name>: the table just ended (tl_file's ctx, rid, rpath, rpv and rpk: the path keys seen, the last one's text and its form, empty for a dotted key), refused when it is a rule carrying a path key the reader does not exempt (gitleaks_config: an empty basic or literal string on any rule, or tl_default_path's entry on one of the five)
+tl_rule_end() {   # <the file's name>: the table just ended (tl_file's ctx, rid, rpath, rpv and rpk: the path keys seen, the last one's text and its form, empty for a dotted key), refused when it is a rule carrying a path key the reader does not exempt (gitleaks_config: an empty string on any rule, exactly, in any of the four quote forms, or tl_default_path's entry on one of the five)
     if [ "$ctx" != rule ] || [ "$rpath" -eq 0 ]; then return 0; fi
     if [ "$rpath" -eq 1 ]; then
-        case "$rpk" in basic|literal) if [ -z "$rpv" ]; then rpath=0; return 0; fi ;; esac
+        case "$rpk" in basic|literal|mlliteral|mlbasic) if [ -z "$rpv" ]; then rpath=0; return 0; fi ;; esac
         case "$rpk" in basic|literal|mlliteral) if tl_default_path "$rid" && [ "$rpv" = "$tl_dpath" ]; then rpath=0; return 0; fi ;; esac
     fi
     unscanned "rule ${rid:-with no id} of the gitleaks config $1 carries a path condition (a path key), which the credential scan cannot apply: it reads the pushed lines as pieces named by number, not by their files' paths; a rule without a path condition is scanned, so remove the condition, or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
@@ -4171,9 +4278,11 @@ probe_check() {   # <path-scoped index file> <the probe run's report file>
 # blob and whose last mode before the object names is the result's mode, and
 # no record or two refuse naming the read. The blob's size (git cat-file -s),
 # a digit run. Its bytes (blob_pieces), whose count of bytes read must be the
-# size and one, the newline blob_pieces appends. A zero result blob (the
-# merge deletes the path) and a gitlink (mode 160000: a commit, no blob of
-# its own) transfer no bytes of their own and are skipped. The pieces are
+# size and one, the newline blob_pieces appends: fewer refuses naming the
+# CONTENT read as short, more refuses naming the SIZE read with both counts.
+# A zero result blob (the merge deletes the path) and a gitlink (mode
+# 160000: a commit, no blob of its own) transfer no bytes of their own and
+# are skipped. The pieces are
 # numbered after the feed's, and their bytes are added to the figures the
 # scanner runs are checked against. Called with the count of routed paths
 # the feed recorded, compared with the lines read back. A content read that
@@ -4237,8 +4346,16 @@ merge_binary_reads() {   # <count of routed paths the feed recorded>
         esac
         rpieces=$((rpieces + bp))
         if [ -n "$rbytes" ]; then rbytes=$((rbytes + bb)); rpbytes=$((rpbytes + bpb)); fi
-        if [ "$bgot" -ne $((size + 1)) ]; then
+        # Split by direction (the round 10 rulings' E): fewer bytes than the
+        # size names is a content read answering short; more is a size read
+        # answering less than the blob holds, or a content read answering
+        # extra, and that line names the SIZE read with both counts and says
+        # no more.
+        if [ "$bgot" -lt $((size + 1)) ]; then
             unscanned "the CONTENT of $bpath in merge ${bsha:0:10} was read short for the credential scan (git cat-file -p exited 0 and answered $((bgot - 1)) bytes of the $size its SIZE read names)"
+            failed_creds=1
+        elif [ "$bgot" -gt $((size + 1)) ]; then
+            unscanned "the SIZE of $bpath in merge ${bsha:0:10}, a path the credential scan reads whole, disagrees with its CONTENT read (git cat-file -s exited 0 and answered $size, and git cat-file -p exited 0 and gave $((bgot - 1)) bytes)"
             failed_creds=1
         fi
     done 6< "$scratch/creds.binary"
@@ -4246,6 +4363,33 @@ merge_binary_reads() {   # <count of routed paths the feed recorded>
         unscanned "the binary paths the CREDENTIAL FEED of the push routed were read back short ($seen_n of the $want its awk recorded), so the rest cannot be read whole"
         failed_creds=1
     fi
+}
+
+# The per-piece directories of the path-scoped copies and the probe run (its
+# arguments: <scratch>/creds.p/<piece> and creds.q/<piece> for each selected
+# piece, handed over in the shell, where no exec's limit applies), made by
+# xargs, which runs mkdir as often as the list needs and sizes each exec's
+# arguments around what the environment leaves of the system's argument limit
+# (GNU findutils 4.9.0 on the box): Linux counts an exec's arguments and its
+# environment against one limit, a quarter of the stack limit and never below
+# 128 KB, so a batch of fixed size, 64 KB of arguments from round 10b (flag
+# 131's bound), failed under a large exported environment and a low stack
+# limit, and bash's Argument list too long line ended the hook with no romp
+# line on a clean push (an exported 80,000-byte variable under ulimit -s 512;
+# the round 10 rulings' D, 2026-09-26), as one mkdir for every piece had past
+# the limit itself until round 10b. printf is a builtin, so the list reaches
+# xargs with no exec of its own. With about 127,000 bytes of environment under
+# ulimit -s 512 no process can be exec'd, bash and git included, so no push
+# runs; in the narrow band where bash starts and the hook's own execs do not
+# fit, the git reads ahead of this step refuse by name. Its status, under
+# pipefail, is printf's or xargs', judged by scan_credentials (judged_read,
+# the DIRECTORIES read), which then tests each directory in the shell, so a
+# mkdir that failed, or directories left unmade, refuse the push with a romp
+# line naming them, never bash's line: this writer has left the scratch
+# writers set -e ends the hook at (the header's scratch paragraph).
+piece_dirs() {   # <directory>...: makes each; prints nothing
+    [ "$#" -gt 0 ] || return 0
+    printf '%s\0' "$@" | xargs -0 mkdir --
 }
 
 # The credential scan (the header's paragraph): the ref loop lists each
@@ -4273,7 +4417,7 @@ merge_binary_reads() {   # <count of routed paths the feed recorded>
 scan_credentials() {
     local gl local_ref local_sha _remote_ref remote_sha revs rev peeled peeled_read nfed record n what
     # shellcheck disable=SC2034  # cfg_name: set by gitleaks_config, for the lines that name the config the runs read
-    local rdone rpieces rbytes rpbytes rbin rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning sbytes step pk cfg_name=""
+    local rdone rpieces rbytes rpbytes rbin rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning dmade=0 dmiss dfirst d cfg_name=""
     local sname prule qtext qbytes qn qwant qv qp_pkcs qp_nuget qp_k8s qp_tf qp_php kind qa qb qc qd qnamed qmiss qfound qother qend seen_lines="" run_rc=0
     local -a cfg=() ix_sha ix_path pdirs
     if ! credential_scan_armed; then
@@ -4470,24 +4614,18 @@ scan_credentials() {
         # finding at a second copy refuses as a credential, named by commit
         # and file (credential_line; blocked_creds is set there alone). Every
         # write is a builtin and the check one awk, so the probe run adds one
-        # scanner run and one awk per push with a selected file, no process
-        # per piece, and its directories join the additive run's mkdir
-        # batches below. The directories are made a
-        # bounded number at a time, never one mkdir for every piece: past the
-        # system's argument limit that one mkdir failed (E2BIG, status 126),
-        # and set -e ended the hook with bash's line and no romp line on a
-        # clean push (until round 10b; the round 9 refuters, 2026-09-25). Each
-        # mkdir takes as many as fit in 64 KB at the scratch path's length in
-        # bytes, half the 128 KB Linux allows any exec's arguments however low
-        # the stack limit. That length is counted under LC_ALL=C: in a UTF-8
-        # locale ${#scratch} counts characters, and until round 10b2 a scratch
-        # path named past ASCII made a batch larger in bytes than it was
-        # counted, so under a low stack limit mkdir could fail on Argument
-        # list too long, a clean push refused with no romp line (the r10b
-        # audit, 2026-09-25: a TMPDIR of three 80-character runs of CJK
-        # characters, ulimit -s 512). A mkdir that fails ends the hook under
-        # set -e, as every writer in the scratch directory does (the header's
-        # scratch paragraph).
+        # scanner run per push with a selected file and no process per piece,
+        # and its directories are made with the additive run's below. Every
+        # piece's two directories are made by piece_dirs, xargs running mkdir
+        # as often as the list needs, each exec's arguments sized around what
+        # the environment leaves of the argument limit (piece_dirs' comment:
+        # a batch of fixed size, 64 KB of arguments from round 10b, ignored
+        # the environment's share of that limit, and one mkdir for every
+        # piece, until round 10b, failed past the limit itself; each ended the
+        # hook with bash's Argument list too long line and no romp line on a
+        # clean push). Its status is judged (judged_read) and each directory
+        # is then tested by the shell, so a mkdir that failed, or directories
+        # left unmade, refuse the push naming them, and neither run is made.
         if [ "$scanning" -eq 1 ] && [ -s "$scratch/creds.pindex" ]; then
             pdirs=()
             while IFS=$'\t' read -r -u 6 piece fpath sname prule fterm; do
@@ -4495,13 +4633,21 @@ scan_credentials() {
                 case "$piece" in ''|*[!0-9]*) continue ;; esac
                 pdirs+=("$scratch/creds.p/$piece" "$scratch/creds.q/$piece")
             done 6< "$scratch/creds.pindex"
-            sbytes=$(LC_ALL=C; printf '%s' "${#scratch}")
-            step=$(( 65536 / (sbytes + 32) )); [ "$step" -ge 1 ] || step=1
-            pk=0
-            while [ "$pk" -lt "${#pdirs[@]}" ]; do
-                mkdir -- "${pdirs[@]:pk:step}"
-                pk=$((pk + step))
-            done
+            dmade=0
+            if judged_read gate="the DIRECTORIES of the path-scoped copies" 0 "the DIRECTORIES of the path-scoped copies could not be made (xargs, running mkdir, exited {rc}, given ${#pdirs[@]} directories, creds.p/<piece> and creds.q/<piece> for each selected piece, under $scratch), so neither the additive run nor the probe run can read its copies; free space or inodes where TMPDIR points, or point TMPDIR at a writable directory, or set ROMP_NO_GITLEAKS=1 for one push" -- piece_dirs "${pdirs[@]}"; then
+                dmiss=0; dfirst=""
+                for d in "${pdirs[@]}"; do
+                    [ -d "$d" ] || { dmiss=$((dmiss + 1)); [ -n "$dfirst" ] || dfirst=$d; }
+                done
+                if [ "$dmiss" -eq 0 ]; then
+                    dmade=1
+                else
+                    unscanned "the DIRECTORIES of the path-scoped copies were made short (xargs, running mkdir, exited 0, and $dmiss of the ${#pdirs[@]} directories it was given do not exist, the first $dfirst), so neither the additive run nor the probe run can read its copies; free space or inodes where TMPDIR points, or point TMPDIR at a writable directory, or set ROMP_NO_GITLEAKS=1 for one push"
+                fi
+            fi
+            [ "$dmade" -eq 1 ] || failed_creds=1
+        fi
+        if [ "$scanning" -eq 1 ] && [ -s "$scratch/creds.pindex" ] && [ "$dmade" -eq 1 ]; then
             # The probes' texts, one per rule, assembled here so the hook's own
             # text holds none (each ASCII, so ${#qtext} counts its bytes; each
             # clear of the default config's value allowlists, stopwords and
