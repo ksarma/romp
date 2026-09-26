@@ -85,11 +85,11 @@ def bounds_snapshot(mem_total=MEM_TOTAL):
         "checkpoints": {"docMemo": {"entries": 2, "bytes": 3000, "capBytes": max(64 * 1024 ** 2, mem_total // 512), "parseMultiple": 4.5}},
         "asmCheckpoint": {"asmDocMemo": {"entries": 1, "bytes": 200, "capBytes": max(64 * 1024 ** 2, mem_total // 512), "multiple": 10}},
         "asmIndex": {"resident": 40, "cap": max(500_000, mem_total // (32 * 1024))},
-        "recordCache": {"entries": 9, "bytes": 123456, "budgetBytes": max(4 * 1024 ** 3, mem_total // 2), "countCap": 1024},
+        "recordCache": {"entries": 9, "bytes": 123456, "budgetBytes": max(4 * 1024 ** 3, int(mem_total * 0.5 / 3.2)), "countCap": 1024},
         "builds": {"feed": {"memo": {"entries": 3, "bytes": 777, "bound": mem_total // 64}}},
         "memos": {"notices": {"bytes": 10, "bound": mem_total // 256}, "spendTree": {"bytes": 11, "bound": mem_total // 64},
                   "summaryAnchor": {"bytes": 12, "bound": mem_total // 256}},
-        "judge": {"child": {"recordCache": {"entries": 1, "bytes": 5, "budgetBytes": max(4 * 1024 ** 3, mem_total // 2)}}},
+        "judge": {"child": {"recordCache": {"entries": 1, "bytes": 5, "budgetBytes": max(4 * 1024 ** 3, int(mem_total * 0.5 / 3.2))}}},
     }
 
 
@@ -635,7 +635,7 @@ class FoldInvariant(unittest.TestCase):
 class BoundCoarsening(unittest.TestCase):
     """The ten memory-fraction bounds (BOUND_PATHS) are kept and COARSENED (round 3 of the export's review, 2026-09-18): each
     is a fixed fraction of the machine's MemTotal, so every export from one machine shared all ten exactly and
-    recordCache.budgetBytes (half of MemTotal) gave the machine's RAM to the kilobyte, a value derived from a machine fact.
+    recordCache.budgetBytes (then half of MemTotal) gave the machine's RAM to the kilobyte, a value derived from a machine fact.
     The fold rounds each UP to a power of two (BOUND_KEYS, public_bound), the key kept and the occupancy beside it
     untouched, so a bound that binds stays visible next to its bytes or entries; the machine's memory is not recoverable
     from the result. Fails before: all ten survived exact."""
