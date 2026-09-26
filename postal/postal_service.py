@@ -4417,7 +4417,9 @@ def _via_held(presence, bus, road, *prevs):
     to one far bus process: the evidence holds across a hub's restart, and a far host restarted on an older release
     carries a new id and no evidence. Every other far bus's omitted word stays held, cost (a) of _remote_sids_document
     (the reviewer's round-5 ruling B amends the 10:19Z ruling that kept the release and the 11:08Z trade over it; (3a)'s
-    second face and the third race below each read a far bus heard answering, and are unchanged). Each word carries
+    second face and the third race below are unchanged where the far bus has been heard answering here, and where it
+    has not, a current bus heard only over caches or a far bus from a release before this PR, the same roads now hold
+    the word, cost (a): the reviewer's verifier at the fifty-fourth commit, by execution). Each word carries
     `hubBus`, the bus id of the hub process whose roster last named it, and the release by omission needs both ids,
     equal, the same road, and the word's viaBus among the ids heard answering: a restarted hub carries a new id (BUS_ID
     is minted per process), and a hub that sends none (from before busId) cannot say it is the same process, so its
@@ -4444,11 +4446,14 @@ def _via_held(presence, bus, road, *prevs):
     host's own row speaks for it here or this bus restarts (cost (h)); all three the restricted side, and (g) closed by
     the carrier fix, each heard far host's answered bit carried independent of session rows. And a roster that reaches
     this bus after a NEWER one by the SAME road (a hub that links this bus under two names dials it from two loops, and
-    a request the hub gave up on can arrive after the next one) releases a word the newer one named: residual (3d)'s
-    face (1) in _remote_sids_document, a false rule 5 left open that this release causes (at the thirty-first commit
-    the word stayed held). A second machine the hub files under the host's name, answering the hub with an empty
-    listing, reads the same as the host's own empty answer and releases the word too (the reviewer's verifier at the
-    forty-fifth commit, by execution; held at the thirty-first commit). With (3a)'s second face these are the
+    a request the hub gave up on can arrive after the next one) releases a word the newer one named, where the word's
+    far bus has been heard answering here: residual (3d)'s face (1) in _remote_sids_document, a false rule 5 left open
+    that this release causes (at the thirty-first commit the word stayed held); for any other far bus the older
+    roster's omission holds the word, cost (a), and the face does not open. A second machine the hub files under the
+    host's name, answering the hub with an empty listing, reads the same as the host's own empty answer: it releases
+    the word too where the host's bus has been heard answering here (the reviewer's verifier at the forty-fifth
+    commit, by execution; held at the thirty-first commit), and holds it, cost (a), where it has not (its verifier at
+    the fifty-fourth commit, by execution). With (3a)'s second face these are the
     release's three races, each reading a far bus heard answering here, its cost under the reviewer's ruling of round
     4 to keep it (stated under (3d) there), whose population since round 6 is the far buses heard answering: a
     race's window ends at the next word about the host, but a completion, reply or resolve for the sender inside it
@@ -4625,7 +4630,9 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     reviewer's ruling of 12:43Z, the forty-ninth commit). With an EMPTY listing, each of its exchanges replaces the
     host's word at the hub, and while that word is a cache (the host's kernel not answering) the same hub process's
     roster omits the host on the road that named it and the release by that omission (under residual (3d) below)
-    frees the held word: the violation REOPENS THE WINDOW AT EACH OF ITS EXCHANGES, a false rule 5 for the session
+    frees the held word wherever the host's bus has been heard answering in this process (where it has not, the
+    omission holds the word, cost (a) below, and no window opens until the host's answered word reaches this bus):
+    the violation REOPENS THE WINDOW AT EACH OF ITS EXCHANGES, a false rule 5 for the session
     whose mail rode the host's cached exchange, each ended by the host's next cached exchange, and a completion,
     reply or resolve for the sender in any of them settles the live session's card wrong for good, so a settle can
     go permanently wrong at each of its exchanges (the release causes these windows, unlike the violation above: at
@@ -4797,9 +4804,13 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     Its second face: a far host whose cached exchange with the hub named sessions and carried a new session's mail
     here, and whose bus then restarts during its kernel's blink with no twin, so its next exchange with the SAME hub
     process carries no session row; the hub's roster omits the host on the road that named it, which reads as the
-    host's empty answer and releases its held word (_via_held), and the session answers rule 5: a false rule 5 whose
-    window ends at the far host's answering exchange with the hub and the hub's next exchange here, a settle inside
-    it standing. The release by the same hub process's omission below causes this face (the thirty-second commit;
+    host's empty answer and, for a far bus heard answering in this process, releases its held word (_via_held), and
+    the session answers rule 5: a false rule 5 whose window ends at the far host's answering exchange with the hub
+    and the hub's next exchange here, a settle inside it standing. For a far bus heard only over caches here, or one
+    from a release before this PR, the same omission holds the word, cost (a) below, and the session stays
+    cannot-determine, so this face does not open for it (the reviewer's verifier at the fifty-fourth commit, by
+    execution, its road vfy3aSecondFaceHeardOnlyOverCaches). The release by the same hub process's omission below
+    causes this face (the thirty-second commit;
     until then the word stayed held), one of the release's three races, its cost under the reviewer's ruling to keep
     it (under (3d) below), and its closure is
     the carrier fix below (the witness, asserting that rule-5 answer: test_residual_3a_a_far_hosts_empty_cache_after_its_bus_restarts_releases_its_held_word_and_its_session_answers_rule_5). (3b) A far
@@ -4894,7 +4905,10 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     another row vouches, its window ending at the source's next exchange here. Three faces: (1) by the SAME road and
     hub process, a word the newer roster named is released by the older one's omission (a hub that links this bus under two names dials it from
     two loops, and a request the hub gave up on can arrive after its next one: the road and the hub process match,
-    and nothing here tells the order); (2) by EITHER road, an older roster naming the far host's ANSWERED word
+    and nothing here tells the order), where the word's far bus has been heard answering in this process; where it
+    has not, that omission holds the word, cost (a) below, and this face does not open (the reviewer's round-5
+    ruling B; by execution at round 6 in each of the three shapes below); (2) by EITHER road, an older roster
+    naming the far host's ANSWERED word
     recorded after the newer one naming its cached word replaces that word (across the two roads, the reviewer's
     verifier's control at the thirty-second commit, an older answer folded after the hub's dial; by the same road,
     the hub's older dial naming the host's answered word, another session, the reviewer's re-verifier at the
@@ -4923,10 +4937,14 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     exchange under the name its sender declares (its PEER_STATE is keyed by name), so a second machine, its own bus,
     answering the hub under a far host's name with an EMPTY listing replaces the host's word there, and the same hub
     process's roster omits the host on the road that named it, which this bus cannot tell from the host's own empty
-    answer: after the host's cached word and a new session's mail were relayed here, the release frees the held word
-    and the session live on the host answers rule 5 while another row vouches, a false rule 5 whose window ends at
-    the real host's next exchange with the hub and the hub's next exchange here (the reviewer's verifier at the
-    forty-fifth commit, by execution). It is the transient case, one exchange of the second machine and one window (a
+    answer: after the host's cached word and a new session's mail were relayed here, where the host's bus has been
+    heard answering in this process, the release frees the held word and the session live on the host answers rule
+    5 while another row vouches, a false rule 5 whose window ends at the real host's next exchange with the hub and
+    the hub's next exchange here (the reviewer's verifier at the forty-fifth commit, by execution); where it has
+    not, a current bus heard only over caches here or a far bus from a release before this PR, the omission holds
+    the word, cost (a) below, and the session stays cannot-determine (its verifier at the fifty-fourth commit, by
+    execution, its road vfyThirdRaceHeardOnlyOverCaches). It is the transient case, one exchange of the second
+    machine and one window (a
     second machine that keeps exchanging under the host's name is THE PREMISE's violation, which reopens the window at
     each of its exchanges: THE PREMISE above). The release causes the race: at the thirty-first commit the word stayed
     held. Neither

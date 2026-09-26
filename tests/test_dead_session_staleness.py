@@ -2637,7 +2637,8 @@ out["roads"][road]["park"] = park(f, S["new"], "px-hub13")
 out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
 out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)  # the NEWER dial lands first: F's cached word and the mail
 step(road, "newerDialRecorded", us, newOnFar=S["new"], nobody=S["nobody"])
-# face (1)'s cause, the release's three conditions: the newer roster names F, its road, and the older dial's hub process
+# face (1)'s cause, three of the release's four conditions: the newer roster names F, its road, and the older dial's hub
+# process (the fourth since round 6, F's bus heard answering in this process, is far_behind_hub's relay)
 out["roads"][road]["newerRecorded"] = [roster_via(us, HUB), us.PEER_STATE[HUB].get("road"),
                                        bool(older.get("busId")) and us.PEER_STATE[HUB].get("busId") == older.get("busId")]
 with As(us):
@@ -4808,7 +4809,10 @@ print(json.dumps(out))
         twin gone, so its next exchange with the SAME hub process serves an empty cache: presenceAnswered False and no
         session row. The hub's roster omits F, which this bus cannot tell from F's answer with an empty listing, the
         release by the same hub process's omission
-        (test_a_far_hosts_empty_answer_through_the_same_hub_process_releases_its_held_word), so the word is released,
+        (test_a_far_hosts_empty_answer_through_the_same_hub_process_releases_its_held_word), so the word is released
+        (F's bus is heard answering in this process, since far_behind_hub relays F's answered word before its blink,
+        the condition the reviewer's round-5 ruling B puts on the release; for a far bus heard only over caches here
+        the omission holds the word, cost (a), and this face does not open),
         and the new session, live on F, answers rule 5 while the hub and C vouch: a false rule 5 left open until F's
         answering exchange with the hub and the hub's next exchange here, which the last step drives (rule 4 then). The
         release causes this face: at the thirty-first commit the word stayed held, cannot-determine. The reviewer ruled
@@ -5157,7 +5161,10 @@ print(json.dumps(out))
         recorded: (1) by the SAME road and hub process, an older roster OMITTING F, here two of the restarted hub's dials
         delivered in the other order (a hub that links this bus under two names dials it from two loops, and a request
         the hub gave up on can arrive after the next one): the release of F's held word by the same hub process's
-        omission (the road and the hub process match), rule 5; (2) by EITHER road, an older roster naming F's ANSWERED
+        omission (the road and the hub process match, and F's bus is heard answering in this process, far_behind_hub
+        having relayed F's answered word before the hub's restart, the condition the reviewer's round-5 ruling B adds;
+        for a far bus heard only over caches here the omission holds the word, cost (a)), rule 5; (2) by EITHER road,
+        an older roster naming F's ANSWERED
         word, which replaces F's cached word: across the roads, the verifier's R2 at the thirty-second commit, the hub's
         older answer to our dial folded after the hub's dial naming F's cached word, and by the same road, the hub's
         older dial naming F's answered word, another session, delivered after its newer dial (the reviewer's
@@ -5167,8 +5174,9 @@ print(json.dumps(out))
         commit too, so the release does not cause it. The release by the same hub process's omission (the thirty-second
         commit) CAUSES face (1) (the reviewer's verifier at the thirty-third commit, by execution): at the thirty-first
         commit the word stayed held, cannot-determine once the older dial landed, as it does under a writer without
-        that release; this witness pins the release's three conditions beside the answer (the newer roster, recorded by
-        the hub's dial, named F's cached word, and the older dial is the same hub process's) and the hub's next roster,
+        that release; this witness pins three of the release's four conditions beside the answer (the newer roster,
+        recorded by the hub's dial, named F's cached word, and the older dial is the same hub process's; the fourth since
+        round 6, F's bus heard answering in this process, is far_behind_hub's relay) and the hub's next roster,
         which names F again and ends the window. The window's end does not undo a settle decided inside it: a
         completion, reply or resolve for the session there settles its card wrong for good
         (test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word). Face (1) is one of
@@ -5199,14 +5207,16 @@ print(json.dumps(out))
                 self.assertEqual((self._road(got, "hubDialsOutOfOrder", "olderDialLanded", "newOnFar"), same["heldAfter"]),
                                  (RULE_5, []),
                                  "RESIDUAL (3d), face (1), HOLDS: the older dial's omission, by the road and the hub process that "
-                                 "named F, releases the word (the release by the same hub process's omission, which the reviewer "
+                                 "named F, of a far bus heard answering here, releases the word (the release by the same hub "
+                                 "process's omission, which the reviewer "
                                  "ruled to keep, causes this face); when this pin reds, a closure has landed, the source's own "
                                  "order on its rosters or the carrier fix, which closes face (1) wherever the older roster carries "
                                  "no answered word of F, as here, where the restarted hub built it before it heard F, and the "
                                  "disclosure moves with it")
                 self.assertEqual(same["newerRecorded"], [[[R_F, S["other"]]], "dial", True],
-                                 "FACE (1)'S CAUSE, the release's three conditions (_via_held): the newer roster, recorded by the "
-                                 "hub's dial, named F's cached word, and the older dial is the same hub process's")
+                                 "FACE (1)'S CAUSE, three of the release's four conditions (_via_held): the newer roster, recorded "
+                                 "by the hub's dial, named F's cached word, and the older dial is the same hub process's (the "
+                                 "fourth, F's bus heard answering in this process, is far_behind_hub's relay)")
                 self.assertEqual(self._road(got, "hubDialsOutOfOrder", "hubDialsAgain", "newOnFar"),
                                  UNANSWERED(R_VIA_F + " (listing unanswered)"),
                                  "the next word about F ends the reader's false answer: the hub's next roster names F's cached "
@@ -5254,7 +5264,10 @@ print(json.dumps(out))
         F answers the hub with an EMPTY listing, and the hub builds a dial to us then, which is delivered last; F then
         answers naming a session, its kernel blinks, and a new session starts on F and mails ours on F's cached exchange;
         the hub's newer dial lands first, naming F's cached word and carrying the mail (the arm, cannot-determine); the
-        older dial lands after it, omitting F, on the road and from the hub process that named F: the release, and the
+        older dial lands after it, omitting F, on the road and from the hub process that named F, and F's bus is heard
+        answering in this process (far_behind_hub relayed F's first answered word here, the condition the reviewer's
+        round-5 ruling B puts on the release; for a far bus heard only over caches here the omission holds the word,
+        cost (a)): the release, and the
         session live on F answers rule 5 while the hub and C vouch, until the hub's next roster names F's cached word
         again (a completion, reply or resolve for the session inside that window settles its card wrong for good:
         test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word). At the thirty-first
@@ -5284,8 +5297,9 @@ print(json.dumps(out))
                                  "commit the word stayed held); when this pin reds, the source's own order on its rosters has "
                                  "landed, and the disclosure moves with it")
                 self.assertEqual(road["newerRecorded"], [[[R_F, S["other"]]], "dial", True],
-                                 "the release's three conditions (_via_held): the newer roster, recorded by the hub's dial, "
-                                 "named F's cached word, and the older dial is the same hub process's")
+                                 "three of the release's four conditions (_via_held): the newer roster, recorded by the hub's "
+                                 "dial, named F's cached word, and the older dial is the same hub process's (the fourth, F's bus "
+                                 "heard answering in this process, is far_behind_hub's relay)")
                 self.assertEqual(self._road(got, "hubDialsOutOfOrderOneProcess", "hubDialsAgain", "newOnFar"), via,
                                  "the next word about F ends the reader's false answer: the hub's next roster names F's cached "
                                  "word again (a settle decided in the window stands: "
@@ -5337,8 +5351,9 @@ print(json.dumps(out))
                                  "at the thirty-first commit the word stayed held); when this pin reds, the carrier fix or the "
                                  "source's own order on its rosters has landed, and the disclosure moves with it")
                 self.assertEqual(road["newerRecorded"], [[[R_F, S["other"]]], "dial", True],
-                                 "the release's three conditions (_via_held): the newer roster, recorded by the hub's dial, "
-                                 "named F's cached word, and the older dial is the same hub process's")
+                                 "three of the release's four conditions (_via_held): the newer roster, recorded by the hub's "
+                                 "dial, named F's cached word, and the older dial is the same hub process's (the fourth, F's "
+                                 "restarted bus heard answering in this process, is the relay pinned above)")
                 self.assertEqual(self._road(got, "hubDialsOutOfOrderOverEmptyCache", "hubDialsAgain", "newOnFar"), via,
                                  "the next word about F ends the window: the hub's next roster names F's cached word again (a "
                                  "settle decided in the window stands: "
@@ -5406,7 +5421,10 @@ print(json.dumps(out))
         the name its sender declares, so F2, a second machine with its own bus, answering the hub under F's name with an
         EMPTY listing replaces F's word there. F's cached word and a new session's mail were relayed here first
         (cannot-determine); then the same hub process's dial, the road that named F, omits F, which reads as F's empty
-        answer, so the release by the same hub process's omission frees F's held word, and the session live on F answers
+        answer, so the release by the same hub process's omission frees F's held word (F's bus is heard answering in this
+        process, since far_behind_hub relays F's answered word first, the condition the reviewer's round-5 ruling B puts
+        on the release; for a far bus heard only over caches here the omission holds the word, cost (a), and the race
+        does not open), and the session live on F answers
         rule 5 while the hub and C vouch, until the real F's next exchange with the hub, still cached, and the hub's next
         dial (cannot-determine): ONE window, the transient case. The release causes this race: at the thirty-first commit
         the word stayed held. It is one of the release's three races, its cost under the reviewer's ruling to keep it,
