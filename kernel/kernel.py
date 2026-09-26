@@ -15590,7 +15590,8 @@ _AGENT_ENDED_UNHELD = {}            # (sid, agent id) -> path for the ends seen 
 
 
 def _note_agent_released(pair, path, taken):
-    """Record `pair`'s end in _AGENT_RELEASED as a release taken (a later start is a false end) or owed, newest last."""
+    """Record `pair`'s end in _AGENT_RELEASED as a release taken (a start a later cycle drains while the end is still here
+    is a false end) or owed, newest last."""
     _AGENT_RELEASED.pop(pair, None)
     _AGENT_RELEASED[pair] = [path, taken]
     while len(_AGENT_RELEASED) > _AGENT_RELEASED_MAX:
@@ -15638,9 +15639,10 @@ def _release_ended_agents():
       in the table is still never counted, since its entry was not popped.
     - Each end remembered as unheld (_AGENT_ENDED_UNHELD: an end seen while the cache held nothing for the file) that this
       batch does not speak for is released again, oldest first: still absent, it stays remembered; taken, it is recorded as
-      a taken release (a later start is a false end); deferred or raced, as an owed one; lost, or raising (counted in
-      releaseLost), it is given up. Every outcome but absent forgets it. So a read that holds the file after the end,
-      before any other event about the agent, is released at the first cycle after the read.
+      a taken release (a start a later cycle drains while _AGENT_RELEASED still holds the end is a false end); deferred or
+      raced, as an owed one; lost, or raising (counted in releaseLost), it is given up. Every outcome but absent forgets it.
+      So a read that holds the file after the end, before any other event about the agent, is released at the first cycle
+      after the read.
     - Each agent whose last event in the batch is an end is released. An end followed in the same batch by the agent
       entering the live set again releases nothing. A start in the batch for an agent whose release was taken, while
       _AGENT_RELEASED still holds that end, is a false end, counted (recordCache.falseEnds); after a release that was only
@@ -15680,7 +15682,8 @@ def _release_ended_agents():
                 continue
             got = paid.get(rec[0])
             if got == "released":
-                rec[1] = True                          # the owed release was taken: a start after it is a false end
+                rec[1] = True                          # the owed release was taken: a start a later cycle drains while
+                                                       # this table holds the end is a false end
             elif rec[0] not in owed:
                 _AGENT_RELEASED.pop(pair, None)        # not taken and no longer owed: no entry was popped for this end
                 if got == "absent":
