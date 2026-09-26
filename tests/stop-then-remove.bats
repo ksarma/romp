@@ -87,8 +87,9 @@ _await_ready() {   # the stand-in has set its TERM disposition, so the TERM belo
 
 _returned_at_the_exit() {   # $1 and $2 the call's start and end (microseconds), after a burst stand-in has exited
     # The call returned after the stand-in's last write, and less than a second after it. On its own this
-    # passes a fixed wait a little longer than cases 1 and 2's one-second burst; case 5's three-second
-    # stand-in is what rules out a fixed wait in place of the poll.
+    # passes a fixed wait that ends less than a second after cases 1 and 2's one-second burst. Case 5's
+    # three-second stand-in reds a fixed wait shorter than its burst, and this check reds one that ends more
+    # than a second after the one-second burst, so between them no fixed wait passes.
     local done_us
     done_us="$(cat "$TEST_DIR/ready.burst-done")"
     echo "the call started at $1, the stand-in's last write was at $done_us, the call returned at $2 (microseconds)"
