@@ -8639,16 +8639,22 @@ chrome over the frame is not read), read at the gesture's start, at the press in
 and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click: a click by a pointer reads the
 record under its own pointerId or, with none, the press a one-click slot took at the last pointerup, the slot emptied by any
 pointerdown, pointercancel or keydown and by the click that takes it and never by time, a key's or a script's click reads neither
-and is read at the click, and a primary press ends every earlier record whatever its pointer type, a mousedown that no pointerdown
-announced counting as one, its verdict taken there and handed to the slot at the pointerup after it, since WebKit sends the mouse's
-next press after its drag of a picture that way, the drag having ended with no pointerup and no pointercancel (in the three engines measured,
-Chromium's tap click carries the touch's own pointerId and Firefox's its press's, while in WebKit under Playwright's touch
-emulation on Linux, a stand-in for WebKitGTK on a touchscreen, a tap's click carries pointerId 1 of type mouse where its press
-carried the touch's, so there it finds its press in the slot; iOS WebKit's source gives an iPhone tap's click the touch's own
-pointerId, read and not run on a device; the slot's clears are defensive, the slot refilled at every pointerup and read by no
-key's or script's click; the clear's cost on a device with a mouse and a touchscreen: a contact held on a picture while a primary
-press of the other pointer type lands elsewhere loses its record, so its click opens nothing and reveals; the file review's round 17,
-tests-1 with regression-1);
+and is read at the click, and a primary press ends every earlier record whatever its pointer type, a record ends at its own
+pointerup, which hands it to the slot, and every record ends at a dragstart and at a mousedown with no pointerdown of a mouse or a
+pen before it, which takes no verdict and leaves the slot alone, since WebKit's drag of a picture ends with no pointerup and no
+pointercancel, and WebKit sends the mouse's next press after a press whose pointerup never came, a drag in another pane among them,
+as a mousedown with no pointerdown (in the three engines measured a click after its press's pointerup finds that press in the slot,
+whatever pointerId it carries: Chromium's tap click carries the touch's own pointerId and Firefox's its press's, while in WebKit
+under Playwright's touch emulation on Linux, a stand-in for WebKitGTK on a touchscreen, a tap's click carries pointerId 1 of type
+mouse where its press carried the touch's; iOS WebKit's source gives an iPhone tap's click the touch's own pointerId, read and not
+run on a device; the slot's clears are defensive, the slot refilled at every pointerup and read by no key's or script's click; the
+clear's cost on a device with a mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type
+lands elsewhere loses its record, so its click opens nothing and reveals; the cost of ending the records, measured in WebKit: after
+a drag anywhere in the page, another pane's included, the mouse's next click on a web picture opens nothing and reveals its sign,
+whatever covers or shows it, a right click before that drag included, and the click after it opens, and where a press's pointerup
+never comes the mouse's next click is refused the same way, while Chromium and Firefox end such a drag with a pointercancel and
+carry no cost; the file review's round 17, tests-1 with regression-1, and its round 18, extra5-1, extra5-2 and correctness-1, with
+the coordinator's decisions on them);
 a refused gesture opens nothing and scrolls the sign into view (`revealSign`, block and inline "nearest", the same-origin frames and
 a pinch zoom's visual viewport included), moving no focus, so the next gesture opens; where the reveal cannot put the sign on the
 screen the gate stays closed, stated limits measured in Chromium: the chat page's modal framed by the dashboard under a pinch zoom of
@@ -8969,7 +8975,8 @@ measured at 22px at the figure's top, the Raw switch landing on the img's own ro
 the structural read's exclusion of the control in the real layout, which the node scene in
 ui/webview/file-view-place-blocks.test.ts stands in for with a fixture box) and, since the fixes for the file review's round 17
 (tests-1 with regression-1), ui/webview/file-figure-open-engines-browser.test.ts (the one gate's tap cells in WebKit, on a
-phone's pages and a hybrid page, and in Firefox, on the hybrid page, the clicks of the mouse after a drag on a plain page too,
+phone's pages and a hybrid page, and in Firefox, on the hybrid page, the clicks of the mouse after a drag of a picture and after a
+drag in another pane, and Firefox's chord, on a plain page too,
 each engine launched through real-viewer-leg.ts's inBrowser with the engine named; the cells are ui/webview/file-figure-open-taps.ts's,
 a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and a case of WebKit's alone that
 reads the window errors of the Files pane as its Comments aside opens beside a document of top-level tables) and, since the fixes
