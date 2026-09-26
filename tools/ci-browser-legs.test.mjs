@@ -1402,20 +1402,22 @@ test('the phrase the script reads a lost browser by is a literal in inBrowser\'s
  *  wherever it stands in the text, a comment or a string included, a loud over-read: the launcher's esbuild entry in
  *  bundleViewer, a string that exports from "./file-view", "./anchor-map" and "./preview", brings in the import graph of
  *  the bundle openViewer builds and loads at run time. For a rostered leg that opens the viewer, that graph is code the
- *  leg runs and these files are the true set; the roster's one leg today, the switch test, opens a page through
- *  inBrowser and never calls openViewer, so for it they are a superset, kept so that a leg rostered later that opens the
- *  viewer is read with no change here. It resolves to the first file of the tree among the specifier, the specifier with
- *  .ts, .tsx, .mts, .js, .mjs or .cjs appended, a .js specifier with .ts in place of .js, and its /index.ts or
- *  /index.js, and a specifier that resolves to none is red, naming it. Not followed: a specifier that is not relative
- *  (node:fs, playwright), a computed one (a template literal, a concatenation), and a file a module reads at run time by
- *  a path it builds (the launcher's sheets and render.ts). `read(rel)` gives a file's text by that path, or null when
- *  the tree has no such file. The run field is read as `bash `, a space and the script's path to the field's end, and a
- *  run field of any other shape (another shell, a flag before the path) is red, naming it, as is a script the tree does
- *  not hold. Each of the ROSTER= and REPORTER= lines is the script's first line that is KEY= and non-space text to its
- *  end, the text read literally, quotes included, and a script with no such line (a line with text after the path is not
- *  one) is red, naming the key. The roster must be in the tree, and the reporter is not checked. Returns the paths in
- *  that order, the script, the roster and the reporter first, each once. Its table: STEP_FILES_ROWS, run by the test
- *  after it. */
+ *  leg runs, and these files are a superset of it: a file named only in an import esbuild erases (a type-only import
+ *  among them), or only in a comment or in a string no build reads, is listed though the bundle never loads it. At this
+ *  head ui/webview/pick-held.ts is one such file, which ui/webview/comments.ts names in an import type alone. The
+ *  roster's one leg today, the switch test, opens a page through inBrowser and never calls openViewer, so for it they
+ *  are a superset by that whole graph, kept so that a leg rostered later that opens the viewer is read with no change
+ *  here. It resolves to the first file of the tree among the specifier, the specifier with .ts, .tsx, .mts, .js, .mjs or
+ *  .cjs appended, a .js specifier with .ts in place of .js, and its /index.ts or /index.js, and a specifier that
+ *  resolves to none is red, naming it. Not followed: a specifier that is not relative (node:fs, playwright), a computed
+ *  one (a template literal, a concatenation), and a file a module reads at run time by a path it builds (the launcher's
+ *  sheets and render.ts). `read(rel)` gives a file's text by that path, or null when the tree has no such file. The run
+ *  field is read as `bash `, a space and the script's path to the field's end, and a run field of any other shape
+ *  (another shell, a flag before the path) is red, naming it, as is a script the tree does not hold. Each of the ROSTER=
+ *  and REPORTER= lines is the script's first line that is KEY= and non-space text to its end, the text read literally,
+ *  quotes included, and a script with no such line (a line with text after the path is not one) is red, naming the key.
+ *  The roster must be in the tree, and the reporter is not checked. Returns the paths in that order, the script, the
+ *  roster and the reporter first, each once. Its table: STEP_FILES_ROWS, run by the test after it. */
 function stepFiles(run, wd, read) {
   const m = /^bash (\S+)$/.exec(run || '');
   assert.ok(m, 'the step\'s run field is bash and a script\'s path: ' + JSON.stringify(run));
