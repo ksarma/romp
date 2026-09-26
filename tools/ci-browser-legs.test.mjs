@@ -98,8 +98,15 @@ const read = (p) => fs.readFileSync(p, 'utf8');
 
 /** The jobs of the workflow: the `^  <key>:` lines after the `jobs:` line (a key of letters, digits, _ and - with only
  *  whitespace after its colon; a quoted key, or a key line with a comment after its colon, is not read, and its lines join
- *  the job before it, and jobKeys refuses such a line among a job's lines), each with its lines up to the next such
- *  line. */
+ *  the job before it, and jobKeys refuses such a line among a job's lines), each with its lines up to the
+ *  next such line. A stated limit: jobs() carries nothing across a job key. A double-quoted value left open
+ *  at the last line of the job before, or a block scalar of a key at no indent placed before the job key
+ *  (`run-name: >-`), holds the job's key and lines as text in YAML, which then has no such job, and jobs()
+ *  still reads the job (two rows of JOBS_ROWS). Another: a second job key placed before the job and spelled
+ *  so jobs() does not read it (quoted, or with a space before its colon), or a second `jobs:` there, joins
+ *  the job before it. Nothing refuses it there, since extensionJob runs jobKeys over its own job alone. The
+ *  workflow then holds the key twice: PyYAML keeps the later one, which jobs() reads, and GitHub's handling
+ *  of the duplicate is unverified (two rows of JOBS_ROWS). Its table: JOBS_ROWS, run by the test after it. */
 function jobs(text) {
   const lines = text.split('\n');
   const start = lines.findIndex((l) => /^jobs:\s*$/.test(l));
@@ -112,6 +119,22 @@ function jobs(text) {
   }
   return out;
 }
+/** jobs()' table: each row a workflow's text and the jobs jobs() reads from it, by key and lines, the rows witnessing
+ *  the stated limits of its docstring, where YAML reads other jobs than jobs() does. */
+const JOBS_ROWS = [
+  { what: 'a stated limit: a double-quoted value left open at the last line of the job before holds the job\'s key and lines, which jobs() reads as a job and YAML as the value\'s text', text: 'jobs:\n  a:\n    steps:\n      - run: "x\n  vscode-extension:\n    steps:\n      - run: y"\n', jobs: [{ key: 'a', lines: ['    steps:', '      - run: "x'] }, { key: 'vscode-extension', lines: ['    steps:', '      - run: y"', ''] }] },
+  { what: 'a stated limit: a block scalar of a key at no indent before the job key holds the job\'s key and lines, which jobs() reads as a job and YAML as the scalar\'s text', text: 'jobs:\n  a:\n    steps:\n      - run: x\nrun-name: >-\n  vscode-extension:\n    steps:\n      - run: y\n', jobs: [{ key: 'a', lines: ['    steps:', '      - run: x', 'run-name: >-'] }, { key: 'vscode-extension', lines: ['    steps:', '      - run: y', ''] }] },
+  { what: 'a stated limit: a quoted second job key before the job joins the job before it, and PyYAML keeps the later of the two keys, the one jobs() reads', text: 'jobs:\n  a:\n    steps:\n      - run: x\n  "vscode-extension":\n    steps:\n      - run: y\n  vscode-extension:\n    steps:\n      - run: z\n', jobs: [{ key: 'a', lines: ['    steps:', '      - run: x', '  "vscode-extension":', '    steps:', '      - run: y'] }, { key: 'vscode-extension', lines: ['    steps:', '      - run: z', ''] }] },
+  { what: 'a stated limit: a second jobs: key before the job joins the job before it, and PyYAML keeps the later of the two keys, which holds the job jobs() reads', text: 'jobs:\n  a:\n    steps:\n      - run: x\njobs:\n  vscode-extension:\n    steps:\n      - run: z\n', jobs: [{ key: 'a', lines: ['    steps:', '      - run: x', 'jobs:'] }, { key: 'vscode-extension', lines: ['    steps:', '      - run: z', ''] }] },
+];
+test('jobs()\' table: each row\'s jobs read as jobs()\' docstring states', () => {
+  const wrong = [];
+  for (const row of JOBS_ROWS) {
+    const got = jobs(row.text);
+    if (!isDeepStrictEqual(got, row.jobs)) wrong.push(row.what + ': jobs() over ' + JSON.stringify(row.text) + ' reads ' + JSON.stringify(got) + ', not ' + JSON.stringify(row.jobs));
+  }
+  assert.deepEqual(wrong, [], 'each row of jobs()\' table is read as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
+});
 // the key read of the env reader and of jobKeys (steps()' docstring states it): from index i, the key place of a line,
 // the key's text trimmed and in lower case, or null for a key the read cannot tell
 function keyRead(l, i) {
@@ -134,8 +157,15 @@ function keyRead(l, i) {
  *  colon and at most one space or tab, the rest of the line trimmed as the value, and its opening line when that is
  *  `      - <field>: ` and a value, a later line of a field replacing an earlier one; a field at another indent, a field
  *  holding a digit or _, a quoted field key, and a line holding a carriage return, U+2028 or U+2029, directly after the
- *  colon included, which neither that space or tab nor the value's . matches, are not read as a field (U+0085, which
- *  the . matches, stays in the value). Its table: STEPS_ROWS, run by the test after it.
+ *  colon included, which neither that space or tab nor the value's . matches, are not read as a field (U+0085,
+ *  which the . matches, stays in the value). A stated limit: a field's value is its line alone, and the job's cap
+ *  and default working directory are read the same way below. A plain value continued on a deeper line, which YAML
+ *  joins to it (`run: bash x` over a deeper `|| true`, which YAML reads as `bash x || true`), reads as its first
+ *  line, and neither the env reader nor jobKeys refuses the continuation (a row of STEPS_ROWS and one of ENV_ROWS).
+ *  Another: nothing here refuses a step key other than env given twice. A second key of a field spelled so the
+ *  fields read does not read it (`run :`, `"run":`), which PyYAML takes over the first, leaves the field its first
+ *  value. Likewise, jobKeys neither reads nor refuses a job key other than steps given twice, such as `defaults:` or
+ *  `timeout-minutes:` (a row of STEPS_ROWS and one of JOB_KEY_ROWS). Its table: STEPS_ROWS, run by the test after it.
  *  Its env, the env reader, which reads every step and fails closed: a line it cannot read is refused, named by its
  *  line (the step's envRefused), rather than read past. A line of the step holding a carriage return or a Unicode
  *  line break (U+0085, U+2028, U+2029) is refused wherever it sits in the step, a # line included: YAML ends a
@@ -157,9 +187,12 @@ function keyRead(l, i) {
  *  read nor refused when they begin no quoted scalar they leave open and no flow collection (below), and a
  *  key nested deeper (an env key under `with:`, at ten spaces) is neither read nor refused. A line after the
  *  opener whose leading run of spaces and tabs is shorter than eight, not blank, not a comment and not inside
- *  a quoted scalar or flow collection the reader follows, is refused: YAML ends the step there (at a key of
- *  the job after its steps, such as `container:` at four spaces), and this reader, which ends a step only
- *  at the next opener, would read the lines after it as the step's. The env line is a line of exactly eight
+ *  a quoted scalar or flow collection the reader follows, is refused: YAML ends the step there (at a key of the
+ *  job after its steps, such as `container:` at four spaces), and this reader, which ends a step only at the next
+ *  opener, would read the lines after it as the step's. A stated limit: the rows hold that refusal at four spaces only,
+ *  and jobKeys' rows hold jobKeys' own bound of four at two spaces, a tab and no indent, with none at three. In ci.yml,
+ *  jobKeys, which extensionJob runs over the job, also refuses every line of four to seven spaces after the steps
+ *  key other than a step's opener (its rows at four, six and seven spaces). The env line is a line of exactly eight
  *  spaces, then `env:` and whitespace alone, and the block begins after it. Every other env key (on the opener,
  *  spelled any other way, or with anything else after its colon: an inline mapping, a comment, an alias) is refused,
  *  and so is each env key after the step's first, each opening a block read the same way (an inline mapping is a
@@ -197,9 +230,9 @@ function keyRead(l, i) {
  *  steps() and the value's text to YAML. When the value began in the block or on an env key's line and closes in
  *  the step it began in, the block goes on after the closing line, as YAML's does: a key after the value, which
  *  YAML keeps in the step's env, is read or refused, and a later line of eight spaces or fewer ends the block.
- *  After a value begun on any other line, or closed in a later step than the one it began in, the lines after
- *  the closing line are read at the level of the step it closes in: a key there that YAML keeps in the env of the
- *  step the value began in is neither read nor refused, and each step the value spans holds a refused line (the
+ *  After a value begun on any other line, or closed in a later step than the one it began in, the lines after the
+ *  closing line are read at the level of the step it closes in. A key there that YAML keeps in the env of the step
+ *  the value began in is then neither read nor refused, and each step the value spans holds a refused line (the
  *  line that opens the value, or the step's opener). A line that begins a flow collection ([ or {) is refused,
  *  closed on its line or not, and so is every later line of the step that is not blank: the reader does not follow
  *  a collection to its closing bracket, which can sit on a later line of eight spaces or fewer that YAML reads past,
@@ -324,6 +357,8 @@ const STEPS_ROWS = [
   { what: 'a field line with U+2028 directly after the colon is not read', lines: ['      - name: A', '        run:\u2028a'], steps: [{ name: 'A', fields: { name: 'A' } }] },
   { what: 'a field line with U+2029 directly after the colon is not read', lines: ['      - name: A', '        run:\u2029a'], steps: [{ name: 'A', fields: { name: 'A' } }] },
   { what: 'a field line with a tab directly after the colon is read', lines: ['      - name: A', '        run:\ta'], steps: [{ name: 'A', fields: { name: 'A', run: 'a' } }] },
+  { what: 'a stated limit (the docstring): a plain value continued on a deeper line, which YAML joins to it, read as its first line', lines: ['      - name: A', '        run: bash x', '          || true'], steps: [{ name: 'A', fields: { name: 'A', run: 'bash x' } }] },
+  { what: 'a stated limit (the docstring): a second key of a field spelled so it is not read, which PyYAML takes over the first, leaves the field its first value', lines: ['      - name: A', '        run: a', '        run : b', '        "run": c'], steps: [{ name: 'A', fields: { name: 'A', run: 'a' } }] },
 ];
 test('steps()\' table: each row\'s steps, names and fields read as steps()\' docstring states', () => {
   const wrong = [];
@@ -441,6 +476,7 @@ const ENV_ROWS = [
   { what: 'a flow collection left open at the last line of the step before, a single-quoted value inside it holding this step\'s lines: every line of this step refused, the opener among them', step: ['      - name: A', '        with: [ \'x', '      - name: S', '        env:', ENV_ON, '        y\' ]', '        run: x'], at: 1, env: {}, refused: ['      - name: S', '        env:', ENV_ON, '        y\' ]', '        run: x'] },
   { what: 'a flow collection begun and closed on a key\'s line of eight spaces after the block, refused with every later line of the step', lines: ['        env:', ENV_ON, '        with: [a]', '        timeout-minutes: 5'], env: ENV_SW, refused: ['        with: [a]', '        timeout-minutes: 5', '        run: x'] },
   { what: 'a line of four spaces after the opener, a key of the job that YAML ends the step at, refused, and the env line after it read', lines: ['    container:', '        env:', ENV_ON], env: ENV_SW, refused: ['    container:'] },
+  { what: 'a stated limit (steps()\' docstring): a plain value continued on a deeper line after the block, neither read nor refused', lines: ['        env:', ENV_ON, '        run: bash x', '          || true'], env: ENV_SW, refused: [] },
   { what: 'a key read a second time in the block, refused, and the first read kept', lines: ['        env:', '          ' + SWITCH + ': ""', ENV_ON], env: { [SWITCH]: '""' }, refused: [ENV_ON] },
   { what: 'the key __proto__ in the block, refused', lines: ['        env:', ENV_ON, '          __proto__: x'], env: ENV_SW, refused: ['          __proto__: x'] },
   { what: 'a key named as another member of Object.prototype, read', lines: ['        env:', ENV_ON, '          constructor: x'], env: { ...ENV_SW, constructor: 'x' }, refused: [] },
@@ -519,6 +555,7 @@ const JOB_KEY_ROWS = [
   { what: 'a # line at two spaces, at no indent and at four spaces after the steps key, and blank lines, neither read nor refused', lines: ['  # c', '# c', '', '   ', ...JOB_LINES, '    # c'], steps: ['    steps:'], refused: [] },
   { what: 'a line of four spaces before the steps key and keys nested deeper, neither read nor refused', lines: ['    defaults:', '      steps: x', ...JOB_LINES, '        with:', '          steps: x'], steps: ['    steps:'], refused: [] },
   { what: 'keys whose text holds steps and more, neither read nor refused', lines: ['    steps-x: y', '    "stepsx": y', ...JOB_LINES], steps: ['    steps:'], refused: [] },
+  { what: 'a stated limit (steps()\' docstring): a job key other than steps given twice, neither read nor refused', lines: ['    defaults:', '      run:', '        working-directory: a', '    defaults:', '      run:', '        working-directory: b', ...JOB_LINES], steps: ['    steps:'], refused: [] },
 ];
 test('jobKeys\' table: each row\'s steps keys and refused lines read as jobKeys\' docstring states', () => {
   const wrong = [];
