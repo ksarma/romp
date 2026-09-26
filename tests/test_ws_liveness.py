@@ -27,6 +27,8 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
+os.makedirs(os.path.join(os.environ["XDG_STATE_HOME"], "romp"), exist_ok=True)
+open(os.path.join(os.environ["XDG_STATE_HOME"], "romp", "session-hosts"), "w").write("off\n")   # a root this module mints: no session host from it (T348)
 km = load_source("romp_kernel_wslive", os.path.join(BIN, "romp-kernel"))
 
 
@@ -86,6 +88,94 @@ class _Handler(threading.Thread):
             km._note_ws_inbound(self.client)
             self.msgs.append(payload)
         self.client["alive"] = False
+
+
+class _StampClearForcing:
+    """Forces the late order of two writers of client["pingAt"] that the kernel leaves free to land either way
+    (2026-09-20): the sender thread's stamp of a ping as it reaches the socket (_ws_sender) and a clear on the
+    handler's thread (_note_ws_inbound: a pong, a message, or the return from a dispatch). Each write is atomic under
+    the client's qlock, only their ORDER is open, and both orders are valid kernel states (test_c3c's docstring says
+    why the kernel is unchanged). The `ping`th ping is held before its stamp until the first clear after arm() has
+    landed, and that clear returns only once the stamp point has passed. It wraps the two module functions the harness
+    threads look up by name, so the REAL sender runs, over a queue proxy (the hold, before the stamp) and a socket-lock
+    proxy (the stamp point: the sender takes that lock right after the stamp). Every hold is bounded by hold_s and
+    recorded in `holds`, one record per hold in return order, read by the cases: (name, fired, exited), `fired` the
+    wait's own return (True the event, False the bound expired) and `exited` whether __exit__ had run when the wait
+    returned, so a release by the exit reads as fired with exited True, a release by the event as fired with exited
+    False, and an expiry as not fired. A wait that discards its result cannot tell its release from its expiry, and a
+    test over it passes green when the bound runs out (the round 1 review, 2026-09-21). `forced` is True only when
+    every hold was released by its event, so a test that means to force asserts it. __exit__ sets both events on
+    every path, so a test that raises inside the block strands no sender thread in a hold (test_c3h)."""
+    HOLD_S = 1.0
+
+    def __init__(self, module, ping=2, hold_s=HOLD_S):
+        self.km, self.ping, self.hold_s = module, ping, hold_s
+        self.cleared, self.stamped = threading.Event(), threading.Event()
+        self.armed, self.holds, self.exited = False, [], False
+
+    @property
+    def forced(self):
+        return bool(self.holds) and all(fired and not exited for _, fired, exited in self.holds)
+
+    def arm(self):
+        """The next _note_ws_inbound call is the forced clear (an earlier call would spend the events)."""
+        self.armed = True
+
+    def _wait(self, name, ev):
+        fired = ev.wait(self.hold_s)
+        self.holds.append((name, fired, self.exited))    # the wait's own answer, and whether the exit had run by then
+
+    def __enter__(self):
+        f = self
+        real_sender, real_clear = self.km._ws_sender, self.km._note_ws_inbound
+        self._saved = real_sender, real_clear
+
+        class Q:                                    # the sender's queue: the hold sits before the stamp
+            def __init__(s, q):
+                s.q, s.n, s.at_stamp_point = q, 0, False
+
+            def get(s):
+                item = s.q.get()
+                if isinstance(item, bytes) and item[:1] == b"\x89":
+                    s.n += 1
+                    if s.n == f.ping:
+                        s.at_stamp_point = True
+                        f._wait("the stamp held for the clear", f.cleared)
+                return item
+
+        class L:                                    # the socket lock: the sender takes it right after the stamp
+            def __init__(s, lock, q):
+                s.lock, s.q = lock, q
+
+            def __enter__(s):
+                if s.q.at_stamp_point:
+                    s.q.at_stamp_point = False
+                    f.stamped.set()
+                return s.lock.__enter__()
+
+            def __exit__(s, *a):
+                return s.lock.__exit__(*a)
+
+        def sender(q, sock, lock, client):
+            qp = Q(q)
+            return real_sender(qp, sock, L(lock, qp), client)
+
+        def clear(client, now=None):
+            if not f.armed:
+                return real_clear(client, now)
+            f.armed = False
+            r = real_clear(client, now)
+            f.cleared.set()
+            f._wait("the clear's return held for the stamp", f.stamped)
+            return r
+
+        self.km._ws_sender, self.km._note_ws_inbound = sender, clear
+        return self
+
+    def __exit__(self, *a):
+        self.exited = True                          # first, since a hold reads it as its wait returns: the exit's release, not the event's
+        self.cleared.set(); self.stamped.set()      # then both holds released, whatever the path: a raise inside the block strands no sender
+        self.km._ws_sender, self.km._note_ws_inbound = self._saved
 
 
 class PhantomPanesAreDropped(unittest.TestCase):
@@ -198,8 +288,27 @@ class PhantomPanesAreDropped(unittest.TestCase):
         self.assertTrue(self._settle(lambda: client["pingAt"] == self.clock[0]), "stamped as the first ping left")
 
     def test_c3_a_peer_is_never_judged_while_its_handler_is_inside_a_dispatch(self):
-        """A `ready` runs the connect push on the handler thread — tens of seconds on a cold kernel — and the
-        peer's pongs wait unread in the receive buffer meanwhile. Unread is not missing (review 2026-09-03)."""
+        """A `ready` runs the connect push on the handler thread, tens of seconds on a cold kernel, and the
+        peer's pongs wait unread in the receive buffer meanwhile. Unread is not missing (review 2026-09-03).
+        The wait before the clear keys the harness on the moment the second ping left rather than on the moment
+        the clear landed: a ping that leaves after the clear is a new outstanding ping stamped at its leave time,
+        so the sender's stamp and this thread's clear are two valid orders of one kernel state, and asserting None
+        right after the clear raced the stamp (red once on CPython 3.14t in CI, 2026-09-20: unforced, the stamp lands
+        about a hundred microseconds after the clear, so the red needs one preemption of this thread in that gap, which
+        under the GIL takes a switch-interval drop request or a blocking call by the holder and on the free-threaded
+        build takes neither; the traces and the unforced run counts are in the ledger entry,
+        upstream/2026-09-20-ws-liveness-order.md). This is the ordinary-path case: the body,
+        _a_dispatch_return_gets_a_fresh_window, runs unforced here, in whatever order the scheduler gives the threads,
+        and is shared with test_c3f, which runs it under _StampClearForcing and guards the wait line in it: deleting that
+        line reds test_c3f and leaves this case green, since unforced the stamp lands after this thread has passed the
+        assertion. test_c3c runs the late order on purpose."""
+        self._a_dispatch_return_gets_a_fresh_window()
+
+    def _a_dispatch_return_gets_a_fresh_window(self):
+        """The body of test_c3, one method shared with test_c3f (the forcing-guarded case) so that a change to the wait
+        before the clear reaches both. The round 1 review showed by execution that a case carrying its own copy of this
+        body stays green when the wait is deleted from test_c3 alone, since the copy is untouched; a shared body is what
+        makes the deletion red in test_c3f."""
         client, peer, handler = self._connect(pongs=False)
         t0 = self.clock[0]
         client["inRead"] = False                                    # as the handler marks itself for a dispatch
@@ -208,6 +317,7 @@ class PhantomPanesAreDropped(unittest.TestCase):
         self.clock[0] = t0 + 3 * km.WS_DEAD_S
         km._keepalive_all(now=self.clock[0])
         self.assertTrue(client["alive"], "silence during a dispatch is the kernel's, not the peer's")
+        self.assertTrue(self._settle(lambda: len(peer.pings) == 2), "the second ping has left: no stamp of it is pending")
         km._note_ws_inbound(client); client["inRead"] = True        # the handler returns to its read: fresh clock
         self.assertIsNone(client["pingAt"])
         km._keepalive_all(now=self.clock[0])                        # a new ping…
@@ -229,6 +339,94 @@ class PhantomPanesAreDropped(unittest.TestCase):
         self.assertTrue(client["alive"])
         self.assertTrue(self._settle(lambda: len(peer.texts) >= 2), "the beat still crossed to the peer")
         self.assertEqual(json.loads(peer.texts[-1])["type"], "ka")
+
+    def test_c3c_a_ping_that_leaves_after_the_clear_is_a_new_outstanding_ping_stamped_as_it_left(self):
+        """The order CI hit in test_c3, run on purpose (2026-09-20): the handler's clear lands first and the second
+        beat's ping, already queued, leaves afterwards. The kernel treats it as what it is, a ping nobody has
+        answered, stamped at its leave time and judged on its own window from there. This is why the kernel is not
+        changed: suppressing the late stamp would leave a ping on the wire never judged, so the obvious kernel fix
+        introduces a real defect where the test fix introduces none. Deterministic through _StampClearForcing, and it
+        asserts the forcing took, so it never passes by the scheduler's grace.
+        Mutation recipe for the one hold: in a scratch copy of kernel/kernel.py, have _note_ws_inbound set a flag on
+        the client under its qlock after the clear, and have _ws_sender skip the ping stamp once while the flag is set.
+        This test then fails at its pingAt assertion (None where the leave time is due), and test_c3 and test_c3f at the
+        shared body's wait for the third ping's stamp, the stamp the flag makes the sender skip, so pingAt stays at the
+        None the clear left (executed 2026-09-20; the counts are in the ledger entry)."""
+        with _StampClearForcing(km) as forcing:
+            client, peer, handler = self._connect(pongs=False)
+            t0 = self.clock[0]
+            client["inRead"] = False
+            km._keepalive_all(now=t0)
+            self.assertTrue(self._settle(lambda: client["pingAt"] == t0))
+            self.clock[0] = t0 + 3 * km.WS_DEAD_S
+            km._keepalive_all(now=self.clock[0])                    # the second ping is queued and held before its stamp
+            forcing.arm()
+            km._note_ws_inbound(client); client["inRead"] = True    # the clear lands, then the held ping leaves
+            self.assertTrue(forcing.forced, "the events, not the bound, ordered the two writes: %r" % (forcing.holds,))
+            self.assertEqual(client["pingAt"], self.clock[0], "the late ping is a new outstanding ping, stamped as it left")
+            self.assertTrue(self._settle(lambda: len(peer.pings) == 2))
+        self.clock[0] += km.WS_DEAD_S - 1
+        km._keepalive_all(now=self.clock[0])
+        self.assertTrue(client["alive"], "judged on its own window, from the leave time")
+        self.clock[0] += 1
+        km._keepalive_all(now=self.clock[0])
+        self.assertFalse(client["alive"], "silent for that whole window: dropped")
+
+    def test_c3f_the_wait_for_the_second_ping_is_what_keeps_its_stamp_ahead_of_the_clear(self):
+        """The guard of test_c3's wait for the second ping (2026-09-21): the shared body runs under _StampClearForcing,
+        which holds that ping before its stamp until the clear has landed. The fixed body clears only after the ping has
+        reached the peer, which is after its stamp point, so the clear cannot release the hold: it expires at its bound
+        (HOLD_S, 1.0 s, inside _settle's 3.0 s, the reason the pass takes about a second), the clear's return then finds
+        the stamp point already passed, and the late order is unreachable from the fixed body. Two kinds of assertion:
+        the helper's `self.assertIsNone(client["pingAt"])` is the product assertion (no ping outstanding after the
+        clear, the value CI saw absent); this case's assertions over forcing.holds are the instrument's (the stamp hold
+        expired at its bound, the clear's return was released by the stamp point, so not every hold was released by its
+        event). A red in the first is the flake back; a red in the second is the instrument not having forced what this
+        case claims. Mutation recipe: in _a_dispatch_return_gets_a_fresh_window delete the wait,
+        `self.assertTrue(self._settle(lambda: len(peer.pings) == 2), ...)`, the line before the clear. The clear then
+        runs while the second ping is still held, releases the hold, the stamp lands after the clear, and the shared
+        body's assertIsNone reds here with CI's text, `AssertionError: 1800000090.0 is not None`; test_c3 stays green
+        through the same body (unforced, the stamp lands after this thread has passed the assertion: the reason the
+        guard is a separate case over a shared body). A second recipe, `all` to `any` in `forced`: the assertFalse
+        below reds, the other cases stay green. The counts of both are in the ledger entry."""
+        with _StampClearForcing(km) as forcing:
+            forcing.arm()                                           # the body's first _note_ws_inbound call is the clear: the peer sends no pong
+            self._a_dispatch_return_gets_a_fresh_window()
+            self.assertIn(("the stamp held for the clear", False, False), forcing.holds,
+                          "the hold on the stamp expired at its bound, unreleased by the clear: %r" % (forcing.holds,))
+            self.assertIn(("the clear's return held for the stamp", True, False), forcing.holds,
+                          "the stamp point, not the bound, released the clear's return: %r" % (forcing.holds,))
+            self.assertFalse(forcing.forced, "one hold expired at its bound and the other was released by its event, so not every hold was forced: %r" % (forcing.holds,))
+
+    def test_c3h_a_raise_inside_the_forcing_releases_the_held_sender_rather_than_leaving_it_to_its_bound(self):
+        """The instrument's release on exit (2026-09-21, the round 1 review's follow-up), at a 10 s hold: the shipped
+        1.0 s hold expires before tearDown's 3.0 s join, so at that bound a release could never be told from an expiry.
+        The real sender enters the queue proxy's hold before the second ping's stamp, the block is left by a test-local
+        raise before any clear, and __exit__ sets both events on every path. The claim is the hold's own record: the
+        hold, entered before or after the exit, returned released with the exit already run, not expired; the case makes
+        no claim that the thread was blocked in the wait or had reached the hold before the exit. The poll for the record
+        is bounded at 30 s only so that the release mutant reds at the boolean rather than at the poll; no assertion
+        rests on that bound against the hold. tearDown's outlived-thread backstop does not record the factory's sender
+        thread and cannot cover this case, whose wait outlasts its hold. Mutation recipe: remove the two set() calls from
+        __exit__. This case then reds at its `fired` assertion about 10 s in, when the bound expires; every other case
+        green; tearDown green there, since by its join the expired hold has freed the sender. The counts are in the
+        ledger entry."""
+        class Deliberate(Exception):
+            """The test-local failure inside the block; assertRaises names it so no other error passes as it."""
+        with self.assertRaises(Deliberate):
+            with _StampClearForcing(km, hold_s=10.0) as forcing:
+                client, peer, handler = self._connect(pongs=False)
+                t0 = self.clock[0]
+                client["inRead"] = False
+                km._keepalive_all(now=t0)
+                self.assertTrue(self._settle(lambda: client["pingAt"] == t0))
+                self.clock[0] = t0 + 3 * km.WS_DEAD_S
+                km._keepalive_all(now=self.clock[0])                # the second ping is queued: the real sender holds before its stamp
+                raise Deliberate("the test fails inside the block, before any clear")
+        self.assertTrue(self._settle(lambda: forcing.holds, timeout=30.0), "the hold never returned within 30 s: neither the exit's release nor the bound's expiry was recorded")
+        name, fired, exited = forcing.holds[0]
+        self.assertTrue(fired, "the hold ran to its %.0f s bound unreleased: the exit set nothing: %r" % (forcing.hold_s, forcing.holds))
+        self.assertTrue(exited, "the event was set before the exit, by something other than the exit (the case made no clear): %r" % (forcing.holds,))
 
     def test_c4_a_peer_still_draining_its_backlog_is_alive_and_one_that_stopped_acknowledging_is_not(self):
         client, peer, handler = self._connect(pongs=False)
