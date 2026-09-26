@@ -27,7 +27,7 @@ beside the kernel's BUS_PORT (which the kernel reads from the port at import) pa
 _ensure_postal_bus revive road stubbed, all put back by cleanups that setUp registers (_PostalTrio), and the
 peer-notify test sets all three around the one call that provokes the revive, held until that revive has ended, under
 a scoped fake of subprocess.run (described below). Other tests that load the kernel in-process and make a bus call do
-without it: tests/test_kernel_known_hosts.py and tests/test_peer_reconnect.py, whose refused detach or trust notify
+without it: tests/test_kernel_known_hosts.py and tests/test_peer_reconnect.py, whose refused detach notify
 kicks the revive, rely on conftest's _dead_bus_port (below) for a dead BUS_PORT in each test and stub
 _revive_postal_bus in setUp, put back by a cleanup (two examples of that form, not a list of the tests that take it).
 Peers was the first leg moved off the import: the kernel reads it at call time, and under xdist every
