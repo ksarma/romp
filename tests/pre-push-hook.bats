@@ -10770,7 +10770,7 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     at_base
 }
 
-@test "round 10b (H, tests-4, flag 118): a repository config dropping a path-scoped rule (disabledRules holding pkcs12-file) makes the additive run fail on a pushed cert.p12, refused as a scan that could not complete, gitleaks' FTL line naming the missing rule (the path-scoped run's own failure: the exit arm is shared with the main run), the remote at its base (red under the other option, the run returning clean on not found in rules: the keystore published)" {
+@test "round 10b (H, tests-4, flag 118): a repository config dropping a path-scoped rule (disabledRules holding pkcs12-file) and a pushed cert.p12: gitleaks fails on the missing rule, its FTL line naming it, and scanner_run's shared exit arm refuses the push as a scan that could not complete, seen through the probe run's exit line (exited 1, neither 0 nor 2), with no probe line naming pkcs12-file, the remote at its base (red under the other option, the run returning clean on not found in rules, where the probe check refuses instead on pkcs12-file's dropped probe; re-aimed in round 12a, the round 11 rulings' F)" {
     r9d_base
     printf '[extend]\nuseDefault = true\ndisabledRules = ["pkcs12-file"]\n' > "$REPO/.gitleaks.toml"
     git -C "$REPO" add .gitleaks.toml
@@ -10783,6 +10783,8 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
     [[ "$output" == *"FTL"*"pkcs12-file not found in rules"* ]]
+    [[ "$output" == *"romp pre-push: the PROBE run of the path-scoped copies exited 1, neither 0 (clean) nor 2 (a finding)"* ]]
+    [[ "$output" != *"dropped pkcs12-file's probe"* ]]
     [[ "$output" == *"gitleaks could not scan"* ]]
     [[ "$output" != *"gitleaks found a credential"* ]]
     at_base
@@ -11751,11 +11753,31 @@ r11c_blank_context_push() {   # the push of main under GIT_DIFF_OPTS=--unified=3
     at_base
 }
 
-@test "round 11c (C, extra5-1, decision 7's execution item 5): the key's older spelling, diff.suppress-blank-empty=true in the clone, which git still reads, under GIT_DIFF_OPTS=--unified=3, prints a blank context line empty, and the same clean push passes: the feed's command-line -c diff.suppressBlankEmpty=false is read last and beats it (refused at 93684a4d1, as under the key's own spelling)" {
+@test "round 11c (C, extra5-1, decision 7's execution item 5): the key's older spelling, diff.suppress-blank-empty=true in the clone, which git still reads, under GIT_DIFF_OPTS=--unified=3, prints a blank context line empty; the same clean push passes through the hook, and through a copy of the hook whose feed drops env -u GIT_DIFF_OPTS, so the three context lines reach diff-tree and the feed's command-line -c diff.suppressBlankEmpty=false alone, read last, beats the key, while a copy dropping the -c pin too refuses it (refused at 93684a4d1, as under the key's own spelling; re-aimed in round 12a, the round 11 rulings' F, the owner's choice (1): only a copy can isolate the -c pin, since env -u removes every source of context)" {
+    local no_env="$TEST_DIR/pre-push-no-env" neither="$TEST_DIR/pre-push-neither"
     r11c_blank_context_history
     git -C "$REPO" config diff.suppress-blank-empty true
     [ "$(GIT_DIFF_OPTS=--unified=3 git -C "$REPO" diff-tree -p -U0 "$(git -C "$REPO" rev-list --reverse "$BASE..main" | head -n 1)" | grep -c '^$')" -ge 1 ]   # the premise: the older spelling takes effect
     r11c_blank_context_push
+    r10a_passes
+    # the copies, made here from the hook under test: each drops one pin from the feed's one diff-tree line
+    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree ' "$HOOK")" -eq 1 ]
+    sed 's/env -u GIT_DIFF_OPTS git -c core.quotePath=true/git -c core.quotePath=true/' "$HOOK" > "$no_env"
+    sed 's/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /' "$no_env" > "$neither"
+    chmod 755 "$no_env" "$neither"
+    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true' "$no_env")" -eq 0 ]
+    [ "$(grep -c -- '^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin ' "$no_env")" -eq 1 ]
+    [ "$(grep -c -- '^    git -c core.quotePath=true diff-tree --stdin ' "$neither")" -eq 1 ]
+    [ "$(diff "$HOOK" "$no_env" | grep -c '^>')" -eq 1 ]
+    [ "$(diff "$no_env" "$neither" | grep -c '^>')" -eq 1 ]
+    # the remote and its tracking ref back at the base, so the same commits are pushed again
+    git -C "$TEST_DIR/remote.git" update-ref refs/heads/main "$BASE"
+    git -C "$REPO" update-ref refs/remotes/origin/main "$BASE"
+    HOOK=$neither r11c_blank_context_push
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read whole (git diff-tree exited 0 and printed a line inside commit "* ]]
+    at_base
+    HOOK=$no_env r11c_blank_context_push
     r10a_passes
 }
 
@@ -11989,4 +12011,210 @@ R11C_DIRS_TAIL="so neither the additive run nor the probe run can read its copie
 
 @test "round 11c (the 06:29Z ruling on round 11b's flag 7): a rule whose path is the empty string in six DOUBLE quotes on one line, a triple-quoted basic string, passes a clean push with the reader silent, and the rule's credential is still named (the reader refused the clean push at round 11b's head)" {
     r11b_empty_path_case '""""""'
+}
+
+# ── round 12a: a key written twice in one table, the reader's arms and the probe check's comparison driven (the round 11 rulings' A and E, with the coordinator's decision 4) ──
+# The round 11 checkers (2026-09-26) found the reader keeping the LAST plain id of a rule table while gitleaks, which
+# folds a key's case, takes a spelling with a capital over id in either order: a table with ID = "r11a-env-rule" then
+# id = "kubernetes-secret-yaml" and that rule's default path was exempted by the reader and read by gitleaks as a custom
+# rule carrying a path condition, so its credential published (tests-1). The rulings (A, R1) have the reader refuse any
+# key written twice in one table once compared lower-cased, naming the key, both lines and the file, and a table's name
+# written in a second spelling; an array of tables repeated in one spelling passes, as gitleaks' default config does
+# (the copied default's case in round 11b, ITEM 5 (1), still passes a clean push). Then one case per arm of the reader
+# that closes a road (E, tests-2 and extra6-1), each on a shape that reaches that arm alone once R1 is in place
+# (decision 4: [extend] repeated in one spelling for the second [extend] path, a quoted "path.x" beside a default path
+# for the exempt path key standing alone), and one case per disjunct of the probe check's comparison (E, extra5-3), each
+# behind an awk that edits the probe check's answer and records that it fired on that program. Each case pushes for
+# real with the identifier scan off and the real scanner armed; every value is assembled at run time.
+
+r12a_dup_line() {   # <key> <first spelling> <its line> <second spelling> <its line> [<the file as the line names it>]: the reader's refusal of a key set twice in one table
+    printf '%s' "romp pre-push: the gitleaks config ${6:-$R11A_WT} sets the key $1 twice in one table ($2 on line $3, $4 on line $5; gitleaks compares keys without regard to case), so the hook cannot tell which of the two the scan would use; set the key once, or set ROMP_NO_GITLEAKS=1 for one push; no scanner run was made, and the scan follows once the config is fixed; the scan is incomplete, so the push is refused"
+}
+r12a_id_config() {   # <idid|litrev|plainrev>: a rule table carrying two spellings of its id key, a custom regex and kubernetes-secret-yaml's default path, under useDefault (the round 11 rulings' A): the id keys on lines 5 and 6
+    printf '[extend]\nuseDefault = true\n\n[[rules]]\n'
+    case "$1" in
+        idid) printf 'ID = "r11a-env-rule"\nid = "kubernetes-secret-yaml"\n' ;;
+        litrev) printf 'id = "kubernetes-secret-yaml"\nID = %s\n' "'''r11a-env-rule'''" ;;
+        plainrev) printf 'id = "kubernetes-secret-yaml"\nID = "r11a-env-rule"\n' ;;
+        *) echo "r12a_id_config: no shape $1" >&2; return 1 ;;
+    esac
+    printf 'regex = %s\npath = %s\n' "'''zzenv_[0-9a-f]{16}'''" "'''(?i)\\.ya?ml\$'''"
+}
+r12a_id_witness() {   # the custom regex's credential in config/prod.yaml, a file kubernetes-secret-yaml's default path selects, committed; sets sha
+    mkdir -p "$REPO/config"
+    printf 'ENV_NAME=prod\nbuild=zzenv_%s%s\n' 0123456789 abcdef > "$REPO/config/prod.yaml"
+    git -C "$REPO" add config/prod.yaml
+    r11b_commit "the custom rule's credential in a yaml file"
+}
+r12a_build_witness() {   # the pathless custom rule's credential in build.txt, committed; sets sha
+    r11a_build_token > "$REPO/build.txt"
+    git -C "$REPO" add build.txt
+    r11b_commit "the custom rule's credential"
+}
+r12a_rules_file() {   # <file> <config text>: the text written to that absolute file, outside the work tree, with a final newline
+    printf '%s\n' "$2" > "$1"
+}
+
+@test "round 12a (A, R1, tests-1): a rule table with ID = r11a-env-rule then id = kubernetes-secret-yaml, a custom regex and that rule's default path, and the regex's credential in config/prod.yaml: refused by R1's line naming the key id, both lines and the file, neither scanner run made, the remote at its base (PUBLISHED at 0b6c76916, both scanners: the reader exempted the table by its last id while gitleaks read the capitalized one; red under the mutant deleting R1's check)" {
+    r11a_base
+    r11a_config "$(r12a_id_config idid)"
+    r12a_id_witness
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r12a_dup_line id ID 5 id 6)"
+}
+
+@test "round 12a (A, R1, tests-1): the literal-valued reverse, id = kubernetes-secret-yaml then ID written as a triple-quoted literal (which the reader's id ignores), and the regex's credential in config/prod.yaml: refused by R1's line naming the key id, both lines and the file, the remote at its base (PUBLISHED at 0b6c76916, both scanners; red under the mutant deleting R1's check)" {
+    r11a_base
+    r11a_config "$(r12a_id_config litrev)"
+    r12a_id_witness
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r12a_dup_line id id 5 ID 6)"
+}
+
+@test "round 12a (A, R1, the control): the plain reverse, id = kubernetes-secret-yaml then ID = r11a-env-rule, is refused by R1's line naming the key id, and no longer by the rule line naming r11a-env-rule, the remote at its base (refused at 0b6c76916 by that rule line: the reader and gitleaks both took the later, capitalized key; red under the mutant deleting R1's check, where the rule line returns)" {
+    r11a_base
+    r11a_config "$(r12a_id_config plainrev)"
+    r12a_id_witness
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r12a_dup_line id id 5 ID 6)"
+    [[ "$output" != *"$(r11a_rule_line r11a-env-rule "$R11A_WT")"* ]]
+}
+
+@test "round 12a (A, R1): a key other than id written twice, regex beside Regex in a pathless custom rule, and that rule's credential in build.txt: refused by R1's line naming the key regex, both lines and the file, the remote at its base (PUBLISHED at 0b6c76916, both scanners: gitleaks took Regex, which never matches; red under the mutant deleting R1's check)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "r12a-build-rule"\nregex = %s\nRegex = %s\n' "'''zzbld_[0-9a-f]{16}'''" "'''zzbld_never[0-9]{9}'''")"
+    r12a_build_witness
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r12a_dup_line regex regex 6 Regex 7)"
+}
+
+@test "round 12a (A, R1): a table's name in two spellings, [[rules]] holding a pathless custom rule beside [[Rules]] holding another, and the first rule's credential in build.txt: refused by R1's line naming the key rules, both lines and the file, the remote at its base (PUBLISHED at 0b6c76916, both scanners: gitleaks kept only the [[Rules]] rule; red under the mutant deleting R1's check)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "r12a-build-rule"\nregex = %s\n\n[[Rules]]\nid = "r12a-other-rule"\nregex = %s\n' "'''zzbld_[0-9a-f]{16}'''" "'''zzqq_[0-9a-f]{16}'''")"
+    r12a_build_witness
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r12a_dup_line rules rules 4 Rules 8)"
+}
+
+@test "round 12a (E, tests-2 and extra6-1, the reader's lower-casing, tl_lower): S1's rule with its path key spelled PATH, then Path, then \"PATH\" quoted, each with S1's credential in config/prod.env: each refused by the reader's rule line naming r11a-env-rule and the file, neither scanner run made, the remote at its base (each PUBLISHED at 93684a4d1; red under the mutant deleting the lower-casing)" {
+    local k
+    r11a_base
+    for k in PATH Path '"PATH"'; do
+        r11a_config "$(r11a_shape_config S1 | sed "s/^path = /$k = /")"
+        grep -q "^$k = " "$REPO/.gitleaks.toml"
+        r11a_witness S1
+        push_main_through_hook_with_shim
+        r11a_refused_by_reader "$(r11a_rule_line r11a-env-rule "$R11A_WT")"
+        git -C "$REPO" reset -q --hard "$BASE"
+    done
+}
+
+@test "round 12a (E, tests-2 and extra6-1, the quoted key's split at its dots, tl_key): a top-level quoted \"extend.path\" naming an absolute file that holds S1's rule, and S1's credential in config/prod.env: refused by the reader's line naming the [extend] table written as a key on line 1, neither scanner run made, the remote at its base (PUBLISHED at 93684a4d1; red under the mutant keeping a quoted key whole)" {
+    r11a_base
+    r12a_rules_file "$TEST_DIR/r12a-s1.toml" "$(r11a_shape_config S1)"
+    r11a_config "$(printf '"extend.path" = "%s"\n' "$TEST_DIR/r12a-s1.toml")"
+    r11a_witness S1
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_construct_line 1 "$R11A_WT" "the [extend] table written as a key")"
+}
+
+@test "round 12a (E, tests-2 and extra6-1, [extend] written as a key): extend.path = an absolute file holding S1's rule, then extend = { path = that file }, each with S1's credential in config/prod.env: each refused by the reader's line naming the [extend] table written as a key on line 1, neither scanner run made, the remote at its base (each PUBLISHED at 93684a4d1; red under the mutant deleting that arm)" {
+    local shape
+    r11a_base
+    r12a_rules_file "$TEST_DIR/r12a-s1.toml" "$(r11a_shape_config S1)"
+    for shape in 'extend.path = "%s"' 'extend = { path = "%s" }'; do
+        # shellcheck disable=SC2059  # the shape is the format
+        r11a_config "$(printf "$shape\\n" "$TEST_DIR/r12a-s1.toml")"
+        r11a_witness S1
+        push_main_through_hook_with_shim
+        r11a_refused_by_reader "$(r11a_construct_line 1 "$R11A_WT" "the [extend] table written as a key")"
+        git -C "$REPO" reset -q --hard "$BASE"
+    done
+}
+
+@test "round 12a (E, extra6-1, a second [extend] path, the coordinator's decision 4): [extend] written twice in one spelling, each table with one path key (a file under useDefault, then a file holding S1's rule), and S1's credential in config/prod.env: refused by the reader's line naming a second [extend] path on line 5, not by R1's line (each header's table is its own), neither scanner run made, the remote at its base (red under the mutant deleting that arm, where the reader follows the second path; refused at 93684a4d1, both scanners, gitleaks itself failing on a table defined twice)" {
+    r11a_base
+    r12a_rules_file "$TEST_DIR/r12a-base.toml" "$(printf '[extend]\nuseDefault = true')"
+    r12a_rules_file "$TEST_DIR/r12a-s1.toml" "$(r11a_shape_config S1)"
+    r11a_config "$(printf '[extend]\npath = "%s"\n\n[extend]\npath = "%s"\n' "$TEST_DIR/r12a-base.toml" "$TEST_DIR/r12a-s1.toml")"
+    r11a_witness S1
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_construct_line 5 "$R11A_WT" "a second [extend] path")"
+    [[ "$output" != *" twice in one table "* ]]
+}
+
+@test "round 12a (E, extra6-1, the exempt path key standing alone, the coordinator's decision 4): kubernetes-secret-yaml under useDefault with a quoted \"path.x\" key (which the reader counts as a path key and gitleaks ignores inside a rule table) ahead of the rule's default path, and a Secret in deploy/secret.yaml: refused by the reader's rule line naming kubernetes-secret-yaml, not by R1's line (path and path.x are two keys), neither scanner run made, the remote at its base (red under the mutant deleting the single-key test, where the default path exempts the table and the scan runs; refused at 93684a4d1, both scanners, the Secret named as a credential)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "kubernetes-secret-yaml"\n"path.x" = %s\npath = %s\n' "'''(?i)\\.nothing\$'''" "'''(?i)\\.ya?ml\$'''")"
+    r11b_secret deploy/secret.yaml
+    r11b_commit "a Secret"
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_rule_line kubernetes-secret-yaml "$R11A_WT")"
+    [[ "$output" != *" twice in one table "* ]]
+}
+
+r12a_probe_answer_edit() {   # <calls name> <awk program over the answer>: an awk that, for the probe check's program alone (its text carries sec[$3] = np), runs the real awk and hands its answer through the program given, the call recorded in calls.<name>; the real awk for every other program
+    local p real r_mktemp r_rm r_cat
+    p=${PATH//"$TEST_DIR/shim:"/}
+    real="$(PATH=$p command -v awk)"; r_mktemp="$(PATH=$p command -v mktemp)"; r_rm="$(PATH=$p command -v rm)"; r_cat="$(PATH=$p command -v cat)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'marker=%q\n' 'sec[$3] = np'
+        printf 'if [[ "$*" == *"$marker"* ]]; then\n'
+        printf '    w=$(%q %q); %q "$@" > "$w"; s=$?\n' "$r_mktemp" "$TEST_DIR/answer.XXXXXX" "$real"
+        printf '    if [ "$s" -ne 0 ]; then %q "$w"; %q -f "$w"; exit "$s"; fi\n' "$r_cat" "$r_rm"
+        printf '    a="$*"; printf "%%s\\n" %q"${a//$'"'"'\\n'"'"'/ }" >> %q\n' "awk " "$TEST_DIR/calls.$1"
+        printf '    LC_ALL=C %q %q "$w"; s=$?; %q -f "$w"; exit "$s"\n' "$real" "$2" "$r_rm"
+        printf 'fi\n'
+        printf 'exec %q "$@"\n' "$real"
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+r12a_check_short_line() {   # <closing line> <probe lines read> <findings read> <lines of no kind>: the probe check's read-short line, one probe written
+    printf '%s' "romp pre-push: the PROBE CHECK of the path-scoped copies was read short (its closing line reads \"$1\", for pieces, findings at a second copy and other lines, where the shell wrote 1 probes and read $2 probe lines, $3 findings, 0 other lines and $4 lines of no kind); the scan is incomplete, so the push is refused"
+}
+
+@test "round 12a (E, extra5-3 (a), the closing line's counts): W8's AND allowlist and a password in prod.nuget.config, behind an awk whose probe check answer loses its found line (the second copy's finding) and keeps its closing line: refused by the read-short line (closing 1 1 0, 0 findings read), no credential named, the remote at its base (red under the mutant deleting the closing line's comparison alone, where the password publishes)" {
+    r11a_base
+    r11a_config "$(r11b_shape_config W8)"
+    r11b_nuget prod.nuget.config
+    r11b_commit "a password at prod.nuget.config"
+    r12a_probe_answer_edit probe-edit '$1 != "found"'
+    push_main_through_hook_with_shim
+    fired probe-edit "sec[\$3] = np"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$(r12a_check_short_line "1 1 0" 1 0 0)"* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 12a (E, extra5-3 (b), the probe lines against the probes written): an OR per-rule allowlist on nuget-config-password matching both the copy's name and the second copy's (a number directory or the romp-copy- stem), where the dropped probe's missing line is the only refusal, and a password in prod.nuget.config, behind an awk whose probe check answer loses that missing line and keeps its closing line: refused by the read-short line (0 probe lines read of 1 probe written), no probe line and no credential named, the remote at its base (red under the mutant deleting that comparison alone, where the password publishes; main's hook refuses it, its allowlist missing the real path)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "nuget-config-password"\n[[rules.allowlists]]\npaths = [%s]\n' "'''^(?:[0-9]+/|romp-copy-)'''")"
+    r11b_nuget prod.nuget.config
+    r11b_commit "a password at prod.nuget.config"
+    r12a_probe_answer_edit probe-edit '$1 != "missing"'
+    push_main_through_hook_with_shim
+    fired probe-edit "sec[\$3] = np"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$(r12a_check_short_line "1 0 0" 0 0 0)"* ]]
+    [[ "$output" != *"'s probe at "* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 12a (E, extra5-3 (c), lines of no kind): a clean ok.yaml with no config, behind an awk whose probe check answer gains one line of no kind ahead of its closing line, the rest whole: refused by the read-short line (1 line of no kind), the remote at its base (red under the mutant deleting that comparison alone, where the push passes)" {
+    r11a_base
+    printf 'name: app\n' > "$REPO/ok.yaml"
+    git -C "$REPO" add ok.yaml
+    r11b_commit "a clean yaml"
+    r12a_probe_answer_edit probe-edit '$1 == "end" { print "zzkind\tone" } { print }'
+    push_main_through_hook_with_shim
+    fired probe-edit "sec[\$3] = np"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$(r12a_check_short_line "1 0 0" 1 0 1)"* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
 }

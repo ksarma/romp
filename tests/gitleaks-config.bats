@@ -415,7 +415,8 @@ freemius-secret-key lib/Settings.PHP'
     # for the additive run (the piece's number and the suffix the selection matched, lower-cased,
     # or nuget.config alone; round 10b, from the round 9 rulings' group F), and since round 11b a
     # SECOND COPY at the probe run's root (romp-copy-, the piece's number in letters, a dot when the
-    # suffix holds none, and the suffix as the path spells it; the round 10 rulings' group A). Both
+    # suffix does not start with one, and the suffix as the path spells it; the round 10 rulings'
+    # group A). Both
     # names are read from the hook: hook_copy_names runs the hook's own piecing awk over the sample
     # paths and the names come from the path-scoped index newpiece writes. Until round 11c this
     # case spelled the copy names itself (1.p12, nuget.config, 1.yaml and the rest) and stayed
@@ -508,7 +509,7 @@ freemius-secret-key lib/Settings.PHP'
         want=romp-copy-$lt$dot$osfx
         [ "${snames[$k]}" = "$want" ] || {
             echo "the hook names the second copy of ${paths[$k]} ${snames[$k]}, not $want, the shape its texts state (romp-copy-, the"
-            echo "piece's number in letters a to j, a dot when the suffix holds none, and the suffix as the path spells it). This check keys"
+            echo "piece's number in letters a to j, a dot when the suffix does not start with one, and the suffix as the path spells it). This check keys"
             echo "on that spelling; the scan above pins the firing property, so a rename that keeps every rule firing owes the header,"
             echo "the comments and the rulings' texts the same change."
             false; }

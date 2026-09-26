@@ -956,8 +956,8 @@
 # selected piece, a PROBE at the copy's exact name (12/12.yaml), a short
 # text the rule reports under gitleaks' default rules, and a SECOND COPY of
 # the piece at the directory's root, named romp-copy-, the piece's number in
-# letters (a to j for 0 to 9), a dot when the suffix holds none, and the
-# file's own suffix as it spells it (romp-copy-bc.yaml,
+# letters (a to j for 0 to 9), a dot when the suffix does not start with one,
+# and the file's own suffix as it spells it (romp-copy-bc.yaml,
 # romp-copy-bc.NuGet.Config): a name with no directory and no digit outside
 # the file's own suffix, which each rule's default path matches and no
 # global path of the default skips.
@@ -1036,7 +1036,23 @@
 # printable ASCII, which gitleaks decodes and case-folds; an [extend] path
 # that is not a one-line string; a file it cannot open) refuses the push
 # naming it and its line, and each file's bytes as the shell read them are
-# compared with its byte count, so a read cut short refuses too. These
+# compared with its byte count, so a read cut short refuses too. A key set
+# twice in one table refuses the push as well, the line naming the key, both
+# lines and the file. Keys are compared as gitleaks compares them, without
+# case: a key's dotted segments lower-cased and joined, however it is quoted
+# and whatever form its value takes. gitleaks keeps one of the two writings
+# by a rule the hook cannot follow: between id and a spelling with a capital
+# it took the capitalized one in either order, and between two capitalized
+# spellings its choice varied from run to run (executed, 8.28.0 and 8.30.1).
+# Until round 12 a rule table with ID and then id, the id one of the five and
+# the path that rule's default, published a credential (the round 11
+# rulings, 2026-09-26). One table is each header's table, each [[...]]
+# element, the root table and each inline table. A table's name in a second
+# spelling ([extend] beside [Extend], [[rules]] beside [[Rules]]) refuses as
+# well. An array of tables repeated in one spelling, and a header whose
+# leading name is a table already defined in that spelling
+# ([[rules.allowlists]] after its [[rules]]), set nothing twice, so
+# gitleaks' default config passes. These
 # refusals come before either scanner run, and each line says the scan
 # follows once the config is fixed. A relative [extend] path is resolved
 # against the directory git runs the hook in (the work tree's root), as
@@ -3733,7 +3749,9 @@ scanner_version() {   # <gitleaks>
 # every piece. Any other path text refuses,
 # a copied default's path written with an escape among them. A construct the
 # reader does not parse refuses naming it and its line, as does a file it
-# cannot open. These refusals come before either scanner run, and each line
+# cannot open, and a key written twice in one table naming it and both lines
+# (tl_note; the helpers' comment below says why). These refusals come before
+# either scanner run, and each line
 # says the scan follows once the config is fixed: a scan under a config the
 # hook has refused would be read under the wrong rules. An [extend] path is
 # read against gitleaks' working directory, which was the work tree's root
@@ -3753,7 +3771,8 @@ scanner_version() {   # <gitleaks>
 gitleaks_config() {   # sets cfg and cfg_name, the caller's
     local LC_ALL=C wt d k n f p l nb count opened tl_n=0 fixed="no scanner run was made, and the scan follows once the config is fixed"
     local tl_i=0 tl_end=0 tl_ln=0 tl_rest="" tl_what="" tl_str="" tl_plain=0 tl_q="" tl_low="" tl_ext="" tl_extln=-1 tl_hit=0 tl_dpath=""
-    local -a tl_all tl_segs chain_file chain_shown chain_short chain_start chain_end chain_extln chain_nonl copy
+    local tl_dupk="" tl_dups1="" tl_dupl1=0 tl_dups2="" tl_dupl2=0
+    local -a tl_all tl_segs tl_orig chain_file chain_shown chain_short chain_start chain_end chain_extln chain_nonl copy
     cfg=(); cfg_name="the default config gitleaks embeds"
     wt=$(pwd -P)
     if [ -f .gitleaks.toml ]; then
@@ -3803,7 +3822,11 @@ gitleaks_config() {   # sets cfg and cfg_name, the caller's
         fi
         tl_i=${chain_start[d]}; tl_end=${chain_end[d]}
         if ! tl_file "${chain_shown[d]}"; then
-            unscanned "line $((tl_ln - chain_start[d] + 1)) of the gitleaks config ${chain_shown[d]} holds $tl_what, which the hook's reader does not parse, so whether a rule there carries a path condition is unknown; rewrite it with [[rules]] and [extend] tables, plain keys and closed strings, or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
+            if [ -n "$tl_dupk" ]; then
+                unscanned "the gitleaks config ${chain_shown[d]} sets the key $tl_dupk twice in one table ($tl_dups1 on line $((tl_dupl1 - chain_start[d] + 1)), $tl_dups2 on line $((tl_dupl2 - chain_start[d] + 1)); gitleaks compares keys without regard to case), so the hook cannot tell which of the two the scan would use; set the key once, or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
+            else
+                unscanned "line $((tl_ln - chain_start[d] + 1)) of the gitleaks config ${chain_shown[d]} holds $tl_what, which the hook's reader does not parse, so whether a rule there carries a path condition is unknown; rewrite it with [[rules]] and [extend] tables, plain keys and closed strings, or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
+            fi
             failed_creds=1; return 1
         fi
         chain_extln[d]=$tl_extln
@@ -3871,7 +3894,10 @@ config_bytes() {   # <file>
 # and its form: basic or literal for such a string, mlliteral for a
 # triple-single-quoted one on one line, empty otherwise), tl_ext and
 # tl_extln (the [extend] path and its line), tl_hit (a rule with a path key
-# reported), tl_dpath (tl_default_path's entry). The grammar is TOML's as
+# reported), tl_dpath (tl_default_path's entry), tl_orig (the key just parsed,
+# its segments as written), and tl_dupk, tl_dups1, tl_dupl1, tl_dups2 and
+# tl_dupl2 (a key written twice: its name lower-cased, and each writing's
+# spelling and line). The grammar is TOML's as
 # gitleaks reads it (go-toml under viper, probed on 8.28.0 and 8.30.1): viper
 # lower-cases every key, and its decoder matches a name in any case, Unicode
 # folding included ([["rule<U+017F>"]] defines rules; a quoted key spelling
@@ -3886,7 +3912,17 @@ config_bytes() {   # <file>
 # compared lower-cased, a quoted one split at its dots, and a quoted key
 # holding an escape or a byte outside printable ASCII is refused; [rules] as
 # a single table defines one rule, and rules as a key an inline table or
-# array of them (both read by execution).
+# array of them (both read by execution). A key written twice in one table
+# is refused (tl_note), compared by its segments lower-cased and joined,
+# whatever its form and its value's: gitleaks folds a key's case and picks
+# one of the writings itself, the capitalized one over id in either order
+# and neither reliably between two capitalized spellings (executed, 8.28.0
+# and 8.30.1; the round 11 rulings, 2026-09-26), so the reader cannot mirror
+# which writing sets the rule's id, path or regex. A key with a value
+# refuses on its second writing in any spelling; a table's name, or a dotted
+# key's leading name, refuses only in a second spelling, so an array of
+# tables repeated in one spelling, and the [[rules]] element a
+# [[rules.allowlists]] header extends, pass.
 tl_line() {   # moves to the next line of the current file: tl_rest its text, one trailing CR dropped (TOML's CRLF); status 1 at the file's end
     [ "$tl_i" -lt "$tl_end" ] || return 1
     tl_ln=$tl_i; tl_rest=${tl_all[tl_i]%$'\r'}; tl_i=$((tl_i + 1))
@@ -3912,9 +3948,9 @@ tl_lower() {   # <text>: tl_low, the text with its ASCII capitals lowered
         tl_low=$tl_low$c
     done
 }
-tl_key() {   # parses a key, dotted or not, at the start of tl_rest: tl_segs its segments lower-cased, a quoted one split at its dots, as gitleaks splits one at the top level (inside a rule table gitleaks keeps it whole, so the split there only over-refuses); status 1, tl_what set, when it is no key the reader reads
+tl_key() {   # parses a key, dotted or not, at the start of tl_rest: tl_segs its segments lower-cased, a quoted one split at its dots, as gitleaks splits one at the top level (inside a rule table gitleaks keeps it whole, so the split there only over-refuses), and tl_orig the same segments as written; status 1, tl_what set, when it is no key the reader reads
     local seg quoted re_bare='^([A-Za-z0-9_-]+)(.*)$' re_basic='^"([^"]*)"(.*)$' re_lit="^'([^']*)'(.*)\$" re_odd='[^ -~]'
-    tl_segs=()
+    tl_segs=(); tl_orig=()
     while :; do
         tl_ws
         quoted=1
@@ -3929,11 +3965,11 @@ tl_key() {   # parses a key, dotted or not, at the start of tl_rest: tl_segs its
         fi
         if [ "$quoted" -ne 0 ]; then
             while :; do
-                tl_lower "${seg%%.*}"; tl_segs+=("$tl_low")
+                tl_orig+=("${seg%%.*}"); tl_lower "${seg%%.*}"; tl_segs+=("$tl_low")
                 case "$seg" in *.*) seg=${seg#*.} ;; *) break ;; esac
             done
         else
-            tl_lower "$seg"; tl_segs+=("$tl_low")
+            tl_orig+=("$seg"); tl_lower "$seg"; tl_segs+=("$tl_low")
         fi
         tl_ws
         case "$tl_rest" in .*) tl_rest=${tl_rest#.} ;; *) return 0 ;; esac
@@ -4018,11 +4054,14 @@ tl_array() {   # parses an array's values after its opening bracket, across line
         esac
     done
 }
-tl_inline() {   # parses an inline table's keys and values after its opening brace, to its closing brace, no line end between them outside a value (TOML 1.0; go-toml refuses one there too); status 1, tl_what set, when it is no inline table the reader reads
+tl_inline() {   # parses an inline table's keys and values after its opening brace, to its closing brace, no line end between them outside a value (TOML 1.0; go-toml refuses one there too), each key noted in the inline table's own map (tl_note); status 1, tl_what set, when it is no inline table the reader reads, or tl_dupk set, when a key is written twice in it
+    # shellcheck disable=SC2034  # tl_mi: read and set by name in tl_note
+    local tl_mi=""
     tl_ws
     case "$tl_rest" in '}'*) tl_rest=${tl_rest:1}; return 0 ;; esac
     while :; do
         tl_key || return 1
+        tl_note tl_mi "$tl_ln" 0 "${#tl_segs[@]}" L || return 1
         tl_ws
         case "$tl_rest" in '='*) tl_rest=${tl_rest:1} ;; *) tl_what="an inline table it does not read"; return 1 ;; esac
         tl_value || return 1
@@ -4034,8 +4073,9 @@ tl_inline() {   # parses an inline table's keys and values after its opening bra
         esac
     done
 }
-tl_file() {   # <the file's name, for its lines>: parses the current file's lines, one refusal per [[rules]] table carrying a path key the reader does not exempt (tl_rule_end); tl_ext and tl_extln its [extend] path and that line, when it names one; status 1, tl_what and tl_ln set, when a line holds a construct the reader does not parse
-    local ctx=top rid="" rpath=0 rpv="" rpk="" hk hdr kln s
+tl_file() {   # <the file's name, for its lines>: parses the current file's lines, one refusal per [[rules]] table carrying a path key the reader does not exempt (tl_rule_end); tl_ext and tl_extln its [extend] path and that line, when it names one; status 1, tl_what and tl_ln set, when a line holds a construct the reader does not parse, or tl_dupk set, when a key is written twice in one table (tl_note: the root table's map, the current header's table's, and the map of the last table named rules, which a rules.<name> header extends)
+    # shellcheck disable=SC2034  # tl_mtop, tl_mcur and tl_mrules: read and set by name in tl_note
+    local ctx=top rid="" rpath=0 rpv="" rpk="" hk hdr kln s km=tl_mtop tl_mtop="" tl_mcur="" tl_mrules="" hlast=""
     local -a segs
     tl_ext=""; tl_extln=-1
     while tl_line; do
@@ -4065,11 +4105,21 @@ tl_file() {   # <the file's name, for its lines>: parses the current file's line
                 '[allowlist'|'[[allowlist'|'[allowlists'|'[[allowlists') ctx=sub ;;
                 *) s=${tl_all[tl_ln]%$'\r'}; tl_what="the table header ${s#"${s%%[![:blank:]]*}"}"; return 1 ;;
             esac
+            # The header's names: its first in the root table, and the second
+            # of a rules.<name> header (every two-name header the reader
+            # recognizes extends rules) in the last table named rules; the
+            # keys after it go to a map of their own (each header's table).
+            # shellcheck disable=SC2034  # tl_mrules: read by name in tl_note
+            [ "$hlast" != rules ] || tl_mrules=$tl_mcur
+            tl_note tl_mtop "$tl_ln" 0 1 T || return 1
+            [ "${#tl_segs[@]}" -eq 1 ] || tl_note tl_mrules "$tl_ln" 1 2 T || return 1
+            hlast=$hdr; tl_mcur=""; km=tl_mcur
             continue
         fi
         kln=$tl_ln
         tl_key || return 1
         segs=("${tl_segs[@]}")
+        tl_note "$km" "$kln" 0 "${#segs[@]}" L || return 1
         tl_ws
         case "$tl_rest" in '='*) tl_rest=${tl_rest:1} ;; *) tl_what="a line that is no key and value, table header or comment"; return 1 ;; esac
         tl_value || return 1
@@ -4099,6 +4149,29 @@ tl_rule_end() {   # <the file's name>: the table just ended (tl_file's ctx, rid,
     fi
     unscanned "rule ${rid:-with no id} of the gitleaks config $1 carries a path condition (a path key), which the credential scan cannot apply: it reads the pushed lines as pieces named by number, not by their files' paths; a rule without a path condition is scanned, so remove the condition, or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
     tl_hit=1; rpath=0
+}
+tl_note() {   # <map variable> <line> <first segment> <one past the last> <L|T>: notes the names of the key just parsed (tl_segs from the first segment to the last, tl_orig as written), each name the segments up to it lower-cased and joined, in one table's map (a line per name: the name, its spelling, L for a key written with a value or T for a table's name, and its line), the last name of the kind given and the ones before it T; status 1, tl_dupk, tl_dups1, tl_dupl1, tl_dups2 and tl_dupl2 set (the name, and each writing's spelling and line), when a name meets its earlier writing in another spelling, or a key written with a value is written again
+    local m=${!1} i=$3 name="" sp="" kind e es ek el
+    while [ "$i" -lt "$4" ]; do
+        if [ "$i" -gt "$3" ]; then name=$name.; sp=$sp.; fi
+        name=$name${tl_segs[i]}; sp=$sp${tl_orig[i]}
+        kind=T; [ "$i" -lt $(($4 - 1)) ] || kind=$5
+        case "$m" in
+            *$'\n'"$name"$'\t'*)
+                e=${m#*$'\n'"$name"$'\t'}; e=${e%%$'\n'*}
+                es=${e%%$'\t'*}; ek=${e#*$'\t'}; el=${ek#*$'\t'}; ek=${ek%%$'\t'*}
+                if [ "$es" != "$sp" ] || { [ "$kind" = L ] && [ "$ek" = L ]; }; then
+                    tl_dupk=$name; tl_dups1=$es; tl_dupl1=$el; tl_dups2=$sp; tl_dupl2=$2
+                    return 1
+                fi
+                # a key with a value on a name first written as a table's, in
+                # the same spelling: the name is a key's from here on
+                if [ "$kind" = L ] && [ "$ek" = T ]; then m=${m/$'\n'"$name"$'\t'"$e"/$'\n'"$name"$'\t'"$sp"$'\t'L$'\t'"$2"}; fi ;;
+            *) m=$m$'\n'$name$'\t'$sp$'\t'$kind$'\t'$2 ;;
+        esac
+        i=$((i + 1))
+    done
+    printf -v "$1" '%s' "$m"
 }
 
 # One run of the scanner over a directory the hook wrote (the pieces, the
@@ -4382,7 +4455,14 @@ merge_binary_reads() {   # <count of routed paths the feed recorded>
 # xargs with no exec of its own. With about 127,000 bytes of environment under
 # ulimit -s 512 no process can be exec'd, bash and git included, so no push
 # runs; in the narrow band where bash starts and the hook's own execs do not
-# fit, the git reads ahead of this step refuse by name. Its status, under
+# fit, the first exec that does not fit may be the scratch mkdir of creds.d,
+# creds.p and creds.q (scan_credentials, ahead of this step), which ends the
+# hook under set -e with bash's Argument list too long line and no romp line:
+# the push is still refused, never published, and the header's scratch
+# paragraph (the scratch writers set -e ends the hook at; the round 7
+# refuter, 2026-09-23) covers that writer (the round 11 rulings' G,
+# correcting round 10's D, which said the git reads ahead of this step refuse
+# by name in all of the band). Its status, under
 # pipefail, is printf's or xargs', judged by scan_credentials (judged_read,
 # the DIRECTORIES read), which then tests each directory in the shell, so a
 # mkdir that failed, or directories left unmade, refuse the push with a romp
