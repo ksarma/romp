@@ -98,15 +98,15 @@ const read = (p) => fs.readFileSync(p, 'utf8');
 
 /** The jobs of the workflow: the `^  <key>:` lines after the `jobs:` line (a key of letters, digits, _ and - with only
  *  whitespace after its colon; a quoted key, or a key line with a comment after its colon, is not read, and its lines join
- *  the job before it, and jobKeys refuses such a line among a job's lines), each with its lines up to the
- *  next such line. A stated limit: jobs() carries nothing across a job key. A double-quoted value left open
- *  at the last line of the job before, or a block scalar of a key at no indent placed before the job key
- *  (`run-name: >-`), holds the job's key and lines as text in YAML, which then has no such job, and jobs()
- *  still reads the job (two rows of JOBS_ROWS). Another: a second job key placed before the job and spelled
- *  so jobs() does not read it (quoted, or with a space before its colon), or a second `jobs:` there, joins
- *  the job before it. Nothing refuses it there, since extensionJob runs jobKeys over its own job alone. The
- *  workflow then holds the key twice: PyYAML keeps the later one, which jobs() reads, and GitHub's handling
- *  of the duplicate is unverified (two rows of JOBS_ROWS). Its table: JOBS_ROWS, run by the test after it. */
+ *  the job before it, and jobKeys refuses such a line among a job's lines), each with its lines up to the next such
+ *  line. A stated limit: jobs() carries nothing across a job key. A double-quoted value left open at the last line of
+ *  the job before, or a block scalar of a key at no indent placed before the job key (`run-name: >-`), holds the job's
+ *  key and lines as text in YAML, which then has no such job, and jobs() still reads the job (two rows of JOBS_ROWS).
+ *  Another: a second job key placed before the job and spelled so jobs() does not read it (quoted, with a space before
+ *  its colon, or with a value on its line), or a second jobs key there, joins the job before it, and a quoted jobs key
+ *  above the `jobs:` line is not read at all. Nothing refuses either, since extensionJob runs jobKeys over its own job
+ *  alone. The workflow then holds the key twice: PyYAML keeps the later one, which jobs() reads, and GitHub's handling
+ *  of the duplicate is unverified (three rows of JOBS_ROWS). Its table: JOBS_ROWS, run by the test after it. */
 function jobs(text) {
   const lines = text.split('\n');
   const start = lines.findIndex((l) => /^jobs:\s*$/.test(l));
@@ -126,6 +126,7 @@ const JOBS_ROWS = [
   { what: 'a stated limit: a block scalar of a key at no indent before the job key holds the job\'s key and lines, which jobs() reads as a job and YAML as the scalar\'s text', text: 'jobs:\n  a:\n    steps:\n      - run: x\nrun-name: >-\n  vscode-extension:\n    steps:\n      - run: y\n', jobs: [{ key: 'a', lines: ['    steps:', '      - run: x', 'run-name: >-'] }, { key: 'vscode-extension', lines: ['    steps:', '      - run: y', ''] }] },
   { what: 'a stated limit: a quoted second job key before the job joins the job before it, and PyYAML keeps the later of the two keys, the one jobs() reads', text: 'jobs:\n  a:\n    steps:\n      - run: x\n  "vscode-extension":\n    steps:\n      - run: y\n  vscode-extension:\n    steps:\n      - run: z\n', jobs: [{ key: 'a', lines: ['    steps:', '      - run: x', '  "vscode-extension":', '    steps:', '      - run: y'] }, { key: 'vscode-extension', lines: ['    steps:', '      - run: z', ''] }] },
   { what: 'a stated limit: a second jobs: key before the job joins the job before it, and PyYAML keeps the later of the two keys, which holds the job jobs() reads', text: 'jobs:\n  a:\n    steps:\n      - run: x\njobs:\n  vscode-extension:\n    steps:\n      - run: z\n', jobs: [{ key: 'a', lines: ['    steps:', '      - run: x', 'jobs:'] }, { key: 'vscode-extension', lines: ['    steps:', '      - run: z', ''] }] },
+  { what: 'a stated limit: a quoted jobs key above the jobs: line is not read, and PyYAML keeps the later of the two keys, which holds the job jobs() reads', text: '"jobs":\n  vscode-extension:\n    steps:\n      - run: y\njobs:\n  vscode-extension:\n    steps:\n      - run: z\n', jobs: [{ key: 'vscode-extension', lines: ['    steps:', '      - run: z', ''] }] },
 ];
 test('jobs()\' table: each row\'s jobs read as jobs()\' docstring states', () => {
   const wrong = [];
