@@ -572,6 +572,14 @@ const BUILTINS = new Set(['Object', 'Array', 'JSON', 'Math', 'Date', 'String', '
 // definer fills the missing value in), so on a data property an undefined value is taken as no value: the property
 // keeps what it holds, as in a browser. (A define that really sets the check to undefined is taken the same way, and
 // missed: an undefined check refuses every message, which is no widening for the tests here to catch.)
+// One cost of that, in this harness only: the lock's own define throws here. The trap applies the lock with the value the
+// property holds, and the proxy then checks the define it was handed (value undefined) against the property, now
+// read-only with another value, and throws a TypeError (its invariant for a non-configurable property). The property is
+// locked with its value by then, and the lock line's own try absorbs the throw, so the boot script runs on; a browser
+// throws nothing there. A lock written without its try would abort the boot script here and not in a browser, so read
+// such an abort as the harness, not the page (CheckLocked's trap test runs the define bare and pins both halves).
+// The set trap's read-only clause below is a belt: vm refuses a write to a read-only property from its descriptor before
+// the trap runs, so the clause is not reached today.
 const G = new Proxy(target, {
   has() { return true; },
   get(t, k) { if (k in t) return t[k]; if (typeof k === 'symbol') return undefined; if (BUILTINS.has(k)) return globalThis[k]; return STUB; },
@@ -800,6 +808,14 @@ if (MODE === 'reads' || MODE === 'nocheck') {
   vm.runInContext("Object.defineProperty(window,'__rompPaneSourceOk',{get:function(){return function(e){return true;};}});", ctx);
   out.trap = { kept, writes: ASSIGNED.map((v) => (typeof v === 'function' ? textOf(v)
                                                   : (v && typeof v.get === 'function' ? 'an accessor' : 'another write: ' + String(v)))) };
+  // the lock's define without its try, on a property of another name holding a function: it throws here (the proxy's
+  // invariant, see the comment at G), and the property is locked with its value all the same
+  vm.runInContext("window.__b5lockProbe=function(e){return false;};", ctx);
+  let lockThrew = null;
+  try { vm.runInContext("Object.defineProperty(window,'__b5lockProbe',{writable:false,configurable:false});", ctx); }
+  catch (x) { lockThrew = (x && x.constructor && x.constructor.name) + ': ' + String(x && x.message || x).slice(0, 160); }
+  const pd = Object.getOwnPropertyDescriptor(target, '__b5lockProbe');
+  out.trap.bareLock = { threw: lockThrew, writable: pd.writable, configurable: pd.configurable, value: textOf(pd.value) };
 }
 out.inEffect = [...IN_EFFECT];
 process.stdout.write('\n' + JSON.stringify(out));
@@ -1116,8 +1132,21 @@ class CheckLocked(unittest.TestCase):
         # the lock's define changes attributes alone ({writable:false,configurable:false}): no write, and the check keeps
         # its value, so a page that locks the check still assigns it once and its listeners still read the adopted
         # function (ShellListenersExecuted). vm fills a missing value in as undefined before the trap sees it
-        self.assertEqual(_run_scripts([], "trap")["trap"], {"kept": "function(e){return false;}",
-                                                            "writes": ["function(e){return false;}", "an accessor"]})
+        trap = _run_scripts([], "trap")["trap"]
+        self.assertEqual({k: trap[k] for k in ("kept", "writes")}, {"kept": "function(e){return false;}",
+                                                                    "writes": ["function(e){return false;}", "an accessor"]})
+
+    def test_in_this_harness_the_lock_define_throws_and_still_locks_so_its_try_is_what_lets_the_boot_run_on(self):
+        # the harness quirk the comment at the stand-in global describes, pinned so the comment cannot go stale: run bare,
+        # the lock's define throws a TypeError here (a browser's does not), and the property is locked with its value
+        bare = _run_scripts([], "trap")["trap"]["bareLock"]
+        self.assertIsNotNone(bare["threw"], "the define throws in this harness")
+        self.assertTrue(bare["threw"].startswith("TypeError: "), bare["threw"])
+        self.assertIn("defineProperty", bare["threw"], "the proxy's defineProperty invariant, not a script error")
+        self.assertEqual({k: bare[k] for k in ("writable", "configurable", "value")},
+                         {"writable": False, "configurable": False, "value": "function(e){return false;}"},
+                         "locked, and holding the function it held")
+        self.assertIn("try{", LOCK, "the served lock line carries the try that absorbs it")
 
 
 # The adopted check alone, over stand-in windows: the truth table of what it admits.
