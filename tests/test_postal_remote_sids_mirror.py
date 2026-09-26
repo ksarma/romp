@@ -4550,5 +4550,228 @@ class PeerStateLock(unittest.TestCase):
                 with self.assertRaises(SyntaxError, msg="below 3.12 the parser refuses a type statement"):
                     self._plant(typed)
 
+
+# The records' two scans (round 6 of fork PR #897, the reviewer's round-5 ruling D on rules-1 and regression-2, over
+# rulings-r3 H): TheRecordsNameInRepoPins below.
+_REPO = os.path.dirname(HERE)
+_LEDGER_ENTRY = os.path.join(_REPO, "upstream", "2026-09-22-judge-remote-sids-read-path.md")
+_RECORD_TEST_NAME = re.compile(r"\btest_[A-Za-z0-9_]+")
+_RECORD_HISTORY_WORD = re.compile(r"\b(?:renamed|split)\b|\bnamed\b[\s\S]*?\buntil\b")
+_RECORD_PARAGRAPH_EDGE = re.compile(r'\n[ \t]*\n|"""')
+_RECORD_FILE_NAME = re.compile(r"[A-Za-z0-9_.*~/$-]*[A-Za-z0-9_*~$-]\.(?:py|log|sh|bats|md|json|jsonl|js|mjs|ts|txt|"
+                               r"toml|ya?ml|css|html|csv|out)\b")
+
+
+def _defined_test_names():
+    """Every `def test_...` name in a Python file under tests/, the population the refuter's git grep read."""
+    names = set()
+    for root, dirs, files in os.walk(HERE):
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("node_modules", "__pycache__")]
+        for f in files:
+            if f.endswith(".py"):
+                names.update(re.findall(r"\bdef (test_[A-Za-z0-9_]+)",
+                                        Path(root, f).read_text(encoding="utf-8", errors="replace")))
+    return names
+
+
+def _is_test_module(name, glob_):
+    """A test module's name (tests/<name>.py), or, followed by a *, a module glob that matches a module."""
+    if glob_:
+        return any(p.is_file() for p in Path(HERE).glob(name + "*.py"))
+    return os.path.isfile(os.path.join(HERE, name + ".py"))
+
+
+def _history_clause(text, lo, hi, start, end):
+    """The clause the test name at text[start:end] stands in, inside its paragraph text[lo:hi] (a paragraph ends at a
+    blank line or at a docstring's quotes). Inside a parenthetical: the whole parenthetical, with the test name right
+    before its opening, the name it annotates. Outside one: the name and what follows it up to the first comma,
+    semicolon, colon, sentence end or next test name, each parenthetical whole, so a name never borrows the pointer of
+    the name after it."""
+    depth, i = 0, start - 1
+    while i >= lo:
+        if text[i] == ")":
+            depth += 1
+        elif text[i] == "(":
+            if depth == 0:
+                break
+            depth -= 1
+        i -= 1
+    inside = i >= lo
+    depth, j = 0, end
+    while j < hi:
+        c = text[j]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0 and not inside and (c in ",;:" or (c == "." and (j + 1 == hi or text[j + 1].isspace()))
+                                            or _RECORD_TEST_NAME.match(text, j)):
+            break
+        j += 1
+    if not inside:
+        return text[start:j]
+    annotated = re.search(r"\btest_[A-Za-z0-9_]+\s*$", text[lo:i])
+    return (annotated.group(0) if annotated else "") + text[i:j + 1]
+
+
+def _record_names(text, defined, is_module):
+    """The test names text carries that no test in tests/ carries, as (stale, history), each a list of (line, name). A
+    name a test carries, a test module's name, or a module glob that matches a module (the name followed by a *) is
+    left out. Any other name is a HISTORY name when its clause (_history_clause) carries renamed, split or named ...
+    until and names a test that exists, the pointer to the test's current name; otherwise it is STALE."""
+    edges = [(m.start(), m.end()) for m in _RECORD_PARAGRAPH_EDGE.finditer(text)]
+    stale, history = [], []
+    for m in _RECORD_TEST_NAME.finditer(text):
+        name, glob_ = m.group(0), text.startswith("*", m.end())
+        if name in defined or is_module(name, glob_):
+            continue
+        lo = max([e for s, e in edges if e <= m.start()] or [0])
+        hi = min([s for s, e in edges if s >= m.end()] or [len(text)])
+        clause = _history_clause(text, lo, hi, m.start(), m.end())
+        points = _RECORD_HISTORY_WORD.search(clause) and any(n in defined for n in _RECORD_TEST_NAME.findall(clause))
+        (history if points else stale).append((text.count("\n", 0, m.start()) + 1, name))
+    return stale, history
+
+
+def _product_literals(sources):
+    """The string constants of the given sources that are not docstrings: the file names the product itself reads or
+    writes (session-flags.json), never a name a docstring only mentions."""
+    found = set()
+    for source in sources:
+        tree = ast.parse(source)
+        docs = {id(n.body[0].value) for n in ast.walk(tree)
+                if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.body
+                and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)
+                and isinstance(n.body[0].value.value, str)}
+        found.update(n.value for n in ast.walk(tree)
+                     if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs)
+    return found
+
+
+def _tree_file_names(root):
+    """The name of every file under root, dot directories, node_modules and __pycache__ left out."""
+    names = set()
+    for _base, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("node_modules", "__pycache__")]
+        names.update(files)
+    return names
+
+
+def _in_the_tree(name, root, file_names, literals):
+    """A file a record names is in the tree when its path, a glob allowed, matches a file under the repository root;
+    or, a bare file name, when a file in the tree carries it or a string constant of the product (literals) is that
+    name or ends in it, a state file the product reads or writes. A home path is never in the tree."""
+    if name.startswith(("~", "$", "/")):
+        return False
+    if "/" in name or "*" in name:
+        return any(p.is_file() for p in Path(root).glob(name))
+    return name in file_names or any(s == name or s.endswith("/" + name) for s in literals)
+
+
+def _files_outside_the_tree(text, in_tree):
+    """Every file name text carries (a name with a file extension, a path or a glob) that in_tree refuses, sorted."""
+    return sorted({m.group(0) for m in _RECORD_FILE_NAME.finditer(text) if not in_tree(m.group(0))})
+
+
+class TheRecordsNameInRepoPins(unittest.TestCase):
+    """The records of fork PR #897 name in-repo pins only (round 6, the reviewer's round-5 ruling D, over rulings-r3 H).
+    The ledger entry and the writer's docstring (_remote_sids_document) name no notes-directory log, tool or probe
+    script: the PR body alone names those, by name, never by path (rules-1). A verifier's road may still be credited by
+    name (rvRecur), since the rule is about files. And every test name that the ledger entry, postal/postal_service.py
+    and kernel/judge.py carry, the writer's and the judge's docstrings among them, names a test that exists in tests/, or
+    stands in a history clause with a pointer to the test's current name: a ledger paragraph keeps the name its commit
+    knew, followed by where the test went (regression-2, the refuter's shape). Both scans read text, so they pin what
+    the records name, not what the tests assert. The plants pin the scans: a scan that loses a rule turns a plant red.
+    THE LIMITS: the history rule reads the words renamed, split or named ... until and a current test name in the
+    clause, not whether the pointer names the right successor, which a reader checks against the commit it cites; the
+    file scan reads names with a file extension, so a record named without one is not seen; and a runtime file that the
+    product names only in prose (a Python docstring or comment, or a file another language writes) reads as outside the
+    tree, the restricted side, a file the two homes do not name."""
+
+    maxDiff = None                                  # a refusal lists every name it refuses
+
+    def test_every_test_name_the_ledger_and_the_two_modules_carry_names_a_test_or_points_to_one_from_a_history_clause(self):
+        defined = _defined_test_names()
+        self.assertGreater(len(defined), 10000, "the scan of tests/ found the suite's tests")
+        stale, history = [], {}
+        for rel in ("upstream/2026-09-22-judge-remote-sids-read-path.md", "postal/postal_service.py", "kernel/judge.py"):
+            got = _record_names(Path(_REPO, rel).read_text(encoding="utf-8"), defined, _is_test_module)
+            stale += ["%s:%d %s" % (rel, line, name) for line, name in got[0]]
+            history[rel] = got[1]
+        self.assertEqual(stale, [], "a test name a record carries names no test here and stands in no history clause "
+                         "pointing to its current name: name the test that exists, or keep the old name in a clause with "
+                         "renamed, split or named ... until and the current name")
+        self.assertTrue(history["upstream/2026-09-22-judge-remote-sids-read-path.md"],
+                        "the ledger keeps the names its paragraphs' commits knew, each with its pointer, so the history "
+                        "rule runs here and is not vacuous")
+
+    def test_the_writer_docstring_and_the_ledger_name_no_file_outside_the_tree(self):
+        literals = _product_literals([p.read_text(encoding="utf-8") for p in sorted(Path(_REPO, "kernel").glob("*.py"))
+                                      + sorted(Path(_REPO, "postal").glob("*.py"))])
+        names = _tree_file_names(_REPO)
+        homes = (("_remote_sids_document's docstring", pm._remote_sids_document.__doc__),
+                 ("the ledger entry", Path(_LEDGER_ENTRY).read_text(encoding="utf-8")))
+        for home, text in homes:
+            with self.subTest(home=home):
+                self.assertTrue(_RECORD_FILE_NAME.search(text), "the scan reads the files %s names" % home)
+                self.assertEqual(_files_outside_the_tree(text, lambda n: _in_the_tree(n, _REPO, names, literals)), [],
+                                 "%s names a file outside the tree: the PR body alone names a notes-directory log, "
+                                 "tool or probe script, by name, never by path" % home)
+
+    def test_the_name_scan_refuses_a_stale_name_with_no_pointer_of_its_own_by_name(self):
+        defined = {"test_now", "test_now_too"}
+
+        def is_module(name, glob_):
+            return name == "test_mod" or (glob_ and "test_mod".startswith(name))
+
+        cases = [
+            ("a name with no pointer", "The witness test_gone.", ["test_gone"]),
+            ("a pointer to the current name", "The witness test_gone (renamed at the fifth commit to test_now).", []),
+            ("a pointer to a name no test carries", "The witness test_gone (renamed at the fifth commit to test_mid).",
+             ["test_gone", "test_mid"]),
+            ("a chain ending at the current name",
+             "test_gone (renamed at the fifth commit to test_mid, and at the ninth to test_now).", []),
+            ("a pointer is not borrowed from the next name",
+             "test_gone and test_old (renamed at the fifth commit to test_now).", ["test_gone"]),
+            ("the reverse form inside a parenthetical", "The witness (test_now, named test_gone until then).", []),
+            ("a parenthetical annotating the current name", "test_now (its faces; named test_gone until round 6).", []),
+            ("a split into the names before it", "test_now and test_now_too (the fifth commit's test_gone, split in two).",
+             []),
+            ("a split naming no current test", "the fifth commit's test_gone (split in two).", ["test_gone"]),
+            ("a parenthetical with no history word", "test_now (the release; test_gone).", ["test_gone"]),
+            ("no pointer across a blank line", "(renamed to test_now\n\ntest_gone).", ["test_gone"]),
+            ("no pointer across a docstring's quotes", '(renamed to test_now """ test_gone).', ["test_gone"]),
+            ("a module and a module glob", "tests/test_mod.py and tests/test_mo*.py", []),
+            ("a glob that matches no module", "tests/test_zz*.py", ["test_zz"]),
+        ]
+        for label, text, want in cases:
+            with self.subTest(plant=label):
+                self.assertEqual([name for _line, name in _record_names(text, defined, is_module)[0]], want, label)
+
+    def test_the_file_scan_refuses_a_notes_directory_record_by_name(self):
+        literals = _product_literals(['def write():\n    """Appends its line to STATE/probe-recur-summary.log"""\n'
+                                      '    return STATE / "notes-api-state.json"\n'])
+        names = _tree_file_names(_REPO)
+        cases = [
+            ("a notes-directory log", "its log r4-x-probe-summary.log", ["r4-x-probe-summary.log"]),
+            ("a notes-directory log glob", "its logs r4-x-probe-*-py312.log", ["r4-x-probe-*-py312.log"]),
+            ("a notes-directory tool", "its tool r4-x-tools/add_road.py", ["r4-x-tools/add_road.py"]),
+            ("a home path", "~/notes/x.py and $HOME/y.log", ["$HOME/y.log", "~/notes/x.py"]),
+            ("an absolute path", "/abs/notes/x.log", ["/abs/notes/x.log"]),
+            ("a path in the tree", "tests/test_postal_remote_sids_mirror.py", []),
+            ("a glob over the tree", "tests/test_postal*.py", []),
+            ("a glob over nothing in the tree", "tests/test_zz_none*.py", ["tests/test_zz_none*.py"]),
+            ("a bare name a file in the tree carries", "kernel.py and postal_service.py", []),
+            ("a state file the product writes", "notes-api-state.json", []),
+            ("a name only a product docstring mentions", "probe-recur-summary.log", ["probe-recur-summary.log"]),
+        ]
+        for label, text, want in cases:
+            with self.subTest(plant=label):
+                self.assertEqual(_files_outside_the_tree(text, lambda n: _in_the_tree(n, _REPO, names, literals)), want,
+                                 label)
+
+
 if __name__ == "__main__":
     unittest.main()

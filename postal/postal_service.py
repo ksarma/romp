@@ -4773,17 +4773,16 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     the thirty-first commit the word stayed held at each). The host's kernel's answer ends the windows only for the
     sessions it names: a session started on the host since, whose mail rides the host's cached exchange at its
     kernel's next blink, answers rule 5 again at the second machine's next exchange (the reviewer's re-verifier at
-    the forty-eighth commit, by execution, its rvReblink road). The witness is the reviewer's re-verifier at the
-    forty-seventh commit, its rvRecur road through the real builders, handlers, folds, this bus's writer, the reader
-    and run_propagate under both root shapes: three windows, a courier settle standing in the second (its logs
-    r4-rvA2c-probe-recur-summary.log and r4-rvA2c-probe-recur-*-py312.log and its tool
-    r4-rvA2c-tools/add_recur_road.py, in the review's notes), pinned in tests/test_dead_session_staleness.py
-    ReaderFollowsTheWriter
+    the forty-eighth commit, by execution, its rvReblink road). Its witnesses, under both root shapes:
+    tests/test_dead_session_staleness.py ReaderFollowsTheWriter
     test_the_premise_violated_a_second_machine_that_keeps_exchanging_under_a_far_hosts_name_with_an_empty_listing_reopens_the_window_at_each_exchange
     (its pins recurs and the next word again, and the session the host's answer did not name answering rule 5
-    again) and by the settle's window settleAgain in
-    test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word. One exchange of such
-    a machine, the transient case, is the release's third race (under residual (3d) below), one window.
+    again) and the settle's window settleAgain in
+    test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word, on the road the
+    reviewer's re-verifier drove at the forty-seventh commit (rvRecur) through the real builders, handlers, folds,
+    this bus's writer, the reader and run_propagate: three windows, a courier settle standing in the second. One
+    exchange of such a machine, the transient case, is the release's third race (under residual (3d) below), one
+    window.
     The kernel's link state decides both (round 2 of
     fork PR #897, the reviewer's ruling): a session started on a host after its last heard roster is in no
     roster, so a host counted as vouching for absence while its link is down, or while the kernel has never
