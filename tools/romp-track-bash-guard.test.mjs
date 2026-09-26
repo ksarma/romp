@@ -281,9 +281,9 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // NOT RUN, and so is a different missing name beside the first binding shape (`q780-other-missing`); a name in the gate's table (bash, zsh,
 // dash, sh, ksh, busybox) is read wherever the text spells it as a word, a binding shape of it in an echo operand notwithstanding, so the
 // road holds only for names outside the table; no committed row takes it to a program a machine may lack: in every committed row whose text
-// sets aside a name, some shell binds that name where the row runs it, but for 17 commands whose binding the shells do not apply at the use
-// (AL-same-line and AL-unalias among them; a name bound anywhere is no program anywhere), which set aside only env and names no system
-// ships (c, foo, s, report.md, x.md), and the five rows a reading of command words alone would change bind their name by a file the row
+// sets aside a name where no shell binds that name at the row's use (AL-same-line, AL-unalias and AL-name-read-var among them; a name bound
+// anywhere is no program anywhere), the name set aside is env or one no system ships (c, foo, s, report.md, x.md), and the five rows a
+// reading of command words alone would change bind their name by a file the row
 // writes and sources or by an env operand (the sixty-sixth commit, on the reviewer's ruling A and decision 9: the test of THE STATED
 // LIMIT's roads of round 8 pins each witness here and below beside its control, a gate call each); a path the text spells whole more often
 // than the first walk reads it as a program, which the path reading sets aside whether or not the text makes it, a path the text only
