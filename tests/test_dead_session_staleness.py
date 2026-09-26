@@ -17,7 +17,8 @@ so rule 5 never fired; the fixtures here wrote the judge's dead path themselves 
 rule opened two roads to a false settle (fork PR #897, round 1): a bus restarted from empty memory
 wrote a first mirror naming nobody, and an expired legacy heartbeat was pruned from the file; the
 mirror now says per host whether the bus has heard it in its current process and whether its presence
-expired, rule 5 fires only when a REACHABLE host exists and none names the sid, and a sid only an
+expired, at round 1 rule 5 fired only when a REACHABLE host existed and none named the sid (the
+conditions the commits below add are stated whole at the twenty-ninth commit's sentence), and a sid only an
 unreachable host names, a mirror with no reachable host, or a mirror of another shape (a whitespace
 list from an older bus) answers cannot-determine, as the dead rule did. Since round 2's third commit
 the kernel's link state gates reachability too: a host whose link the kernel holds down cannot vouch
@@ -63,9 +64,11 @@ answers carry-lost, cannot-determine, until the bus has heard every host its ker
 Since the twenty-fourth commit (the reviewer's ruling of 15:45Z) the clear's answer is stated as the design's first-start
 answer: a session on a host that no linked host hears now is outside every source after the clear, as on a first start.
 Since the twenty-ninth commit (round 4 of fork PR #897, the reviewer's ruling on its round-3 refuters' finding) rule 5
-fires only when a host vouches for absence, none names the sid, no host HEARD in the bus's current process has an
-unanswered roster (held down or not, since the thirtieth commit; the twenty-ninth read reachable rows alone) and no
-lost-carry mark stands: while a heard row is unanswered the ladder answers listing-unanswered, cannot-determine, since a
+fires only when a host vouches for absence (an answered listing among its conditions, the eleventh commit's gate),
+none names the sid, no host HEARD in the bus's current process (held down or not, since the thirtieth commit; the
+twenty-ninth read reachable rows alone), and no host's row CARRIED from before the bus's restart (since round 6 of fork
+PR #897, the reviewer's decision 4 on round 5), has an unanswered roster, and no lost-carry mark stands: while a heard or
+carried host row is unanswered the ladder answers listing-unanswered, cannot-determine, since a
 session started on that host during its kernel's blink is in no row and its own mail rides the exchange that omits it,
 and a down notify after that exchange does not unsend it (until the twenty-ninth commit rule 5 presumed it closed whenever
 another row vouched, on four roads the refuters drove through the real builders, handler, writer and reader, and until the
@@ -185,10 +188,13 @@ NO_MIRROR = (False, None, "no-mirror")                         # written at a pa
 UNPARSABLE = (False, None, "mirror-unparsable")
 FIRST_START = ("a session on a host that no linked host hears now is outside every source after the clear, as on a first "
                "start")                                          # the reviewer's ruling of 15:45Z, the bound the clearing line states
-CLEARED_RULE_5 = ("the judge's rule 5 can presume it closed while a host vouches for absence and no host heard since this "
-                  "bus started has an unanswered roster")        # the clearing line's consequence: rule 5's whole condition
-#                                                                  (round 4 of fork PR #897, the thirtieth commit, the reviewer's
-#                                                                  ruling that every text stating rule 5's condition states the arm)
+CLEARED_RULE_5 = ("the judge's rule 5 can presume it closed while a host vouches for absence (heard with its link known up "
+                  "and its listing answered) and no host heard since this bus started, and no host's row carried from "
+                  "before it started, has an unanswered roster")  # the clearing line's consequence: rule 5's whole
+#                                                                  condition (round 4 of fork PR #897, the thirtieth commit, the
+#                                                                  reviewer's ruling that every text stating rule 5's condition
+#                                                                  states the arm; the answered gate and the carried rows since
+#                                                                  round 6, its round-5 ruling F and decision 4)
 
 
 def LOST(*sources):
@@ -224,11 +230,13 @@ def UNANSWERED(*sources):
     """The cannot-determine verdict of the listing-unanswered arm (round 4 of fork PR #897, the reviewer's ruling on its
     round-3 refuters' finding, the twenty-ninth commit, and the thirtieth): a host vouches for absence and none names the
     sid, but the roster of a row HEARD in the bus's current process is unanswered, whatever its link state, held down
-    included (the last answered rows its host's exchange served while its kernel listing did not answer), so a session
-    started on that host since is in no row; the reason names each such row, sorted by key, with why it cannot vouch, in
-    the hand-spelled form of LOST and NO_VOUCH. Until the twenty-ninth commit the reader answered rule 5 here whenever
-    another row vouched: residual (3) of the writer's docstring, a live session presumed closed; until the thirtieth it
-    did so for a held-down row (that commit's arm read reachable rows alone)."""
+    included (the last answered rows its host's exchange served while its kernel listing did not answer), or that of a
+    host's row CARRIED from before the bus's restart (round 6 of fork PR #897, the reviewer's decision 4 on round 5), so a
+    session started on that host since is in no row; the reason names each such row, sorted by key, with why it cannot
+    vouch, in the hand-spelled form of LOST and NO_VOUCH. Until the twenty-ninth commit the reader answered rule 5 here
+    whenever another row vouched: residual (3) of the writer's docstring, a live session presumed closed; until the
+    thirtieth it did so for a held-down row (that commit's arm read reachable rows alone), and until round 6 for a
+    carried row."""
     return (False, None, "listing-unanswered: " + ", ".join(sources))
 
 
@@ -525,8 +533,9 @@ class PresumedClosed(World):
                          "property, the disclosed residual (3), a live session presumed closed on the other host's vouch")
         self.assertEqual(self._verdict(DEAD), RULE_4, "...and the sid the cache names stays rule 4's")
         # the arm's conjuncts (the same ruling, and the thirtieth commit): a row HEARD in this bus process that is unanswered,
-        # whatever its link state, and nothing else. A cached row the kernel never reported up, beside a vouching host: the
-        # arm, both causes named
+        # whatever its link state, or a host's row CARRIED from before the bus's restart with its bit False (round 6 of fork
+        # PR #897, below), and nothing else. A cached row the kernel never reported up, beside a vouching host: the arm, both
+        # causes named
         _bus_wrote({HOST: _row([DEAD], link_up=False, answered=False), HOST2: _row([], link_up=True)})
         self.assertEqual(self._verdict(REMOTE), UNANSWERED(HOST + " (no link state, listing unanswered)"),
                          "a reachable cached row with no link state holds a sid nothing names too (cost (c)'s row shape)")
@@ -7201,7 +7210,10 @@ print(json.dumps(out))
         so the rule 5 the interleaving read there is the torn read's, not the road's. The up notify BEFORE R3 is another
         history: R2, heard and answered and no longer held down, is older than the hub's word and folds it, so goss is in
         no row until R3 names it. That is residual (1) as disclosed (postal/postal_service.py, the writer's docstring),
-        and this road is its witness here: rule 5 in the write after the notify, rule 4 after R3."""
+        and this road is its witness here: rule 5 in the write after the notify, a false rule 5 for a live session while a
+        host vouches for absence, and rule 4 after R3, B's next exchange, where the window ends; a completion, reply or
+        resolve for the sender decided inside the window stands (round 6 of fork PR #897, the reviewer's round-5 ruling F
+        on extra7-2)."""
         for shape, got in self.roads.items():
             with self.subTest(shape=shape):
                 for name in ("oneHoldLinkStateWriteFirst", "oneHoldLinkStateDialThenWrite", "oneHoldLinkStateWriteLast"):
@@ -7212,8 +7224,9 @@ print(json.dumps(out))
                 name = "oneHoldLinkStateUpFirst"
                 self.assertEqual(self._road(got, name, "written", "goss"), RULE_5,
                                  "RESIDUAL (1): the up notify before R3, R2 answered and not held down folds the hub's word, "
-                                 "so the session is in no row until B's next exchange")
-                self.assertEqual(self._road(got, name, "afterAll", "goss"), RULE_4, "R3, B's next exchange, closes the window")
+                                 "so the live session is in no row and answers rule 5 until B's next exchange; a settle "
+                                 "decided in that window stands")
+                self.assertEqual(self._road(got, name, "afterAll", "goss"), RULE_4, "R3, B's next exchange, ends the window")
 
     def test_a_peer_mode_beat_vouches_for_presence_alone_and_the_legacy_scheme_keeps_its_ttl_vouch(self):
         """Round 3 of fork PR #897, the reviewer's ruling on its refuters' finding (the peer-mode beat phase of the class
@@ -7673,7 +7686,8 @@ print(json.dumps(out))
                 self.assertEqual(len(said), 1, "the clearing said once: %r" % lost["busLog"])
                 self.assertIn(FIRST_START, said[0], "the clearing line states the ruled bound")
                 self.assertIn(CLEARED_RULE_5, said[0], "and its consequence, rule 5's whole condition (until the thirtieth commit "
-                              "the line stopped at the vouch and left out the listing-unanswered arm)")
+                              "the line stopped at the vouch and left out the listing-unanswered arm; until round 6 "
+                              "it left out the answered gate and the carried host rows)")
 
     def test_a_hub_the_only_link_restarted_clears_the_mark_and_its_far_hosts_session_answers_rule_5_as_on_a_first_start(self):
         """Round 3 of fork PR #897, the reviewer's ruling of 15:45Z, clause 5: THE NAMED WITNESS of the ruled road, through
@@ -7714,7 +7728,8 @@ print(json.dumps(out))
                 self.assertEqual(len(said), 1, "the clearing said once: %r" % cleared["busLog"])
                 self.assertIn(FIRST_START, said[0], "the clearing line states the ruled bound")
                 self.assertIn(CLEARED_RULE_5, said[0], "and its consequence, rule 5's whole condition (until the thirtieth commit "
-                              "the line stopped at the vouch and left out the listing-unanswered arm)")
+                              "the line stopped at the vouch and left out the listing-unanswered arm; until round 6 "
+                              "it left out the answered gate and the carried host rows)")
                 self.assertEqual((got["restartMemory25"], got["firstStartSeeded"], got["firstStartLinks"]), (fresh, True, [HOST2]),
                                  "the twenty-fifth restart is a fresh module object over no file, seeded with B alone")
                 self.assertIsNone(got["firstStartMark"], "a first start's seed writes no mark: nothing was lost")

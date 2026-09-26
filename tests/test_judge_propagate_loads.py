@@ -130,10 +130,13 @@ def _bus_hears_nobody_remote():
     whitespace list is the shape of a bus before 2026-09-22); since the round's fifth commit a heard host with
     no link state vouches for presence alone, so rule 5 needs the link up; since round 3's eleventh commit it
     needs an ANSWERED listing behind the roster too (`answered`: the host's exchange did not serve the last
-    answered rows through a kernel blink), so the row spells it; and since round 4's twenty-ninth commit no
+    answered rows through a kernel blink), so the row spells it; since round 4's twenty-ninth commit no
     row heard in the bus's current process may be unanswered either, held down or not since the thirtieth (the
-    reader's listing-unanswered arm), which this one row, answered, satisfies (SettleUnderTheUnansweredArm and
-    SettleWhenTheCachedHostIsHeldDown drive mirrors in which one is)."""
+    reader's listing-unanswered arm), and since round 6 no host's row carried from before the bus's restart
+    (the reviewer's decision 4 on round 5), which this one row, heard and answered, satisfies
+    (SettleUnderTheUnansweredArm and SettleWhenTheCachedHostIsHeldDown drive mirrors in which a heard row is
+    unanswered); and no lost-carry mark may stand (round 3's twenty-second commit), which this document,
+    carrying none, satisfies."""
     _mirror().write_text(json.dumps({"v": 2, "busStarted": T - 100, "writtenAt": T, "hosts": {
         "TESTHOST": {"kind": "peer", "sids": [], "heard": True, "expired": False, "linkDown": False, "linkUp": True,
                      "answered": True, "reachable": True, "vouchesAbsence": True, "seenAt": T}}}) + "\n")

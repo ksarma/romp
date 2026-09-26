@@ -4148,8 +4148,11 @@ def _remote_sids_lost_cleared(lost, table, links, seeded):
     of them clears it, and joins (a) to (c) once a bus in peer mode over the same root clears the mark: its session is
     named again by any linked host that hears it now, and is outside every source only when none does (the thirty-fifth
     commit; until then this sentence said the mark never clears under the legacy scheme, true of a bus on that scheme
-    and silent on the peer-mode bus that follows one). While a host vouches for absence and no host heard in this
-    process has an unanswered roster (the reader's listing-unanswered arm, the twenty-ninth and thirtieth commits: _remote_sids_document) the judge presumes a session outside
+    and silent on the peer-mode bus that follows one). While a host vouches for absence (heard with its link known up
+    and its listing answered) and no host heard in this process, and no host's row carried from before its start, has
+    an unanswered roster (the reader's listing-unanswered arm, the twenty-ninth and thirtieth commits, and for the
+    carried rows round 6 of fork PR #897, the reviewer's decision 4 on round 5: _remote_sids_document) the judge
+    presumes a session outside
     every source closed by rule 5 (True, 5, no-reachable-host-names-it), as it does on a first start, where the
     intact file's carried row would answer named-by-unreachable-host until an event about that far host (the carry keeps a via row whose hub gossips nothing
     about its far host: _remote_sids_document). No event this bus receives names a far host whose row was lost, and a
@@ -4896,17 +4899,24 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     far bus; one dropping a carried via row with no viaBus while its hub gossips any via row, which also takes the
     restarted hub's word about the second far host, a live session presumed closed). The
     gossip is never added to the direct row as a naming source: that would credit the host with a word it
-    did not give. RESIDUAL (1), disclosed as a bound and not closed by a timer: a direct row heard, not
-    held down and ANSWERED whose roster is OLDER than the hub's gossip folds it, so a session started on that
-    host since its last exchange is in no row until its next exchange names it, a window of one exchange
-    interval of that host, closed by that exchange (the event; the named witness, whose THE RESIDUAL assertion
-    holds that window and turns red when the residual closes: tests/test_postal_remote_sids_mirror.py
-    test_a_hubs_word_about_a_directly_held_host_folds_only_while_that_host_is_heard_and_not_held_down). The population of that residual is every
+    did not give. RESIDUAL (1), a false rule 5 whose window ends at an event, not at a timer: a direct row
+    heard, not held down and ANSWERED whose roster is OLDER than the hub's gossip folds it, so a session started
+    on that host since its last exchange is in no row until its next exchange names it, and while a host vouches
+    for absence (the hub, or the far host's own row with its link known up; both do in the witness) the reader
+    answers rule 5 for that live session, for up to one exchange interval of that host. The window ends at that
+    exchange (the event), but a settle decided inside it does not: a completion, reply or resolve for the sender
+    there settles the live session's card wrong for good, as RESIDUAL (3)'s opening below states for each false
+    rule 5 it lists (round 6 of fork PR #897, the reviewer's round-5 ruling F on extra7-2; until then this passage
+    called the window a bound closed by that exchange). The named witness, whose THE RESIDUAL assertions hold that
+    window, the rows and, since that round, the reader's rule-5 answer, each red under a writer that folds only
+    the sids the direct row names, and whose next step reads rule 4 once the host's next exchange names the
+    session: tests/test_postal_remote_sids_mirror.py
+    test_a_hubs_word_about_a_directly_held_host_folds_only_while_that_host_is_heard_and_not_held_down. The population of that residual is every
     heard row the kernel does not hold down whose last exchange carried an answered listing, the rows with no
     link state included: a far bus filed under the hostname it declares before this bus's own dial has folded
     it under the alias the kernel notifies (no PEERS row, so no link to hold down) folds the hub's gossip like
     a row the kernel holds up, and a session started there since its last dial to us is in no row until its
-    next dial (the event that closes it, the same one-exchange bound). A heard row whose last exchange served
+    next dial (the event that ends its window, the same one exchange interval). A heard row whose last exchange served
     a CACHED roster is NOT in that population: it speaks for nothing (_direct_row_speaks), so the hub's word
     about its host stands beside it as a via row, and a session started there during the blink that the hub
     names is rule 4's by that row (the eleventh commit's gate folded the hub's word into the cached row and so
@@ -5597,7 +5607,9 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
         _remote_sids_say("the remote-sids mirror's lost-carry mark of %s is cleared: every host the kernel holds a link to "
                          "has been heard since; a session on a host that no linked host hears now is outside every source "
                          "after the clear, as on a first start, and the judge's rule 5 can presume it closed while a host "
-                         "vouches for absence and no host heard since this bus started has an unanswered roster"
+                         "vouches for absence (heard with its link known up and its listing answered) and no host heard "
+                         "since this bus started, and no host's row carried from before it started, has an unanswered "
+                         "roster"
                          % time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(lost["at"])))
         lost = None
     if lost is not None:
@@ -5611,8 +5623,10 @@ def _write_remote_sids(released=()):
     roster it reported and whether this bus process has heard it (_remote_sids_document has the shape and
     the reasons). A sid absent from the local registry but named by a reachable source is a live REMOTE
     session whose local mirror store must never be presumed closed; a sid no source names is presumed
-    closed only when a source vouches for its absence, no source heard in this process has an unanswered roster
-    (held down or not) and no lost-carry mark stands (the reader's arms; _remote_sids_document). Two flags are computed here, per row,
+    closed only when a source vouches for its absence (`vouchesAbsence` below, its roster an answered listing), no
+    source heard in this process (held down or not), and no host's row carried from before its start (round 6 of fork
+    PR #897, the reviewer's decision 4 on round 5), has an unanswered roster, and no lost-carry mark stands (the
+    reader's arms; _remote_sids_document). Two flags are computed here, per row,
     and the reader reads them: `reachable` (heard, not expired, its link not held down by the kernel: the source vouches
     for the PRESENCE of the sids it names) and `vouchesAbsence` (heard, not expired, its roster an ANSWERED
     listing, and its link KNOWN UP, a dialable PEERS row up and the host heard since the link last dropped,

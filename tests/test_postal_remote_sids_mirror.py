@@ -12,9 +12,12 @@ a hub stamps the FAR host's bit on its gossip, `viaAnswered`; a legacy heartbeat
 `vouchesAbsence` (heard and not expired and answered and linkUp, or a heartbeat within its TTL under the legacy
 singleton scheme alone, ROMP_POSTAL_PEERS=0, peers_on() read at the write: the source vouches for the ABSENCE of a
 sid it does not name, rule 5's precondition), `sids`. The reader presumes a sid
-closed only when a source vouches for absence, none names it, no source heard in this process has an unanswered
-roster, held down or not (the reader's listing-unanswered arm, round 4 of fork PR #897, the twenty-ninth and thirtieth
-commits; this module runs no reader, tests/test_dead_session_staleness.py does) and no lost-carry mark stands. Two roads to a false settle closed here, at the
+closed only when a source vouches for absence (its roster an answered listing among the conditions), none names it,
+no source heard in this process, held down or not, and no host's row carried from before the bus's restart, has an
+unanswered roster (the reader's listing-unanswered arm, round 4 of fork PR #897, the twenty-ninth and thirtieth commits,
+and for the carried rows round 6, the reviewer's decision 4 on round 5) and no lost-carry mark stands; this module runs
+the reader in one witness alone, residual (1)'s (round 6 of fork PR #897, the reviewer's round-5 ruling F), and
+tests/test_dead_session_staleness.py runs it throughout. Two roads to a false settle closed here, at the
 writer:
   (1) a bus restarted from empty memory wrote its first mirror from that memory, naming nobody: every key
       the previous file named that this process has not heard is CARRIED FORWARD, its roster kept, heard
@@ -172,6 +175,11 @@ _ROOT = Path(os.environ["XDG_STATE_HOME"]) / "romp"
 _ROOT.mkdir(parents=True, exist_ok=True)
 (_ROOT / "session-hosts").write_text("off\n")
 pm = load_source("romp_postal_mirror", os.path.join(BIN, "romp-postal-service"))
+# the judge's reader under a private name, over the same root, for residual (1)'s witness (round 6 of fork PR #897, the
+# reviewer's round-5 ruling F): its STATE plus `postal` is the bus's STATE, where the writer puts the mirror
+jd = load_source("romp_judge_mirror", os.path.join(BIN, "romp-judge"))
+RULE_5 = (True, 5, "no-reachable-host-names-it")      # the reader's verdicts, (closed, rule, why), as
+RULE_4 = (False, 4, "named-by-reachable-host")        # _presumed_closed_verdict spells them
 
 A = "a5a5a5a5-0001-4000-8000-000000000001"   # private synthetic sids, never the shared placeholder
 B = "a5a5a5a5-0002-4000-8000-000000000002"
@@ -338,6 +346,20 @@ class Mirror(unittest.TestCase):
         """key -> answered: whether the row's roster is an answered listing (round 3 of fork PR #897), the second gate
         on absence beside the link. Read with .get, so a writer that does not spell it fails a pin by None."""
         return {k: r.get("answered") for k, r in json.loads(self.path.read_text())["hosts"].items()}
+
+    def _verdict(self, sid):
+        """(closed, rule, why): the judge's reader (kernel/judge.py _presumed_closed_verdict) over the file this writer
+        wrote, with no session discovered on this machine, so the ladder reaches the mirror (rules 4 and 5 and their
+        cannot-determine arms). Residual (1)'s witness alone reads it (round 6 of fork PR #897, the reviewer's round-5
+        ruling F). The reader must read this module's file: a reader over another root fails here, not by a verdict."""
+        self.assertEqual(jd.STATE / "postal" / "remote-sids", self.path, "the reader reads the file this writer writes")
+        found = jd.discover
+        jd.discover = lambda now, window=None, forks=True: []
+        try:
+            v = jd._presumed_closed_verdict(sid, self.now)
+        finally:
+            jd.discover = found
+        return (v.closed, v.rule, v.why)
 
     def _notify(self, host, up, port=50002):
         """The kernel's /peer notify for a tunnel transition, through the real handler (peer_update), which writes
@@ -838,22 +860,46 @@ class Mirror(unittest.TestCase):
         identity, the name the hub uses for the host or the bus id it stamps on the gossip (the row may sit under the
         alias the kernel dials). Until this round the writer folded it whenever the far host had a dialable PEERS row
         or a heard row, whatever that row's state (_via_duplicate, the display fold), and the second half of this test
-        asserted the fold with the direct row CARRIED: the regression round 2 found by execution. The fold's residual
-        is witnessed here, disclosed as a bound with the event that closes it, not closed by a timer."""
+        asserted the fold with the direct row CARRIED: the regression round 2 found by execution. The fold's residual,
+        RESIDUAL (1) of the writer's docstring, is witnessed here: a live session on the far host that the hub names and
+        the far host's older roster does not is in no row, and the reader answers rule 5 for it while the hub and the far
+        host's own row vouch for absence, a false rule 5 whose window ends at the far host's next exchange (the event),
+        not at a timer; a completion, reply or resolve decided inside the window stands (the settle's stickiness is
+        pinned in the release's windows: tests/test_dead_session_staleness.py
+        test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word). Round 6 of fork PR
+        #897 (the reviewer's round-5 ruling F on extra7-2) added the reader's answer beside the rows; until then this
+        test asserted the rows alone. Both THE RESIDUAL assertions turn red under a writer that folds only the sids the
+        direct row names, a closure of the residual (B then stands in a via row, rule 4)."""
         self._notify(FAR, up=True)                                            # the kernel's table: a direct link, up
+        self._notify(HUB, up=True)                                            # ...and the hub's, so the hub vouches too
         self._peer(FAR, [{"id": C, "name": "tests"}], bus_id="far-bus")       # heard in this process
         self._peer(HUB, [{"id": B, "name": "api", "via": FAR, "viaBus": "far-bus"},
                          {"id": C, "name": "tests", "via": FAR, "viaBus": "far-bus"}])
         pm._write_remote_sids()
-        self.assertEqual(self._rows(), {HUB: (True, False, []), FAR: (True, False, [C])},
-                         "heard and not held down: the far host's own word about its sessions, and no via row. THE RESIDUAL, "
-                         "disclosed as a bound: the hub names a session on the far host (B) that the far host's older roster "
-                         "does not, and that sid is in no row at this write, a window of one exchange interval of the far "
-                         "host, closed by its next exchange (the event), not by a timer")
+        vouch = self._vouch()
+        self.assertEqual((vouch.get(HUB), vouch.get(FAR)), ((True, True, True), (True, True, True)),
+                         "the premise: the hub and the far host each heard with its link known up and an answered listing, "
+                         "each vouching for absence (the two rows alone: the rows assertion below says which rows stand)")
+        with self.subTest(pin="THE RESIDUAL, the rows"):
+            self.assertEqual(self._rows(), {HUB: (True, False, []), FAR: (True, False, [C])},
+                             "heard and not held down: the far host's own word about its sessions, and no via row. THE "
+                             "RESIDUAL, the rows: the hub names a session on the far host (B) that the far host's older "
+                             "roster does not, and that sid is in no row at this write, for up to one exchange interval of "
+                             "the far host, until its next exchange (the event), not a timer (a writer that folds only the "
+                             "sids the direct row names writes a via row naming B here)")
+        with self.subTest(pin="THE RESIDUAL, the reader"):
+            self.assertEqual(self._verdict(B), RULE_5,
+                             "THE RESIDUAL, the reader: B is live on the far host and in no row, and while the hub and the far "
+                             "host's own row vouch for absence the reader answers rule 5, a false rule 5 until the far host's "
+                             "next exchange; a completion, reply or resolve for the sender decided in this window stands (a "
+                             "writer that folds only the sids the direct row names answers rule 4 here, B named by the hub's "
+                             "via row)")
+        self.assertEqual(self._verdict(C), RULE_4, "the sid the far host's own row names: rule 4")
         self._peer(FAR, [{"id": B, "name": "api"}, {"id": C, "name": "tests"}], bus_id="far-bus")   # the event
         pm._write_remote_sids()
         self.assertEqual(self._rows(), {HUB: (True, False, []), FAR: (True, False, [B, C])},
                          "the far host's next exchange names it")
+        self.assertEqual(self._verdict(B), RULE_4, "the window ends at the far host's next exchange: rule 4 for B")
         # by name alone: a hub that predates viaBus stamps none, and the row under that name speaks
         self._peer(HUB, [{"id": D, "name": "web", "via": FAR}])
         pm._write_remote_sids()
@@ -1422,7 +1468,7 @@ class Mirror(unittest.TestCase):
         ties the two names: the carried row's bus id is the old process's, and the hub's current word pairs the far bus
         with the new name. So the hub's old row and its via row stay carried, heard false, across the hub's exchanges under
         the new name, and the via row still names the ended session: the reader answers cannot-determine for it, named by
-        an unreachable host, where rule 5 would otherwise fire (this module runs no reader; these rows fix that verdict).
+        an unreachable host, where rule 5 would otherwise fire (this test runs no reader; these rows fix that verdict).
         The event that ends it is the hub heard under the old name again, this bus's own dial to the name the kernel
         dials, whose fold files the hub's current word there and drops the declared name's rows; a hub never heard under
         the old name again leaves them for the file's life. A carry that drops a carried via row when a heard via row from

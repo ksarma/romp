@@ -19557,8 +19557,9 @@ def _presumed_closed_verdict(sid, now):
          it declares before the bus's own dial has folded it under the alias the kernel dials, has no link
          state and still answers rule 4 for its own sids;
       5. at least one host VOUCHES FOR ABSENCE, none names it, no unreachable host's last roster names it
-         either, no host HEARD in the bus's current process has an unanswered roster (held down or not), and
-         no lost-carry mark stands → a dead
+         either, no host HEARD in the bus's current process (held down or not), and no host's row CARRIED from
+         before the bus's restart (round 6 of fork PR #897, the reviewer's decision 4 on round 5: _holds_the_arm),
+         has an unanswered roster, and no lost-carry mark stands → a dead
          determination, True. A host vouches for absence (`vouchesAbsence`, the writer's
          second flag, read here and never recomputed) only when heard, not expired, its roster an ANSWERED
          listing (`answered`, the writer's seventh flag: the `presenceAnswered` its exchange carried, False
@@ -19640,7 +19641,7 @@ def _presumed_closed_verdict(sid, now):
     that host's answer to a dial of the new process (until then a carried row held nothing, and such a session
     answered rule 5); the cost, a host never heard again holding every sid for the file's life, is the writer's.
     What the arm leaves open and what it costs are stated at postal_service.py _remote_sids_document, each
-    with its named witness: the sessions that still answer rule 5 (postal_service.py RESIDUAL (3), each with its
+    with its named witness: the sessions that still answer rule 5 (postal/postal_service.py RESIDUAL (3), each with its
     witness), and every state in which the arm holds rule 5 at cannot-determine. Unreachable is one arm
     whatever made the host so: rule 4 is a positive determination, live on another host, that only a host
     the bus can vouch for makes, and the closed field is False either way; the reason of each of the three
@@ -19730,7 +19731,7 @@ def _presumed_closed_verdict(sid, now):
         return Deadness(False, None, "carry-lost: %s at %s" % (           # nothing names may be one of theirs (the mark)
             lost["cause"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(lost["at"]))))
     return Deadness(True, 5, "no-reachable-host-names-it")               # a vouching host is reachable and none names it;
-    #                                                                      no heard roster a cache, no mark
+    #                                                                      no heard or carried host roster unanswered, no mark
 
 
 def _presumed_closed(sid, now):
