@@ -182,8 +182,11 @@ function keyRead(l, i) {
  *  a line with a tab in its leading whitespace. A quoted scalar or a flow collection that a line of the block or a
  *  line at the step's own level begins (the opener and each line of eight spaces the reader reads the key of, whatever
  *  that key is) is followed as YAML follows it. Its node begins at the line's key place (after its leading whitespace,
- *  any `- `, `? ` or `: ` indicator, and any tag or anchor) or at its value place (after a plain key's colon and a
- *  space, a tab or the line's end, or after a quoted key closed on the line and its colon, then any such indicator, tag
+ *  any `- `, `? ` or `: ` indicator, and any tag or anchor that a space, a tab, the line's end, a quote, `[` or `{`
+ *  follows: a tag is `!` and the text up to the next whitespace, commas and brackets among it, as PyYAML reads them,
+ *  or, read first, a verbatim tag, `!<`, the text up to the next `>`, and the `>`, and an anchor is `&` and the text
+ *  up to the next whitespace, comma, bracket or brace) or at its value place (after a plain key's colon and a space,
+ *  a tab or the line's end, or after a quoted key closed on the line and its colon, then any such indicator, tag
  *  or anchor, as at the key place), and a quote anywhere else, inside a plain scalar (`NOTE: a'b`) or in a comment,
  *  begins nothing. A line that begins a single- or double-quoted scalar and does not close it (inside single quotes two
  *  single quotes are a quote, and inside double quotes a backslash escapes the next character) is refused, and so is
@@ -214,7 +217,7 @@ function steps(job) {
   const opens = (l, i, quote, key) => {
     for (;;) {
       if (!quote) {
-        i += /^(?:[-?:](?:[ \t]+|$)|(?:![^\s,[\]{}]*|&[^\s,[\]{}]+)(?:[ \t]+|$|(?=[[{])))*/.exec(l.slice(i))[0].length;
+        i += /^(?:[-?:](?:[ \t]+|$)|(?:!<[^>\s]*>|!\S*(?!\S)|&[^\s,[\]{}]+(?![^\s,[\]{}]))(?:[ \t]+|$|(?=[[{'"])))*/.exec(l.slice(i))[0].length;
         if (l[i] === '[' || l[i] === '{') return FLOW;
         if (l[i] === '"' || l[i] === "'") { quote = l[i++]; continue; }
         if (!key) return null;
@@ -408,6 +411,12 @@ const ENV_ROWS = [
   { what: 'two backslashes before a double quote, an escaped backslash and the close, read', lines: ['        env:', ENV_ON, '          NOTE: "a\\\\"', ENV_NO], env: { ...ENV_BOTH, NOTE: '"a\\\\"' }, refused: [] },
   { what: 'a blank line inside a quoted value, neither read nor refused, and a # line that closes it, refused as its text', lines: ['        env:', ENV_ON, '          NOTE: \'a', '', '  # b\'', ENV_NO], env: ENV_BOTH, refused: ['          NOTE: \'a', '  # b\''] },
   { what: 'a tag before a single-quoted value opened on the switch\'s key line, followed as the quote is', lines: ['        env:', '          ' + SWITCH + ': !!str \'1', ENV_ON, '        \'', ENV_NO], env: { NODE_OPTIONS: '--test-only' }, refused: ['          ' + SWITCH + ': !!str \'1', ENV_ON, '        \''] },
+  { what: 'a verbatim tag holding a comma before a single-quoted value on a line of eight spaces before the env line, spanning it and closed on a line of eight spaces: the four lines refused, and the env not read', lines: ['        shell: !<tag:yaml.org,2002:str> \'a', '        env:', ENV_ON, '        b\''], env: {}, refused: ['        shell: !<tag:yaml.org,2002:str> \'a', '        env:', ENV_ON, '        b\''] },
+  { what: 'a tag holding a comma before a single-quoted value in the block, followed as the quote is, and NODE_OPTIONS after its closing line read', lines: ['        env:', ENV_ON, '          NOTE: !a,b \'x', '        \'', ENV_NO], env: ENV_BOTH, refused: ['          NOTE: !a,b \'x', '        \''] },
+  { what: 'a tag holding a closing bracket before a flow collection in the block, refused with every later line of the step', lines: ['        env:', ENV_ON, '          NOTE: !a]b [', ENV_NO, '        ]'], env: ENV_SW, refused: ['          NOTE: !a]b [', ENV_NO, '        ]', '        run: x'] },
+  { what: 'a verbatim tag directly followed by a single-quoted value, which a YAML reader can take as the value\'s tag, followed as the quote is, and NODE_OPTIONS after its closing line read', lines: ['        env:', ENV_ON, '          NOTE: !<t>\'x', '        \'', ENV_NO], env: ENV_BOTH, refused: ['          NOTE: !<t>\'x', '        \''] },
+  { what: 'a tag followed by a no-break space, which is not a space or a tab, is not read as a tag, and the quote inside it begins nothing: the value read', lines: ['        env:', ENV_ON, '          NOTE: !a\'x y', ENV_NO], env: { ...ENV_BOTH, NOTE: '!a\'x y' }, refused: [] },
+  { what: 'an anchor followed by a comma is not read as an anchor, and the quote inside it begins nothing: the value read', lines: ['        env:', ENV_ON, '          NOTE: &a\'x,', ENV_NO], env: { ...ENV_BOTH, NOTE: '&a\'x,' }, refused: [] },
   { what: 'a quoted key left open, refused with its closing line', lines: ['        env:', ENV_ON, '          \'NOTE', '        \': x', ENV_NO], env: ENV_BOTH, refused: ['          \'NOTE', '        \': x'] },
   { what: 'a single-quoted value opened after a quoted key, refused with its closing line', lines: ['        env:', ENV_ON, '          "NOTE": \'a', '        \'', ENV_NO], env: ENV_BOTH, refused: ['          "NOTE": \'a', '        \''] },
   { what: 'a single-quoted value opened after "- ", refused with its closing line', lines: ['        env:', ENV_ON, '          - \'a', '        \'', ENV_NO], env: ENV_BOTH, refused: ['          - \'a', '        \''] },
