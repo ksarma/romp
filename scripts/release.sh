@@ -242,15 +242,17 @@ else
     say "running the Python suite..."
     # Resolve a suite environment instead of assuming a system-wide pytest (the v0.13.0 run died
     # on a bare ModuleNotFoundError mid-release on a box with only a repo venv). Prefer a WORKING
-    # ambient `python3 -m pytest`; else run through uv's throwaway env with CI's exact dep set
-    # (pytest + cryptography — .github/workflows/ci.yml's install step: cryptography is the Web
-    # Push soft dependency, without it the webpush tests silently skip); neither → die LOUDLY
-    # naming both remedies BEFORE any release state is at stake.
+    # ambient `python3 -m pytest`; else run through uv's throwaway env with pytest and cryptography
+    # (cryptography is the Web Push soft dependency, without it the webpush tests silently skip).
+    # That is not CI's whole set: .github/workflows/ci.yml's Python job also installs pytest-timeout,
+    # for a per-test timeout this run does not ask for, and pytest-xdist, without which the few
+    # tests that run a child pytest under -n skip. Neither → die LOUDLY naming both remedies BEFORE
+    # any release state is at stake.
     if [ -z "$PYTEST" ]; then
         if python3 -m pytest --version >/dev/null 2>&1; then
             PYTEST="python3 -m pytest"
         elif command -v uvx >/dev/null 2>&1; then
-            say "no ambient pytest — running the suite through uv's throwaway env (pytest + cryptography, CI's dep set)"
+            say "no ambient pytest: running the suite through uv's throwaway env (pytest + cryptography)"
             PYTEST="uvx --with pytest --with cryptography pytest"
         else
             die "no way to run the Python suite: python3 has no pytest and uv is not installed.
