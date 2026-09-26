@@ -1073,9 +1073,10 @@ class CheckLocked(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # the served shell, as it is: the pins below read this run alone, so they fail on their own assertions when the
+        # lock is missing or weakened (the contrast builds its page in its own test)
         html = km._landing()
         cls.locked = _run_scripts(_inline_scripts(html), "overwrite")
-        cls.unlocked = _run_scripts(_inline_scripts(_without_lock(html)), "overwrite")
         i = html.index(REGION_HEAD)
         cls.fn = html[i:html.index(REGION_TAIL, i) + len(REGION_TAIL)][len("window.__rompPaneSourceOk="):-1]
 
@@ -1100,9 +1101,10 @@ class CheckLocked(unittest.TestCase):
         # the contrast: the same page less its lock line. Each attempt runs without an error and lands, and the listeners
         # then read messages from senders the adopted check refuses: so every attempt above is a working replacement,
         # and a replacement that lands is one these tests see
-        self.assertEqual(self.unlocked["descriptor"], {"writable": True, "configurable": True, "enumerable": True,
-                                                       "value": self.fn, "accessor": False})
-        got = self.unlocked["attempts"]
+        unlocked = _run_scripts(_inline_scripts(_without_lock(km._landing())), "overwrite")
+        self.assertEqual(unlocked["descriptor"], {"writable": True, "configurable": True, "enumerable": True,
+                                                  "value": self.fn, "accessor": False})
+        got = unlocked["attempts"]
         self.assertEqual(sorted(got), sorted(self.ATTEMPTS))
         for name in self.ATTEMPTS:
             with self.subTest(attempt=name):
