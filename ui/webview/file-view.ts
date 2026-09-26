@@ -4655,15 +4655,15 @@ const SHEET_STACK_CLASSES: ReadonlySet<string> = new Set([
  *  and SHEET_PRESS_THROUGH_CLASSES take off every element and SHEET_DIM_CLASSES off a figure's ancestors. A stacking context around
  *  a picture holds its control's z-index 1 inside it (SHEET_STACK_CLASSES's docstring says what that z-index keeps), so
  *  dropStackClasses takes these off each figure and every element above it. The rule counts on the safe side: a class whose only
- *  rules no element around a picture can match (a subject that also needs a class another list takes, an id, a data- attribute the
- *  sanitizer strips, a form control it removes, the body) is listed too, and its drop takes nothing from what an author's markup
- *  shows. Held to the sheets both ways by file-figure-open.test.ts, which derives the list by this rule, names each class the sheets
+ *  stacking rules no element around a picture can match (a subject that also needs a class another list takes, an id, a data-
+ *  attribute the sanitizer strips, a form control it removes, the body) is listed too. Held to the sheets both ways by file-figure-open.test.ts, which derives the list by this rule, names each class the sheets
  *  would make a stacking context around a picture that the list lacks and each listed class they no longer do, and names each rule
  *  that would make an element a stacking context with no class in its subject, an element that could hold a picture's control
- *  (no void element and no tag the sanitizer removes) and no id: no drop of a class undoes such a rule's reach. Two of
- *  the listed classes carry an author's own layout: fileview-load and wt-hostload style a picture's wrapper (a flex row,
- *  and the inner picture's size and its spin), so dropping them takes that layout from a note whose author used the class,
- *  though the picture and its control stay. */
+ *  (no void element and no tag the sanitizer removes) and no id: no drop of a class undoes such a rule's reach. Its cost, as
+ *  dropDimmingClasses states its own: an author element of a listed class around a picture loses what that class gave it, its
+ *  layout included, a class listed on the safe side too, and one class's drop hides a picture outright: an element of the
+ *  classes picker-error and show loses show and stands at picker-error's display none, the picture inside it hidden, which
+ *  fails closed (the file review's round 18, extra6-1 and extra7-5). */
 const SHEET_CONTEXT_CLASSES: ReadonlySet<string> = new Set([
   "ask-btn", "composer-stage-btn", "ctx-swatch", "fask-secbtn", "fc-arrivals", "fc-clip", "fc-replies", "fc-sec", "fconfirm-btn",
   "feed-cols", "fileview-load", "fl-prov-swirl", "fold-caret", "host-dial-swirl", "meta-held-mark", "path-load-spin",
@@ -4678,8 +4678,9 @@ const SHEET_CONTEXT_CLASSES: ReadonlySet<string> = new Set([
  *  coordinator's decision 4 on it). Every element for the first list, since an element the sheets would raise may stand anywhere in
  *  the document; a figure's ancestors for the second, the dimming drop's scope, since the control stands beside the figure's anchor
  *  and a stacking context holds it only from an element above it (an svg image as dropDimmingClasses reads one, since the fence
- *  pass can make an HTML img of it). Its cost: an author's element of one of these page classes loses the stacking, the shift, the
- *  turn or the press and hover scale that class gave it. The chat's md() does not run it (the pass is the viewer's, not md-sanitize.ts's). */
+ *  pass can make an HTML img of it). Its cost, as dropDimmingClasses states its own: an author's element of one of these page classes
+ *  loses what that class gave it, its layout included (SHEET_CONTEXT_CLASSES's docstring names the drop that hides a picture; the
+ *  file review's round 18, extra6-1 and extra7-5). The chat's md() does not run it (the pass is the viewer's, not md-sanitize.ts's). */
 function dropStackClasses(root: Element): void {
   root.querySelectorAll("[class]").forEach((e) => {
     const stack = (e.getAttribute("class") || "").split(/\s+/).filter((c) => SHEET_STACK_CLASSES.has(c));
@@ -4740,7 +4741,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const clean = sanitizeMd(dirty, mintHeadingIds);   // the sanitized <body>: DOMPurify's own document's, which never loads (below)
   if (doc && doc.kind === "file") dropDimmingClasses(clean);   // an author's dimming class off every figure's ancestors, before any pass of the viewer's own (dropDimmingClasses)
   if (doc && doc.kind === "file") dropPressThrough(clean);     // and off every author element what would let a press pass through it, so the hit test reads it (dropPressThrough)
-  if (doc && doc.kind === "file") dropStackClasses(clean);     // and off every author element the classes that would raise it to the control's stacking level, and off a figure's ancestors the classes that would make one a stacking context around it (dropStackClasses)
+  if (doc && doc.kind === "file") dropStackClasses(clean);     // and off every author element the classes that would raise it to the control's stacking level, and off a figure's ancestors the classes that would make one a stacking context around it, each such element losing what that class gave it, its layout included (dropStackClasses)
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers (the same no-guessing rule as
   // langFor; an unnamed block stays plain rather than being painted at random). Then, for EVERY fence, named or not, the
   // chat's own dress (code-block.ts): the per-line rows that number the lines and make a soft-wrap read distinctly from a
