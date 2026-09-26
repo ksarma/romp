@@ -226,11 +226,72 @@ a running session declares its full per-session env: any var you don't name
 again is dropped, and `romp new --no-env <name>` declares the empty set, which
 clears them all. Keep secrets out of it: each value is copied into
 per-session files and the session registry under `~/.local/state/romp/`. A
-credential never goes in `--env`, and never in `service.env` either: a payload
-naming `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN`
-is refused outright. A session's credential is Claude Code's own resolution,
-the `apiKeyHelper` in its settings for a key and the login otherwise; see
-[Service environment and credentials](#service-environment-and-credentials).
+credential never goes in `--env`: a payload naming `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN` is refused outright, and so
+is one naming any other credential-shaped variable with a non-empty value (a
+name ending `_API_KEY` or `_TOKEN`, or one of 1Password's `OP_*` names, in any
+letter case for both; the same rule the hosted launch uses to keep such a name
+out of its `spawn.json`, and romp's own `ROMP_SERVE_TOKEN` is refused like any
+other). The refusal names the variable, never its value, and nothing is saved:
+a running session's env stays what it was. Where such a value belongs depends
+on which half of the rule it matched. Another provider's `_API_KEY` or
+`_TOKEN` variable goes in the process environment romp's service starts with
+(`service.env`, or the service unit's environment), which reaches every
+session's Claude process (the boot line described under
+[Service environment and credentials](#service-environment-and-credentials)
+names those variables), or a session's own shells load it from a secret
+manager themselves. The retired provider names (`ROMP_API_KEY_CMD`,
+`ROMP_API_KEY_REF` and `ANTHROPIC_API_KEY`) and 1Password's `OP_*` names never
+go in `service.env`: the boot check refuses them, as that section says, reading
+each name as spelled (`op`'s upper-case spellings; a lower-case `OP_*` spelling
+is refused at this door, which folds case, and not at boot). The other two
+Claude names, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN`, are not
+refused at boot: found in the kernel's own environment they are claimed at boot
+and handed to login-billed launches ([the login](#the-login)), and a pick
+naming either is refused at this door for its own reason. romp no longer runs
+`op`, so a helper that needs a 1Password token reads it from a file of its own,
+or the session's shells load it. A session's credential is Claude Code's own
+resolution, the `apiKeyHelper`
+in its settings for a key and the login otherwise. An env stored before this
+rule keeps launching as it was and is named once per session in the problem
+ring, names only: the session launches with the variable, and its value sits
+in the session registry and in the session's `sdk-flag-settings/<sid>.json`.
+Nothing in this change removes a value already stored; that is a separate
+decision. Until it is made, a re-declaration (`romp new --env` with the rest
+of the set, or `--no-env`) does what it did before the door: the registry
+follows it at once, the flag-settings file only at the session's next connect
+that writes it, and a file nothing rewrites stays as it was. A fork of that
+session (a cut turn, a comment thread) inherits its parent's env less any such
+name, so a fork's env can differ from its parent's by exactly those names; the
+parent's registry keeps it. After a re-declaration drops such a name from
+the registry, no row is filed or refreshed for it, and a row already in the
+ring leaves at the ring's roll-off or the kernel's restart, because the row
+reads the registry and not the file, which keeps the value until a connect
+that writes it. The problem ring shows the most recent problems, so the check
+is the command below, not the error centre. It lists, by name
+only, the stored offenders in the two launch files it reads, the per-session
+flag-settings files and the session registries, and in the temp file a kernel
+killed mid-write can leave beside either (`<sid>.json.<pid>.<hex>.tmp`, which
+holds what was being written; one caught mid-write can be truncated JSON,
+which is reported as unreadable rather than passed over). A pick parked in
+`pending-ops.json` is not read here; the door judges it at replay. The rule it
+spells is the doors' own, so it names exactly what they refuse. A file it
+cannot read, or that is not a settings object, is reported on stderr and
+skipped, never passed over in silence:
+
+```bash
+python3 -c 'import glob, json, os, sys
+S = os.environ.get("ROMP_STATE_DIR") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "romp")
+for p in sorted(glob.glob(S + "/sdk-flag-settings/*.json*") + glob.glob(S + "/sdk/*.json*")):
+    try: body = json.load(open(p))
+    except (OSError, ValueError) as e: print(p, "skipped: unreadable (%s)" % e.__class__.__name__, file=sys.stderr); continue
+    if not isinstance(body, dict) or not isinstance(body.get("env") or {}, dict): print(p, "skipped: not a settings object", file=sys.stderr); continue
+    env = body.get("env") or {}
+    for n in sorted(env):
+        u = n.upper()
+        if (env[n] or "").strip() and (u.endswith(("_API_KEY", "_TOKEN")) or u.startswith("OP_SESSION_") or u in ("OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN", "OP_ACCOUNT")):
+            print(p, n)'
+```
 
 Two things to know before building on `romp sessions --json`. **`waiting` means
 at rest**, the ordinary state of a session that has finished its turn, so
@@ -1406,7 +1467,7 @@ a session can print, so there is no quiet fallback anywhere.
 
 At boot the kernel also names, once and as information rather than a problem,
 the variables in its own environment shaped like credentials (names ending
-`_API_KEY` or `_TOKEN` in any letter case, and 1Password's own `OP_*` names)
+`_API_KEY` or `_TOKEN`, and 1Password's own `OP_*` names, in any letter case)
 that reach every session's Claude process and the shells it spawns: the SDK
 hands each session the kernel's environment, and romp takes only the login
 tokens it claims at boot (see [The login](#the-login)) out of it. The line
@@ -2097,7 +2158,7 @@ spawn specification the kernel writes
 (`hosts/<sid>/spawn.json`, the plain fields of the SDK's options, at mode 0600
 in a 0700 directory, since it carries the environment overlay; a login token
 whatever its value, and any other name of that overlay carrying a value that
-ends `_API_KEY` or `_TOKEN`, in any letter case, or is one of 1Password's, is
+ends `_API_KEY` or `_TOKEN` or is one of 1Password's, in any letter case, is
 left out of the file and rides the host's process environment instead), through the
 SDK's own subprocess transport, so the command line and the environment are
 the SDK's byte for byte. It reads the CLI's stdout without pause and appends
