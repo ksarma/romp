@@ -3490,6 +3490,14 @@ class PopulationCheckReds(unittest.TestCase):
         refused = run_pytest_status(src)[1]
         self.assertEqual([r[0] for r in refused], [line], refused)
         self.assertIn("the expression ${{ matrix.workers }}, a shape batch 917's evaluator does not read", refused[0][2])
+        # an expression on another line of the run text: the pytest row is the same in every cell, so it is one row, read
+        # for every cell (os None), where a row per cell would report the one command twice
+        other_line = self._with_shell_job_env(self._with_step_in_shell_job(
+            "      - name: Expression on another line (pytest)\n        run: |\n"
+            "          echo ${{ matrix.os == 'ubuntu-latest' && 'linux' || 'other' }}\n"
+            "          python -m pytest tests/test_a.py -q -p no:anyio\n")[0])
+        inv = [i for i in pytest_invocations(other_line) if (i["job"], i["step"]) == ("shell", "Expression on another line (pytest)")]
+        self.assertEqual([(i["os"], verdict(i)) for i in inv], [(None, "ok")], [_describe(i) for i in inv])
         # part 5 reads each cell's text too: an earlier step of the job whose value joins GITHUB_ENV across the
         # expression's edge, where the text as written spells no name, is refused at its line
         name = "      - name: Run pytest\n"
