@@ -15561,10 +15561,200 @@ def _begin_checkpoint_cycle():
     """The pusher cycle's START (T362 round one, lows 2 and 3): the cycle's checkpoint byte budget is whole again, shared by the
     builds' quiescence-drop writes and the converge pass near the cycle's end (the boot's first builds are capped where the
     volume is; before, the pass began the cycle and the first cycle's drops ran uncapped), and the drops an earlier cycle
-    deferred are paid with this cycle's room, oldest first, no fold over their files needed. The pass's off switch
-    (ROMP_CKPT_CONVERGE_MS=0) covers the drop write: the cycle begins with no budget, and the drop pops as before T362."""
+    deferred are paid with this cycle's room, oldest first, no fold over their files needed; then the releases at an agent's
+    end, against the same room (_release_ended_agents: the cycle's live-set events drained, the owed release of an agent whose
+    start that drain carries cancelled while the kernel holds the agent's end, the owed releases paid, the ends an earlier
+    cycle saw while nothing was held released again, then the batch's ends).
+    The order carries a property: each cycle pays what an earlier cycle deferred before any end that is new to it, so the
+    owed quiescent drops and the owed releases are each paid before the batch's ends. They take their writes from one budget,
+    each in one step (em.checkpoint_cycle_take), so whichever runs first gets the room when only one document fits. An owed
+    drop's only other payer is a later fold over its file, which may never come; with the new ends first, a steady stream
+    of them could defer an owed drop or an owed release at every cycle and leave its records resident. The pass's off
+    switch (ROMP_CKPT_CONVERGE_MS=0)
+    covers the drop write: the cycle begins with no budget, and the drop pops as before T362 (with the drop writes off, a
+    release at an agent's end keeps the entry of a file still on disk instead of popping it unwritten)."""
     em.checkpoint_cycle_begin(CKPT_CONVERGE_BYTES if CKPT_CONVERGE_MS > 0 else 0)
     em.checkpoint_pay_owed_drops()
+    _release_ended_agents()
+
+
+_AGENT_RELEASED = {}                # (sid, agent id) -> [path, taken] for the ends _release_ended_agents released an entry for
+#                                     (taken True) or owed a release (taken False until checkpoint_pay_owed_releases takes it; at a
+#                                     cycle that paid any owed release, an owed end whose release was not taken and is no longer
+#                                     owed is dropped, or moved to _AGENT_ENDED_UNHELD when the pay found nothing held), oldest
+#                                     first, at most _AGENT_RELEASED_MAX: a start of the agent that a cycle drains after its
+#                                     release was taken is a false end (recordCache.falseEnds), after a release still owed it
+#                                     cancels that release, and after one never taken it counts nothing. A start dropped past the
+#                                     queue's bound is never drained, and one drained after the end left this table finds nothing,
+#                                     so neither cancels an owed release nor counts a false end. The pusher thread's alone
+_AGENT_RELEASED_MAX = 4096
+_AGENT_ENDED_UNHELD = {}            # (sid, agent id) -> path for the ends seen while the record cache held nothing for the agent's
+#                                     file (release_entry answered "absent", at the batch or at the owed releases' pay: no entry
+#                                     with weight stood for the file, among them an end drained before any read held it, an entry
+#                                     evicted or popped before the release finished, and an agent's later end after its earlier
+#                                     release was taken, as its task's end or its workflow slot's done state after its stop, so
+#                                     the first whole re-read after that end is released at the next cycle), oldest first, at most
+#                                     _AGENT_RELEASED_MAX (past it the oldest is forgotten and not counted: it held nothing when it
+#                                     was last paid). Released again at each cycle, so a read that holds the file after the end is
+#                                     released at the first cycle after it; a start of the agent that a cycle drains, a release
+#                                     that pops the path, and every outcome but absent of the pair's own release forget it (a start
+#                                     queued after the drain of the cycle that releases the file, or dropped past the queue's
+#                                     bound, does not, and a release taken then pops the running agent's entry). The pusher
+#                                     thread's alone
+
+
+def _note_agent_released(pair, path, taken):
+    """Record `pair`'s end in _AGENT_RELEASED as a release taken (a start a later cycle drains while the end is still here
+    is a false end) or owed, newest last."""
+    _AGENT_RELEASED.pop(pair, None)
+    _AGENT_RELEASED[pair] = [path, taken]
+    while len(_AGENT_RELEASED) > _AGENT_RELEASED_MAX:
+        _AGENT_RELEASED.pop(next(iter(_AGENT_RELEASED)), None)
+
+
+def _remember_unheld_end(pair, path):
+    """Remember `pair`'s end, which found nothing held for `path`, newest last (_AGENT_ENDED_UNHELD)."""
+    _AGENT_ENDED_UNHELD.pop(pair, None)
+    _AGENT_ENDED_UNHELD[pair] = path
+    while len(_AGENT_ENDED_UNHELD) > _AGENT_RELEASED_MAX:
+        _AGENT_ENDED_UNHELD.pop(next(iter(_AGENT_ENDED_UNHELD)), None)
+
+
+def _forget_unheld_paths(paths):
+    """Forget every remembered end whose path is in `paths`: a release popped the path."""
+    if paths and _AGENT_ENDED_UNHELD:
+        for pair, p in list(_AGENT_ENDED_UNHELD.items()):
+            if p in paths:
+                _AGENT_ENDED_UNHELD.pop(pair, None)
+
+
+def _release_ended_agents():
+    """The pusher cycle's start (2026-09-24): each agent that left its session's live set since the last cycle has its parsed
+    transcript released from the record cache (em.release_entry, reason agentEnded: the file's checkpoint document written
+    when it lacks what the cache holds, then the records dropped), so a later fold whose cursor the document records restores
+    a tail and reads nothing whole. The events come from the SDK backend's own add and removal sites, queued in arrival order
+    (SdkBackend.drain_agent_live_events), never from a difference of liveness snapshots: three threads take those
+    independently, and a staler one would end an agent a fresher one listed. In order:
+    - The batch is drained. An agent whose last event dropped past the queue's bound was an end comes back as an end ahead
+      of the queued events, so it is released like the batch's own ends below when the batch holds no later event for it;
+      only the ends dropped past the bound of the list the backend keeps them in are releases given up (recordCache.releaseLost).
+      A dropped start is not counted.
+    - An agent that entered the live set in this batch and whose earlier end is still owed its release (an earlier cycle's
+      budget refused the document, or a read raced the pop) has that release cancelled (em.cancel_owed_release, under the
+      path the release was owed for). Its entry was never popped, so that start is not a false end, as for an end and a
+      start in one batch. Its end remembered as unheld (below) is forgotten: the file is live again. A start that is not in
+      the batch (queued after the drain of the cycle that pays the owed release, or dropped past the queue's bound), or one
+      drained after the end left _AGENT_RELEASED, cancels nothing, and a release taken then pops the running agent's entry
+      (em.checkpoint_pay_owed_releases).
+    - The releases still owed are paid (em.checkpoint_pay_owed_releases). An owed end whose release is taken now is marked
+      taken, and every remembered end for that path is forgotten. When any was paid, an owed end whose release was not
+      taken and is no longer owed (paid as absent or lost, raised, given up at the owed table's bound, forgotten at a
+      checkpoint-directory rebind, or cancelled above) is dropped, and one paid as absent is remembered as unheld; one left
+      in the table is still never counted, since its entry was not popped.
+    - Each end remembered as unheld (_AGENT_ENDED_UNHELD: an end seen while the cache held nothing for the file) that this
+      batch does not speak for is released again, oldest first: still absent, it stays remembered; taken, it is recorded as
+      a taken release (a start a later cycle drains while _AGENT_RELEASED still holds the end is a false end); deferred or
+      raced, as an owed one; lost, or raising (counted in releaseLost), it is given up. Every outcome but absent forgets it.
+      So a read that holds the file after the end, before any other event about the agent, is released at the first cycle
+      after the read.
+    - Each agent whose last event in the batch is an end is released. An end followed in the same batch by the agent
+      entering the live set again releases nothing. A start in the batch for an agent whose release was taken, while
+      _AGENT_RELEASED still holds that end, is a false end, counted (recordCache.falseEnds); after a release that was only
+      owed, it is not. An end that finds nothing held is remembered as unheld; any other outcome forgets a remembered end of
+      the agent. That includes an agent's later end acted on after its earlier release was taken (its task's end or its
+      workflow slot's done state after its stop, in a later cycle, or in this cycle after the owed pay took a deferred
+      release): if a re-read holds the file at that end, the end releases it; if nothing is held, the end is remembered, so
+      the first whole re-read after it is released at the next cycle. A whole re-read after that release, with no later end
+      of the agent, stays whole until the count cap, the byte budget or a quiescent drop reaches it (the residual stated
+      beside em.RECORD_CACHE_BUDGET_FLOOR_BYTES).
+    An end, remembered or in the batch, whose resolution or release raises is given up, counted in releaseLost, and
+    written to stderr at every raise with the session, the agent, the file when it resolved and the traceback
+    (em.say_release_raised), as the pusher's other stage failures are; the rest are still released. The release counters
+    count a path once per cycle, so an agent's second end in the cycle adds nothing to them.
+    The file is resolved as the folds resolve it (_path_of, _subagent_file), so the release names the cache key the folds
+    read. Returns the releases taken or owed for this batch's ends."""
+    be = _sdk_backend
+    drain = getattr(be, "drain_agent_live_events", None) if be else None
+    events, lost = drain() if drain is not None else ([], 0)
+    if lost:
+        em.note_release_lost(lost, "overflow")          # ends given up past the backend's bound on the ends it keeps
+    last = {}
+    for i, (sid, aid, _live) in enumerate(events):
+        last[(sid, aid)] = i
+    for sid, aid, live in events:
+        if not live:
+            continue
+        rec = _AGENT_RELEASED.get((sid, aid))
+        if rec is not None and not rec[1]:
+            em.cancel_owed_release(rec[0])             # an end whose release is still owed (the last _AGENT_RELEASED_MAX ends)
+        _AGENT_ENDED_UNHELD.pop((sid, aid), None)      # the agent's file turned live again: its unheld end is over
+    paid = em.checkpoint_pay_owed_releases()           # {path: outcome} of the releases an earlier cycle owed
+    if paid:
+        owed = em.owed_release_paths()
+        for pair, rec in list(_AGENT_RELEASED.items()):
+            if rec[1]:
+                continue
+            got = paid.get(rec[0])
+            if got == "released":
+                rec[1] = True                          # the owed release was taken: a start a later cycle drains while
+                                                       # this table holds the end is a false end
+            elif rec[0] not in owed:
+                _AGENT_RELEASED.pop(pair, None)        # not taken and no longer owed: no entry was popped for this end
+                if got == "absent":
+                    _remember_unheld_end(pair, rec[0])   # nothing held at the pay: a read that holds the file is released later
+        _forget_unheld_paths({p for p, got in paid.items() if got == "released"})
+    popped = set()                                     # the paths a release popped below: their remembered ends are over
+    for pair, p in list(_AGENT_ENDED_UNHELD.items()):
+        if pair in last:
+            continue                                   # the batch speaks for the agent: its own last event governs below
+        try:
+            got = em.release_entry(p, "agentEnded")
+        except Exception as e:                         # given up, like a batch end that raises; the rest are still paid
+            em.say_release_raised("the release of session %s's agent %s (remembered unheld; file %s)" % (pair[0], pair[1], p))
+            em.note_release_lost(1, "a release raised %s" % type(e).__name__, key=p)
+            _AGENT_ENDED_UNHELD.pop(pair, None)
+            continue
+        if got == "absent":
+            continue                                   # still nothing held: remembered for the next cycle
+        _AGENT_ENDED_UNHELD.pop(pair, None)
+        if got in ("released", "deferred", "raced"):
+            _note_agent_released(pair, p, got == "released")
+            if got == "released":
+                popped.add(p)
+    n = 0
+    for i, (sid, aid, live) in enumerate(events):
+        pair = (sid, aid)
+        if live:
+            rec = _AGENT_RELEASED.pop(pair, None)
+            if rec is not None and rec[1]:
+                em.note_false_end()
+            continue
+        if last[pair] != i:
+            continue                                   # the agent entered the live set again later in this batch
+        ap = None
+        try:
+            path = _path_of(sid)
+            ap = _subagent_file(path, aid) if path else None
+            got = em.release_entry(str(ap), "agentEnded") if ap is not None else None
+        except Exception as e:                         # one event that raises must not lose the rest of the drained batch
+            em.say_release_raised("the release of session %s's agent %s (%s)"
+                                  % (sid, aid, "file %s" % ap if ap is not None else "its file not resolved"))
+            em.note_release_lost(1, "a release raised %s" % type(e).__name__, key=None if ap is None else str(ap))
+            _AGENT_ENDED_UNHELD.pop(pair, None)
+            continue
+        if got is None:
+            continue                                   # no transcript for the session or no file for the agent
+        if got == "absent":
+            _remember_unheld_end(pair, str(ap))        # nothing held yet: a read that holds the file is released later
+            continue
+        _AGENT_ENDED_UNHELD.pop(pair, None)
+        if got in ("released", "deferred", "raced"):
+            _note_agent_released(pair, str(ap), got == "released")
+            if got == "released":
+                popped.add(str(ap))
+            n += 1
+    _forget_unheld_paths(popped)
+    return n
 
 
 def _converge_checkpoints(now):

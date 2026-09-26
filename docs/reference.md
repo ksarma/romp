@@ -1952,7 +1952,12 @@ fold cold for want of a state counts for the pass, which heals it, and not
 here, where it would only be written cold again), before the entry is popped,
 and on a hit or a restore at the witness the entry stays as it always has. The
 write is charged to the pusher cycle's byte budget, which the kernel begins at
-each cycle's start and the pass shares near its end; over the budget the write
+each cycle's start, where the drops an earlier cycle owed, then the releases an
+earlier cycle owed, then the releases of the ends an earlier cycle saw while
+nothing was held, then the releases at the ends new to the cycle charge it
+before the builds' drops do (whichever runs first gets the room when one
+document fits, so what an earlier cycle deferred is paid before any new end),
+and the pass shares near its end; over the budget the write
 and the drop wait with the entry held (`converge.dropDeferred`), the drop then
 owed and paid at the next cycle's start with the room that cycle has, oldest
 first, or by the next fold over the file, whichever comes first. A document
@@ -1966,8 +1971,10 @@ The knobs: `ROMP_CKPT_CONVERGE_MS=0` turns the pass off and the drop write with
 it (the drop then pops as it did before the write existed, except under the
 incident scan's memo, which keeps a walked file's records resident when the
 document write is off, since its memo cannot reach the disk); `ROMP_CKPT_CONVERGE_MB`
-is the cycle budget both charge, and `0` turns the drop write off the same way
-rather than deferring every drop; both are read where the drop lives, so they
+is the cycle budget all three charge, and `0` turns the drop write off the same
+way rather than deferring every drop (and gives up every release at an agent's
+end whose file is still on disk, counted in `recordCache.releaseLost`); both
+are read where the drop lives, so they
 hold from the first fold, before the first pusher cycle begins. The pass also
 writes the ASSEMBLY document of an idle leaf that has none (the assembly
 document is otherwise written only at a settle, which an idle session never
@@ -3166,10 +3173,119 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   nobody can log into) or when the request says `?stacks=1` (`romp perf
   stacks`, T401); `null` otherwise.
 - `recordCache`: the reader's record cache (the JSONL records held in memory):
-  `entries`, `bytes`, `budgetBytes`, `countCap`, `inserts`, `evictions`,
+  `entries`, `bytes` (the held entries' weight in FILE bytes), `budgetBytes`
+  (the byte budget in the same unit: half of MemTotal in resident bytes,
+  divided by the resident bytes a held file byte takes,
+  `RECORD_CACHE_RESIDENT_PER_FILE_BYTE` in `kernel/event_model.py`, never
+  under 4 GiB; `ROMP_RECORD_CACHE_BUDGET_MB` sets it outright), `bytesMax`
+  (the most `bytes` has been this life, never lowered; it counts the ledger
+  only, and the process holds more while reads are in flight, including
+  concurrent reads of different files and a re-read that keeps both copies
+  of its file, and while a caller holds a popped entry's records),
+  `countCap`, `inserts`, `evictions`,
   `evictedBytes`, `budgetEvictions`, `dropped` and `droppedBytes` (the
-  quiescence drop), and `wholeReads`: every read that pulled a file whole,
-  keyed `kind<-caller` (the reader's kind, one of `zero`, `rewrite`, `guard`,
+  quiescence drop); the release at an agent's end (the SDK backend queues
+  each agent entering or leaving a session's live set: an agent's own end
+  events even on a session object that never saw it start, as after a
+  kernel restart under a session host, where the object knows an agent
+  already running only through a Task agent's row (seeded from the
+  registry's mirror, adopted from a turn-end report, or, when the mirror
+  lacked it, minted from the agent's progress frame, which carries no type)
+  or a Workflow run's roster; a turn-end report that lists a Task agent's
+  row as ended; where the CLI's end ends every agent inside it (the
+  reconnect teardown, and the CLI's end when the session is not detached),
+  every agent the object knows through its live set, a Task agent's row or
+  a run's roster; and, at a boot or a comment thread's wake that finds the
+  mirror naming a CLI that died with an earlier kernel, each Task agent's
+  row of that mirror. A row whose type was never learned counts as a Task
+  agent's row on each of those roads, and the kernel resolves its id when it
+  drains the end. When the id is not in the session's own subagents tree,
+  the resolution walks every sibling session's subagents tree in the project
+  directory, once for each such end, whatever its road: on the largest one
+  measured, on 2026-09-25, 87 to 134 ms the first time, sixteen runs, once
+  after a restart, and a median of 21 to 49 ms each later time, three runs
+  of ten walks, the longest single walk 53.5 ms, with every session that has
+  a subagents tree there alive, as on the measured box, since the jobs pass
+  keeps an alive session's tree; a tree no alive session owns is dropped and
+  walked again, and with no sibling alive a later walk cost a median of 88
+  to 97 ms. Each run's median walk is inside the 50 ms bound set for one
+  cycle's resolution, and one walk of the thirty exceeded it by 3.5 ms, so
+  the bound holds at the median for a cycle that carries at most one such
+  end, and a cycle that carries two is at or over it; a first cycle after a
+  restart with several such ends pays the first walk and a later walk for
+  each further one. No end is queued
+  for an agent none of
+  those names: a Workflow run's agents when the object holds no roster for
+  the run (one the report retires before any progress frame, or one that
+  ends or loses its CLI before any), and a subagent the old kernel knew only
+  by its start hook whose stop is lost; their entries fall to the quiescent
+  drop, the count cap or the byte budget. The pusher, at each
+  cycle's start, writes an ended
+  agent's checkpoint document when it lacks what the cache holds, then
+  drops its records, so a later fold whose cursor the document records
+  restores a tail from it; an end whose release finds no entry with weight
+  for the file (among them one drained before any read held the file, one
+  whose entry the cache evicted or dropped before the end or took between
+  the release's document write and its pop, an owed release whose entry
+  left the cache before its pay, and an agent's later end after its
+  earlier release was taken, such as its task's end or its workflow slot's
+  done state after its stop) is remembered, and the file released at the
+  first cycle after a read holds it, unless a cycle drains the agent's
+  start first (a start queued after the drain of the cycle that releases
+  the file, or one dropped past the queue's bound, does not forget the
+  end, and a release taken then pops the running agent's entry; only the
+  first of those counts in `falseEnds`, at the next cycle);
+  a whole re-read of a file after its release was taken is held whole
+  until the count cap, the byte budget or a quiescent drop reaches it,
+  unless a later end of the agent comes after that release: one that finds
+  the re-read holding the file releases it, and one that finds nothing
+  held is remembered as above, so the first whole re-read after it is
+  released at the next cycle; a file no fold holds
+  a recordable cursor for is dropped without a document and read whole at
+  its next fold, and a file that no longer exists is dropped with nothing
+  written; an agent whose start the cycle drains before a deferred release
+  is paid keeps its records, while a start the cycle does not drain first
+  (one queued after the drain, one dropped past the queue's bound, or one
+  whose end the kernel no longer holds) does not cancel the release, and
+  when the release is then taken only the first of those counts in
+  `falseEnds`):
+  `released` (per reason, today `agentEnded`, with `count` and `bytes`;
+  `agentEnded` is reported at zero until the first release, so the block
+  carries every key from a new kernel's first read),
+  `releaseDeferred` (deferrals of a release to the next cycle, counted once
+  per path per cycle, so an agent's second end in the cycle adds nothing, a
+  release refused on N cycles counts N, and the figure is not the number owed
+  now: its checkpoint budget refused the write, or a read replaced the entry
+  before the drop or was still reading the file when the drop came),
+  `releaseLost` (releases given up, the entry left to the cache's own
+  eviction, the count cap or the byte budget, or a later quiescent drop,
+  counted once per path per cycle where the release names a path (an end
+  given up past the bound of the ends the backend keeps, or one whose file
+  never resolved before its resolution raised, counts one each): no
+  document could be written, as with
+  `ROMP_CKPT_CONVERGE_MS=0` or `ROMP_CKPT_CONVERGE_MB=0` or when the check
+  whether a write was due raised; an owed release was dropped past its
+  bound; an agent's end was dropped past the queue's bound and then past the
+  bound of the ends the backend keeps (an end kept is released at the drain
+  like any other); or resolving or paying one raised. With the drop writes
+  off, an agent whose two ends, its stop and its task's end, reach two cycles
+  counts two. Each cause is said once on stderr in a summary line, and a
+  release that raises also writes its own line with the traceback at every
+  raise),
+  `falseEnds` (agents whose release at their end was taken, the entry
+  popped, that entered the live set again, counted at the cycle that
+  drains the start while the kernel still holds the end in its table of
+  released ends: a start queued after the drain of the cycle that took the
+  release counts at the next cycle, while a start dropped past the queue's
+  bound, or drained after the end left that table, counts none; a release
+  that was only owed, then cancelled, forgotten, given up or paid without
+  being taken, counts none) and `releasedReread` (`count` and `bytes` of
+  the first whole read of a path after a release popped it, when no other pop of the path came in
+  between: what releasing cost; at most `countCap` marks are outstanding,
+  the oldest dropped first, and a mark leaves when it is taken or cleared,
+  which frees its slot, so the bound is on outstanding marks, not on the
+  most recent releases); and
+  `wholeReads`: every read that pulled a file whole, keyed `kind<-caller` (the reader's kind, one of `zero`, `rewrite`, `guard`,
   `shrunk` and `upgrade`, and the first calling function outside the event
   model and the parse family), with `count` and `bytes`; a tail read, an
   append and a restore's tail read are not whole reads and are not counted;
@@ -4527,8 +4643,8 @@ memory-fraction bounds (`recordCache.budgetBytes`, `heap.hydrated.capBytes`,
 the judge child's copies of its tables carry the same keys) stay, each
 rounded up to a power of two with the occupancy beside it untouched: each is
 a fixed fraction of the machine's MemTotal, so every export from one machine
-shared all ten exactly and `budgetBytes`, half of it, gave the machine's RAM
-to the kilobyte; a value derived from a machine fact is a machine string in
+shared all ten exactly and `budgetBytes`, then half of it, gave the machine's
+RAM to the kilobyte; a value derived from a machine fact is a machine string in
 a number's clothing. A bound that binds is still visible next to its `bytes`
 or `entries`. The
 result goes under a `schema` line (`romp-perf-export/1`) with the UTC minute
@@ -4668,7 +4784,7 @@ pass's own, `failures` its tier crashes, and the four blocks (`recordCache` and 
 `parses` as the parse store's misses and hits, `goalIo` as the goal-store loads, saves and writes) are the DIFFERENCES
 against the previous pass's snapshot for every counter, so the kernel can feed its `/perf` counters per pass, while each
 block's GAUGES ride as their current values: in `recordCache` the keys `entries`, `bytes` (the cache's contents now),
-`budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document memo's size and cap);
+`bytesMax` (the life maximum of `bytes`), `budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document memo's size and cap);
 `parses` and `goalIo` carry counters only. `asmCheckpoint.restoreMs` is a counter like its neighbours (the restore's parts
 since boot, as described above), so the line carries the pass's own restore time. A non-numeric value (a name) rides as
 current too. `recovered` is the child's judge-module recovery flag (the once-per-storm

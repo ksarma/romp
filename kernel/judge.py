@@ -20260,8 +20260,8 @@ def _dump_goals():
 # run_pass, the SAME function the in-process producer calls (round two: a copy of the producer had drifted three ways before
 # it ever ran). Every counter on the done line is a PER-PASS figure: wallMs, tierCpuMs and workerCpuMs are the pass's own,
 # and the recordCache, asmCheckpoint, parses and goalIo blocks are the differences against the previous pass's snapshot (the
-# kernel feeds its /perf counters per pass) except their GAUGES (_SERVE_GAUGES: recordCache's entries, bytes, budgetBytes and
-# countCap; asmCheckpoint's asmDocMemo), which ride as current values (restoreMs accumulates since boot and is differenced like
+# kernel feeds its /perf counters per pass) except their GAUGES (_SERVE_GAUGES: recordCache's entries, bytes, bytesMax, budgetBytes
+# and countCap; asmCheckpoint's asmDocMemo), which ride as current values (restoreMs accumulates since boot and is differenced like
 # every counter, so the line carries the pass's own restore time); `recovered` is this process's judge-module
 # recovery flag, consumed by the child
 # and acted on by the kernel (the give-up re-arm after a rate-limit storm ends). One pass at a time: a `pass` arriving before the previous `done` is answered `busy` and
@@ -20446,7 +20446,8 @@ def _serve_counter_blocks():
 
 
 _SERVE_GAUGES = {                                 # the keys of each block that are GAUGES (a current size, a cap), not counters:
-    "recordCache": ("entries", "bytes", "budgetBytes", "countCap"),   #  they ride as their current values, never as a difference
+    "recordCache": ("entries", "bytes", "bytesMax", "budgetBytes", "countCap"),   #  they ride as their current values, never as a
+    #                                             difference (bytesMax, the life maximum of held bytes, would read 0 differenced)
     "asmCheckpoint": ("asmDocMemo",),             # (round three); restoreMs is NOT one: _restore_ms accumulates since boot, so its
     "parses": (), "goalIo": ()}                   #  per-pass difference is the pass's own restore time (round four)
 
