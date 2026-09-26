@@ -1794,8 +1794,9 @@ test("the one gate's later events of one gesture, a guard CI runs (the file revi
 // slot at the window's pointerup, both in the capture phase, and a click by a pointer reads the record under its own pointerId or,
 // with none, the press the slot handed it, while a key's or a script's click reads neither and is read at the click. A record ends
 // at its own pointerup, which hands it to the slot, at its pointercancel and at the next primary press, and every record ends at a
-// dragstart and at a mousedown with no pointerdown of a mouse or a pen before it, which takes no verdict and leaves the slot alone
-// (the file review's round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them). The stand-in's
+// dragstart and at a mousedown with no pointerdown of a mouse or a pen before it, which takes no verdict (the file review's round
+// 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them) and empties the slot unless it is the
+// compatibility mousedown of the one-finger tap whose pointerup filled it (the closing check after those fixes). The stand-in's
 // dispatch never reaches the window, so each pointer event is dispatched on the window here, its target the element a press there
 // would land on, as a browser delivers it to the capture listener before the page's own; a click is dispatched on the window, which
 // hands it the slot, and then on its element with the fields the gate reads (pointerId, detail, and isTrusted, which a node Event
@@ -1805,7 +1806,8 @@ test("the one gate's later events of one gesture, a guard CI runs (the file revi
 // the mouse's own next press after WebKit's drag of the picture, and after a drag in another pane that this window never hears:
 // a mousedown with no pointerdown before it, a pointerup under pointerId 1, and the click. Firefox's chord: a left press's
 // pointerdown and mousedown, then the chorded button's mousedown with no pointerdown of its own, then the left press's pointerup and
-// its click, under pointerId 0. Each cell opens a viewer of its own, so no cell's record or slot reaches the next; the executed
+// its click, under pointerId 0. A tap on another document's element over the picture that goes away during the press: the tap's
+// compatibility mousedown and its click, with no pointerdown or pointerup in this window. Each cell opens a viewer of its own, so no cell's record or slot reaches the next; the executed
 // proof in each engine is the browser cells (file-figure-open-engines-browser.test.ts for WebKit and Firefox,
 // file-figure-open-browser.test.ts for Chromium).
 type GatePtr = { pointerId: number; pointerType: string; isPrimary?: boolean; button?: number };
@@ -2126,6 +2128,40 @@ test("how a click finds its press, a trusted click with no pointerId, a guard CI
   t.diagnostic("record " + JSON.stringify(got));
   assert.deepEqual(got, { covered: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], shown: { opened: 1, reveals: 0 } },
     "a click with no pointerId takes the press the slot handed it: [the click, the next] where the press began covered (a property pin over window.open's calls and the scrollIntoView record)");
+});
+test("how a click finds its press, a tap on another document's element, a guard CI runs (the closing check after the fixes for the file review's round 18): the dashboard's panes are same-origin frames, and a tap on an element of the top page over the viewer's frame that goes away during the press sends this window the tap's compatibility mousedown and its trusted click alone, with no pointerdown or pointerup. After a pointerup of this window with no click after it, a right press on the picture with the control shown (the tap's click then under the touch's pointerId as Chromium sends it, under pointerId 1 as WebKit sends it, or under pointerId 0 as Firefox sends it), a middle press, or a two-finger touch on it lifted in either order, then another element over the control, then the tap's mousedown and click: the click opens nothing and reveals the control, the mousedown having emptied the slot, and that element gone, the next click opens once; and a one-finger tap on the picture with the control shown, in each engine's shape, opens once, its compatibility mousedown leaving the slot its own pointerup filled (a property pin over window.open's calls and the scrollIntoView record; the six cells after a leftover red at 0f998a3b9, whose mousedown left the slot alone, so the click took the slot the earlier pointerup had filled; the one-finger taps red under a gate that empties the slot at every such mousedown; the two-finger touch whose primary contact lifts last red under one that keeps the slot after any primary touch's pointerup)", async (t) => {
+  const got: Record<string, unknown> = {};
+  const mouse: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
+  const touch = (pointerId: number, isPrimary: boolean): GatePtr => ({ pointerId, pointerType: "touch", isPrimary, button: 0 });
+  const leftovers: Array<[string, number, (g: KeyGate) => void]> = [
+    ["a right press, then the tap as Chromium sends it, its click under the touch's pointerId", 7, (g) => { onWindow("pointerdown", g.img, { ...mouse, button: 2 }); onWindow("mousedown", g.img, { button: 2 }); onWindow("pointerup", g.img, { ...mouse, button: 2 }); }],
+    ["a right press, then the tap as WebKit sends it, its click under pointerId 1", 1, (g) => { onWindow("pointerdown", g.img, { ...mouse, button: 2 }); onWindow("mousedown", g.img, { button: 2 }); onWindow("pointerup", g.img, { ...mouse, button: 2 }); }],
+    ["a right press under pointerId 0, then the tap as Firefox sends it, its click under pointerId 0", 0, (g) => { onWindow("pointerdown", g.img, { ...mouse, pointerId: 0, button: 2 }); onWindow("mousedown", g.img, { button: 2 }); onWindow("pointerup", g.img, { ...mouse, pointerId: 0, button: 2 }); }],
+    ["a middle press, then the tap as Chromium sends it", 7, (g) => { onWindow("pointerdown", g.img, { ...mouse, button: 1 }); onWindow("mousedown", g.img, { button: 1 }); onWindow("pointerup", g.img, { ...mouse, button: 1 }); }],
+    ["a two-finger touch, its primary contact lifted first as Chromium's touch emulation lifts it, then the tap as Chromium sends it", 11, (g) => { onWindow("pointerdown", g.img, touch(9, true)); onWindow("pointerdown", g.img, touch(10, false)); onWindow("pointerup", g.img, touch(9, true)); onWindow("pointerup", g.img, touch(10, false)); }],
+    ["a two-finger touch, its primary contact lifted last, then the tap as Chromium sends it", 11, (g) => { onWindow("pointerdown", g.img, touch(9, true)); onWindow("pointerdown", g.img, touch(10, false)); onWindow("pointerup", g.img, touch(10, false)); onWindow("pointerup", g.img, touch(9, true)); }],
+  ];
+  for (const [name, clickPid, before] of leftovers) {
+    got[name] = await gateCell(t, name, (g, opens) => {
+      g.place(IN_BOX);
+      before(g);                                                          // a pointerup of this window with no click after it
+      g.cover(new El("div"));                                             // another document's element over the control, gone during the tap's press
+      onWindow("mousedown", g.img, { button: 0 });                        // the tap's compatibility mousedown, no pointerdown or pointerup here
+      gateClick(g.img, clickPid, 1);
+      const first = opens();
+      g.cover(null);
+      mouseClick(g.img);
+      return [first, opens()];
+    });
+  }
+  got["a one-finger tap, as Chromium sends it"] = await gateCell(t, "a one-finger tap, as Chromium sends it", (g, opens) => { g.place(IN_BOX); pressUp(g.img, touch(3, true)); onWindow("mousedown", g.img, { button: 0 }); gateClick(g.img, 3, 1); return opens(); });
+  got["a one-finger tap, as WebKit sends it"] = await gateCell(t, "a one-finger tap, as WebKit sends it", (g, opens) => { g.place(IN_BOX); webkitTap(g.img); return opens(); });
+  got["a one-finger tap, as Firefox sends it"] = await gateCell(t, "a one-finger tap, as Firefox sends it", (g, opens) => { g.place(IN_BOX); pressUp(g.img, touch(0, true)); onWindow("mousedown", g.img, { button: 0 }); gateClick(g.img, 0, 1); return opens(); });
+  t.diagnostic("record " + JSON.stringify(got));
+  const want = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
+  const tap = { opened: 1, reveals: 0 };
+  assert.deepEqual(got, Object.fromEntries([...leftovers.map(([n]) => [n, want] as [string, unknown]), ["a one-finger tap, as Chromium sends it", tap], ["a one-finger tap, as WebKit sends it", tap], ["a one-finger tap, as Firefox sends it", tap]]),
+    "a click whose press and release this window never heard finds no press, [that click, the next], and a one-finger tap opens once (a property pin over window.open's calls and the scrollIntoView record)");
 });
 // ── the hit test's five samples, a guard CI runs (the file review's round 17, tests-2; the browser legs skip in CI) ── signUncovered
 // reads the element a press would reach at the centre of the sign's in-view part and at its four quarter points, so an element over

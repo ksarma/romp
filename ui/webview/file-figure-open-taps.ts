@@ -1,11 +1,13 @@
 // The one gate's tap cells, one set for every engine (the file review's round 17, tests-1 with regression-1, and the coordinator's
-// decisions 1 to 3 on it; its round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them), for the
+// decisions 1 to 3 on it; its round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them and the
+// closing check after those fixes), for the
 // link-navigation follow-on of plans/markdown-viewer.md: file-figure-open-browser.test.ts runs them in Chromium, and
 // file-figure-open-engines-browser.test.ts in WebKit and Firefox, a leg of its own that stays off the shared roster of browser legs,
 // since the job that runs the roster installs Chromium alone. The gate (file-view.ts webGestureShown and the recorder above it)
 // records a press's verdict at the window's pointerdown and fills a one-click slot at the pointerup, and a click by a pointer reads
 // the record under its own pointerId or, with none, the press the slot handed it; a record ends at its own pointerup, which hands it
-// to the slot, and every record ends at a dragstart and at a mousedown with no pointerdown of a mouse or a pen before it. The engines
+// to the slot, and every record ends at a dragstart and at a mousedown with no pointerdown of a mouse or a pen before it, which
+// empties the slot too unless it is the compatibility mousedown of the one-finger tap whose pointerup filled the slot. The engines
 // differ in what a tap's click carries, read off the page as each cell's precondition: Chromium gives the click the touch's own
 // pointerId, Firefox its press's (0, a mouse's and a touch's alike), and WebKit under Playwright's touch emulation on Linux (a
 // stand-in for WebKitGTK, and presumably WPE, on a touchscreen; no cell claims iOS Safari, whose click WebKit's iOS source gives the
@@ -52,6 +54,14 @@
 //   mouse's click beside it, the finger lifted, then the mouse's press on the picture with the control out of view or under the
 //   flyout, a finger's swipe beside it while the mouse is held, and the release: its click opens nothing, with the finger's steps
 //   before it or without them;
+// - a tap on another document's element, on the hybrid page in the dashboard's shape (the viewer's page in a same-origin frame of a
+//   top page, as the dashboard frames its chat, Files and feed panes): an element of the top page over the control and the picture
+//   beside it, gone at its own pointerup, so the tap's press and release go to the top page and its compatibility mousedown and
+//   click land in the viewer's window alone, a precondition each cell asserts. After nothing, a right click or a middle click on the
+//   picture with the control shown, and in Chromium a two-finger touch on it, the tap opens nothing and the next click of the mouse
+//   opens once; so does the tap after a right click with the control above the top page's window at the tap's start, the frame
+//   moved back at the element's pointerup; and in Firefox alone, a tap on a hover tooltip of the top page over the control, hidden
+//   as the tap moves the mouse off its cell (Chromium and WebKit send that tap's mouse events to the tooltip);
 // - the clicks by no pointer: Enter on the control in view opens once, and so does Enter after a refused tap; a press with no click
 //   after it begun with the control out of view, the control then scrolled into view with no pointer or key event, then Enter on it
 //   opens once; the same press begun with the control shown, the flyout then shown over the control with no event, then a script's
@@ -67,10 +77,13 @@
 // ef686b029, whose gate took a verdict at the mousedown with no pointerdown before it, as they record the cost and guard no
 // defect; the other pane's covered cells are red in WebKit at X, the gate with a dragstart clear and records ended at no pointerup,
 // whose click read the record the right click or the released press left; Firefox's chord cells and Chromium's cells of a finger
-// beside the mouse are red at ef686b029 and under A18-M, that gate restored; the reads of each of these reds are a private witness
-// kept out of the tree. file-view-outline.test.ts drives the same orders over the stand-in in CI, where these legs launch no browser.
+// beside the mouse are red at ef686b029 and under A18-M, that gate restored; the other-document cells after a right click, a middle
+// click or a two-finger touch are red at 0f998a3b9 in the engines that run them, whose gate left the slot alone at the tap's
+// mousedown, so the tap's click took the slot that pointerup with no click had filled, and the cell after nothing reads the same
+// there, by design; the reads of each of these reds are a private witness kept out of the tree. file-view-outline.test.ts drives
+// the same orders over the stand-in in CI, where these legs launch no browser.
 import * as assert from "node:assert/strict";
-import { openViewer, frames, PARA, REPORT } from "./real-viewer-leg";
+import { openViewer, frames, pageHtml, PARA, REPORT, ORIGIN, SID } from "./real-viewer-leg";
 import { RECORD_OPENS, opensCounter } from "./file-figure-open-stacking";
 
 export type TapEngine = "chromium" | "firefox" | "webkit";
@@ -367,6 +380,7 @@ export async function tapCells(browser: any, engine: TapEngine, device: TapDevic
     if (engine === "firefox") await chordCells(browser, engine, surface, mouseOnly, on, cell, note);
   }
   if (engine === "chromium" && device === "hybrid") await touchBesideMouse(browser, surface, at, cell, note);
+  if (device === "hybrid") await otherDocumentTap(browser, engine, surface, named(true) + ", a hybrid page in a frame, " + surface + ": ", cell, note);
   return cells;
 }
 
@@ -376,7 +390,7 @@ const fmt = (evs: PtrEv[]): string => evs.map((e) => e.type + "(" + e.pid + "," 
 /** A click of the mouse at `p`, and the events it sent; `after` names the press's shape the engine sends: "own", its pointerdown
  *  and its mousedown, or "lost", the mousedown alone, as WebKit sends the mouse's next press after a press whose pointerup never
  *  came, asserted as the cell's precondition. */
-async function mouseClickAt(s: Scene, p: { x: number; y: number }, after: "own" | "lost", what: string): Promise<PtrEv[]> {
+async function mouseClickAt(s: Pick<Scene, "page" | "events">, p: { x: number; y: number }, after: "own" | "lost", what: string): Promise<PtrEv[]> {
   await s.events();
   await s.page.mouse.click(p.x, p.y);
   await frames(s.page, 2);
@@ -682,5 +696,240 @@ async function touchBesideMouse(browser: any, surface: TapSurface, at: string, c
       cell("a finger held on the picture with the control shown, the mouse's click beside it, the finger lifted, then the mouse's press on the picture " + where + ", a swipe while it is held, the release: [the finger's opens, the click's]", [[0, 0], [0, 0]], [fingerOpens, await press(covered)]);
     }
     note("record " + JSON.stringify({ engine: "chromium", surface, scene: "touch-beside-mouse", ...rec }));
+  });
+}
+
+/** The scene of a framed viewer: the top page, the viewer's frame, the frame's reads and the opens, and an element of the top document
+ *  laid over the frame. */
+type Framed = Pick<Scene, "opens" | "read" | "place" | "events"> & {
+  page: any;
+  fr: any;
+  /** An element of the top document at `box` (top-page pixels), which at its own pointerup hides itself and, where `moveBack`, puts the
+   *  viewer's frame back at the top page's top; what the top page hits at each of `pts`, true where the element. */
+  cover: (box: { x: number; y: number; w: number; h: number }, pts: Array<{ x: number; y: number }>, moveBack?: boolean) => Promise<boolean[]>;
+  /** The pointer and touch events the top document heard since the cover went up, and the cover's display now; the cover removed. */
+  dropCover: () => Promise<{ events: string[]; display: string | null }>;
+  /** The viewer's frame moved to `top` px in the top page. */
+  frameTop: (top: number) => Promise<void>;
+  /** The control's box in the viewer's frame, and the frame's top in the top page. */
+  ctlBox: () => Promise<{ l: number; t: number; w: number; h: number; frameTop: number }>;
+};
+/** `text` open on the surface in the dashboard's shape: the viewer's page inside a same-origin frame of a top page (the dashboard's chat,
+ *  Files and feed panes are same-origin frames), the frame at the top page's top left at 900 by 700, on the hybrid page (hasTouch with
+ *  a mouse); the remote pictures routed and loaded through the gate, the helpers installed in the viewer's frame, the opens counted by
+ *  the gate's own window.open calls there (opensCounter, reading the frame's record), and `body` run with the scene; the page errors
+ *  asserted empty after it. */
+async function framedScene(browser: any, engine: TapEngine, surface: TapSurface, text: string, name: string, body: (s: Framed) => Promise<void>): Promise<void> {
+  const docReqs: string[] = [], popups: any[] = [];
+  let wake = (): void => { /* no counter yet */ };
+  const page = await hybridPages(browser).newPage({ viewport: { width: 900, height: 700 } });
+  const errors: string[] = [];
+  page.on("pageerror", (e: Error) => { errors.push(e.message); });
+  try {
+    await page.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+      const req = route.request();
+      if (req.resourceType() === "document") { docReqs.push(req.url()); wake(); return route.fulfill({ status: 200, contentType: "text/html", body: "<p>third party</p>" }); }
+      const sz = SIZES[new URL(req.url()).pathname] || [300, 200];
+      return route.fulfill({ status: 200, contentType: "image/svg+xml", body: sized(sz[0], sz[1], "#6a3d9a") });
+    });
+    const viewer = pageHtml(surface, { [REPORT]: text });
+    const top = "<!doctype html><html><head><meta charset=utf-8></head><body style='margin:0'><iframe id=tview src='/viewer' style='position:absolute;left:0;top:0;width:900px;height:700px;border:0'></iframe></body></html>";
+    await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: new URL(route.request().url()).pathname === "/viewer" ? viewer : top }));
+    await page.goto(ORIGIN + "/");
+    await page.waitForFunction(() => { const f = document.getElementById("tview") as HTMLIFrameElement | null; return !!f && !!f.contentWindow && !!(f.contentWindow as any).FV; }, null, { timeout: 15000 });
+    const fr = page.frames().find((f: any) => f.url() === ORIGIN + "/viewer");
+    assert.ok(fr, engine + ", " + surface + ": the viewer's frame in the top page (a precondition)");
+    await fr.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID]);
+    await fr.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+    for (let i = 0; i < 20 && await fr.evaluate(() => !!document.querySelector('.fileview-md [data-act="fv-load"]')); i++) { await fr.evaluate(() => { (document.querySelector('.fileview-md [data-act="fv-load"]') as HTMLElement).click(); }); await frames(fr, 3); }
+    await fr.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).every((i) => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0), null, { timeout: 15000 });
+    await frames(fr, 4);
+    await fr.evaluate(INSTALL);
+    await fr.evaluate(RECORD_OPENS);
+    const counter = opensCounter({ evaluate: (f: any, a?: any) => fr.evaluate(f, a), bringToFront: () => page.bringToFront() }, popups, docReqs, engine + ", a hybrid page in a frame, " + surface + ", the scene " + name);
+    wake = counter.wake;
+    page.context().on("page", (p: any) => { popups.push(p); wake(); });
+    const read = (alt: string): Promise<Read> => fr.evaluate((a: string) => (window as any).__tread(a), alt);
+    const scene: Framed = {
+      page, fr, read,
+      events: () => fr.evaluate(() => (window as any).__tev.splice(0)),
+      opens: counter.opens,
+      place: async (alt, dy) => { await fr.evaluate(([a, d]: [string, number]) => (window as any).__tplace(a, d), [alt, dy]); await frames(fr, 3); return read(alt); },
+      cover: (box, pts, moveBack = false) => page.evaluate(([b, ps, back]: [{ x: number; y: number; w: number; h: number }, Array<{ x: number; y: number }>, boolean]) => {
+        const w = window as any;
+        const d = document.createElement("div");
+        d.id = "tcover";
+        d.style.cssText = "position:fixed;left:" + b.x + "px;top:" + b.y + "px;width:" + b.w + "px;height:" + b.h + "px;z-index:10;background:#eee;font:16px sans-serif";
+        d.textContent = "a menu item of the top page";
+        w.__cev = [];
+        if (!w.__cevOn) { w.__cevOn = true; for (const type of ["pointerdown", "pointerup", "pointercancel", "touchstart", "touchend", "mousedown", "click"]) window.addEventListener(type, (e: any) => { w.__cev.push(e.type); }, true); }
+        d.addEventListener("pointerup", () => { d.style.display = "none"; if (back) (document.getElementById("tview") as HTMLElement).style.top = "0px"; });
+        document.body.appendChild(d);
+        return ps.map((p) => document.elementFromPoint(p.x, p.y) === d);
+      }, [box, pts, moveBack]),
+      dropCover: () => page.evaluate(() => { const w = window as any; const d = document.getElementById("tcover"); const display = d ? getComputedStyle(d).display : null; if (d) d.remove(); const t = document.getElementById("ttip"); if (t) t.remove(); const c = document.getElementById("tcell"); if (c) c.remove(); return { events: (w.__cev || []).splice(0), display }; }),
+      frameTop: async (y) => { await page.evaluate((v: number) => { (document.getElementById("tview") as HTMLElement).style.top = v + "px"; }, y); await frames(fr, 3); },
+      ctlBox: () => fr.evaluate(() => { const c = (window as any).__tctl("w490").getBoundingClientRect(); const f = (window.frameElement as HTMLElement).getBoundingClientRect(); return { l: c.left, t: c.top, w: c.width, h: c.height, frameTop: f.top }; }),
+    };
+    await body(scene);
+    await counter.end();
+  } finally {
+    await page.close();
+  }
+  assert.deepEqual(errors, [], engine + ", a hybrid page in a frame, " + surface + ": no page errors");
+}
+
+/** A tap on another document's element over the picture that goes away during the press (the closing check after the fixes for the
+ *  file review's round 18), in the dashboard's shape (framedScene): an element of the top document over the viewer's frame where the
+ *  picture's control stands, a menu item or a backdrop of the top page, which hides itself at its own pointerup. The tap's press and
+ *  release go to the top document, and its compatibility mousedown and click, which the browser sends after that pointerup, hit-test
+ *  into the viewer's frame, whose window hears a mousedown and a click and no pointerdown or pointerup, a precondition each cell
+ *  asserts. Before the tap, with the control shown: nothing, a right click on the picture or a middle click on it (a pointerup of the
+ *  viewer's window with no click after it), and in Chromium a two-finger touch on it (the same, CDP touch); the tap on the element
+ *  over the picture beside the control, which covers the control at the tap's start: it opens nothing, and the next click of the
+ *  mouse on the picture, the element gone, opens once. And the control out of view at the tap: after a right click with the control
+ *  shown, the viewer's frame moved up until the control stands above the top page's window, a small element of the top page at the
+ *  tap's point over the picture, which at its pointerup hides itself and moves the frame back, so the click lands on the picture with
+ *  the control in view: it opens nothing, and the next click opens once. In Firefox alone, a hover tooltip of the top page over the
+ *  control, shown while the mouse rests on a cell of the top page and hidden at that cell's mouseleave, after a right click with the
+ *  control shown: a finger's tap on the tooltip moves the mouse off the cell before its compatibility mousedown, which lands in the
+ *  viewer with its click (Chromium and WebKit send that tap's mouse events to the tooltip); it opens nothing, and the next click opens
+ *  once. The gate empties the slot at a mousedown with no pointerdown of a mouse or a pen before it unless that mousedown is the
+ *  compatibility mousedown of the one-finger tap whose pointerup filled the slot, so such a click finds no press. */
+async function otherDocumentTap(browser: any, engine: TapEngine, surface: TapSurface, at: string, cell: CellFn, note: (m: string) => void): Promise<void> {
+  await framedScene(browser, engine, surface, COVER_TEXT, "other-document", async (s) => {
+    const rec: Record<string, unknown> = {};
+    /** No cover, the frame at the top page's top, and a click on the report's first paragraph, the body scrolled to its top: its
+     *  primary press ends every record and empties the slot, and its pointerup fills the slot with nothing, before each cell. */
+    const settle = async (): Promise<void> => {
+      await s.dropCover();
+      await s.frameTop(0);
+      await s.fr.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = 0; });
+      await frames(s.fr, 3);
+      const q = await s.fr.evaluate(() => { const p = document.querySelector(".fileview-md p") as HTMLElement; const r = p.getBoundingClientRect(); const x = Math.round(r.left + 20), y = Math.round(r.top + r.height / 2); const e = document.elementFromPoint(x, y); return e && p.contains(e) ? { x, y } : null; });
+      assert.ok(q, at + "the first paragraph's point in view for the settling click (a precondition)");
+      await mouseClickAt(s, q!, "own", at + "the settling click on the first paragraph");
+      await s.opens();
+    };
+    const button = (b: "right" | "middle") => async (r: Read): Promise<PtrEv[]> => { await s.events(); await s.page.mouse.click(r.pt.x, r.pt.y, { button: b }); await frames(s.fr, 2); return s.events(); };
+    const twoFinger = async (r: Read): Promise<PtrEv[]> => {
+      await s.events();
+      const cdp = await s.page.context().newCDPSession(s.page);
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: r.pt.x, y: r.pt.y, id: 1 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: r.pt.x, y: r.pt.y, id: 1 }, { x: r.pt2.x, y: r.pt2.y, id: 2 }] });
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await frames(s.fr, 3);
+      await cdp.detach();
+      return s.events();
+    };
+    const leftovers: Array<[string, string, ((r: Read) => Promise<PtrEv[]>) | null]> = [["nothing before it", "", null], ["a right click on the picture", "the right click's", button("right")], ["a middle click on the picture", "the middle click's", button("middle")]];
+    if (engine === "chromium") leftovers.push(["a two-finger touch on the picture", "the two-finger touch's", twoFinger]);
+    /** The leftover's events, asserted: a pointerup of the viewer's window and no click after it. */
+    const leftover = async (before: string, step: ((r: Read) => Promise<PtrEv[]>) | null, r0: Read): Promise<[number, number]> => {
+      if (step) {
+        const evs = await step(r0);
+        assert.ok(evs.some((e) => e.type === "pointerup") && !evs.some((e) => e.type === "click"), at + before + " with the control shown sends the viewer's window a pointerup and no click (a precondition): " + fmt(evs));
+        rec[before] = fmt(evs);
+      }
+      return s.opens();
+    };
+    /** The tap's events in the viewer's window, asserted: a mousedown and a trusted click, and no pointerdown or pointerup. */
+    const foreign = (evs: PtrEv[], what: string): void => {
+      const n = (t: string) => evs.filter((e) => e.type === t).length;
+      assert.ok(n("pointerdown") === 0 && n("pointerup") === 0 && n("mousedown") === 1 && n("click") === 1 && evs.some((e) => e.type === "click" && e.trusted), at + what + ": the viewer's window hears the tap's mousedown and its trusted click and no pointerdown or pointerup (a precondition): " + fmt(evs));
+    };
+    const next = async (what: string): Promise<[number, number]> => {
+      const r2 = await s.read("w490");
+      assert.ok(r2.inView && r2.hit2 === "the picture", at + what + ": the control in view and the next click's point on the picture (a precondition): " + JSON.stringify(r2));
+      await mouseClickAt(s, r2.pt2, "own", at + what + ": the next click");
+      return s.opens();
+    };
+    for (const [before, its, step] of leftovers) {
+      await settle();
+      const r0 = await s.place("w490", 3);
+      assert.ok(r0.inView && r0.hit === "the picture" && r0.ctl, at + before + ": the control shown, the point on the picture (a precondition): " + JSON.stringify(r0));
+      const stepOpens = await leftover(before, step, r0);
+      await s.place("w490", 3);
+      const c = await s.ctlBox();
+      const tapAt = { x: Math.round(c.l - 50), y: Math.round(c.t + c.h / 2 + 30) };
+      const over = await s.cover({ x: Math.round(c.l - 120), y: Math.round(c.t - 10), w: Math.round(c.w + 140), h: Math.round(c.h + 90) }, [{ x: c.l + c.w / 2, y: c.t + c.h / 2 }, tapAt]);
+      const hit = await s.fr.evaluate(([x, y]: [number, number]) => document.elementFromPoint(x, y) === (window as any).__timg("w490"), [tapAt.x, tapAt.y]);
+      assert.ok(over[0] && over[1] && hit, at + before + ": the top page's element over the control's centre and over the tap's point, which in the viewer is on the picture (a precondition): " + JSON.stringify({ over, hit, c, tapAt }));
+      await s.events();
+      await s.page.touchscreen.tap(tapAt.x, tapAt.y);
+      await frames(s.fr, 3);
+      const evs = await s.events();
+      const top = await s.dropCover();
+      rec[before + " tap"] = { viewer: fmt(evs), top };
+      foreign(evs, before);
+      assert.ok(top.events.includes("pointerdown") && top.events.includes("pointerup") && top.display === "none", at + before + ": the tap's press and release went to the top page's element, hidden at its pointerup (a precondition): " + JSON.stringify(top));
+      const tapOpens = await s.opens();
+      cell("a tap on another document's element over the control, gone at its pointerup, " + (step ? "after " + before + " with the control shown: [" + its + " opens, the tap's, the next click's]" : "with " + before + ", the control shown: [the tap's opens, the next click's]"), step ? [[0, 0], [0, 0], [1, 1]] : [[0, 0], [1, 1]], step ? [stepOpens, tapOpens, await next(before)] : [tapOpens, await next(before)]);
+    }
+    {
+      const what = "the control out of view at the tap";
+      await settle();
+      const r0 = await s.place("w490", 3);
+      assert.ok(r0.inView && r0.hit === "the picture", at + what + ": the control shown before the right click (a precondition): " + JSON.stringify(r0));
+      const stepOpens = await leftover("a right click on the picture (" + what + ")", button("right"), r0);
+      const r1 = await s.place("w490", 3);
+      const SHIFT = 90;
+      await s.frameTop(-SHIFT);
+      const c = await s.ctlBox();
+      const tapAt = { x: r1.pt.x, y: r1.pt.y - SHIFT };
+      const over = await s.cover({ x: tapAt.x - 40, y: tapAt.y - 30, w: 80, h: 60 }, [tapAt], true);
+      assert.ok(c.frameTop + c.t + c.h <= 0 && over[0], at + what + ": the control above the top page's window at the tap's start, the top page's element at the tap's point (a precondition): " + JSON.stringify({ c, over, tapAt }));
+      await s.events();
+      await s.page.touchscreen.tap(tapAt.x, tapAt.y);
+      await frames(s.fr, 3);
+      const evs = await s.events();
+      const top = await s.dropCover();
+      const back = await s.ctlBox();
+      rec[what] = { viewer: fmt(evs), top, back };
+      foreign(evs, what);
+      assert.ok(back.frameTop === 0 && top.display === "none", at + what + ": the element hidden and the frame moved back at its pointerup, the control in view at the click (a precondition): " + JSON.stringify({ top, back }));
+      const tapOpens = await s.opens();
+      cell("a tap on another document's element over the picture, the control above the top page's window at the tap's start and the frame moved back at the element's pointerup, after a right click with the control shown: [the right click's opens, the tap's, the next click's]", [[0, 0], [0, 0], [1, 1]], [stepOpens, tapOpens, await next(what)]);
+    }
+    if (engine === "firefox") {
+      const what = "a hover tooltip of the top page";
+      await settle();
+      const r0 = await s.place("w490", 3);
+      assert.ok(r0.inView && r0.hit === "the picture", at + what + ": the control shown before the right click (a precondition): " + JSON.stringify(r0));
+      const stepOpens = await leftover("a right click on the picture (" + what + ")", button("right"), r0);
+      await s.place("w490", 3);
+      const c = await s.ctlBox();
+      const tapAt = { x: Math.round(c.l - 50), y: Math.round(c.t + c.h / 2 + 30) };
+      await s.page.evaluate((b: { x: number; y: number; w: number; h: number }) => {
+        const w = window as any;
+        const cellEl = document.createElement("div"), tip = document.createElement("div");
+        cellEl.id = "tcell"; tip.id = "ttip";
+        cellEl.style.cssText = "position:fixed;left:20px;bottom:10px;width:120px;height:30px;z-index:10;background:#ccd;font:13px sans-serif";
+        cellEl.textContent = "a rail cell";
+        tip.style.cssText = "position:fixed;left:" + b.x + "px;top:" + b.y + "px;width:" + b.w + "px;height:" + b.h + "px;z-index:11;background:#ffd;font:13px sans-serif;display:none";
+        tip.textContent = "a hover tooltip of the top page";
+        cellEl.addEventListener("mouseenter", () => { tip.style.display = "block"; });
+        cellEl.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+        w.__cev = [];
+        if (!w.__cevOn) { w.__cevOn = true; for (const type of ["pointerdown", "pointerup", "pointercancel", "touchstart", "touchend", "mousedown", "click"]) window.addEventListener(type, (e: any) => { w.__cev.push(e.type); }, true); }
+        document.body.appendChild(cellEl); document.body.appendChild(tip);
+      }, { x: Math.round(c.l - 120), y: Math.round(c.t - 10), w: Math.round(c.w + 140), h: Math.round(c.h + 90) });
+      await s.page.mouse.move(80, 675, { steps: 4 });
+      await frames(s.fr, 2);
+      const shown = await s.page.evaluate(([cx, cy, tx, ty]: [number, number, number, number]) => { const t = document.getElementById("ttip"); return !!t && document.elementFromPoint(cx, cy) === t && document.elementFromPoint(tx, ty) === t; }, [c.l + c.w / 2, c.t + c.h / 2, tapAt.x, tapAt.y]);
+      assert.ok(shown, at + what + ": the tooltip shown over the control's centre and the tap's point while the mouse rests on the cell (a precondition)");
+      await s.events();
+      await s.page.touchscreen.tap(tapAt.x, tapAt.y);
+      await frames(s.fr, 3);
+      const evs = await s.events();
+      const hidden = await s.page.evaluate(() => getComputedStyle(document.getElementById("ttip") as HTMLElement).display);
+      const top = await s.dropCover();
+      rec[what] = { viewer: fmt(evs), top, hidden };
+      foreign(evs, what);
+      assert.ok(hidden === "none", at + what + ": the tooltip hidden at the cell's mouseleave by the tap (a precondition): " + hidden);
+      const tapOpens = await s.opens();
+      cell("a finger's tap on a hover tooltip of the top page over the control, hidden as the tap moves the mouse off its cell, after a right click with the control shown: [the right click's opens, the tap's, the next click's]", [[0, 0], [0, 0], [1, 1]], [stepOpens, tapOpens, await next(what)]);
+    }
+    note("record " + JSON.stringify({ engine, surface, page: "hybrid in a frame", scene: "other-document", ...rec }));
   });
 }

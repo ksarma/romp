@@ -2786,17 +2786,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // read on the body came after that close and saw the sign uncovered, and a click on the picture under the popover opened the
   // tab; the text-size flyout closes later, at the document's mousedown. How a click finds its press, keyed on seven events of
   // the window's capture phase and never on time (the file review's round 17, tests-1 with regression-1; its round 18, extra5-1,
-  // extra5-2 and correctness-1, with the coordinator's decisions on them):
+  // extra5-2 and correctness-1, with the coordinator's decisions on them and the closing check after those fixes):
   // - a pointerdown records the press's verdict under its pointerId, a primary one first ending every earlier record whatever its
   //   pointer type, since a new primary contact means every earlier one has ended. A record ends at its own pointerup, which hands
   //   it to the slot, and at its own pointercancel (a swipe that scrolls, and in Chromium and Firefox the picture's own drag); a
   //   dragstart ends every record, since WebKit's drag of the picture sends no pointerup and no pointercancel; and a mousedown with
-  //   no pointerdown of a mouse or a pen before it ends every record, takes no verdict and leaves the slot alone. A mouse's press and
-  //   a pen's send their own mousedown after their pointerdown and before their pointerup, and a tap's compatibility mousedown comes
-  //   after its pointerup, so such a mousedown is a tap's, a chorded button's, or WebKit's next press of the mouse after a press
-  //   whose pointerup never came: a drag in another pane, whose dragstart this window never hears (the dashboard's panes are
-  //   same-origin frames, and WebKit keeps the button's pressed state across them), and presumably a native context menu or a
-  //   middle press's autoscroll, not measured. Ending a record can only refuse a click, never open one. The dragstart's clear and the
+  //   no pointerdown of a mouse or a pen before it ends every record and takes no verdict, and it empties the slot unless it is the
+  //   compatibility mousedown of the one-finger tap whose pointerup filled the slot (the slot's rule, below). A mouse's press and a
+  //   pen's send their own mousedown after their pointerdown and before their pointerup, and a tap's compatibility mousedown comes
+  //   after its pointerup, so such a mousedown is a tap's, a chorded button's, WebKit's next press of the mouse after a press whose
+  //   pointerup never came (a drag in another pane, whose dragstart this window never hears: the dashboard's panes are same-origin
+  //   frames, and WebKit keeps the button's pressed state across them; and presumably a native context menu or a middle press's
+  //   autoscroll, not measured), or a tap on another document's element over the picture that went away during the press (a top
+  //   page's menu item, backdrop or hover tooltip over the viewer's frame), whose press and release that document heard and whose
+  //   compatibility mousedown and click land in this window with no pointerdown or pointerup of theirs. Ending a record or emptying
+  //   the slot can only refuse a click, never open one. The dragstart's clear and the
   //   pointerup's end of its own record are defensive once the mousedown's clear stands: the mouse's next press after a lost pointerup
   //   reaches this window as a mousedown with no pointerdown, or with a pointerdown, and either ends the record, so dropping either
   //   alone changes no gesture a test drives, while dropping the mousedown's clear alone lets a press whose pointerup never came hand
@@ -2810,9 +2814,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   pointer type lands elsewhere loses its record, a mouse held while a finger presses or a finger held while the mouse presses,
   //   so its click opens nothing and reveals;
   // - a pointerup fills the one-click slot with the record under its own pointerId, or with nothing when that pointer recorded
-  //   none; any pointerdown, pointercancel or keydown empties the slot, and the first click after it takes it, whatever the click
-  //   lands on, so one slot serves one click; the boundary and capture events a browser sends between a pointerup and its click
-  //   (lostpointercapture, pointerout) leave it alone;
+  //   none; any pointerdown, pointercancel or keydown empties the slot, and so does a mousedown with no pointerdown of a mouse or a
+  //   pen before it, unless the pointerup that filled the slot was a one-finger tap's (a primary touch, the only contact since its
+  //   own pointerdown) and this is the first mousedown since, that tap's compatibility mousedown; the first click after it takes it,
+  //   whatever the click lands on, so one slot serves one click, the click of the gesture whose pointerup filled it, and a click
+  //   whose press and release this window never heard finds the slot empty, whatever pointerup with no click after it (a right or a
+  //   middle click, a two-finger touch) had filled it; the boundary and capture events a browser sends between a pointerup and its
+  //   click (lostpointercapture, pointerout) leave it alone;
   // - a click by a pointer (trusted, and its pointerId other than -1, or none with a detail above 0) reads the record under its own
   //   pointerId, which stands only until that pointer's pointerup, and with none the press the slot handed it; that press must be
   //   this picture's, its verdict shown, and the sign in view again at the click (controlInView), and with neither the click opens
@@ -2825,10 +2833,20 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // press in the slot in each of them, whatever pointerId it carries, and so does an iPhone tap's click, which WebKit's iOS source
   // gives the touch's own pointerId, read and not run on a device. The arm for a click with no pointerId serves an engine whose
   // click is a plain MouseEvent, which finds its press in the slot too; no engine measured sends one (every engine's click carries a
-  // pointerId, a key's -1), so that arm is pinned over the stand-in alone (the file review's round 18, tests-2). The slot's four
-  // clears (a pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive: the slot is refilled at every
-  // pointerup, a tap's click follows its own pointerup, and a key's or a script's click never reads the slot, so dropping any one
-  // clear alone changes no gesture a test drives; the press cells (a press with no click, then a key's click or a script's) are red
+  // pointerId, a key's -1), so that arm is pinned over the stand-in alone (the file review's round 18, tests-2). The mousedown's
+  // clear of the slot is not defensive: before it, after a pointerup of this window with no click after it, on a picture and begun
+  // with its sign shown, a tap on another document's element over the picture took that slot at its click and opened the tab with
+  // the sign covered, or out of view, at the tap's start, in Chromium, Firefox and WebKit (the closing check after the fixes for the
+  // file review's round 18; the other-document cells and their node guard, red at 0f998a3b9, whose mousedown left the slot alone);
+  // and its exception for the one-finger tap's own mousedown is what lets a tap's click find its press (the guard's one-finger taps,
+  // red under a gate that empties the slot at every such mousedown). Its residual: a one-finger touch of this window that ends in a
+  // pointerup with no compatibility mousedown and no click, then such a tap on another document's element, would find that touch's
+  // press in the slot; no touch measured ends so (a swipe ends in a pointercancel, and in Chromium a touch held 1.2 s clicks), and
+  // the viewer's own document cancels a touch only on the comment float, which holds no picture. The slot's four other clears (a
+  // pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive: the slot is refilled at every pointerup,
+  // the click of a press this window heard follows that press's own pointerup, the mousedown's clear empties it before a click whose
+  // press this window did not hear, and a key's or a script's click never reads the slot, so dropping any one of the four alone
+  // changes no gesture a test drives; the press cells (a press with no click, then a key's click or a script's) are red
   // under a gate that lets a key's or a script's click read the slot with the keydown's clear dropped. One physical gesture's later
   // events are closed by their own fields and never by time: a click whose detail is above 1, following a refused click of its run
   // (the second click of a double click, and in Chromium the second tap of a double tap, whose click carries detail 2), opens
@@ -2837,13 +2855,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // key's repeats and Space's release are the key gate's.
   type FigurePress = { img: Element; ok: boolean };
   const presses = new Map<number, FigurePress>();        // the press records, by pointerId, each until its pointerup or its pointercancel, a primary press, a dragstart or a mousedown no mouse's or pen's pointerdown came before
-  let slot: FigurePress | null = null;                   // the one-click slot: the record of the last pointerup, until a pointerdown, a pointercancel, a keydown or the click that takes it
+  let slot: FigurePress | null = null;                   // the one-click slot: the record of the last pointerup, until a pointerdown, a pointercancel, a keydown, a mousedown no mouse's or pen's pointerdown came before (but a one-finger tap's own) or the click that takes it
   let slotted: FigurePress | null = null;                // what the current click took from the slot at the window, read by webGestureShown
   let mouseDownDue = false;                               // a mouse's or a pen's pointerdown came and its own mousedown has not, until that mousedown, its pointerup or its pointercancel
+  let tapDue = false;                                     // the slot was filled at a one-finger tap's pointerup and that tap's compatibility mousedown has not come, until that mousedown or the next pointerdown or pointercancel
+  let touchDowns = 0;                                     // the touch contacts since the last primary touch's pointerdown, that one counted
   let refusedRun = false;                                 // the last click on a web figure in the current run of clicks was refused
   const onFigurePress = (ev: PointerEvent): void => {
     slot = null;
+    tapDue = false;
     mouseDownDue = ev.pointerType !== "touch";            // a mouse's and a pen's press send their own mousedown before their pointerup; a tap's comes after its pointerup
+    if (ev.pointerType === "touch") touchDowns = ev.isPrimary ? 1 : touchDowns + 1;
     if (ev.isPrimary) presses.clear();                    // a primary press: every earlier contact has ended, whatever its pointer type
     const t = ev.target as Element | null;
     const control = figureControlOf(t, body);
@@ -2851,12 +2873,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const sign = img ? figureSign(img) : null;
     if (img && sign) presses.set(ev.pointerId, { img, ok: signShown(sign) });
   };
-  const onFigureMouseDown = (): void => {                 // ends records and nothing else: it takes no verdict and leaves the slot alone
+  const onFigureMouseDown = (): void => {                 // ends records and empties the slot, but for a one-finger tap's own: it takes no verdict
     if (mouseDownDue) { mouseDownDue = false; return; }   // the mousedown of the mouse's or the pen's press just recorded
     presses.clear();                                      // a mousedown no mouse's or pen's pointerdown came before: every record ends
+    if (!tapDue) slot = null;                             // and the slot too, unless this is the compatibility mousedown of the one-finger tap whose pointerup filled it
+    tapDue = false;
   };
-  const onFigureUp = (ev: PointerEvent): void => { slot = presses.get(ev.pointerId) ?? null; presses.delete(ev.pointerId); mouseDownDue = false; };   // the record ends at its own pointerup, handed to the slot
-  const onFigureCancel = (ev: PointerEvent): void => { presses.delete(ev.pointerId); slot = null; mouseDownDue = false; };
+  const onFigureUp = (ev: PointerEvent): void => { slot = presses.get(ev.pointerId) ?? null; presses.delete(ev.pointerId); mouseDownDue = false; tapDue = ev.pointerType === "touch" && ev.isPrimary && touchDowns === 1; };   // the record ends at its own pointerup, handed to the slot
+  const onFigureCancel = (ev: PointerEvent): void => { presses.delete(ev.pointerId); slot = null; mouseDownDue = false; tapDue = false; };
   const onFigureKey = (): void => { slot = null; };
   const onFigureDragStart = (): void => { presses.clear(); };   // a drag ends every record: WebKit's drag of the picture sends no pointerup and no pointercancel, and no click follows a drag
   const onClickRun = (ev: MouseEvent): void => { slotted = slot; slot = null; if (ev.detail === 1) refusedRun = false; };   // the click takes the slot, and a click of detail 1 begins a new run
