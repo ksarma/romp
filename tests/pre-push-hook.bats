@@ -12269,11 +12269,12 @@ r12b_form_case() {   # <form>: that allowlist form with the crafted number path,
     [[ "$output" == *"switch a rule off with disabledRules"* ]]
 }
 
-r12b_log_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the scan of record's run alone (its arguments carry --log-level trace), records the mode and the path of the file its stderr is (the hook's log), runs the real scanner with its log to a file of its own, records whether the token is in that log (never the token itself), and hands the log on to its stderr unchanged; the real scanner for every other run
+r12b_log_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the scan of record's run alone (its arguments carry --log-level trace and it runs in the pieces' directory, creds.d: since round 12b3 the skip canary's run is at the trace level too, in creds.c), records the mode and the path of the file its stderr is (the hook's log), runs the real scanner with its log to a file of its own, records whether the token is in that log (never the token itself), and hands the log on to its stderr unchanged; the real scanner for every other run
     mkdir -p "$TEST_DIR/scanner"
     {
         printf '#!/usr/bin/env bash\n'
         printf 'case " $* " in *" --log-level trace "*) ;; *) exec %q "$@" ;; esac\n' "$GL"
+        printf 'case "$PWD" in */creds.d) ;; *) exec %q "$@" ;; esac\n' "$GL"
         printf 'stat -L -c %%a /proc/self/fd/2 >> %q; readlink /proc/self/fd/2 >> %q\n' "$TEST_DIR/calls.logmode" "$TEST_DIR/calls.logpath"
         printf 'e=$(mktemp %q); %q "$@" 2> "$e"; s=$?\n' "$TEST_DIR/wlog.XXXXXX" "$GL"
         printf 'if grep -qF -- %q "$e"; then echo in-log >> %q; else echo absent >> %q; fi\n' "$(r12b_token)" "$TEST_DIR/calls.premise" "$TEST_DIR/calls.premise"
@@ -12313,25 +12314,25 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     [ "$(wc -l < "$TEST_DIR/calls.premise")" -eq 2 ]
 }
 
-@test "round 12b (C, decision 2, the count arm): a scanner wrapper that drops --log-level trace from the scan of record's arguments, so the trace level does not take effect, under the crafted number path on generic-api-key and the token at app/settings.py: refused by the count line (0 scanning path lines where the hook wrote 1 piece), no skip line, no credential named, the remote at its base (red under the mutant deleting the count comparison, where the token publishes)" {
+@test "round 12b (C, decision 2, the count arm): a scanner wrapper that drops --log-level trace from the scan of record's arguments, so the trace level does not take effect, under the crafted number path on generic-api-key and the token at app/settings.py: refused by the count line (0 scanning path lines where the hook wrote 1 piece), matched as the whole printed line with its note naming the second cause (gitleaks also logs none for a piece it skipped whole), no skip line, no credential named, the remote at its base (red under the mutant deleting the count comparison, where the token publishes, and under the one deleting the note argument from unscanned; since round 12b3 the wrapper acts on the scan of record's run alone, in creds.d, so the skip canary's run keeps its trace level)" {
     r11a_base
     r11a_config "$(r12b_config tables)"
     r11a_witness S3
-    scanner_wrapper "$(printf 'a=(); d=0; for x in "$@"; do if [ "$d" = 1 ]; then d=0; continue; fi; if [ "$x" = --log-level ]; then d=1; echo dropped >> %q; continue; fi; a+=("$x"); done; set -- "${a[@]}"' "$TEST_DIR/calls.dropped")"
+    scanner_wrapper "$(printf 'if [[ "$PWD" == */creds.d ]]; then a=(); d=0; for x in "$@"; do if [ "$d" = 1 ]; then d=0; continue; fi; if [ "$x" = --log-level ]; then d=1; echo dropped >> %q; continue; fi; a+=("$x"); done; set -- "${a[@]}"; fi' "$TEST_DIR/calls.dropped")"
     push_main_through_hook_with_shim
     [ "$(wc -l < "$TEST_DIR/calls.dropped")" -eq 1 ]
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: the CREDENTIAL scan's trace log holds 0 scanning path lines, one per file read, where the hook wrote 1 pieces for it, so whether a path allowlist skipped a rule on a piece is unknown (a run at which the trace level did not take effect logs none); the scan is incomplete, so the push is refused"* ]]
+    [ "$(grep -cxF -- "romp pre-push: the CREDENTIAL scan's trace log holds 0 scanning path lines, one per file read, where the hook wrote 1 pieces for it, so whether a path allowlist skipped a rule on a piece is unknown (a run at which the trace level did not take effect logs none); the scan is incomplete, so the push is refused (gitleaks also logs none for a piece it skipped whole, as under a global path allowlist, which the byte figure refuses too)" <<< "$output")" -eq 1 ]
     [[ "$output" != *" skipped rule "* ]]
     [[ "$output" != *"ADDS a credential"* ]]
     at_base
 }
 
-@test "round 12b table case: the PATH SKIPS in the trace log of the scan of record: an awk silent on the path skips' program alone, through a real push of the token at app/settings.py under the crafted number path on generic-api-key, is refused naming the missing closing line, no skip line and no credential named, and the remote stays at its base (red under the mutant deleting the no-closing-line arm, where the read-short line refuses in its place, and under the one deleting both closing-line arms, where the count line does)" {
+@test "round 12b table case: the PATH SKIPS in the trace log of the scan of record: an awk silent on the path skips' program over the scan of record's log alone (since round 12b3 the skip canary's read runs the same program over its own log, creds.canary.log), through a real push of the token at app/settings.py under the crafted number path on generic-api-key, is refused naming the missing closing line, no skip line and no credential named, and the remote stays at its base (red under the mutant deleting the no-closing-line arm, where the read-short line refuses in its place, and under the one deleting both closing-line arms, where the count line does)" {
     r11a_base
     r11a_config "$(r12b_config tables)"
     r11a_witness S3
-    calls_silent_on_text awk path-skips 'allowed-path=true'
+    calls_silent_on awk path-skips '[[ "$*" == *allowed-path=true* && "$*" == */creds.log ]]'
     push_main_through_hook_with_shim
     fired path-skips "allowed-path=true"
     [ "$status" -ne 0 ]
@@ -12341,11 +12342,11 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     at_base
 }
 
-@test "round 12b short case: the PATH SKIPS in the trace log of the scan of record: an awk whose path skips answer is cut to three bytes of its skip line (exit 0), through a real push of the token at app/settings.py under the crafted number path on generic-api-key, is refused naming the missing closing line, no skip line named, and the remote stays at its base (red under the mutant deleting the no-closing-line arm, where the read-short line refuses in its place, and under the one deleting both closing-line arms, where the count line does)" {
+@test "round 12b short case: the PATH SKIPS in the trace log of the scan of record: an awk whose path skips answer over the scan of record's log alone (not the skip canary's, since round 12b3) is cut to three bytes of its skip line (exit 0), through a real push of the token at app/settings.py under the crafted number path on generic-api-key, is refused naming the missing closing line, no skip line named, and the remote stays at its base (red under the mutant deleting the no-closing-line arm, where the read-short line refuses in its place, and under the one deleting both closing-line arms, where the count line does)" {
     r11a_base
     r11a_config "$(r12b_config tables)"
     r11a_witness S3
-    calls_short_on_text awk path-skips 'allowed-path=true' bytes:3
+    calls_short_on awk path-skips '[[ "$*" == *allowed-path=true* && "$*" == */creds.log ]]' bytes:3
     push_main_through_hook_with_shim
     fired_short path-skips "allowed-path=true"
     [ "$status" -ne 0 ]
@@ -12498,5 +12499,365 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     sed 's/^scanner_run() {/scanner_run_renamed() {/' "$HOOK" > "$TEST_DIR/plant-r10c-sr.sh"
     run census_unread_shapes "$TEST_DIR/plant-r10c-sr.sh"
     [ "${lines[0]}" = "0:the extent of scanner_run, which an exception of the bound is keyed on, is missing" ]
-    [[ "$output" == *$'\n'*':    ( cd "$dir" && umask 077 && { [ "$mode" != record ] || export NO_COLOR=1; } && "$gl" "${GL_ARGS[@]}" < /dev/null 1>&2 2> "$logf" ) || rc=$?'* ]]
+    [[ "$output" == *$'\n'*':    ( cd "$dir" && umask 077 && { [ "$trace" -eq 0 ] || export NO_COLOR=1; } && "$gl" "${GL_ARGS[@]}" < /dev/null 1>&2 2> "$logf" ) || rc=$?'* ]]
+}
+
+# ── round 12b3: the skip canary (romp-manager's ruling, 2026-09-26 20:08Z) ──
+# Round 12b reads gitleaks' own trace line for a rule-allowlist path skip, its wording verified on the eleven releases
+# from 8.25.0 to 8.30.1; a later gitleaks that reworded that line alone would leave the check disarmed while the
+# per-file count agrees. The ruling rejected both a stated residual and a version ceiling: when the config the reader
+# reads carries a per-rule or targeted path allowlist, the hook first runs gitleaks once over pieces of its own under
+# its own config (one custom rule, romp-skip-canary, and one allowlist of each form the repository's config uses, each
+# on a fixed number path its piece is named by: per-rule 1, targeted 2, AND 3), at the trace level into a private
+# file, and a form whose skip line the scan of record's own reader (path_skips) does not find there refuses the push,
+# naming the gitleaks version. Each case pushes for real with the identifier scan off and the real scanner armed,
+# wrapped where the case says so; every value is assembled at run time.
+
+r12b3_value() { printf 'zz%s%s' canary 503174629841; }       # the canary's value, assembled as skip_canary assembles it
+R12B3_HONEST="'''(^|/)tests/'''"                               # an honest path allowlist, which no piece's number matches
+R12B3_RULE="[[rules]] [[rules.allowlists]] paths = ['''^1\$'''] "
+R12B3_TGT="[[rules]] [[allowlists]] targetRules = [\"romp-skip-canary\"] paths = ['''^2\$'''] "
+R12B3_RULE_AND="[[rules]] [[rules.allowlists]] paths = ['''^1\$'''] [[rules.allowlists]] condition = \"AND\" paths = ['''^3\$'''] "
+R12B3_TGT_AND="[[rules]] [[allowlists]] targetRules = [\"romp-skip-canary\"] paths = ['''^2\$'''] [[allowlists]] targetRules = [\"romp-skip-canary\"] condition = \"AND\" paths = ['''^3\$'''] "
+R12B3_ALL="[[rules]] [[rules.allowlists]] paths = ['''^1\$'''] [[allowlists]] targetRules = [\"romp-skip-canary\"] paths = ['''^2\$'''] [[allowlists]] targetRules = [\"romp-skip-canary\"] condition = \"AND\" paths = ['''^3\$'''] "
+r12b3_scanner() {   # <all|canary> [<sed script>]: a gitleaks on ROMP_GITLEAKS that records each run (the name of the directory it runs in: creds.c for the canary's, creds.d for the scan of record's) in calls.runs and, for the canary's run, the table headers and the condition, paths and targetRules lines of the config it is handed, joined on one line, in calls.canary; given a sed script, it runs the real scanner with its log to a file of its own and hands that log on through the script, for every run (all) or the canary's alone, recording in calls.filtered each run whose log the script changed; the real scanner otherwise; gitleaks version passed straight through
+    mkdir -p "$TEST_DIR/scanner"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = version ]; then exec %q "$@"; fi\n' "$GL"
+        printf 'echo "${PWD##*/}" >> %q\n' "$TEST_DIR/calls.runs"
+        printf 'if [ "${PWD##*/}" = creds.c ]; then for a in "$@"; do case "$a" in */creds.canary.toml) grep -E %q "$a" | tr "\\n" " " >> %q; echo >> %q ;; esac; done; fi\n' '^(\[|condition|paths|targetRules)' "$TEST_DIR/calls.canary" "$TEST_DIR/calls.canary"
+        if [ -n "${2:-}" ]; then
+            [ "$1" = all ] || printf '[ "${PWD##*/}" = creds.c ] || exec %q "$@"\n' "$GL"
+            printf 'e=$(mktemp %q); %q "$@" 2> "$e"; s=$?\n' "$TEST_DIR/wlog.XXXXXX" "$GL"
+            printf 'sed %q "$e" > "$e.out"; cmp -s "$e" "$e.out" || echo "${PWD##*/}" >> %q\n' "$2" "$TEST_DIR/calls.filtered"
+            printf 'cat "$e.out" >&2; rm -f "$e" "$e.out"; exit "$s"\n'
+        else
+            printf 'exec %q "$@"\n' "$GL"
+        fi
+    } > "$TEST_DIR/scanner/gitleaks"
+    chmod 755 "$TEST_DIR/scanner/gitleaks"
+    export ROMP_GITLEAKS="$TEST_DIR/scanner/gitleaks"
+}
+r12b3_canary_line() {   # <per-rule|targeted|AND-condition>: the canary's refusal of that form under the scanner the case runs, the config the work tree's
+    local v
+    v=$("$GL" version)
+    printf '%s' "romp pre-push: gitleaks $v logged no skip line the hook reads for the canary's $1 path allowlist (the hook's own rule and piece, which that allowlist skips), so its skip wording is not recognized, and an allowlist of that form in the config the scan reads ($R12B_WT_CFG) could skip a rule on a piece unseen; re-verify the hook against gitleaks $v, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+}
+r12b3_n=0
+r12b3_clean() {   # [<path>]: a clean one-line file there (a fresh name under lib/ by default), committed; sets sha
+    local path=${1:-}
+    [ -n "$path" ] || { r12b3_n=$((r12b3_n + 1)); path="lib/f$r12b3_n.py"; }
+    mkdir -p "$(dirname "$REPO/$path")"
+    printf 'the front door is blue\n' > "$REPO/$path"
+    git -C "$REPO" add -- "$path"
+    r11b_commit "a clean file"
+}
+r12b3_form_dropped() {   # <piece> <form word>: after a push that passed, a second clean commit behind a gitleaks whose canary run loses the skip lines naming that piece is refused by the canary's line naming that form alone, no skip line, the remote at the first push's commit
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    r12b3_scanner canary "/ path=$1 rule-id=romp-skip-canary\$/d"
+    r12b3_clean
+    push_main_through_hook_with_shim
+    grep -qx creds.c "$TEST_DIR/calls.filtered"
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "$(r12b3_canary_line "$2")" <<< "$output")" -eq 1 ]
+    [ "$(grep -c "logged no skip line the hook reads" <<< "$output")" -eq 1 ]
+    [[ "$output" != *" skipped rule "* ]]
+    at_base
+}
+r12b3_forms() {   # <the canary config's line expected, or empty for no canary run> <config text>: a clean push under that config passes, and the canary's config the hook wrote holds exactly the allowlists expected (empty: no canary run, the scan of record's alone)
+    r11a_config "$2"
+    : > "$TEST_DIR/calls.canary"; : > "$TEST_DIR/calls.runs"
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ] || { printf 'refused under:\n%s\n%s\n' "$2" "$output" >&2; return 1; }
+    if [ -z "$1" ]; then
+        [ ! -s "$TEST_DIR/calls.canary" ] || { printf 'a canary run under:\n%s\n' "$2" >&2; return 1; }
+        [ "$(cat "$TEST_DIR/calls.runs")" = creds.d ]
+    else
+        [ "$(cat "$TEST_DIR/calls.canary")" = "$1" ] || { printf 'under:\n%s\nthe canary config: %s\n' "$2" "$(cat "$TEST_DIR/calls.canary")" >&2; return 1; }
+        [ "$(cat "$TEST_DIR/calls.runs")" = $'creds.c\ncreds.d' ]
+    fi
+}
+
+@test "round 12b3 (the canary, a scanner that rewords the skip line): a gitleaks whose every run logs the rule-allowlist skip line in other words, under the crafted number path on generic-api-key and the token at app/settings.py: refused by the canary's line naming the gitleaks version and the per-rule form, one such line, no skip line and no credential named, neither the token nor the canary's value printed, the remote at its base (PUBLISHED at ae42540b9 under the same scanner, both releases of the box: the reworded line disarms the scan of record's check there; red under the mutant deleting the canary's call)" {
+    r11a_base
+    r11a_config "$(r12b_config tables)"
+    r11a_witness S3
+    r12b3_scanner all 's/: rule allowlist /: rule-allowlist /'
+    push_main_through_hook_with_shim
+    [ "$(cat "$TEST_DIR/calls.runs")" = $'creds.c\ncreds.d' ]
+    [ "$(cat "$TEST_DIR/calls.filtered")" = $'creds.c\ncreds.d' ]      # both runs' skip lines were reworded
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "$(r12b3_canary_line per-rule)" <<< "$output")" -eq 1 ]
+    [ "$(grep -c "logged no skip line the hook reads" <<< "$output")" -eq 1 ]
+    [[ "$output" != *" skipped rule "* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    [[ "$output" != *"$(r12b_token)"* ]]
+    [[ "$output" != *"$(r12b3_value)"* ]]
+    at_base
+}
+
+@test "round 12b3 (the canary passes under the real scanner): the crafted number path on generic-api-key and the token at app/settings.py are refused by the skip line alone, with no canary line, the canary's run made ahead of the scan of record under a config holding one per-rule allowlist on 1; and a clean push under the honest per-rule allowlist (^|/)tests/ passes with the canary's run made and no romp line (both releases of the box; all eleven from 8.25.0 to 8.30.1 in the round 12b3 log, a scratch run, not a case)" {
+    r11a_base
+    r11a_config "$(r12b_config tables)"
+    r11a_witness S3
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    r12b3_scanner all
+    push_main_through_hook_with_shim
+    [ "$(cat "$TEST_DIR/calls.runs")" = $'creds.c\ncreds.d' ]
+    [ "$(cat "$TEST_DIR/calls.canary")" = "$R12B3_RULE" ]
+    r12b_refused_by_skip generic-api-key app/settings.py
+    [[ "$output" != *"logged no skip line the hook reads"* ]]
+    [[ "$output" != *"$(r12b3_value)"* ]]
+    r11a_config "$(r12b_config tables "$R12B3_HONEST")"
+    : > "$TEST_DIR/calls.runs"
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [ "$(cat "$TEST_DIR/calls.runs")" = $'creds.c\ncreds.d' ]
+}
+
+@test "round 12b3 (no canary without a per-rule or targeted path allowlist): a clean push under no config, under this repository's .gitleaks.toml, under a per-rule allowlist holding only a value regex, under a global path allowlist with no targetRules (which skips a piece whole, a skip the byte figure refuses, and is no form), and under a targeted allowlist with no paths each makes one scanner run, the scan of record's, with no canary run and no canary config, and passes" {
+    r11a_base
+    r12b3_scanner all
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [ "$(cat "$TEST_DIR/calls.runs")" = creds.d ]
+    r12b3_forms "" "$(cat "$ROMP_DIR/.gitleaks.toml")"
+    r12b3_forms "" "$(r12b_config regex)"
+    r12b3_forms "" "$(printf '[extend]\nuseDefault = true\n\n[[allowlists]]\npaths = [%s]\n' "$R12B3_HONEST")"
+    r12b3_forms "" "$(printf '[extend]\nuseDefault = true\n\n[[allowlists]]\ntargetRules = ["generic-api-key"]\nregexes = [%s]\n' "'''Zq8X'''")"
+    [ ! -s "$TEST_DIR/calls.canary" ]
+}
+
+r12b3_canary_watcher() {   # a gitleaks on ROMP_GITLEAKS that, for the canary's run alone (in creds.c), records the mode and the path of the file its stderr is (the canary's log), runs the real scanner with its log to a file of its own, records whether the canary's value is in that log (never the value itself), and hands the log on to its stderr unchanged; the real scanner for every other run
+    mkdir -p "$TEST_DIR/scanner"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'case "$PWD" in */creds.c) ;; *) exec %q "$@" ;; esac\n' "$GL"
+        printf 'stat -L -c %%a /proc/self/fd/2 >> %q; readlink /proc/self/fd/2 >> %q\n' "$TEST_DIR/calls.clogmode" "$TEST_DIR/calls.clogpath"
+        printf 'e=$(mktemp %q); %q "$@" 2> "$e"; s=$?\n' "$TEST_DIR/wlog.XXXXXX" "$GL"
+        printf 'if grep -qF -- %q "$e"; then echo in-log >> %q; else echo absent >> %q; fi\n' "$(r12b3_value)" "$TEST_DIR/calls.cpremise" "$TEST_DIR/calls.cpremise"
+        printf 'cat "$e" >&2; rm -f "$e"; exit "$s"\n'
+    } > "$TEST_DIR/scanner/gitleaks"
+    chmod 755 "$TEST_DIR/scanner/gitleaks"
+    export ROMP_GITLEAKS="$TEST_DIR/scanner/gitleaks"
+}
+
+@test "round 12b3 (the canary's secret): under an honest AND-condition path allowlist, whose skip line prints the canary's value whole (gitleaks' finding field, which --redact does not reach), a scanner wrapper sees the value in the canary's log, a file of mode 600 named creds.canary.log in the hook's scratch directory, and the clean push passes printing neither the value nor any romp line nor any trace line, the log gone and TMPDIR empty once the hook exits (red under the mutant that shows the canary's log, and under the one that drops the umask)" {
+    r11a_base
+    export TMPDIR="$TEST_DIR/r12b3-tmp"; mkdir -p "$TMPDIR"
+    r12b3_canary_watcher
+    r11a_config "$(r12b_config and "$R12B3_HONEST")"
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    [ "$(cat "$TEST_DIR/calls.cpremise")" = in-log ]
+    [ "$(cat "$TEST_DIR/calls.clogmode")" = 600 ]
+    [[ "$(cat "$TEST_DIR/calls.clogpath")" == "$TMPDIR/romp-pre-push."*"/creds.canary.log" ]]
+    [ ! -e "$(cat "$TEST_DIR/calls.clogpath")" ]
+    [[ "$output" != *"$(r12b3_value)"* ]]
+    r12b_no_trace_shown
+    [ -z "$(ls -A "$TMPDIR")" ]
+}
+
+@test "round 12b3 (the canary checks the per-rule form): under the honest per-rule allowlist (^|/)tests/, a clean push passes with the canary's config holding one per-rule allowlist on 1; a second clean push behind a gitleaks whose canary run loses the skip line of piece 1 is refused by the canary's line naming the per-rule form alone, the remote at the first push's commit" {
+    r11a_base
+    r11a_config "$(r12b_config tables "$R12B3_HONEST")"
+    r12b3_scanner all
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [ "$(cat "$TEST_DIR/calls.canary")" = "$R12B3_RULE" ]
+    r12b3_form_dropped 1 per-rule
+}
+
+@test "round 12b3 (the canary checks the targeted form): under an honest targeted [[allowlists]] naming generic-api-key, a clean push passes with the canary's config holding one targeted allowlist on 2; a second clean push behind a gitleaks whose canary run loses the skip line of piece 2 is refused by the canary's line naming the targeted form alone, the remote at the first push's commit (both releases of the box: gitleaks 8.28.0 applies no targeted allowlist naming a default rule, case 549, but applies the canary's, which names the canary's own rule; so does every release from 8.25.0, the round 12b3 log)" {
+    r11a_base
+    r11a_config "$(r12b_config targeted "$R12B3_HONEST")"
+    r12b3_scanner all
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [ "$(cat "$TEST_DIR/calls.canary")" = "$R12B3_TGT" ]
+    r12b3_form_dropped 2 targeted
+}
+
+@test "round 12b3 (the canary checks the AND form): under an honest per-rule AND-condition allowlist, a clean push passes with the canary's config holding a per-rule allowlist on 1 and a per-rule AND one on 3; a second clean push behind a gitleaks whose canary run loses the skip line of piece 3 (gitleaks' skipping finding line) is refused by the canary's line naming the AND-condition form alone, the per-rule form passing, the remote at the first push's commit" {
+    r11a_base
+    r11a_config "$(r12b_config and "$R12B3_HONEST")"
+    r12b3_scanner all
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [ "$(cat "$TEST_DIR/calls.canary")" = "$R12B3_RULE_AND" ]
+    r12b3_form_dropped 3 AND-condition
+}
+
+@test "round 12b3 (the reader's forms, per-rule spellings): a clean push passes under each spelling of a per-rule path allowlist, the canary's config holding the per-rule allowlist on 1 for each ([[rules.allowlists]], the legacy [rules.allowlist], dotted allowlist.paths and allowlists.paths, an inline allowlist = { } and allowlists = [ { } ], the paths in an array's second table), and a rule extended from another file carrying one; a condition gitleaks reads as AND (AND, and, &&, one spelled with an escape, a dotted allowlist.condition or allowlists.condition, an inline table's) adds the AND allowlist on 3, and one it reads as OR (OR, ||, the empty string) adds none (each red under the mutant deleting its arm of the reader)" {
+    local h=$R12B3_HONEST head
+    head=$(printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "generic-api-key"')
+    r11a_base
+    r12b3_scanner all
+    r12b3_forms "$R12B3_RULE" "$(r12b_config tables "$h")"
+    r12b3_forms "$R12B3_RULE" "$(r12b_config legacy "$h")"
+    r12b3_forms "$R12B3_RULE" "$(r12b_config dotted "$h")"
+    r12b3_forms "$R12B3_RULE" "$(printf '%s\nallowlists.paths = [%s]\n' "$head" "$h")"
+    r12b3_forms "$R12B3_RULE" "$(printf '%s\nallowlist = { paths = [%s] }\n' "$head" "$h")"
+    r12b3_forms "$R12B3_RULE" "$(r12b_config inline "$h")"
+    r12b3_forms "$R12B3_RULE" "$(printf '%s\nallowlists = [ { regexes = [%s] }, { paths = [%s] } ]\n' "$head" "'''Zq8X'''" "$h")"
+    r11a_config "$(r12b_config tables "$h")" config/base.toml
+    r12b3_forms "$R12B3_RULE" "$(printf '[extend]\npath = "config/base.toml"\n')"
+    r12b3_forms "$R12B3_RULE_AND" "$(r12b_config and "$h")"
+    r12b3_forms "$R12B3_RULE_AND" "$(printf '%s\n[[rules.allowlists]]\ncondition = "and"\npaths = [%s]\nregexes = [%s]\n' "$head" "$h" "'''Zq8X'''")"
+    r12b3_forms "$R12B3_RULE_AND" "$(printf '%s\n[[rules.allowlists]]\ncondition = "&&"\npaths = [%s]\nregexes = [%s]\n' "$head" "$h" "'''Zq8X'''")"
+    r12b3_forms "$R12B3_RULE_AND" "$(printf '%s\n[[rules.allowlists]]\ncondition = "\\u0041ND"\npaths = [%s]\nregexes = [%s]\n' "$head" "$h" "'''Zq8X'''")"
+    r12b3_forms "$R12B3_RULE_AND" "$(printf '%s\nallowlist.condition = "AND"\nallowlist.paths = [%s]\nallowlist.regexes = [%s]\n' "$head" "$h" "'''Zq8X'''")"
+    r12b3_forms "$R12B3_RULE_AND" "$(printf '%s\nallowlists.condition = "AND"\nallowlists.paths = [%s]\nallowlists.regexes = [%s]\n' "$head" "$h" "'''Zq8X'''")"
+    r12b3_forms "$R12B3_RULE_AND" "$(printf '%s\nallowlist = { condition = "AND", paths = [%s], regexes = [%s] }\n' "$head" "$h" "'''Zq8X'''")"
+    r12b3_forms "$R12B3_RULE" "$(printf '%s\n[[rules.allowlists]]\ncondition = "OR"\npaths = [%s]\n' "$head" "$h")"
+    r12b3_forms "$R12B3_RULE" "$(printf '%s\n[[rules.allowlists]]\ncondition = "||"\npaths = [%s]\n' "$head" "$h")"
+    r12b3_forms "$R12B3_RULE" "$(printf '%s\n[[rules.allowlists]]\ncondition = ""\npaths = [%s]\n' "$head" "$h")"
+}
+
+@test "round 12b3 (the reader's forms, targeted spellings and all three): a clean push passes under each spelling of a targeted path allowlist, a global one holding targetRules and paths, the canary's config holding the targeted allowlist on 2 for each ([[allowlists]], the legacy [allowlist], the root table's dotted allowlist. and allowlists. keys, an inline allowlist = { } and allowlists = [ { } ]); a targeted AND-condition one adds a targeted AND allowlist on 3 written last; and all three forms together give the per-rule allowlist on 1, the targeted one on 2 and a targeted AND one on 3 written last, since gitleaks 8.25.0 evaluates none of a rule's allowlists after an AND-condition one holding a value regex (each red under the mutant deleting its arm of the reader, and the last two under the one writing the AND allowlist per-rule always)" {
+    local h=$R12B3_HONEST tail
+    tail=$(printf '[extend]\nuseDefault = true\n')
+    r11a_base
+    r12b3_scanner all
+    r12b3_forms "$R12B3_TGT" "$(r12b_config targeted "$h")"
+    r12b3_forms "$R12B3_TGT" "$(printf '%s\n\n[allowlist]\ntargetRules = ["generic-api-key"]\npaths = [%s]\n' "$tail" "$h")"
+    r12b3_forms "$R12B3_TGT" "$(printf 'allowlist.targetRules = ["generic-api-key"]\nallowlist.paths = [%s]\n\n%s\n' "$h" "$tail")"
+    r12b3_forms "$R12B3_TGT" "$(printf 'allowlists.targetRules = ["generic-api-key"]\nallowlists.paths = [%s]\n\n%s\n' "$h" "$tail")"
+    r12b3_forms "$R12B3_TGT" "$(printf 'allowlist = { targetRules = ["generic-api-key"], paths = [%s] }\n\n%s\n' "$h" "$tail")"
+    r12b3_forms "$R12B3_TGT" "$(printf 'allowlists = [ { targetRules = ["generic-api-key"], paths = [%s] } ]\n\n%s\n' "$h" "$tail")"
+    r12b3_forms "$R12B3_TGT_AND" "$(printf '%s\n\n[[allowlists]]\ntargetRules = ["generic-api-key"]\ncondition = "AND"\npaths = [%s]\nregexes = [%s]\n' "$tail" "$h" "'''Zq8X'''")"
+    r12b3_forms "$R12B3_ALL" "$(printf '%s\n\n[[rules]]\nid = "generic-api-key"\n[[rules.allowlists]]\npaths = [%s]\n[[rules.allowlists]]\ncondition = "AND"\npaths = [%s]\nregexes = [%s]\n\n[[allowlists]]\ntargetRules = ["generic-api-key"]\npaths = [%s]\n' "$tail" "$h" "$h" "'''Zq8X'''" "$h")"
+}
+
+@test "round 12b3 (the canary's own failure): under the honest per-rule allowlist, clean pushes behind a gitleaks whose canary run exits 3 without scanning (refused naming that exit), whose canary log gains an ERR line (refused naming the error), whose canary scans one byte more than the hook wrote (refused naming both figures), and whose canary run loses --log-level trace (refused by the canary's count line, 0 scanning path lines where the hook wrote 1 pieces, and no form line), each with the scan of record passing and the remote at its base (each red under the mutant deleting its arm)" {
+    local v want
+    r11a_base
+    r11a_config "$(r12b_config tables "$R12B3_HONEST")"
+    v=$("$GL" version)
+    want=$(printf 'canary = %s\n_' "$(r12b3_value)"); want=${#want}; want=$((want - 1))
+    scanner_wrapper "$(printf 'if [[ "$PWD" == */creds.c ]]; then echo fired >> %q; exit 3; fi' "$TEST_DIR/calls.cfail")"
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.cfail")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the skip CANARY run of gitleaks $v exited 3, neither 0 (clean) nor 2 (a finding), so whether it logs the skip line the scan of record reads is unknown; re-verify the hook against that gitleaks, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"logged no skip line the hook reads"* ]]
+    at_base
+    scanner_wrapper ":" "$(printf 'if [[ "$PWD" == */creds.c ]]; then echo fired >> %q; echo "12:00AM ERR zzsynth canary failure" >&2; fi' "$TEST_DIR/calls.cerr")"
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.cerr")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the skip CANARY run of gitleaks $v did not complete: gitleaks logged an error (zzsynth canary failure); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+    scanner_wrapper "$(printf 'if [[ "$PWD" == */creds.c ]]; then echo fired >> %q; printf x >> 1; fi' "$TEST_DIR/calls.cbytes")"
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.cbytes")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the skip CANARY run of gitleaks $v read $((want + 1)) of the $want bytes written for it (the canary's pieces); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+    scanner_wrapper "$(printf 'if [[ "$PWD" == */creds.c ]]; then a=(); d=0; for x in "$@"; do if [ "$d" = 1 ]; then d=0; continue; fi; if [ "$x" = --log-level ]; then d=1; echo dropped >> %q; continue; fi; a+=("$x"); done; set -- "${a[@]}"; fi' "$TEST_DIR/calls.ctrace")"
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.ctrace")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the trace log of the skip CANARY run of gitleaks $v holds 0 scanning path lines, one per file read, where the hook wrote 1 pieces for it, so whether it logs the skip line the scan of record reads is unknown (a run at which the trace level did not take effect logs none); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"logged no skip line the hook reads"* ]]
+    at_base
+}
+
+r12b3_canary_answer_edit() {   # <awk program over the answer>: an awk that, for the canary's read alone (the path skips' program over creds.canary.log), runs the real awk and hands its answer through the program given, the call recorded in calls.canary-edit; the real awk for every other call
+    local p real r_mktemp r_rm r_cat
+    p=${PATH//"$TEST_DIR/shim:"/}
+    real="$(PATH=$p command -v awk)"; r_mktemp="$(PATH=$p command -v mktemp)"; r_rm="$(PATH=$p command -v rm)"; r_cat="$(PATH=$p command -v cat)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [[ "$*" == *allowed-path=true* && "$*" == */creds.canary.log ]]; then\n'
+        printf '    w=$(%q %q); %q "$@" > "$w"; s=$?\n' "$r_mktemp" "$TEST_DIR/answer.XXXXXX" "$real"
+        printf '    if [ "$s" -ne 0 ]; then %q "$w"; %q -f "$w"; exit "$s"; fi\n' "$r_cat" "$r_rm"
+        printf '    a="$*"; printf "%%s\\n" %q"${a//$'"'"'\\n'"'"'/ }" >> %q\n' "awk " "$TEST_DIR/calls.canary-edit"
+        printf '    LC_ALL=C %q %q "$w"; s=$?; %q -f "$w"; exit "$s"\n' "$real" "$1" "$r_rm"
+        printf 'fi\n'
+        printf 'exec %q "$@"\n' "$real"
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "round 12b3 (the canary's read short): under the honest per-rule allowlist, a clean push behind an awk whose canary read loses its skip line and keeps its closing line is refused by the read-short line (closing 1 1, 0 skip lines read), and one whose canary read gains a line of no kind ahead of its closing line is refused by the same line (1 line of no kind), no form line, the remote at its base (red under the mutant deleting the canary's read-short comparison: the first push then refused by the form line instead, the second published)" {
+    local v
+    r11a_base
+    r11a_config "$(r12b_config tables "$R12B3_HONEST")"
+    v=$("$GL" version)
+    r12b3_canary_answer_edit '$1 != "skip"'
+    r12b3_clean
+    push_main_through_hook_with_shim
+    fired canary-edit "creds.canary.log"
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the PATH SKIPS in the trace log of the skip CANARY run of gitleaks $v were read short (the closing line reads \"1 1\", the per-file lines then the skip lines, where the shell read 0 skip lines and 0 lines of no kind); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"logged no skip line the hook reads"* ]]
+    at_base
+    r12b3_canary_answer_edit '$1 == "end" { print "zzkind\tone" } { print }'
+    : > "$TEST_DIR/calls.canary-edit"
+    r12b3_clean
+    push_main_through_hook_with_shim
+    fired canary-edit "creds.canary.log"
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the PATH SKIPS in the trace log of the skip CANARY run of gitleaks $v were read short (the closing line reads \"1 1\", the per-file lines then the skip lines, where the shell read 1 skip lines and 1 lines of no kind); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+}
+
+@test "round 12b3 (a form the scanner does not apply): under the honest per-rule allowlist, a clean push behind a gitleaks whose canary run finds its piece under another number (1 renamed 7), so the canary's allowlist does not apply and its rule reports the canary's value as a finding (exit 2), is refused by the canary's line naming the per-rule form alone: no credential named, no line of the finding shown, no credential verdict, the value printed nowhere, the remote at its base (red under the mutants that name the canary's findings, show its stdout, or let its exit 2 set the credential verdict)" {
+    r11a_base
+    r11a_config "$(r12b_config tables "$R12B3_HONEST")"
+    scanner_wrapper "$(printf 'if [[ "$PWD" == */creds.c ]]; then echo fired >> %q; mv 1 7; fi' "$TEST_DIR/calls.cmv")"
+    r12b3_clean
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.cmv")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "$(r12b3_canary_line per-rule)" <<< "$output")" -eq 1 ]
+    [ "$(grep -c "logged no skip line the hook reads" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"ADDS a credential"* ]]
+    [[ "$output" != *"romp-skip-canary"* ]]
+    [[ "$output" != *"gitleaks found a credential"* ]]
+    [[ "$output" != *"$(r12b3_value)"* ]]
+    at_base
+}
+
+@test "round 12b3 table case: the PATH SKIPS in the trace log of the skip canary: an awk silent on the path skips' program over the canary's log alone, through a real push of a clean file under the honest per-rule allowlist (^|/)tests/, which passes without it, is refused naming the missing closing line, no form line, and the remote stays at its base (red under the mutant deleting the canary's no-closing-line arm, where the read-short line refuses in its place)" {
+    r11a_base
+    r11a_config "$(r12b_config tables "$R12B3_HONEST")"
+    r12b3_clean
+    calls_silent_on awk canary-skips '[[ "$*" == *allowed-path=true* && "$*" == */creds.canary.log ]]'
+    push_main_through_hook_with_shim
+    fired canary-skips "creds.canary.log"
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the PATH SKIPS in the trace log of the skip CANARY run of gitleaks $("$GL" version) answered no closing line of counts (awk exited 0), so whether it logs the skip line the scan of record reads is unknown; the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"logged no skip line the hook reads"* ]]
+    at_base
+}
+
+@test "round 12b3 short case: the PATH SKIPS in the trace log of the skip canary: an awk whose canary read answer is cut to three bytes of its skip line (exit 0), through a real push of a clean file under the honest per-rule allowlist (^|/)tests/, is refused naming the missing closing line, no form line, and the remote stays at its base (red under the mutant deleting the canary's no-closing-line arm, where the read-short line refuses in its place)" {
+    r11a_base
+    r11a_config "$(r12b_config tables "$R12B3_HONEST")"
+    r12b3_clean
+    calls_short_on awk canary-skips '[[ "$*" == *allowed-path=true* && "$*" == */creds.canary.log ]]' bytes:3
+    push_main_through_hook_with_shim
+    fired_short canary-skips "creds.canary.log"
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the PATH SKIPS in the trace log of the skip CANARY run of gitleaks $("$GL" version) answered no closing line of counts (awk exited 0), so whether it logs the skip line the scan of record reads is unknown; the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"logged no skip line the hook reads"* ]]
+    at_base
 }

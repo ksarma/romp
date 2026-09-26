@@ -591,27 +591,32 @@
 #       8b3: read as own= until then, an awk silent here, beside a scanner
 #       that logged an error and counted a commit whole with its credential
 #       file unread, published the credential through a real push). Since
-#       round 9 gitleaks runs no git, in any of its three runs (the pieces,
-#       the path-scoped copies, and since round 11b the probe run's probes and
-#       second copies, a third run), so the line is any error gitleaks logs;
-#       since round 12b the awk reads the run's private log file, the scan of
-#       record's at gitleaks' trace level, and a TRC or DBG line there is
-#       never read as an ERR line. Its end: the whole word none, no cut of
-#       which is an answer, or an error line, which refuses however short
+#       round 9 gitleaks runs no git, in any of its runs (the pieces, the
+#       path-scoped copies, since round 11b the probe run's probes and second
+#       copies, a third run, and since round 12b3 the skip canary's pieces, a
+#       fourth under a config carrying a per-rule or targeted path allowlist),
+#       so the line is any error gitleaks logs; since round 12b the awk reads
+#       the run's private log file, the scan of record's and since round 12b3
+#       the skip canary's at gitleaks' trace level, and a TRC or DBG line
+#       there is never read as an ERR line. Its end: the whole word none, no
+#       cut of which is an answer, or an error line, which refuses however
+#       short
 #   the BYTE COUNT line of the scanner log
 #       the bytes written for the run (the pieces for the scan of record and
 #       the path-scoped copies for the additive run, as the feed's awk
 #       recorded writing them, a merge's binary path read whole among them;
 #       for the probe run, a third run since round 11b, the probes the shell
-#       wrote for it and the second copies of the path-scoped pieces),
-#       compared with the one scanned ~N bytes line gitleaks logs (read from
-#       the run's private log file since round 12b, the scan of record's at
-#       gitleaks' trace level, where a TRC or DBG line is no INF line), which
-#       the awk answers as a word, a tab and digits: no such line, or two, is
-#       refused naming the count of lines, any other answer naming it, and
-#       another number naming both (round 9: the commit count it replaces held
-#       a scan whole at the granularity of commits alone). Its end: a cut
-#       figure is a prefix of its digits, another number than the record's
+#       wrote for it and the second copies of the path-scoped pieces; for the
+#       skip canary's run, since round 12b3, its pieces), compared with the
+#       one scanned ~N bytes line gitleaks logs (read from the run's private
+#       log file since round 12b, the scan of record's and since round 12b3
+#       the skip canary's at gitleaks' trace level, where a TRC or DBG line is
+#       no INF line), which the awk answers as a word, a tab and digits: no
+#       such line, or two, is refused naming the count of lines, any other
+#       answer naming it, and another number naming both (round 9: the commit
+#       count it replaces held a scan whole at the granularity of commits
+#       alone). Its end: a cut figure is a prefix of its digits, another
+#       number than the record's
 #   the PATH SKIPS in the trace log of the scan of record
 #       a closing line the awk prints last: end, the count of per-file lines
 #       ([Ss]canning path, one per scanned file in every release from 8.25.0
@@ -629,6 +634,22 @@
 #       extensionless or root-level path allowlist on generic-api-key skipped
 #       the rule on every piece and published a credential main's hook
 #       refused; the round 11 rulings' C and the coordinator's decision 2).
+#       Its end: the closing line, the answer's last, which an answer cut
+#       anywhere loses or contradicts, refused naming the read
+#   the PATH SKIPS in the trace log of the skip canary
+#       the same awk as the scan of record's PATH SKIPS read (path_skips) over
+#       the skip canary's private log (canary_check, round 12b3:
+#       romp-manager's ruling of 2026-09-26 20:08Z, a canary in place of a
+#       stated residual or a version ceiling for a gitleaks that rewords the
+#       skip line): a closing line the awk prints last, end, the count of
+#       per-file lines and the count of skip lines it printed; the count of
+#       skip lines compared with the lines the shell read, a line of no kind
+#       refused, and the count of per-file lines compared with the canary's
+#       pieces, another number refused naming both, so a canary run at which
+#       the trace level did not take effect refuses as that; then each form of
+#       path allowlist the config uses (per-rule, targeted, AND) whose piece
+#       holds no skip line of the canary's rule refuses, naming the gitleaks
+#       version and the form and saying its skip wording is not recognized.
 #       Its end: the closing line, the answer's last, which an answer cut
 #       anywhere loses or contradicts, refused naming the read
 # Reads whose empty answer is the object's own (own=):
@@ -838,10 +859,13 @@
 # (creds.index, creds.pindex), the
 # feed's record (creds.record), the merges' binary paths the feed routes
 # (creds.binary) and the record of each one's whole read (creds.brecord),
-# the scanner's log (creds.log, one run's at a time: written by the run's own
+# the scanner's log (creds.log, one run's at a time, and the skip canary's
+# run's, creds.canary.log: written by the run's own
 # redirect under umask 077, whose failure fails the run, and deleted by an rm
 # once read, a writer set -e ends the hook at, the EXIT trap removing it
-# then), the report template, the three reports and the copies of the config's
+# then), the skip canary's config (creds.canary.toml) and pieces (creds.c),
+# written by the shell with each writer's status read (skip_canary), the
+# report template, the four reports and the copies of the config's
 # chain every scanner run is handed (creds.cfg.0.toml and on), each copy
 # written by one redirect whose status gitleaks_config reads: it runs as a
 # condition, where set -e does not act, and a copy it could not write
@@ -957,8 +981,37 @@
 # until 8.26.0), by execution on each of those eleven releases, 2026-09-26,
 # so the floor stays 8.25.0. A later gitleaks that rewords the per-file line
 # refuses every push with content, visibly; one that rewords the skip line
-# alone would leave that check disarmed while the count agrees, a residual
-# stated here, since no release past 8.30.1 has been read.
+# alone would leave that check disarmed while the count agrees, so the skip
+# CANARY checks the wording on the running gitleaks itself (skip_canary;
+# romp-manager's ruling, 2026-09-26 20:08Z, which rejected both a stated
+# residual and a version ceiling). When the config the reader reads carries
+# a per-rule or targeted path allowlist (the reader records which forms: a
+# per-rule one in any of its spellings, a targeted one by its targetRules,
+# and whether any has an AND condition), one scanner run ahead of the scan
+# of record reads a directory of synthetic pieces under the hook's own
+# config: one custom rule and one allowlist of each form the repository's
+# config uses, each on a fixed number path its piece is named by, so the
+# canary evaluates none of the repository's own paths. It runs at the trace
+# level with NO_COLOR=1, its log a private file of its own under the same
+# care as the scan of record's (umask 077, deleted once read) and never
+# shown, and path_skips, the scan of record's own reader, reads it: a form whose
+# piece holds no skip line refuses the push, the line naming the gitleaks
+# version and the form and saying its skip wording is not recognized, with
+# the remedies in order (re-verify the hook against that gitleaks;
+# ROMP_NO_GITLEAKS=1 for one push, last). The canary run's own failure (an
+# exit other than 0 or 2, an ERR line, a byte figure or a count of per-file
+# lines other than written) refuses as every run's does, and the scan of
+# record still runs, for its findings. The canary costs one more scanner run
+# per push with content, and only under such a config: a config with no
+# per-rule or targeted path allowlist runs none. It passes on each of the
+# eleven releases from 8.25.0 to 8.30.1 under a per-rule, a targeted, a
+# per-rule AND and a targeted AND allowlist, and under all three forms
+# together (executed, 2026-09-26); gitleaks 8.25.0 evaluates none of a
+# rule's allowlists after an AND-condition one holding a value regex, so
+# when the config uses a targeted form the canary's AND allowlist is a
+# targeted one written last. Its witnesses are in tests/pre-push-hook.bats,
+# round 12b3 (a gitleaks that rewords the skip line publishes a credential
+# without the canary and is refused by it).
 # The scanner must be gitleaks 8.25.0 or later, its version read where a scan
 # would run (scanner_version; a push with nothing to scan reads none): the
 # options the hook passes need 8.24.0 (the report template since 8.21.3, the
@@ -973,7 +1026,8 @@
 # pinned gitleaks, 8.28.0, is above the floor. The trace lines the scan of
 # record reads (the paragraph above) leave the floor where it is: every
 # release from 8.25.0 to 8.30.1 logs them in the same words (the coordinator's
-# decision 2 (b), verified on all eleven, 2026-09-26).
+# decision 2 (b), verified on all eleven, 2026-09-26), and the skip canary
+# passes on each of them.
 # A second, ADDITIVE run covers the five default rules that fire only on a
 # file's path (pkcs12-file, nuget-config-password, kubernetes-secret-yaml,
 # hashicorp-tf-password, freemius-secret-key), which the pieces' digit names
@@ -1082,7 +1136,10 @@
 # the scan of record reads (the credential paragraph above; until round 12
 # an honest extensionless or root-level allowlist on generic-api-key
 # published a credential main's hook refused, the round 11 rulings' C and the
-# coordinator's decision 2, 2026-09-26). Two path values
+# coordinator's decision 2, 2026-09-26). The reader records only which forms
+# of path allowlist the population carries (per-rule, targeted, and whether
+# any has an AND condition, a condition it cannot tell from OR counted as
+# AND), for the skip canary (the credential paragraph). Two path values
 # are exempt, each on a path key standing alone: on one of the five
 # path-scoped rules, the text the hook's own table gives that rule (the path
 # gitleaks' default config gives it, which the additive run's copies meet),
@@ -3727,7 +3784,7 @@ parent_counts() {   # <list file: one commit per line> <record file>: prints "<c
 # --redact keeps the secret itself out of terminal scrollback: the location is
 # what a fix needs, and the value has to be rotated anyway (it does not reach
 # a trace line, so the scan of record's trace log is never shown but for its
-# INF, WRN, ERR, FTL and PNC lines: scanner_run). --no-color keeps
+# INF, WRN, ERR, FTL and PNC lines, and the skip canary's never: scanner_run). --no-color keeps
 # the log lines the hook reads plain. --exit-code 2 tells a finding apart
 # from gitleaks failing (exit 1: an unreadable config, say); both refuse the
 # push, with different advice. The template report is the attribution's
@@ -3736,7 +3793,7 @@ parent_counts() {   # <list file: one commit per line> <record file>: prints "<c
 # format by name too). The caller's options follow: the reader's copy of
 # the config, and for the path-scoped and probe runs their --enable-rule;
 # scanner_run adds --log-level trace for the scan of record (its record
-# mode), after them.
+# mode) and the skip canary's run (its canary mode), after them.
 gitleaks_args() {   # <template> <report> [<option>...]: fills GL_ARGS
     local tpl="$1" rep="$2"
     shift 2
@@ -3760,8 +3817,9 @@ gitleaks_args() {   # <template> <report> [<option>...]: fills GL_ARGS
 # three numbers), or not that shape (a build from source answers "version is
 # set by build process"), and a version below the floor, each refuse the push
 # as a scan that cannot run, one line naming what was found, the floor and
-# the three remedies. Status 0 when the scan may run; 1 when refused here
-# (failed_creds set, and failed_scan by unscanned).
+# the three remedies. Status 0 when the scan may run, gl_version (the
+# caller's) the version as read, for the skip canary's lines (skip_canary);
+# 1 when refused here (failed_creds set, and failed_scan by unscanned).
 scanner_version() {   # <gitleaks>
     local gl="$1" v re='^v?([0-9]{1,9})\.([0-9]{1,9})\.([0-9]{1,9})$' fix="the credential scan needs gitleaks 8.25.0 or later: upgrade it, point ROMP_GITLEAKS at another binary, or set ROMP_NO_GITLEAKS=1 for one push"
     if ! judged_read gate="the VERSION of the scanner" 0 "the VERSION of gitleaks ($gl) could not be read (gitleaks version exited {rc}), so whether it can run the scan is unknown; $fix" -- "$gl" version; then
@@ -3780,6 +3838,7 @@ scanner_version() {   # <gitleaks>
         unscanned "gitleaks $v ($gl) is older than 8.25.0, so the scan cannot run; $fix"
         failed_creds=1; return 1
     fi
+    gl_version=$v
     return 0
 }
 
@@ -3843,15 +3902,29 @@ scanner_version() {   # <gitleaks>
 # gitleaks 8.28.0 and 8.30.1 follow two levels of [extend] and ignore a path
 # at the third, which is refused here rather than followed, a visible
 # refusal of a rare shape: a later gitleaks that followed it would read rules
-# the reader never saw.
+# the reader never saw. The reader also records which forms of path
+# allowlist the population carries, for the skip canary (skip_canary; the
+# header's credential paragraph; romp-manager's ruling, 2026-09-26 20:08Z):
+# cfg_forms names, in this order, rule for a per-rule allowlist holding a
+# paths key in any of its spellings (a [[rules.allowlists]] or legacy
+# [rules.allowlist] table, a dotted allowlist.paths key in the rule's own
+# table, or an inline allowlist = { ... } or allowlists = [ { ... } ]),
+# targeted for a global one holding both a paths key and a targetRules key
+# (a [[allowlists]] or legacy [allowlist] table, or the root table's dotted
+# or inline spelling of either), and and when any of those carries a
+# condition gitleaks reads as AND, or one the reader cannot tell from OR
+# (fail closed: the canary then checks that form too). A global allowlist
+# with no targetRules skips a piece whole, which the byte figure refuses, and
+# names no form.
 # Status 0 when the scan may run; 1 when refused here (failed_creds set, and
 # failed_scan by unscanned).
-gitleaks_config() {   # sets cfg and cfg_name, the caller's
+gitleaks_config() {   # sets cfg, cfg_name and cfg_forms, the caller's
     local LC_ALL=C wt d k n f p l nb count opened tl_n=0 fixed="no scanner run was made, and the scan follows once the config is fixed"
     local tl_i=0 tl_end=0 tl_ln=0 tl_rest="" tl_what="" tl_str="" tl_plain=0 tl_q="" tl_low="" tl_ext="" tl_extln=-1 tl_hit=0 tl_dpath=""
     local tl_dupk="" tl_dups1="" tl_dupl1=0 tl_dups2="" tl_dupl2=0
+    local tl_fp=0 tl_ft=0 tl_fa=0 tl_ictx="" tl_and=0
     local -a tl_all tl_segs tl_orig chain_file chain_shown chain_short chain_start chain_end chain_extln chain_nonl copy
-    cfg=(); cfg_name="the default config gitleaks embeds"
+    cfg=(); cfg_name="the default config gitleaks embeds"; cfg_forms=""
     wt=$(pwd -P)
     if [ -f .gitleaks.toml ]; then
         chain_file=("$wt/.gitleaks.toml"); chain_short=(.gitleaks.toml); chain_shown=(".gitleaks.toml (the work tree's)")
@@ -3917,6 +3990,11 @@ gitleaks_config() {   # sets cfg and cfg_name, the caller's
         chain_file[d + 1]=$p; chain_short[d + 1]=$tl_ext; chain_shown[d + 1]="$tl_ext (the [extend] of ${chain_short[d]})"
     done
     if [ "$tl_hit" -ne 0 ]; then failed_creds=1; return 1; fi
+    # The forms of path allowlist the population carries, for the skip
+    # canary (the comment above): tl_al_add noted each allowlist read.
+    [ "$tl_fp" -eq 0 ] || cfg_forms="rule"
+    [ "$tl_ft" -eq 0 ] || cfg_forms="$cfg_forms${cfg_forms:+ }targeted"
+    [ "$tl_fa" -eq 0 ] || cfg_forms="$cfg_forms${cfg_forms:+ }and"
     # The copy of the chain, the config every scanner run is handed: each
     # file's lines as the shell read them, a missing final newline kept
     # missing, its [extend] path line replaced by the next copy's absolute
@@ -3973,9 +4051,14 @@ config_bytes() {   # <file>
 # triple-single-quoted one on one line, empty otherwise), tl_ext and
 # tl_extln (the [extend] path and its line), tl_hit (a rule with a path key
 # reported), tl_dpath (tl_default_path's entry), tl_orig (the key just parsed,
-# its segments as written), and tl_dupk, tl_dups1, tl_dupl1, tl_dups2 and
+# its segments as written), tl_dupk, tl_dups1, tl_dupl1, tl_dups2 and
 # tl_dupl2 (a key written twice: its name lower-cased, and each writing's
-# spelling and line). The grammar is TOML's as
+# spelling and line), and tl_fp, tl_ft and tl_fa (a per-rule path
+# allowlist seen, a targeted one, and either with an AND condition: the
+# forms cfg_forms names), tl_ictx (the kind of allowlist, rule or global,
+# an inline table about to be parsed is, for tl_inline; empty for any other
+# inline table) and tl_and (tl_andish's verdict on a condition's value).
+# The grammar is TOML's as
 # gitleaks reads it (go-toml under viper, probed on 8.28.0 and 8.30.1): viper
 # lower-cases every key, and its decoder matches a name in any case, Unicode
 # folding included ([["rule<U+017F>"]] defines rules; a quoted key spelling
@@ -4132,28 +4215,43 @@ tl_array() {   # parses an array's values after its opening bracket, across line
         esac
     done
 }
-tl_inline() {   # parses an inline table's keys and values after its opening brace, to its closing brace, no line end between them outside a value (TOML 1.0; go-toml refuses one there too), each key noted in the inline table's own map (tl_note); status 1, tl_what set, when it is no inline table the reader reads, or tl_dupk set, when a key is written twice in it
+tl_inline() {   # parses an inline table's keys and values after its opening brace, to its closing brace, no line end between them outside a value (TOML 1.0; go-toml refuses one there too), each key noted in the inline table's own map (tl_note), and, when tl_ictx names the kind of allowlist the table is (rule or global), its paths, targetRules and condition keys noted with tl_al_add at its closing brace; status 1, tl_what set, when it is no inline table the reader reads, or tl_dupk set, when a key is written twice in it
     # shellcheck disable=SC2034  # tl_mi: read and set by name in tl_note
-    local tl_mi=""
+    local tl_mi="" ik=$tl_ictx ip=0 it=0 ia=0 kk
+    # a table inside this one is no allowlist; tl_ictx is put back at the
+    # closing brace, for the next table of an array of them
+    tl_ictx=""
     tl_ws
-    case "$tl_rest" in '}'*) tl_rest=${tl_rest:1}; return 0 ;; esac
+    case "$tl_rest" in '}'*) tl_rest=${tl_rest:1}; tl_ictx=$ik; return 0 ;; esac
     while :; do
         tl_key || return 1
         tl_note tl_mi "$tl_ln" 0 "${#tl_segs[@]}" L || return 1
+        kk="${#tl_segs[@]}:${tl_segs[0]}"
         tl_ws
         case "$tl_rest" in '='*) tl_rest=${tl_rest:1} ;; *) tl_what="an inline table it does not read"; return 1 ;; esac
         tl_value || return 1
+        case "$kk" in
+            1:paths) ip=1 ;;
+            1:targetrules) it=1 ;;
+            1:condition) tl_andish; ia=$tl_and ;;
+        esac
         tl_ws
         case "$tl_rest" in
             ','*) tl_rest=${tl_rest:1} ;;
-            '}'*) tl_rest=${tl_rest:1}; return 0 ;;
+            '}'*) tl_rest=${tl_rest:1}; tl_al_add "$ik" "$ip" "$it" "$ia"; tl_ictx=$ik; return 0 ;;
             *) tl_what="an inline table it does not read"; return 1 ;;
         esac
     done
 }
-tl_file() {   # <the file's name, for its lines>: parses the current file's lines, one refusal per [[rules]] table carrying a path key the reader does not exempt (tl_rule_end); tl_ext and tl_extln its [extend] path and that line, when it names one; status 1, tl_what and tl_ln set, when a line holds a construct the reader does not parse, or tl_dupk set, when a key is written twice in one table (tl_note: the root table's map, the current header's table's, and the map of the last table named rules, which a rules.<name> header extends)
+tl_file() {   # <the file's name, for its lines>: parses the current file's lines, one refusal per [[rules]] table carrying a path key the reader does not exempt (tl_rule_end), each allowlist's form noted (tl_al_end, tl_al_add); tl_ext and tl_extln its [extend] path and that line, when it names one; status 1, tl_what and tl_ln set, when a line holds a construct the reader does not parse, or tl_dupk set, when a key is written twice in one table (tl_note: the root table's map, the current header's table's, and the map of the last table named rules, which a rules.<name> header extends)
     # shellcheck disable=SC2034  # tl_mtop, tl_mcur and tl_mrules: read and set by name in tl_note
     local ctx=top rid="" rpath=0 rpv="" rpk="" hk hdr kln s km=tl_mtop tl_mtop="" tl_mcur="" tl_mrules="" hlast=""
+    # the allowlist the current table is (ak: rule or global for an
+    # allowlist's header, empty otherwise) and its paths, targetRules and AND
+    # condition (ap, at, aa); and the dotted allowlist.<key> and
+    # allowlists.<key> keys of a rule table or of the root table (d1p, d1t,
+    # d1a; d2p, d2t, d2a), each noted when its table ends (tl_al_end)
+    local ak="" ap=0 at=0 aa=0 d1p=0 d1t=0 d1a=0 d2p=0 d2t=0 d2a=0
     local -a segs
     tl_ext=""; tl_extln=-1
     while tl_line; do
@@ -4175,12 +4273,14 @@ tl_file() {   # <the file's name, for its lines>: parses the current file's line
             tl_ws
             case "$tl_rest" in ''|'#'*) ;; *) tl_what="more after a table header on its line"; return 1 ;; esac
             tl_rule_end "$1"
+            tl_al_end
             hdr=""; for s in "${tl_segs[@]}"; do hdr="$hdr${hdr:+.}$s"; done
             case "$hk$hdr" in
                 '[extend') ctx=extend ;;
                 '[rules'|'[[rules') ctx=rule; rid=""; rpath=0; rpv=""; rpk="" ;;
-                '[rules.allowlist'|'[[rules.allowlist'|'[rules.allowlists'|'[[rules.allowlists'|'[rules.required'|'[[rules.required') ctx=sub ;;
-                '[allowlist'|'[[allowlist'|'[allowlists'|'[[allowlists') ctx=sub ;;
+                '[rules.allowlist'|'[[rules.allowlist'|'[rules.allowlists'|'[[rules.allowlists') ctx=sub; ak=rule ;;
+                '[rules.required'|'[[rules.required') ctx=sub ;;
+                '[allowlist'|'[[allowlist'|'[allowlists'|'[[allowlists') ctx=sub; ak=global ;;
                 *) s=${tl_all[tl_ln]%$'\r'}; tl_what="the table header ${s#"${s%%[![:blank:]]*}"}"; return 1 ;;
             esac
             # The header's names: its first in the root table, and the second
@@ -4200,9 +4300,31 @@ tl_file() {   # <the file's name, for its lines>: parses the current file's line
         tl_note "$km" "$kln" 0 "${#segs[@]}" L || return 1
         tl_ws
         case "$tl_rest" in '='*) tl_rest=${tl_rest:1} ;; *) tl_what="a line that is no key and value, table header or comment"; return 1 ;; esac
+        # an inline allowlist, or an array of them, in a rule table (per-rule)
+        # or in the root table (global): tl_inline notes each one's form
+        tl_ictx=""
+        case "$ctx:${#segs[@]}:${segs[0]}" in
+            rule:1:allowlist|rule:1:allowlists) tl_ictx=rule ;;
+            top:1:allowlist|top:1:allowlists) tl_ictx=global ;;
+        esac
         tl_value || return 1
+        tl_ictx=""
         tl_ws
         case "$tl_rest" in ''|'#'*) ;; *) tl_what="more after a value on its line"; return 1 ;; esac
+        # an allowlist's paths, targetRules and condition keys: in its own
+        # table (a header's), or dotted under allowlist or allowlists in a
+        # rule table or the root table, noted when the table ends (tl_al_end)
+        case "$ctx:${#segs[@]}:${segs[0]}:${segs[1]:-}" in
+            sub:1:paths:) ap=1 ;;
+            sub:1:targetrules:) at=1 ;;
+            sub:1:condition:) tl_andish; aa=$tl_and ;;
+            rule:2:allowlist:paths|top:2:allowlist:paths) d1p=1 ;;
+            rule:2:allowlist:targetrules|top:2:allowlist:targetrules) d1t=1 ;;
+            rule:2:allowlist:condition|top:2:allowlist:condition) tl_andish; d1a=$tl_and ;;
+            rule:2:allowlists:paths|top:2:allowlists:paths) d2p=1 ;;
+            rule:2:allowlists:targetrules|top:2:allowlists:targetrules) d2t=1 ;;
+            rule:2:allowlists:condition|top:2:allowlists:condition) tl_andish; d2a=$tl_and ;;
+        esac
         case "$ctx:${segs[0]}" in
             top:rules) tl_ln=$kln; tl_what="the rules written as a key (rules = ...: an inline table or array of them)"; return 1 ;;
             top:extend) tl_ln=$kln; tl_what="the [extend] table written as a key"; return 1 ;;
@@ -4218,6 +4340,34 @@ tl_file() {   # <the file's name, for its lines>: parses the current file's line
         esac
     done
     tl_rule_end "$1"
+    tl_al_end
+    return 0
+}
+tl_al_end() {   # the table just ended (tl_file's ctx, ak, ap, at, aa and the d1 and d2 keys): its allowlists noted with tl_al_add, a header's allowlist by ak and the dotted ones by the table (rule for a rule table, global for the root table), then cleared
+    local k=""
+    tl_al_add "$ak" "$ap" "$at" "$aa"
+    case "$ctx" in rule) k=rule ;; top) k=global ;; esac
+    tl_al_add "$k" "$d1p" "$d1t" "$d1a"
+    tl_al_add "$k" "$d2p" "$d2t" "$d2a"
+    ak=""; ap=0; at=0; aa=0; d1p=0; d1t=0; d1a=0; d2p=0; d2t=0; d2a=0
+}
+tl_al_add() {   # <rule|global|empty> <a paths key: 0 or 1> <a targetRules key: 0 or 1> <an AND condition: 0 or 1>: one allowlist's form noted in tl_fp, tl_ft and tl_fa (gitleaks_config's; the forms cfg_forms names); nothing for one with no paths key, a global one with no targetRules (it skips a piece whole, which the byte figure refuses), or an empty kind
+    [ "$2" -eq 1 ] || return 0
+    case "$1" in
+        rule) tl_fp=1 ;;
+        global) if [ "$3" -eq 1 ]; then tl_ft=1; else return 0; fi ;;
+        *) return 0 ;;
+    esac
+    [ "$4" -eq 0 ] || tl_fa=1
+    return 0
+}
+tl_andish() {   # tl_and 0 when the value just parsed (tl_value's tl_str and tl_q) is a string gitleaks reads as the OR condition (empty, or, or ||, in any case), 1 for any other: AND, and a value the reader cannot tell (an escape, a multi-line string, no string), so the canary checks the AND form then too
+    tl_and=1
+    case "$tl_q" in
+        basic|literal|mlliteral|mlbasic)
+            tl_lower "$tl_str"
+            case "$tl_low" in ''|or|'||') tl_and=0 ;; esac ;;
+    esac
     return 0
 }
 tl_rule_end() {   # <the file's name>: the table just ended (tl_file's ctx, rid, rpath, rpv and rpk: the path keys seen, the last one's text and its form, empty for a dotted key), refused when it is a rule carrying a path key the reader does not exempt (gitleaks_config: an empty string on any rule, exactly, in any of the four quote forms, or tl_default_path's entry on one of the five)
@@ -4266,8 +4416,8 @@ tl_note() {   # <map variable> <line> <first segment> <one past the last> <L|T>:
 }
 
 # One run of the scanner over a directory the hook wrote (the pieces, the
-# path-scoped copies, or the probe run's probes and second copies), from
-# inside that directory, so gitleaks finds no .gitleaksignore of the work
+# path-scoped copies, the probe run's probes and second copies, or the skip
+# canary's pieces), from inside that directory, so gitleaks finds no .gitleaksignore of the work
 # tree (it reads one from its working directory whatever -i says) and no
 # config but the copy gitleaks_config wrote and names with --config (the
 # reader's own bytes), or with no config to copy its default (the directory
@@ -4283,7 +4433,7 @@ tl_note() {   # <map variable> <line> <first segment> <one past the last> <L|T>:
 # "scanned ~N bytes" line, compared with the bytes written: none, two, or
 # another number refuses naming both). Each awk strips colour codes itself:
 # --no-color makes gitleaks' lines plain, but a line logged before the flag
-# takes effect stays coloured. Three modes. record, the scan of record, runs
+# takes effect stays coloured. Four modes. record, the scan of record, runs
 # at gitleaks' trace level (--log-level trace, with NO_COLOR=1, which leaves
 # no colour code on any line in every release from 8.25.0 to 8.30.1) and
 # reads its log a third time, for the PATH SKIPS (path_skips, the comment
@@ -4297,7 +4447,7 @@ tl_note() {   # <map variable> <line> <first segment> <one past the last> <L|T>:
 # skipped finding's value whole there, so the log shown after this run keeps
 # only the lines whose level field is INF, WRN, ERR, FTL or PNC, and no TRC
 # or DBG line, nor any line whose level cannot be told, is ever shown. The
-# trace level is this run's alone: in the additive and probe runs an honest
+# trace level is this run's and the skip canary's alone: in the additive and probe runs an honest
 # allowlist on a real name (nuget\.config$) matches the copies' names too,
 # so the same line there would refuse honest configs, and what a path
 # allowlist does to a copy there is the probe's to find. record and names
@@ -4316,30 +4466,41 @@ tl_note() {   # <map variable> <line> <first segment> <one past the last> <L|T>:
 # nothing; its log is shown only when the run fails (an exit other than 0 or
 # 2, which is named, an ERR line, or a byte figure missing, repeated or
 # another number), after the refusal; the caller judges its report
-# (probe_check) when it exits 0 or 2. Sets blocked_creds, failed_scan,
-# failed_creds and run_rc (the scanner's exit), the caller's.
-scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <bytes written there, or empty when the feed was refused> <report file> <record|names|probe> [<scanner option>...]
-    local gl="$1" what="$2" dir="$3" want="$4" rep="$5" mode="$6" rc log logf line err got start rule term piece line_out nrec leaks judged=$unscanned_n
+# (probe_check) when it exits 0 or 2. canary, the skip canary's run
+# (skip_canary, the header's credential paragraph): at the trace level and
+# with NO_COLOR=1 as record is, its log a private file of its own
+# (creds.canary.log) under the same umask, never shown and never read into
+# the shell, deleted once read; its findings (a form its allowlist did not
+# skip) are never shown and exit 2 sets nothing; an exit other than 0 or 2
+# is named, and the ERR line and the byte figure are read as in every run;
+# then canary_check reads the log for the skip lines. Sets blocked_creds,
+# failed_scan, failed_creds and run_rc (the scanner's exit), the caller's.
+scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <bytes written there, or empty when the feed was refused> <report file> <record|names|probe|canary> [<scanner option>...]
+    local gl="$1" what="$2" dir="$3" want="$4" rep="$5" mode="$6" rc log logf line err got start rule term piece line_out nrec leaks judged=$unscanned_n trace=0
     local kind sa sb snamed sd send swhere spath sline sseen="" shown='^[^ ]+ (INF|WRN|ERR|FTL|PNC)( |$)'
     shift 6
     : > "$rep"
-    if [ "$mode" = record ]; then
+    case "$mode" in record|canary) trace=1 ;; esac
+    if [ "$trace" -eq 1 ]; then
         gitleaks_args "$scratch/creds.template" "$rep" "$@" --log-level trace
     else
         gitleaks_args "$scratch/creds.template" "$rep" "$@"
     fi
     logf="$scratch/creds.log"
+    [ "$mode" != canary ] || logf="$scratch/creds.canary.log"
     rc=0
-    # The probe run's findings, its stdout, are the probes: for its one
-    # statement stderr is /dev/null, so 1>&2 sends them there, restored after.
-    [ "$mode" != probe ] || exec 8>&2 2>/dev/null
+    # The probe run's findings, its stdout, are the probes, and the canary's
+    # are its own value: for its one statement stderr is /dev/null, so 1>&2
+    # sends them there, restored after.
+    case "$mode" in probe|canary) exec 8>&2 2>/dev/null ;; esac
     # outside judged_read: the scanner's own exit, judged with its log against the bytes the feed wrote.
-    ( cd "$dir" && umask 077 && { [ "$mode" != record ] || export NO_COLOR=1; } && "$gl" "${GL_ARGS[@]}" < /dev/null 1>&2 2> "$logf" ) || rc=$?
-    [ "$mode" != probe ] || exec 2>&8 8>&-
+    ( cd "$dir" && umask 077 && { [ "$trace" -eq 0 ] || export NO_COLOR=1; } && "$gl" "${GL_ARGS[@]}" < /dev/null 1>&2 2> "$logf" ) || rc=$?
+    case "$mode" in probe|canary) exec 2>&8 8>&- ;; esac
     # The log as shown, read by the shell alone: every line, but in record
-    # mode only a line whose level field is one of the five above.
+    # mode only a line whose level field is one of the five above, and in
+    # canary mode none (the log is never read into the shell).
     log=""
-    if [ -f "$logf" ]; then
+    if [ -f "$logf" ] && [ "$mode" != canary ]; then
         while IFS= read -r line || [ -n "$line" ]; do
             if [ "$mode" = record ] && ! [[ "$line" =~ $shown ]]; then continue; fi
             log=$log$line$'\n'
@@ -4349,9 +4510,10 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
     [ -z "$log" ] || [ "$mode" = probe ] || printf '%s\n' "$log" >&2
     case $rc in
         0) ;;
-        2) [ "$mode" = probe ] || blocked_creds=1 ;;
+        2) [ "$mode" = probe ] || [ "$mode" = canary ] || blocked_creds=1 ;;
         *)
             [ "$mode" != probe ] || unscanned "$what exited $rc, neither 0 (clean) nor 2 (a finding), so what it read is unknown; its log follows"
+            [ "$mode" != canary ] || unscanned "$what exited $rc, neither 0 (clean) nor 2 (a finding), so whether it logs the skip line the scan of record reads is unknown; re-verify the hook against that gitleaks, or set ROMP_NO_GITLEAKS=1 for one push"
             failed_scan=1; failed_creds=1 ;;
     esac
     if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
@@ -4392,6 +4554,8 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
         if [ -n "$got" ] && [ -n "$want" ] && [ "$got" != "$want" ]; then
             if [ "$mode" = probe ]; then
                 unscanned "$what read $got of the $want bytes written for it (its probes and the second copies of the added lines)"
+            elif [ "$mode" = canary ]; then
+                unscanned "$what read $got of the $want bytes written for it (the canary's pieces)"
             else
                 unscanned "$what read $got of the $want bytes of added lines it was fed"
             fi
@@ -4438,12 +4602,14 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
                 failed_creds=1
             fi
         fi
+        # The skip canary's read (canary mode; canary_check's comment).
+        [ "$mode" != canary ] || canary_check "$logf"
     fi
     # The log is deleted once read (the scratch directory's EXIT trap removes
     # it too, should a line above end the hook).
     rm -f -- "$logf"
     run_rc=$rc
-    if [ "$rc" -eq 2 ] && [ "$mode" != probe ]; then
+    if [ "$rc" -eq 2 ] && [ "$mode" != probe ] && [ "$mode" != canary ]; then
         nrec=0
         while IFS=$'\t' read -r -u 6 start rule term; do
             [ "$term" = . ] || continue
@@ -4486,7 +4652,9 @@ scanner_run() {   # <gitleaks> <the scan's name, for its lines> <directory> <byt
 # count of per-file lines ([Ss]canning path, one per scanned file in every
 # release, Scanning until 8.26.0) and the count of skip lines printed. The
 # wording of these lines is read from the log, identical in the eleven
-# releases from 8.25.0 to 8.30.1 (verified by execution, 2026-09-26).
+# releases from 8.25.0 to 8.30.1 (verified by execution, 2026-09-26). The
+# skip canary reads its own run's log with this same awk (canary_check), so
+# the canary tests the reader the scan of record uses, not a copy of it.
 path_skips() {   # <log file>
     LC_ALL=C awk '
         { gsub(/\033\[[0-9;]*m/, "") }
@@ -4506,6 +4674,127 @@ path_skips() {   # <log file>
             next
         }
         END { print "end\t" files + 0 "\t" n + 0 }' "$1"
+}
+# The skip CANARY (the header's credential paragraph; romp-manager's ruling,
+# 2026-09-26 20:08Z, which rejected both a stated residual and a version
+# ceiling): path_skips reads gitleaks' own wording of a rule-allowlist path
+# skip, verified on the eleven releases from 8.25.0 to 8.30.1, and a later
+# gitleaks that reworded that line alone would leave the check disarmed
+# while the per-file count agrees. So when the config the reader read
+# carries a per-rule or targeted path allowlist (cfg_forms, gitleaks_config's
+# comment), ahead of the scan of record, one scanner run reads a directory of
+# synthetic pieces (creds.c) under the hook's OWN config (creds.canary.toml):
+# one custom rule, romp-skip-canary, and one allowlist of each form the
+# repository's config uses, each on a fixed number path its piece is named by
+# (canary_form: per-rule 1, targeted 2, AND 3), each piece a line the rule
+# matches, its value assembled here so the hook's own text holds none. The
+# canary evaluates none of the repository's paths: its allowlists must skip
+# its pieces in any gitleaks that applies them, and the read asks only
+# whether the skip line appeared. The run is scanner_run's canary mode (the
+# trace level, NO_COLOR=1, its log a private file under umask 077, never
+# shown, deleted once read; its exit, its ERR line and its byte figure judged
+# as every run's), and its read canary_check. The config and the pieces are
+# written by the shell, each writer's status read, and a write that fails
+# refuses naming them. Every status the caller sees is 0: a refusal here sets
+# failed_creds (and failed_scan by unscanned), and the scan of record still
+# runs for its findings.
+skip_canary() {   # <gitleaks>: the canary's config and pieces written, its one run made (scanner_run, canary mode)
+    local gl="$1" f cpiece cword cval ctext ctoml cbytes=0 cpieces=0 cforms=$cfg_forms cw=1 cand=rules
+    printf -v cval 'zz%s%s' canary 503174629841
+    ctext="canary = $cval"$'\n'
+    printf -v ctoml '[[rules]]\nid = "romp-skip-canary"\nregex = %s\nkeywords = ["zzcanary"]\n' "'''zzcanary[0-9]{12}'''"
+    # The allowlists in the order TOML and gitleaks need them: a rule's own
+    # allowlists follow its [[rules]] table, and gitleaks appends the
+    # targeted ones after them, so the AND one, per-rule when the config uses
+    # no targeted form, is targeted and written last when it does: gitleaks
+    # 8.25.0 evaluates none of a rule's allowlists after an AND-condition one
+    # holding a value regex (executed, 2026-09-26: a targeted allowlist after
+    # a per-rule AND one skipped nothing there; 8.25.1 on evaluate each one).
+    case " $cforms " in *" targeted "*) cand=targeted ;; esac
+    for f in rule and targeted; do
+        case " $cforms " in *" $f "*) ;; *) continue ;; esac
+        cpieces=$((cpieces + 1)); cbytes=$((cbytes + ${#ctext}))
+    done
+    case " $cforms " in *" rule "*) canary_form rule; printf -v ctoml '%s\n[[rules.allowlists]]\npaths = [%s]\n' "$ctoml" "'''^$cpiece\$'''" ;; esac
+    case "$cand: $cforms " in rules:*" and "*) canary_form and; printf -v ctoml '%s\n[[rules.allowlists]]\ncondition = "AND"\npaths = [%s]\nregexes = [%s]\n' "$ctoml" "'''^$cpiece\$'''" "'''^zzcanary'''" ;; esac
+    case " $cforms " in *" targeted "*) canary_form targeted; printf -v ctoml '%s\n[[allowlists]]\ntargetRules = ["romp-skip-canary"]\npaths = [%s]\n' "$ctoml" "'''^$cpiece\$'''" ;; esac
+    case "$cand: $cforms " in targeted:*" and "*) canary_form and; printf -v ctoml '%s\n[[allowlists]]\ntargetRules = ["romp-skip-canary"]\ncondition = "AND"\npaths = [%s]\nregexes = [%s]\n' "$ctoml" "'''^$cpiece\$'''" "'''^zzcanary'''" ;; esac
+    if ! { mkdir "$scratch/creds.c" && printf '%s' "$ctoml" > "$scratch/creds.canary.toml"; }; then cw=0; fi
+    for f in rule and targeted; do
+        case " $cforms " in *" $f "*) ;; *) continue ;; esac
+        canary_form "$f"
+        if [ "$cw" -eq 1 ] && ! printf '%s' "$ctext" > "$scratch/creds.c/$cpiece"; then cw=0; fi
+    done
+    if [ "$cw" -eq 0 ]; then
+        unscanned "the skip CANARY's config and pieces could not be written to the scratch directory, so whether gitleaks $gl_version logs the skip line the scan of record reads is unknown; free space where TMPDIR points, or point TMPDIR at a writable directory, or set ROMP_NO_GITLEAKS=1 for one push"
+        failed_creds=1
+        return 0
+    fi
+    scanner_run "$gl" "the skip CANARY run of gitleaks $gl_version" "$scratch/creds.c" "$cbytes" "$scratch/creds.creport" canary --config "$scratch/creds.canary.toml"
+    return 0
+}
+# The skip canary's forms, one definition for its writer (skip_canary) and
+# its read (canary_check): the number the form's piece is named by, which is
+# also its allowlist's path in the canary's config, and its name for the
+# lines.
+canary_form() {   # <rule|targeted|and>: cpiece and cword, the caller's
+    case "$1" in
+        rule) cpiece=1; cword="per-rule" ;;
+        targeted) cpiece=2; cword="targeted" ;;
+        and) cpiece=3; cword="AND-condition" ;;
+        *) cpiece=""; cword="" ;;
+    esac
+}
+# The skip canary's read (scanner_run, canary mode, where skip_canary's
+# cforms and cpieces and scanner_run's what are in scope): path_skips over
+# the canary's log through judged_read (its own tag, and its row in
+# tests/pre-push-reads.tsv), then, as the scan of record's PATH SKIPS read
+# does, the closing line (missing: refused; its count of skip lines other
+# than the lines read, or a line of no kind: refused as read short; its
+# count of per-file lines other than the pieces written: refused, so a run
+# at which the trace level did not take effect refuses as that, not as a
+# wording); then each form the config uses whose piece holds no skip line of
+# the canary's rule refuses, the line naming the gitleaks version and the
+# form and saying its skip wording is not recognized, with the remedies
+# (re-verify the hook against that gitleaks; ROMP_NO_GITLEAKS=1 for one
+# push, last). A form a gitleaks does not apply logs no skip line either,
+# and refuses the same way: 8.25.0 applies no targeted allowlist (the
+# header). Status 0 always; a refusal sets failed_creds.
+canary_check() {   # <log file>
+    local kind sa sb cnamed=0 sd=0 send="" seen=" " f cpiece cword
+    if judged_read gate="the PATH SKIPS in the trace log of the skip canary" 0 "$what could not be judged: its trace log could not be read for the skip lines of the canary's allowlists (awk exited {rc})" -- path_skips "$1"; then
+        while IFS=$'\t' read -r kind sa sb; do
+            case "$kind" in
+                skip) cnamed=$((cnamed + 1)); [ "$sb" != romp-skip-canary ] || seen="$seen$sa " ;;
+                end) send="$sa $sb" ;;
+                *) sd=$((sd + 1)) ;;
+            esac
+        done <<< "$read_out"
+        if [ -z "$send" ]; then
+            unscanned "the PATH SKIPS in the trace log of $what answered no closing line of counts (awk exited 0), so whether it logs the skip line the scan of record reads is unknown"
+            failed_creds=1
+        elif [ "${send#* }" != "$cnamed" ] || [ "$sd" -ne 0 ]; then
+            unscanned "the PATH SKIPS in the trace log of $what were read short (the closing line reads \"$send\", the per-file lines then the skip lines, where the shell read $cnamed skip lines and $sd lines of no kind)"
+            failed_creds=1
+        elif [ "${send%% *}" != "$cpieces" ]; then
+            unscanned "the trace log of $what holds ${send%% *} scanning path lines, one per file read, where the hook wrote $cpieces pieces for it, so whether it logs the skip line the scan of record reads is unknown (a run at which the trace level did not take effect logs none)"
+            failed_creds=1
+        else
+            for f in rule targeted and; do
+                case " $cforms " in *" $f "*) ;; *) continue ;; esac
+                canary_form "$f"
+                case "$seen" in
+                    *" $cpiece "*) ;;
+                    *)
+                        unscanned "gitleaks $gl_version logged no skip line the hook reads for the canary's $cword path allowlist (the hook's own rule and piece, which that allowlist skips), so its skip wording is not recognized, and an allowlist of that form in the config the scan reads ($cfg_name) could skip a rule on a piece unseen; re-verify the hook against gitleaks $gl_version, or set ROMP_NO_GITLEAKS=1 for one push"
+                        failed_creds=1 ;;
+                esac
+            done
+        fi
+    else
+        failed_creds=1
+    fi
+    return 0
 }
 # A finding named with its commit and file, from the index the caller read
 # into ix_sha and ix_path, printed once for the push: the overlap can find one
@@ -4702,12 +4991,15 @@ piece_dirs() {   # <directory>...: makes each; prints nothing
 # its status, then its record, the commits read whole against the count fed,
 # a foreign line refused naming its commit); then, when the feed's record is
 # whole, each merge's binary path it routed, read whole (merge_binary_reads);
-# then the scan of record over the pieces, and when the push adds a file the
+# then, when the config carries a per-rule or targeted path allowlist, the
+# skip canary's run over pieces of its own (skip_canary); then the scan of
+# record over the pieces, and when the push adds a file the
 # path-scoped rules name, the additive run over its copies and the probe run
 # over its probes and second copies (scanner_run, each judged by its exit,
 # its ERR line and its byte figure; the scan of record's trace log also by
-# its path skips and its count of per-file lines, path_skips; the probe
-# run's report by probe_check).
+# its path skips and its count of per-file lines, path_skips, and the skip
+# canary's by the same awk, canary_check; the probe run's report by
+# probe_check).
 # The scanner runs unless the feed wrote nothing (no new commit, or commits
 # that add no line: 0 bytes and no piece); after a feed refused as short it
 # still runs over the pieces written, for their findings, with no figure to
@@ -4719,7 +5011,7 @@ piece_dirs() {   # <directory>...: makes each; prints nothing
 scan_credentials() {
     local gl local_ref local_sha _remote_ref remote_sha revs rev peeled peeled_read nfed record n what
     # shellcheck disable=SC2034  # cfg_name: set by gitleaks_config, for the lines that name the config the runs read
-    local rdone rpieces rbytes rpbytes rbin rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning dmade=0 dmiss dfirst d cfg_name=""
+    local rdone rpieces rbytes rpbytes rbin rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning dmade=0 dmiss dfirst d cfg_name="" cfg_forms="" gl_version=""
     local sname prule qtext qbytes qn qwant qv qp_pkcs qp_nuget qp_k8s qp_tf qp_php kind qa qb qc qd qnamed qmiss qfound qother qend seen_lines="" run_rc=0
     local -a cfg=() ix_sha ix_path pdirs
     if ! credential_scan_armed; then
@@ -4894,7 +5186,16 @@ scan_credentials() {
             # decision 2, 2026-09-26: an allowlist whose path matches a
             # piece's number drops its rule there, and honest extensionless
             # and root-level allowlists published a credential main's hook
-            # refused).
+            # refused). Ahead of it, when the config carries a per-rule or
+            # targeted path allowlist (cfg_forms, which gitleaks_config
+            # records), the skip canary (skip_canary; romp-manager's ruling,
+            # 2026-09-26 20:08Z) makes one scanner run over pieces of its own
+            # under the hook's own config, and a form of allowlist whose skip
+            # line path_skips does not read there refuses, naming the
+            # gitleaks version: a gitleaks that reworded that line would
+            # leave the check below disarmed. A config with no such
+            # allowlist makes no canary run.
+            if [ -n "$cfg_forms" ]; then skip_canary "$gl"; fi
             scanner_run "$gl" "the CREDENTIAL scan" "$scratch/creds.d" "$rbytes" "$scratch/creds.report" record ${cfg[@]+"${cfg[@]}"}
         fi
         # The additive run (the header): each piece the second index names,
