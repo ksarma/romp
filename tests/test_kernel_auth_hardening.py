@@ -492,9 +492,12 @@ class OpenerIsolation(unittest.TestCase):
     needs. It rides _send, so every page carries it, and so do the dashboard's own tabs: a /file image or PDF it opens
     with window.open is a same-origin document with the same policy, so window.open still returns a handle
     (ui/webview/preview.ts openFileTab reads only that). Executed on the shell, every pane page, the sign-in page, a
-    static asset and a served /file image. Each carries the header exactly once, read from every send_header call
-    (_SentHeaders.all): a second copy, even of the same value, leaves a browser with a header it cannot parse and so
-    with no policy. The /remote/<host>/file relay's copy is read off the wire in tests/test_kernel_remote_file_relay.py."""
+    static asset, and each document shape the /file route builds: an image, and every shape that hands _send extra
+    headers of its own (an SVG, with its sandbox policy; a PDF, with its name; a text file, with its mtimes; a 404, with
+    its reason) or a page of its own (the 413 page a PDF's own tab shows). Each carries the header exactly once, read
+    from every send_header call (_SentHeaders.all): a second copy, even of the same value, leaves a browser with a
+    header it cannot parse and so with no policy. The /remote/<host>/file relay's shapes are read off the wire in
+    tests/test_kernel_remote_file_relay.py."""
 
     def test_every_page_the_kernel_serves_carries_coop_same_origin(self):
         status, sent, _ = _serve_get_full("/?token=" + TOK)
@@ -528,6 +531,49 @@ class OpenerIsolation(unittest.TestCase):
         self.assertEqual(sent.get("Content-Type"), "image/png")
         self.assertEqual(sent.all("Cross-Origin-Opener-Policy"), ["same-origin"],
                          "the tab matches its opener's policy (one header), so window.open still returns a handle")
+
+    def _file_coop(self, name, data, want_status, headers=None, cap=None):
+        """Serve `data`, written to a file called `name`, through /file; assert one COOP header, same-origin; return the
+        status's (sent headers, body)."""
+        from unittest import mock
+        from urllib.parse import quote
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, name)
+            if data is not None:
+                with open(p, "wb") as f:
+                    f.write(data)
+            with mock.patch.object(km, "_MEDIA_MAX_BYTES", cap if cap is not None else km._MEDIA_MAX_BYTES):
+                status, sent, body = _serve_get_full("/file?path=" + quote(p), headers=dict({"X-Romp-Token": TOK}, **(headers or {})))
+        self.assertEqual(status, want_status, body[:120])
+        self.assertEqual(sent.all("Cross-Origin-Opener-Policy"), ["same-origin"], name + ": one header, same-origin")
+        return sent, body
+
+    def test_an_svg_file_carries_it_once_beside_its_sandbox_policy(self):
+        # _media_policy_headers hands _send `Content-Security-Policy: sandbox` for an SVG
+        sent, _ = self._file_coop("fig.svg", b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>', 200)
+        self.assertEqual(sent.get("Content-Type"), "image/svg+xml")
+        self.assertIn("sandbox", sent.all("Content-Security-Policy"), "the SVG's own extra header is sent")
+
+    def test_a_pdf_file_carries_it_once_beside_its_name(self):
+        sent, _ = self._file_coop("paper.pdf", b"%PDF-1.4\n%%EOF\n", 200)
+        self.assertEqual(sent.get("Content-Type"), "application/pdf")
+        self.assertEqual(sent.get("Content-Disposition"), 'inline; filename="paper.pdf"')
+
+    def test_a_text_file_carries_it_once_beside_its_mtimes(self):
+        sent, body = self._file_coop("notes.md", b"# notes-api\n", 200)
+        self.assertTrue(sent.get("Content-Type", "").startswith("text/plain"))
+        self.assertEqual(sent.get("X-Romp-Text-Utf8"), "1", "the text shape's extra headers are sent")
+        self.assertEqual(body, "# notes-api\n")
+
+    def test_the_page_an_oversize_pdfs_own_tab_shows_carries_it_once(self):
+        # the 413 page (_too_large_page), served when a navigation asks for a PDF past the cap
+        sent, body = self._file_coop("paper.pdf", b"%PDF-1.4\n%%EOF\n", 413, headers={"Sec-Fetch-Dest": "document"}, cap=4)
+        self.assertTrue(sent.get("Content-Type", "").startswith("text/html"), "the way-out page, a document")
+        self.assertIn("too large to show", body)
+
+    def test_a_missing_file_carries_it_once_beside_its_reason(self):
+        sent, _ = self._file_coop("gone.png", None, 404)
+        self.assertEqual(sent.get(km._FILE_404_REASON_HDR), "missing", "the 404's extra header is sent")
 
     def test_the_recorder_shows_a_header_sent_twice_as_two(self):
         # the tests above read every send_header call, so a doubled header, even one that repeats its value, is seen

@@ -60,6 +60,13 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
     dl_truncate = False         # short body then a clean close, as _file_download sends when the file shrank
     nf_reason = None            # the X-Romp-Reason a newer remote puts on its 404 (None: a remote from before it)
 
+    def _opener_policy(self):
+        # A real romp kernel answers through Handler._send, which sends Cross-Origin-Opener-Policy: same-origin on every
+        # response it builds: the GET 200 of a file and every refusal (404, 413, 500). Its HEAD and 206 replies are
+        # written header by header and carry none. The relay sends its own copy through its own _send, so a relay that
+        # also mirrored the remote's would send the header twice, and a browser applies no policy from a doubled header.
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+
     def _serve(self, head):
         _FakeRemoteFileHandler.requests.append(self.path)
         if "download=1" in self.path and "data.bin" in self.path:
@@ -87,6 +94,8 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             if start:
                 self.send_header("Content-Range", "bytes %d-%d/%d" % (start, len(SVG_BYTES) - 1, len(SVG_BYTES)))
+            elif not head:
+                self._opener_policy()
             self.end_headers()
             if not head:
                 self.wfile.write(body)
@@ -95,6 +104,8 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", _FakeRemoteFileHandler.ctype)
             self.send_header("Content-Length", str(len(PY_BYTES)))
+            if not head:
+                self._opener_policy()
             self.end_headers()
             if not head:
                 self.wfile.write(PY_BYTES)
@@ -107,6 +118,7 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
                     else b"the remote kernel fell over")
             self.send_response(413 if "big.pdf" in self.path else 500)
             self.send_header("Content-Type", "text/plain")
+            self._opener_policy()
             if _FakeRemoteFileHandler.nf_reason is not None:
                 self.send_header("X-Romp-Reason", _FakeRemoteFileHandler.nf_reason)
             self.send_header("Content-Length", str(len(body)))
@@ -121,6 +133,8 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/pdf")
             self.send_header("Content-Disposition", 'attachment; filename="evil.pdf"')
             self.send_header("Content-Length", str(len(PDF_BYTES)))
+            if not head:
+                self._opener_policy()
             self.end_headers()
             if not head:
                 self.wfile.write(PDF_BYTES)
@@ -129,6 +143,7 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
             body = b"not found: /tmp/gone" if "download=1" in self.path else b""
             self.send_response(404)
             self.send_header("Content-Type", "text/plain")
+            self._opener_policy()
             if _FakeRemoteFileHandler.nf_reason is not None:
                 self.send_header("X-Romp-Reason", _FakeRemoteFileHandler.nf_reason)
             self.send_header("Content-Length", str(len(body)))
@@ -139,6 +154,8 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", _FakeRemoteFileHandler.ctype)
         self.send_header("Content-Length", str(len(PNG_BYTES)))
+        if not head:
+            self._opener_policy()
         if _FakeRemoteFileHandler.nf_reason is not None:
             # a (confused or hostile) remote putting a 404's word on its 200: the relay's mirror is guarded on the status
             self.send_header("X-Romp-Reason", _FakeRemoteFileHandler.nf_reason)
@@ -242,20 +259,54 @@ class RemoteFileRelay(unittest.TestCase):
         self.assertIn("path=%2Ftmp%2Fplot.png", req)
         self.assertIn("sid=11111111-2222-3333-4444-555555555555", req)
 
-    def test_a_relayed_file_carries_the_openers_policy_like_a_local_one(self):
-        # a remote session's figure opened in a tab of its own is a document on this origin too, so it declares
-        # Cross-Origin-Opener-Policy: same-origin as the local /file route does (the relay answers through _send,
-        # tests/test_kernel_auth_hardening.py OpenerIsolation), so the dashboard's window.open still returns a handle.
-        # Read off the wire, every copy: exactly one header, since a browser that receives two cannot parse it and
-        # applies no policy (a dict of the headers keeps one copy and would hide the second)
+    # A remote session's file opened in a tab of its own is a document on this origin too, so each shape the relay
+    # answers through _send declares Cross-Origin-Opener-Policy: same-origin as the local /file route does
+    # (tests/test_kernel_auth_hardening.py OpenerIsolation), so the dashboard's window.open still returns a handle. Read
+    # off the wire, every copy: exactly one header, since a browser that receives two cannot parse it and applies no
+    # policy (a dict of the headers keeps one copy and would hide the second). The fake remote sends its own copy on
+    # each of these replies, as a real romp kernel does (_FakeRemoteFileHandler._opener_policy), so a relay that
+    # mirrored the remote's header beside its own fails here. One test per shape, since each one's extra headers
+    # (the mirrored mtimes, the SVG sandbox, the PDF's name, the 404's reason, the 413 page) come from its own code.
+    def _relayed_coop(self, path, want_status, headers=None):
         self._register("gpu1", self.fake.server_address[1])
-        req = urllib.request.Request("http://127.0.0.1:%d/remote/gpu1/file?path=%%2Ftmp%%2Fplot.png" % self.port)
-        req.add_header("X-Romp-Token", km.TOKEN)
-        with urllib.request.urlopen(req, timeout=10) as r:
-            status, body, coop = r.status, r.read(), r.headers.get_all("Cross-Origin-Opener-Policy")
-        self.assertEqual(status, 200)
+        status, body, msg = self._get_msg("/remote/gpu1/file?path=" + urllib.parse.quote(path, safe=""), headers=headers)
+        self.assertEqual(status, want_status, body[:80])
+        self.assertIn(path, _FakeRemoteFileHandler.requests[-1].replace("%2F", "/"), "the remote was asked")
+        self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"],
+                         "one Cross-Origin-Opener-Policy header on the wire, same-origin")
+        return body, msg
+
+    def test_a_relayed_image_carries_the_openers_policy_like_a_local_one(self):
+        body, _ = self._relayed_coop("/tmp/plot.png", 200)
         self.assertEqual(body, PNG_BYTES)
-        self.assertEqual(coop, ["same-origin"], "one Cross-Origin-Opener-Policy header on the wire, same-origin")
+
+    def test_a_relayed_pdf_carries_the_openers_policy_once(self):
+        body, msg = self._relayed_coop("/tmp/paper.pdf", 200)
+        self.assertEqual(body, PDF_BYTES)
+        self.assertEqual(msg.get("Content-Disposition"), 'inline; filename="paper.pdf"')
+
+    def test_a_relayed_svg_carries_the_openers_policy_once(self):
+        body, msg = self._relayed_coop("/tmp/chart.svg", 200)
+        self.assertEqual(body, SVG_BYTES)
+        self.assertIn("sandbox", msg.get_all("Content-Security-Policy"))
+
+    def test_a_relayed_text_file_carries_the_openers_policy_once(self):
+        body, _ = self._relayed_coop("/tmp/app.py", 200)
+        self.assertEqual(body, PY_BYTES)
+
+    def test_the_relays_oversize_pdf_page_carries_the_openers_policy_once(self):
+        body, msg = self._relayed_coop("/tmp/big.pdf", 413, headers={"Sec-Fetch-Dest": "document"})
+        self.assertTrue(msg.get("Content-Type", "").startswith("text/html"), "the way-out page, a document")
+        self.assertIn(b"too large to show: /tmp/big.pdf", body)
+
+    def test_a_relayed_refusal_carries_the_openers_policy_once(self):
+        _FakeRemoteFileHandler.nf_reason = "missing"
+        for path, want in (("/tmp/gone.png", 404), ("/tmp/boom.png", 500)):
+            with self.subTest(path=path):
+                _, msg = self._relayed_coop(path, want)
+                self.assertEqual(msg.get("Content-Type"), "text/plain")
+                self.assertEqual(msg.get(km._FILE_404_REASON_HDR), "missing" if want == 404 else None,
+                                 "the 404 passes the remote's reason to _send as an extra header; the 500 passes none")
 
     def test_a_remote_pdf_is_served_inline_with_its_own_name_derived_here_never_the_remotes(self):
         # a remote session's PDF opens in its own browser tab too (2026-09-06): the tab's title and a Save's
