@@ -20,6 +20,12 @@ no blank line within the relay's byte or time bound (padded past 64 KiB, stalled
 silent, or closed early) each get this kernel's own 502, and none of the peer's bytes, its later frames
 included, reach the browser. A clean handshake still relays as its handshake headers and its frames.
 
+The file relay mirrors five of the peer's header values (RemoteFileRelayHeaderValues): Content-Length,
+Last-Modified, X-Romp-Mtime-Ns, X-Romp-Text-Utf8 and Content-Range. http.client keeps a folded line's
+CRLF inside the value it returns and send_header writes a value as it is given, so the relay checks each
+one: a value holding a line break or another control byte gets a 502, and never reaches the browser
+inside a header of this kernel's response.
+
 RemoteWsSetCookieStrip and RemoteFileRelayCredentials name no session-cookie helper, so they run against
 a kernel before or after the login cookie split; RemoteWsHeadRefused's case beside a session signs in with
 one. Synthetic only: host TESTHOST, invented cookie and credential strings, no session state touched.
@@ -539,6 +545,118 @@ class RemoteWsHeadRefused(unittest.TestCase):
                          "the one Set-Cookie is this kernel's clear of the legacy cookie")
         self.assertNotIn(b"peer-set-value", got, "the peer's cookie never reaches the browser")
         self.assertNotIn(b"PEERFRAMEBYTES", got, "nor its body")
+
+
+class _PeerValueHandler(BaseHTTPRequestHandler):
+    """A peer kernel's /file whose reply carries one header value the test sets (`inject`: a name and a value),
+    written as given: send_header checks no value, so a folded line (CRLF, then a space) or a NUL goes out as it
+    is. A suffix Range gets the 206 shape of the peer's own route."""
+    inject = ("X-Romp-Mtime-Ns", "1700000000000000000")
+    BODY = b"\x89PNG\r\n\x1a\nsynthetic-png"
+
+    def log_message(self, *a):
+        pass
+
+    def _serve(self, head):
+        name, value = type(self).inject
+        rng = self.headers.get("Range") or ""
+        start = int(rng[len("bytes="):-1]) if rng.startswith("bytes=") and rng.endswith("-") else 0
+        body = self.BODY[start:]
+        self.send_response(206 if start else 200)
+        self.send_header("Content-Type", "image/png")
+        if name != "Content-Length":
+            self.send_header("Content-Length", str(len(body)))
+        if start and name != "Content-Range":
+            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, len(self.BODY) - 1, len(self.BODY)))
+        self.send_header(name, value)
+        self.end_headers()
+        if not head:
+            self.wfile.write(body)
+
+    def do_GET(self):
+        self._serve(head=False)
+
+    def do_HEAD(self):
+        self._serve(head=True)
+
+
+class RemoteFileRelayHeaderValues(unittest.TestCase):
+    """The /remote/<host>/file relay mirrors five of the peer's header values: Content-Length (a probe, a download),
+    Last-Modified, X-Romp-Mtime-Ns and X-Romp-Text-Utf8 (a success), Content-Range (a partial read). One that carries a
+    line break or another control byte is refused with a 502, so the peer's bytes never reach the browser inside a
+    header of this kernel's response. Read over a raw socket, so the bytes are what the browser would get."""
+
+    FOLD = "\r\n Set-Cookie: romp_token=peer-set-value; Path=/"     # a folded line: http.client keeps its CRLF
+    VIEW = "/remote/TESTHOST/file?path=%2Fproj%2Ffigure.png&sid=11111111-2222-3333-4444-555555555555"
+    DOWNLOAD = "/remote/TESTHOST/file?path=%2Fproj%2Fdata.bin&download=1&sid=11111111-2222-3333-4444-555555555555"
+
+    def setUp(self):
+        self.peer = ThreadingHTTPServer(("127.0.0.1", 0), _PeerValueHandler)
+        threading.Thread(target=self.peer.serve_forever, daemon=True).start()
+        self.hub = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        threading.Thread(target=self.hub.serve_forever, daemon=True).start()
+        self._saved = dict(km._remotes)
+        with km._remotes_lock:
+            km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855, "local_port": self.peer.server_address[1],
+                                       "token": "row-" + "token-" + "testhost", "status": "up"}
+
+    def tearDown(self):
+        with km._remotes_lock:
+            km._remotes.clear()
+            km._remotes.update(self._saved)
+        _PeerValueHandler.inject = ("X-Romp-Mtime-Ns", "1700000000000000000")
+        for s in (self.hub, self.peer):
+            s.shutdown()
+            s.server_close()
+
+    def _raw(self, method, path, extra=()):
+        lines = ["%s %s HTTP/1.1" % (method, path), "Host: 127.0.0.1:%d" % self.hub.server_address[1],
+                 "X-Romp-Token: " + km.TOKEN, "Connection: close"] + list(extra)
+        got = b""
+        s = socket.create_connection(("127.0.0.1", self.hub.server_address[1]), timeout=15)
+        try:
+            s.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
+            while True:
+                b = s.recv(65536)
+                if not b:
+                    break
+                got += b
+        except OSError:
+            pass
+        finally:
+            s.close()
+        return got
+
+    def test_a_clean_mirrored_value_still_relays(self):
+        got = self._raw("GET", self.VIEW)
+        self.assertTrue(got.startswith(b"HTTP/1.1 200 "), "the relay serves the peer's file: %r" % got[:60])
+        self.assertIn(b"\r\nX-Romp-Mtime-Ns: 1700000000000000000\r\n", got.split(b"\r\n\r\n", 1)[0])
+
+    def test_a_mirrored_value_carrying_a_line_break_or_a_control_byte_is_refused(self):
+        date = "Mon, 01 Jan 2024 00:00:00 GMT"
+        cases = [
+            ("Last-Modified on a view", "GET", self.VIEW, (), "Last-Modified", date + self.FOLD),
+            ("X-Romp-Mtime-Ns on a view", "GET", self.VIEW, (), "X-Romp-Mtime-Ns", "1700000000000000000" + self.FOLD),
+            ("X-Romp-Text-Utf8 on a view", "GET", self.VIEW, (), "X-Romp-Text-Utf8", "1" + self.FOLD),
+            ("a NUL in Last-Modified on a view", "GET", self.VIEW, (), "Last-Modified",
+             date + "\x00Set-Cookie: romp_token=peer-set-value"),
+            ("Content-Length on a probe", "HEAD", self.VIEW, (), "Content-Length", "21" + self.FOLD),
+            ("Last-Modified on a probe", "HEAD", self.VIEW, (), "Last-Modified", date + self.FOLD),
+            ("X-Romp-Mtime-Ns on a probe", "HEAD", self.VIEW, (), "X-Romp-Mtime-Ns", "1700000000000000000" + self.FOLD),
+            # the 206 arm's own shape check (bytes N-M/L) refuses this one as well
+            ("Content-Range on a partial read", "GET", self.VIEW, ("Range: bytes=4-",), "Content-Range",
+             "bytes 4-20/21" + self.FOLD),
+            ("Content-Length on a download", "GET", self.DOWNLOAD, (), "Content-Length", "21" + self.FOLD),
+            ("Content-Length on a download probe", "HEAD", self.DOWNLOAD, (), "Content-Length", "21" + self.FOLD),
+        ]
+        for what, method, path, extra, name, value in cases:
+            with self.subTest(what):
+                _PeerValueHandler.inject = (name, value)
+                got = self._raw(method, path, extra)
+                self.assertTrue(got.startswith(b"HTTP/1.1 502 "), "%s: the relay refuses the reply: %r" % (what, got[:60]))
+                low = got.lower()
+                self.assertNotIn(b"set-cookie", low, "%s: no header line of the peer's reaches the browser" % what)
+                self.assertNotIn(b"peer-set-value", low, "%s: nor its value" % what)
 
 
 if __name__ == "__main__":

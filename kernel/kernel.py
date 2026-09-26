@@ -4115,9 +4115,10 @@ _WS_MIRROR_HEADERS = {b"upgrade": b"Upgrade", b"connection": b"Connection",
 _WS_HEAD_MAX = 65536
 _WS_HEAD_TIMEOUT_S = 15.0
 # A control byte: C0 (NUL to US, which takes in CR, LF and HTAB) and DEL. A genuine peer writes none in
-# a header block beyond the CRLF that ends each line, so a head holding one is refused, not cleaned:
-# browsers differ in which of these bytes they read as the end of a line.
+# a header block beyond the CRLF that ends each line, so a head or a mirrored value holding one is
+# refused, not cleaned: browsers differ in which of these bytes they read as the end of a line.
 _CONTROL_BYTE = re.compile(rb"[\x00-\x1f\x7f]")
+_CONTROL_CHAR = re.compile(r"[\x00-\x1f\x7f]")
 _WS_STATUS_101 = re.compile(rb"HTTP/1\.1 101(?: .*)?\Z")
 
 
@@ -4147,6 +4148,15 @@ def _ws_head_allowlist(head, extra=()):
             kept.append(spelled + b": " + value.strip(b" "))
     return (b"\r\n".join([b"HTTP/1.1 101 Switching Protocols"] + kept + list(extra))
             + b"\r\n\r\n" + head[sep + 4:])
+
+
+def _peer_header_value_ok(value):
+    """False when a header value a relay read from a peer's reply holds a CR, an LF or another control
+    character (_CONTROL_CHAR). http.client keeps a folded line's CRLF inside the value it returns, and
+    BaseHTTPRequestHandler.send_header writes a value as it is given, so a relay that mirrors such a
+    value would write the peer's line break, and whatever follows it, into this kernel's own response.
+    A relay refuses the reply (502) instead of mirroring it."""
+    return not _CONTROL_CHAR.search(value)
 
 
 # Unauthorized browser GET of "/" gets this instead of a bare 403, Jupyter's login-page flow: paste
@@ -78536,6 +78546,14 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             except OSError:
                 pass
+        if not all(_peer_header_value_ok(v) for v in (clen, lastmod, r_ns, r_u8, crange) if v):
+            # Each of these five can be written into this response's headers as the remote gave it (Content-Length on
+            # the HEAD arm, Content-Range on the 206 arm, the other three on every success), so one that carries a
+            # line break or another control character refuses the reply rather than writing the remote's bytes as a
+            # header of this kernel's own. The 404's cause needs no check: it is mirrored only when it equals one of
+            # this kernel's own words (_FILE_404_REASONS).
+            return self._send(502, b"" if head else ("%s answered with a header value this kernel does not relay" % host),
+                              "text/plain")
         if len(body) > _MEDIA_MAX_BYTES:       # backstop only — the remote's own cap 413s long before this
             return self._send(413, b"" if head else "too large to preview", "text/plain")
         if status not in (200, 206):
@@ -78641,6 +78659,11 @@ class Handler(BaseHTTPRequestHandler):
                     body = b"" if head else resp.read(_TEXT_MAX_BYTES)
                     return self._send(resp.status, body, "text/plain", cache="no-cache")
                 clen = resp.getheader("Content-Length")
+                if clen is not None and not _peer_header_value_ok(clen):
+                    # passed through below as the remote gave it: a line break or another control character in
+                    # it refuses the reply, like the preview arm's mirrored values (_remote_file)
+                    return self._send(502, b"" if head else ("%s answered with a header value this kernel does not relay"
+                                                             % host), "text/plain")
             except (OSError, http.client.HTTPException):
                 _demand_redial(host, "timeout")
                 return self._send(502, b"" if head else ("tunnel to %s is not answering — re-dialing now" % host),
