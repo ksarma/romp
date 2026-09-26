@@ -736,18 +736,19 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
     assert.ok(!/fetch-depth:\s*0\b/.test(block), block.split('\n')[0].trim() + ' checks out at the default depth, with no origin/main, so the merge-base gate holds L6\'s verifications off there; a job that fetches history now runs them, and the plan\'s sentence that they run in no checkout that gates landing is to be reworded');
   }
   assert.ok(section.includes('`git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty'), 'L6 names the kernel stat from the merge-base');
-  assert.ok(section.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools, upstream or tests alone'), 'and the listing from the merge-base (ui, not ui/webview, since the case fixes ruled in the file review\'s round 13, extra7-1, brought ui/test-code-only.ts into the delta)');
+  assert.ok(section.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools, upstream or tests, and SECURITY.md, alone'), 'and the listing from the merge-base (ui, not ui/webview, since the case fixes ruled in the file review\'s round 13, extra7-1, brought ui/test-code-only.ts into the delta, and SECURITY.md, the one file at the repository\'s root, since the fixes for its round 18, regression-2, named the marquee in its profile list)');
   assert.ok(!section.includes('git diff --stat 34142c262') && !section.includes('git diff --name-only 34142c262'), 'no verification against the branch point remains');
-  const count = /upstream or tests alone[^()]*\((\d+) files, the ledger entry's where line/.exec(section);
+  const count = /upstream or tests, and SECURITY\.md, alone[^()]*\((\d+) files, the ledger entry's where line/.exec(section);
   assert.ok(count, 'L6 counts the listing beside the command');
   assert.ok(exists('upstream', '2026-09-19-linknav-trail-back-forward.md'), 'the ledger entry the section names');
   assert.ok(exists(...THIS_MODULE.split('/')), 'THIS_MODULE names a file in the tree: ' + THIS_MODULE + ' (a misspelt path would hold the verifications off for good behind a green diagnostic; the file review\'s round 5, tests-7)');
   gated(t, L6_CHECK, (d) => {
     assert.equal(d.kernel, '', 'no kernel change since the merge-base ' + d.base);
     const DIRS = ['ui/', 'docs/', 'plans/', 'tools/', 'upstream/', 'tests/'];   // ui, not ui/webview: ui/test-code-only.ts is in the delta since the file review's round 13, extra7-1
-    for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)), f + ' lies under one of the six directories L6 names');
+    const ROOT_FILES = ['SECURITY.md'];   // the one root file L6 names, in the delta since the fixes for the file review's round 18, regression-2
+    for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)) || ROOT_FILES.includes(f), f + ' lies under one of the six directories L6 names, or is the root file it names');
     assert.equal(d.files.length, Number(count[1]), 'L6 says the listing since the merge-base has ' + count[1] + ' files; it has ' + d.files.length + ': ' + d.files.join(', '));
-    t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories L6 names');
+    t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories L6 names or the root file it names');
   });
 });
 
@@ -789,7 +790,7 @@ test('the guide\'s Links in a file paragraph ends with the two sentences, whole,
   assert.equal((flat(guide).match(/once there is a file to step back or forward to \(after you follow a link or open a picture; there are none before that\)/g) || []).length, 1, 'the condition is stated once');
   assert.equal((flat(guide).match(/keeps a trail of the files you reach/g) || []).length, 1, 'the trail is described once in the guide');
   assert.ok(para.includes('A file path opens that file in the viewer, in place of the one you were reading'), 'the replace sentence stands: a link still opens in place, and now there is a way back');
-  assert.ok(section.includes('The guide\'s Links in a file paragraph gained two sentences, the trail\'s and the figure control\'s, and the browser plan\'s navigation-stack section (plans/file-browser.md) a pointer sentence.'), 'the section says what the guide and the browser plan gained');
+  assert.ok(section.includes('The guide\'s Links in a file paragraph gained two sentences, the trail\'s and the figure control\'s, its paragraph on a file\'s own HTML one on the marquee\'s removal (the file review\'s round 18, regression-2), and the browser plan\'s navigation-stack section (plans/file-browser.md) a pointer sentence.'), 'the section says what the guide and the browser plan gained');
   // the browser plan: one sentence between the navigation-stack heading and the next
   const bp = flat(browserPlan);
   const stack = between(bp, '### Browser ↔ viewer: the navigation stack', '### Waiting, staleness, click-safety');

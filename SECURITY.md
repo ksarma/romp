@@ -92,7 +92,7 @@ UID can read.
   strict nonce CSP with `localResourceRoots` limited to the extension's assets.
   The profile is modelled on the rules GitHub applies to a README
   (`ui/webview/md-sanitize.ts`, shared by the chat and the file viewer): no
-  `<style>`, no form controls, no image map, ids and names prefixed
+  `<style>`, no form controls, no image map, no `<marquee>`, ids and names prefixed
   `user-content-`, an inline `style` reduced to its color declarations, no
   `background` attribute; unlike GitHub it keeps that color-only inline `style`
   and inline SVG. One renderer writes into that sanitized DOM after DOMPurify

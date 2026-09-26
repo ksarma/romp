@@ -2096,9 +2096,12 @@ a.fileview-gh-note { border-style: dashed; }
    off every element of a file's author markup the classes these sheets give a z-index at or above the control's, and off each
    figure and every element above it the classes these sheets would make a stacking context there (file-view.ts dropStackClasses
    over SHEET_STACK_CLASSES and SHEET_CONTEXT_CLASSES, each list held to these sheets both ways in file-figure-open.test.ts), and
-   a top-level table's shift into the gutters is a position and a left, which make no stacking context, so the control's z-index
-   1 keeps it above author content at z-index auto or 0 (the file review's round 16, extra5-1; its round 17, extra9-1, and the
-   coordinator's decision 4). The outbound mark of a picture with no control has no stacking level of its own, and none of that
+   a top-level table's shift into the gutters is a position and a left, which make no stacking context, and the shared sanitizer
+   removes an author's marquee (md-sanitize.ts MD_FORBID_TAGS), whose own rendering made one around what it held in Chromium and
+   Firefox (in WebKit it makes none, and its own scroll and clip carried the control outside the page), so, where no stacking
+   context stands around the picture, the control's z-index 1 keeps it above author content at z-index auto or 0 (the file
+   review's round 16, extra5-1; its round 17, extra9-1, and the coordinator's decision 4; its round 18, extra7-1 and extra7-2).
+   The outbound mark of a picture with no control has no stacking level of its own, and none of that
    holds for it (the file review's round 17, fresh-1 and extra7-1). An author's
    own link still opens its address with no dress, as it did
    before this follow-on. Byte-equal in both sheets

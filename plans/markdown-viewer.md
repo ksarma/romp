@@ -8632,8 +8632,10 @@ elementsFromPoint skips such an element as elementFromPoint does, measured in Ch
 does not see stays below the control, whose z-index keeps it on top where no stacking context stands around the picture, the viewer
 having taken off the classes the sheets would raise it to the control's stacking level and, from a figure's ancestors, the classes that
 would make one a stacking context around it, a top-level table's shift into the gutters being a position and a left, which make no
-stacking context, and the sanitizer removing an author's marquee, whose own rendering made one around what it held (`dropStackClasses`,
-below, and md-sanitize.ts's forbidden tags; the file review's round 17, extra9-1, and the coordinator's decision 4 on it), the outbound
+stacking context, and the sanitizer removing an author's marquee, whose own rendering made one around what it held in Chromium and
+Firefox, while in WebKit it makes none and its own scroll and clip carried the control outside the page (`dropStackClasses`, below,
+and md-sanitize.ts's forbidden tags; the file review's round 17, extra9-1, and the coordinator's decision 4 on it; its round 18,
+extra7-2), the outbound
 mark of a picture with no control excepted, which has no stacking level of its own, a stated boundary (its round 17, extra7-1); a same-origin parent's own
 chrome over the frame is not read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
 and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click: a click by a pointer reads the
@@ -8692,11 +8694,13 @@ the sheets both ways by file-figure-open.test.ts; the file review's round 16, ex
 painted the dress at 2.00:1 dark and 1.86:1 light while a tap opened the tab), while an author's element laid over the figure is the
 one gate's to read, which refuses a sign where a press would reach such an element, the viewer taking off it what would let a press
 pass through it (`dropPressThrough`) and the classes the sheets would raise it to the control's stacking level, and off a figure's
-ancestors the classes that would make one a stacking context around it, so author content the hit test does not see stays below the
-control (`dropStackClasses` over `SHEET_STACK_CLASSES` and `SHEET_CONTEXT_CLASSES`, each held to the sheets both ways by
-file-figure-open.test.ts; the file review's round 16, extra5-1, and its round 17, extra9-1, with the coordinator's decision 4 on it,
-under which a top-level table's shift into the gutters is a position and a left, not a translate, since a translate made every
-top-level table a stacking context), and an author's own link opens its address with no dress, as before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
+ancestors the classes that would make one a stacking context around it, a top-level table's shift into the gutters being a position
+and a left, not a translate, since a translate made every top-level table a stacking context, and the sanitizer removing an author's
+marquee, whose own rendering made one around what it held in Chromium and Firefox (in WebKit it makes none, and its own scroll and
+clip carried the control outside the page), so author content the hit test does not see stays below the control where no stacking
+context stands around the picture (`dropStackClasses` over `SHEET_STACK_CLASSES` and `SHEET_CONTEXT_CLASSES`, each held to the
+sheets both ways by file-figure-open.test.ts, and md-sanitize.ts's forbidden tags; the file review's round 16, extra5-1, its round
+17, extra9-1, with the coordinator's decision 4 on it, and its round 18, extra7-1 and extra7-2), and an author's own link opens its address with no dress, as before this follow-on; the painted-contrast ask of 2026-09-23, the press cue on the maintainer's ruling within it,
 where at 0.8 the control read 2.46:1 by pixels on a
 VS Code editor ground of #404040 and, at 0.8 x 0.7 inside a captioned dead link, 2.47:1 dark and 2.40:1 light), measured in its own
 CSS pixels from the loaded picture's laid-out box while it is in the document (the box divided by the picture's zoom, so a body zoom
@@ -8897,11 +8901,14 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests alone (60 files, the ledger entry's where line; run 2026-09-26 at the head that carries the fixes for the
-file review's round 17, tests-1 with regression-1 and extra9-1, and the sanitizer's removal of an author's marquee,
-where the merge-base is fa3ef54b5, the fork's main the
+upstream or tests, and SECURITY.md, alone (64 files, the ledger entry's where line; run 2026-09-26 at the head that carries the
+marquee forbid's records from the fixes for the file review's round 18, tests-1 with regression-1 and regression-2, where the
+merge-base is fa3ef54b5, the fork's main the
 branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch PR 907, and the listing is the
-branch's whole delta over it; the run at the head before that removal, from the merge-base fa3ef54b5, listed 58, before
+branch's whole delta over it; the run at the head that carries the fixes for the file review's round 17, tests-1 with
+regression-1 and extra9-1, and the sanitizer's removal of an author's marquee, from the merge-base fa3ef54b5, listed 60, before
+SECURITY.md, ui/webview/md-config-block-boxes.test.ts, ui/webview/anchor-map-wrappers.test.ts and
+ui/webview/anchor-map-pairing-r6.test.ts joined the delta; the run at the head before that removal, from the merge-base fa3ef54b5, listed 58, before
 ui/webview/md-sanitize.ts and its node suite ui/webview/md-sanitize.test.ts, modules of main, joined the delta; the run at the
 head that carries the fixes for that round's tests-1 with regression-1, from the
 merge-base fa3ef54b5, listed 57, before ui/webview/file-figure-open-stacking.ts, the one gate's stacking cells, joined the delta;
@@ -9158,8 +9165,11 @@ the box whose containment it measures, read again where the body scrolled to, si
 document's author markup makes an element fixed, which the test reads at run time over every sheet a page of either host loads;
 the leg launches through real-viewer-leg.ts's inBrowser, as this follow-on's legs do), and since the sanitizer's removal of an
 author's marquee, ui/webview/md-sanitize.test.ts (the profile's list of forbidden tags holds the marquee, whose own rendering
-makes a stacking context around what it holds with no class or style of the author's). The guide's Links in a file paragraph gained two sentences, the trail's and
-the figure control's, and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
+makes a stacking context around what it holds with no class or style of the author's in Chromium and Firefox, while in WebKit it
+makes none and its own scroll and clip carried the control outside the page; the guide's pin reads the marquee's sentence, the
+file review's round 18, regression-2). The guide's Links in a file paragraph gained two sentences, the trail's and
+the figure control's, its paragraph on a file's own HTML one on the marquee's removal (the file review's round 18,
+regression-2), and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
 scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail
 module exists with the functions L1 names and the viewer calls it where L1 and L2 say; the words quoted here and in the

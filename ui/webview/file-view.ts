@@ -4620,7 +4620,8 @@ function dropPressThrough(root: Element): void {
  *  above the control), and takes SHEET_CONTEXT_CLASSES, the classes that would make an element around the picture a stacking
  *  context, off each figure and every element above it; and the viewer's own rule for a top-level table shifts it with a position
  *  and a left, which make no stacking context; and the sanitizer removes an author's marquee, whose own rendering made one around
- *  what it held with no page class (md-sanitize.ts MD_FORBID_TAGS). A stacking context around the picture would hold the control's
+ *  what it held with no page class in Chromium and Firefox, while in WebKit it makes none and its own scroll and clip carried the
+ *  control outside the page (md-sanitize.ts MD_FORBID_TAGS; the file review's round 18, extra7-2). A stacking context around the picture would hold the control's
  *  z-index inside it, and author paint the hit test does not see could then cover the control. None of this holds for the outbound
  *  mark a picture
  *  with no control wears, which has no stacking level of its own (the file review's round 17, fresh-1 and extra7-1), nor for a

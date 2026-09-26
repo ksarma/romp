@@ -285,7 +285,7 @@ test("setMdSanitizer (the node suites' seam, Slice 7 of plans/markdown-viewer.md
 
 // ── the profile ─────────────────────────────────────────────────────────────────────────────────────
 
-test("the profile: html + svg, data: on img, no data-*, the forbidden tags (the marquee among them, whose own rendering makes a stacking context around what it holds), prefixed ids and names; input stays for the task checkbox", () => {
+test("the profile: html + svg, data: on img, no data-*, the forbidden tags (the marquee among them, whose own rendering makes a stacking context around what it holds in Chromium and Firefox, while in WebKit it makes none and its own scroll and clip carried the control outside the page; the file review's round 18, extra7-2), prefixed ids and names; input stays for the task checkbox", () => {
   assert.deepEqual(MD_PURIFY.USE_PROFILES, { html: true, svg: true });
   assert.deepEqual(MD_PURIFY.ADD_DATA_URI_TAGS, ["img"]);
   assert.equal(MD_PURIFY.ALLOW_DATA_ATTR, false);
@@ -420,6 +420,7 @@ test("the guide says what a file's own HTML may do, in the terms the code enforc
   assert.match(para, prose("HTML comment is dropped"), "the comment rule: dropped before the element holding it is judged, so the prose around it stays (dropCommentChildren)");
   assert.match(para, prose("An HTML `<title>` is dropped with its text"), "the body title rule: dropped with its text, since the browser shows one nowhere outside the page's head (dropBodyTitle)");
   assert.match(para, prose("the `<title>` of an inline `svg`, the drawing's tooltip, stays"), "and its one exception, dropBodyTitle's namespace test: an svg's own <title> is kept (review round 6: the sentence had said every <title> is dropped, while the same paragraph says an inline svg is kept)");
+  assert.match(para, prose("A `<marquee>` is removed, and its text and pictures stay where it stood, not moving"), "the marquee rule: the sanitizer removes an author's marquee and keeps what it held where it stood, unmoving (MD_FORBID_TAGS with KEEP_CONTENT; the file review's round 18, regression-2: the forbid reached every markdown surface and this paragraph did not say so)");
   assert.doesNotMatch(para, /\u2014/, "no em dash");
 });
 
