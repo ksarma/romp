@@ -8555,6 +8555,42 @@ class PostalPeerTunnels(unittest.TestCase):
         # the call's duration the process is client-only with peers off and names a port nothing can bind, so no bus is
         # ever started (2026-09-10: a hermetic bus reached the machine's fixed port from exactly this test while the real
         # bus was down for a restart); restored after, whatever the outcome
+        # Under this kernel the refusal kicks the revive on EVERY run, on a thread, and the test holds that revive inside
+        # itself (the reviewer's re-ruling of round 2 on fork PR #894). The revive is rebound to a wrapper that sets an
+        # Event in a finally, and the restore waits on that Event: without the wait the restore won the race in every run,
+        # and the ensure's child, forked with the restored environment, which names no port, pinged the machine's fixed bus
+        # port. For the whole window, from before the call until after the wait, subprocess.run is a scoped fake: a call
+        # whose argv (positional or args=) names romp-postal-service is recorded and answered as a refusing ensure, so no
+        # ensure child starts; every other call, from any thread, runs for real and gets its own answer. The one assertion
+        # on the fake is that no postal-service call reached the real run; the test asserts nothing about whether the
+        # revive runs the ensure (upstream's PR 1848 returns before it under client-only, and fork PR #875 brings their
+        # assertion on that: whichever of fork PR #875 and fork PR #894 lands second keeps it beside this wait and fake).
+        import threading
+        revive_ended = threading.Event()
+        real_revive = km._revive_postal_bus
+
+        def revive():
+            try:
+                real_revive()
+            finally:
+                revive_ended.set()
+        real_run = km.subprocess.run
+        stubbed, reached = [], []          # stubbed is for fork PR #875's assertion (none, under its skip); reached is this test's
+
+        def fake_run(*a, **kw):
+            argv = a[0] if a else kw.get("args")
+            text = " ".join(map(str, argv)) if isinstance(argv, (list, tuple)) else str(argv)
+            if "romp-postal-service" in text:      # the postal service, whatever its verb or argv position
+                stubbed.append(text)
+                return km.subprocess.CompletedProcess(argv, 1, "", "stubbed by the test: no ensure ran")
+            return pass_through(text, a, kw)
+
+        def pass_through(text, a, kw):     # the one road from the fake to the real run
+            if "romp-postal-service" in text:
+                reached.append(text)       # empty while the filter above holds; a narrowed filter (argv[2] alone) fills it
+            return real_run(*a, **kw)
+        km._revive_postal_bus = revive
+        km.subprocess.run = fake_run
         env_saved = {k: os.environ.get(k) for k in ("ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT")}
         os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1")
         try:
@@ -8562,11 +8598,16 @@ class PostalPeerTunnels(unittest.TestCase):
                              "postal down → False, never an exception (the supervisor must survive)")
         finally:
             km.BUS_PORT = saved
+            ended = revive_ended.wait(60)   # the revive's calls all fall inside the window, through the fake, under the trio
+            km.subprocess.run = real_run
+            km._revive_postal_bus = real_revive
             for k, v in env_saved.items():
                 if v is None:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
+        self.assertTrue(ended, "the refusal kicks the bus revive, and the revive ends before the fake and the environment are restored")
+        self.assertEqual(reached, [], "no romp-postal-service call reached the real subprocess.run")
 
 
 class CheckinMechanics(unittest.TestCase):

@@ -67,36 +67,382 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   every collected module before it runs a test, so in any run that collected the
   tunnels module `test_postal_via_dedupe.py`'s PeerRoutePrefersDirect resolve case
   answered an error instead of a relay and `test_kernel_remote_identity.py`'s absorb
-  case missed its bus notice (5 of 6 full runs). The tunnels module now sets the value
-  per test (a setUp that saves what it found and registers the restore as a cleanup; a
-  tearDown restore is skipped when a subclass's setUp fails part-way, and the value
-  leaks the same way), both readers pin the default the same way (review round 2,
-  2026-09-18, moved their restores, `RemoteIdentity`'s and the dedupe module's
-  `_Seeded`'s, from tearDown onto a cleanup too, each with an executed pin that runs a
-  subclass setUp that raises), and `tests/test_hermetic_kernel_postal.py` holds the
-  placement. The rule from now on has two halves, held differently. The import-time half
-  is pinned for every `.py` under `tests/`, walked recursively so `fixtures/` is read too
-  (941 files on 2026-09-18: 925 `test_*.py`, 13 helpers beside them and 3 under
-  `fixtures/`; the test checks its glob against an independent walk, so no file is
-  silently unscanned): no module-level write of `ROMP_POSTAL_PEERS`, module-level `if`,
-  `try`, `for` and `with` bodies included, in every shape a write takes (a subscript
-  assignment, `setdefault`, `update` of a dict literal, of keywords or of a module-level
-  name bound to a dict literal, `|=`, `os.putenv`, through `os.environ` or any name bound
-  to it), and a write whose keys the scan cannot read fails the test naming the file and
-  line rather than passing unread (review round 2: the subscript and `setdefault` alone
-  had left a module-level `update` invisible). A module-level `pop` is outside that pin:
-  unset is the production default and what a clean shell gives every module. The
-  per-test half, set in setUp and put back by a cleanup registered right after the write
-  (`restore_env` from `tests/conftest.py`, or a method of the class), is a convention and
-  not a pinned rule: the hermetic module checks it for the tunnels module alone. The same
-  shape leaked `ROMP_SESSIONS_FILE` from `test_postal_bus_lifetime.py` (a tearDown that
-  put back only a prior value; fixed 2026-09-18 with a cleanup and a pin that runs the
-  case). conftest's
-  `_shared_state_restored` names such a leftover, but only in a run that collects no
-  module writing the seam at import, so the module alone is the run that shows it.
-  `ROMP_POSTAL_PORT` is the one postal leg the kernel reads at import, and it stays
-  before the load. A red in one of these under `-n` is still judged by the module alone:
-  `python3 -m pytest tests/<module>.py -q`.
+  case missed its bus notice (5 of 6 full runs). The same shape, wider, on 2026-09-22
+  (fork PR #813's CI, the 3.10 cell): a real postal bus started from the peer-notify
+  guard test's revive road with the environment of the test process, which carried
+  the tunnels module's module-level `ROMP_POSTAL_PORT` (the run's own, so the bus's
+  fixed-port belt licensed the bind) and `ROMP_POSTAL_CLIENT_ONLY` (inert with peers
+  on) and the `ROMP_SESSIONS_FILE` seam ten postal modules wrote at module level
+  (one live row, so the bus never autostopped); it wrote into a shared state root
+  every 30 s and turned another module's snapshot test red. What put the first write
+  inside that test's 50 ms window on the cell stays unknown. Reading ruled out a kick,
+  a restart road or a removal of `postal/` in the 21 modules between the bus-restore
+  module and the asserting module (`server.pid` and `server.log` were not among the
+  files added, so no bus started inside the window), but it read only those modules.
+  It did not rule out one source that ran in every run at the round-1 head of fork
+  PR #894 and showed in 4 of 5 CI cells. Every kernel a test module loads in-process read
+  `BUS_PORT` 25302, the machine's fixed bus port, because conftest pops
+  `ROMP_POSTAL_PORT`, so its bus calls reached whatever bus a developer's box runs
+  there. The postal service loaded in-process built its client's `BASE` from the same
+  popped name, and three set_working tests of `tests/test_postal_relay_honesty.py`
+  sent heartbeats through it. Where nothing listened, the refused detach notify of
+  three tests (`tests/test_kernel_known_hosts.py`'s two `KnownHostMemory` detach tests
+  and `tests/test_peer_reconnect.py`'s `test_detach_is_the_one_end_of_intent`) revived
+  the bus with a real `romp-postal-service ensure` from the test process; a revive
+  still in flight absorbs a later one, so a run records two or three. This is closed
+  now: conftest's `_dead_bus_port` gives every loaded `romp_kernel*` module a dead
+  `BUS_PORT` and every loaded `romp_postal*` module a dead `BASE` for each test and
+  puts them back after it, and the three detach tests stub the revive. The hermetic
+  module's pin runs the modules whose calls dialled the fixed port
+  (`BUS_DIALLING_MODULES`, derived by a spy over one full serial run) together in both
+  orders under a connect and spawn spy, and asserts no connect to 25302 and no
+  postal-service process. Two things would settle fork PR #813's cell: that spy over
+  one serial run of its head, or `PYTEST_CURRENT_TEST` and the thread name logged
+  beside the kernel's refusal line. The disclosure is conditional: a run carries
+  the contaminant only when the revive wins the race AND a write lands in an asserting
+  window; the witness is the leaked process the run's log names, with the test name
+  when the spawn carried it. THE RULE, a property and
+  not a list of names: **no test module writes an environment variable at module
+  level that a spawned child could inherit**, outside a licensed set. A module-level
+  write executes at COLLECTION and holds for every test in the process and for every
+  child any test spawns, whether or not the writing module's own tests run
+  (deselecting does not help). It has two halves, held differently.
+  The import-time half is pinned for every `.py` under `tests/`, walked recursively
+  so `fixtures/` is read too (the test checks its glob against an independent walk,
+  so no file is silently unscanned), by `tests/test_hermetic_kernel_postal.py`: the
+  set of names the test modules write in everything that EXECUTES AT IMPORT
+  (module-level `if`, `try`, `for` and `with` bodies and their header expressions,
+  class bodies, the decorators and default argument values of a def, the decorators
+  and bases of a class, and the writes reached through a call at import the scan can
+  resolve to a def or class under `tests/`: a def in any import-time block or class
+  body, every binding of the name, a name imported from a tests-local module, by
+  its dotted name, by a star import or through a helper that re-exports it, a bare
+  decorator, a `metaclass=` value, a base's `__init_subclass__`, an instantiation, a
+  chain of calls up to 40 deep, a longer one failing the test naming the chain), in
+  each shape the scan reads (a subscript assignment, an augmented assignment to a key,
+  a key bound as a `for`, comprehension or `with` target, `setdefault`, `update` of a
+  dict literal, of keywords or of a module-level name bound once to a dict literal
+  and read only by an update, a spread, an iteration or a membership test, `|=`,
+  `os.putenv`, the dunder spellings `__setitem__` and `__ior__` on the mapping or
+  unbound with the mapping as the first argument, through `os.environ` or
+  `os.environb` under any name `os` is imported as, `from os import environ` or
+  `from os import *`, a name a plain assignment binds to either, the one target a
+  name (`env = os.environ`; an annotated or a chained assignment is not read), or a
+  parameter of the def a call at import resolves to (a function, a method, or a
+  class's `__new__` or `__init__`) that the call passes it to or that defaults to it
+  (a lambda's parameter is not read, nor a parameter of a def or class bound inside
+  a function; each of these unread shapes is on the list of what stays outside the
+  scan, named below), a subscript whose key a `for` over string literals binds),
+  EQUALS the licensed set `LICENSED_MODULE_LEVEL_WRITES` there, an equality and never
+  a floor, and every write meets its licence's condition. A name is read through its
+  first binding alone: bound again by any binding the module's code spells (a star
+  import counting as a binding of every name), it is unreadable, and a write
+  through it fails the test naming the file and line; a rebinding through the
+  module's namespace (`globals()`, `vars()`, `sys.modules`) or by a string `exec`
+  or `eval` runs (a walrus binds in an `eval` string) is not seen, and each is one
+  of the shapes listed outside the scan. What stays outside the scan
+  is listed in one place, the comment above `_Module` in that module, each shape
+  with a plant the scan is held to recording nothing for. The licences
+  are per name and checkable, each with a condition on
+  the written value (read through a module-level name bound once, so
+  `_ROOT = tempfile.mkdtemp()` is read as the mkdtemp): the state preamble
+  (`XDG_STATE_HOME` a bare mkdtemp or one with a literal prefix, never a `dir=`;
+  `ROMP_STATE_DIR` a bare `TemporaryDirectory`'s name, a path joined onto such a
+  mkdtemp, or the shell's value put back, never a bare mkdtemp, which no writer
+  uses; `tests/test_state_isolation_order.py` mandates the preamble, so every new
+  module that loads `bin/romp-*` is a new writer of both, no date bounds them, and
+  their licences rest on the value check of every write),
+  `ROMP_SERVE_TOKEN` (a string literal, or the shell's value put back) and
+  `ROMP_KERNEL_NO_OPEN` (the value "1"), the four of them dated 2026-09-22 and
+  pointed at the class item fork PR #871 filed in the notes (import-time writers
+  migrate into fixtures or the floor); the writer modules of these two are
+  committed, one path per line, in `tests/fixtures/module-level-env-writers/` and
+  compared with the census as sets, so a new writer fails naming itself (omit the
+  write or move it to the conftest floor; not `setUp`, since a module that loads
+  the kernel at import needs the value before the load) and a migrated one fails
+  until its line is removed. Then the dead ports and the catalog, scope,
+  claude-config and service-env floors (one value or a path under the module's
+  root, and `tests/conftest.py` re-asserts the name before every test, so the
+  module value cannot outlive collection). The re-assert is proved by running it:
+  a static reader first names the candidates (an unconditional plain assignment or
+  pop before the yield of a function-scoped autouse fixture, one in a `for` over a
+  literal tuple included, in a fixture it can show pytest registers, reading
+  `tests/conftest.py`'s fixtures and hooks from the module Python imported). That
+  reader only refuses. A name is licensed only when a child pytest over a copy of
+  the conftest writes the name at each probe module's import and, in each probe
+  test, reads it and sets it again, and sees the counted fixture's own code set or
+  pop it in every probe test's setup, with the value re-asserted there. For
+  `tests/conftest.py` that child runs in one scratch copy of the checkout per
+  module run, shared by every case: the real package `tests` on its one
+  directory, with the real `tests/__init__.py`, the real conftest and every other
+  entry of `tests/` in place, directories included, and the checkout's other
+  files around it (the copy leaves out what each clone keeps for itself: `.git`,
+  what git ignores outside `tests/`, and `__pycache__`); only two probe modules
+  and two dummy modules are added for each form of command line below. The
+  child collects those four modules and no other: it runs from the copy's root
+  with no `--rootdir` and is handed the four as files, so it collects the first
+  probe module first, then the two dummy modules, then the second probe module
+  fourth. Each run is made in two forms of command line. What this account of
+  the proof says of CI's form, its options and its runs with and without a
+  worker, holds where pytest-xdist and pytest-timeout are installed, as they are
+  in each of CI's cells; on a machine that lacks one of them,
+  `_proof_mode_options` in `tests/test_hermetic_kernel_postal.py` leaves out of
+  CI's form what that machine cannot pass. CI's form has the
+  options of CI's `Run pytest` step as a runner runs it, read from
+  `.github/workflows/ci.yml` with the step's expressions valued for each runner
+  label by fork PR #916's evaluator, as GitHub values them, so the cache plugin
+  is loaded: its run with no worker has the options of the runners whose step
+  sets no worker (`-n 0`, on `macos-latest`), and its run with workers those of
+  the runners whose step sets some (`-n 2`, on `ubuntu-latest`). The
+  developer's form has none of those options but `-n`, and has
+  `-p no:cacheprovider -k reassert`, which blocks the cache plugin and
+  deselects none of the four, and `-n 2` in its run with workers. A
+  `PYTEST_ADDOPTS` the caller exported does not reach the child
+  (`_proof_child_env` drops it), so it adds no option to either form. Where
+  pytest-xdist is installed the run makes four children per case, whatever run
+  of the suite it is in: the two forms, each with no worker and with two. On a
+  machine without pytest-xdist it makes two, one in each form with no worker.
+  The run's limit comes in three tiers. It refuses
+  an unconditional removal of the fixture (from every test), which is the class
+  of the bug, and any removal keyed on a fact of the first tier. First, matched
+  by construction: the conftest and the probe modules in a directory named
+  `tests`, which is a package, so the conftest imports as `tests.conftest` and
+  each probe module as a module of `tests`; the conftest loaded when pytest
+  starts; the first module collected and the fourth, so a hook keyed on a place
+  third or later is caught; function tests and a `unittest.TestCase` in each; a
+  run with no xdist worker (and none of the variables pytest-xdist sets in one)
+  and, where pytest-xdist is installed, one with `-n 2`; and the pair of forms,
+  each of those runs made in both: whether each option that one run gives and
+  another does not is given (CI's `-q`, `--durations`, `--timeout`,
+  `--timeout-method` and `-n`, the last given by every run but the developer's
+  with no worker; and the developer's `-p no:cacheprovider` and `-k`). The pair
+  covers whether an option is given, not its value. Code that stops the fixture
+  from running in any of those tests, keyed on those facts alone or on facts one
+  run has together, named or not, is refused by the run. The pair doubles each
+  case's runs, which adds to the time of `tests/test_hermetic_kernel_postal.py`
+  run serially: 2.6 s on 3.10 and 3.4 s on 3.12 where no run has `-n 2`
+  (pytest-xdist not installed), and 7.1 s and 7.8 s where the `-n 2` runs are
+  made (pytest-xdist installed; means of
+  three runs each, measured at the forty-third and forty-fifth commits of fork
+  PR #894, not enforced). Those figures were measured with the synthetic
+  cases' children run four at once; since the forty-ninth commit they run as
+  many at once as the machine has CPUs, at least four and at most eight
+  (`_CHILDREN_AT_ONCE`), so a machine with four CPUs keeps that pace.
+  Second, matchable at a cost and not matched here: the rest of the collection,
+  meaning a module's exact place, which modules come before a test's module and
+  after it, and how many (the child collects its four; a real run collects every
+  test module under `tests/`, hundreds of them after most modules), and the
+  run's arguments (the child hands its four modules as files, where CI's step
+  hands no path and a developer's run may hand `tests/`). Matching these takes a
+  child that collects every test module of `tests/`, about 40 s per child. When
+  the child did that, at the fortieth commit of fork PR #894, this module ran
+  for about six minutes where it had run for about one, which, with CI's cells
+  serial under the time limit they had then, would have put the slowest cell
+  past it. So this tier was stated rather than matched, to be revisited if the
+  CI-headroom decision gave that cell more time. That change has since landed
+  (fork PR #916: two workers on the Linux cells, and more time on every cell);
+  the tier is not measured under it here, and stays stated. A copy of the
+  conftest that keys a hook on a module named `test_kernel_env_floor.py` coming
+  earlier, on the module collected exactly third, on a module collected fifth or
+  later, on a module that four or more modules follow, or on a directory among
+  the arguments is granted, and under each road a real run of that copy reads
+  the value a module-level write or an earlier test left (planted). Also in
+  this tier are the forms of command line the pair does not have: an option
+  neither form gives (`--rootdir`, `-x` or `-s`, say), and a combination of
+  options neither form has (the cache plugin blocked with no `-k`, as a sweep
+  of this suite may run). Each could be matched by more runs per case, one per
+  option or combination. A road on `--rootdir` given and one on the cache
+  plugin blocked with no `-k` are granted (planted; no committed test makes a
+  real run under either). Third, unmatchable at any cost: a hook condition
+  keyed on an open-valued signal (a mark, an environment variable, a host name,
+  an option's value such as a `--durations` of 5 where CI's step gives 10, or
+  another collection-time signal), what each clone keeps for itself, and what
+  a real test module's own code does for its own tests. A copy of the conftest whose
+  `pytest_collectreport` takes the fixture out of each marked test is granted
+  the licence, and a real run of that copy shows a marked test reading a
+  module-level write (planted). This tier rests on an untampered run (pytest and
+  its plugins as installed, and no code outside the conftest changing what
+  pytest runs for a test) and on a reviewed conftest: the filter refuses any
+  hook it does not list, so only code it takes on trust can key a removal on
+  such a signal. And
+  `ROMP_MODELS_URL` (read at kernel import,
+  port 9 of 127.0.0.1 and no other); a check over the table itself holds every
+  licence to a per-write condition and every temporary one to a since date and a
+  named item. The two floor modules, `tests/conftest.py` and `tests/__init__.py`,
+  are the one home of run-wide values and are licensed wholesale, except for the
+  five names a module-level write of which is the leak itself (the postal peers,
+  port, client-only and host, and the sessions-file seam): of those a floor module
+  may write only upstream's client-only floor of "1". The other names only the
+  floor modules write are committed in the same directory, one line per writer
+  module, and compared as a set. A write whose keys the scan
+  cannot read fails the test naming the file and line rather than passing unread. A
+  module-level `pop` is outside that pin: unset is the production default and what a
+  clean shell gives every module. Writes at a module's setup rather than its import
+  (`setUpModule`, `setUpClass`, a module- or class-scoped fixture) are outside the
+  census and checked by conftest's `_module_env_restored` for the names it watches
+  (`MODULE_WATCHED_ENV_NAMES`: the seams below and the postal trio): it takes its
+  snapshot before the module's `setUpModule`, `setUpClass` and module- and
+  class-scoped fixtures run and fails naming the module when a watched name differs
+  after the module's teardown (the port against its floor, unset, since conftest pops
+  it before every test); every other name is outside it. conftest pops every watched
+  name at import, so the developer's shell does not change what the check reads. A
+  write by a session- or package-scoped fixture is read by a check only when the
+  fixture's setup runs after that check's snapshot. One requested by name by the
+  first of the module's tests to be set up (an autouse one always is) runs before
+  both snapshots, and neither check reads it; one a later test is the first to
+  request by name is named by this check alone. The first test to be set up need
+  not be the module's first. A test counts as set up once its module-scoped
+  fixtures are, and that rule decides every route; the routes planted follow.
+  pytest ends a test before that point when a skip or skipif mark skips it, when
+  an xfail mark with `run=False` ends it (not under `--runxfail`), when a
+  session- or package-scoped fixture it requests (by name, through a fixture, by
+  `usefixtures` or as autouse) skips or raises in its setup, since fixtures are
+  set up highest scope first, or when a hook skips it before pytest's runner
+  sets its fixtures up, as a conftest's `pytest_runtest_setup` does when it runs
+  before the runner's (a plain one does). A test skipped in its body, in a
+  module-, class- or function-scoped fixture (`setUpModule` included), in
+  `setUpClass`, by a unittest skip decorator, or by a conftest's
+  `pytest_runtest_setup` that runs after the runner's (one marked `trylast`
+  does) is set up. A fixture requested at run time
+  (`request.getfixturevalue`) is named by both from a test's body or a
+  function-scoped fixture, and by this check alone from a module-scoped fixture.
+  The tree has no fixture scoped above module, and the hermetic module holds that
+  list at empty.
+  `python -m tests.test_hermetic_kernel_postal --census` prints the counts by name
+  and shape, a total line per name and the split between `test_*.py` files and
+  the others, and the number of files it parsed, which the census pin compares
+  with an `os.walk` of the tree by equality; the census parses each file itself,
+  once per run of the module, keeps the trees of the files its import resolver
+  may read and drops every other tree after its walk (the census pin holds the
+  trees it keeps, and those that outlive their walk, read through weak
+  references, equal to that list, derived again by a reader of the pin's own,
+  and the ast objects made in the build and alive after its loop, found through
+  `gc.get_objects()`, which changes no collector state, and counted by class,
+  equal to the nodes, by class, of the trees of that derived list),
+  and derives once per set of paths, and the module holds what it keeps in one
+  object that its
+  `tearDownModule` releases. It does not use `tests/parse_cache.py`'s shared
+  parse: with the trees kept in that cache, every full collection after the module
+  walked them, and the perf-snapshot readers that run after it in the serial order
+  slowed past main's spread; holding every tree until the module's end left them
+  slower than main too (the census's docstring gives the measurement). The module
+  changes no collector state: its `tearDownModule` asserts that no file was parsed
+  twice in its run, that the released object is gone (a weak reference) and that
+  `gc.get_freeze_count()` is not above what its
+  `setUpModule` read, since `parse_cache.derived()` freezes the heap and every
+  perf-snapshot reader after the module then pays per read. Its docstring says
+  which figures are compared and which are not. The per-test half,
+  set in setUp and put back by a cleanup registered
+  right after the write (`restore_env` from `tests/conftest.py`, or a method of the
+  class; a tearDown restore is skipped when a subclass's setUp fails part-way, and
+  the value leaks the same way), is a convention and not a pinned rule, except for
+  the tunnels module, whose placement the hermetic module checks by position: all
+  three postal legs and the kernel's `BUS_PORT` (read at import) set in the setUp of
+  every class that attaches or detaches, its `_ensure_postal_bus` revive road stubbed
+  there with a recorder, all put back by cleanups, none at module level (a probe runs
+  the stub: a call of the stubbed road after the setUp lands in the recorder, the
+  cleanups fail on it and put the road back). The same shape leaked `ROMP_SESSIONS_FILE` from `test_postal_bus_lifetime.py`
+  (a tearDown that put back only a prior value; fixed 2026-09-18 with a cleanup and a
+  pin that runs the case). conftest's `_shared_state_restored` names such a leftover
+  in any run, since no module writes the seam at import, and it watches the bus-name
+  seam `ROMP_POSTAL_HOST` too; each fires only in a run where nothing set the name
+  beforehand (a leftover equal to what an earlier test left is no change; the
+  developer's shell never sets one, since conftest pops every name the two checks
+  watch at import). The port the kernel reads at import used to be the
+  one leg allowed before the load; since 2026-09-22 it is set per test beside
+  `km.BUS_PORT`, and conftest pops `ROMP_POSTAL_PORT` before every test (the
+  dead-port fixture), so a stray value never reaches a child; and since a kernel
+  loaded at import then reads the machine's fixed bus port, conftest's
+  `_dead_bus_port` gives every loaded kernel module a dead `BUS_PORT` for each test,
+  and every loaded postal module a dead `BASE` (the unknown above). A red in one of these
+  under `-n` is still judged by the module alone: `python3 -m pytest tests/<module>.py -q`.
+- **The run-end check names a process whose environment, cwd, open files or argv
+  hold a path under the run's roots** (2026-09-22; its reads widened and its unread
+  classes named 2026-09-24, round 2 of fork PR #894's review). At the controller's
+  session end `tests/conftest.py` first joins its live non-daemon threads (within
+  the bound below; a daemon thread is never waited for). A thread that ends costs
+  only the time until it ends; one that only threading's exit hooks end, which
+  run at interpreter exit after the check, is waited the whole bound and reported
+  as still running: the worker of an idle `concurrent.futures` pool a test never
+  shut down (an unclosed event loop's default executor is one; the module below
+  has its witness). It then reads `/proc` for
+  every live process whose environment carries one of the run's temp roots or a
+  path under one (a `:`-joined value counted per component), whose cwd is under
+  one, one of whose open file descriptors points under one, or one of whose
+  arguments is under one (whole, after an option's `=`, or as a `:`-joined
+  component), each root compared by its spelling, folded as a value is (a TMPDIR
+  spelled with a leading `//` keeps that pair in the root's spelling), and by its
+  realpath, and each environment value and argument read with a doubled
+  separator and a `.` or `..` segment folded as `os.path.normpath` folds them
+  (lexically: a value whose `..` follows a symlink is named when its folded
+  spelling is under a root, the safe side). A relative value or argument is read
+  as the path it names from the process's cwd when it carries the name of a
+  root's directory (`<root name>/x` from the root's parent is `<root>/x`): from a
+  cwd outside every root a relative path reaches under one only through that
+  name, and a process whose cwd is under a root holds it through the cwd. The roots
+  are the controller's and every root listed in its `romp-tests-children`: a
+  nested process (an xdist worker, a nested pytest, any child of the run that
+  imports the tests package handed a root as its TMPDIR together with the run's
+  `ROMP_TESTS_SYSTEM_TMPDIR`, as a child given a copy of its parent's
+  environment is) lists itself at mint time
+  in the root of every process above it, the run's first included (the lineage
+  its parent's owner marker records, `tests/__init__.py`), so the controller reads
+  every nested root at any depth after the processes between have removed their
+  own. A child handed a root as its TMPDIR without that name (an environment
+  built with TMPDIR alone) does not nest: it mints its root inside the handed
+  root and lists itself nowhere, and is read all the same, since its root is a
+  path under a run root. It waits for the one event it can observe, each
+  holder's exit, up to `LEAK_EXIT_BOUND_S` (5 s: a signalled child exits well
+  inside it). The wait starts only when a holder is seen or a process is listed
+  as not judged (below): a run with neither pays nothing for it, and a run that
+  leaves only a listed process waits for its exit, up to the whole bound, and
+  stays green. If any
+  still hold a root the run is RED and each is named: pid, parent, command line,
+  what it holds the root through (the environment names, `cwd`, `fd`, `argv`),
+  and the test phase current at its spawn (`PYTEST_CURRENT_TEST` in the
+  environment it inherited). A holder without that name is reported as that: the
+  phase at its spawn is unknown, because it was spawned while no phase was set or
+  was given an environment built without it. The pid and the command line are
+  the witness and the phase is a pointer when there is one. Keyed on that
+  property, never on a binary's name: a postal bus, a kernel, a session host and a
+  mock ssh's orphaned `sleep` are the same leak (the tunnels module's mocks `exec`
+  their trailing sleep since the check found the orphans). The check never kills;
+  it names the pid. What it does not read, each for the reason in the comment
+  above `LEAK_EXIT_BOUND_S`:
+  - a process whose environment, cwd, open files and argv carry no path under a
+    root, as one handed a built environment with its cwd elsewhere and no file
+    open in the root (the residual probe in the module below is its witness);
+  - a path spelled through a symlink outside the root, in an environment value or
+    an argument, absolute or relative (compared as spelled, folded lexically; a
+    cwd and a descriptor are resolved);
+  - a relative value or argument as the process used it from an earlier cwd (it
+    is read from the cwd the process has at the scan);
+  - a path inside a longer string (code text in an argument, an option inside an
+    environment value), a Unix socket bound under a root (its descriptor reads
+    `socket:[inode]`), a file mapped with no descriptor open, an environment
+    changed after the process started;
+  - a process that is not nested and whose root lies outside every run root;
+  - a process whose environment cannot be read. One of this user's that made
+    itself non-dumpable (ssh-agent, gpg-agent and op do; a setuid program is the
+    same) and started after the controller, in its cgroup, is listed by pid and
+    command line as not judged, whether or not a holder was found, and leaves the
+    exit status alone; that condition cannot tell this run's process from another
+    run's in the same cgroup (a sibling test's child run under pytest-xdist, a
+    second run started from the same shell), which is listed too; other users'
+    processes, and this user's started before the run or in another cgroup, are a
+    count of unreadable processes printed with any report;
+  - a process started after the scan: by a non-daemon thread still running when
+    the join's bound ran out, by a daemon thread, or by any process outside this
+    one. The threads of the first two kinds are reported by count and name, with
+    the statement that a process they start after the scan is not seen.
+  The added reads cost a clean run's single scan about 28 to 32 ms on the box,
+  and the fold 6 to 10 ms more on a busier box; reading a relative value from the
+  cwd made the scan 5 to 11 ms cheaper, since a relative component that carries
+  no root's name is no longer walked up its parents (the comment has the three
+  measurements). A platform without procfs says so once, runs
+  no check and leaves the exit status alone.
+  `tests/test_run_end_leaked_processes.py` pins the scan, the wait, the join, the
+  roots and the red run end by execution, in child pytest processes.
 - **`*.bats`** — the shell surfaces: `bin/romp`, the launch chain, hooks,
   postal CLI. Keep them GNU/BSD-portable (CI runs bats on ubuntu).
   Run: `bats tests/*.bats`.
@@ -223,8 +569,10 @@ at 17 bytes under `-n`; at 18 that lab's test, ServedRestart, overflowed under
 xdist while it passed alone, and the TMPDIR + 72 shapes — HostProcess, EndToEnd,
 AttachStandDown, a bare mkdtemp root — overflowed from a 36-byte TMPDIR under
 `-n`). A nested process lists its pid and root in
-`<parent root>/romp-tests-children`; the parent removes a dead child's root at
-run end, so a worker killed mid-run leaks nothing. `tests/test_tempdir_hygiene.py`
+`<parent root>/romp-tests-children`, and in the same file in every root above
+its parent up to the run's first (the lineage, which the run-end process check
+reads); the parent removes a dead child's root at run end, so a worker killed
+mid-run leaks nothing. `tests/test_tempdir_hygiene.py`
 `HarnessSocketBudget` derives the bound from the roots the harness makes and
 the tests' own lab shapes, and from the same scan holds the longest directory
 path and the longest single component the harness can produce under xdist

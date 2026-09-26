@@ -29,14 +29,25 @@ _SESS = os.path.join(os.environ["XDG_STATE_HOME"], "sessions.json")
 Path(_SESS).write_text(json.dumps([
     {"id": STABLE, "name": "web", "dir": "/tmp/notes-api", "state": "waiting",
      "working": "", "lastSid": FORK}]))
-os.environ["ROMP_SESSIONS_FILE"] = _SESS
 ps = load_source("romp_postal_selfid", os.path.join(BIN, "romp-postal-service"))
 
 
-class ForkedSelfIdentity(unittest.TestCase):
+class _Seam(unittest.TestCase):
+    """The sessions-file seam, per test (2026-09-22): the bus reads ROMP_SESSIONS_FILE at call time, and until now this
+    module wrote it at import, which held for every test in the process and for every child any test spawned (a real
+    bus started from another module's test inherited such a seam and, with one live row to count, never autostopped:
+    fork PR #813's CI). Set here for each test and put back by a cleanup registered right after the write
+    (tests/README.md; tests/test_hermetic_kernel_postal.py holds the repo-wide rule)."""
+
     def setUp(self):
-        self._prior_seam = os.environ.get("ROMP_SESSIONS_FILE")
+        prior = os.environ.get("ROMP_SESSIONS_FILE")
         os.environ["ROMP_SESSIONS_FILE"] = _SESS
+        self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", prior)
+
+
+class ForkedSelfIdentity(_Seam):
+    def setUp(self):
+        super().setUp()
         self._env = os.environ.get("CLAUDE_CODE_SESSION_ID")
         # a Codex session's shell carries CODEX_THREAD_ID, the second identity source since 2026-09-15: a
         # run launched from inside one would otherwise resolve an identity in the "no environment" case
@@ -48,7 +59,6 @@ class ForkedSelfIdentity(unittest.TestCase):
         else:
             os.environ["CLAUDE_CODE_SESSION_ID"] = self._env
         restore_env("CODEX_THREAD_ID", self._codex)
-        restore_env("ROMP_SESSIONS_FILE", self._prior_seam)
 
     def test_exact_id_match_resolves_directly(self):
         os.environ["CLAUDE_CODE_SESSION_ID"] = STABLE
