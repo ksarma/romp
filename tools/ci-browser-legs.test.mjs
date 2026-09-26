@@ -125,21 +125,63 @@ function jobs(text) {
  *  and this reader, which splits at a line feed alone, would read what follows the break as part of the line. An env
  *  line is a code line of exactly eight spaces and then `env:`, and the block begins after the step's env line when
  *  only whitespace follows its colon. An env line with anything else after its colon (an inline mapping, a comment, an
- *  alias) is refused, and so is a second env line in the step, each opening a block read the same way. The block runs
- *  to the first line that is not blank, not a comment, and whose leading run of spaces and tabs holds no tab and eight
- *  spaces or fewer. A blank line (empty, or whitespace alone by \s at any length) and a comment (spaces and tabs alone
- *  before its #, at any indent, inside a block scalar's text too) neither end the block nor are read, and a line with
- *  any other character before its # (a no-break space, which YAML reads as the start of a key) is not a comment.
- *  Inside it, a line of exactly ten spaces, then a key of letters, digits
- *  and _ beginning with a letter or _, then a colon and a space, is read as that key, its value the rest of the line
- *  trimmed: a block-scalar indicator (`NOTE: |`, `FOO: >-`) is read as the value, and a colon followed by spaces alone
- *  as an empty value, each an extra key, a loud red. Every other line in the block is refused: a quoted key, a key led
- *  by a digit, a key holding another character (a hyphen, a dot, the YAML merge key `<<`), a key with a space before
- *  its colon, a key whose colon ends its line, a line led by nine, or eleven or more, spaces (a block scalar's text, a
- *  value continued on the next line, a key at another depth), and a line with a tab in its leading whitespace. The
- *  first test asserts the Browser legs step's refused lines are none and its env the switch alone. Its table: ENV_ROWS,
- *  run by the test after STEPS_ROWS' test. */
+ *  alias) is refused, and so is a second env line in the step, each opening a block read the same way (an inline
+ *  mapping is a flow collection, below). Outside a quoted value (below), the block runs to the first line that is not
+ *  blank, not a comment, and whose leading run of spaces and tabs holds no tab and eight spaces or fewer. A blank line
+ *  (empty, or whitespace alone by \s at any length) and a comment (spaces and tabs alone before its #, at any indent,
+ *  inside a block scalar's text too) neither end the block nor are read, and a line with any other character before
+ *  its # (a no-break space, which YAML reads as the start of a key) is not a comment. Inside it, a line of exactly ten
+ *  spaces, then a key of letters, digits and _ beginning with a letter or _, then a colon and a space, is read as that
+ *  key, its value the rest of the line trimmed: a block-scalar indicator (`NOTE: |`, `FOO: >-`) is read as the value,
+ *  and a colon followed by spaces alone as an empty value, each an extra key, a loud red. Every other line in the block
+ *  is refused: a quoted key, a key led by a digit, a key holding another character (a hyphen, a dot, the YAML merge key
+ *  `<<`), a key with a space before its colon, a key whose colon ends its line, a line led by nine, or eleven or more,
+ *  spaces (a block scalar's text, a value continued on the next line, a key at another depth), and a line with a tab in
+ *  its leading whitespace. A quoted scalar or a flow collection that a line of the block begins, the env line among
+ *  them, is followed as YAML follows it. Its node begins at the line's key place (after its leading whitespace, any
+ *  `- `, `? ` or `: ` indicator, and any tag or anchor) or at its value place (after a plain key's colon and a space, a
+ *  tab or the line's end, or after a quoted key closed on the line and its colon, then any tag or anchor), and a quote
+ *  anywhere else, inside a plain scalar (`NOTE: a'b`) or in a comment, begins nothing. A line that begins a single- or
+ *  double-quoted scalar and does not close it (inside single quotes two single quotes are a quote, and inside double
+ *  quotes a backslash escapes the next character) is refused, and so is each later line up to and including the line
+ *  that closes it, whatever its indent, a # line, an env line and a key line among them, since YAML reads them as the
+ *  value's text (a blank line among them is neither read nor refused). The block goes on after the closing line, as
+ *  YAML's does: a key after the value, which YAML keeps in the step's env, is read or refused, and a later line of
+ *  eight spaces or fewer ends the block. A line that begins a flow collection ([ or {) is refused, closed on its line
+ *  or not, and so is every later line of the step that is not blank: the reader does not follow a collection to its
+ *  closing bracket, which can sit on a later line of eight spaces or fewer that YAML reads past, as a quoted scalar's
+ *  closing line can. The first test asserts the Browser legs step's refused lines are none and its env the switch
+ *  alone. Its table: ENV_ROWS, run by the test after STEPS_ROWS' test. */
 function steps(job) {
+  // the env reader's follower of a quoted scalar or a flow collection that a line begins (its docstring): from index i
+  // at a node's place, a key's when key is true and else a value's, with quote the quote a scalar is open under (null at
+  // a place), it returns the quote the line leaves open, FLOW when a flow collection begins, or null
+  const FLOW = '[';
+  const opens = (l, i, quote, key) => {
+    for (;;) {
+      if (!quote) {
+        i += /^(?:[-?:](?:[ \t]+|$)|(?:![^\s,[\]{}]*|&[^\s,[\]{}]+)(?:[ \t]+|$|(?=[[{])))*/.exec(l.slice(i))[0].length;
+        if (l[i] === '[' || l[i] === '{') return FLOW;
+        if (l[i] === '"' || l[i] === "'") { quote = l[i++]; continue; }
+        if (!key) return null;
+        const c = /[ \t]#|:(?=[ \t]|$)/.exec(l.slice(i));
+        if (!c || c[0] !== ':') return null;
+        i += c.index + 1;
+        i += /^[ \t]*/.exec(l.slice(i))[0].length;
+        key = false;
+        continue;
+      }
+      while (i < l.length && l[i] !== quote) i += quote === '"' && l[i] === '\\' ? 2 : 1;
+      if (i >= l.length) return quote;
+      if (quote === "'" && l[i + 1] === "'") { i += 2; continue; }
+      i++;
+      quote = null;
+      const c = /^[ \t]*:(?:[ \t]+|$)/.exec(l.slice(i));
+      if (!c) return null;
+      i += c[0].length;
+      key = false;
+    }
+  };
   const out = [];
   for (const l of job.lines) {
     if (/^      - /.test(l)) out.push({ name: null, lines: [] });
@@ -157,20 +199,27 @@ function steps(job) {
     }
     s.env = {};
     s.envRefused = [];
-    let block = false, envLines = 0;
+    let block = false, envLines = 0, open = null;
     for (const l of s.lines) {
       if (/[\r\u0085\u2028\u2029]/.test(l)) { s.envRefused.push(l); continue; }
+      if (open) {
+        if (open !== FLOW) open = opens(l, 0, open, false);
+        if (!/^\s*$/.test(l)) s.envRefused.push(l);
+        continue;
+      }
       if (/^\s*$/.test(l) || /^[ \t]*#/.test(l)) continue;
       if (/^        env:/.test(l)) {
         envLines++;
         block = true;
+        open = opens(l, 8, null, true);
         if (envLines > 1 || !/^        env:\s*$/.test(l)) s.envRefused.push(l);
         continue;
       }
       if (!block) continue;
       const lead = /^[ \t]*/.exec(l)[0];
       if (!lead.includes('\t') && lead.length <= 8) { block = false; continue; }
-      const e = /^          ([A-Za-z_][A-Za-z0-9_]*): (.*)$/.exec(l);
+      open = opens(l, lead.length, null, true);
+      const e = !open && /^          ([A-Za-z_][A-Za-z0-9_]*): (.*)$/.exec(l);
       if (e) s.env[e[1]] = e[2].trim();
       else s.envRefused.push(l);
     }
@@ -243,7 +292,7 @@ const ENV_ROWS = [
   { what: 'a line of eight spaces ends the block, and a key after it is neither read nor refused', lines: ['        env:', ENV_ON, '        timeout-minutes: 5', ENV_NO], env: ENV_SW, refused: [] },
   { what: 'an env line with spaces after its colon opens the block', lines: ['        env:  ', ENV_ON], env: ENV_SW, refused: [] },
   { what: 'an env line of ten spaces, under with:, is not the step\'s env', lines: ['        with:', '          env:', '            NODE_OPTIONS: x'], env: {}, refused: [] },
-  { what: 'an inline mapping after env:, refused', lines: ['        env: { NODE_OPTIONS: --test-only }'], env: {}, refused: ['        env: { NODE_OPTIONS: --test-only }'] },
+  { what: 'an inline mapping after env:, refused, a flow collection, with every later line of the step', lines: ['        env: { NODE_OPTIONS: --test-only }'], env: {}, refused: ['        env: { NODE_OPTIONS: --test-only }', '        run: x'] },
   { what: 'a comment after env:, refused, its block read', lines: ['        env: # the switch', ENV_ON], env: ENV_SW, refused: ['        env: # the switch'] },
   { what: 'an alias after env:, refused', lines: ['        env: *x'], env: {}, refused: ['        env: *x'] },
   { what: 'a second env line, refused, its block read', lines: ['        env:', ENV_ON, '        timeout-minutes: 5', '        env:', ENV_NO], env: ENV_BOTH, refused: ['        env:'] },
@@ -259,6 +308,21 @@ const ENV_ROWS = [
   { what: 'a # line led by a no-break space, refused (YAML reads a key there)', lines: ['        env:', ENV_ON, '          \u00a0#NODE_OPTIONS: x'], env: ENV_SW, refused: ['          \u00a0#NODE_OPTIONS: x'] },
   { what: 'a # line led by eight spaces and a no-break space ends the block, and a key after it is neither read nor refused', lines: ['        env:', ENV_ON, '        \u00a0# a comment', ENV_NO], env: ENV_SW, refused: [] },
   { what: 'a # line led by spaces and a tab, a comment, not the end of the block', lines: ['        env:', ENV_ON, ' \t # a comment', ENV_NO], env: ENV_BOTH, refused: [] },
+  { what: 'a single-quoted value opened on the switch\'s key line, the switch set again inside it and the quote closed on a line of eight spaces: the three lines refused, and NODE_OPTIONS after the closing line read', lines: ['        env:', '          ' + SWITCH + ': \'1', ENV_ON, '        \'', ENV_NO], env: { NODE_OPTIONS: '--test-only' }, refused: ['          ' + SWITCH + ': \'1', ENV_ON, '        \''] },
+  { what: 'a double-quoted value closed on a line of eight spaces, refused with it, and NODE_OPTIONS after it read', lines: ['        env:', ENV_ON, '          NOTE: "a', '        b"', ENV_NO], env: ENV_BOTH, refused: ['          NOTE: "a', '        b"'] },
+  { what: 'two single quotes inside single quotes, a quote and not the close', lines: ['        env:', ENV_ON, '          NOTE: \'a\'\'', '        b\'', ENV_NO], env: ENV_BOTH, refused: ['          NOTE: \'a\'\'', '        b\''] },
+  { what: 'a backslash and a double quote inside double quotes, a quote and not the close', lines: ['        env:', ENV_ON, '          NOTE: "a\\"', '        b"', ENV_NO], env: ENV_BOTH, refused: ['          NOTE: "a\\"', '        b"'] },
+  { what: 'two backslashes before a double quote, an escaped backslash and the close, read', lines: ['        env:', ENV_ON, '          NOTE: "a\\\\"', ENV_NO], env: { ...ENV_BOTH, NOTE: '"a\\\\"' }, refused: [] },
+  { what: 'a blank line inside a quoted value, neither read nor refused, and a # line that closes it, refused as its text', lines: ['        env:', ENV_ON, '          NOTE: \'a', '', '  # b\'', ENV_NO], env: ENV_BOTH, refused: ['          NOTE: \'a', '  # b\''] },
+  { what: 'a tag before a single-quoted value opened on the switch\'s key line, followed as the quote is', lines: ['        env:', '          ' + SWITCH + ': !!str \'1', ENV_ON, '        \'', ENV_NO], env: { NODE_OPTIONS: '--test-only' }, refused: ['          ' + SWITCH + ': !!str \'1', ENV_ON, '        \''] },
+  { what: 'a quoted key left open, refused with its closing line', lines: ['        env:', ENV_ON, '          \'NOTE', '        \': x', ENV_NO], env: ENV_BOTH, refused: ['          \'NOTE', '        \': x'] },
+  { what: 'a single-quoted value opened after a quoted key, refused with its closing line', lines: ['        env:', ENV_ON, '          "NOTE": \'a', '        \'', ENV_NO], env: ENV_BOTH, refused: ['          "NOTE": \'a', '        \''] },
+  { what: 'a single-quoted value opened after "- ", refused with its closing line', lines: ['        env:', ENV_ON, '          - \'a', '        \'', ENV_NO], env: ENV_BOTH, refused: ['          - \'a', '        \''] },
+  { what: 'an env line opening a single-quoted value: the lines up to its close refused, and the switch after it read', lines: ['        env: \'x', ENV_NO, '        \'', ENV_ON], env: ENV_SW, refused: ['        env: \'x', ENV_NO, '        \''] },
+  { what: 'a flow collection opened on the switch\'s key line, the switch set again inside it and closed on a line of eight spaces: refused with every later line of the step', lines: ['        env:', '          ' + SWITCH + ': [', ENV_ON, '        ]', ENV_NO], env: {}, refused: ['          ' + SWITCH + ': [', ENV_ON, '        ]', ENV_NO, '        run: x'] },
+  { what: 'a flow collection closed on its line after an anchor, refused with every later line of the step', lines: ['        env:', ENV_ON, '          NOTE: &a {b: 1}', ENV_NO], env: ENV_SW, refused: ['          NOTE: &a {b: 1}', ENV_NO, '        run: x'] },
+  { what: 'a quote inside a plain value begins nothing: the value read, and a line of eight spaces after it ends the block', lines: ['        env:', ENV_ON, '          NOTE: a\'b', '        timeout-minutes: 5', ENV_NO], env: { ...ENV_SW, NOTE: 'a\'b' }, refused: [] },
+  { what: 'a single-quoted value closed on its line, a quote in the comment after it, read with the comment', lines: ['        env:', ENV_ON, '          NOTE: \'a\' # it\'s', ENV_NO], env: { ...ENV_BOTH, NOTE: '\'a\' # it\'s' }, refused: [] },
 ];
 test('the env reader\'s table: each row\'s env and refused lines read as steps()\' docstring states', () => {
   const wrong = [];
