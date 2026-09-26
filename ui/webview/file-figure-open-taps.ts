@@ -196,7 +196,7 @@ export async function tapCells(browser: any, engine: TapEngine, device: TapDevic
     const downs = evs.filter((e) => e.type === "pointerdown"), clicks = evs.filter((e) => e.type === "click");
     assert.ok(downs.length === 1 && clicks.length === 1 && clicks[0].trusted, at + what + ": the tap sends one pointerdown and one trusted click (a precondition): " + JSON.stringify(evs));
     if (own) assert.equal(clicks[0].pid, downs[0].pid, at + what + ": the tap's click carries its press's pointerId in " + engine + " (a precondition): " + JSON.stringify(evs));
-    else assert.ok(clicks[0].pid !== downs[0].pid && clicks[0].ptype === "mouse" && downs[0].ptype === "touch", at + what + ": the tap's click carries a pointerId other than its press's in WebKit, of type mouse where the press's is touch (a precondition): " + JSON.stringify(evs));
+    else assert.ok(clicks[0].pid !== downs[0].pid && clicks[0].ptype === "mouse" && downs[0].ptype === "touch", at + what + ": the tap's click carries a pointerId other than its press's in Playwright's WebKit on Linux under touch emulation, of type mouse where the press's is touch (a precondition): " + JSON.stringify(evs));
     return clicks[0];
   };
   await tapScene(browser, engine, device, surface, TALL_TEXT, async (s) => {
