@@ -59,7 +59,7 @@ test("render.ts takes the record out of sessionStorage at load (one reload, one 
 });
 
 test("landActive's landing consumes the record for the active tab first, then falls to the ordinary rule", () => {
-  const m = RENDER.match(/^function landActive\(content: HTMLElement \| null, v: View\): void \{([\s\S]*?)\n\}/m);
+  const m = RENDER.match(/^function landActive\(content: HTMLElement \| null, v: View, scrollerHolds: boolean = false\): void \{([\s\S]*?)\n\}/m);
   assert.ok(m, "landActive");
   const body = m![1];
   assert.match(body, /const rs = takeReloadScroll\(pendingReloadScroll, activeId\);\s*\n\s*if \(rs\) \{\s*\n\s*pendingReloadScroll = null;\s*\n\s*v\.stick = rs\.stick;\s*\n\s*if \(rs\.stick\) writeScroll\(content, content\.scrollHeight, "reload-restore", true\);\s*\n\s*else if \(!\(rs\.anchor && restoreScrollAnchor\(content, v, rs\.anchor\)\)\) \{/);

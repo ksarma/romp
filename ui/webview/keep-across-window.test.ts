@@ -25,7 +25,7 @@ test("keepPlaceAcrossWindow: the direct restore first; on a miss, the deep-link 
 });
 
 test("showActive keeps the place through the window-aware helper on both build paths", () => {
-  assert.match(RENDER, /syncView\(activeId!\); landActive\(content, v\);\n\s*if \(keepAnchor\) keepPlaceAcrossWindow\(content, v, keepAnchor\);/);
+  assert.match(RENDER, /syncView\(activeId!\); landActive\(content, v, scrollerHolds\);\n\s*if \(keepAnchor\) keepPlaceAcrossWindow\(content, v, keepAnchor\);/);
   assert.match(RENDER, /landActive\(cc, vv\);\n\s*if \(keepAnchor && cc\) keepPlaceAcrossWindow\(cc, vv, keepAnchor\);/);
   assert.equal((RENDER.match(/keepPlaceAcrossWindow\(/g) || []).length, 3, "two call sites and the definition");
 });
