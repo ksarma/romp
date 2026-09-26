@@ -61,8 +61,8 @@
 // the clicks after a drag, whose reads there are a private witness kept out of the tree; the tap cells of Chromium and Firefox read
 // the same at that head as at the fix, by design. The key cells are green at both heads by design, red under a gate that reads a
 // key's click as a pointer's (the Enter cells) and under one that lets a key's or a script's click read the slot with the keydown's
-// clear dropped (the press cells). The covered drag cells are red under A18-R in WebKit, the gate with the file review's round 18
-// rule reverted and no clear put in its place, whose click read the drag's record; WebKit's cost cells after a drag are red at
+// clear dropped (the press cells). The covered drag cells are red under A18-R in WebKit, the gate with the rule the file review's round
+// 18 found reverted and no clear put in its place, whose click read the drag's record; WebKit's cost cells after a drag are red at
 // ef686b029, whose gate took a verdict at the mousedown with no pointerdown before it, as they record the cost and guard no
 // defect; the other pane's covered cells are red in WebKit at X, the gate with a dragstart clear and records ended at no pointerup,
 // whose click read the record the right click or the released press left; Firefox's chord cells and Chromium's cells of a finger
