@@ -956,7 +956,12 @@ class _PerfStats:
                                    off made wake-only: the awaiting dead-man, plus the debt reminders
                                    while the nudge toggle is on; such a look records and skips under
                                    its own mode tag since jobs stage 1),
-                                   wakeOnlyRecorded (the memo rows those looks recorded), and
+                                   wakeOnlyRecorded (the memo rows those looks recorded), loads
+                                   (the walk's shared goal-store reads: one per look that reaches
+                                   its decision read, whether the read returns a store, returns a
+                                   fault or raises out of the look, none on a skip or a state-gate
+                                   exit, the count fold ruling A condition 7 bounds at one per
+                                   alive session per pass), and
                                    unboundedBy (the refusals per leg); nudgeGate
                                    (the walk's placement gate, _nudge_placement_gate) -> served /
                                    derived (answers served from the memo vs re-derived) / failed
@@ -7030,14 +7035,20 @@ def _refuse_setting(client, exc, what, gesture, sid="", item_id="", flag="", val
     REFUSED because the store it edits could not be read -- or, since the maintainer's fold on PR
     #1019, WRITTEN (_StateUnwritable: the publish itself failed): one stderr line, and the refusal answered
     on the DELIVERING socket as a `settingRefused` frame -- the same targeted _reply idiom the
-    settingStale stand-down and the saveFile acks use, never a broadcast. The frame names the
+    settingStale stand-down and the saveFile acks use, never a broadcast. Two ops answer more causes on
+    this frame, each before a setter runs: a value that is not a JSON boolean, on the setSessionFlag op
+    and on the cardNotify op (the validator's complaint, `value` what the display path paints for that
+    flag or bell), and, on the setSessionFlag op, a flag name outside _LANE_FLAGS (_lane_flag_refusal's
+    sentence, `value` None since no pane paints an unlisted flag, and `flag` the name as str() spells it,
+    the empty string for a falsy name, which never equals a listed name). The frame names the
     `gesture` ("flag" / "bell" / "order" -- the views store's doors answer on their own acks, _ack_views_write, and
     never draw this frame -- so a pane never infers it from which fields are
     empty), the gesture's own address (sid / itemId / flag), and `value`: what the kernel's display
     path still paints for that flag or bell -- the value the next push carries -- so the pane
     repaints the refused toggle to it on THIS event rather than to a value it recorded at the click
     (two clicks before the first refusal made such a record wrong until the next push). None for a
-    gesture with no single value (an order, a whole-blob view write). A `warn` frame did none of
+    gesture with no single value (an order, a whole-blob view write) and for a flag refused by name.
+    A `warn` frame did none of
     this: only the chat page renders `warn`, so a refused bell on the feed page and a refused lane
     flag on the timeline page stayed painted as if they had landed until a reload. A dead socket is
     the client's problem: the refusal already stands. `log`, when given, is what stderr gets INSTEAD of
@@ -15228,9 +15239,12 @@ def _tick_job_skips(job, s):
 # 63 s first cycle in this walk, parsing every alive session cold before a single nudge could be due.
 _NUDGE_HORIZON = threading.local()    # the walking thread's collector: .notes (the flips a look's clock legs declined on)
 _NUDGE_WALK_STATS = {"looks": 0, "stats": 0, "served": 0, "skippedParses": 0, "parses": 0, "coldParses": 0, "deferredSessions": 0, "unbounded": 0,
-                     "clockDue": 0, "wakeOnly": 0, "wakeOnlyRecorded": 0, "unboundedBy": {}}   # unboundedBy: the None notes per leg (T401
+                     "clockDue": 0, "wakeOnly": 0, "wakeOnlyRecorded": 0, "loads": 0, "unboundedBy": {}}   # unboundedBy: the None notes per leg (T401
 #                                       follow-up); wakeOnlyRecorded: the memo rows wake-only looks recorded (jobs stage 1), read against
-#                                       wakeOnly and skippedParses on a quiet board with the gear off
+#                                       wakeOnly and skippedParses on a quiet board with the gear off; loads: the walk's shared goal-store
+#                                       reads, one per look that reaches its decision read whatever the read does (a store, a fault or
+#                                       a raise out of the look) and none on a skip or a state-gate exit (fold ruling A condition 7
+#                                       as ruled 2026-09-19: at most one per alive session per pass)
 _NUDGE_LOOK_STATS = {}                # sid -> the stat the pass took before its snapshots, for the look (a side map: the session
 #                                       rows are shared, read-only and memoised per cycle, never written into)
 _NUDGE_LOOK_ASKERS = {}               # sid -> (the asker sids whose registry rows the key carries, the ones beyond the bound)
@@ -15547,10 +15561,200 @@ def _begin_checkpoint_cycle():
     """The pusher cycle's START (T362 round one, lows 2 and 3): the cycle's checkpoint byte budget is whole again, shared by the
     builds' quiescence-drop writes and the converge pass near the cycle's end (the boot's first builds are capped where the
     volume is; before, the pass began the cycle and the first cycle's drops ran uncapped), and the drops an earlier cycle
-    deferred are paid with this cycle's room, oldest first, no fold over their files needed. The pass's off switch
-    (ROMP_CKPT_CONVERGE_MS=0) covers the drop write: the cycle begins with no budget, and the drop pops as before T362."""
+    deferred are paid with this cycle's room, oldest first, no fold over their files needed; then the releases at an agent's
+    end, against the same room (_release_ended_agents: the cycle's live-set events drained, the owed release of an agent whose
+    start that drain carries cancelled while the kernel holds the agent's end, the owed releases paid, the ends an earlier
+    cycle saw while nothing was held released again, then the batch's ends).
+    The order carries a property: each cycle pays what an earlier cycle deferred before any end that is new to it, so the
+    owed quiescent drops and the owed releases are each paid before the batch's ends. They take their writes from one budget,
+    each in one step (em.checkpoint_cycle_take), so whichever runs first gets the room when only one document fits. An owed
+    drop's only other payer is a later fold over its file, which may never come; with the new ends first, a steady stream
+    of them could defer an owed drop or an owed release at every cycle and leave its records resident. The pass's off
+    switch (ROMP_CKPT_CONVERGE_MS=0)
+    covers the drop write: the cycle begins with no budget, and the drop pops as before T362 (with the drop writes off, a
+    release at an agent's end keeps the entry of a file still on disk instead of popping it unwritten)."""
     em.checkpoint_cycle_begin(CKPT_CONVERGE_BYTES if CKPT_CONVERGE_MS > 0 else 0)
     em.checkpoint_pay_owed_drops()
+    _release_ended_agents()
+
+
+_AGENT_RELEASED = {}                # (sid, agent id) -> [path, taken] for the ends _release_ended_agents released an entry for
+#                                     (taken True) or owed a release (taken False until checkpoint_pay_owed_releases takes it; at a
+#                                     cycle that paid any owed release, an owed end whose release was not taken and is no longer
+#                                     owed is dropped, or moved to _AGENT_ENDED_UNHELD when the pay found nothing held), oldest
+#                                     first, at most _AGENT_RELEASED_MAX: a start of the agent that a cycle drains after its
+#                                     release was taken is a false end (recordCache.falseEnds), after a release still owed it
+#                                     cancels that release, and after one never taken it counts nothing. A start dropped past the
+#                                     queue's bound is never drained, and one drained after the end left this table finds nothing,
+#                                     so neither cancels an owed release nor counts a false end. The pusher thread's alone
+_AGENT_RELEASED_MAX = 4096
+_AGENT_ENDED_UNHELD = {}            # (sid, agent id) -> path for the ends seen while the record cache held nothing for the agent's
+#                                     file (release_entry answered "absent", at the batch or at the owed releases' pay: no entry
+#                                     with weight stood for the file, among them an end drained before any read held it, an entry
+#                                     evicted or popped before the release finished, and an agent's later end after its earlier
+#                                     release was taken, as its task's end or its workflow slot's done state after its stop, so
+#                                     the first whole re-read after that end is released at the next cycle), oldest first, at most
+#                                     _AGENT_RELEASED_MAX (past it the oldest is forgotten and not counted: it held nothing when it
+#                                     was last paid). Released again at each cycle, so a read that holds the file after the end is
+#                                     released at the first cycle after it; a start of the agent that a cycle drains, a release
+#                                     that pops the path, and every outcome but absent of the pair's own release forget it (a start
+#                                     queued after the drain of the cycle that releases the file, or dropped past the queue's
+#                                     bound, does not, and a release taken then pops the running agent's entry). The pusher
+#                                     thread's alone
+
+
+def _note_agent_released(pair, path, taken):
+    """Record `pair`'s end in _AGENT_RELEASED as a release taken (a start a later cycle drains while the end is still here
+    is a false end) or owed, newest last."""
+    _AGENT_RELEASED.pop(pair, None)
+    _AGENT_RELEASED[pair] = [path, taken]
+    while len(_AGENT_RELEASED) > _AGENT_RELEASED_MAX:
+        _AGENT_RELEASED.pop(next(iter(_AGENT_RELEASED)), None)
+
+
+def _remember_unheld_end(pair, path):
+    """Remember `pair`'s end, which found nothing held for `path`, newest last (_AGENT_ENDED_UNHELD)."""
+    _AGENT_ENDED_UNHELD.pop(pair, None)
+    _AGENT_ENDED_UNHELD[pair] = path
+    while len(_AGENT_ENDED_UNHELD) > _AGENT_RELEASED_MAX:
+        _AGENT_ENDED_UNHELD.pop(next(iter(_AGENT_ENDED_UNHELD)), None)
+
+
+def _forget_unheld_paths(paths):
+    """Forget every remembered end whose path is in `paths`: a release popped the path."""
+    if paths and _AGENT_ENDED_UNHELD:
+        for pair, p in list(_AGENT_ENDED_UNHELD.items()):
+            if p in paths:
+                _AGENT_ENDED_UNHELD.pop(pair, None)
+
+
+def _release_ended_agents():
+    """The pusher cycle's start (2026-09-24): each agent that left its session's live set since the last cycle has its parsed
+    transcript released from the record cache (em.release_entry, reason agentEnded: the file's checkpoint document written
+    when it lacks what the cache holds, then the records dropped), so a later fold whose cursor the document records restores
+    a tail and reads nothing whole. The events come from the SDK backend's own add and removal sites, queued in arrival order
+    (SdkBackend.drain_agent_live_events), never from a difference of liveness snapshots: three threads take those
+    independently, and a staler one would end an agent a fresher one listed. In order:
+    - The batch is drained. An agent whose last event dropped past the queue's bound was an end comes back as an end ahead
+      of the queued events, so it is released like the batch's own ends below when the batch holds no later event for it;
+      only the ends dropped past the bound of the list the backend keeps them in are releases given up (recordCache.releaseLost).
+      A dropped start is not counted.
+    - An agent that entered the live set in this batch and whose earlier end is still owed its release (an earlier cycle's
+      budget refused the document, or a read raced the pop) has that release cancelled (em.cancel_owed_release, under the
+      path the release was owed for). Its entry was never popped, so that start is not a false end, as for an end and a
+      start in one batch. Its end remembered as unheld (below) is forgotten: the file is live again. A start that is not in
+      the batch (queued after the drain of the cycle that pays the owed release, or dropped past the queue's bound), or one
+      drained after the end left _AGENT_RELEASED, cancels nothing, and a release taken then pops the running agent's entry
+      (em.checkpoint_pay_owed_releases).
+    - The releases still owed are paid (em.checkpoint_pay_owed_releases). An owed end whose release is taken now is marked
+      taken, and every remembered end for that path is forgotten. When any was paid, an owed end whose release was not
+      taken and is no longer owed (paid as absent or lost, raised, given up at the owed table's bound, forgotten at a
+      checkpoint-directory rebind, or cancelled above) is dropped, and one paid as absent is remembered as unheld; one left
+      in the table is still never counted, since its entry was not popped.
+    - Each end remembered as unheld (_AGENT_ENDED_UNHELD: an end seen while the cache held nothing for the file) that this
+      batch does not speak for is released again, oldest first: still absent, it stays remembered; taken, it is recorded as
+      a taken release (a start a later cycle drains while _AGENT_RELEASED still holds the end is a false end); deferred or
+      raced, as an owed one; lost, or raising (counted in releaseLost), it is given up. Every outcome but absent forgets it.
+      So a read that holds the file after the end, before any other event about the agent, is released at the first cycle
+      after the read.
+    - Each agent whose last event in the batch is an end is released. An end followed in the same batch by the agent
+      entering the live set again releases nothing. A start in the batch for an agent whose release was taken, while
+      _AGENT_RELEASED still holds that end, is a false end, counted (recordCache.falseEnds); after a release that was only
+      owed, it is not. An end that finds nothing held is remembered as unheld; any other outcome forgets a remembered end of
+      the agent. That includes an agent's later end acted on after its earlier release was taken (its task's end or its
+      workflow slot's done state after its stop, in a later cycle, or in this cycle after the owed pay took a deferred
+      release): if a re-read holds the file at that end, the end releases it; if nothing is held, the end is remembered, so
+      the first whole re-read after it is released at the next cycle. A whole re-read after that release, with no later end
+      of the agent, stays whole until the count cap, the byte budget or a quiescent drop reaches it (the residual stated
+      beside em.RECORD_CACHE_BUDGET_FLOOR_BYTES).
+    An end, remembered or in the batch, whose resolution or release raises is given up, counted in releaseLost, and
+    written to stderr at every raise with the session, the agent, the file when it resolved and the traceback
+    (em.say_release_raised), as the pusher's other stage failures are; the rest are still released. The release counters
+    count a path once per cycle, so an agent's second end in the cycle adds nothing to them.
+    The file is resolved as the folds resolve it (_path_of, _subagent_file), so the release names the cache key the folds
+    read. Returns the releases taken or owed for this batch's ends."""
+    be = _sdk_backend
+    drain = getattr(be, "drain_agent_live_events", None) if be else None
+    events, lost = drain() if drain is not None else ([], 0)
+    if lost:
+        em.note_release_lost(lost, "overflow")          # ends given up past the backend's bound on the ends it keeps
+    last = {}
+    for i, (sid, aid, _live) in enumerate(events):
+        last[(sid, aid)] = i
+    for sid, aid, live in events:
+        if not live:
+            continue
+        rec = _AGENT_RELEASED.get((sid, aid))
+        if rec is not None and not rec[1]:
+            em.cancel_owed_release(rec[0])             # an end whose release is still owed (the last _AGENT_RELEASED_MAX ends)
+        _AGENT_ENDED_UNHELD.pop((sid, aid), None)      # the agent's file turned live again: its unheld end is over
+    paid = em.checkpoint_pay_owed_releases()           # {path: outcome} of the releases an earlier cycle owed
+    if paid:
+        owed = em.owed_release_paths()
+        for pair, rec in list(_AGENT_RELEASED.items()):
+            if rec[1]:
+                continue
+            got = paid.get(rec[0])
+            if got == "released":
+                rec[1] = True                          # the owed release was taken: a start a later cycle drains while
+                                                       # this table holds the end is a false end
+            elif rec[0] not in owed:
+                _AGENT_RELEASED.pop(pair, None)        # not taken and no longer owed: no entry was popped for this end
+                if got == "absent":
+                    _remember_unheld_end(pair, rec[0])   # nothing held at the pay: a read that holds the file is released later
+        _forget_unheld_paths({p for p, got in paid.items() if got == "released"})
+    popped = set()                                     # the paths a release popped below: their remembered ends are over
+    for pair, p in list(_AGENT_ENDED_UNHELD.items()):
+        if pair in last:
+            continue                                   # the batch speaks for the agent: its own last event governs below
+        try:
+            got = em.release_entry(p, "agentEnded")
+        except Exception as e:                         # given up, like a batch end that raises; the rest are still paid
+            em.say_release_raised("the release of session %s's agent %s (remembered unheld; file %s)" % (pair[0], pair[1], p))
+            em.note_release_lost(1, "a release raised %s" % type(e).__name__, key=p)
+            _AGENT_ENDED_UNHELD.pop(pair, None)
+            continue
+        if got == "absent":
+            continue                                   # still nothing held: remembered for the next cycle
+        _AGENT_ENDED_UNHELD.pop(pair, None)
+        if got in ("released", "deferred", "raced"):
+            _note_agent_released(pair, p, got == "released")
+            if got == "released":
+                popped.add(p)
+    n = 0
+    for i, (sid, aid, live) in enumerate(events):
+        pair = (sid, aid)
+        if live:
+            rec = _AGENT_RELEASED.pop(pair, None)
+            if rec is not None and rec[1]:
+                em.note_false_end()
+            continue
+        if last[pair] != i:
+            continue                                   # the agent entered the live set again later in this batch
+        ap = None
+        try:
+            path = _path_of(sid)
+            ap = _subagent_file(path, aid) if path else None
+            got = em.release_entry(str(ap), "agentEnded") if ap is not None else None
+        except Exception as e:                         # one event that raises must not lose the rest of the drained batch
+            em.say_release_raised("the release of session %s's agent %s (%s)"
+                                  % (sid, aid, "file %s" % ap if ap is not None else "its file not resolved"))
+            em.note_release_lost(1, "a release raised %s" % type(e).__name__, key=None if ap is None else str(ap))
+            _AGENT_ENDED_UNHELD.pop(pair, None)
+            continue
+        if got is None:
+            continue                                   # no transcript for the session or no file for the agent
+        if got == "absent":
+            _remember_unheld_end(pair, str(ap))        # nothing held yet: a read that holds the file is released later
+            continue
+        _AGENT_ENDED_UNHELD.pop(pair, None)
+        if got in ("released", "deferred", "raced"):
+            _note_agent_released(pair, str(ap), got == "released")
+            if got == "released":
+                popped.add(str(ap))
+            n += 1
+    _forget_unheld_paths(popped)
+    return n
 
 
 def _converge_checkpoints(now):
@@ -18878,6 +19082,12 @@ def _auto_nudge_session(s, now, live_map, nudged, waitfor, alive_ids=None, wake_
     # jd.load_goals), and a write through the view raises FrozenStoreError rather than landing, files a
     # frozen-store-write row and switches the cache off for the process, so a writer that forgets is refused
     # and recorded rather than landing a write.
+    # The walk's one shared load of this look, served as memos.nudgeWalk.loads: fold ruling A condition 7 as ruled
+    # 2026-09-19 (at most one per alive session per pass, zero on a skip or a state-gate exit; the placement gate's
+    # currency re-read on a derive is the gate's own and is not counted here). Counted on the line before the read, so a
+    # look that reaches the read counts exactly once whatever the read does: returns a store, returns a fault, or raises
+    # out of the look (_or_fault turns an OSError into a fault and lets any other exception through).
+    _NUDGE_WALK_STATS["loads"] += 1
     store, fault = jd.load_goals_shared_or_fault(sid)
     if fault is not None:
         _nudge_clock(None, "storeFault")                           # a fault heals without a file write (EMFILE, EACCES, EIO): unbounded (round three)
@@ -20196,10 +20406,13 @@ def _env_error(env, auth=""):
     name outside it would be written silently and exported never. The first offender is NAMED and the
     whole request refused (fail-loudly, the user 2026-07-03): a skipped var is a session quietly
     running without the env it was asked to have. The backend validates AGAIN: spawn backs this
-    door with its loud ValueError, but set_env re-checks and refuses with a silent False its
-    callers discard — so on the existing:true path drift between the two copies would be a 200
-    with an env echo and nothing applied. This copy MUST stay in lockstep with
-    sdk_backend.env_request_error, pinned by test_session_env's ValidatorLockstep."""
+    door with its loud ValueError, but set_env re-checks and refuses with a False (logged as a
+    problem row since 2026-09-18; the /new echo and the parked-op drain read it since review round 2
+    of the env-pick door, 2026-09-19), so on the existing:true path drift between the two copies
+    would be a 200 with an `envRefused` echo and nothing applied. This copy MUST stay in lockstep with sdk_backend.env_request_error, pinned by
+    test_session_env's ValidatorLockstep. The credential-shape rule and its wording are read from
+    credentials.py (credential_env_names, credential_env_refusal), which both copies load, so that
+    part is one function rather than a mirrored spelling."""
     if not isinstance(env, dict):
         return "env must be an object of NAME: value pairs"
     for k, v in env.items():
@@ -20221,6 +20434,15 @@ def _env_error(env, auth=""):
             # accepted, it bakes into the reg a var the CLI can only truncate or throw on, either
             # way diverging from what /new echoed as applied.
             return "env: the value for %r contains a NUL byte — no process environment can carry one" % (k,)
+    # A credential-shaped name of any other spelling is refused too, by name (2026-09-18, found by the
+    # spawn.json fix's build; the box admin ruled the door the fix): the pick lands in the registry and the
+    # per-sid flag-settings file, against the fork's rule that no credential is written to a file. The three
+    # login names were refused above whatever their value, so credentials.py's rule over the rest of the pick
+    # is exactly what sdk_backend.spawn_env_secret_names flags for the backend's copy (ValidatorLockstep). The
+    # "env: " head is this door's, added once (review round 1 of the env-pick door, 2026-09-18).
+    secret = jd._cred.credential_env_names(env)
+    if secret:
+        return "env: " + jd._cred.credential_env_refusal(secret)
     return ""
 
 
@@ -20242,7 +20464,18 @@ def _apply_new_session_prefs(sid, body):
     for direct callers. A level the backend REFUSES (a Codex model whose catalog does not offer it) is
     echoed as `refused`, the setter's own words, never as `effort`: the verdict used to be dropped here,
     so `romp new` printed the level as applied and exited 0 while nothing changed (the catch-up fold's
-    review, 2026-09-18)."""
+    review, 2026-09-18). An env pick the backend refuses is echoed as `envRefused` (_env_refusal's
+    generic sentence, names nothing of the pick), never as `env`, for the same reason (review round 2 of
+    the env-pick door, 2026-09-19: the verdict was dropped here too, so a pick the backend refused, a
+    credential-shaped name its own door caught or a session whose registry it could not read, printed as
+    applied). Two refusal fields, one per leg, and this docstring is the one place
+    their relationship is stated (the round-2 addendum, 2026-09-19; the leg comments below point here). The
+    echo is read per asked key: `romp new` tells a refused ask from a dropped one (an older kernel that never
+    answered it) by the presence of that key's own echo, so each leg's refusal sits in its own slot beside the
+    key it answers, and the two differ in scope on purpose: `refused` is the setter's own sentence and names the
+    level, since a level is not a secret; `envRefused` is generic and names nothing of the pick, since its values
+    may be. A third leg that can refuse (model, say) should generalise the shape, one slot per leg under one
+    rule, rather than add a third sibling field with a spelling of its own (the reviewer's note, paraphrased)."""
     out = {}
     m = str((body or {}).get("model") or "").strip()
     e = str((body or {}).get("effort") or "").strip()
@@ -20268,12 +20501,24 @@ def _apply_new_session_prefs(sid, body):
         else:
             # refused (a Codex model whose catalog does not offer the level, or a catalog the backend could not
             # read): the echo carries the refusal in place of the level, so the caller is loud, and stderr says so
-            # once, as the typed route does
+            # once, as the typed route does. Its relationship to the env leg's `envRefused` below (two fields, two
+            # scopes) is stated in this function's docstring, the one place for it (the round-2 addendum, 2026-09-19)
             out["refused"] = _effort_refusal(be, e)
             sys.stderr.write("effort %r for %s refused by %s (POST /new)\n" % (e, sid, type(be).__name__))
     if ev is not None and hasattr(be, "set_env"):
-        _set_env_or_park(be, str(sid), dict(ev))
-        out["env"] = dict(ev)
+        took, _parked = _set_env_or_park(be, str(sid), dict(ev))
+        if took:
+            out["env"] = dict(ev)
+        else:
+            # refused (review round 2 of the env-pick door, 2026-09-19): the verdict used to be dropped here, so a
+            # pick the backend refused (its own door, or a session whose registry it could not read) was echoed as
+            # applied and `romp new` printed it so. The echo carries the refusal in
+            # its own slot, never the `env` key, and stderr says so once with the NAMES of the pick only (the dict
+            # carries values, and a credential-shaped one is what the door refuses). The relationship to the effort
+            # leg's `refused` above is the docstring's
+            out["envRefused"] = _env_refusal()
+            sys.stderr.write("env %s for %s refused by %s (POST /new)\n"
+                             % (" ".join(sorted(ev)) or "(cleared)", sid, type(be).__name__))
     _push_soon()
     return out
 
@@ -22735,7 +22980,15 @@ def _sdk_problem_count():
     return n
 
 
-def _sdk_problem_text(text, cap=400):
+# How many characters of a problem row's text the feed carries (the error centre cuts again at
+# sdk_backend.ERROR_CENTER_TEXT_CAP); what is cut is the ring text a backend row carries (_sdk_problem_rows reads
+# the ring, never the kernel log line), so a ring text under the error centre's cap is under this one too (review
+# round 1 of the env-pick door, 2026-09-18, which found set_env's refusal row 14 characters past it and clipped
+# mid-word; round 3, 2026-09-19, which found docstrings claiming this cap governed the log line).
+SDK_PROBLEM_TEXT_CAP = 400
+
+
+def _sdk_problem_text(text, cap=SDK_PROBLEM_TEXT_CAP):
     """One line naming what broke, out of a message that may be a whole traceback. The head says what
     romp was doing ("boot reconcile failed"), the LAST line says what actually raised ("KeyError: 'x'"),
     and the frames in between are the kernel log's business — so the entry reads as a cause, not as
@@ -22750,7 +23003,7 @@ def _sdk_problem_text(text, cap=400):
     return out[:cap - 1] + "…" if len(out) > cap else out
 
 
-def _sdk_problem_rows(limit=20, cap=400):
+def _sdk_problem_rows(limit=20, cap=SDK_PROBLEM_TEXT_CAP):
     """Recent SDK-backend problems for the feed payload, oldest first. The signature keys the OCCURRENCE
     (this kernel's start + the ring's own sequence number), so a re-render or a page reload never re-logs
     and a repeat of the same failure DOES log again — the bell coalesces a flood into one counted row.
@@ -24599,6 +24852,19 @@ class _UnownedBackend(sb.SessionBackend):
         return False
 
     def set_fast(self, sid, value):
+        return False
+
+    def set_env(self, sid, value):
+        # the per-session env pick, refused like the other setters (round 9 of fork PR #781's review, kernel-1 and
+        # extra9-1): set_env is not on the ABC (SdkBackend alone takes a per-session env), so without this the
+        # parked-op drain's env arm reached an attribute this class lacked, and its blanket handler dropped the sid's
+        # whole parked queue; the drain guards the call too, and this makes the refusal UNIFORM with set_effort and
+        # set_fast, so the next arm added to that loop inherits the behaviour instead of needing its own guard.
+        # The reason line is send's shape (the closing commit of round 9, kernel-1): every refusal this answers is
+        # echoed with _env_refusal's sentence, which points the user at the backend's log line, and this route
+        # wrote none, so the user was pointed at a line that did not exist. Names nothing of the pick (its dict
+        # carries values) and not the setter's name: the drain's pin reads stderr for no AttributeError naming it
+        sys.stderr.write("per-session env for %s refused: no backend owns this session\n" % sid)
         return False
 
     def spawn(self, name, cwd, bg="", fg="", sid=None, *a, **kw):
@@ -41183,9 +41449,27 @@ def _set_env_or_park(be, sid, value):
     """Apply a per-session env change (POST /new's "env", the spawn-time slice) now — or park it while
     the session compacts, in the same FIFO as /model and /effort: a CHANGE applies by reconnecting
     (env is connect-time, like effort), which mid-compaction would derail the compaction exactly the
-    way an effort switch would. An unchanged re-assert is a no-op inside set_env either way."""
-    if not _gate_or_park(sid, ("env", value)):
-        be.set_env(sid, value)
+    way an effort switch would. An unchanged re-assert is a no-op inside set_env either way. Returns
+    (took, parked) in _set_effort_or_park's shape (review round 2 of the env-pick door, 2026-09-19):
+    `parked` is True when the change queued, `took` is False when the backend refused it, so the /new
+    echo can carry the verdict. This used to return nothing and drop it, so a set_env that refused (a
+    pick the door refuses, a session whose registry the backend cannot read) was echoed back as applied
+    and `romp new` printed it so while nothing had changed."""
+    if _gate_or_park(sid, ("env", value)):
+        return (True, True)
+    return (bool(be.set_env(sid, value)), False)
+
+
+def _env_refusal():
+    """The sentence a refused per-session env pick is answered with, POST /new's echo and the parked-op
+    drain's alike (review round 2 of the env-pick door, 2026-09-19; the drain's since round 1): generic on
+    purpose, and NAMES nothing of the pick, because the pick's dict carries values and a credential-shaped one
+    is what the door refuses; the backend's own log line says why on every road it refuses: SdkBackend's problem row
+    (a refused name, or a registry it could not read: that road logged nothing until the closing review of 2026-09-19,
+    so the sentence pointed at no line there) and the unowned route's stderr line (_UnownedBackend.set_env, for a sid
+    no backend owns: it refused in silence until the closing commit of round 9 of fork PR #781's review, kernel-1, so
+    the sentence pointed at no line there either; `romp sessions` shows whether the session is listed)."""
+    return "Couldn't set the per-session env: the session's backend refused it (its log line says why)."
 
 
 def _set_auth_or_park(be, sid, value):
@@ -41543,7 +41827,19 @@ def _apply_pending_ops(now=None):
                     elif op[0] == "auth":
                         be.set_auth(sid, op[1])
                     elif op[0] == "env":
-                        be.set_env(sid, op[1])
+                        # the verdict is READ here too (review round 1 of the env-pick door, 2026-09-18): a parked
+                        # pick the door refuses at replay (a queue mirrored before the credential-shape rule and
+                        # drained after a restart) retired its chip as if it had landed, with no line and no frame,
+                        # while the effort and fast arms had been changed to read theirs for exactly that reason.
+                        # GUARDED like the /new door's env leg (round 9 of the review, kernel-1 and extra9-1): set_env
+                        # is SdkBackend's alone, so on a sid Sessions.backend_for routes to _UNOWNED (a queue parked
+                        # before the session died, or restored after a restart for a session no backend owns) or to
+                        # the Codex backend the unguarded call raised AttributeError, the handler below popped the
+                        # sid's WHOLE queue, and a send parked behind the pick was dropped with no frame and no line,
+                        # where the effort and fast arms answer settingRefused and still hand the send over. A backend
+                        # without set_env is a refusal here; _UnownedBackend answers set_env False itself since the
+                        # same round, so this guard is for a backend outside the kernel's own (Codex; a stand-in)
+                        refused = (be.set_env(sid, op[1]) is False) if hasattr(be, "set_env") else True
                     # (an unknown op kind gets no call: it is popped below and dropped — never wedge the queue)
                     with _pending_ops_lock:               # POP the head — only if it is still the op the backend got
                         _inflight_ops.pop(sid, None)      # (a no-op for a cwd op, which was never recorded)
@@ -41575,7 +41871,7 @@ def _apply_pending_ops(now=None):
                             _mark_compacting(sid)         # a TYPED /compact gets the same instant cue as the button's op
                         _after_turn_opening(be, sid, _pending_ops.get(sid) or [])
                         break                             # its turn / compaction must end before anything behind it fires
-                    if op[0] in ("effort", "fast") and refused:
+                    if op[0] in ("effort", "fast", "env") and refused:
                         # the backend refused the parked level or toggle when it fired (a Codex model whose catalog does
                         # not offer the level, a session the backend holds no row for, a Codex session's fast toggle):
                         # the same stderr line the command and compact arms write, and the refusal to the chat on the
@@ -41584,9 +41880,17 @@ def _apply_pending_ops(now=None):
                         # a same-kind replacement delivering next does not unsay this one's refusal. No client is at hand
                         # here, so the chat page is the addressee (_send_to_app). Nothing applies early: the gate lift is
                         # still what fires the op (the catch-up fold's review, 2026-09-18).
-                        what = "/%s %s" % (op[0], op[1] if op[0] == "effort" else v)
-                        why = (_effort_refusal(be, op[1]) if op[0] == "effort"
-                               else "Couldn't toggle fast mode: the session's backend refused it.")
+                        if op[0] == "env":
+                            # NAMES ONLY, through the chip's own renderer (_parked_md): the op's dict carries the values,
+                            # and a credential-shaped one is what the door refuses, so neither the stderr line nor the
+                            # frame may quote the pick; the reason stays generic, the backend's log line says why
+                            # (review round 1 of the env-pick door, 2026-09-18)
+                            what = _parked_md(op)
+                            why = _env_refusal()
+                        else:
+                            what = "/%s %s" % (op[0], op[1] if op[0] == "effort" else v)
+                            why = (_effort_refusal(be, op[1]) if op[0] == "effort"
+                                   else "Couldn't toggle fast mode: the session's backend refused it.")
                         sys.stderr.write("pending ops apply: %s refused %r for %s\n" % (type(be).__name__, what, sid[:8]))
                         _send_to_app("chat", {"type": "settingRefused", "gesture": "command", "sid": sid,
                                               "flag": op[0], "text": why})
@@ -73063,6 +73367,24 @@ _LANE_FLAGS = ("hideFromFeed", "postalServiceOff", "notify")   # the per-session
 #                                    (setSessionFlag in ui/webview/render.ts)
 
 
+def _lane_flag_refusal(flag):
+    """The ONE whitelist of the per-session flags a client may write: None when `flag` is one of _LANE_FLAGS, else
+    the refusal, naming the list and a bounded echo of what arrived. The two flag doors ask it, POST /flag (its 400's
+    error) and the setSessionFlag socket op (its settingRefused frame, which wraps the same sentence), for every flag
+    name a request carries, a falsy one included, so they cannot disagree on which flag names a client may set; a
+    request with no flag key is where they differ, POST /flag answering this refusal ("got null") and the socket op
+    the terminal arm's unknownOp, the kernel's answer for a known op missing a field its arm requires
+    (_note_unknown_op). The saveFile socket op, under the file-editing consent, can write session-flags.json whole,
+    as it can any text file; it is not a flag door and does not ask this. Until the reviewer's ruling in the round-3
+    review of fork PR #897 the socket op wrote any name it was sent: a client could set `threadMail`, the key that
+    turns a comment thread's mail on, or the legacy `postalOff`, while the route refused both. The kernel and the
+    postal bus read those keys; no dashboard, panel or extension sends them. tests/test_obsidian_state_routes.py pins
+    the doors (FlagWriterPopulation) and executes both refusals."""
+    if flag in _LANE_FLAGS:
+        return None
+    return "flag must be one of %s, got %s" % (", ".join(_LANE_FLAGS), _clip_json(flag))
+
+
 def _unknown_keys_error(b, allowed):
     """A typed body's refusal of keys the route does not read (the /restart helper's rule): a typo key
     must never pass as "not asked" while the caller reads ok:true as its field applying."""
@@ -73106,9 +73428,9 @@ def _state_write_route(path, b):
             return 400, {"ok": False, "error": "id (the session's id) required"}
         sid = sid.strip()
         flag = b.get("flag")
-        if flag not in _LANE_FLAGS:
-            return 400, {"ok": False, "error": "flag must be one of %s, got %s"
-                         % (", ".join(_LANE_FLAGS), _clip_json(flag))}
+        err = _lane_flag_refusal(flag)                 # the whitelist the setSessionFlag socket op asks too
+        if err:
+            return 400, {"ok": False, "error": err}
         if b.get("value") is None:
             return 400, {"ok": False, "error": "value (true or false) required"}
         value, ferr = _as_bool(b.get("value"), "value")
@@ -76588,10 +76910,23 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             _apih_resend(client)          # and the bottom bar's API cell, from the last frame (same reason)
-        elif msg and msg.get("type") == "setSessionFlag" and msg.get("id") and msg.get("flag"):
+        elif msg and msg.get("type") == "setSessionFlag" and msg.get("id") and "flag" in msg:
             # timeline lane gear → toggle a per-session view flag (e.g. hideFromFeed). Persisted +
             # re-broadcast so the feed drops/restores that session's cards immediately. The notify
             # bell is tri-state (an override on the master default) → its own setter.
+            # The name first, as POST /flag checks it: one of the lane toggles, by the predicate the route asks
+            # (_lane_flag_refusal has the why). Refused on the settingRefused frame like a bad value below, with
+            # `value` null, since no pane paints an unlisted flag; the log names the field's type, never the name.
+            # The arm keys on the flag key's PRESENCE, not its truthiness, so every name a frame carries, null, "",
+            # 0, false, [] and {} included, meets the predicate and draws the refusal a truthy unlisted name draws.
+            # A frame with NO flag key falls to the terminal arm's unknownOp (_note_unknown_op, the answer for a
+            # known op missing a field its arm requires), where POST /flag answers its 400 ("got null")
+            nerr = _lane_flag_refusal(msg["flag"])
+            if nerr:
+                _refuse_setting(client, nerr, "that setting", "flag", sid=msg["id"], flag=msg["flag"], value=None,
+                                log="refused %s: 'flag' is %s, not one of %s"
+                                    % (msg["type"], _json_type_name(msg["flag"]), ", ".join(_LANE_FLAGS)))
+                return
             value, ferr = _as_bool(msg.get("value"), "value")
             if ferr:
                 # the lane gear's own refusal frame (settingRefused, which the timeline page renders and

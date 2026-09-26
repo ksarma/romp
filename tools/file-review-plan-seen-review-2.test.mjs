@@ -123,7 +123,7 @@ test('the save\'s scroll is history wherever the plan names scrollToSaved, and t
   assert.ok(!FLAT.includes('the margin\'s scroll to a saved card (`scrollToSaved`) finds no card'), 'not stated as today\'s');
   assert.ok(!panel.includes('scrollToSaved'), 'the panel has no scrollToSaved');
   const land = body(panel, 'private landSaved(c: Composer, had: Set<string>, r: Status, note: string): boolean {');
-  assert.ok(land.includes('if (this.margin) this.focusOn(key);') && land.includes('const side = this.cardWhere(key);'), 'the focus, then the side');
+  assert.ok(land.includes('if (this.margin && (!this.composer || this.composer === c)) this.focusOn(key);') && land.includes('const side = this.cardWhere(key);'), 'the focus, then the side (a pin on where the code lives; the focus\'s condition is executed by file-comments-margin-fixes.test.ts "a reply open on its card while another comment\'s reply lands…", red when any landing takes the focus, and "a reply\'s save out, its box cancelled, then the landing…", red when a landing takes it only for the saving composer still open)');
   assert.ok(!/scrollCard|scrollBoth|scrollIntoView|centerOn|showLoose|scrollTop\s*=[^=]/.test(land), 'no scroll');
   assert.ok(body(panel, 'private cardWhere(key: string): "above" | "below" | null {').includes('if (!p) return null;'), 'a card not placed (the filter hides it) is nothing to point at: no line');
   assert.ok(panel.includes('const hid = r !== null && c.kind !== "reply" && this.noteHiddenSave(before, note);'), 'the hidden comment\'s own row is raised by the save');
