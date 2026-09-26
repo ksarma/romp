@@ -2099,6 +2099,34 @@ test("how a click finds its press, the clicks by no pointer, a guard CI runs (th
   assert.deepEqual(got, { enter: { opened: 1, reveals: 0 }, enterAfterRefusedTap: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], pressThenEnter: [{ opened: 0, reveals: 0 }, { opened: 1, reveals: 0 }], pressThenScript: [{ opened: 0, reveals: 0 }, { opened: 0, reveals: 1 }] },
     "each click by no pointer is read at the click: [the press or the tap before it, the click] (a property pin over window.open's calls and the scrollIntoView record)");
 });
+/** A trusted click of detail `detail` on `target` that carries no pointerId, a plain MouseEvent's shape, which no engine measured sends
+ *  (every engine's click carries a pointerId, a key's -1): on the window first, which hands it the slot, then on the element. */
+const plainClick = (target: El, detail: number): void => {
+  onWindow("click", target, { detail });
+  const ev = new Ev("click", { detail });
+  (ev as any).isTrusted = true;
+  assert.equal(typeof (ev as any).pointerId, "undefined", "the click carries no pointerId (a precondition)");
+  target.dispatchEvent(ev);
+};
+test("how a click finds its press, a trusted click with no pointerId, a guard CI runs (the file review's round 18, tests-2): an engine whose click is a plain MouseEvent, with no pointerId and a detail of 1, finds its press in the one-click slot filled at the pointerup: after a press on the picture begun with another element over the control, that element gone before the click, the click opens nothing and reveals the control, and the next click opens once; after a press begun with the control shown, the click opens once (a property pin over window.open's calls and the scrollIntoView record; no engine measured sends such a click, so the arm is pinned over the stand-in alone; the covered cell red under C18-N, a gate that reads such a click at the click, which every other test passed, and green at 0ab74924c by design, where the click read the last press)", async (t) => {
+  const got: Record<string, unknown> = {};
+  const mouse = { pointerId: 1, pointerType: "mouse" };
+  got.covered = await gateCell(t, "a press begun covered, the cover gone, then a click with no pointerId", (g, opens) => {
+    g.place(IN_BOX);
+    g.cover(new El("div"));
+    pressUp(g.img, mouse);
+    g.cover(null);
+    plainClick(g.img, 1);
+    const first = opens();
+    pressUp(g.img, mouse);
+    plainClick(g.img, 1);
+    return [first, opens()];
+  });
+  got.shown = await gateCell(t, "a press begun with the control shown, then a click with no pointerId", (g, opens) => { g.place(IN_BOX); pressUp(g.img, mouse); plainClick(g.img, 1); return opens(); });
+  t.diagnostic("record " + JSON.stringify(got));
+  assert.deepEqual(got, { covered: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], shown: { opened: 1, reveals: 0 } },
+    "a click with no pointerId takes the press the slot handed it: [the click, the next] where the press began covered (a property pin over window.open's calls and the scrollIntoView record)");
+});
 // ── the hit test's five samples, a guard CI runs (the file review's round 17, tests-2; the browser legs skip in CI) ── signUncovered
 // reads the element a press would reach at the centre of the sign's in-view part and at its four quarter points, so an element over
 // any one quarter point refuses the gesture though the centre is uncovered. Each row lays an element over a square 4px on a side

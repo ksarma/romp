@@ -2823,16 +2823,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // alike), and WebKit under Playwright's touch emulation on Linux (a stand-in for WebKitGTK, and presumably WPE, on a
   // touchscreen) pointerId 1 of type mouse while its press carried the touch's. A click after its press's pointerup finds that
   // press in the slot in each of them, whatever pointerId it carries, and so does an iPhone tap's click, which WebKit's iOS source
-  // gives the touch's own pointerId, read and not run on a device. A browser whose click carries no pointerId finds its press in
-  // the slot too. The slot's four clears (a pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive:
-  // the slot is refilled at every pointerup, a tap's click follows its own pointerup, and a key's or a script's click never reads
-  // the slot, so dropping any one clear alone changes no gesture a test drives; the press cells (a press with no click, then a
-  // key's click or a script's) are red under a gate that lets a key's or a script's click read the slot with the keydown's clear
-  // dropped. One physical gesture's later events are closed by their own fields and never by time: a click whose detail is above
-  // 1, following a refused click of its run (the second click of a double click, and in Chromium the second tap of a double tap,
-  // whose click carries detail 2), opens nothing, since the first click's reveal put the sign on the screen between the two; in
-  // Firefox and WebKit each tap's click carries detail 1, so a second tap is read at its own start and opens once the first tap's
-  // reveal has shown the sign; a held key's repeats and Space's release are the key gate's.
+  // gives the touch's own pointerId, read and not run on a device. The arm for a click with no pointerId serves an engine whose
+  // click is a plain MouseEvent, which finds its press in the slot too; no engine measured sends one (every engine's click carries a
+  // pointerId, a key's -1), so that arm is pinned over the stand-in alone (the file review's round 18, tests-2). The slot's four
+  // clears (a pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive: the slot is refilled at every
+  // pointerup, a tap's click follows its own pointerup, and a key's or a script's click never reads the slot, so dropping any one
+  // clear alone changes no gesture a test drives; the press cells (a press with no click, then a key's click or a script's) are red
+  // under a gate that lets a key's or a script's click read the slot with the keydown's clear dropped. One physical gesture's later
+  // events are closed by their own fields and never by time: a click whose detail is above 1, following a refused click of its run
+  // (the second click of a double click, and in Chromium the second tap of a double tap, whose click carries detail 2), opens
+  // nothing, since the first click's reveal put the sign on the screen between the two; in Firefox and WebKit each tap's click
+  // carries detail 1, so a second tap is read at its own start and opens once the first tap's reveal has shown the sign; a held
+  // key's repeats and Space's release are the key gate's.
   type FigurePress = { img: Element; ok: boolean };
   const presses = new Map<number, FigurePress>();        // the press records, by pointerId, each until its pointerup or its pointercancel, a primary press, a dragstart or a mousedown no mouse's or pen's pointerdown came before
   let slot: FigurePress | null = null;                   // the one-click slot: the record of the last pointerup, until a pointerdown, a pointercancel, a keydown or the click that takes it

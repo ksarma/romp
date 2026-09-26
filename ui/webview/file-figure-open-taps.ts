@@ -225,7 +225,9 @@ async function tapScene(browser: any, engine: TapEngine, device: TapDevice, surf
 export async function tapCells(browser: any, engine: TapEngine, device: TapDevice, surface: TapSurface, note: (m: string) => void): Promise<TapCell[]> {
   const cells: TapCell[] = [];
   const cell = (what: string, want: unknown, got: unknown): void => { cells.push([what, want, got]); };
-  const at = (engine === "webkit" ? "WebKit (Playwright's, on Linux under touch emulation)" : engine) + ", " + (device === "phone" ? "a phone's pages" : "a hybrid page") + ", " + surface + ": ";
+  /** The engine as a message names it: WebKit under touch emulation on a page with a touchscreen, and with none on a plain page. */
+  const named = (touch: boolean): string => (engine === "webkit" ? "WebKit (Playwright's, on Linux" + (touch ? " under touch emulation" : "") + ")" : engine);
+  const at = named(true) + ", " + (device === "phone" ? "a phone's pages" : "a hybrid page") + ", " + surface + ": ";
   const own = engine !== "webkit";   // Chromium's and Firefox's tap click carries its press's pointerId; WebKit's carries the mouse's
   /** The tap's shape, asserted as the cell's precondition: one pointerdown and one click, trusted, the click's pointerId its press's in
    *  Chromium and Firefox and another in WebKit (1, of type mouse, where the press carried the touch's). */
@@ -360,7 +362,7 @@ export async function tapCells(browser: any, engine: TapEngine, device: TapDevic
     note("record " + JSON.stringify({ engine, device, surface, scene: "cover", ...rec }));
   });
   if (device === "hybrid") for (const mouseOnly of [false, true]) {
-    const on = at.replace("a hybrid page", mouseOnly ? "a plain page" : "a hybrid page");
+    const on = named(!mouseOnly) + ", " + (mouseOnly ? "a plain page" : "a hybrid page") + ", " + surface + ": ";   // a plain page has no touchscreen, so no touch emulation in its messages (the file review's round 18, tests-3)
     await dragThenClick(browser, engine, surface, mouseOnly, on, cell, note);
     await otherPane(browser, engine, surface, mouseOnly, on, cell, note);
     if (engine === "firefox") await chordCells(browser, engine, surface, mouseOnly, on, cell, note);
