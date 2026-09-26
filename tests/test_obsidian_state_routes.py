@@ -1130,10 +1130,11 @@ def _store_flow(fn, modules, helpers=frozenset(), outer=None):
     reads the path still holds it, so what a call of it returns counts as the path, and a reader whose nested def
     reads the file reds as returning the path until the read moves into its own body.
     The exits are keyed on the path itself (_path_valued), not on anything computed from it, since the readers return
-    values read from the file (keyed on carrying, seven of the nine readers would have one). A Return, Yield or
-    YieldFrom of `fn`'s own body whose value is the path is a _PATH_EXIT: the function hands the path to its caller, a
-    path helper (NAMERS' "path" role), and _derive_namers makes every function that mentions it a namer in turn. A
-    return inside a nested def or lambda is that scope's, not `fn`'s: the scope's object carries the path instead.
+    values read from the file (keyed on carrying, seven of the nine readers would have one, by the census built under
+    that rule at 909e3ced5). A Return, Yield or YieldFrom of `fn`'s own body whose value is the path is a _PATH_EXIT:
+    the function hands the path to its caller, a path helper (NAMERS' "path" role), and _derive_namers makes every
+    function that mentions it a namer in turn. A return inside a nested def or lambda is that scope's, not `fn`'s: the
+    scope's object carries the path instead.
     The path, or an object that holds it, kept anywhere but a plain local name is a _PATH_STORED, which the role check
     refuses under every role: a subscript or attribute assigned it, whatever its root (a module-level table, `self`, a
     parameter, or a local, which may alias either), a name the function declares global, and a call of a method of a
@@ -1281,10 +1282,11 @@ def _facts(node):
     context or an operator (no child, no name, no call; a comparison's operators are read on the comparison), in a
     stack's order rather than a queue's, which no fact depends on: each is a count, a set or a flag. A type test
     stands for isinstance, since the parser builds each node as its exact class. Read-only, as the trees must be
-    (_parse_kernel_module). One walk per unit is round 1's cost cut on fork PR #909, the reviewer's ask after the PR's
-    own Python 3.10 cell hit CI's 25-minute wall: the census had walked every function once per fact and once per round
-    of _derive_roads, about 5 s of the module's run on 3.10. While a build of the census runs, each call is counted in
-    the build's walk table (_WALKS, keyed by id(node)), which the mechanism pin reads: each unit walked exactly once."""
+    (_parse_kernel_module). One walk per unit is the cost cut the reviewer asked for on round 1 of fork PR #909, after
+    the PR's own Python 3.10 cell hit CI's 25-minute wall (CI run 35925603311, at 7e5e74e95): at 7e5e74e95, the head
+    that walked every function once per fact and once per round of _derive_roads, those walks took about 5 s of the
+    module's run on 3.10. While a build of the census runs, each call is counted in the build's walk table (_WALKS,
+    keyed by id(node)), which the mechanism pin reads: each unit walked exactly once."""
     if _WALKS is not None:
         _WALKS[id(node)] = _WALKS.get(id(node), 0) + 1
     Name, Attribute, Constant, Alias, Call, Expr, Compare, AST = (ast.Name, ast.Attribute, ast.Constant, ast.alias,
@@ -1387,29 +1389,36 @@ def _flag_census():
     reference; its tearDownClass drops it, so the facts and the trees are freed before the next module's first test.
     No test instance keeps a reference of its own.
     WHY NOT tests/parse_cache.py's derived(): derived() memoises the value for the whole process and calls gc.freeze()
-    after a build, and the freeze is process-global. In CI's serial run this module sorts at about 61 percent, so its
-    build was the run's first freeze, and every later read of the kernel's perf snapshot (_PerfStats.snapshot reads
-    gc.get_freeze_count(), which walks the permanent generation on every call) paid per read for everything frozen here.
-    Measured at round 1 of fork PR #909 from the PR's own Python 3.10 cell: 58 s over main's cell at the same base,
-    most of it in the snapshot readers that sort after this module and in the thread-stop census, which reads the
-    frozen count itself (the reviewer's ruling of that round). So the module changes no collector state at all: no
-    gc.freeze, gc.disable or gc.collect, since the first is process-global and the other two walk every tracked object.
+    after a build, and the freeze is process-global. In a serial run of the suite this module sorts at about 61
+    percent (in collection order, 11060 of the 18056 items sort before its first at 909e3ced5, and 11060 of 18026 at
+    7e5e74e95), so at the heads that built the census through derived() its build was the run's first freeze, and
+    every later read of the kernel's perf snapshot (_PerfStats.snapshot reads gc.get_freeze_count(), which walks the
+    permanent generation on every call) paid per read for everything frozen here. At bc9790a14, the last of those
+    heads, the PR's own Python 3.10 cell (CI run 35942065383) took 58 s longer than main's at the same base
+    (fa3ef54b5, CI run 35890814789), most of it in the snapshot readers that sort after this module and in the
+    thread-stop census, which reads the frozen count itself (the reviewer's ruling on round 1 of fork PR #909). So
+    the module changes no collector state at all: no gc.freeze, gc.disable or gc.collect, since the first is
+    process-global and the other two walk every tracked object.
     WHY NOT THE CACHE'S SHARED PARSE EITHER, this census's exception to tests/parse_cache.py's one-cache rule: read
     through source_and_tree, which freezes nothing, the trees stayed in the cache, tracked, from this module until the
-    thread-stop census froze them, and every full collection in between walked them. Measured at round 2 of fork PR
-    #909 on Python 3.10, the 14 snapshot readers after this module, run in one process after it, took 34.5 to 41.2 s
-    with the trees read through the cache (16 full collections took 10.5 to 14.5 s of that) against main's 23.6 to
-    29.0 s; with the census's own parse, released with its facts, they took 25.3 to 27.2 s, inside main's run-to-run
-    spread, and Python 3.12 gave the same picture. What the exception costs: the thread-stop census, which sorts after
-    this module, parses the kernel's files itself, as it did before this census existed.
+    thread-stop census froze them, and every full collection in between walked them. Measured at 565043897 against
+    main at fa3ef54b5, the module then the 14 snapshot readers and the thread-stop census in one serial process, five
+    runs per tree on Python 3.10 and three on 3.12: with the trees read through the cache (shape S, applied to
+    565043897 for the measurement) the 14 readers took 36.28 to 39.37 s on 3.10 (16 full collections took 9.72 to
+    11.95 s of that) and 35.51 to 37.98 s on 3.12, against main's 26.16 to 28.55 s and 27.18 to 28.49 s; with the
+    census's own parse, released with its facts (shape E, as 565043897 commits it and this build keeps), they took
+    26.35 to 28.16 s and 27.05 to 27.66 s, inside main's range on 3.10 and overlapping it on 3.12. What the exception
+    costs: the thread-stop census, which sorts after this module, parses the kernel's files itself, as it did before
+    this census existed.
     THE RULE FOR THE BUILD: it leaves no cycle behind, so that dropping the one reference frees the facts and the trees
     by reference count, with no collection. Its value is plain data (dicts, sets, tuples, the trees and their nodes, and
     tables keyed by id(node)) and it makes no closure or object that refers back to itself. A cycle through the held
     object is pinned (tearDownModule's weak reference, pin 2). A cycle among the inner containers that does not pass
     through the held object, or an inner container kept by another name, would leave the held object free and that pin
-    green, so that half is a measurement: with the collector off, a collection right after this build found nothing
-    unreachable when the census adopted tests/parse_cache.py, again after round 1's one-walk cut on fork PR #909, and
-    again at round 2 of that PR, where a collection right after dropping the census found nothing unreachable either."""
+    green, so that half is a measurement, with the collector off: at 7e5e74e95 and 4850e2ca8, heads that built
+    through derived() (before and after the one-walk cut), a collection right after a direct build was dropped found
+    nothing unreachable; at 909e3ced5, with the census's own parse (shape E), a collection right after the build found
+    nothing unreachable, and neither did one right after dropping the census."""
     global _CENSUS_BUILDS, _WALKS
     _WALKS = walks = {}
     try:
@@ -1434,7 +1443,8 @@ def setUpModule():
     kernel modules _parse_kernel_module has parsed so far in the process (_CENSUS_BUILDS, _PARSES), both counted per
     process, so a build at import would count as the module's one build. That pin requires both to be 0 here: a census
     or a tree made at import would be held, tracked, through every module that sorts before this one, the retention
-    that ruled out the cache's shared parse (_flag_census), over the first 61 percent of CI's serial run."""
+    that ruled out the cache's shared parse (_flag_census), over the first 61 percent of a serial run (in collection
+    order at 909e3ced5, 11060 of the suite's 18056 items sort before this module's first)."""
     global _FROZEN_BEFORE, _BUILT_BEFORE
     _FROZEN_BEFORE = gc.get_freeze_count()
     _BUILT_BEFORE = (_CENSUS_BUILDS, sum(_PARSES.values()))
@@ -1446,13 +1456,16 @@ def tearDownModule():
     (1) The module froze nothing: gc.get_freeze_count() is not above what setUpModule read. The count is live and falls
     when a frozen object dies, so an object an earlier module froze can lower it in between, while nothing but a freeze
     inside the module raises it. Red under a build through tests/parse_cache.py's derived(), which freezes every object
-    tracked when its build returns (about 1.16 million in the module's own process at round 1 of fork PR #909).
+    tracked when its build returns (about 1.16 million in the module's own process on Python 3.10 and 3.12 at
+    bc9790a14, the last head that built the census through derived()).
     (2) The census is gone: the weak reference setUpClass took is dead, read with no gc.collect(), since with no cycle
-    reference counting has already freed it, and a collection walks every tracked object (seconds at a serial cell's
-    heap). Red under a module-scope cache that keeps the census and under a build whose value refers back to itself. It
-    does not see a cycle among the inner containers that does not pass through the held object, or an inner container
-    kept by another name (_flag_census states that half as a measurement). Not read through gc.get_objects(), which
-    does not list frozen objects, so under a derived() build it would find nothing and pass for the wrong reason.
+    reference counting has already freed it, and a collection walks every tracked object (at d809087fc, shape E, the
+    one full collection inside a build over 6 million tracked objects standing in for a serial cell's heap took 0.36 s
+    on Python 3.10 and 0.67 to 0.82 s on 3.12). Red under a module-scope cache that keeps the census and under a build
+    whose value refers back to itself. It does not see a cycle among the inner containers that does not pass through
+    the held object, or an inner container kept by another name (_flag_census states that half as a measurement). Not
+    read through gc.get_objects(), which does not list frozen objects, so under a derived() build it would find
+    nothing and pass for the wrong reason.
     Neither pin skips without a word: a census built (_CENSUS_BUILDS above 0) with no weak reference taken reds pin
     (2), and a missing first read reds pin (1). The one silent case is pin (2) when no census was built at all (every
     FlagWriterPopulation test deselected), where there is nothing to be gone."""
@@ -2269,7 +2282,8 @@ class StoreFlowReach(unittest.TestCase):
     def test_a_reader_that_returns_what_it_parsed_has_no_path_exit(self):
         """A control, green with the exit rule and without it, by design: the _session_flags shape returns a value
         read from the file, which carries the path in _store_flow's over-approximate sense but is not the path. Keyed
-        on carrying, the exit rule would make seven of the nine readers path helpers."""
+        on carrying, the exit rule would make seven of the nine readers path helpers (the census built under that
+        rule at 909e3ced5), and this control reds."""
         src = ('def _session_flags(sid):\n    p = jd.STATE / "session-flags.json"\n'
                '    data = json.loads(p.read_text())\n    return data.get(sid, {})\n')
         self.assertEqual(self._outside(src, "_session_flags"), {}, "a reader of the store: every call it hands the path "
