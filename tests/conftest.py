@@ -841,7 +841,8 @@ def wait_for_census(before, timeout=5.0):
 # fail that teardown, each named with its target and its stack. Not waited for: daemon threads (the interpreter does not
 # join them), the main thread, the thread running this check, and pytest-timeout's timer for the running test, a
 # non-daemon threading.Timer that the plugin cancels and joins only after the test's protocol returns, so under CI's
-# --timeout-method=thread it is always alive here (matched by the function it runs, not by its name).
+# --timeout-method=thread it is always alive here (matched as thread_census matches it, by a pytest_timeout prefix of its
+# name or of its function's module).
 # HOW THE REPORT REACHES THE CONTROLLER. The failure is the teardown phase's test report. A worker sends every test report
 # to the controller over xdist's channel, this one included; the controller prints it as `ERROR at teardown of <that
 # test>` and counts it in the run's exit status. Nothing else a worker does after its session would be seen: its stdout
@@ -865,8 +866,13 @@ _monotonic = time.monotonic   # bound at import: a test's leaked patch of time.m
 
 
 def _pytest_timeout_timer(t):
-    """Whether `t` is pytest-timeout's watchdog for the running test: a threading.Timer running that plugin's function."""
-    return isinstance(t, threading.Timer) and getattr(getattr(t, "function", None), "__module__", None) == "pytest_timeout"
+    """Whether `t` is pytest-timeout's watchdog for the running test, matched as thread_census matches it: a `pytest_timeout`
+    prefix of the thread's name (the plugin names its timer `pytest_timeout <nodeid>`) or of the module of the callable it
+    runs (a Timer keeps it as `function`, a Thread as `_target`). A prefix and not an exact module, because CI installs the
+    plugin unpinned: a release that moved its function into a submodule would otherwise fail every cell on the timer."""
+    fn = getattr(t, "function", None) or getattr(t, "_target", None)
+    mod = (getattr(fn, "__module__", None) or "") if fn is not None else ""
+    return t.name.startswith("pytest_timeout") or mod.startswith("pytest_timeout")
 
 
 def _guarded_thread(t):

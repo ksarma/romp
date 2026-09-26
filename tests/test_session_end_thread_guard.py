@@ -44,6 +44,9 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
 - A thread listed while its start() is still running, which Thread.join refuses with a RuntimeError, is read again on
   the guard's next pass rather than raised (JoinRace, in this process under the conftest: a thread never started, which
   join refuses the same way, stands in for it).
+- pytest-timeout's timer is matched by a `pytest_timeout` prefix of its name or of its function's module, as
+  thread_census matches it, so a plugin release that moves the function into a submodule still leaves it unwaited
+  (TimeoutTimerMatch, in this process; CI installs the plugin unpinned). Other timers and threads are still waited for.
 
 Each child-run pin was run with the guard removed from tests/conftest.py and fails there: the leak runs pass (exit 0, no
 error) and the green runs' witness finds the within-cap threads alive at sessionfinish. Synthetic fixtures only; no
@@ -290,6 +293,39 @@ class SessionEndThreadGuard(unittest.TestCase):
     @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
     def test_threads_that_end_within_the_cap_and_daemon_threads_leave_a_two_worker_run_green(self):
         self._assert_green_and_waited(*self._run("".join(GREEN_TEST.format(i=i) for i in range(TESTS)), workers=2))
+
+
+def _function_in(module):
+    """A callable whose __module__ is `module`, standing in for a plugin's function (never called)."""
+    def timeout_timer(*_a):
+        pass
+    timeout_timer.__module__ = module
+    return timeout_timer
+
+
+@unittest.skipUnless("tests.conftest" in sys.modules, "the guard is tests/conftest.py's (pytest-only)")
+class TimeoutTimerMatch(unittest.TestCase):
+    """pytest-timeout's timer is matched the way tests/conftest.py's thread_census matches it, by a `pytest_timeout`
+    PREFIX of the thread's name or of its callable's module, so a release that moves the plugin's function into a
+    submodule (CI installs pytest-timeout unpinned) does not make every cell wait the cap and fail on the timer. The
+    threads here are built and never started: the match reads only their attributes."""
+
+    def test_the_timer_is_not_guarded_when_its_function_moves_into_a_submodule(self):
+        cf = sys.modules["tests.conftest"]
+        moved = threading.Timer(600, _function_in("pytest_timeout._core"))
+        moved.name = "pytest_timeout tests/test_x.py::test_y"          # the name the plugin gives its timer
+        self.assertFalse(cf._guarded_thread(moved), "a submodule's timer, named as the plugin names it, is excluded")
+        renamed = threading.Timer(600, _function_in("pytest_timeout._core"))
+        self.assertFalse(cf._guarded_thread(renamed), "matched by its function's module alone, whatever its name")
+        today = threading.Timer(600, _function_in("pytest_timeout"))
+        self.assertFalse(cf._guarded_thread(today), "the plugin's function as it is today")
+
+    def test_other_non_daemon_timers_are_still_guarded(self):
+        cf = sys.modules["tests.conftest"]
+        self.assertTrue(cf._guarded_thread(threading.Timer(600, _function_in("kernel.kernel"))),
+                        "a product timer is waited for")
+        self.assertTrue(cf._guarded_thread(threading.Thread(target=_function_in("tests.test_x"), name="plant-timer")),
+                        "a plain thread is waited for")
 
 
 @unittest.skipUnless("tests.conftest" in sys.modules, "the guard is tests/conftest.py's (pytest-only)")
