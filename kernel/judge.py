@@ -19371,38 +19371,346 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb
     return fb[0][1] if (_depth == 0 and fb) else None
 
 
-def _presumed_closed(sid, now):
+def _remote_sids_mirror():
+    """The postal bus's presence mirror, STATE/postal/remote-sids: the bus's STATE is this module's plus
+    `postal`, and postal_service.py _write_remote_sids owns the file's home and its shape (its
+    _remote_sids_document: a JSON object whose `hosts` table has one row per presence source, {"sids":
+    [...], "heard": bool, "expired": bool, "linkDown": bool, "linkUp": bool, "reachable": bool,
+    "vouchesAbsence": bool, ...}: `reachable` says the source vouches for the PRESENCE of the sids it names,
+    `vouchesAbsence` that it vouches for the ABSENCE of a sid it does not name, which a source does only
+    when its link is known up, or it is a heartbeat within its TTL under the bus's legacy singleton scheme
+    (in peer mode, the default, a heartbeat row vouches for presence alone; round 3 of fork PR #897), and
+    its roster is an ANSWERED
+    listing, `answered`, the seventh flag: False while the host's kernel listing did not answer and its
+    exchange served the last answered rows, whose silence about a session started there since is no word;
+    round 3 of fork PR #897); this reader follows both. The seven booleans are required per row: a row
+    without them is not the shape the bus writes since round 3 of fork PR #897 (a bus still running a
+    previous shape under this judge answers cannot-determine, the conservative side, until it restarts; the
+    six-flag shape of round 2 among them, whose rows vouched for absence over a cached roster). The document's
+    VERSION gates the read (round 3 of fork PR #897, the reviewer's ruling, the twentieth commit): `v` must equal
+    2, the version the writer stamps, or the file is unparsable whatever its rows carry, so a document of another
+    version, or of none, whose rows spell the seven booleans is never read as the bus's shape (until that commit
+    the number was decorative, and such a document answered rule 5 as a v 2 one does). The file is read as BYTES
+    and decoded as UTF-8 inside the parse's try, never with errors="replace": a UnicodeDecodeError is a
+    ValueError and lands in the unparsable arm below, said once and naming the file (until that commit the
+    decode sat outside the try, under the OSError catch alone, and raised out of _presumed_closed_verdict for
+    every sid; a replacing decode would read a document with one stray byte inside a sid as naming another sid,
+    and a host vouching for absence would let rule 5 presume the sid it named closed). The bus's own
+    previous-read replaces for its parse and validates every sid it carries (postal_service.py
+    _remote_sids_previous); this reader stays strict, and the bus's next write replaces the file. A BYTE-ORDER
+    MARK is accepted and dropped (utf-8-sig; round 3 of fork PR #897, the reviewer's ruling of 14:57Z, the
+    twenty-second commit): the document behind it is read, where until that commit it was unparsable. A document
+    nested past the JSON parser's depth raises RecursionError, which is not a ValueError, and raised out of the
+    ladder the same way until the twentieth commit; it lands in the same arm (found by that commit's builder, the
+    same class as the bytes). THE LOST-CARRY MARK (the same ruling): a document whose previous file the bus could
+    not read whole carries "carryLost", {"cause": str, "at": int}, until the bus has heard every host its kernel
+    links to since (postal_service.py _remote_sids_lost_cleared); it is returned beside the table, and a mark in
+    any other shape, a second before 1970 or past the year 9999 among them (the verdict prints it, and time.gmtime
+    raises past the platform's range), makes the file unparsable. Returns (hosts, None, lost) with the table as the bus wrote it and
+    the mark, or None; (None, "no-mirror", None) when there is no file (the bus has not written under this root);
+    (None, "mirror-unparsable", None) when the file is not a document of that shape, a whitespace list written by
+    a bus from before 2026-09-22, a document whose `v` is not 2 and a file whose bytes are not UTF-8 among them,
+    said once per distinct text in this process's log, so a shape drift between the two modules is seen and never
+    read as an empty roster."""
+    path = STATE / "postal" / "remote-sids"
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None, "no-mirror", None
+    try:
+        doc = json.loads(raw.decode("utf-8-sig"))       # strict, inside this try (a UnicodeDecodeError is a ValueError);
+        if not isinstance(doc, dict):                   # a byte-order mark accepted and dropped
+            raise ValueError("not a JSON object")
+        if doc.get("v") != 2:                           # the version gate: the writer stamps 2
+            raise ValueError("the document's version is %r, not 2" % (doc.get("v"),))
+        hosts = doc["hosts"]
+        if not isinstance(hosts, dict):
+            raise ValueError("no hosts table")
+        for key, row in hosts.items():
+            if not (isinstance(row, dict) and isinstance(row.get("sids"), list)
+                    and all(isinstance(s, str) for s in row["sids"])
+                    and all(isinstance(row.get(k), bool) for k in ("heard", "expired", "linkDown", "linkUp",
+                                                                       "answered", "reachable", "vouchesAbsence"))):
+                raise ValueError("host %r is not a roster row" % (key,))
+        lost = doc.get("carryLost")                     # the lost-carry mark, while it stands: a second the verdict can print
+        if lost is not None and not (isinstance(lost, dict) and isinstance(lost.get("cause"), str)
+                                     and type(lost.get("at")) is int and 0 <= lost["at"] <= 253402300799):
+            raise ValueError("the lost-carry mark is not the shape the bus writes")
+    except (ValueError, KeyError, TypeError, RecursionError) as e:   # RecursionError: nesting past json's depth
+        _say_once_judge("romp-judge: the postal bus's presence mirror %s is not the shape the bus writes (%s: %s); "
+                        "rules 4 and 5 of the dead-session ladder answer cannot-determine until the bus rewrites it"
+                        % (path, type(e).__name__, str(e)[:120]))
+        return None, "mirror-unparsable", None
+    return hosts, None, lost
+
+
+Deadness = collections.namedtuple("Deadness", "closed rule why")
+#   closed  the ladder's answer, what _presumed_closed returns
+#   rule    1 to 5, the rule that answered; None when none could (closed is then False: cannot determine)
+#   why     one token per arm, matched by value in tests/test_dead_session_staleness.py and
+#           tests/test_judge_propagate_loads.py: parsed, parse-failed (rules 1 and 2); ext (3);
+#           named-by-reachable-host (4); no-reachable-host-names-it (5); and the cannot-determine arms
+#           no-mirror, mirror-unparsable, named-by-unreachable-host, no-host-vouches-absence,
+#           listing-unanswered (a host vouches for absence and none names the sid, but the roster of a row HEARD
+#           in the bus's current process is unanswered, whatever its link state: the last answered rows its
+#           host's exchange served while its kernel listing did not answer, so a session started on that host
+#           since is in no row, and its mail may have landed here on that exchange: "listing-unanswered: <each
+#           such row with why it cannot vouch>"; round 4 of fork PR #897, the reviewer's ruling on its round-3
+#           refuters' finding, the twenty-ninth commit, which read reachable rows alone; heard, whatever the
+#           link, since the thirtieth, on the reviewer's verifier's finding that a down notify after such an
+#           exchange let rule 5 presume the session closed), carry-lost (the bus's lost-carry mark stands where
+#           rule 5 would fire: "carry-lost: <the mark's cause> at <its UTC second>"; round 3 of fork PR #897,
+#           the reviewer's ruling of 14:57Z, the twenty-second commit). THE ORDER of the last two:
+#           listing-unanswered answers first where both hold, since it names the source whose next answering
+#           exchange releases it, and carry-lost, a stamp on the whole document, answers once no heard row is
+#           unanswered (PresumedClosed's ladder pins the rung where both hold, red under the other order).
+#           The rule is
+#           two-sided (round 2 of fork PR #897, the reviewer's ruling): a heard source that is not held
+#           down vouches for the PRESENCE of the sids it names (`reachable`), and a source vouches for the
+#           ABSENCE of a sid it does not name (`vouchesAbsence`) only when its link is known up (or, under
+#           the bus's legacy singleton scheme, it is a legacy heartbeat within its TTL; in peer mode a
+#           heartbeat row vouches for presence alone and reads "no link state" among the causes, the literal
+#           fact) AND its roster is an answered listing (`answered`; round 3 of
+#           fork PR #897: a host serving its last answered rows through a kernel blink says nothing about a
+#           session started there since). Unreachable is one arm whatever made the source so (not heard
+#           since the bus started, expired, its link held down by the kernel), and the three arms that turn
+#           on a source's state NAME the sources after the token, each with why it cannot vouch
+#           (_source_causes: "named-by-unreachable-host: <key> (link down)", or "(link down, listing
+#           unanswered)" for a held-down row heard in this process whose last exchange served a cache;
+#           "no-host-vouches-absence: <key> (not heard), <key> (expired), <key> (no link state), <key> (listing
+#           unanswered)"; a mirror with no row at all, "no-host-vouches-absence: no source";
+#           "listing-unanswered: <key> (listing unanswered)", or "(no link state, listing unanswered)" for such
+#           a row the kernel never reported up, or "(link down, listing unanswered)" for one it holds down), so
+#           the reason says which host cannot vouch and why.
+#           Rule 5's token stays "no-reachable-host-names-it", true whenever it fires (a vouching host is
+#           reachable, and no reachable host names the sid); the arms before it carry its other conditions (a
+#           row vouches for absence, no heard row is unanswered, no lost-carry mark stands), so a mirror whose
+#           reachable hosts all have no link state reaches the no-vouching arm (beside a host that vouches, a
+#           host with no link state is no gate: rule 5), and a host heard in this process serving a cache,
+#           held down or not, beside a vouching host reaches the listing-unanswered arm, never rule 5
+
+
+def _source_causes(rows):
+    """The sources of `rows` (key to row, as the bus wrote them) for a cannot-determine reason: each key with why it
+    cannot vouch, in parentheses and in this fixed order (not heard since the bus's current process started;
+    expired, a legacy heartbeat past its TTL; link down, the kernel's word; no link state, a source heard and not
+    held down whose link the kernel has never reported up, so it vouches for presence alone; listing unanswered, a
+    source heard in this process whose last exchange served a cached roster, its kernel listing not answering, so
+    it vouches for presence alone whatever its link, round 3 of fork PR #897), sorted by key; "no source" for an
+    empty table. No link state is a cause only for a row that would otherwise vouch (heard, not expired, not held
+    down): a down row's link says why it cannot vouch. Listing unanswered is a cause for every row heard in this
+    process, held down or not (the thirtieth commit of round 4: a held-down host can dial this bus over its cache,
+    and a down notify can follow the exchange that served one, so a down row's bit does not predate the drop and
+    the reason says so, "(link down, listing unanswered)"); a carried row's bit is its last process's, and not
+    heard says why it cannot vouch. No link state and listing unanswered can hold at once, in the fixed order, and
+    so can link down and listing unanswered. A heartbeat row under the bus's legacy
+    singleton scheme, `answered` True and vouching by its TTL, reaches neither; in peer mode the writer withholds
+    its vouch (a beat filed there is a local session's, recorded during a listing blink; round 3 of fork PR #897,
+    the reviewer's ruling) and the row reads "no link state", the literal fact: a heartbeat has no link, and the
+    TTL exception belongs to the legacy scheme."""
+    parts = []
+    for key in sorted(rows):
+        row = rows[key]
+        would = row["heard"] and not row["expired"] and not row["linkDown"]   # ...vouch, but for the causes below
+        causes = [w for w, on in (("not heard", not row["heard"]), ("expired", row["expired"]),
+                                  ("link down", row["linkDown"]),
+                                  ("no link state", would and not row["linkUp"] and not row["vouchesAbsence"]),
+                                  ("listing unanswered", row["heard"] and not row["answered"])) if on]
+        parts.append(str(key) + (" (%s)" % ", ".join(causes) if causes else ""))
+    return ", ".join(parts) or "no source"
+
+
+def _presumed_closed_verdict(sid, now):
     """Deadness for a session no live parse can answer for (the user 2026-08-28, the dead-session
     round: complete tops on dead sids read working forever because the settle gate derived
-    closed=False from mere registry absence). The ladder, most-evidence-first:
+    closed=False from mere registry absence). The ladder, most-evidence-first, with the rule that
+    answered and its reason (Deadness), so a test can tell rule 4's False from cannot-determine's:
       1. discovered in the recency window → the parse decides (_session_closed), exactly as before;
       2. absent from the window but the transcript exists → windowless lookup + parse — a dead
          LOCAL session's own record says it closed;
       3. an ext: pseudo-sid → closed by construction (a one-shot mailer, no session behind it);
-      4. a sid the postal bus reports LIVE ON ANOTHER HOST (STATE/remote-sids, the federated
-         presence mirror) → NOT closed — a live remote session's local mirror store must never be
-         presumed settled (the premature-settle flicker the gate exists to prevent);
-      5. nothing anywhere knows it AND the bus has spoken (the mirror file exists) → a dead
-         determination, True; no mirror file at all → conservative False (cannot determine)."""
+      4. a sid a REACHABLE host names in the postal bus's presence mirror (STATE/postal/remote-sids,
+         _remote_sids_mirror) → NOT closed: live on another host, and a live remote session's local
+         mirror store must never be presumed settled (the premature-settle flicker the gate exists to
+         prevent). Reachable is the bus's word, per row, the `reachable` flag its writer computes and
+         this reader only reads: heard in the bus's current process, its presence not expired (a legacy
+         heartbeat past HEARTBEAT_TTL; a peer's presence has no TTL), and its link not held down by the
+         kernel (`linkDown`: from the kernel's down notify until the host's next heartbeat or exchange
+         arrives with the link up). A reachable host vouches for the PRESENCE of every sid it names,
+         whatever its link state: a host the kernel never notified, or a far bus filed under the hostname
+         it declares before the bus's own dial has folded it under the alias the kernel dials, has no link
+         state and still answers rule 4 for its own sids;
+      5. at least one host VOUCHES FOR ABSENCE, none names it, no unreachable host's last roster names it
+         either, no host HEARD in the bus's current process has an unanswered roster (held down or not), and
+         no lost-carry mark stands → a dead
+         determination, True. A host vouches for absence (`vouchesAbsence`, the writer's
+         second flag, read here and never recomputed) only when heard, not expired, its roster an ANSWERED
+         listing (`answered`, the writer's seventh flag: the `presenceAnswered` its exchange carried, False
+         while its kernel listing did not answer and the exchange served the last answered rows; round 3 of
+         fork PR #897, the reviewer's ruling), and its link KNOWN UP: a dialable PEERS row the kernel holds up
+         and the host heard since the link last dropped (`linkUp`), or, under the bus's legacy singleton
+         scheme, a legacy heartbeat within its TTL, which has no link and vouches by the TTL as before (in peer
+         mode, the default, a heartbeat row vouches for presence alone: the beats that reach the bus's table
+         there are local sessions' beats filed as remote presence during a listing blink, so its sids are rule
+         4's and a sid it does not name is cannot-determine by it; round 3 of fork PR #897, the reviewer's
+         ruling); a far host gossiped through a hub vouches by the
+         hub's link and by its own bit, which the hub stamps on the gossip. The reach through a hub rests on a
+         PREMISE: a hub knows one machine by a name (bus ids are unique by construction, so two machines
+         exchanging with one hub under one host name is a misconfiguration, outside the model; round 4 of fork
+         PR #897, the reviewer's ruling of 11:08Z). What a violation does, and its witness, the writer states
+         (postal_service.py _remote_sids_document, THE PREMISE).
+    Cannot determine, False, in six arms: no mirror file (the bus has not written under this root); a
+    mirror not in the bus's shape (a document whose `v` is not 2, a row without the seven booleans, bytes that
+    are not UTF-8, a lost-carry mark of another shape: _remote_sids_mirror; said once in this process's log;
+    never read as an empty roster); the sid named only by an UNREACHABLE host, whose last roster stands until
+    the host is heard again; no host vouches for absence (a bus that has heard nobody since it started, a
+    mirror carried from before, every heard host expired or held down, every heard host with NO LINK STATE, or
+    every heard host whose last exchange served a cached roster); a host vouches for absence and none names the
+    sid, but the roster of a host HEARD in the bus's current process is UNANSWERED ("listing-unanswered",
+    naming each such host with why it cannot vouch; round 4 of fork PR #897, the reviewer's ruling on its
+    round-3 refuters' finding, the twenty-ninth commit, the thirtieth, the thirty-first, the thirty-second and the
+    thirty-third): its last exchange here serving the
+    rows of its kernel's last answered listing, whether a peer's own row or a hub's word about a far host
+    carrying that host's unanswered bit, whatever its link state, held down included (the writer's `heard`
+    True with `answered` False; a hub's word stays heard across a RESTARTED hub's rosters that omit the far
+    host, until the hub names it again or the same hub process omits it on the road that last named it, the far
+    host's empty answer, postal_service.py _via_held); a session started on that host during the blink is
+    in no roster, and its own
+    mail reaches this judge on the exchange that omits it, so another host's vouch says nothing about it (until
+    the twenty-ninth commit rule 5 presumed it closed whenever any other row vouched, the refuters' four roads
+    through the real builders, handler, writer and reader; that commit's arm read reachable rows alone, so the
+    kernel's down notify after such an exchange, or a held-down host's own dial over its cache, let rule 5
+    presume the session closed again, the reviewer's verifier's roads, closed by the thirtieth; until the
+    thirty-first the hub's restart did the same for a hub's word, its first roster after the restart omitting
+    the far host, closed in the writer); the release is
+    that source's next answering exchange, which the bus already records (for a hub's word, the far host's
+    answering exchange with the hub and then the hub's next exchange here, naming the host or, for an empty
+    listing, omitting it from the same hub process's roster on the road that last named it), or the bus's
+    restart, with no new
+    event and no timer; it
+    answers before the carry-lost arm where both hold, naming the source that releases it; and a host vouches
+    for absence, none names the sid and no heard host's roster is unanswered, but the bus's LOST-CARRY
+    MARK stands ("carry-lost", its cause and its second: the bus could not
+    read its previous file whole, so a session a lost row named is in no row; round 3 of fork PR #897, the
+    reviewer's ruling of 14:57Z, the twenty-second commit), which the bus clears once it has heard every host
+    its kernel links to since. After the clear the mirror knows what a fresh bus knows, and rule 5 there is the
+    design's first-start answer (the reviewer's ruling of 15:45Z, the twenty-fourth commit): a session on a host
+    that no linked host hears now is outside every source after the clear, as on a first start, and answers rule
+    5 while a host vouches for absence and no heard host's roster is unanswered (postal_service.py
+    _remote_sids_lost_cleared states it; ReaderFollowsTheWriter
+    witnesses it with a hub the only link, restarted and no longer hearing its far host). The rule is
+    two-sided (round 2 of fork PR #897, the reviewer's ruling): a heard host vouches for presence; a host
+    vouches for absence only when its link is known up,
+    so a heard host with no link state answers cannot-determine for a sid it does not name, as a down host
+    does, and rule 4 for the sids it names; and so does a heard host whose roster is a cache (round 3): the
+    sessions it names were live at its last answered listing, rule 4, and a session started there since is
+    in no roster while the listing does not answer, so its silence is no word, and the event that releases
+    it is its next exchange with an answered listing. Since the twenty-ninth commit that silence also holds
+    every sid nothing names at cannot-determine while another host vouches (the listing-unanswered arm), and
+    since the thirtieth whatever the host's link: THE CONTRAST is where the session's mail can have landed. A
+    session started on a host during its blink reaches this judge through its own mail on an exchange that
+    omits it, and every such exchange in this bus process leaves its row heard with its bit False, whether the
+    kernel held the host up, never reported it, or holds it down before or after (the down notify does not
+    unsend the mail); a host held down after an ANSWERED exchange cannot carry such a session's mail until its
+    next exchange, which replaces the bit (answered: its roster names the session; a cache: the arm). A
+    CARRIED row's bit is its last process's and holds nothing: a hold on it would hold every sid for the file's
+    life for a host never heard again, so a session whose mail landed on a cached exchange before this bus
+    restarted answers rule 5 until that host's first exchange here, a residual disclosed with its witness.
+    What the arm leaves open and what it costs are stated at postal_service.py _remote_sids_document, each
+    with its named witness: the two sessions that still answer rule 5, one on a far host whose cached roster
+    is empty, behind a heard hub, and one whose mail landed on a cached exchange before this bus restarted;
+    and every state in which the arm holds rule 5 at cannot-determine. Unreachable is one arm
+    whatever made the host so: rule 4 is a positive determination, live on another host, that only a host
+    the bus can vouch for makes, and the closed field is False either way; the reason of each of the three
+    arms that turn on a source's state names the sources it turns on and why each cannot vouch
+    (_source_causes: not heard, expired, link down, no link state, listing unanswered), so a reader of the
+    verdict sees which host cannot vouch, and why, without the mirror in hand. The link gate's reason: a session started on a
+    host after its last heard roster is in no roster, so a host counted as vouching for absence while the
+    kernel holds its link down, or has never reported it up, would let rule 5 presume that session closed.
+    Event-keyed at both ends: the down notify makes the host unreachable at once (the bus writes the mirror
+    from the notify); the first heartbeat or exchange heard with the link up makes it reachable again, not
+    the up notify, whose roster is the one from before the drop, and from that exchange, the link up and the
+    host heard since, it vouches for absence; for a far bus under its declared name the fold (the bus's own
+    dial landing under the alias with the busId) is the event that files its row where the alias's link
+    reaches it. The unreachable and no-vouching arms close the two roads to a false settle that
+    arming this rule opened (fork PR #897, round 1, the reviewer's refuters): (1) a bus restarted from
+    empty memory wrote its first mirror from that memory, so until its first exchange every sid live on
+    another host was absent from the file and its local mirror store settled; the bus now carries every
+    host it has not heard forward, unreachable,
+    and the event that closes the road is that host's heartbeat or exchange arriving in the new process.
+    The carry reads the previous file (round 3 of fork PR #897, the reviewer's ruling of 14:57Z on its
+    verifier's finding at the twentieth commit, the twenty-second commit): one bad byte there costs one sid,
+    never the document (the bus decodes with replacement for its JSON parse alone and drops a sid that fails
+    the session-id shape, saying so once in its log), and a byte-order mark is read; a file the bus cannot read
+    whole (text that is not JSON, bytes that are not UTF-8 in a file that is not a document at v 2 after that
+    decode, an empty file, a value of neither shape, a path it cannot open) carries no row, so the bus marks
+    the document and this ladder answers carry-lost, cannot-determine, where rule 5 would fire, until the bus
+    has heard every host its kernel links to since the mark. Until that commit such a file carried nothing
+    and a session it named on a host the new process had not heard answered rule 5 while a heard host
+    vouched. postal_service.py _remote_sids_previous and _remote_sids_lost_cleared have the files, the
+    clearing rule and its bound, and ReaderFollowsTheWriter's one-byte, byte-order-mark and lost-carry phases
+    are the witnesses;
+    (2) under the legacy singleton scheme the bus pruned an expired heartbeat's sid from the file, so a
+    tunnel drop or a stalled peer longer than the TTL settled a live session on no new information; the
+    row now stays, marked expired, and a beat from the session (the event) makes it reachable again. A
+    session that has ended beats no more, so its row stands, its sid cannot-determine by it, for the life
+    of the state root: the bus's disclosed cost (round 3 of fork PR #897, the seventeenth commit, which
+    corrected the earlier framing of the expiry as closed by "the next beat"), and the design rule refuses
+    a timer. The bus has one release, a heartbeat row whose sid the local kernel's answered listing owns,
+    which rules 1 and 2 here own anyway. Both are event-keyed: no grace period anywhere. A dead rule was
+    conservative; an armed rule that settles falsely is worse than dead, so both arms answer as the dead
+    rule did, cannot-determine.
+    The mirror is read where the bus writes it: postal_service.py's _write_remote_sids puts it at the
+    BUS's state root, which is this module's STATE plus `postal` (its STATE binding carries that
+    suffix), so the file is STATE/postal/remote-sids here. The writer owns the file's home and its shape
+    and the reader follows. From the ladder's birth (2026-08-28) until 2026-09-22 this read was
+    STATE/remote-sids, a path nothing wrote: it raised OSError on every call, rule 5 never fired,
+    and every sid reaching it answered cannot-determine (the conservative side: nothing settled
+    early, a dead sender's card only took longer to settle). tests/test_dead_session_staleness.py
+    (ReaderFollowsTheWriter) runs the bus writer and this reader over one root, under both root
+    shapes, through the first write, a restart, an expiry, a link the kernel holds down, the alias road (a
+    far bus filed under its declared name before the fold) and the legacy shape, and holds the two modules
+    together by execution."""
     for f, p, _a, _n in discover(now):
         if f == sid:
             try:
-                return _session_closed(parsed_session(sid, [str(p)], now))
+                return Deadness(_session_closed(parsed_session(sid, [str(p)], now)), 1, "parsed")
             except Exception:
-                return False
+                return Deadness(False, 1, "parse-failed")
     for f, p, _a, _n in discover(now, window=now):
         if f == sid:
             try:
-                return _session_closed(parsed_session(sid, [str(p)], now))
+                return Deadness(_session_closed(parsed_session(sid, [str(p)], now)), 2, "parsed")
             except Exception:
-                return False
+                return Deadness(False, 2, "parse-failed")
     if str(sid).startswith("ext:"):
-        return True
-    try:
-        remote = set((STATE / "remote-sids").read_text().split())
-    except OSError:
-        return False                                   # the bus has not spoken → cannot determine
-    return sid not in remote
+        return Deadness(True, 3, "ext")
+    hosts, why, lost = _remote_sids_mirror()
+    if hosts is None:
+        return Deadness(False, None, why)               # the bus has not spoken in a shape this reader knows
+    sid = str(sid)
+    reachable = {k: row for k, row in hosts.items() if row["reachable"]}   # the writer's flag: vouches for presence
+    naming = {k: row for k, row in hosts.items() if sid in row["sids"]}
+    if any(k in reachable for k in naming):
+        return Deadness(False, 4, "named-by-reachable-host")
+    if naming:                                                           # its host's last word stands until heard again
+        return Deadness(False, None, "named-by-unreachable-host: " + _source_causes(naming))
+    if not any(row["vouchesAbsence"] for row in hosts.values()):         # the writer's second flag: nobody heard with its
+        return Deadness(False, None, "no-host-vouches-absence: " + _source_causes(hosts))   # link known up (or a live beat)
+    unanswered = {k: row for k, row in hosts.items() if row["heard"] and not row["answered"]}
+    if unanswered:                                                       # a host heard in this process serving a cache, held
+        return Deadness(False, None, "listing-unanswered: " + _source_causes(unanswered))   # down or not: a session started
+    #                                                                      there since is in no row, and its mail may have landed
+    if lost is not None:                                                 # the bus lost the rows it would have carried: a sid
+        return Deadness(False, None, "carry-lost: %s at %s" % (           # nothing names may be one of theirs (the mark)
+            lost["cause"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(lost["at"]))))
+    return Deadness(True, 5, "no-reachable-host-names-it")               # a vouching host is reachable and none names it;
+    #                                                                      no heard roster a cache, no mark
+
+
+def _presumed_closed(sid, now):
+    """The ladder's answer alone (_presumed_closed_verdict has the rule that answered and its reason)."""
+    return _presumed_closed_verdict(sid, now).closed
 
 
 def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=None, verbose=False):
