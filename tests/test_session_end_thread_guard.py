@@ -35,9 +35,13 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   within half the cap of the process's last one (it finishes milliseconds after; a guard that slept its cap would finish
   nine seconds after).
 
-Each pin was run with the guard removed from tests/conftest.py and fails there: the leak runs pass (exit 0, no error)
-and the green runs' witness finds the within-cap threads alive at sessionfinish. Synthetic fixtures only; no kernel,
-no network.
+- A thread listed while its start() is still running, which Thread.join refuses with a RuntimeError, is read again on
+  the guard's next pass rather than raised (JoinRace, in this process under the conftest: a thread never started, which
+  join refuses the same way, stands in for it).
+
+Each child-run pin was run with the guard removed from tests/conftest.py and fails there: the leak runs pass (exit 0, no
+error) and the green runs' witness finds the within-cap threads alive at sessionfinish. Synthetic fixtures only; no
+kernel, no network.
 """
 import importlib.util
 import json
@@ -47,7 +51,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(HERE)
@@ -243,6 +249,20 @@ class SessionEndThreadGuard(unittest.TestCase):
     @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
     def test_threads_that_end_within_the_cap_and_daemon_threads_leave_a_two_worker_run_green(self):
         self._assert_green_and_waited(*self._run("".join(GREEN_TEST.format(i=i) for i in range(TESTS)), workers=2))
+
+
+@unittest.skipUnless("tests.conftest" in sys.modules, "the guard is tests/conftest.py's (pytest-only)")
+class JoinRace(unittest.TestCase):
+    def test_a_thread_listed_before_its_start_returned_is_read_again_not_raised(self):
+        """Thread.join raises RuntimeError on a thread whose start() has not returned yet (threading.enumerate lists it
+        from the moment start() puts it in the starting set). The guard passes over it and reads the list again, inside
+        the same deadline. Stood in for by a thread never started, which join refuses the same way, listed once."""
+        cf = sys.modules["tests.conftest"]
+        mid_start = threading.Thread(target=int, name="plant-mid-start")
+        reads = [[threading.main_thread(), mid_start], [threading.main_thread()]]
+        with mock.patch.object(cf.threading, "enumerate", side_effect=lambda: reads.pop(0) if len(reads) > 1 else reads[0]):
+            self.assertEqual(cf.threads_left_at_session_end(5.0), [])
+        self.assertEqual(reads, [[threading.main_thread()]], "the guard read the list a second time")
 
 
 if __name__ == "__main__":
