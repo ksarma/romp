@@ -2786,7 +2786,47 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   stage is `jobsPass`, its opening `jobs.prelude`; each job is still its
   `jobs.<job>` stage, and a `jobs.<job>` row in `stages_ms` is this thread's
   own (since 2026-09-18); the pusher's cycle jobs are counted under
-  `pusher.cycleJobsMs`.
+  `pusher.cycleJobsMs`. With the nudge toggle off, fold ruling A condition 7
+  (as ruled on 2026-09-19) bounds two loaders of a session's goal store on
+  this thread's auto-nudge walk, the look's decision read and the placement
+  gate's currency check, each on its own: the walk takes at most one shared
+  goal-store load per alive session per pass, exactly one when its look
+  reaches the store and zero when the look is skipped or ends at a state gate
+  before the store read; the placement gate's post-derivation currency check
+  is a second load, a mechanism of its own and not an exception to the walk's
+  bound, at most one per derived session, counted apart by the test rather
+  than by a served counter (`memos.nudgeWalk.loads` counts the walk's loads,
+  `nudgeGate.derived` the derives that bound the gate's checks, and
+  `tests/test_nudge_walk_one_load_per_pass.py` counts each mechanism by
+  execution against whether the look ran, skipped or derived). Other readers of
+  the same store run on the same pass under their own rules and outside both
+  bounds, among them the dead-man's fresh re-read inside the look (`_wake_goal`,
+  the writer's loader, under `goals.loads`, at most one per stamped top whose
+  dead-man is due, per look), the writers' own loads at their write moments
+  (`_mark_nudge_failed`, `_file_wake_answer` and `_dead_wait_block`, each a
+  `load_goals` under `goals.loads`; the first two reached from the look's wake
+  legs and from the wake sweep, `_dead_wait_block` from the look's dormant-owner
+  branch in `_wake_goal`, since its other caller, `_dead_wait_sweep`, runs only
+  with the toggle on), the relay's read of each store it has queued entries for
+  (`_relay_store`, reached through `_relay_tick`, a `load_goals` under
+  `goals.loads`, called outside the toggle guard after the walk in the same
+  pass: `_relay_store`'s own read is at most one per queued sid per pass, none
+  while that sid's quiet key stands unchanged and no hold of its has ended (a
+  quiet key is held only after a pass over that sid left nothing to do until
+  the key moves or a hold ends, and is the store file, the postal log and the
+  queue entries by mtime and size, and whether the sid is alive); a dead
+  worker's queued sid is read too, since `_relay_store` loads before
+  `_relay_entry`'s alive check), the relay's fresh re-read of a pending
+  relay's node on disk (`_relay_ended_since`, reached from `_relay_entry`
+  inside `_relay_store`, a `load_goals` under `goals.loads`, one per pending
+  relay of a standing wait whose far-host status came back bounced or
+  withdrawn, none while that sid's quiet key stands unchanged and no hold of
+  its has ended), so on a pass the relay reads a queued sid's store at most
+  1 + N times, N the pending relays of standing waits whose status came back
+  bounced or withdrawn, and the wake sweep after the per-session loop (`_awaiting_wake_outcomes`, called outside
+  the toggle guard, one shared load per wake record it owns that
+  `memos.nudgeWalk.loads` does not count), which runs after the walk in the
+  same pass, not on it.
 - `caches`: one block per cache the kernel, the judge and the event model keep,
   each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
   lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`
@@ -3605,8 +3645,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   since 2026-09-18 such a look checks and
   records like any other, under its own mode tag, so with the gear off
   `skippedParses` rises toward `looks` on a quiet board, where until then
-  every wake-only look parsed) and `wakeOnlyRecorded` (memo rows a wake-only
-  look recorded); a memo row is the ten files' stat, the look's mode tag
+  every wake-only look parsed), `wakeOnlyRecorded` (memo rows a wake-only
+  look recorded) and `loads` (the walk's shared goal-store loads: one per
+  look that reaches the store, whether the read returns a store, returns a
+  fault or raises out of the look, none on a look that is skipped or that a
+  state gate ends before the store read, the walk's bound under fold ruling
+  A condition 7 since 2026-09-19, at most one per alive session per pass;
+  the condition bounds two loaders, this one and the placement gate's
+  post-derivation currency check, a second loader with a bound of its own,
+  at most one load per derived session, counted by the test and by no served
+  counter, `nudgeGate.derived` counting the derives that bound it; the store's
+  other readers on the pass are named with their bounds in the `jobs` block
+  above); a memo
+  row is the ten files' stat, the look's mode tag
   (`full`, `wake`, or `wake+reminders` for tracking off with nudges on), the
   earliest flip and the verdict, and a row serves a look of the same mode
   only (a row of another mode counts a miss under
