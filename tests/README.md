@@ -196,7 +196,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the runners whose step sets some (`-n 2`, on `ubuntu-latest`). The
   developer's form has none of those options but `-n`, and has
   `-p no:cacheprovider -k reassert`, which blocks the cache plugin and
-  deselects none of the four, and `-n 2` in its run with workers. Where
+  deselects none of the four, and `-n 2` in its run with workers. A
+  `PYTEST_ADDOPTS` the caller exported does not reach the child
+  (`_proof_child_env` drops it), so it adds no option to either form. Where
   pytest-xdist is installed the run makes four children per case, whatever run
   of the suite it is in: the two forms, each with no worker and with two. On a
   machine without pytest-xdist it makes two, one in each form with no worker.

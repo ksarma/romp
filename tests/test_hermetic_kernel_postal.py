@@ -3433,8 +3433,9 @@ def _conftest_reasserted_names(src=None, where=None):
     each form's runs handed four modules of their own (_proof_numbers). CI's form has the options of CI's Run pytest
     step as a runner runs it (_proof_options: the step read from .github/workflows/ci.yml, its expressions valued for
     each runner label by fork PR #916's evaluator, as GitHub values them; the reviewer's hold of 2026-09-25 22:24Z), and
-    so the cache plugin loaded: its run with no worker has the options of the runners whose step sets no worker (-n 0,
-    on macos-latest) and its run with workers those of the runners whose step sets some (-n 2, on ubuntu-latest;
+    so the cache plugin loaded (no PYTEST_ADDOPTS the caller exported reaches the child, _proof_child_env, so none
+    adds an option to either form): its run with no worker has the options of the runners whose step sets no worker
+    (-n 0, on macos-latest) and its run with workers those of the runners whose step sets some (-n 2, on ubuntu-latest;
     _proof_ci_forms, _proof_mode_options). The developer's form has none of those options but -n, and has
     -p no:cacheprovider and -k reassert (_PROOF_DEVELOPER_OPTIONS), which blocks the cache plugin and deselects none of
     the four, and -n 2 in its run with workers.
@@ -3977,11 +3978,17 @@ def _proof_checkout():
 
 
 def _proof_child_env(probed, tmp):
-    """The child pytest's environment: this process's, less PYTEST_CURRENT_TEST, the probed names and the variables
+    """The child pytest's environment: this process's, less PYTEST_CURRENT_TEST, the probed names, the variables
     pytest-xdist sets in a worker (PYTEST_XDIST_*: this process's, when it is one, would make the child's run with no
-    worker look like a worker to a hook that reads them), with TMPDIR `tmp`."""
+    worker look like a worker to a hook that reads them) and PYTEST_ADDOPTS (the reviewer's ruling of 2026-09-26 16:25Z
+    on round 2 of fork PR #894: one the caller exported, -p no:cacheprovider say, would add its options to each form's
+    command line, and CI's form would run with the cache plugin blocked; popped as
+    test_a_write_by_a_fixture_scoped_above_module_is_named_by_each_check_whose_snapshot_its_setup_follows pops it for
+    each child but the one it hands --runxfail; test_an_exported_pytest_addopts_does_not_reach_the_proofs_child), with
+    TMPDIR `tmp`."""
     child = {k: v for k, v in os.environ.items()
              if k != "PYTEST_CURRENT_TEST" and not k.startswith("PYTEST_XDIST_") and k not in probed}
+    child.pop("PYTEST_ADDOPTS", None)
     child["TMPDIR"] = tmp
     return child
 
@@ -7369,6 +7376,53 @@ class HermeticKernelPostal(unittest.TestCase):
                          "write in is passed over for the next of tempfile's candidates, which the runs share); "
                          "resolved instead: %s"
                          % sorted({r for pairs in wrong.values() for _t, r in pairs}))
+
+    def test_an_exported_pytest_addopts_does_not_reach_the_proofs_child(self):
+        """THE CALLER'S PYTEST_ADDOPTS STAYS OUT OF THE CHILD (the reviewer's ruling of 2026-09-26 16:25Z on round 2 of
+        fork PR #894, after the verifier's observation at the sixty-second commit: this module run with
+        PYTEST_ADDOPTS=-pno:cacheprovider exported, in place of the flag on the command line, ended 2 failed, 64 passed,
+        the children of the proof's CI form running with the cache plugin blocked). With PYTEST_ADDOPTS set to
+        -pno:cacheprovider in this process's environment (put back by a cleanup registered right after the write),
+        _proof_child_env's environment carries no PYTEST_ADDOPTS, and a spy on subprocess.run that answers each pytest
+        child of a call of _reassert_proof in its place, for two synthetic cases and for one `real` case, finds no
+        PYTEST_ADDOPTS in the environment any child is handed, and PATH, which the child inherits, in every one. The
+        spy reads the environment each child is handed; it runs no child, so what a child's pytest loads is not read
+        here."""
+        from unittest import mock
+        prior = os.environ.get("PYTEST_ADDOPTS")
+        os.environ["PYTEST_ADDOPTS"] = "-pno:cacheprovider"
+        if prior is None:
+            self.addCleanup(os.environ.pop, "PYTEST_ADDOPTS", None)
+        else:
+            self.addCleanup(os.environ.__setitem__, "PYTEST_ADDOPTS", prior)
+        self.assertEqual(os.environ.get("PYTEST_ADDOPTS"), "-pno:cacheprovider", "the caller's variable is set")
+        tmp = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        direct = _proof_child_env(set(), tmp)
+        self.assertEqual(("PYTEST_ADDOPTS" in direct, "PATH" in direct), (False, True),
+                         "_proof_child_env drops PYTEST_ADDOPTS and keeps PATH (membership only, no value shown)")
+        real_run, seen = subprocess.run, []
+
+        def spy(cmd, *args, **kwargs):
+            if list(cmd[:3]) == [sys.executable, "-m", "pytest"]:
+                seen.append(("PYTEST_ADDOPTS" in kwargs["env"], "PATH" in kwargs["env"]))
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            return real_run(cmd, *args, **kwargs)
+        sites = {"ROMP_PROBE_ADDOPTS": frozenset({("_f", 4, "pop")})}
+        got = {}
+        with mock.patch.object(subprocess, "run", spy):
+            for label, cases, real in (("synthetic", [("a", "", {}, sites), ("b", "", {}, sites)], False),
+                                       ("real", [("c", None, {}, sites)], True)):
+                del seen[:]
+                _reassert_proof(cases, real=real)
+                got[label] = list(seen)
+        modes = _proof_modes()
+        self.assertEqual({label: len(pairs) for label, pairs in got.items()},
+                         {"synthetic": 2 * len(modes), "real": len(modes)}, "the spy answers every pytest child of each call")
+        self.assertEqual({label: sorted(set(pairs)) for label, pairs in got.items()},
+                         {"synthetic": [(False, True)], "real": [(False, True)]},
+                         "each child is handed an environment with no PYTEST_ADDOPTS and with PATH, (PYTEST_ADDOPTS "
+                         "present, PATH present) per child (membership only, no value shown)")
 
     def test_the_proofs_disclosed_limit_a_road_keyed_on_a_mark_is_granted_and_a_real_run_of_it_reads_the_module_level_write(self):
         """THE PROOF'S THIRD TIER, UNMATCHABLE, WITNESSED (the reviewer's rulings of 2026-09-24 23:17Z, (4), and
