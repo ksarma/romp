@@ -862,9 +862,11 @@ def wait_for_census(before, timeout=5.0):
 # NOT CHECKED: a thread started after the last test's teardown, in a pytest_sessionfinish or pytest_unconfigure hook or
 # an atexit handler, since the check has run by then. None starts one today: the hooks and atexit handlers in tests/
 # only remove directories.
-# An idle ThreadPoolExecutor worker, from a pool left without shutdown, fails the guard too: it is a non-daemon thread
-# that no join ends. The interpreter wakes such workers at exit, so serially it would not have hung the run; failing on
-# it is the stricter reading. None is left on main.
+# IDLE concurrent.futures WORKERS fail the guard too: a ThreadPoolExecutor's idle workers (a pool left without shutdown,
+# or an asyncio event loop's default executor when the loop is never closed) and a ProcessPoolExecutor's manager thread.
+# Each is a non-daemon thread that no join ends, but the interpreter wakes them at exit (threading._register_atexit), so
+# they would not have hung a serial run or kept an xdist worker from exiting; failing on them is the stricter reading,
+# and the report labels them so. Each costs the cap once per process. None is left on main.
 THREAD_GUARD_CAP_S = 10.0
 _monotonic = time.monotonic   # bound at import: a test's leaked patch of time.monotonic cannot move the guard's deadline
 _enumerate = threading.enumerate    # bound at import too: a test's leaked patch of threading.enumerate cannot empty the
@@ -913,7 +915,9 @@ def _thread_report(t, frames):
     else:
         runs = "%s.%s.run" % (type(t).__module__, type(t).__qualname__)     # a Thread subclass's own run()
     if runs.startswith("concurrent.futures.thread."):
-        runs += " (a ThreadPoolExecutor worker: a pool left without shutdown)"
+        runs += " (a ThreadPoolExecutor worker: a pool, or an asyncio loop's default executor, left without shutdown)"
+    elif runs.startswith("concurrent.futures.process."):
+        runs += " (a ProcessPoolExecutor's manager thread: a pool left without shutdown)"
     frame = frames.get(t.ident)
     stack = "".join(traceback.format_stack(frame)) if frame is not None else "  (no stack: the thread ended as it was read)\n"
     return "thread %r (ident %s) runs %s\n%s" % (t.name, t.ident, runs, stack)
@@ -931,8 +935,9 @@ def pytest_runtest_teardown(item, nextitem):
     frames = sys._current_frames()
     pytest.fail("non-daemon threads still running at the end of this process's session, after up to %g s for each to end "
                 "(tests/conftest.py, the session-end thread guard). A thread a test starts must end before the test does: "
-                "run serially, the process cannot exit while one runs; under pytest-xdist the worker is killed at exit and "
-                "the run would pass without this report. %s is this process's last test, where the check runs, and not "
+                "run serially, the process cannot exit while one runs, unless every thread named is an idle concurrent.futures "
+                "worker, which the interpreter wakes at exit and this guard fails on all the same; under pytest-xdist the "
+                "worker is killed at exit and the run would pass without this report. %s is this process's last test, where the check runs, and not "
                 "necessarily the one that started a thread; each thread's target and stack say where it came from.\n\n%s"
                 % (THREAD_GUARD_CAP_S, item.nodeid, "\n".join(_thread_report(t, frames) for t in left)), pytrace=False)
 

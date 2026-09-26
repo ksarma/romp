@@ -22,8 +22,9 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   has run) fails the run, serially and under -n 2, with exactly one error, whose text names the thread, its target and
   a frame of its stack; under -n 2 that text is in the controller's output under a worker's `[gwN]` line, which is how
   the report is shown to have reached the controller. Daemon threads alive at the same moment are not named. Serially,
-  an idle ThreadPoolExecutor worker (a pool left open) is named too: the guard's stricter reading, which the conftest's
-  comment states. These runs shorten the guard's cap to LEAK_CAP_S through the scratch conftest, so a leak costs the
+  an idle ThreadPoolExecutor worker (a pool left open, and an event loop's default executor, the loop never closed) is
+  named too, with a label naming both causes: the guard's stricter reading, which the conftest's comment states, and the
+  message says such a worker would not have hung a serial run. These runs shorten the guard's cap to LEAK_CAP_S through the scratch conftest, so a leak costs the
   pins seconds and not the full cap.
 - Threads that END WITHIN THE CAP (each test starts one that sleeps WITHIN_S and exits) and DAEMON threads that run past
   the session (one per test, released at unconfigure) leave the run green, serially and under -n 2, at the guard's own
@@ -72,6 +73,7 @@ HAS_XDIST = importlib.util.find_spec("xdist") is not None
 # CI's Run pytest flags for pytest-timeout: its timer for the running test is alive through the guard's check
 TIMEOUT_FLAGS = ["--timeout=600", "--timeout-method=thread"] if importlib.util.find_spec("pytest_timeout") else []
 
+EXECUTOR_LABEL = "(a ThreadPoolExecutor worker: a pool, or an asyncio loop's default executor, left without shutdown)"
 LEAK_CAP_S = 2.0      # the guard's cap in the leak runs: long enough to be a real wait, short enough to cost little
 WITHIN_S = 1.0        # a within-cap thread's life after its test: a tenth of the guard's own cap
 TESTS = 4             # tests in the plant, each starting its threads: every worker's last test starts some
@@ -180,6 +182,13 @@ def test_pool_left_open():
     pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="plant-pool")
     pool.submit(int).result()
     POOL.append(pool)                       # kept referenced and never shut down: its worker idles
+
+
+def test_event_loop_left_open():
+    import asyncio
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(loop.run_in_executor(None, int))
+    POOL.append(loop)                       # never closed: its default executor's worker idles
 '''
 
 
@@ -242,7 +251,10 @@ class SessionEndThreadGuard(unittest.TestCase):
         rc, out, started, _ended, _finish = self._run(plant, cap=LEAK_CAP_S)
         self._assert_leak_reported(rc, out, started)
         self.assertIn("thread 'plant-pool_0'", out, "an idle executor worker left open is named too:\n" + out)
-        self.assertIn("(a ThreadPoolExecutor worker: a pool left without shutdown)", out)
+        self.assertIn("thread 'asyncio_0'", out, "so is an event loop's default-executor worker, the loop never closed")
+        self.assertEqual(out.count(EXECUTOR_LABEL), 2, "both executor workers carry the label that names both causes:\n" + out)
+        self.assertIn("unless every thread named is an idle concurrent.futures worker", out,
+                      "the message does not claim such a worker would have hung a serial run")
         self.assertIn("after up to %g s for each to end" % LEAK_CAP_S, out, "the cap the scratch conftest set was the one used")
 
     @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
@@ -328,6 +340,21 @@ class TimeoutTimerMatch(unittest.TestCase):
                         "a product timer is waited for")
         self.assertTrue(cf._guarded_thread(threading.Thread(target=_function_in("tests.test_x"), name="plant-timer")),
                         "a plain thread is waited for")
+
+
+@unittest.skipUnless("tests.conftest" in sys.modules, "the guard is tests/conftest.py's (pytest-only)")
+class ThreadReportLabel(unittest.TestCase):
+    """The guard's report labels a ProcessPoolExecutor's manager thread, another worker the interpreter wakes at exit.
+    Stood in for by a never-started Thread subclass carrying the manager thread's module and name, so no process is
+    spawned; the report reads only the thread's type and attributes."""
+
+    def test_a_process_pool_manager_thread_is_labelled(self):
+        cf = sys.modules["tests.conftest"]
+        manager = type("_ExecutorManagerThread", (threading.Thread,), {"__module__": "concurrent.futures.process"})(
+            name="plant-manager")
+        report = cf._thread_report(manager, {})
+        self.assertIn("runs concurrent.futures.process._ExecutorManagerThread.run (a ProcessPoolExecutor's manager "
+                      "thread: a pool left without shutdown)", report)
 
 
 @unittest.skipUnless("tests.conftest" in sys.modules, "the guard is tests/conftest.py's (pytest-only)")

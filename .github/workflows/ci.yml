@@ -160,7 +160,8 @@ jobs:
         # 10 s to end, then fails that test's teardown naming each thread still running, with its
         # stack, and the controller prints that error like any test report
         # (tests/test_session_end_thread_guard.py). A serial cell prints the same error and then
-        # still hangs at exit until the cap.
+        # still hangs at exit until the cap, unless every thread named is an idle concurrent.futures
+        # worker, which the interpreter wakes at exit and the guard fails on all the same.
         run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }} --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
