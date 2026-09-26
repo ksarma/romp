@@ -3054,7 +3054,14 @@ print("\x1f".join([r.get("parentIgnored") or "", "existing" if r.get("existing")
             _refused="$(python3 -c 'import json,sys; v=json.loads(sys.argv[1]).get("refused"); print(v if isinstance(v, str) else "")' "$_resp" 2>/dev/null || true)"
             [[ -n "$_refused" ]] && echo "romp new: $_refused" >&2
             _effask="$effort_arg"; [[ -n "$_refused" ]] && _effask=""
-            _envask="${env_args[*]-}$_noenv"
+            # an `envRefused` echo is the kernel's ANSWER to --env / --no-env, in the same shape (review round 2
+            # of the env-pick door, 2026-09-19: the kernel dropped set_env's verdict, so a pick its backend
+            # refused printed here as applied): its own slot, so a refused --env is never confused
+            # with a dropped one below, and never counted as unacknowledged. The sentence names nothing of the
+            # pick (its values can be secrets); the kernel's problem row says why.
+            _envrefused="$(python3 -c 'import json,sys; v=json.loads(sys.argv[1]).get("envRefused"); print(v if isinstance(v, str) else "")' "$_resp" 2>/dev/null || true)"
+            [[ -n "$_envrefused" ]] && echo "romp new: $_envrefused" >&2
+            _envask="${env_args[*]-}$_noenv"; [[ -n "$_envrefused" ]] && _envask=""
             # the tags ask is named for what it was: --in, or the inheritance a parent implies
             _taglab=""; if [[ ${#in_args[@]} -gt 0 ]]; then _taglab="--in"; elif [[ -n "$_parent" ]]; then _taglab="the parent's tags"; fi
             _dropped="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print("/".join(lab for k,lab,a in (("model","--model",sys.argv[2]),("effort","--effort",sys.argv[3]),("env","--env",sys.argv[4]),("tags",sys.argv[6],sys.argv[5])) if a and r.get(k) is None))' "$_resp" "$model_arg" "$_effask" "$_envask" "$_tagask" "$_taglab" 2>/dev/null || echo "--model/--effort/--env/--in")"
