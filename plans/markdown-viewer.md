@@ -8652,7 +8652,7 @@ the viewer as the top page and the Files pane's frame pan), until the reader pan
 round 16 disclosed for an author's element of a page class laid over the figure (extra5-1) and do not close it: an element that a class
 `dropStackClasses` takes off had placed over the figure no longer covers the control, and one that a page class the viewer keeps
 positions over a picture that wears the control rests below the control, whose z-index keeps it on top, so the control opens the
-picture on every gesture while a press on the picture's own body lands on that element and opens nothing, the same inside what was a
+picture on every gesture while a click on the picture's own body lands on that element and opens nothing, the same inside what was a
 stacking context around the picture (its round 17, extra9-2, a shape the context drop and a top-level table's position and left close),
 and one that a kept page class positions over a picture that wears the mark still keeps that picture from opening, since the mark has
 no stacking level of its own and no button for a key to reach (its round 17, fresh-1); a refused key closes the viewer's own text-size

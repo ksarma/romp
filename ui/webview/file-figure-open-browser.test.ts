@@ -3421,7 +3421,7 @@ for (const device of ["phone", "hybrid"] as TapCellDevice[]) for (const surface 
 // disclosed (an author's element laid over a picture kept it from opening) and do not close it: an element that a class the drops take
 // off had placed over the figure no longer covers the control; an element that a page class the viewer keeps positions over a picture
 // that wears the control rests below the control, whose z-index keeps it on top, so the control opens the picture on every gesture,
-// while a press on the picture's own body lands on that element and opens nothing, and inside what was a stacking context around the
+// while a click on the picture's own body lands on that element and opens nothing, and inside what was a stacking context around the
 // picture the same holds, the shape the file review's round 17 found there (extra9-2) closed by the context drop and a top-level table's
 // position and left; and an element a kept page class positions over a small picture that wears the mark still keeps that picture from
 // opening, since the mark has no stacking level of its own and no button for a key to reach (its round 17, fresh-1). The two-way pin
