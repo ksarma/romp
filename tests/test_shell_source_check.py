@@ -15,11 +15,14 @@ them reds; recompute the recorded digest from that commit, never from the fork's
 
     git show f4a57200894ede72a4d4469570490aa64fbf9e94:kernel/kernel.py | sed -n '65382,65384p' | head -c -1 | sha256sum
 
-The rest runs the served landing: the census of every window message listener in its inline scripts, and node
-executing those scripts in a stand-in browser that forges a message from each sender the shell must refuse (a page
-that opened it, a sandboxed frame, a window it does not hold, itself, its own dispatch, a sourceless post with the
-opaque origin) and from a pane, and reads which function the check is when each message is delivered. Synthetic
-only: no session data, a loopback origin.
+NoOtherWriter holds that nothing else names the check: no file in the tree but the kernel, and in the kernel's code
+nothing but the adopted lines and the gates. The rest runs the served landing: the census of every window message
+listener in its inline scripts (addEventListener, and an onmessage handler on the window), and node executing those
+scripts in a stand-in browser, then every callback they leave for later (timers, animation frames, microtasks, load
+listeners), then forging a message from each sender the shell must refuse (a page that opened it, a sandboxed frame,
+a window it does not hold, itself, its own dispatch, a sourceless post with the opaque origin) and from a pane, and
+reading which function the check is when each message is delivered. Synthetic only: no session data, a loopback
+origin.
 """
 import hashlib
 import json
@@ -78,6 +81,16 @@ LISTENERS = {
 
 LISTEN_OPEN = "addEventListener('message',function(e){"
 
+# An onmessage handler assigned to the window: window., self. or globalThis. (or a computed ['onmessage'] member of
+# one of them), or a bare onmessage with no receiver. A plain `=` only: == and === compare.
+_ONMESSAGE = re.compile(r"(?:(?<![\w$.])(?:window|self|globalThis)\s*(?:\.\s*onmessage|\[\s*['\"]onmessage['\"]\s*\])"
+                        r"|(?<![\w$.])onmessage)\s*=(?!=)")
+
+
+def _window_onmessage(text):
+    """Every onmessage handler assigned to the window in `text` (the matches, for the failure message)."""
+    return [m.group(0) for m in _ONMESSAGE.finditer(text)]
+
 
 def _inline_scripts(html):
     """The bodies of the page's inline <script> elements, in page order (a <script src=...> is a bundle, not here)."""
@@ -121,6 +134,75 @@ class AdoptedCheck(unittest.TestCase):
         self.assertLess(html.index("<body"), html.index(REGION_HEAD), "a body script, after the markup it reads")
 
 
+# Where the tree is walked for the census below: every file but the repository's own records and tests (a test names
+# the check to stand it in, a record names it to describe it) and what is built or cached from the sources.
+_CENSUS_SKIP_DIRS = {".git", "node_modules", "dist", "out-tests", "__pycache__", ".pytest_cache", ".venv",
+                     "tests", "docs", "plans", "upstream"}
+_TEST_FILE = re.compile(r"\.test\.(ts|js|mjs|cjs|tsx)$")
+
+
+def _files_naming(name):
+    """Every file under the repository root, outside _CENSUS_SKIP_DIRS and not a test or a Markdown record, whose bytes
+    hold `name`, as paths relative to the root, and the set of files read."""
+    root = os.path.dirname(HERE)
+    hits, read = [], set()
+    needle = name.encode("utf-8")
+    for d, subdirs, files in os.walk(root):
+        subdirs[:] = sorted(x for x in subdirs if x not in _CENSUS_SKIP_DIRS)
+        for f in sorted(files):
+            if f.endswith(".md") or _TEST_FILE.search(f):
+                continue
+            path = os.path.join(d, f)
+            if os.path.islink(path) or not os.path.isfile(path):
+                continue
+            with open(path, "rb") as fh:
+                data = fh.read()
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            read.add(rel)
+            if needle in data:
+                hits.append(rel)
+    return hits, read
+
+
+class NoOtherWriter(unittest.TestCase):
+    """Nothing outside the adopted lines and the thirteen gates names the check: no other code in the kernel (the pane
+    shim, another page's script, a string it serves), and no file anywhere else in the tree (a ui/ bundle the shell or a
+    pane loads, the timeline view). So no code in the tree replaces the shell's check under its name, on its own window
+    or on a pane's window.parent. This census reads text; a replacement the landing makes in any spelling, at load or
+    deferred, is what the executed legs below catch."""
+
+    def test_no_file_but_the_kernel_names_the_check(self):
+        hits, read = _files_naming("__rompPaneSourceOk")
+        # the walk reads the sources a script on romp's origin comes from: the kernel's pages, the bundles built from
+        # ui/webview (the shell's palette, every pane's), the timeline view the kernel injects, the extension's source
+        for must in ("kernel/kernel.py", "ui/webview/palette-main.ts", "ui/webview/render.ts", "ui/webview/gear.js",
+                     "ui/webview/frame-listener.ts", "ui/romp-timeline-view.js", "vscode-extension/src/extension.ts"):
+            self.assertIn(must, read, "the walk read " + must)
+        self.assertGreater(len([f for f in read if f.startswith("ui/")]), 100, "the walk read ui/ (%d files)" % len(read))
+        self.assertEqual(hits, ["kernel/kernel.py"], "a file outside the kernel names the shell's check")
+
+    def test_the_kernel_names_it_only_in_the_adopted_lines_and_the_gates(self):
+        with open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8") as f:
+            src = f.read()
+        # the Python comment lines that describe it aside, every mention is in the served JavaScript
+        code = "\n".join(l for l in src.split("\n") if not l.lstrip().startswith("#"))
+        self.assertEqual(code.count(REGION_HEAD), 1, "the adopted definition, once")
+        self.assertEqual(code.count(GATE), len(LISTENERS), "each gate, once")
+        self.assertEqual(code.count("__rompPaneSourceOk"), 1 + 2 * len(LISTENERS),
+                         "the name appears in kernel.py's code only in the adopted definition and the gates")
+
+    def test_no_page_but_the_shell_carries_it(self):
+        pages = {"/chat": km._chat_page(), "/feed": km._feed_page(), "/fleet": km._fleet_page(),
+                 "/waiting": km._waiting_page(), "/files": km._files_page(), "/settings": km._settings_page(),
+                 "/timeline": km._timeline_page(), "the sign-in page": km._TOKEN_LOGIN_HTML,
+                 "the too-large page": km._too_large_page("too large", "a.pdf", {})}
+        for name, page in pages.items():
+            with self.subTest(page=name):
+                self.assertIn("<", page, "the page was built")
+                self.assertNotIn("__rompPaneSourceOk", page)
+        self.assertEqual(km._landing().count("__rompPaneSourceOk"), 1 + 2 * len(LISTENERS))
+
+
 class ShellListenerCensus(unittest.TestCase):
     """Every window message listener in the served shell reads the check fail-closed as its first statement; the
     service worker's channel, which no window can post on, is the one listener without it."""
@@ -143,6 +225,20 @@ class ShellListenerCensus(unittest.TestCase):
         self.assertEqual(len(every), len(LISTENERS) + 1, "the thirteen window listeners and the service worker's")
         self.assertEqual(self.html.count("swc.addEventListener('message',function(ev){"), 1,
                          "the service worker's own channel: exempt, a window cannot post on it")
+        # nor as an onmessage handler on the window, by any name the page reaches it by: window.onmessage=,
+        # self.onmessage=, globalThis['onmessage']=, a bare onmessage=. A socket's (ws.onmessage=, d.onmessage=) and a
+        # MessageChannel port's are no window listener, and no other page can post on them
+        self.assertEqual(_window_onmessage(self.html), [], "an onmessage handler on the shell's window")
+
+    def test_the_onmessage_census_reads_each_spelling(self):
+        for src in ("window.onmessage=function(e){}", "self.onmessage = f", "globalThis['onmessage']=f", "window [\"onmessage\"] =f",
+                    ";onmessage=function(e){}", "\n  onmessage = f"):
+            with self.subTest(src=src):
+                self.assertEqual(len(_window_onmessage(src)), 1)
+        for src in ("ws.onmessage=function(ev){}", "d.onopen=d.onmessage=d.onclose=null", "ch.port1.onmessage=flush",
+                    "if(window.onmessage===f)go()", "var x_onmessage=1"):
+            with self.subTest(src=src):
+                self.assertEqual(_window_onmessage(src), [])
 
     def test_each_named_listener_opens_with_the_check(self):
         for name, phrase in LISTENERS.items():
@@ -196,9 +292,17 @@ function frame(id, w) { return stubbed({ id, contentWindow: w, getAttribute(n) {
                                          addEventListener() {}, removeEventListener() {} }); }
 const FRAMES = [frame('f-chat', CHAT), frame('f-files', FILES), frame('f-url', SANDBOXED), frame('f-x', XFRAME)];
 const BYID = {}; FRAMES.forEach((f) => { BYID[f.id] = f; });
+// what the page leaves for later: timer, animation-frame, idle and microtask callbacks, and the listeners for the page's
+// load events (window's and document's) and an on<load event> handler. All run after the scripts and before any
+// message is delivered, so a write the page defers is in place when the listeners are tested
+const LATE = [];
+const LATE_EVENTS = new Set(['load', 'DOMContentLoaded', 'pageshow', 'readystatechange']);
+function later(f) { if (typeof f === 'function') LATE.push(f); return LATE.length; }
 const document = stubbed({
   querySelectorAll(sel) { return sel === 'iframe' ? FRAMES.slice() : []; },
   getElementById(id) { return BYID[id] || STUB; },
+  addEventListener(type, f) { if (LATE_EVENTS.has(type)) later(f); },
+  removeEventListener() {},
 });
 const LISTENERS = [];
 const target = {};
@@ -208,6 +312,14 @@ const target = {};
 // in the order first heard; an accessor's descriptor is kept as itself
 const CHECK = '__rompPaneSourceOk', ASSIGNED = [];
 function heard(v) { if (!ASSIGNED.includes(v)) ASSIGNED.push(v); }
+// every value the scripts assign to the window's onmessage, however spelled: an onmessage handler is a window message
+// listener addEventListener never sees
+const ONMESSAGE = [];
+function onGlobalWrite(k, v) {
+  if (k === CHECK) heard(v);
+  if (k === 'onmessage') ONMESSAGE.push(textOf(v));
+  if ((k === 'onload' || k === 'onpageshow') && typeof v === 'function') later(v);
+}
 function textOf(v) { return typeof v === 'function' ? Function.prototype.toString.call(v) : typeof v; }
 const BUILTINS = new Set(['Object', 'Array', 'JSON', 'Math', 'Date', 'String', 'Number', 'Boolean', 'RegExp', 'Error',
   'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Symbol', 'Promise',
@@ -216,8 +328,8 @@ const BUILTINS = new Set(['Object', 'Array', 'JSON', 'Math', 'Date', 'String', '
 const G = new Proxy(target, {
   has() { return true; },
   get(t, k) { if (k in t) return t[k]; if (typeof k === 'symbol') return undefined; if (BUILTINS.has(k)) return globalThis[k]; return STUB; },
-  set(t, k, v) { if (k === CHECK) heard(v); t[k] = v; return true; },
-  defineProperty(t, k, d) { if (k === CHECK) heard('value' in d ? d.value : d); Object.defineProperty(t, k, d); return true; },
+  set(t, k, v) { onGlobalWrite(k, v); t[k] = v; return true; },
+  defineProperty(t, k, d) { onGlobalWrite(k, 'value' in d ? d.value : d); Object.defineProperty(t, k, d); return true; },
   getOwnPropertyDescriptor(t, k) { return Object.getOwnPropertyDescriptor(t, k); },
   deleteProperty(t, k) { delete t[k]; return true; },
 });
@@ -227,11 +339,13 @@ Object.assign(target, {
                       pathname: '/', search: '', hash: '', href: ORIGIN + '/', reload() {}, replace() {}, assign() {} }),
   localStorage: stubbed({ getItem() { return null; }, setItem() {}, removeItem() {} }),
   sessionStorage: stubbed({ getItem() { return null; }, setItem() {}, removeItem() {} }),
-  setTimeout() { return 0; }, clearTimeout() {}, setInterval() { return 0; }, clearInterval() {},
-  requestAnimationFrame() { return 0; }, cancelAnimationFrame() {},
+  setTimeout: later, clearTimeout() {}, setInterval: later, clearInterval() {},
+  requestAnimationFrame: later, cancelAnimationFrame() {}, requestIdleCallback: later, cancelIdleCallback() {},
+  queueMicrotask: later,
   innerWidth: 1280, innerHeight: 800,
   addEventListener(type, f) {
     if (type === 'message') LISTENERS.push({ f, src: String(f), checkDefined: typeof target.__rompPaneSourceOk === 'function' });
+    else if (LATE_EVENTS.has(type)) later(f);
   },
   removeEventListener() {},
 });
@@ -241,7 +355,27 @@ SCRIPTS.forEach((body, n) => {
   try { vm.runInContext(body, ctx, { filename: 'landing-script-' + n + '.js', timeout: 5000 }); }
   catch (e) { ERRORS.push([n, String(e && e.message || e).slice(0, 200)]); }
 });
-// the check the listeners will read, as the scripts left it
+(async () => {
+// then what the scripts left for later, in rounds (a callback may leave more), each callback once, every one bounded:
+// the scripts' promise reactions first (a macrotask turn drains the microtask queue the context shares with this one),
+// then the queued callbacks, each handed a stand-in load event
+const LATE_RUN = { queued: 0, ran: 0, errors: 0, rounds: 0 };
+for (let round = 0; round < 6 && (round === 0 || LATE.length); round++) {
+  await new Promise((r) => setImmediate(r));
+  const batch = LATE.splice(0, 5000);
+  if (!batch.length) break;
+  LATE_RUN.rounds++;
+  LATE_RUN.queued += batch.length;
+  for (const f of batch) {
+    target.__b5late = f;
+    LATE_RUN.ran++;
+    try { vm.runInContext("__b5late.call(window,{type:'load',persisted:false,timeStamp:0})", ctx, { timeout: 2000 }); }
+    catch (x) { LATE_RUN.errors++; }
+  }
+}
+await new Promise((r) => setImmediate(r));
+LATE_RUN.left = LATE.length;
+// the check the listeners will read, as the scripts and everything they left for later left it
 const AFTER_BOOT = textOf(target.__rompPaneSourceOk);
 // the senders: [name, source, origin]
 const SENDERS = {
@@ -267,7 +401,7 @@ function deliver(l, source, origin, data) {
 }
 const MODE = process.env.ROMP_TEST_MODE || 'reads';
 const out = { errors: ERRORS, listeners: LISTENERS.map((l) => ({ src: l.src, checkDefined: l.checkDefined })),
-              assigns: ASSIGNED.map(textOf), afterBoot: AFTER_BOOT };
+              assigns: ASSIGNED.map(textOf), afterBoot: AFTER_BOOT, late: LATE_RUN, onmessage: ONMESSAGE };
 if (MODE === 'reads' || MODE === 'nocheck') {
   // the check missing (held as undefined: a name the context lacks answers with a stub): fail-closed hears nothing
   if (MODE === 'nocheck') target.__rompPaneSourceOk = undefined;
@@ -298,6 +432,7 @@ if (MODE === 'reads' || MODE === 'nocheck') {
 }
 out.inEffect = [...IN_EFFECT];
 process.stdout.write('\n' + JSON.stringify(out));
+})().catch((x) => { process.stderr.write(String(x && x.stack || x)); process.exit(1); });
 """
 
 
@@ -355,7 +490,8 @@ class ShellListenersExecuted(unittest.TestCase):
                 self.assertGreater(reads["pane"], 0, "%s still hears its panes" % name)
 
     def test_the_check_every_listener_reads_is_the_adopted_function(self):
-        # whatever spelling a second assignment used (window['...']=, a bare global, a defineProperty), it lands on the
+        # whatever spelling a second assignment used (window['...']=, a bare global, a defineProperty), and whenever it
+        # ran (at load, or from a timer, a microtask or a load listener the scripts left for later), it lands on the
         # page's global: the scripts assign the check once, the adopted function, and it is the function in effect at
         # every delivery, so a later wrapper that widens it for some senders cannot stand in for it
         html = km._landing()
@@ -366,6 +502,18 @@ class ShellListenersExecuted(unittest.TestCase):
         self.assertEqual(self.run_["assigns"], [fn], "the scripts assign the check once, and assign the adopted function")
         self.assertEqual(self.run_["afterBoot"], fn, "after the scripts run, the check is the adopted function")
         self.assertEqual(self.run_["inEffect"], [fn], "at every delivery, the check is the adopted function")
+
+    def test_the_run_includes_what_the_page_leaves_for_later(self):
+        # the timers, animation frames, microtasks and load listeners the scripts queue all ran before the first
+        # delivery, so a write the page defers to one of them is what the check tests above read
+        late = self.run_["late"]
+        self.assertGreater(late["ran"], 0, "the scripts queue callbacks for later, and the harness ran them: %r" % late)
+        self.assertEqual(late["left"], 0, "every callback queued, one queued by another included, ran: %r" % late)
+
+    def test_no_script_assigns_an_onmessage_handler_to_the_window(self):
+        # an onmessage handler is a window message listener that addEventListener never sees; however a script spells
+        # the write (window.onmessage=, a computed member, a bare global, a defineProperty), it lands on the global
+        self.assertEqual(self.run_["onmessage"], [], "an onmessage handler on the shell's window")
 
     def test_without_the_check_no_listener_reads_anything(self):
         run = _run_landing("nocheck")
