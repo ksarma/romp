@@ -194,11 +194,13 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // silent skip and never a false pass. The derivation reads the text with the hook's lexer (the segments, their words after quote removal,
 // their command and process substitutions and here-documents), and per segment: the reserved words and the words a shell reads as its own
 // are no program (SHELL_OWN); assignments are stepped past; a wrapper (WRAPPERS: exec, command, env, nice, timeout, xargs and the rest) is
-// stepped past with its options and operands, itself a program where it is one; the word after them is the program. The texts a shell runs
+// stepped past with its options and operands, itself a program where it is one; the word after them is the program (an assignment whose
+// word the lexer does not hold as literal or holds a blank, and a name or a path the readings below set aside, stop the walk instead: THE
+// NON-LITERAL WORDS and THE STATED LIMIT, in the class of what the derivation does not read). The texts a shell runs
 // are read the same way, to a depth of eight: a shell's operands that hold a blank or an operator (its -c text, however its options are
 // spelled), the here-documents and here-strings it is fed, what echo, printf or cat pipe into it or print in a process substitution it reads,
-// and the texts eval, trap, emulate -c, alias (a global alias's value aside, and every value of an alias command one of whose words the
-// lexer does not hold as literal), env -S, flock -c, su -c, find -exec and capsh's `--` run. The
+// and the texts eval, trap, emulate -c, alias (a global alias's value aside), env -S, flock -c, su -c, find -exec and capsh's `--` run, each
+// as far as THE NON-LITERAL WORDS allow. The
 // rows here bind and make their own programs on purpose, so three readings keep the gate to programs this machine is asked for: a name the
 // command binds (a function, an alias, a path a hash binds it to, zsh's `=name` and its function table) is no program; a name the text
 // rebinds is no program, and since the fifty-sixth commit a text that rebinds one name no longer sets aside every other (THE REBOUND NAMES,
@@ -206,8 +208,14 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // command or alias table entry, the builtins of a zsh module it loads (a table measured with `zmodload -lF`), and a name it spells as a file
 // under a literal directory of a PATH it sets; and a path the text also spells whole elsewhere, as a word of its own (a copy of cp it makes,
 // or links, before it runs it; since the fifty-seventh commit a longer path it starts, `./tool.bak` for `./tool`, is no such spelling), is no
-// program of this machine's. The walk stops at each name these readings set aside, and at each such path that names a wrapper, and does not
-// step past it, so what that name or path runs is not read (below). At any other such path the walk reads on as at the program the path
+// program of this machine's (since the fifty-ninth commit, "elsewhere" is counted: the text spells the path whole more often than a first
+// walk, which steps past every wrapper's path, reads it as the program a segment runs; THE WRAPPER'S PATH, at programsInvoked). The walk stops at
+// each name these readings set aside, and at each such path that names a wrapper (on a second walk, run only where the first sets such a
+// path aside), and does not step past it, so what that name or path runs is not read (below); a wrapper's path the text only runs, however
+// often, is stepped past (the fifty-ninth commit, on the reviewer's re-verifier: the stop asked whether the text spelled a wrapper's path
+// twice, which counted its program words, so a missing program behind a wrapper's path the text runs twice, `/usr/bin/env
+// q780-no-such-program x; /usr/bin/env q780-no-such-program y`, or runs again in a pipe, a substitution or a -c text, was measured). At any
+// other such path the walk reads on as at the program the path
 // names, so a shell's texts and find's -exec are read there and only the path is set aside (the fifty-eighth commit cut this text's claim
 // that the walk stops at every path these readings set aside, on the reviewer's verifier: a copy of bash the text makes and then runs with
 // a -c text has that text read). Where the text rebinds a
@@ -219,18 +227,26 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // word `alias` defines aliases, and the words after its name bind as alias's do; one whose value runs alias with words of its own is no
 // such level); a zsh module outside the table; a handler for every name not found; and a global alias's name where a command stands. Where the rows run a program that was absent on purpose where their evidence
 // was measured, THE RECORDED ABSENCES below say so per row, and the gate turns for it. What the derivation does not read, stated as its
-// class: a program word that is an expansion (`$z -c ..`, `"$(command -v zsh)"`, a tilde) or holds a blank; what a name the text binds or
+// class: a program word that is an expansion (`$z -c ..`, `"$(command -v zsh)"`, a tilde) or holds a blank; THE NON-LITERAL WORDS, where
+// a word the lexer does not hold as literal is, by the lexer's rule, one carrying an expansion the hook cannot resolve (`$x`) or an
+// unquoted glob character (`[`): every text an alias, eval, trap, emulate -c or mapfile -C (readarray -C) command runs, and the text echo
+// or printf prints into a shell, where any one of that command's operands is such a word, whichever it is (the text itself, a trap's signal
+// word, a word beside a literal value); a shell's operand that is such a word (its -c text, capsh's `--` text among them), its other
+// operands still read; and what follows an assignment whose word is such a word or holds a blank (`X=$y q780-no-such-program ..`), since the
+// walk stops at that word (the fifty-ninth commit, on the reviewer's re-verifier, states this rule once, where the fifty-eighth named the
+// alias road alone: THE NON-LITERAL WORDS' test pins a witness of each road as measured and its literal control as NOT RUN, and the alias
+// witnesses, `alias c="q780-no-such-program $x"`, `alias [=q780-no-such-program` and a literal value beside such a word, are the
+// fifty-eighth commit's); what a name the text binds or
 // rebinds runs, where that is a hashed path, a table entry's value or the value of an alias that a name defining aliases defines; the
-// command a wrapper or a shell runs where the text binds or rebinds that wrapper's or shell's name, or makes the wrapper's path it runs,
-// since the walk does not step past such a name or path (the fifty-seventh commit, on the reviewer's verifier: THE STATED LIMIT's
+// command a wrapper or a shell runs where the text binds or rebinds that wrapper's or shell's name, or also spells whole elsewhere the
+// wrapper's path it runs (the path reading above: a copy it makes, and an operand, an assignment's value or a here-document line that
+// spells the path, `ls /usr/bin/env` among them), since the walk does not step past such a name or path (the fifty-seventh commit, on the reviewer's verifier: THE STATED LIMIT's
 // witnesses, `hash -p /usr/bin/env env`, `alias env='env '`, `aliases[env]=env`, a function env and a copy of env made as ../scratch/env,
 // each then running env q780-no-such-program, are measured, and since the fifty-eighth so are `hash -p /usr/bin/bash bash`, `alias
 // bash=bash`, a function bash and a bash the text copies under a PATH it sets, each then running bash -c 'q780-no-such-program x'; a
-// shell's or find's path the text makes is read on, above); a global alias's value, which runs wherever its name stands; every value of an
-// alias command one of whose words the lexer does not hold as literal, which by the lexer's rule is a word carrying an expansion the hook
-// cannot resolve (`$x`) or an unquoted glob character (`[`) (the fifty-eighth commit, on the reviewer's verifier: THE STATED LIMIT's alias
-// road, where `alias c="q780-no-such-program $x"`, `alias [=q780-no-such-program` and a literal value beside such a word, each then running
-// the alias's name, are measured); and a program a shell reaches by a road the list above does not follow (a script file's own lines, a `(( ))` or `$((` body read as
+// shell's or find's path the text makes is read on, above; and since the fifty-ninth a copy of env the text makes and runs twice is measured
+// too, while env's path run twice with nothing made is stepped past); a global alias's value, which runs wherever its name stands; and a
+// program a shell reaches by a road the list above does not follow (a script file's own lines, a `(( ))` or `$((` body read as
 // commands, an array's elements, a pattern a `case` or zsh's `for NAME (..)` holds). A miss there runs the leg. Where the leg asserts that
 // a shell writes, the absent program then reds it by name on that machine (no shell writes), never a false pass; where the leg asserts
 // that no shell writes, or an absence, the absent program gives the very result the leg asserts, and the leg passes without having run it
@@ -321,10 +337,9 @@ const definedNames = (text) => new Set([
 // or shell's name runs is not read (the fifty-seventh commit cut this text's claim that every other name is read, on the reviewer's
 // verifier: `aliases[env]=env`, then env running a missing program, is measured; THE STATED LIMIT, in the header's class of what the
 // derivation does not read). Every other name the walk reaches where a program stands is read as a program, and the walk reads an alias's
-// value as the text that alias runs, but for a global alias's (below) and for every value of an alias command one of whose words the lexer
-// does not hold as literal (the fifty-eighth commit cut this text's claim for every value, on the reviewer's verifier: `alias
-// c="q780-no-such-program $x"`, then c, is measured, since the lexer does not hold that word as literal; THE STATED LIMIT's alias road, in
-// the header's class of what the derivation does not read). Four readings go exactly as far as the
+// value as the text that alias runs, but for a global alias's (below) and as far as THE NON-LITERAL WORDS, in the header's class of what the
+// derivation does not read, allow (the fifty-eighth commit cut this text's claim for every value, on the reviewer's verifier: `alias
+// c="q780-no-such-program $x"`, then c, is measured). Four readings go exactly as far as the
 // ruling at 01:00Z and no further:
 //   an alias whose name is one variable's expansion (`alias $n=cp`) binds that variable's value where the variable has exactly one write before
 //   the alias, the text naming the variable nowhere else before the alias and naming no IFS, the write and the alias each standing at top
@@ -515,13 +530,16 @@ const reboundNamesOf = (text) => {
 const reboundBy = (r, text, word) => r.names.has(word) || [...r.suffixes].some((x) => word.endsWith(`.${x}`)) || r.dirs.some((d) => new RegExp(`(?:^|[^\\w./-])${escapeRe(d)}/${escapeRe(word)}(?![\\w./-])`).test(text));
 // every program the walk reaches where a program stands in the command text, in the order its segments run them (wrappers included), each
 // once: by name unless the text binds or rebinds that name (definedNames, THE REBOUND NAMES), and by path unless the text spells that path
-// whole elsewhere too (a word of its own, as an operand or a redirection's target: a file the text makes, copies or links before it runs it;
-// a longer path it starts or ends is none, since the fifty-seventh commit). The walk stops at a name so set aside, and at a path so set
-// aside that names a wrapper, so what it runs is not read (THE STATED LIMIT, in the header); at any other path so set aside it reads on as
-// at the program the path names (a shell's texts, find's -exec), and the filter at its end sets the path aside (the fifty-eighth commit cut
-// this comment's claim that the walk stops at every path so set aside). `unknown`, when given, receives each rebinding whose
+// whole more often than the walk reads it as the program a segment runs, so elsewhere too (a word of its own, as an operand or a
+// redirection's target: a file the text makes, copies or links before it runs it; a longer path it starts or ends is none, since the
+// fifty-seventh commit), the reads counted on a first walk that steps past every wrapper's path (THE WRAPPER'S PATH, below). The walk stops
+// at a name so set aside, and at a path so set aside that names a wrapper (on a second walk, run only where the first sets such a path
+// aside), so what it runs is not read (THE STATED LIMIT, in the header); a wrapper's path the text only runs, however often, is stepped past
+// (the fifty-ninth commit: the stop counted the path's own program words, so a path run twice stopped it); at any other path so set aside it
+// reads on as at the program the path names (a shell's texts, find's -exec), and the filter at its end sets the path aside (the fifty-eighth
+// commit cut this comment's claim that the walk stops at every path so set aside). `unknown`, when given, receives each rebinding whose
 // names the reader cannot know (THE REBOUND NAMES' `unknowable`, and a global alias's name standing where a command stands), for namedPresent's
-// NOT RUN. `collect`, when given, receives every PROGRAM WORD the walk reaches, read or not, for THE LOOKUP RECORD's
+// NOT RUN. `collect`, when given, receives every PROGRAM WORD the walk whose result stands reaches, read or not, for THE LOOKUP RECORD's
 // rule 2 (below, at THE CLEARED ENVIRONMENT's legs): `{ word, read, name, conditional }`. `read` marks a program the walk reads (by name or
 // by path, returned below unless a filter above sets it aside); an unread one is a program word the walk stops at (an expansion or a tilde in
 // the program's place, a word holding a blank, zsh's `=name`, a name the text rebinds or a global alias's name, the first word after an assignment the
@@ -532,11 +550,23 @@ const reboundBy = (r, text, word) => r.names.has(word) || [...r.suffixes].some((
 // share its mark. A subshell's parenthesis is not read, so a command inside `a && ( .. )` after its first is marked unconditional: the
 // stricter side
 const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
-  const found = [];
   const defined = definedNames(cmd);
   const rebinding = reboundNamesOf(cmd);
-  const cannot = (why) => { if (unknown && !unknown.includes(why)) unknown.push(why); };
-  rebinding.unknowable.forEach(cannot);
+  const tell = (why) => { if (unknown && !unknown.includes(why)) unknown.push(why); };
+  rebinding.unknowable.forEach(tell);
+  // THE WRAPPER'S PATH (the fifty-ninth commit; the reviewer's re-verifier on the fifty-eighth, under the condition at 00:29Z): the state of
+  // the walk under way. A path is set aside where the text spells it whole more often than a FIRST walk, which steps past every wrapper's
+  // path, reads it as the program a segment runs (`made`, below); where one such path names a wrapper, a second walk stops there (`stops`),
+  // so the stop and the filter at the end ask the same question on the same counts. The stop asked instead whether the text spelled a
+  // wrapper's path twice, which counted the path's own program words: `/usr/bin/env q780-no-such-program x; /usr/bin/env ..` stopped at
+  // both runs, and a missing program behind a wrapper's path the text runs twice, or runs again in a pipe, a substitution or a -c text, was
+  // measured. `collect` and `unknown` take the records of the walk whose result stands, never the first walk's where a second one runs.
+  let found = [];
+  let asProgram = new Map();   // how often the walk read each path as the program a segment runs
+  let stops = null;   // the wrapper paths the walk stops at: none on the first walk
+  let records = [];   // collect's records of the walk under way
+  let cannotKnow = [];   // unknown's, of the walk under way (a global alias's name where a command stands)
+  const cannot = (why) => { if (!cannotKnow.includes(why)) cannotKnow.push(why); };
   // how often the text spells a path WHOLE (the fifty-seventh commit; the reviewer's verifier on the fifty-sixth, which found a count of every
   // substring setting `./tool` aside beside a made `./tool.bak`): a spelling ends a shell word on each side (the text's edge, a blank, an
   // operator, a quote or a backtick, and before it an assignment's `=` too), so a longer path it starts or ends (`./tool.bak`, `x./tool`) is none
@@ -545,8 +575,7 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
     for (let i = cmd.indexOf(p); i >= 0; i = cmd.indexOf(p, i + 1)) if (/^(?:|[\s;&|<>()'"`=])$/.test(i > 0 ? cmd[i - 1] : '') && /^(?:|[\s;&|<>()'"`])$/.test(cmd[i + p.length] || '')) n++;
     return n;
   };
-  const asProgram = new Map();   // how often the walk read each path as the program a segment runs
-  const note = (word, cond) => { asProgram.set(word, (asProgram.get(word) || 0) + 1); if (!found.includes(word)) found.push(word); if (collect) collect.push({ word, read: true, name: word, operands: null, conditional: cond }); };
+  const note = (word, cond) => { asProgram.set(word, (asProgram.get(word) || 0) + 1); if (!found.includes(word)) found.push(word); if (collect) records.push({ word, read: true, name: word, operands: null, conditional: cond }); };
   // a program word the walk does not read, at `words[i]`: the first word from there that is no assignment, its literal name, and the words
   // after it where every one is literal (the fifty-fourth commit: THE LOOKUP RECORD's rule 2 attributes a word with no name by them)
   const unread = (words, i, cond, named) => {
@@ -557,7 +586,7 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
     const w = words[j];
     const ops = words.slice(j + 1);
     const literal = (x) => x.literal && !x.text.includes('\u0000') && !/^~/.test(x.raw || '');
-    collect.push({ word: w.raw || w.text, read: false, name: (named || j > i) && literal(w) && !/\s/.test(w.text) ? w.text : null, operands: ops.every(literal) ? ops.map((o) => o.text) : null, conditional: cond });
+    records.push({ word: w.raw || w.text, read: false, name: (named || j > i) && literal(w) && !/\s/.test(w.text) ? w.text : null, operands: ops.every(literal) ? ops.map((o) => o.text) : null, conditional: cond });
   };
   const lexOf = (text) => { try { return lex(text); } catch (e) { throw new Error(`THE INVOKED PROGRAM: the command text could not be read (${e.message}): ${String(text).slice(0, 200)}`); } };
   // the text a segment of echo, printf or cat prints, as a shell it feeds reads it: echo's literal operands joined by a blank (its leading
@@ -625,8 +654,8 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
     for (let steps = 0; i < words.length && steps < 32; steps++) {
       const w = words[i];
       const word = w.text;
-      if (!w.literal || word === '' || word.includes('\u0000') || /^~/.test(w.raw || '')) { unread(words, i, cond, false); return; }   // an expansion in the program's place (a tilde's HOME among them): not derived
-      if (/\s/.test(word)) { unread(words, i, cond, false); return; }   // a command word holding a blank (`"$(echo 'cp a b')"`): a name no machine's PATH or filesystem ships
+      if (!w.literal || word === '' || word.includes('\u0000') || /^~/.test(w.raw || '')) { unread(words, i, cond, false); return; }   // an expansion in the program's place (a tilde's HOME among them), or in an assignment's word (THE NON-LITERAL WORDS): not derived
+      if (/\s/.test(word)) { unread(words, i, cond, false); return; }   // a command word holding a blank (`"$(echo 'cp a b')"`): a name no machine's PATH or filesystem ships; an assignment's word holding one stops the walk too (THE NON-LITERAL WORDS)
       if (ASSIGNMENT.test(word)) { i++; continue; }
       if (['!', '{', '}', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'end'].includes(word)) { i++; continue; }
       if (['for', 'foreach', 'select', 'case', '[[', '((', 'function'].includes(word)) return;
@@ -634,7 +663,7 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
       if (defined.has(word) || word.startsWith('=')) { if (word.startsWith('=')) unread(words, i, cond, false); return; }   // a name the command binds, or zsh's `=name` (an expansion to a path)
       if (!word.includes('/') && reboundBy(rebinding, cmd, word)) { unread(words, i, cond, true); return; }   // a name the text rebinds (THE REBOUND NAMES): it resolves the name itself
       const base = word.slice(word.lastIndexOf('/') + 1);
-      if (word.includes('/') && Object.hasOwn(WRAPPERS, base) && mentions(word) > 1) { note(word, cond); return; }   // a path the text also spells whole (a copy it makes under a wrapper's name): no wrapper of this machine's
+      if (stops && word.includes('/') && Object.hasOwn(WRAPPERS, base) && stops.has(word)) { note(word, cond); return; }   // a wrapper's path the filter sets aside (THE WRAPPER'S PATH: a copy the text makes under a wrapper's name among them): no wrapper of this machine's
       const spec = Object.hasOwn(WRAPPERS, base) ? WRAPPERS[base] : null;
       if (spec) {
         if (!spec.own || word.includes('/')) note(word, cond);
@@ -682,7 +711,7 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
     }
   };
   const readOwn = (word, rest, depth, cond) => {
-    if (rest.some((r) => !r.literal)) return;   // a text holding an expansion is not read
+    if (rest.some((r) => !r.literal)) return;   // no text of a command one of whose operands the lexer does not hold as literal is read (THE NON-LITERAL WORDS, in the header)
     const lits = rest.map((r) => r.text);
     if (word === 'eval') readText(lits.join(' '), depth + 1, cond);
     else if (word === 'trap') { const ops = lits.filter((t) => t !== '--'); if (ops.length >= 2 && !/^-/.test(ops[0])) readText(ops[0], depth + 1, true); }
@@ -700,8 +729,21 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
     }
     else if (word === 'mapfile' || word === 'readarray') { const c = lits.indexOf('-C'); if (c >= 0 && lits[c + 1] !== undefined) readText(lits[c + 1], depth + 1, true); }
   };
-  readText(cmd, 0);
-  return found.filter((p) => !p.includes('/') || mentions(p) <= (asProgram.get(p) || 0));
+  // one walk over the whole text, stopping at the wrapper paths in `at`; it returns the paths the text spells whole more often than it read them
+  const walk = (at) => {
+    found = [];
+    asProgram = new Map();
+    stops = at;
+    records = [];
+    cannotKnow = [];
+    readText(cmd, 0);
+    return new Set(found.filter((p) => p.includes('/') && mentions(p) > (asProgram.get(p) || 0)));
+  };
+  const made = walk(null);
+  if ([...made].some((p) => Object.hasOwn(WRAPPERS, p.slice(p.lastIndexOf('/') + 1)))) walk(made);
+  if (collect) for (const r of records) collect.push(r);
+  cannotKnow.forEach(tell);
+  return found.filter((p) => !made.has(p));
 };
 // every command a leg gated with the default table, by its text: the row id the caller named (the population THE INVOKED PROGRAM's pin reads)
 const GATED_ROWS = new Map();
@@ -16898,4 +16940,91 @@ test("round 7 of fork PR #780 review, fifty-eighth commit, THE STATED LIMIT's al
   ];
   const got = cases.map(([label, cmd]) => [label, ...gateLines(cmd)]);
   assert.deepEqual(got, cases.map(([label, , ok, lines]) => [label, ok, [...lines].sort()]), 'each alias witness of the stated limit is measured, and each control is NOT RUN');
+});
+
+// ── round 7 of fork PR #780 review, fifty-ninth commit (2026-09-26): THE WRAPPER'S PATH and THE NON-LITERAL WORDS ──────────────────────────
+//
+// The reviewer's re-verifier on the fifty-eighth, under the loop stop at 17:18Z and the condition at 00:29Z. The walk's stop at a wrapper's
+// path asked whether the text spelled that path whole twice, a count that took in the path's own program words, while the filter at the end
+// sets a path aside only where the text spells it more often than the walk reads it as a program. So a wrapper's path the text runs twice,
+// or runs again in a pipe, a substitution or a -c text, stopped the walk though the text made nothing, and a truly missing program behind it
+// was measured. The stop now asks the filter's question, on the counts of a first walk that steps past every wrapper's path (THE WRAPPER'S
+// PATH, at programsInvoked). And the rule that reads no text of a command one of whose words the lexer does not hold as literal was stated
+// for alias alone, where it holds for eval, trap, emulate -c, mapfile -C and what echo or printf print into a shell, for a shell's operand,
+// and for an assignment's word, where the walk stops: the header states it once (THE NON-LITERAL WORDS), the claim cut, the check not
+// widened, and its witnesses are pinned below as measured.
+test("round 7 of fork PR #780 review, fifty-ninth commit, THE WRAPPER'S PATH (the reviewer's re-verifier on the fifty-eighth; the condition at 00:29Z): the walk stops at a wrapper's path only where the filter sets that path aside, the text spelling it whole more often than a first walk reads it as a program, so a truly missing program behind a wrapper's path the text runs twice, or runs again in a pipe, a substitution, a -c text or behind a made wrapper's path, is NOT RUN by name, through env, nice, timeout, xargs, sudo and env -S alike, and a missing path the text runs behind a made wrapper's path and again bare is NOT RUN, the filter counting on the first walk; a wrapper's path the text makes, run once or twice, or spells as another command's operand, still stops the walk and is measured (THE STATED LIMIT); and the two committed rows that run a made wrapper's path derive as before", () => {
+  const RUN = '../base/report.md report.md';
+  const M = Q780_MISSING;
+  const MISS = `NOT RUN: real ${M} is not on this runner`;
+  const dir = outsideDir();
+  try {
+    const cwd = path.join(dir, 'project', 'cwd');   // an empty world: nothing relative exists under it or its parent
+    fs.mkdirSync(cwd, { recursive: true });
+    // [label, command, the absolute wrapper paths it runs (a runner without one gets that path's line too)]
+    const stepped = [
+      ['env run twice, nothing made', `/usr/bin/env ${M} x; /usr/bin/env ${M} y`, ['/usr/bin/env']],
+      ['env runs the missing program, then true', `/usr/bin/env ${M} ${RUN}\n/usr/bin/env true`, ['/usr/bin/env']],
+      ['nice runs it, then true', `/usr/bin/nice ${M} ${RUN}; /usr/bin/nice true`, ['/usr/bin/nice']],
+      ['timeout runs it, piped to timeout again', `/usr/bin/timeout 5 ${M} ${RUN} | /usr/bin/timeout 5 cat`, ['/usr/bin/timeout']],
+      ['xargs runs it, then xargs again', `echo a | /usr/bin/xargs ${M}; echo b | /usr/bin/xargs true`, ['/usr/bin/xargs']],
+      ['env runs it, the path again inside a substitution', `/usr/bin/env ${M} "$(/usr/bin/env true)"`, ['/usr/bin/env']],
+      ['env twice inside one bash -c text', `bash -c '/usr/bin/env ${M} x; /usr/bin/env true'`, ['/usr/bin/env']],
+      ["env -S's text, then env again", `/usr/bin/env -S '${M} x'; /usr/bin/env true`, ['/usr/bin/env']],
+      ['sudo runs it, then sudo -k', `/usr/bin/sudo ${M} ${RUN}; /usr/bin/sudo -k`, ['/usr/bin/sudo']],
+      ["nice run behind a made env's path, then bare", `cp /usr/bin/env ../scratch/env; ../scratch/env /usr/bin/nice x; /usr/bin/nice ${M} ${RUN}`, ['/usr/bin/nice']],
+    ];
+    const kept = [
+      ['a copy of env the text makes, run twice', `cp /usr/bin/env ../scratch/env; ../scratch/env ${M} x; ../scratch/env ${M} y`],
+      ["env's path spelled as an ls operand, then run once", `ls /usr/bin/env; /usr/bin/env ${M} ${RUN}`],
+    ];
+    const cases = [
+      ...stepped.map(([label, cmd, wrappers]) => [label, cmd, false, [...missingLines(...wrappers), MISS]]),
+      // the filter counts on the first walk too: a missing path the second walk no longer reaches behind the made path, but runs bare, is kept
+      ["a missing path run behind a made env's path, then bare", `cp /usr/bin/env ../scratch/env; ../scratch/env ./tool x; ./tool y`, false, [`NOT RUN: real ./tool ${BY_PATH_WHY}`]],
+      ...kept.map(([label, cmd]) => [label, cmd, true, []]),
+    ];
+    const got = cases.map(([label, cmd]) => [label, ...gateLines(cmd, `synthetic: ${cmd}`, { ...NAMED_PROBE }, { cwd })]);
+    assert.deepEqual(got, cases.map(([label, , ok, lines]) => [label, ok, [...lines].sort()]), "a missing program behind a wrapper's path the text only runs is NOT RUN by name, and one behind a wrapper's path the text spells elsewhere is measured");
+    // the two committed rows whose wrapper's path the text makes (the rows table above): their text as committed, the derivation the
+    // fifty-eighth commit gave them, and measured
+    const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+    const rows = [
+      ['S9-pn-bound-as-path-env', 'cp /usr/bin/cp ../scratch/env; ../scratch/env ../base/report.md report.md', ['cp']],
+      ['S9-pn-bound-as-path-nice', 'ln -s /usr/bin/cp ../scratch/nice; ../scratch/nice -n 5 ../base/report.md report.md', ['ln']],
+    ];
+    assert.deepEqual(rows.map(([id, cmd]) => [id, src.includes(`["${id}", "nad", "${cmd}"`), programsInvoked(cmd), ...gateLines(cmd, `synthetic: ${cmd}`, { ...NAMED_PROBE }, { cwd })]), rows.map(([id, , programs]) => [id, true, programs, true, []]), "the committed rows that run a made wrapper's path are read as before and measured");
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+test("round 7 of fork PR #780 review, fifty-ninth commit, THE NON-LITERAL WORDS (the reviewer's re-verifier on the fifty-eighth; the claim cut, the check not widened, under the loop stop at 17:18Z): the walk reads no text of an eval, trap, emulate -c, mapfile -C or readarray -C command, and no text echo or printf prints into a shell, where one of that command's operands is a word the lexer does not hold as literal, whichever operand it is; no shell operand that is such a word; and nothing after an assignment whose word is such a word or holds a blank; so a missing program on each road is measured, and each literal control is NOT RUN (the alias road is the fifty-eighth commit's test; a change that reads such a text reds here, and the header's sentence changes with it)", () => {
+  const RUN = '../base/report.md report.md';
+  const M = Q780_MISSING;
+  const MISS = `NOT RUN: real ${M} is not on this runner`;
+  const cases = [
+    ['a trap text holding an expansion', `trap "${M} $x" EXIT\ntrue`, true, []],
+    ['a literal trap text beside a signal word holding an expansion', `trap '${M} x' EXIT $sig\ntrue`, true, []],
+    ['a literal trap text beside an unquoted glob character', `trap '${M} x' EXIT [\ntrue`, true, []],
+    ['the control: the trap literal', `trap '${M} x' EXIT\ntrue`, false, [MISS]],
+    ['an eval text holding an expansion', `eval "${M} $x"`, true, []],
+    ['a literal eval text beside a word holding an expansion', `eval '${M} x' $y`, true, []],
+    ['the control: the eval literal', `eval '${M} x'`, false, [MISS]],
+    ['an emulate -c text holding an expansion', `emulate sh -c "${M} $x"`, true, []],
+    ['the control: the emulate -c literal', `emulate sh -c '${M} x'`, false, [MISS]],
+    ['a mapfile -C text holding an expansion', `mapfile -C "${M} $x" a < /dev/null`, true, []],
+    ['a readarray -C text holding an expansion', `readarray -C "${M} $x" a < /dev/null`, true, []],
+    ['the control: the mapfile -C literal', `mapfile -C '${M} x' a < /dev/null`, false, [MISS]],
+    ['an echo text holding an expansion, piped into bash', `echo "${M} $x" | bash`, true, []],
+    ['a printf text holding an expansion, piped into bash', `printf '%s\\n' "${M} $x" | bash`, true, []],
+    ['the control: the echo literal', `echo '${M} x' | bash`, false, [MISS]],
+    ['the control: the printf literal', `printf '%s\\n' '${M} x' | bash`, false, [MISS]],
+    ['a bash -c text holding an expansion', `bash -c "${M} $x"`, true, []],
+    ['the control: the bash -c literal, beside an operand holding an expansion', `bash -c '${M} x' $y`, false, [MISS]],
+    ['an assignment holding an expansion', `X=$y ${M} ${RUN}`, true, []],
+    ['an assignment holding a blank', `X="a b" ${M} ${RUN}`, true, []],
+    ['an assignment holding an unquoted glob character', `X=a* ${M} ${RUN}`, true, []],
+    ['an assignment holding an expansion, before an alias', `X=$y alias c='${M} x'\nc ${RUN}`, true, []],
+    ['the control: the assignment literal', `X=y ${M} ${RUN}`, false, [MISS]],
+  ];
+  const got = cases.map(([label, cmd]) => [label, ...gateLines(cmd)]);
+  assert.deepEqual(got, cases.map(([label, , ok, lines]) => [label, ok, [...lines].sort()]), 'each witness of the non-literal words is measured, and each control is NOT RUN');
 });
