@@ -154,6 +154,7 @@ These are for scripting and for agents rather than daily use:
 | `romp sessions [--json]` | The fleet with each session's state, identity colours, directory and backend |
 | `romp perf [--interval <s>] [--json]`, `romp perf log on\|off` | The kernel's performance counters as rates over two snapshots (below); `--json` prints one raw snapshot; `log on\|off` turns the `romp-perf` stderr log on or off without a restart |
 | `romp perf export --public [--from SNAPSHOT.json] [--usage] [--out PATH]` | Write one paste-safe copy of the kernel's counters (see [Kernel performance counters](#kernel-performance-counters)) as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json` under the state directory, or at `--out`, and print its path and size; `--from` takes a saved `romp perf --json` snapshot instead of the running kernel; `--usage` adds session and feature counts. The flag is required: the verb has no raw mode. Nothing leaves the machine |
+| `romp perf upload <file> [--yes] [--receiver URL]` | Send one export written by `romp perf export --public` to the configured receiver (see [Kernel performance counters](#kernel-performance-counters)): the file is checked again as it stands against the export's rule (paste-safe, not unlinkable: what the export dropped or coarsened is refused, the measurements it keeps pass), the path, the byte size and the URL it will dial are printed, a yes is asked for on a terminal (`--yes` is the form an agent uses; off a terminal the verb refuses without it), then one POST; the only answer accepted is a `201` receipt, printed with the retention period. The address is `--receiver`, else `ROMP_PERF_RECEIVER`, else `~/.config/romp/perf-receiver`; with none set the verb refuses and names them |
 | `romp perf client [--minutes <n>] [--json]` | What the open dashboards' browsers spent on the frames they received (below): handler milliseconds per minute by frame type with window p50/p90/p99 and max, the worst minute's main-thread-free p90, long animation frames and their attributed callbacks, the worst minute, heap and DOM, the slowest frames, per dashboard and pane over the last `<n>` minutes (default 10) |
 | `romp api-health` | The API-health signal as JSON (see [The API-health signal](#the-api-health-signal)): per-credential, per-model-family retry and give-up rates over rolling windows, with a derived state |
 | `romp restart-metrics [--json [--public]] [--window day\|week] [--anchor D] [--since D] [--until D] [--tz Z] [--no-live]` | What kernel restarts do to the sessions (see [Restart metrics](#restart-metrics)): turns cut per restart and per window, outage and reconcile times, quiet-window waits, orphans and reaps, crash heals, redo cost, turn latency, per-session and kernel memory and CPU; a text summary per window, or the whole document as JSON |
@@ -4361,13 +4362,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the `judge` line, since the judge's CPU share alone cannot tell a cheaper
   pass from a faster cadence.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
-  OPTIONS, the query string removed and `/dist/*`, `/media/*`, `/glossary/*`
-  (the term is the user's text; its lookups count under one key) and
-  `/remote/*/…` collapsed to one key each, for at most 256 keys. A path
-  outside the kernel's own route table (a scanner's probe, anything typed
-  into a URL) counts under `other`, as do keys past the cap, so the table
-  names only routes the kernel ships. A WebSocket upgrade is counted when it arrives and not
-  timed, since its handler runs for the life of the socket.
+  OPTIONS, the query string removed, `/dist/*`, `/media/*` and `/glossary/*`
+  (the term is the user's text; its lookups count under one key) collapsed to
+  one key each, and `/remote/<host>/...` collapsed by host alone, the host a
+  star and the route kept, one key per remote operation
+  (`GET /remote/*/sessions`, say), for at most 256 keys. A path outside the
+  kernel's own route table (a scanner's probe, anything typed into a URL)
+  counts under `other`, as do keys past the cap, so the table names only
+  routes the kernel ships. A WebSocket upgrade is counted when it arrives and
+  not timed, since its handler runs for the life of the socket.
 
 `POST /perf` with the body `{"log": true}` or `{"log": false}` turns the
 `romp-perf` stderr log on or off in the running kernel (`romp perf log on|off`).
@@ -4426,30 +4429,126 @@ same port after `GET /perf`, whose snapshot has no commit of its own, and
 takes its `kernel_sha` (git's short sha, a `-dirty` suffix for a checkout with
 uncommitted edits stripped); a `/version` that does not answer leaves the
 envelope without one, and a saved snapshot carries one only when it was
-written beside it. `--usage` adds a `usage` block, off by
-default, with the session counts, the user's actions and the panes opened
-(from the http table's route counts) and the kernel's uptime bucket, all from
-keys the snapshot already carries. Before writing, the document is searched
-for the strings only this machine knows (its hostname, user and home
+written beside it. `--usage` adds a `usage` block, off by default: the session
+counts, one count per action route served and one per pane route served, each
+the http table's count for that route under the route's name, whoever made the
+requests, and the kernel's uptime bucket, all from leaves the plain export
+already carries, so the block adds packaging and no number. A snapshot that
+gives no parsed count has none for the block to copy, and the block says so in
+place of the count: `sessions.parsedUnavailable`, one of two fixed strings, each
+true of the snapshot that carries it: `predates-parses.perSession` when the
+snapshot has no `parses.perSession` block (saved by a kernel from before it
+counted parsed sessions), and `perSession.sessions-not-a-number` when the block
+is there and its `sessions` is not a number (absent, a string, a boolean or
+null). Where the snapshot's count is a number no double can hold (a NaN, an
+infinity or an integer past about 1.8e308), `parsed` is null and no
+`parsedUnavailable` is written beside it: null is the export's output for
+every such number. So `sessions` carries exactly one of three, a `parsed`
+count, `parsed` null or `parsedUnavailable` in the count's place, never two
+and never none, and a reader comparing two exports can tell a count the
+export could not read from a kernel that parsed nothing, an old snapshot from
+a malformed one, and either from a count no double can hold. Before
+writing, the document is searched,
+every key, string value and number (a number by the spelling the export
+writes and, when that spelling carries an exponent, by its plain decimal
+expansion too, so a listed digit run inside a counter is found however the
+file spelled it, and a listed entry written with an exponent is applied by
+its plain decimal spelling in keys and string values as well as in numbers,
+so a listed 1.5e-05 refuses the string and the key 0.000015 too (since
+2026-09-19; the entry is expanded and never the document's string, so a listed
+0.000015 refuses the number 1.5e-05 and not a string spelled 1.5e-05); from the
+same day a listed entry is applied to a number only
+when it, or the plain decimal spelling of an entry written with an exponent,
+carries seven or more digits, counted across the whole spelling, so 1234.5678
+has eight and a listed 1.5e-05 reaches the floor as 0.000015, while an entry
+written with an exponent beyond 324, further than any number an export can
+carry (the smallest double is 5e-324, the largest about 1.8e+308), keeps its
+own spelling alone and is not expanded, since its expansion would run to as
+many digits as the exponent, and one stderr line says so by the entry's list
+line, never its text: an entry that reaches the floor and matches a number,
+as a substring of the number's spelling or as its run of whole digit groups,
+refuses the export and the upload, an entry that could match a number, by its
+spelling or by its digit groups, with fewer digits in every spelling is
+checked in keys and string values and not in numbers, and one stderr line
+says how many entries that is,
+which by the line of the list each is on (the first six lines, then a count
+of the rest, so the line stays one line; never the entry's text, never the
+list's path), and what does and does not protect a number; the floor comes from a real
+export, where a listed run of four digits matched some number by coincidence
+about one time in four and a run of seven digits about one time in 7,000, so
+below seven a match said nothing about the private value; a parenthesised,
+underscored, slashed or space-split run is counted like a bare one, since the
+check applies such an entry to a number by its digit groups (a listed
+(1234567) refuses the number 1234567) and an entry outside the number alphabet
+that carries a letter in a digit group (abc12, zz424242) is not counted; the one
+letter a number spells is an exponent's e, so an entry in the alphabet such as
+1e5 is counted by its spelling; the line reports the digit count only,
+and an entry it does not count is not thereby matchable in a number (a listed
+twelve-digit dotted address is armed and matches no number, whose spelling has
+no four digit groups)), for the strings only this machine knows (its hostname, user and home
 directory, the session ids and working directories in the state directory's
-registry; a hostname or user is matched as whole words, so a user named
-`mark` is not found in the counter `intrMarks`), then walked once more for a
-uuid, a 32-hex or 40-hex token, an absolute path or free text (a string
-carrying whitespace); either finding refuses the write and names the kind of
+registry, and the lines of `~/.config/romp/private-strings.txt` when that
+file exists, the list the repository's pre-push hook reads, one string per
+line with `#` comments, `ROMP_PRIVATE_STRINGS` naming another file and
+`XDG_CONFIG_HOME` honoured, plainly absent on a clone that never set one up,
+so a no-op there, in silence; a path that is there but yields no list (not a
+regular file, a fifo or a directory among them, so nothing waits on it; a
+file that cannot be read; a symbolic link whose target is gone; a
+`ROMP_PRIVATE_STRINGS` naming a file that does not exist) is still no list,
+and is said in one stderr line naming the path and the reason at the moment
+it happens, since a check that turns itself off must say so; the file is read as far as 64 KiB, a
+partial last line dropped so a fragment never becomes a probe, and every entry
+is a probe whatever its length; one line on stderr says when the bound was hit
+and the entries past it are not checked, when lines that are not UTF-8 were
+dropped rather than read as entries, or when listed entries did not become
+probes; a hostname or user is matched as whole words, so a user named `mark`
+is not found in the counter `intrMarks`, and a private string as whole words
+or as a substring, whichever finds it, so a listed word glued into a camelCase
+key or value is found and a dotted entry is found as a run of words), then walked
+once more for a uuid, a 32-hex or 40-hex token, an absolute path or free text
+(a string
+carrying whitespace), and checked against the denylist (a key the export
+drops, a string value the fold would have folded to `other`, a key the
+grammar's anchored match admits but the fold would have replaced (one ending
+in a newline among them), an uptime not rounded to whole minutes, a bound not rounded to
+a power of two, or, under any other key, a float inside a clock stamp's epoch
+window, 1.5e9 to 2.0e9 for seconds or 1.5e12 to 2.0e12 for milliseconds, a
+number
+written with a point or an exponent as `time.time()` values are; an integer a
+double can hold is a byte total or a count, which a long-lived kernel's lifetime
+totals carry into the window within hours, and passes whatever its size (one a
+double cannot hold, at about 1.8e308 and above, is null in the export's output,
+as a NaN is, and refused at the upload's parse), and so does a float outside
+both windows, a measurement whatever its size (the allocator's
+arena on a long-lived kernel passes 2.0e9), and a float inside a window under
+a duration key, a name that carries the token `ms` between underscores or
+camelCase boundaries (`cycle_cpu_ms_sum`, `wallMs`; `sendMax` and `startedAt`
+are not), its own key or any key above it (`stages_ms` names the measure and
+its entries the stages), a millisecond total the kernel's sums carry through
+the seconds window in weeks: a check the export's own output passes, with
+one stated exception, two measurement floats merged under one `other` key
+whose sum lands inside a stamp window, where the export refuses to write
+rather than keep a number it cannot tell from a stamp, and which
+`romp perf upload` runs again over a file you may have edited); any finding
+refuses
+the write and names the kind of
 finding and the key path (a value's own path, or the path of the dict holding
-a key), never the key or the value; when both find something, the finding
-with the shortest path is named, so the path printed never carries a key
-either would refuse.
+a key), never the key or the value; a finding of a listed private string also
+names the line of `private-strings.txt` the entry is on and says to edit that
+line or the value (`edit line 4 of the private-strings list or that value`),
+never the entry itself; when more than one check finds something,
+the finding with the shortest path is named, so the path printed never carries
+a key any check would refuse.
 The file lands as `perf-exports/perf-export-<YYYYMMDDTHHMM>.json` under the
 state directory, readable by the owner alone, or at `--out` (a write that
 fails partway removes the file rather than leave a truncated one); the path
 and the byte size are printed. `--from SNAPSHOT.json` folds a snapshot saved
-earlier with `romp perf --json` (an older kernel's raw http paths are
-collapsed to their families the way the kernel does now). Without `--public`
-the verb refuses with one line and exit 2: there is no raw mode, so a raw
-snapshot is never written by habit. Nothing leaves the machine: the export
-reads `GET /perf` on `127.0.0.1` and writes a file, and posting it is the
-user's own act. Read the file before you paste it. The counters are
+earlier with `romp perf --json` (an older kernel's raw http paths are folded
+the way the kernel folds them now, as the `http` bullet above describes).
+Without `--public` the verb refuses with one line and exit 2: there is no raw
+mode, so a raw snapshot is never written by habit. Nothing leaves the machine:
+the export reads `GET /perf` on `127.0.0.1` and writes a file, and posting it
+is the user's own act. Read the file before you paste it. The counters are
 lifetime totals, so a bug report is best served by an export taken after the
 kernel has been up for a while, with the `romp perf` text output (the rates
 over a live window, which the export does not carry) pasted beside it.
@@ -4462,11 +4561,231 @@ the kernel's uptime is rounded down to whole minutes; the durations, counts
 and distributions stay, so two documents from one machine remain linkable
 through them).
 
+`romp perf upload <file>` sends one such export to a receiver, and only when
+you run the verb and confirm it. The receiver's address is configuration, empty
+by default: `--receiver URL`, else the `ROMP_PERF_RECEIVER` environment
+variable, else the file `~/.config/romp/perf-receiver` (one line in a regular
+file; a path that is there but is not a readable regular file, a fifo, a
+socket or a file you cannot read among them, is refused as an address naming
+the file, never reported as no receiver set, and the verb does not wait on it;
+only an absent or blank file is no receiver); with none set the
+verb refuses and names the three, exit 2. The address must be an `https` URL with a
+host and no userinfo, query or fragment (`http` only for `127.0.0.1` and
+`localhost`, for tests), and it may carry a path, the base the route below is
+appended to; a refused address is not echoed. The receiver is unauthenticated,
+so no credential exists for it: the verb reads no token and sends none. The
+file must be a regular file of at most 1 MiB that parses as strict JSON (no
+`NaN` or `Infinity`, whether spelled as a literal or reached by a number written
+past the double's range, such as 1e999 or an integer past about 1.8e308, which a
+double reader makes an infinity; no key repeated within an object) with the
+`romp-perf-export/1` schema line, nested at most 32 levels deep (a fresh export
+is about 7; the checks below recurse one level per frame and this is the one
+file romp reads that a person names, so a deeper file is refused in one line
+that names the bound before any check walks it). It must also pass the
+export's own scan, walk and denylist check again, as it stands, since you may
+have edited it (the scan's seven-digit floor for a listed entry over a number
+applies here too, since 2026-09-19). The
+rule is the export's: the public form is paste-safe, not unlinkable, and the
+file is held to the export's own fold, not only to its checks. What the
+export dropped or coarsened is refused (a `t` put back on a split row, a
+string value the export would have folded to `other`, a key it would have
+replaced, one ending in a newline among them, an uptime typed to the second,
+a bound typed to the byte, a float inside a clock stamp's epoch window, 1.5e9
+to 2.0e9 seconds or 1.5e12 to 2.0e12 milliseconds, with no duration key on
+its path), and, whatever those find, the document's top-level keys must be
+the ones the export writes and no other (`schema`, `exported_at` and `perf`,
+with `kernel_commit` and `usage` optional; any other top-level key is refused
+naming the key alone, which the checks passed over), `exported_at` and
+`kernel_commit` must match the shapes the export writes them in, and the
+`perf` and `usage` blocks must each equal their own fold, or the verb refuses
+naming the block; the measurements the export keeps pass (an integer a double
+can hold is a byte total or a count, whatever its size; one past about 1.8e308
+is refused with the overflowing float, above; a float outside both windows is a
+measurement; a float inside a window under a duration key, a name carrying the
+token `ms`, its own or any key above it, is a millisecond total),
+so a fresh export passes whole and two
+uploads from one kernel remain linkable through them by design. A finding is
+reported by kind and key path, never by value; a listed private string's
+finding also names the line of the list its entry is on and says to edit that
+line or the value. What is sent is what was
+checked: the body is the parsed document written out again the way the export
+writes it (one space of indent, sorted keys, a trailing newline), never the
+file's own bytes, so a spelling no check read (a number written with more
+digits than a float holds or with an exponent, the whitespace between tokens,
+the order of keys) never travels, and a file as the export wrote it goes out
+byte for byte as the file. The verb then prints the path,
+the byte size of the body it will send (the file's own size for a file as the
+export wrote it) and the URL it will dial (the address as configured with `/v1/upload`
+appended, so whatever the setting carries is seen before the yes) and asks for
+a yes. Off a terminal it refuses unless `--yes` is passed. That flag is the form an agent
+uses, and the command line that carries it is the record of the confirmation;
+no setting or environment variable replaces it, so nothing uploads unless a
+command says so. Each run is opt-in and keeps no state. Read the file before
+you send it.
+
+The verb sends one `POST <receiver>/v1/upload`: the checked document,
+re-serialised as above, as the body
+under six headers, three set by the verb (`Content-Type: application/json`,
+`Content-Length` and `User-Agent: romp-perf-upload/1`) and three by Python's
+HTTP client (`Host`, which names the receiver, `Accept-Encoding: identity` and
+`Connection: close`); no other header and no cookie. It gives the whole
+exchange 30 s, the connect, the send, the status line, the headers and the
+body together, as one deadline rather than a timeout per read: the connect
+and the TLS handshake are bounded by the connection's own timeout, cut to the
+time left, and once the connection is up a timer shuts its socket down when
+the budget runs out, so a receiver that answers in pieces cannot hold an
+unattended `--yes` run open; whatever phase the deadline cuts, the refusal is
+the fixed line naming `TimeoutError`. It follows no redirect (a 3xx is
+refused by its code and its `Location` is not read) and reads no proxy
+variable. The request carries nothing that names the machine beyond the
+file: no hostname, account or filename anywhere in it, and no second file;
+the receiver names the stored object itself. What does travel is the file's
+content, and that is paste-safe, not unlinkable: the per-process and
+per-machine measurements the export keeps go with it, every leaf under
+`process` (`rss_kb`, `rss_anon_kb`, `hwm_kb`, `cpu_s`, `threads`, `gc_gen2`,
+`allocated_blocks`, the `malloc` block's `arena`, `fordblks`, `hblkhd` and
+`uordblks`, null with no leaves under it where the C library has no mallinfo2,
+glibc before 2.33, musl and macOS among them, and the fixed string `source`)
+plus, on macOS alone, `rss_peak_kb`
+(the peak resident size), every leaf under `heap`
+(`allocatedBlocks`, `assemblyEntries`, `judgeUsageRows`, `lazyIndexes`,
+`materializedLruSlots`, `parseSlots`, `tracing`, the `builtChat` block's
+`events`, `serializedBytes` and `tabs`, the `hydrated` block's `bytes`,
+`entries` and `capBytes`, the `imgCache` block's `bytes` and `entries`, and
+the `gc` block's `enabled`, `counts`, `thresholds` and, per generation under
+`stats`, `collections`, `collected` and `uncollectable`), every leaf under
+`gc` (`hooked`, `frozen`, `errors`, `counts`, `thresholds` and, per generation
+under `gen`, `collections`, `collectedLast`, `msLast`, `msMax` and `msSum`),
+the ten memory-fraction bounds coarsened to a power of two (`hydrated.capBytes`
+among them), the uptime rounded down to the minute, the `http` table in every
+export, with or without `--usage`: one row per route the kernel has served since
+it started (`METHOD /path` over the kernel's route register; the bundle, media
+and glossary families collapsed to one row each; the remote family collapsed by
+host alone, the host's name replaced by a star and the route kept, so a kernel
+attached to a peer carries one row per remote operation it served there,
+`GET /remote/*/sessions`, say, and no host name in any key; and one `other` row
+for whatever is off the register or past the table's cap), each row that route's
+request `count` and millisecond total `ms`, whoever made the requests (the
+counter records the route and the time and nothing about the client), and,
+only when `--usage` was given, the `usage` block, which adds no number a
+plain export lacks: every leaf under `usage` (the uptime's bucket
+`kernelUptime`, the `sessions` block's `parsed`, `chatBuilt` and `stamped`,
+each a copy or a count of a leaf under perf that travels anyway, or, where the
+snapshot gives no parsed count, `parsedUnavailable` in place of `parsed` with
+one of two fixed strings, predates-parses.perSession for a snapshot saved
+before the kernel counted parsed sessions (no perSession block under parses)
+and perSession.sessions-not-a-number for a snapshot whose perSession block is
+there but carries no number under sessions, so a count the export could not
+read is told from a kernel that parsed nothing, and an old snapshot from a
+malformed one, and where the snapshot's count is a number no double can hold
+(a NaN, an infinity or an integer past about 1.8e308), `parsed` null with no
+`parsedUnavailable` beside it, null being the export's output for every such
+number, so the `sessions` block carries exactly one of three, a `parsed` count,
+`parsed` null or `parsedUnavailable` in the count's place, never two and never
+none, the `actions` block's one count per
+action route served, the http row's count under the route's name, `color`,
+`compact`, `down`, `emoji`, `end`, `flag`, `fleet-restart`, `fork`,
+`fork-comment`, `fork-promote`, `group`, `interrupt`, `judge-settings`,
+`logins`, `mesh-settings`, `move`, `new`, `notify-all`, `notify-turns`, `order`,
+`pinnote`, `push.relay`, `push.subscribe`, `push.test`, `push.unsubscribe`,
+`redial`, `rename`, `restart`, `reveal`, `send`, `tag`, `tunnels`,
+`tunnels.askpull`, `tunnels.autoupdate`, `tunnels.checkin`, `tunnels.detach`,
+`tunnels.forget`, `tunnels.pull`, `tunnels.start`, `tunnels.trust`,
+`tunnels.trust-mirror`, `tunnels.trust-remote`, `tunnels.update`, `unpinnote`,
+`update`, `update-dismiss`, `usertodo`, `usertodo.context`, `usertodo.withdraw`,
+`views`, `walk-root`, `watch` and `watch-pr`, and the `views` block's one count
+per pane route served, the http row's count under the route's name, `chat`,
+`feed`, `timeline`, `fleet`, `waiting`, `analytics`, `files`, `file`, `usage`,
+`usage.fleet`, `spend.detail`, `session-events`, `handoff`, `views` and
+`tunnels`; a count is present only for a route the kernel has served since it
+started), and the kernel commit when the export carried one (the list is every
+leaf of those four blocks in a fresh Linux export of 2026-09-19, with the one
+leaf macOS adds and the usage counts from a kernel that served every route), so
+two uploads from one kernel remain linkable by design. The
+one answer accepted is `201` with
+a JSON body of exactly `{"receipt": <uuid4>, "retention_days": <integer>,
+"av": "ok"|"skipped"}`, printed as `uploaded: receipt <uuid> (kept <N> days;
+delete by sending the receipt to the project)`. Any other status (a redirect
+among them), a body outside that shape, a connection error or a timeout is
+refused with a fixed line carrying only the status code or the error's class
+name, never the body.
+
+An operator writing a receiver implements this contract:
+
+- `Content-Length` and the bytes read are capped at 1 MiB; `413` beyond.
+- The body carries `Content-Type: application/json` and parses, with depth at
+  most 8 and at most 20,000 keys; `400` otherwise.
+- The top-level `schema` is one the receiver knows; `422` for any other, so a
+  new export shape needs a receiver release.
+- Every key and string value is in a checked-in vocabulary for that schema
+  version, no denylisted key is present, and every number is finite and inside
+  its key's bounds; `422`, never a rewrite.
+- A rate limit answers `429`.
+- Success answers `201` with the receipt above.
+
+The project's receiver screens each upload before it stores it: the vocabulary
+check, so no free text is ever kept, and an antivirus pass over the body;
+nothing in an upload is executed or rendered. Accepted uploads are kept 180
+days and then deleted. To have one deleted earlier, send the receipt id to the
+project (an issue or a mail) and the object is deleted by that name; the
+receipt is the only handle, so keep it: the verb prints it once and records
+it nowhere, so record it yourself if you may want a deletion. The platform's
+request log keeps the source address for 30 days.
+
 The counters describe a running kernel. To time the same builders offline, on
 a copy of a state directory and with no live kernel, `tools/perf-bench.py`
 loads a checkout's kernel in-process and reports each builder's cost on
 real-sized data; two checkouts can run against one copy for a before-and-after
 comparison. Its module docstring is the reference.
+
+### Requests Romp makes on its own
+
+Besides the upload, Romp makes these requests on its own. The list is what
+`tests/test_outbound_requests_census.py` finds today, derived from the code
+rather than kept by hand: the test enumerates every request site under
+`kernel/`, `cli/`, `bin/` and `postal/`, classifies each as a `127.0.0.1` call,
+as the one connect that sends nothing (below), or as one of these, and fails on
+a site it does not name and on an entry with no site: the Anthropic Models API,
+for the model pickers' version list, with the credential Claude Code's
+`apiKeyHelper` yields, at an install's first boot, when no cached list exists,
+and when a session reports a model id the list lacks, off under
+`ROMP_MODEL_CATALOG=off`; a public model-price table on GitHub, for the settings
+modal's token-cost chart, at most once per six hours when that chart is read,
+with no switch to turn it off; a web push notification to the push service of
+every device you subscribed from the notifications popover, for each bell and
+for the popover's test button, and none when no device is subscribed;
+Anthropic's fast-mode availability endpoint with the session's API key, at every
+connect of a key-billed session and never a login session; the release remote's
+tags and main by `git ls-remote`, for the update check and the drift watcher,
+off under `ROMP_UPDATE_CHECK=off` or the update mode `off`, and a `git fetch`
+when an update is taken (of main by the drift watcher, or of the release tag
+followed by the installer); the checkout's origin by `git ls-remote`, for the
+file viewer's GitHub link, when a file inside a git checkout with an origin is
+opened; a watched pull request by `gh pr view`, only for a PR you asked
+`romp watch-pr` to follow; `ssh` to every machine you attached as a linked
+kernel, the tunnel the linked kernels ride, plus that machine's kernel start,
+restart, update and pull over it and a terminal opened there from a remote
+session's folder icon, off when you detach or forget the host; `npm install` in
+the extension directory, to refresh the UI bundle's dependencies when the bundle
+is stale at boot and its build fails, one retry, with no switch to turn it off;
+and the Codex runtime by `pip` from its pinned GitHub release URL, checked
+against a published digest, when you run `romp-codex-setup` and the runtime is
+missing. The agents' and the judge pipeline's model calls go through `claude` or
+`codex` (each agent's backend, and the engine the judges are set to), not
+through any of these. One connect sends nothing: the kernel connects a UDP
+socket to a documentation address (`192.0.2.1`, reserved and never routed) to
+learn which local address the routing table picks, the event the linked kernels'
+tunnels key on, and no datagram leaves. Every other request site the census
+finds dials `127.0.0.1`: the kernel's own bus, the manager, a tunnel's local
+end, and the CLI and postal clients. In the shell scripts under `bin/` the
+census finds four: the installer's download of `get-pip.py` in
+`bin/romp-sdk-setup` (off under `ROMP_NO_GET_PIP=1`); `pip` in
+`bin/romp-sdk-setup`, which installs pip's own upgrade, the pinned Claude Agent
+SDK and `cryptography` from PyPI; `pip` in `bin/romp-codex-setup`, which
+installs the pinned Codex SDK from PyPI and then runs the Codex runtime
+installer; and `gh repo view` when you run `romp watch-pr` without naming a
+repository, to learn which one the directory belongs to. The first three run
+once, when you run an installer.
 
 ### The chat wire's two protocols
 
@@ -5865,11 +6184,18 @@ linkable through them by design. The kernel's uptime
 (`live.kernel.uptimeS`) is rounded down to whole minutes, every other key and string
 folds to a code identifier or `other` (a week bucket's key is respelled
 `week-of-YYYY-MM-DD` so the weeks stay distinct), and the document is marked
-`public: true`; before it is printed it goes through the two checks the export runs
-(`check_document`: the search for the strings only this machine knows, then the walk
-for a uuid, a 32-hex or 40-hex token, an absolute path or free text), and either
-finding refuses the print the way the export refuses its write, naming the kind of
-finding and the key path of the shallowest finding, never the string.
+`public: true`; before it is printed it goes through the three checks the export runs
+(`check_document`: the search for the strings only this machine knows, the hostname,
+login, home, the registry's ids and directories and the machine-local private-strings
+list when one exists, then the walk for a uuid, a 32-hex or 40-hex token, an absolute
+path or free text, then the denylist walk, which refuses what the fold would have
+dropped or coarsened: a key the export drops, a string or key the fold would have
+replaced, an uptime off whole minutes, a bound off a power of two, a float inside a
+clock stamp's epoch window with no duration key on its path), and any finding
+refuses the print the way the export refuses its write, naming the kind of finding
+and the key path of the shallowest finding, never the string (a listed private
+string's finding names the line of the list its entry is on as well, with the
+remedy, editing that line or the value).
 
 `scripts/restart_metrics_report.py` draws the before-versus-after figures from
 two or more of the raw `--json` documents with cleanplots, which is not a romp

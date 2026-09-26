@@ -19,6 +19,8 @@ directory: the state root is the suite's floor, the machine strings the scan lea
 are set for the child, and socket.gethostname is pinned to TESTHOST.example in it; an in-process run of the verb or
 of its check replaces machine_probes with SYNTHETIC_PROBES, so no real hostname, login or home is read by any test),
 every id is a placeholder."""
+import contextlib
+import io
 import json
 import os
 import re
@@ -132,6 +134,18 @@ def _stamps(doc):
     return [(p, v) for p, v in _numbers(doc) if any(lo <= v <= hi for lo, hi in EPOCH_WINDOWS)]
 
 
+def _epoch(node, key=None):
+    """`node` with every stamp of the leak snapshot (`t`, `now`, `since`; the fixture's own are small numbers) moved into the
+    seconds epoch window, so a survivor would stand out as a number inside one of the EPOCH_WINDOWS."""
+    if isinstance(node, dict):
+        return {k: _epoch(v, k) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_epoch(v) for v in node]
+    if key in ("t", "now", "since") and isinstance(node, (int, float)) and not isinstance(node, bool):
+        return node + 1.7e9
+    return node
+
+
 def leak_snapshot():
     """A GET /perf snapshot in the shape of a kernel from BEFORE the served-leak fixes, so every leak the export
     must fold or drop is present at once; a few numbers ride beside them so the diagnosis they leave is checked."""
@@ -186,15 +200,32 @@ CHILD = ("import runpy, socket, sys; socket.gethostname = lambda: %r; sys.argv =
          "runpy.run_path(sys.argv[0], run_name='__main__')" % HOSTNAME)
 
 
-def _run(args, env_extra=None, state=None):
+# A finite cap on a child's virtual address space (RLIMIT_AS, bytes) for the refusable-input cases: 1.5 GiB. The closing
+# re-run's reproduction used 768 MiB (ulimit -v 786432) when a listed 1e-1000000000 asked for a billion digits and the head
+# died with a MemoryError, and 768 MiB is enough for the fixed child on 3.10, 3.12 and 3.13; the free-threaded 3.14t
+# interpreter maps about 1 GiB of address space before any code runs (VmSize 1085112 kB, measured 2026-09-19) and died
+# importing hashlib under 768 MiB. The cap must also stay UNDER what the billion-digit expansion needs, or the guard's
+# removal no longer fails fast: under 2 GiB format(Decimal('1e-1000000000'), 'f') completes (1000000002 characters in
+# 1.3 s, measured on 3.12 and 3.14t) and the child then grinds past the subprocess timeout; under 1.5 GiB it raises
+# MemoryError in under a second on both (0.68 s and 0.64 s). One cap for every build, 1.5 GiB: room for 3.14t's baseline,
+# none for the expansion.
+ADDRESS_SPACE_CAP = 1536 * 1024 * 1024
+
+
+def _run(args, env_extra=None, state=None, address_space=None):
     """bin/romp-perf-export as a child, hermetic: the suite's interpreter, a private state root, a synthetic
-    HOME, USER and hostname (CHILD), no live kernel port and no token unless the caller says so."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k != "CLAUDE_CODE_SESSION_ID"}
-    state = state or tempfile.mkdtemp()
+    HOME, USER and hostname (CHILD), no live kernel port and no token unless the caller says so. `address_space`, in
+    bytes, caps the child's virtual address space (RLIMIT_AS), set by the CHILD ITSELF in its prelude before the verb's
+    code runs, not through preexec_fn: a fork hook in a parent that may be running a kernel's threads (the ServedKernel
+    cases can share a worker with these) is the documented deadlock hazard, and the cap lands on the same process either
+    way."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+    state = state or tempfile.mkdtemp()      # no XDG_CONFIG_HOME: the child resolves the private list under its synthetic HOME, never this machine's
     env.update({"XDG_STATE_HOME": os.path.dirname(state) if os.path.basename(state) == "romp" else state,
                 "HOME": HOME, "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1"})
     env.update(env_extra or {})
-    return subprocess.run([sys.executable, "-c", CHILD, EXPORT] + list(args), capture_output=True, text=True, timeout=60, env=env)
+    child = CHILD if address_space is None else "import resource; resource.setrlimit(resource.RLIMIT_AS, (%d, %d)); " % (address_space, address_space) + CHILD
+    return subprocess.run([sys.executable, "-c", child, EXPORT] + list(args), capture_output=True, text=True, timeout=60, env=env)
 
 
 SYNTHETIC_PROBES = [("hostname", "testhost"), ("username", "tester"), ("home directory", HOME)]
@@ -460,14 +491,411 @@ class FoldInvariant(unittest.TestCase):
         # the structured findings the rule is computed from: the scan's Hit is shaped like the walk's Problem, and
         # both count their depth at the finding (a key's is its dict's; the root is depth 0 and the empty path)
         hits = pp.identifier_hits({"a": {token: "TESTHOST", "TESTHOST": {"n": 1}}, "TESTHOST": 1}, SYNTHETIC_PROBES)
-        self.assertEqual(hits, [("hostname", False, "a/" + token, 2), ("hostname", True, "a", 1), ("hostname", True, "", 0)])
-        self.assertEqual([(h.kind, h.is_key, h.path, h.depth) for h in hits], hits)
+        self.assertEqual(hits, [("hostname", False, "a/" + token, 2, None), ("hostname", True, "a", 1, None), ("hostname", True, "", 0, None)],
+                         "the fifth field is the list line a listed entry's Probe carries; a machine string has none")
+        self.assertEqual([(h.kind, h.is_key, h.path, h.depth, h.line) for h in hits], hits)
         self.assertEqual([pp.place(h) for h in hits], ["the value at a/" + token, "a key under a", "a key under the root"])
         problems = pp.paste_problems({"a": {token: "x y"}, "GET /perf": {"c d": 1}})
         self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in problems],
                          [("a 32-hex token", True, "a", 1), ("free text", False, "a/" + token, 2),
                           ("outside the identifier grammar", True, "", 0), ("outside the identifier grammar", True, "GET /perf", 1)],
                          "a key that contains the separator is one component, so the depth rides in its own field")
+
+
+    def test_the_denylist_walk_is_the_third_source_and_a_fold_passes_it_by_construction(self):
+        """`t` fits the identifier grammar and an uptime to the second is a number, so the walk passes both; the denylist
+        walk (pp.denylist_problems) refuses what the fold would have dropped or rounded, which is what lets `romp perf
+        upload`, running check_document over a file the user may have edited, refuse a `t` put back or an uptime typed
+        to the second. Over a fold's own output it finds nothing, so the export's own write is unchanged (2026-09-18)."""
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a fold's output is the walk's fixed point")
+        self.assertIsNone(_check(doc))
+        # a split row's stamp put back: a key finding at the dict holding it (the walk is silent)
+        doc["perf"]["pusher"]["firstCycle"]["t"] = 900.5
+        self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [])
+        self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                         [("a key the denylist drops", True, "perf/pusher/firstCycle", 3)])
+        self.assertEqual(_check(doc), "the public form still fails the denylist (a key the denylist drops, a key under perf/pusher/firstCycle); nothing written")
+        # an uptime off the grain: a value finding at its own path, the number in no printed field; on the grain it
+        # passes, a float on the grain too (the fold's int compares equal), and what is not a number is left alone
+        for raw, refused in ((3725, True), (59.9, True), (3720, False), (3720.0, False), (0, False), (None, False), (True, False)):
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"]["uptime_s"] = raw
+            problems = pp.denylist_problems(doc, under=("perf",), skip=("schema",))
+            if refused:
+                self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in problems],
+                                 [("an uptime not rounded to whole minutes", False, "perf/uptime_s", 2)], repr(raw))
+                self.assertEqual(_check(doc), "the public form still fails the denylist (an uptime not rounded to whole minutes, "
+                                              "the value at perf/uptime_s); nothing written", repr(raw))
+            else:
+                self.assertEqual(problems, [], repr(raw))
+        # the rest of the denylist through the same walk: DENY_PATHS anchored at the snapshot's root (`perf`), a pid under
+        # any spelling, an identity key over text (over a number it is a counter and stays), a denied key inside `usage`
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        doc["perf"]["now"] = 1000.5
+        doc["perf"]["process"]["cliPid"] = 4242
+        doc["perf"]["heap"]["name"] = "x"
+        doc["perf"]["heap"]["names"] = 3
+        doc["usage"]["sid"] = 1
+        self.assertEqual(sorted((p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))),
+                         sorted([("a key the denylist drops", "perf"), ("a key the denylist drops", "perf/process"),
+                                 ("a key the denylist drops", "perf/heap"), ("a key the denylist drops", "usage")]))
+        # the depth rule holds with the third source: a machine string beneath a denied key names the denied key's dict,
+        # so the printed path never carries a key the denylist drops; a shallower scan finding wins over a deeper denied key
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["t"] = {"TESTHOST": {"a b": 1}}
+        self.assertEqual(_check(doc), "the public form still fails the denylist (a key the denylist drops, a key under perf/heap); nothing written")
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["TESTHOST"] = {"t": 1}
+        self.assertEqual(_check(doc), "a string this machine knows (hostname) survives as a key under perf/heap; nothing written")
+        # on a tie: the scan's wording, then the walk's, then the denylist's
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["a b"] = 1
+        doc["perf"]["heap"]["t"] = 1
+        self.assertEqual(_check(doc), "the public form still fails the walk (outside the identifier grammar, a key under perf/heap); nothing written")
+
+    def test_the_denylist_walk_refuses_a_bound_off_a_power_of_two_and_a_number_the_size_of_a_stamp_and_passes_every_fold(self):
+        """The two findings added with the third review round's rules (2026-09-18), so the upload's re-check matches the
+        fold's full fixed point: a memory-fraction bound (BOUND_KEYS) the fold would have rounded up to a power of two, a
+        value finding at its own path; and a FLOAT leaf inside one of the STAMP_WINDOWS, 1.5e9 to 2.0e9 (an epoch second,
+        2017 to 2033) or 1.5e12 to 2.0e12 (the same span in milliseconds), both ends in, anywhere outside a bound or a
+        duration key on its path (test_a_float_under_a_duration_key_is_never_judged_against_the_stamp_windows), dict or list,
+        which is round 3's property (no absolute clock stamp survives the fold under any key) turned into a check over a
+        file. What is not a float inside a window is a measurement and exempt whatever its size: a time.time() value is a
+        float, and the kernel's cumulative byte and count totals are integers that pass 1.5e9 within hours on a busy kernel
+        (the ws tables' `bytes`, `parses.bytes`), so a fresh export from a long-lived kernel must pass its own belt (a rule
+        over every number refused it, 2026-09-18); and a float OUTSIDE both windows tells no time (the export's fifth review
+        round, the same day: glibc's allocator figures on a long-lived kernel, process.malloc.arena 2931437568 and uordblks
+        2731423520, exceeded a floor at 1.5e9 in the served export's property test, and a float that large under a key the
+        denylist does not know is a measurement kept on purpose; before the windows every float from 1.5e9 up was refused).
+        The fixed point holds: a fold of every fixture at that round's head, the epoch-shifted leak snapshot and the ten
+        real-sized bounds among them (budgetBytes floors at 4 GiB, above the seconds window; no power of two lies in either
+        window), raises no finding."""
+        for snap in (leak_snapshot(), _epoch(leak_snapshot()), bounds_snapshot(), bounds_snapshot(8 * 1024 ** 3)):
+            for usage in (False, True):
+                doc = pe.export_document(snap, usage=usage)
+                self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a fold's output is the walk's fixed point")
+                self.assertIsNone(_check(doc))
+        doc = pe.export_document(bounds_snapshot())
+        self.assertGreater(doc["perf"]["recordCache"]["budgetBytes"], pp.STAMP_WINDOWS[0][1], "a coarsened bound above the seconds window is the fold's own and passes")
+        self.assertEqual(pp.STAMP_WINDOWS, ((1.5e9, 2.0e9), (1.5e12, 2.0e12)))
+        for lo, hi in pp.STAMP_WINDOWS:
+            self.assertFalse(any(lo <= (1 << k) <= hi for k in range(64)), "no power of two lies in a window: a coarsened bound is never the size of a stamp")
+        # a bound off a power of two: a value finding at its own path, the number in no printed field; a power of two, however
+        # large, and what is not a positive finite number pass, as public_bound leaves them
+        for raw in (4_210_310_144, 3, 2.5, 501, 20000, 1.7e9):
+            doc = pe.export_document(bounds_snapshot())
+            doc["perf"]["heap"]["hydrated"]["capBytes"] = raw
+            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                             [("a bound not rounded to a power of two", False, "perf/heap/hydrated/capBytes", 4)], repr(raw))
+            self.assertEqual(_check(doc), "the public form still fails the denylist (a bound not rounded to a power of two, "
+                                          "the value at perf/heap/hydrated/capBytes); nothing written", repr(raw))
+        for ok in (1, 2, 4096, 1 << 40, 4096.0, 0, -5, None, True, "other"):
+            doc = pe.export_document(bounds_snapshot())
+            doc["perf"]["heap"]["hydrated"]["capBytes"] = ok
+            self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], repr(ok))
+        # the windows: a FLOAT leaf inside the seconds window or the milliseconds window under a key the denylist does not
+        # know, in a dict or a list, in `usage` too; a value at a window's floor or ceiling is refused, one past either passes
+        for path, raw, where in (((("perf", "pusher", "startedAt"), 1.6e9, "perf/pusher/startedAt")),
+                                 ((("perf", "heap", "marks"), [1, 1.5e9], "perf/heap/marks/1")),
+                                 ((("usage", "firstSeen"), 1_700_000_000.0, "usage/firstSeen")),
+                                 ((("perf", "pusher", "bootAt"), 1.6e12, "perf/pusher/bootAt")),
+                                 ((("perf", "heap", "marks"), [2.5e12, 1.5e12], "perf/heap/marks/1")),
+                                 ((("usage", "firstSeen"), 2.0e12, "usage/firstSeen"))):
+            doc = pe.export_document(leak_snapshot(), usage=True)
+            node = doc
+            for k in path[:-1]:
+                node = node[k]
+            node[path[-1]] = raw
+            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                             [("a number the size of a clock stamp", False, where, where.count("/") + 1)], where)
+            self.assertEqual(_check(doc), "the public form still fails the denylist (a number the size of a clock stamp, the value at %s); nothing written" % where)
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["pusher"]["cycles"] = 1_499_999_999
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "below the seconds window a number is a count")
+        # OUTSIDE BOTH WINDOWS a float is a measurement, whatever its size and wherever it sits (fails before: each was the
+        # stamp finding, and check_document named perf/process/malloc/arena): glibc's allocator figures on a long-lived
+        # kernel (the fifth review round's numbers), above the seconds window; a float between the windows; one above the
+        # milliseconds window; one just below the seconds window; in a list and in `usage` too
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        self.assertNotIn("malloc", doc["perf"]["process"], "the fixture carries no allocator block; the case plants one")
+        doc["perf"]["process"]["malloc"] = {"arena": 2931437568.0, "hblkhd": 3.5e9, "uordblks": 2731423520.0, "fordblks": 2_000_000_000.5}
+        doc["perf"]["pusher"]["startedAt"] = 2.9e9
+        doc["perf"]["heap"]["marks"] = [1, 2_000_000_001.0, 1.0e12, 2.5e12, 1e300]
+        doc["perf"]["pusher"]["cycles"] = 1_499_999_999.5
+        doc["usage"]["firstSeen"] = 2.5e12
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a float outside both windows is a measurement")
+        self.assertIsNone(_check(doc))
+        # the edges: both ends of each window in, the values just past them out
+        for raw, stamp in ((1.5e9, True), (2.0e9, True), (1_499_999_999.9, False), (2_000_000_000.5, False),
+                           (1.5e12, True), (2.0e12, True), (1_499_999_999_999.9, False), (2_000_000_000_000.5, False)):
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"]["pusher"]["startedAt"] = raw
+            self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                             ["a number the size of a clock stamp"] if stamp else [], repr(raw))
+        # an INTEGER inside a window is a count or a byte total, not a stamp, whatever its size and wherever it sits: under a
+        # bytes-named key (the kernel's lifetime wire totals pass 2e9 within hours), under a key the denylist does not know,
+        # in a list, in `usage`; the same value as a float, at the seconds window's ceiling, is the stamp finding (fails
+        # before the integer exemption: every one refused)
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        doc["perf"]["pusher"]["clients"]["byKind"]["chrome"]["bytes"] = 2_000_000_000
+        doc["perf"]["pusher"]["clients"]["byApp"]["chat"]["bytes"] = 2_000_000_000
+        doc["perf"]["parses"]["bytes"] = 2_000_000_000
+        doc["perf"]["pusher"]["startedAt"] = 2_000_000_000
+        doc["perf"]["heap"]["marks"] = [1, 2_000_000_000, 1 << 40]
+        doc["usage"]["firstSeen"] = 1_700_000_000
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "an integer past the floor is a total, not a stamp")
+        self.assertIsNone(_check(doc))
+        doc["perf"]["pusher"]["startedAt"] = 2_000_000_000.0
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                         [("a number the size of a clock stamp", "perf/pusher/startedAt")], "the same value as a float is a stamp")
+        # one finding per leaf: under an uptime key the grain is judged first (1.6e9 is off it), and on the grain the window
+        # (1.5e9 is 25 million whole minutes) as a float; the same as an integer is what public_uptime writes and passes;
+        # under a denied key nothing beneath is walked, so the key finding stands alone
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["uptime_s"] = 1.6e9
+        self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))], ["an uptime not rounded to whole minutes"])
+        doc["perf"]["uptime_s"] = 1.5e9
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))], [("a number the size of a clock stamp", "perf/uptime_s")])
+        doc["perf"]["uptime_s"] = 1_500_000_000
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "an integer uptime on the grain is the fold's own")
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["pusher"]["firstCycle"]["t"] = 1.7e9
+        self.assertEqual([(p.kind, p.is_key, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                         [("a key the denylist drops", True, "perf/pusher/firstCycle")])
+        # the depth rule with the new findings: a shallower key finding wins over a deeper value finding, and a value finding
+        # at the root's child over a deeper key finding
+        doc = pe.export_document(bounds_snapshot())
+        doc["perf"]["heap"]["hydrated"]["capBytes"] = 3
+        doc["perf"]["heap"]["t"] = 1
+        self.assertEqual(_check(doc), "the public form still fails the denylist (a key the denylist drops, a key under perf/heap); nothing written")
+        doc = pe.export_document(bounds_snapshot())
+        doc["perf"]["startedAt"] = 1.7e9
+        doc["perf"]["heap"]["hydrated"]["t"] = 1
+        self.assertEqual(_check(doc), "the public form still fails the denylist (a number the size of a clock stamp, the value at perf/startedAt); nothing written")
+
+    def test_a_bound_under_two_keys_that_fold_to_the_same_name_is_re_coarsened_after_the_merge(self):
+        """Two sibling keys outside the grammar fold to one `other` and their subtrees merge, numbers summed; each side's
+        bound had already been rounded up to a power of two, and a sum of two powers of two is one only when they are
+        equal, so the fold's own output failed its denylist walk (a bound not rounded to a power of two) at every such
+        collision and the export refused itself (the upload's second review round, 2026-09-18). The collision is always at
+        an ancestor folded to `other` (two bound keys cannot collide in one dict), so the fix is in _merge, after the sum.
+        The uptime needs none and is pinned as already closed: a sum of whole minutes is whole minutes. Fails before: 3072,
+        and 12 for 3 and 5 (each coarsened to 4 and 8 before the sum), both refused as a bound not rounded to a power of
+        two. The float variant, two measurement floats summed into a stamp window, is not closed here and is not claimed."""
+        self.assertEqual(pp.fold({"memos": {"a table name": {"bound": 1024}, "another table name": {"bound": 2048}}}),
+                         {"memos": {"other": {"bound": 4096}}})
+        self.assertEqual(pp.fold({"heap": {"a b": {"capBytes": 3, "bytes": 1}, "c d": {"capBytes": 5, "bytes": 2}}}),
+                         {"heap": {"other": {"capBytes": 16, "bytes": 3}}}, "3 and 5 coarsen to 4 and 8, sum to 12, coarsen to 16; the occupancy is summed")
+        self.assertEqual(pp.fold({"x": {"a b": {"cap": 1}, "c d": {"cap": 1}}}), {"x": {"other": {"cap": 2}}}, "equal powers sum to a power")
+        self.assertEqual(pp.fold({"x": {"a b": {"deep": {"bound": 6}}, "c d": {"deep": {"bound": 6}}}}), {"x": {"other": {"deep": {"bound": 16}}}},
+                         "and at depth inside the merged subtrees")
+        self.assertEqual(pp.fold({"memos": {"a k": {"uptime_s": 100}, "b k": {"uptime_s": 100}}}), {"memos": {"other": {"uptime_s": 120}}},
+                         "the uptime is closed under the merge already")
+        for snap in ({"memos": {"a table name": {"bound": 1024}, "another table name": {"bound": 2048}}},
+                     {"heap": {"a b": {"capBytes": 3}, "c d": {"capBytes": 5}}},
+                     {"memos": {"a k": {"uptime_s": 100}, "b k": {"uptime_s": 100}}}):
+            self.assertEqual(pp.denylist_problems(pp.fold(snap)), [], repr(snap))
+        # through the export: a snapshot with such a collision folds to a document that passes its own check (fails before:
+        # refused as a bound not rounded to a power of two at perf/memos/other/bound)
+        snap = leak_snapshot()
+        snap["memos"]["a table name"] = {"bytes": 10, "bound": 1024}
+        snap["memos"]["another table name"] = {"bytes": 11, "bound": 2048}
+        doc = pe.export_document(snap, usage=True)
+        self.assertEqual(doc["perf"]["memos"]["other"], {"bytes": 21, "bound": 4096})
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [])
+        self.assertIsNone(_check(doc))
+        self.assertEqual(pp.fold(doc["perf"]), doc["perf"], "and the output is its own fold")
+
+    def test_a_float_under_a_duration_key_is_never_judged_against_the_stamp_windows(self):
+        """The kernel's millisecond totals are FLOATS and cumulative: pusher.cycle_cpu_ms_sum read 1,779,484.0 after one
+        hour on a busy kernel, about 35 days to 1.5e9 and twelve more across the seconds window, and the other ms sums
+        climb behind it, so a rule over every float refused a fresh export from a long-lived kernel by its own belt
+        (2026-09-18). A float inside a STAMP_WINDOWS window under a DURATION key (duration_key: a name whose tokens, split
+        on underscores and camelCase boundaries, carry `ms` in any case) is a total and never a finding; under every other
+        key outside BOUND_KEYS it stays the stamp finding at its path, the type, the size and the key deciding together.
+        The exemption reads the leaf's own key and every dict key
+        above it (the ANCESTOR rule, the same day: stages_ms is a dict of lifetime millisecond sums keyed by stage names,
+        push, jobs, push.chat, so its leaf keys carry no `ms` token while the parent does, and the sums climb like
+        cycle_cpu_ms_sum), so a list element, which has no key of its own, passes under a duration key and is judged under
+        any other, and a leaf whose own key is one passes whatever its parents (a stageRing row's `ms`). Fails before:
+        cycle_cpu_ms_sum 2.0e9 and wallMs 1.6e9 were refused as stamps, and check_document named
+        perf/pusher/cycle_cpu_ms_sum; with the leaf-only reading, perf/stages_ms/push at 2.0e9 was refused too."""
+        # the tokenizer: underscores and camelCase boundaries, an uppercase run kept whole before a capitalized word; the
+        # boundary and the token are the receiver's, read by name from here
+        self.assertEqual(pp.KEY_TOKEN_BOUNDARY.pattern, r"_+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+        self.assertEqual(pp.DURATION_TOKEN, "ms")
+        self.assertEqual(pp.KEY_TOKEN_BOUNDARY.split("__msgs__"), ["", "msgs", ""])
+        self.assertEqual(pp.key_tokens("cycle_cpu_ms_sum"), ["cycle", "cpu", "ms", "sum"])
+        self.assertEqual(pp.key_tokens("tierCpuMs"), ["tier", "Cpu", "Ms"])
+        self.assertEqual(pp.key_tokens("HTTPMs"), ["HTTP", "Ms"])
+        self.assertEqual(pp.key_tokens("p95Ms"), ["p95", "Ms"])
+        self.assertEqual(pp.key_tokens("__msgs__"), ["msgs"])
+        self.assertEqual(pp.key_tokens("sendMax"), ["send", "Max"])
+        self.assertEqual(pp.key_tokens("ms2"), ["ms2"])         # a digit joins its letters: the gc row's gen-2 time is one token
+        self.assertEqual(pp.key_tokens(""), [])
+        for name, ok in (("cycle_cpu_ms_sum", True), ("ms_sum", True), ("ms_max", True), ("wallMs", True), ("sendMs", True),
+                         ("restoreMs", True), ("held_ms", True), ("tierCpuMs", True), ("ms", True), ("MS", True), ("Ms", True),
+                         ("cpuMS", True), ("ms_bytes", True), ("stages_ms", True),
+                         ("sendMax", False), ("startedAt", False), ("bytes", False), ("sigMsgs", False), ("promptMsgId", False),
+                         ("msgs", False), ("items", False), ("ms2", False), ("terms", False), ("t", False), ("", False)):
+            self.assertIs(pp.duration_key(name), ok, name)
+        self.assertFalse(pp.duration_key(None))     # a list element's key
+        self.assertFalse(pp.duration_key(3))
+        # a float inside a window under a duration key passes, in the fold's own places and under a new one, in `usage` too,
+        # in the milliseconds window too (every value here sits inside a window, so the exemption is what passes it; a float
+        # outside both passes by its size alone); the fixed point over every fixture holds (the case above)
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        doc["perf"]["pusher"]["cycle_cpu_ms_sum"] = 2.0e9
+        doc["perf"]["judge"]["child"]["wallMs"] = 1.6e9
+        doc["perf"]["judge"]["ms_sum"] = 1.5e9
+        doc["perf"]["jobs"]["pass_ms_max"] = 1.7e9
+        doc["perf"]["heap"]["tierCpuMs"] = 1.9e9
+        doc["perf"]["pusher"]["held_ms"] = 1_600_000_000.5
+        doc["perf"]["judge"]["wall_ms_sum"] = 1.6e12
+        doc["usage"]["restoreMs"] = 1.6e9
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a millisecond total is a duration, not a stamp")
+        self.assertIsNone(_check(doc))
+        # the same float under a key that is not a duration by name is the stamp finding at its path, the number in no field
+        for name in ("startedAt", "sendMax", "bytes", "sigMsgs"):
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"]["pusher"][name] = 1.6e9
+            self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                             [("a number the size of a clock stamp", False, "perf/pusher/" + name, 3)], name)
+            self.assertEqual(_check(doc), "the public form still fails the denylist (a number the size of a clock stamp, "
+                                          "the value at perf/pusher/%s); nothing written" % name)
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["pusher"]["sendMax"] = 1.6e12
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                         [("a number the size of a clock stamp", "perf/pusher/sendMax")], "a millisecond stamp under a key that is not a duration")
+        # THE ANCESTOR RULE: a float passes when any key on its path is a duration key. stages_ms is keyed by stage names,
+        # so the parent carries the token and the leaves do not, at any depth (a dotted seam's parts as a nested dict).
+        # Fails before: perf/stages_ms/push was the stamp finding
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        self.assertEqual(doc["perf"]["stages_ms"]["jobs"], 5000.0)
+        doc["perf"]["stages_ms"]["push"] = 2.0e9
+        doc["perf"]["stages_ms"]["jobs"] = {"autoNudge": 1.6e9, "parse": {"cold": 1.5e9}}
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a float below a duration key is a total")
+        self.assertIsNone(_check(doc))
+        # a list under a duration key: the element has no key of its own and passes by the ring's key above it (this pin
+        # read the element's own key alone before the ancestor rule and refused perf/pusher/cycle_ms_ring/1); a list under
+        # a key that is not one is judged as before, and the path carries the index
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["pusher"]["cycle_ms_ring"] = [1.0, 1.6e9, [2.0e9]]
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "an element of a list under a duration key")
+        doc["perf"]["pusher"]["cycle_ring"] = [1.0, 1.6e9]
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                         [("a number the size of a clock stamp", "perf/pusher/cycle_ring/1")])
+        # the LEAF rule stands on its own: a stageRing row's stage split sits under keys none of which is a duration (jobs,
+        # stageRing, the index, stages, jobs), its `ms` passes by its own key, and the row's `bytes` beside it, the same
+        # float under the same parents, is the stamp finding at its depth; a key with no duration anywhere on its path is
+        # refused as before
+        doc = pe.export_document(leak_snapshot())
+        row = doc["perf"]["jobs"]["stageRing"][0]["stages"]["jobs"]
+        self.assertEqual(sorted(row), ["bytes", "hydrated", "ms"])
+        row["ms"] = 1.6e9
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], "a leaf `ms` under parents that are not durations")
+        row["bytes"] = 1.6e9
+        self.assertEqual([(p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                         [("a number the size of a clock stamp", False, "perf/jobs/stageRing/0/stages/jobs/bytes", 7)])
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["pusher"]["startedAt"] = 1.6e9
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                         [("a number the size of a clock stamp", "perf/pusher/startedAt")], "no duration key on the path")
+        # a duration key exempts the stamp finding alone: an uptime or a bound is judged by its own coarsening first, as before
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["uptime_s"] = 1.6e9
+        self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))], ["an uptime not rounded to whole minutes"])
+        # THE EXEMPTION IS BY NAME AT ANY DEPTH, on purpose (the upload's third review round, 2026-09-18): a float two levels
+        # under an invented ancestor carrying the token (ms_x) is NOT a finding, and the same float under a plain ancestor (x)
+        # at the same depth IS one. The belt catches a stamp typed under a new key by accident and is not an adversarial
+        # control (an editor can spell a stamp as an integer or a quoted string under any key); a narrowing to the leaf's key
+        # or its parent would not close that road, nor the finding's own case (a float directly under an invented ms-named
+        # key, which is then the parent), and a checked-in list of duration parents would bring back the false refusals the
+        # ancestor rule exists to avoid, so it is not taken (the kernel's stages_ms is a flat dict, so its leaves stay exempt
+        # under either rule), and this pin documents the accepted case rather than leaving it to be rediscovered
+        for ancestor, findings in (("ms_x", []), ("x", [("a number the size of a clock stamp", "perf/x/a/b")])):
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"][ancestor] = {"a": {"b": 1.7e9}}
+            self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))], findings, ancestor)
+
+    def test_the_denylist_walk_refuses_what_the_fold_would_have_folded_a_string_outside_the_grammar_and_a_key_its_anchored_match_admits(self):
+        """The two findings that make the re-check hold a file to the fold's own rule and not to the walk's (the upload's
+        second review round, 2026-09-18). The walk judges a KEY by `.match` against a `$`-anchored grammar, which admits a
+        trailing newline after a good name (and the joined grammar has no length cap there), and a string VALUE for a
+        uuid, a hex token, a path and whitespace, so a 43-character token with none of them passed it; the fold's
+        `_public_key` fullmatches and caps, and folds every string outside IDENT to `other`. So a file carrying either was
+        changed after the export and would have been POSTed at the previous head. Each is one path-precise finding of the
+        denylist walk: a key finding at the dict holding it (its value still walked), a value finding at its own path, in a
+        dict or a list, under a bound key too (a string is judged by the grammar alone); check_document names them with the
+        denylist wording and the token reaches no output. The schema line is not judged with the same skip the scan and the
+        walk take (without it the envelope's slash would be the finding on every export). The fixed point still holds over
+        every fixture and both usage settings, and every top-level block outside the envelope equals its own fold, which with
+        the upload's top-level allowlist is the belt `romp perf upload` adds under the checks. Fails before: the walk reported
+        [] for all of them."""
+        token = "zz-planted-token-past-thirty-two-chars-zz"     # 41 characters, no whitespace, no hex run: silent to the walk
+        self.assertIsNone(pp.IDENT.fullmatch(token))
+        self.assertEqual(pp.fold(token), "other")
+        doc = pe.export_document(leak_snapshot(), usage=True)
+        doc["perf"]["heap"]["tok"] = token
+        doc["perf"]["heap"]["list"] = ["ok", token]
+        doc["perf"]["heap"]["capBytes"] = token
+        doc["perf"]["pusher"]["cycles\n"] = 1
+        doc["perf"]["recordCache"]["wholeReads"]["leaf<-_parse\n"] = {"count": 1, "bytes": 5}
+        doc["perf"]["recordCache"]["wholeReadsByStage"]["x" * 97] = {"count": 1}
+        for k in ("cycles\n", "leaf<-_parse\n", "x" * 97):
+            self.assertIsNotNone(pp.IDENT.match(k) if k == "cycles\n" else pp.JOINED_KEY.match(k), "the walk's anchored match admits it")
+            self.assertEqual(pp._public_key(k, () if k == "cycles\n" else ("recordCache", "wholeReads")), "other", "the fold does not")
+        self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [], "the walk is silent on every one")
+        self.assertEqual(sorted((p.kind, p.is_key, p.path, p.depth) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))),
+                         sorted([("a string the fold would have folded", False, "perf/heap/tok", 3),
+                                 ("a string the fold would have folded", False, "perf/heap/list/1", 4),
+                                 ("a string the fold would have folded", False, "perf/heap/capBytes", 3),
+                                 ("a key the fold would have folded", True, "perf/pusher", 2),
+                                 ("a key the fold would have folded", True, "perf/recordCache/wholeReads", 3),
+                                 ("a key the fold would have folded", True, "perf/recordCache/wholeReadsByStage", 3)]))
+        self.assertTrue(all(token not in str(p.kind) and token not in p.path for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))))
+        # each alone through check_document: the denylist wording, the kind and the path, the token and the key in no output
+        for plant, line in (((("perf", "heap", "tok"), token), "a string the fold would have folded, the value at perf/heap/tok"),
+                            (((("perf", "heap", "list"), ["ok", token])), "a string the fold would have folded, the value at perf/heap/list/1"),
+                            (((("perf", "pusher", "cycles\n"), 1)), "a key the fold would have folded, a key under perf/pusher"),
+                            (((("perf", "recordCache", "wholeReads", "leaf<-_parse\n"), {"count": 1})), "a key the fold would have folded, a key under perf/recordCache/wholeReads"),
+                            (((("extra",), {"note": token})), "a string the fold would have folded, the value at extra/note")):
+            doc = pe.export_document(leak_snapshot(), usage=True)
+            node = doc
+            for k in plant[0][:-1]:
+                node = node[k]
+            node[plant[0][-1]] = plant[1]
+            reason = _check(doc)
+            self.assertEqual(reason, "the public form still fails the denylist (%s); nothing written" % line)
+            self.assertNotIn(token, reason)
+            self.assertNotIn("\n", reason)
+        # the http block: a key outside the register's image is the walk's finding first and the fold's too (it collapses)
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["http"]["GET /dist/render.js"] = {"count": 1}
+        self.assertEqual([p.kind for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))], ["a key the fold would have folded"])
+        self.assertEqual(_check(doc), "the public form still fails the walk (outside the image of the route register, a key under perf/http); nothing written")
+        # the key finding leaves the value walked: a stamp beneath a folded key is named too
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["pusher"]["ring\n"] = {"startedAt": 1.6e9}
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",), skip=("schema",))],
+                         [("a key the fold would have folded", "perf/pusher"), ("a number the size of a clock stamp", "perf/pusher/ring\n/startedAt")])
+        # the schema line: judged without the skip (the envelope's slash), not judged with it, as the scan and the walk take it
+        doc = pe.export_document(leak_snapshot())
+        self.assertEqual([(p.kind, p.path) for p in pp.denylist_problems(doc, under=("perf",))], [("a string the fold would have folded", "schema")])
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [])
+        self.assertIsNone(_check(doc))
+        # the fixed point, and the belt: every block outside the envelope is its own fold, on every fixture, both usage settings
+        self.assertEqual(pe.ENVELOPE_KEYS, ("schema", "exported_at", "kernel_commit"))
+        for snap in (leak_snapshot(), _epoch(leak_snapshot()), bounds_snapshot(), bounds_snapshot(8 * 1024 ** 3)):
+            for usage in (False, True):
+                doc = pe.export_document(snap, usage=usage)
+                self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [])
+                self.assertEqual(set(doc) - {"perf", "usage"}, set(doc) & set(pe.ENVELOPE_KEYS), "the envelope and the blocks, nothing else")
+                for k in doc:
+                    if k not in pe.ENVELOPE_KEYS:
+                        self.assertEqual(pp.fold(doc[k]), doc[k], k)
+                        self.assertEqual(pp.fold(pp.fold(doc[k])), pp.fold(doc[k]), "and the fold is idempotent")
 
     def test_the_walk_holds_the_http_block_to_the_registers_image_and_the_stack_sample_to_its_grammars(self):
         # the walk's http check is membership in what the kernel's fold can return (http_key_ok), not a character grammar:
@@ -613,18 +1041,125 @@ class FoldInvariant(unittest.TestCase):
                          {"quietWindows": [{"waitedS": 297, "cutTurns": 2}], "restarts": [{"boot": {"settleS": 0.2, "outageS": 2.5}}],
                           "range": {}, "live": {"kernel": {"uptimeS": 60}}})
 
+    def test_an_integer_no_double_can_hold_is_null_in_the_fold_like_a_nan_with_the_edge_where_float_draws_it(self):
+        """HIGH 2 of the closing check (2026-09-19), the fold's side. json.load parses an integer literal of any size exactly,
+        and until that day the fold kept it (pp._finite passed every int), so fold({"rss_kb": 10**400}) wrote 401 digits and
+        the export road put them in the file, while the two coarsenings raised OverflowError on the same value. The rule now
+        (pp.finite_number, the old name kept as an alias) is "representable as a finite double", the rule that already nulled
+        a NaN and an infinity: every double reader, a browser's JSON.parse or the receiver, makes an infinity of an int at or
+        past 2**1024 - 2**970 (309 digits), so it is null in the fold, under any key, in a list, and inside a merged subtree,
+        where None is _merge's identity, so the re-coarsening sees one side. The edge is float()'s, not a digit count:
+        int(sys.float_info.max), int(sys.float_info.max) + 1 (rounds to the largest double) and 2**1024 - 2**970 - 1, all 309
+        digits, are kept; 2**1024 - 2**970 and its negative are null. The denylist walk over each fold's output finds nothing
+        (the fixed point), and over a RAW value it names the coarsening's finding and never raises: an uptime or a bound of
+        10**400 is "not rounded", since pp.public_uptime and pp.public_bound are total over ints, and an ordinary counter of
+        10**400 passes the walk (an integer is never a stamp; the parse refuses it on the upload road and the fold nulls it on
+        the others, so it reaches no walk from a file). Fails with finite_number's int arm reverted (10**400 - 40 where None is
+        asserted, and the digits kept under the counter), and with the edge moved to a digit count (len(str(x)) > 309 keeps
+        the edge; >= 309 nulls the three kept values)."""
+        fmax, edge = int(sys.float_info.max), 2 ** 1024 - 2 ** 970
+        self.assertEqual((len(str(fmax)), len(str(edge))), (309, 309))
+        self.assertEqual(pp.fold({"uptime_s": 10 ** 400}), {"uptime_s": None})
+        self.assertEqual(pp.fold({"uptime_s": -(10 ** 400)}), {"uptime_s": None})
+        self.assertIsNone(pp.fold({"capBytes": -(10 ** 400)})["capBytes"])
+        self.assertIsNone(pp.fold({"heap": {"hydrated": {"capBytes": 10 ** 400, "bytes": 5}}})["heap"]["hydrated"]["capBytes"])
+        self.assertEqual(pp.fold({"rss_kb": 10 ** 400}), {"rss_kb": None}, "an ordinary counter too: the closing check saw 401 digits written")
+        self.assertEqual(pp.fold({"x": [10 ** 400, 1, -(10 ** 400)]}), {"x": [None, 1, None]}, "in a list")
+        self.assertEqual(pp.fold({"a b": {"bound": 10 ** 400}, "a c": {"bound": 4}}), {"other": {"bound": 4}},
+                         "None is the merge identity, so the re-coarsening after the sum sees one side")
+        self.assertEqual(pp.fold({"a b": {"n": 10 ** 400}, "a c": {"n": 4}}), {"other": {"n": 4}})
+        for kept in (fmax, fmax + 1, edge - 1, -(edge - 1), 10 ** 307, 10 ** 308):
+            self.assertEqual(pp.fold({"rss_kb": kept}), {"rss_kb": kept}, "float() holds it: kept")
+            self.assertIs(pp.finite_number(kept), kept)
+        for nulled in (edge, -edge, 10 ** 400, 10 ** 5000, float("nan"), float("inf"), float("-inf")):
+            self.assertEqual(pp.fold({"rss_kb": nulled}), {"rss_kb": None}, "no double holds it: null")
+            self.assertIsNone(pp.finite_number(nulled))
+        self.assertIs(pp.finite_number(True), True)
+        self.assertIs(pp.finite_number(False), False)
+        self.assertEqual(pp.finite_number(1.5), 1.5)
+        self.assertIs(pp._finite, pp.finite_number, "the old name is an alias of the new")
+        for doc in ({"uptime_s": 10 ** 400}, {"capBytes": -(10 ** 400)}, {"a b": {"bound": 10 ** 400}, "a c": {"bound": 4}},
+                    {"rss_kb": edge}, {"x": [10 ** 400]}):
+            self.assertEqual(pp.denylist_problems(pp.fold(doc)), [], "a fold's output is the walk's fixed point: %r" % (sorted(doc),))
+        # over a RAW value (the upload road, before the parse refused it): a finding, never a raise
+        self.assertEqual([p.kind for p in pp.denylist_problems({"uptime_s": 10 ** 400})], ["an uptime not rounded to whole minutes"])
+        self.assertEqual([p.kind for p in pp.denylist_problems({"bound": 10 ** 400})], ["a bound not rounded to a power of two"])
+        self.assertEqual([p.kind for p in pp.denylist_problems({"uptimeS": -(10 ** 400)})], ["an uptime not rounded to whole minutes"])
+        self.assertEqual(pp.denylist_problems({"bound": -(10 ** 400)}), [], "public_bound returns a non-positive value as it is")
+        self.assertEqual(pp.denylist_problems({"rss_kb": 10 ** 400}), [], "an integer is never a stamp; the parse and the fold keep it off the wire")
+
+    def test_a_coarsening_or_a_sum_whose_result_no_double_holds_is_null_so_the_folds_output_is_its_own_fold(self):
+        """The fold's stated rule, no number a double cannot hold in its output, held over what the fold itself MAKES and not
+        only over what it reads (the closing check at the re-run's head, its verification, 2026-09-19): public_bound rounds a
+        bound at or past 2**1023 UP, so int(sys.float_info.max) under capBytes became 2**1024, which no double holds; two ints
+        of fmax under keys that fold to one `other` summed to 2 * fmax (310 digits) in _merge, and two 1e308 floats to inf, the
+        Infinity literal in the file. Each was written by the export child (exit 0) and the upload refused the export's own
+        output as not strict JSON; fold(fold(x)) differed from fold(x). Now every coarsening's and every sum's result passes
+        pp.held_number (finite_number's rule over a result): null, as a parsed NaN or a parsed 10**400 is, so on each input
+        the output is its own fold, every number in it is held by a double, the denylist walk finds nothing, and the export
+        child's file passes the upload (the road case in tests/test_perf_upload.py). public_uptime's int arm is held too: a
+        negative uptime just inside the edge, -(2**1024 - 2**970 - 1), has a residue of 49 and steps past it. Values that
+        stay inside are untouched: a bound of 2**1023 is its own power of two, 2**1022 + 1 rounds to 2**1023, a held sum
+        stays a sum. Fails with held_number dropped from either coarsening, from _merge's sum (2**1024, 2 * fmax and inf
+        written, and the second fold differing from the first) or from _merge's re-coarsening of a summed bound (2**1023 and
+        2**1022 sum to 3 * 2**1022, held, which rounds up to 2**1024: the one case the sum's own held_number does not reach)."""
+        fmax, edge = int(sys.float_info.max), 2 ** 1024 - 2 ** 970
+        cases = ({"heap": {"hydrated": {"capBytes": fmax, "bytes": 5}}},               # a bound a double holds rounds up past every double
+                 {"heap": {"hydrated": {"capBytes": 2 ** 1023 + 1}}},
+                 {"a b": {"n": fmax}, "a c": {"n": fmax}},                              # two held ints summed past the edge
+                 {"a b": {"n": 1e308}, "a c": {"n": 1e308}},                            # two held floats summed to an infinity
+                 {"x": {"a b": {"bound": 2 ** 1023}, "c d": {"bound": 2 ** 1023}}},     # two coarsened bounds summed past the edge
+                 {"x": {"a b": {"bound": 2 ** 1023}, "c d": {"bound": 2 ** 1022}}},     # summed to 3 * 2**1022, held, then coarsened again past it
+                 {"uptime_s": -(edge - 1)},
+                 {"memos": {"a k": {"uptime_s": -(edge - 1)}, "b k": {"uptime_s": 0}}})
+        self.assertEqual((-(edge - 1)) % 60, 49, "the residue that steps the int arm past the edge")
+
+        def numbers(node):
+            if isinstance(node, dict):
+                for v in node.values():
+                    yield from numbers(v)
+            elif isinstance(node, list):
+                for v in node:
+                    yield from numbers(v)
+            elif isinstance(node, (int, float)) and not isinstance(node, bool):
+                yield node
+        for snap in cases:
+            out = pp.fold(snap)
+            self.assertEqual(pp.fold(out), out, "the output is its own fold: %r" % (sorted(snap),))
+            for n in numbers(out):
+                self.assertIsNotNone(pp.finite_number(n), "a number no double holds in a fold's output: %r" % (sorted(snap),))
+            self.assertEqual(pp.denylist_problems(out), [], repr(sorted(snap)))
+        self.assertEqual(pp.fold(cases[0]), {"heap": {"hydrated": {"capBytes": None, "bytes": 5}}}, "the bound is null, the occupancy beside it kept")
+        self.assertEqual(pp.fold(cases[1]), {"heap": {"hydrated": {"capBytes": None}}})
+        self.assertEqual(pp.fold(cases[2]), {"other": {"n": None}}, "2 * fmax is null")
+        self.assertEqual(pp.fold(cases[3]), {"other": {"n": None}}, "inf is null, never the Infinity literal")
+        self.assertEqual(pp.fold(cases[4]), {"x": {"other": {"bound": None}}}, "the sum itself passes the edge")
+        self.assertEqual(pp.fold(cases[5]), {"x": {"other": {"bound": None}}}, "the sum is held and its re-coarsening passes the edge")
+        self.assertEqual(pp.fold(cases[6]), {"uptime_s": None})
+        self.assertEqual(pp.fold(cases[7]), {"memos": {"other": {"uptime_s": 0}}}, "None is the merge identity: the held side gives way to the sibling's 0")
+        self.assertEqual(pp.fold({"heap": {"hydrated": {"capBytes": 2 ** 1023}}}), {"heap": {"hydrated": {"capBytes": 2 ** 1023}}},
+                         "the largest power of two a double holds stays")
+        self.assertEqual(pp.fold({"heap": {"hydrated": {"capBytes": 2 ** 1022 + 1}}}), {"heap": {"hydrated": {"capBytes": 2 ** 1023}}})
+        self.assertEqual(pp.fold({"a b": {"n": 1e308}, "a c": {"n": 1.0}}), {"other": {"n": 1e308 + 1.0}}, "a held sum stays")
+        self.assertEqual(pp.fold({"uptime_s": -(edge - 61)}), {"uptime_s": -(edge - 12)}, "an uptime whose rounding stays inside the edge is rounded")
+        self.assertIsNotNone(pp.finite_number(-(edge - 12)))
+        for x in (None, "other", True, False):
+            self.assertIs(pp.held_number(x), x, "not a number: returned as it is")
+        self.assertIsNone(pp.held_number(2 ** 1024))
+        self.assertIsNone(pp.held_number(float("inf")))
+        self.assertEqual(pp.held_number(2 ** 1023), 2 ** 1023)
+        snap = leak_snapshot()
+        snap["heap"] = {"tracing": False, "hydrated": {"entries": 1, "bytes": 2, "capBytes": fmax}}
+        doc = pe.export_document(snap, usage=True)
+        self.assertIsNone(doc["perf"]["heap"]["hydrated"]["capBytes"], "through the export document")
+        self.assertEqual(doc["perf"]["heap"]["hydrated"]["bytes"], 2)
+        self.assertIsNone(_check(doc), "and it passes its own check")
+        self.assertEqual(pp.fold(doc["perf"]), doc["perf"], "and the output is its own fold")
+
     def test_no_absolute_clock_stamp_survives_the_export(self):
         # the PROPERTY, not key names (round 3): with every stamp of the leak snapshot moved into the seconds epoch window
         # (the fixture's own are small numbers), no numeric leaf inside an epoch window survives anywhere in the export
-        def epoch(node, key=None):
-            if isinstance(node, dict):
-                return {k: epoch(v, k) for k, v in node.items()}
-            if isinstance(node, list):
-                return [epoch(v) for v in node]
-            if key in ("t", "now", "since") and isinstance(node, (int, float)) and not isinstance(node, bool):
-                return node + 1.7e9
-            return node
-        snap = epoch(leak_snapshot())
+        snap = _epoch(leak_snapshot())
         self.assertGreaterEqual(len(_stamps(snap)), 8, "the snapshot carries stamps: now, since, five split rows, the child's")
         doc = pe.export_document(snap, usage=True)
         survivors = _stamps(doc)
@@ -682,6 +1217,27 @@ class BoundCoarsening(unittest.TestCase):
                          "a bound that IS a power of two (the floor on a small machine) reads the same, which a reader cannot tell from a rounded one")
 
 
+    def test_public_bound_is_total_over_ints_so_a_raw_bound_no_double_can_hold_is_a_finding_and_never_a_raise(self):
+        """pp.public_bound over an int float() cannot hold: until 2026-09-19 the guard was math.isfinite(value), which raises
+        OverflowError for such an int, and pp.denylist_problems applies the function to a RAW file value on the upload road
+        (the closing check's HIGH 2 drove a 401-digit bound to a traceback there). The finiteness test is now asked of a float
+        alone, and the body is exact for an int: public_bound(10**400) is 1 << 1329 (the next power of two), -10**400 is
+        returned as it is (not positive), int(sys.float_info.max) is 1 << 1024, and the float cases stand. The parse refuses
+        such an int first on the upload road, so this is the belt behind it, which is why the unit exists. Fails with the
+        isfinite reorder reverted (OverflowError)."""
+        self.assertEqual(pp.public_bound(10 ** 400), 1 << 1329)
+        self.assertEqual((10 ** 400).bit_length(), 1329)
+        self.assertEqual(pp.public_bound(-(10 ** 400)), -(10 ** 400))
+        self.assertEqual(pp.public_bound(int(sys.float_info.max)), 1 << 1024)
+        self.assertEqual(pp.public_bound(2 ** 1024 - 2 ** 970), 1 << 1024)
+        self.assertEqual(pp.public_bound(10 ** 5000), 1 << (10 ** 5000).bit_length())
+        self.assertEqual(pp.public_bound(1 << 1329), 1 << 1329, "a power of two of any size reads the same")
+        inf, nan = float("inf"), float("nan")
+        self.assertIs(pp.public_bound(inf), inf)
+        self.assertIs(pp.public_bound(nan), nan)
+        self.assertEqual(pp.public_bound(2.5), 4)
+
+
 class UptimeRounding(unittest.TestCase):
     """`uptime_s` stays (it is the span the lifetime totals cover) but rounded DOWN to whole minutes: to the second,
     beside the export minute (a stamp with no seconds), it placed the kernel's start within a minute, the same start the
@@ -708,6 +1264,29 @@ class UptimeRounding(unittest.TestCase):
         self.assertEqual(pp.public_uptime(3725), 3720)
         self.assertEqual(pp.UPTIME_KEYS, frozenset({"uptime_s", "uptimeS"}))
 
+    def test_public_uptime_is_total_over_ints_so_a_raw_uptime_no_double_can_hold_is_a_finding_and_never_a_raise(self):
+        """pp.public_uptime over an int float() cannot hold: until 2026-09-19 the guard was math.isfinite(value) and the body
+        value / 60, and each raises OverflowError for such an int ("int too large to convert to float"; "integer division
+        result too large for a float"); pp.denylist_problems applies the function to a RAW file value on the upload road, the
+        first raise the closing check's HIGH 2 drove there (a 401-digit uptime_s, a thirty-line traceback where the verb
+        promises one line). An int now takes an exact arm, value - value % 60 (10**400 - 40: 10**400 is 40 mod 60), a float
+        the floor of its quotient as before, and the finiteness test is asked of a float alone. The parse refuses such an int
+        first on the upload road, so this is the belt behind it, which is why the unit exists. Fails with the reorder
+        reverted (OverflowError) and with the int arm dropped (the quotient raises)."""
+        self.assertEqual(pp.public_uptime(10 ** 400), 10 ** 400 - 40)
+        self.assertEqual((10 ** 400 - 40) % 60, 0)
+        self.assertEqual(pp.public_uptime(-(10 ** 400)), -(10 ** 400) - 20)
+        fmax = int(sys.float_info.max)
+        self.assertEqual(pp.public_uptime(fmax), fmax - fmax % 60)
+        self.assertEqual(pp.public_uptime(10 ** 5000) % 60, 0)
+        self.assertEqual(pp.public_uptime(3725), 3720)
+        self.assertEqual(pp.public_uptime(-61), -120, "the int arm floors like the float arm did")
+        self.assertEqual(pp.public_uptime(100.5), 60)
+        self.assertIsInstance(pp.public_uptime(100.5), int)
+        inf, nan = float("inf"), float("nan")
+        self.assertIs(pp.public_uptime(inf), inf)
+        self.assertIs(pp.public_uptime(nan), nan)
+
     def test_the_usage_bucket_reads_the_raw_uptime_and_agrees_with_the_rounded_one(self):
         # usage_block reads the RAW snapshot's uptime_s (the block is built from the snapshot, before the fold); every
         # bucket bound is a whole number of minutes, so the raw value and its rounded form land in the same bucket at
@@ -728,7 +1307,12 @@ class Usage(unittest.TestCase):
 
     def test_session_counts_actions_views_and_the_uptime_bucket(self):
         u = pe.usage_block(leak_snapshot())
-        self.assertEqual(u["sessions"], {"parsed": 2, "chatBuilt": 2, "stamped": 31}, "an old kernel's per-sid table is a count")
+        self.assertEqual(u["sessions"], {"chatBuilt": 2, "stamped": 31, "parsedUnavailable": "predates-parses.perSession"},
+                         "an old kernel's per-sid table is one the plain export drops, so it gives no parsed count (the closing check at "
+                         "the re-run's head, 2026-09-19: the block adds no number a plain export lacks), and the block says so in place "
+                         "of the count (the second closing check, the same day)")
+        self.assertEqual(pe.usage_block({"parses": {"bySid": {SID: 3}}})["sessions"], {"parsedUnavailable": "predates-parses.perSession"},
+                         "len(bySid) is never written; the absence is")
         self.assertEqual(u["actions"], {"send": 7, "new": 2}, "POST routes the user drives; /tick is the browser's clock")
         self.assertEqual(u["views"], {"feed": 3})
         self.assertEqual(u["kernelUptime"], "lt1h")
@@ -739,8 +1323,151 @@ class Usage(unittest.TestCase):
         self.assertEqual(u["actions"], {"tunnels.start": 1})
         self.assertEqual(u["views"], {"usage.fleet": 2})
         self.assertEqual(u["kernelUptime"], "1d-7d")
-        self.assertEqual(pe.usage_block({}), {"sessions": {}, "actions": {}, "views": {}})
+        self.assertEqual(pe.usage_block({}), {"sessions": {"parsedUnavailable": "predates-parses.perSession"}, "actions": {}, "views": {}})
         self.assertEqual(pp.paste_problems(pp.fold(pe.usage_block(leak_snapshot()))), [])
+
+    def test_the_parsed_counts_absence_is_stated_in_place_of_the_count_and_only_then(self):
+        """The ruling of the second closing check (2026-09-19): the block dropped its count of an older snapshot's per-sid
+        table (a table the plain export drops, so the count was the one number --usage added), and a --usage export of such a
+        snapshot then had NO parsed count and nothing saying why, an absence a reader could not tell from a kernel that parsed
+        nothing. So `sessions` carries `parsedUnavailable` exactly when `parsed` is absent, with a fixed string that says WHY,
+        keyed on the snapshot's shape (the ruling of the same day on this leaf: its first cut wrote one reason over two causes,
+        and the reason was false for one of them): the older shape (parses.bySid, no perSession) and a snapshot with no parses
+        block at all carry `predates-parses.perSession`; a perSession block whose sessions is not a number carries
+        `perSession.sessions-not-a-number` (the next test drives every corner of that shape); the current shape carries the
+        count and no leaf; a count no double can hold is null in the count's place with no leaf beside it (the test named for
+        the third outcome, the ruling of 2026-09-19). Exactly one of the three, never two, never none. Each value is judged by the machinery the block travels through: it fits
+        the ident grammar, so pp.fold writes it as it is and the block equals its own fold, the belt the upload holds it to,
+        and the three walks pass it; a spelling with a space, the refused input, would fold to `other` and be a denylist
+        finding, which is why each reason is one token. Fails on: the leaf dropped; the leaf written whatever the shape; either
+        reason reworded, or the two spelled alike; a reason outside the grammar; the malformed shape given the predates
+        reason."""
+        reason = "predates-parses.perSession"
+        malformed = "perSession.sessions-not-a-number"
+        self.assertEqual((pe.PARSED_UNAVAILABLE, pe.PARSED_UNAVAILABLE_REASON), ("parsedUnavailable", reason))
+        self.assertEqual(pe.PARSED_MALFORMED_REASON, malformed)
+        old = {"parses": {"kernel": 12, "hits": 30, "bySid": {SID: 3, SID2: 9}}}
+        none = {"http": {"POST /send": {"count": 1}}}
+        bad = {"parses": {"perSession": {"sessions": "9", "max": 2}}}
+        for snap, why in ((old, reason), (none, reason), (bad, malformed)):
+            sessions = pe.usage_block(snap)["sessions"]
+            self.assertEqual(sessions.get("parsedUnavailable"), why, sorted(sessions))
+            self.assertNotIn("parsed", sessions, "never both")
+        new = {"parses": {"kernel": 12, "hits": 30, "perSession": {"sessions": 5, "max": 9}}}
+        sessions = pe.usage_block(new)["sessions"]
+        self.assertEqual(sessions, {"parsed": 5}, "the count present, the absence leaf not")
+        self.assertNotIn("parsedUnavailable", sessions)
+        # the two values through the fold and the walks, as the export writes them and the upload re-checks them: distinct
+        # tokens of the ident grammar, each kept by the fold as it is
+        self.assertNotEqual(reason, malformed, "two causes, two reasons")
+        for why in (reason, malformed):
+            self.assertTrue(pp.IDENT.fullmatch(why), "the reason is one token of the ident grammar, so the fold keeps it: %r" % why)
+            self.assertEqual(pp.fold({"sessions": {"parsedUnavailable": why}}), {"sessions": {"parsedUnavailable": why}}, why)
+        for snap in (old, bad):
+            block = pe.usage_block(snap)
+            self.assertEqual(pp.fold(block), block, "the block is its own fold: the upload's belt passes it")
+        doc = pe.export_document(dict(old, uptime_s=60, process={}, pusher={}, http={}), usage=True)
+        self.assertEqual(doc["usage"]["sessions"]["parsedUnavailable"], reason)
+        self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [])
+        self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [])
+        self.assertIn('"parsedUnavailable": "predates-parses.perSession"', pe.document_text(doc), "the line a reader of the file sees")
+        # the refused input: a reason spelled as text would not survive the fold, and the walk names it
+        spaced = {"sessions": {"parsedUnavailable": "predates parses.perSession"}}
+        self.assertEqual(pp.fold(spaced)["sessions"]["parsedUnavailable"], "other")
+        self.assertEqual([p.kind for p in pp.paste_problems(spaced)], ["free text"])
+        self.assertEqual([p.kind for p in pp.denylist_problems(spaced)], ["a string the fold would have folded"])
+
+    def test_a_per_session_block_whose_count_is_not_a_number_is_told_so_and_never_that_the_snapshot_is_old(self):
+        """The ruling of 2026-09-19 on the absence leaf: its first cut wrote `predates-parses.perSession` whenever no numeric
+        parses.perSession.sessions existed, one reason over two causes, and false for one of them: a snapshot whose perSession
+        block IS there but carries no number under sessions was told it was old when the field was present and garbage (no
+        kernel writes that shape: _PerfStats.snapshot writes len(by_sid) there, an int, so it is a hand-made or edited
+        snapshot's). So the arm is keyed on the SHAPE: no perSession block under parses (or no parses block) is the predates
+        reason; a perSession block, whatever is under sessions that is not a number, is `perSession.sessions-not-a-number`;
+        a number is the count. Every corner of the malformed shape here: sessions a digit string, a word, True, False, null, a
+        list, a dict, absent, and a perSession that is not a block at all (a number, a string, null); each carries the
+        malformed reason and no count. The accepting direction beside it: a genuine zero is `parsed` 0 and no leaf (a
+        kernel that parsed nothing is not an absence), a float count is kept as it is, and the two older shapes keep the
+        predates reason. Through the export: a malformed snapshot's document carries the new reason on its usage line, the
+        garbage leaf travels under perf as the fold leaves it (a digit string fits the ident grammar), and the three walks
+        pass both. Red before the second reason existed (every malformed corner read the predates reason). Fails on: the
+        malformed arm returning the predates reason (the defect ruled); the shape test inverted; the reason respelled; a
+        malformed corner counted (a bool as 1, a digit string parsed)."""
+        malformed, predates = pe.PARSED_MALFORMED_REASON, pe.PARSED_UNAVAILABLE_REASON
+        self.assertEqual(malformed, "perSession.sessions-not-a-number")
+        self.assertNotEqual(malformed, predates)
+        for bad in ("9", "nine", True, False, None, [], {}, [5], {"n": 5}):
+            snap = {"parses": {"kernel": 12, "hits": 30, "perSession": {"sessions": bad, "max": 2}}}
+            sessions = pe.usage_block(snap)["sessions"]
+            self.assertEqual(sessions, {"parsedUnavailable": malformed}, "sessions %r" % (bad,))
+        for per in ({"max": 2}, {}, 5, "five", None, [5]):
+            snap = {"parses": {"kernel": 12, "hits": 30, "perSession": per}}
+            sessions = pe.usage_block(snap)["sessions"]
+            self.assertEqual(sessions, {"parsedUnavailable": malformed}, "perSession %r" % (per,))
+        # the accepting direction: a number is the count, whatever its value
+        for n in (0, 5, 2.0):
+            sessions = pe.usage_block({"parses": {"perSession": {"sessions": n, "max": 9}}})["sessions"]
+            self.assertEqual(sessions, {"parsed": n}, "a count of %r is a count" % (n,))
+        # and the shape the predates reason is true of keeps it: no perSession block, or no parses block
+        for snap in ({"parses": {"kernel": 12, "hits": 30, "bySid": {SID: 3}}}, {"parses": {}}, {"parses": 7}, {}):
+            self.assertEqual(pe.usage_block(snap)["sessions"], {"parsedUnavailable": predates}, repr(snap))
+        # through the export: the document says what is wrong with the snapshot, and its walks pass the garbage as the
+        # fold leaves it (a digit string is one ident token; a bool and a null the fold keeps)
+        for bad in ("9", True, None):
+            snap = {"parses": {"kernel": 12, "hits": 30, "perSession": {"sessions": bad, "max": 2}}, "uptime_s": 60,
+                    "process": {}, "pusher": {}, "http": {}}
+            doc = pe.export_document(snap, usage=True)
+            self.assertEqual(doc["usage"]["sessions"], {"parsedUnavailable": malformed}, repr(bad))
+            self.assertEqual(doc["perf"]["parses"]["perSession"], {"sessions": bad, "max": 2}, "the garbage travels as it is: the fact the reason states")
+            self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [], repr(bad))
+            self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], repr(bad))
+            self.assertIn('"parsedUnavailable": "perSession.sessions-not-a-number"', pe.document_text(doc), "the line a reader of the file sees")
+
+    def test_a_count_no_double_can_hold_is_null_in_the_counts_place_with_no_leaf_beside_it(self):
+        """The third outcome (the ruling of 2026-09-19, restating the two-outcome biconditional as three): a perSession.sessions
+        that IS a number but one no double can hold, an integer past about 1.8e308 (json.load parses the literal exactly), a NaN
+        or an infinity (json.load admits both literals and reads 1e400 as an infinity), is a count the block copies and the fold
+        nulls, pp.finite_number's rule for every such number in the export, so `parsed` is null in the count's place and no
+        `parsedUnavailable` is written beside it: not an absence claim, and not a fourth reason, which would have put one signal
+        over three causes. Exactly one of a count, null or the leaf in every document, the same sum Disclosed._check takes over
+        its four documents. Both sides of the double's edge: the largest integer a double holds is a count, the first it cannot
+        hold is null. Through the export: the document's usage line reads parsed null, the same number under perf is null, the
+        leaf's name is nowhere in the text, and the three walks pass. Fails on: a leaf written beside the null; the null replaced
+        by a reason; the edge moved."""
+        first_unholdable = 2 ** 1024 - 2 ** 970                       # the first integer float() cannot hold (pp.finite_number)
+        self.assertIsNone(pp.finite_number(first_unholdable))
+        self.assertEqual(pp.finite_number(first_unholdable - 1), first_unholdable - 1, "the largest integer a double holds")
+        loaded = [json.loads('{"parses": {"perSession": {"sessions": %s, "max": 2}}}' % text)["parses"]["perSession"]["sessions"]
+                  for text in ("1e400", "-1e400", "NaN", "Infinity", "-Infinity", str(2 ** 1024))]
+        self.assertEqual((loaded[0], loaded[1], loaded[3], loaded[4], loaded[5]), (float("inf"), float("-inf"), float("inf"), float("-inf"), 2 ** 1024),
+                         "the loader's readings: 1e400 is an infinity, the integer literal is exact")
+        self.assertNotEqual(loaded[2], loaded[2], "NaN as the loader reads it")
+        for n in [2 ** 1024, -(2 ** 1024), first_unholdable, float("nan"), float("inf"), float("-inf")] + loaded:
+            snap = {"parses": {"kernel": 12, "hits": 30, "perSession": {"sessions": n, "max": 2}}}
+            raw = pe.usage_block(snap)["sessions"]
+            self.assertEqual(set(raw), {"parsed"}, "the block copies the count and writes no leaf: %r" % sorted(raw))
+            sessions = pp.fold(pe.usage_block(snap))["sessions"]
+            self.assertEqual(sessions, {"parsed": None}, "null in the count's place, no leaf, for %r" % (n,))
+            doc = pe.export_document(dict(snap, uptime_s=60, process={}, pusher={}, http={}), usage=True)
+            self.assertEqual(doc["usage"]["sessions"], {"parsed": None}, repr(n))
+            self.assertIsNone(doc["perf"]["parses"]["perSession"]["sessions"], "the same number under perf is null: one rule")
+            text = pe.document_text(doc)
+            self.assertIn('"parsed": null', text, "the line a reader of the file sees")
+            self.assertNotIn("parsedUnavailable", text, "no leaf anywhere in the document")
+            self.assertEqual(pp.paste_problems(doc, skip=("schema",), under=("perf",)), [], repr(n))
+            self.assertEqual(pp.denylist_problems(doc, under=("perf",), skip=("schema",)), [], repr(n))
+        # the accepting side of the edge: a count a double holds is the count, whatever its size
+        sessions = pp.fold(pe.usage_block({"parses": {"perSession": {"sessions": first_unholdable - 1, "max": 2}}}))["sessions"]
+        self.assertEqual(sessions, {"parsed": first_unholdable - 1})
+        # exactly one of the three outcomes over the four shapes
+        for snap, expect in (({"parses": {"perSession": {"sessions": 5, "max": 2}}}, "count"),
+                             ({"parses": {"perSession": {"sessions": 2 ** 1024, "max": 2}}}, "null"),
+                             ({"parses": {"perSession": {"sessions": "5", "max": 2}}}, "leaf"),
+                             ({"parses": {"bySid": {SID: 3}}}, "leaf")):
+            s = pp.fold(pe.usage_block(snap))["sessions"]
+            outcomes = {"count": "parsed" in s and s["parsed"] is not None and pp.finite_number(s["parsed"]) is not None,
+                        "null": "parsed" in s and s["parsed"] is None, "leaf": "parsedUnavailable" in s}
+            self.assertEqual([k for k, v in outcomes.items() if v], [expect], repr(snap))
 
     def test_a_non_finite_uptime_fits_no_bucket_and_raises_nothing(self):
         # json.load accepts the NaN and Infinity literals, so a --from file can carry either; the bucket search used
@@ -753,6 +1480,21 @@ class Usage(unittest.TestCase):
         self.assertEqual(pe.usage_block({"uptime_s": 0})["kernelUptime"], "lt1h")
         self.assertEqual(pe.usage_block({"uptime_s": 8 * 86400.0})["kernelUptime"], "gt7d")
         self.assertNotIn("kernelUptime", pe.usage_block({"uptime_s": "100"}), "a string is not an uptime")
+
+
+    def test_an_uptime_no_double_can_hold_fits_no_bucket_and_raises_nothing(self):
+        """pe.usage_block's bucket guard was math.isfinite(up), which raises OverflowError for an int float() cannot hold
+        (json.load parses 10**400 exactly from a --from snapshot; the closing check's HIGH 2 audit, :258); the guard is
+        pp.finite_number now, so 10**400 and -10**400 fit no bucket and the key is left out, as for a NaN, while the rest of
+        the block stands, and an int a double holds still buckets (8 * 86400 and int(sys.float_info.max) are gt7d). Fails
+        with the guard reverted (OverflowError)."""
+        for up in (10 ** 400, -(10 ** 400), 2 ** 1024 - 2 ** 970, 10 ** 5000):
+            u = pe.usage_block({"uptime_s": up, "http": {"POST /send": {"count": 1}}})
+            self.assertNotIn("kernelUptime", u)
+            self.assertEqual(u["actions"], {"send": 1}, "the rest of the block is unaffected")
+        self.assertEqual(pe.usage_block({"uptime_s": 8 * 86400})["kernelUptime"], "gt7d")
+        self.assertEqual(pe.usage_block({"uptime_s": int(sys.float_info.max)})["kernelUptime"], "gt7d", "an int a double holds buckets")
+        self.assertEqual(pe.usage_block({"uptime_s": 2 ** 1024 - 2 ** 970 - 1})["kernelUptime"], "gt7d")
 
 
 class Cli(unittest.TestCase):
@@ -805,24 +1547,125 @@ class Cli(unittest.TestCase):
         with open(out, encoding="utf-8") as fh:
             doc = json.load(fh)
         self.assertEqual(doc["usage"]["actions"], {"send": 7, "new": 2})
-        self.assertEqual(doc["usage"]["sessions"]["parsed"], 2)
+        self.assertEqual(doc["usage"]["sessions"], {"chatBuilt": 2, "stamped": 31, "parsedUnavailable": "predates-parses.perSession"},
+                         "no parsed count from the fixture's per-sid table, and the absence stated in its place")
         self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), "--out means no default file")
 
-    def test_a_snapshot_with_a_nan_uptime_exports_under_usage_with_no_traceback(self):
-        snap = leak_snapshot()
-        snap["uptime_s"] = float("nan")
-        with open(self.src, "w") as fh:
-            json.dump(snap, fh)                       # json writes the NaN literal, which json.load reads back
-        out = os.path.join(self.xdg, "nan.json")
+    def test_a_snapshot_from_before_the_per_session_count_exports_the_absence_leaf_and_a_current_one_the_count(self):
+        """The ruling of the second closing check (2026-09-19) on the export road, as a child over a saved snapshot with
+        --usage. The fixture is the OLDER shape (parses.bySid, no perSession, what a kernel before 2026-09-18 saved): the file
+        carries `sessions.parsedUnavailable`, the fixed string `predates-parses.perSession`, and no `parsed`, beside the two
+        counts the plain body gives, the verb exits 0 with nothing on stderr (its own three checks passed the leaf), and the
+        per-sid table is in neither block. The same snapshot with the kernel's perSession in place of the table, the CURRENT
+        shape: `parsed` is the count and the absence leaf is not written. The same snapshot with its count replaced by a digit
+        string, the MALFORMED shape (the ruling of 2026-09-19 on the leaf): the leaf with `perSession.sessions-not-a-number`,
+        never the predates reason, since the block is there. Red before the leaf existed: the older shape's sessions block was
+        the two counts and nothing said why the third was missing. Fails on: the leaf dropped; the leaf written for the
+        current shape too; either reason reworded; the malformed shape given the predates reason."""
+        reason = "predates-parses.perSession"
+        out = os.path.join(self.xdg, "old.json")
         r = _run(["--public", "--from", self.src, "--usage", "--out", out], state=self.state)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stderr, "", "no traceback, no warning")
-        self.assertNotIn("Traceback", r.stdout + r.stderr)
+        self.assertEqual((r.returncode, r.stderr), (0, ""), r.stderr)
+        with open(out, encoding="utf-8") as fh:
+            text = fh.read()
+        doc = json.loads(text)
+        self.assertEqual(doc["usage"]["sessions"], {"chatBuilt": 2, "stamped": 31, "parsedUnavailable": reason})
+        self.assertNotIn("bySid", doc["perf"]["parses"], "the per-sid table travels in no block")
+        self.assertNotIn("perSession", doc["perf"]["parses"], "and the older snapshot has no perSession for a reader to find")
+        self.assertIn('"parsedUnavailable": "predates-parses.perSession"', text, "the line in the file, as a reader sees it")
+        current = leak_snapshot()
+        current["parses"] = {"kernel": 12, "hits": 30, "bytes": 4096, "perSession": {"sessions": 2, "max": 9}}
+        src = os.path.join(self.xdg, "current.json")
+        with open(src, "w") as fh:
+            json.dump(current, fh)
+        out = os.path.join(self.xdg, "current-export.json")
+        r = _run(["--public", "--from", src, "--usage", "--out", out], state=self.state)
+        self.assertEqual((r.returncode, r.stderr), (0, ""), r.stderr)
         with open(out, encoding="utf-8") as fh:
             doc = json.load(fh)
-        self.assertNotIn("kernelUptime", doc["usage"])
-        self.assertEqual(doc["usage"]["actions"], {"send": 7, "new": 2})
-        self.assertIsNone(doc["perf"]["uptime_s"], "the fold nulls the non-finite number")
+        self.assertEqual(doc["usage"]["sessions"], {"parsed": 2, "chatBuilt": 2, "stamped": 31}, "the count, and no absence leaf")
+        self.assertEqual(doc["perf"]["parses"]["perSession"], {"sessions": 2, "max": 9}, "the leaf the count is a copy of travels")
+        # the MALFORMED shape (the ruling of 2026-09-19 on the leaf): a perSession block whose sessions is not a number is
+        # told so, in the file, with its own reason, never that the snapshot is old, and the garbage travels as it is
+        current["parses"]["perSession"]["sessions"] = "2"
+        src = os.path.join(self.xdg, "malformed.json")
+        with open(src, "w") as fh:
+            json.dump(current, fh)
+        out = os.path.join(self.xdg, "malformed-export.json")
+        r = _run(["--public", "--from", src, "--usage", "--out", out], state=self.state)
+        self.assertEqual((r.returncode, r.stderr), (0, ""), r.stderr)
+        with open(out, encoding="utf-8") as fh:
+            text = fh.read()
+        doc = json.loads(text)
+        self.assertEqual(doc["usage"]["sessions"], {"chatBuilt": 2, "stamped": 31, "parsedUnavailable": "perSession.sessions-not-a-number"},
+                         "the block is there and carries no number: the reason says that, not that the snapshot is old")
+        self.assertEqual(doc["perf"]["parses"]["perSession"], {"sessions": "2", "max": 9}, "the leaf the reason is about travels as it is")
+        self.assertIn('"parsedUnavailable": "perSession.sessions-not-a-number"', text, "the line in the file, as a reader sees it")
+
+    def test_a_snapshot_with_a_nan_uptime_exports_under_usage_with_no_traceback(self):
+        """The export road NULLS a number no double can hold and writes the file, one success line and no traceback: the NaN
+        literal was the precedent (json.load accepts it; the bucket search once ran off the end of UPTIME_BUCKETS on it and the
+        verb printed a traceback carrying the checkout's path, the review of 2026-09-18), and since the closing check's HIGH 2
+        (2026-09-19) an integer float() cannot hold takes the same road: json.load parses 10**400 exactly, the fold nulls it
+        (pp.finite_number, the NaN rule), usage_block leaves the bucket out, and the two coarsenings are total over ints (before
+        that day pp.public_uptime raised OverflowError on it inside the fold, and under an ordinary counter the 401 digits were
+        written). Refusing an integer here while admitting NaN would be inconsistent, and the file is re-checked by `romp perf
+        upload` before anything leaves, where the parse refuses both. Driven as a child for NaN, 10**400 and -10**400 (the ints
+        spliced into the snapshot text) at uptime_s, at a BOUND_KEYS leaf, at an ordinary counter, at an http row's count and
+        at a list element: exit 0, nothing on stderr, the leaf null in the written file, no kernelUptime for the uptime plant,
+        the action count null for the http-count plant. A 5001-digit literal at a counter is the one refusal here, "is not
+        JSON", exit 1, nothing written: that outcome is the INTERPRETER'S int() digit limit (PYTHONINTMAXSTRDIGITS, 4300 by
+        default on 3.10.20, 3.12.3, 3.13 and 3.14.6t, pinned in the child's environment), not this verb's rule; with the
+        limit off the fold nulls it like the others. Fails with finite_number's int arm reverted (the digits in the file)."""
+        mark = "@@LITERAL@@"
+        sites = (("uptime_s", lambda d: d.__setitem__("uptime_s", mark), lambda doc: doc["perf"]["uptime_s"]),
+                 ("heap/hydrated/capBytes", lambda d: d["heap"].__setitem__("hydrated", {"entries": 12, "bytes": 5000, "capBytes": mark}),
+                  lambda doc: doc["perf"]["heap"]["hydrated"]["capBytes"]),
+                 ("process/rss_kb", lambda d: d["process"].__setitem__("rss_kb", mark), lambda doc: doc["perf"]["process"]["rss_kb"]),
+                 ("http/POST /send/count", lambda d: d["http"]["POST /send"].__setitem__("count", mark), lambda doc: doc["perf"]["http"]["POST /send"]["count"]),
+                 ("probe/ring/0", lambda d: d.__setitem__("probe", {"ring": [mark]}), lambda doc: doc["perf"]["probe"]["ring"][0]))
+
+        def write(plant, literal):
+            snap = leak_snapshot()
+            plant(snap)
+            text = json.dumps(snap)                   # json writes a NaN literal for the fixture's own NaN, which json.load reads back
+            self.assertEqual(text.count(json.dumps(mark)), 1)
+            with open(self.src, "w") as fh:
+                fh.write(text.replace(json.dumps(mark), literal))
+
+        out = os.path.join(self.xdg, "nulled.json")
+        for where, plant, leaf in sites:
+            for name, literal in (("NaN", "NaN"), ("10**400", "1" + "0" * 400), ("-10**400", "-1" + "0" * 400)):
+                label = "%s at %s" % (name, where)
+                write(plant, literal)
+                if os.path.exists(out):
+                    os.unlink(out)
+                r = _run(["--public", "--from", self.src, "--usage", "--out", out], state=self.state)
+                self.assertEqual(r.returncode, 0, label + "\n" + r.stderr[-800:])
+                self.assertEqual(r.stderr, "", label + ": no traceback, no warning")
+                self.assertNotIn("Traceback", r.stdout + r.stderr, label)
+                self.assertNotRegex(r.stdout + r.stderr, r"0{40}", label)
+                with open(out, encoding="utf-8") as fh:
+                    text = fh.read()
+                self.assertNotRegex(text, r"0{40}", label + ": the digits are not in the file")
+                doc = json.loads(text)
+                self.assertIsNone(leaf(doc), label + ": the fold nulls the number no double can hold")
+                if where == "uptime_s":
+                    self.assertNotIn("kernelUptime", doc["usage"], label)
+                    self.assertEqual(doc["usage"]["actions"], {"send": 7, "new": 2}, label)
+                elif where == "http/POST /send/count":
+                    self.assertEqual(doc["usage"]["actions"], {"send": None, "new": 2}, label + ": the relabelled count is null too")
+                else:
+                    self.assertEqual(doc["usage"]["kernelUptime"], "lt1h", label)
+                    self.assertEqual(doc["usage"]["actions"], {"send": 7, "new": 2}, label)
+        # past the interpreter's int() digit limit: its ValueError, one line, the limit's outcome and not the verb's
+        write(sites[2][1], "1" + "0" * 5000)
+        os.unlink(out)
+        r = _run(["--public", "--from", self.src, "--usage", "--out", out], state=self.state, env_extra={"PYTHONINTMAXSTRDIGITS": "4300"})
+        self.assertEqual(r.returncode, 1, r.stderr[-800:])
+        self.assertEqual(r.stderr, "romp perf export: %s is not JSON\n" % self.src)
+        self.assertEqual(r.stdout, "")
+        self.assertFalse(os.path.exists(out), "nothing written")
 
     def test_a_missing_or_unreadable_snapshot_is_said(self):
         r = _run(["--public", "--from", os.path.join(self.xdg, "none.json")], state=self.state)
@@ -1028,6 +1871,1120 @@ class Cli(unittest.TestCase):
         self.assertEqual(_hits({"a": {"b": "x " + SID2[:8]}}, probes), [("session id", "the value at a/b")])
         self.assertEqual(_hits({"TESTHOST": 1}, probes), [("hostname", "a key under the root")])
 
+    def test_a_number_is_scanned_by_its_wire_spelling_so_a_listed_digit_run_in_a_numeric_leaf_is_a_hit(self):
+        """The identifier scan reads every NUMBER by its wire spelling, json.dumps(node), the spelling perf_export.document_text
+        writes and `romp perf upload` sends (the upload's fourth review round, 2026-09-19, its lens over the final artifact:
+        the private list may hold a digit run, and a listed run written as a number travelled unread while the same run in
+        quotes was refused). A hit is a value finding at the number's path, whatever the file spelled: a plain integer, a
+        float, a negative, a run embedded in a longer one, a fraction, an exponent form whose canonical spelling carries the
+        run (4.242424242e9 is 4242424242.0), a listed float-shaped entry and its exponent respelling (1234.5678, eight digits, at
+        the floor by digit count; the base's assertion, deleted by the first floor, which computed the floor as the longest run, and
+        restored by the closing delta), a list element. A
+        number whose canonical spelling does not carry the run is no hit (4242424242e-3 is 4242424.242, and a float that
+        merely rounds near it), nor are a bool or null under a probe that spells them, nor any number under the machine's
+        word and path probes (a hostname, a login, a home directory, a session id, a working directory spell letters,
+        slashes or dashes a number never carries). Fails before: every numeric leaf was skipped."""
+        listed = [(pp.PRIVATE_KIND, "4242424242"), (pp.PRIVATE_KIND, "1234.5678")]      # the pointed entry: eight digits, at the floor by digit count
+        for value, where in ((4242424242, "a/n"), (4242424242.0, "a/n"), (4242424242.5, "a/n"), (-4242424242, "a/n"), (14242424242, "a/n"),
+                             (0.4242424242, "a/n"), (4.242424242e9, "a/n"), (1234.5678, "a/n"), (12345678e-4, "a/n"), ([1, 4242424242], "a/n/1")):
+            self.assertEqual(_hits({"a": {"n": value}}, listed), [(pp.PRIVATE_KIND, "the value at %s" % where)], repr(value))
+            self.assertIn(json.dumps(value if not isinstance(value, list) else value[1]).strip("-"), pe.document_text({"a": {"n": value}}),
+                          "the spelling scanned is the spelling the writer puts in the file")
+        for value in (4242424242e-3, 4242424241.9999, 42424242, True, False, None, "x"):
+            self.assertEqual(_hits({"a": {"n": value}}, listed), [], repr(value))
+        self.assertEqual(_hits({"a": {"n": True, "m": None}}, [(pp.PRIVATE_KIND, "true"), (pp.PRIVATE_KIND, "null")]), [],
+                         "a bool and null are not scanned")
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"):
+            machine = pp.machine_probes(self.state, env={"HOME": HOME, "USER": "tester"})
+        self.assertEqual(_hits({"a": {"n": 4242424242, "f": 1234.5678, "l": [1e100, -0.0, 1.5e12]}}, machine), [],
+                         "the machine's words and paths are never spelled by a number")
+        self.assertEqual(_hits({"a": {"n": 4242424242}}, [("session id", "11111111")]), [], "an all-digit id prefix elsewhere is no hit")
+        self.assertEqual(_hits({"a": {"n": 911111111}}, [("session id", "11111111")]), [("session id", "the value at a/n")],
+                         "an all-digit id prefix a counter carries is a hit, the rare cost the docstring names")
+
+    def test_an_exponent_spelled_number_is_scanned_by_its_plain_decimal_spelling_too(self):
+        """A float whose canonical spelling carries an exponent (at or above 1e16 or under 1e-4 in magnitude) is scanned by every
+        spelling a reader recovers the value from (pp.number_spellings): the wire spelling and its plain decimal expansion
+        (format(Decimal(text), 'f') of the TEXT: 1.234567e+16 is 12345670000000000, 1.5e-05 is 0.000015, 1e+23 is
+        100000000000000000000000), and by NO third spelling: the exact integer of the double (int(1e+23) is
+        99999999999999991611392) is binary noise nobody wrote, which a listed 9999999 would match; the closing delta's first cut
+        scanned it and the verifier dropped it (E pins that a listed 99999999999999991611392 hits nothing, and a listed 9999999
+        neither). A listed entry is expanded the same way and THE FLOOR IS DECIDED PER SPELLING (pp.numeric_probe over each of
+        number_spellings' results), so a listed 1.234567e+16 is applied as 12345670000000000 and as itself, a listed 12345678e-4 as
+        1234.5678 and as itself, and a listed 1.5e-05 (four digits as written, seven as 0.000015) is applied as its expansion
+        alone: G hits the leaves 1.5e-05 and 0.000015, and machine_probes does not count it under the floor (the stderr test);
+        the first cut decided the floor on the entry's text once, so a listed 1e+16 protected nothing while the line told the
+        operator it carried too few digits (the closing delta's verifier). An expansion with fewer digits than the entry is not
+        armed: a listed 1.0000000e+2 (nine digits) is armed as itself and as 100.00000, never as 100, so the leaves 100.5 and
+        1000 travel (H). The closing check of 2026-09-19: a listed 12345670000000000 was refused when the leaf spelled the
+        integer and travelled when the same value's canonical spelling was 1.234567e+16, repr's point after the first digit
+        breaking the substring, while the module claimed a listed run was found however the file spelled it (the hole as old as
+        the numeric scan's first version). A number yields at most ONE Hit, the first spelling that carries a probe, and the Hit
+        never carries a spelling; the wire spelling is still what the writer puts in the file. Decimal of the text, not of the
+        value: Decimal(value) is the double's exact binary expansion (Decimal(1e+23) is 99999999999999991611392, never the
+        100000000000000000000000 a reader recovers from the text). An entry that underflows to zero (1000000e-400, seven
+        digits, leading exponent -394) is outside pp.EXPANSION_EXPONENT_MAX and keeps its ONE spelling since the closing re-run
+        of 2026-09-19 (the bound test beside this one), so it expands to no long plain fraction and to no bare 0, and refuses no
+        number carrying a zero (the first cut's int() road spelled str(int(0.0))). Dropping the Decimal spelling reds A on
+        1.234567e+16 (its first case), B on
+        1.234567e-05, C on 1.5e-05 and F on 1e+23; the int() spelling back reds E and the 1e+23 pin; scanning a probe by its
+        text alone reds D on the integer leaf and G on both leaves; Decimal of the value reds F on 1e+23 (and the
+        number_spellings pins); a Hit per spelling reds the single-Hit assertion on D over 1.234567e+16 (both spellings carry a
+        probe); a spelling in the Hit reds the digit-free reprs; the floor decided on the entry's text reds G's hits."""
+        A = pp.Probe(pp.PRIVATE_KIND, "12345670000000000", 2)
+        B = pp.Probe(pp.PRIVATE_KIND, "1234567", 3)
+        C = pp.Probe(pp.PRIVATE_KIND, "0.000015", 4)
+        D = pp.Probe(pp.PRIVATE_KIND, "1.234567e+16", 5)
+        E = pp.Probe(pp.PRIVATE_KIND, "99999999999999991611392", 6)
+        F = pp.Probe(pp.PRIVATE_KIND, "100000000000000000000000", 7)
+        G = pp.Probe(pp.PRIVATE_KIND, "1.5e-05", 8)
+        H = pp.Probe(pp.PRIVATE_KIND, "1.0000000e+2", 9)
+        digits = re.compile(r"\d{4,}")
+        for probe, value, where in ((A, 1.234567e+16, "a/n"), (A, -1.234567e+16, "a/n"), (A, [1, 1.234567e+16], "a/n/1"),
+                                    (A, 12345670000000000, "a/n"), (B, 1.234567e-05, "a/n"), (B, 0.001234567, "a/n"), (B, 1.234567e+16, "a/n"),
+                                    (C, 1.5e-05, "a/n"), (C, 0.000015, "a/n"), (D, 12345670000000000, "a/n"), (D, 1.234567e+16, "a/n"),
+                                    (F, 1e+23, "a/n"), (G, 1.5e-05, "a/n"), (G, 0.000015, "a/n")):
+            hits = pp.identifier_hits({"a": {"n": value}}, [probe])
+            self.assertEqual(len(hits), 1, "one Hit per number, whatever its spellings: %r under line %d" % (value, probe.line))
+            self.assertEqual(hits, [pp.Hit(pp.PRIVATE_KIND, False, where, len(where.split("/")), probe.line)], "%r under line %d" % (value, probe.line))
+            self.assertIsNone(digits.search(repr(hits)), "the Hit carries no spelling: %r" % (hits,))
+        for probe, value in ((A, 1.234568e+16), (A, 1e+16), (B, 1.234568e-05), (C, 1.5e-06), (E, 1e+23), (pp.Probe(pp.PRIVATE_KIND, "9999999", 6), 1e+23),
+                             (G, 1.5e-06), (H, 100.5), (H, 1000), (H, 100), (pp.Probe(pp.PRIVATE_KIND, "1000000e-400", 10), 409600)):
+            self.assertEqual(pp.identifier_hits({"a": {"n": value}}, [probe]), [], "no hit: %r under line %d" % (value, probe.line))
+        self.assertEqual(_hits({"a": {"n": "x1.5e-05"}}, [G]), [(pp.PRIVATE_KIND, "the value at a/n")], "a four-digit entry is still checked in a string")
+        for value in (1.234567e+16, -1.234567e+16, 1.234567e-05, 1.5e-05, 1e+23):
+            self.assertIn("e", json.dumps(value), repr(value))
+            self.assertIn(json.dumps(value), pe.document_text({"a": {"n": value}}), "the wire spelling is what the writer puts in the file")
+        self.assertEqual(pp.number_spellings("1.234567e+16", 1.234567e+16), ("1.234567e+16", "12345670000000000"))
+        self.assertEqual(pp.number_spellings("1.5e-05", 1.5e-05), ("1.5e-05", "0.000015"))
+        self.assertEqual(pp.number_spellings("1.234567e-05", 1.234567e-05), ("1.234567e-05", "0.00001234567"))
+        self.assertEqual(pp.number_spellings("-1.5e-05", -1.5e-05), ("-1.5e-05", "-0.000015"))
+        self.assertEqual(pp.number_spellings("1e+23", 1e+23), ("1e+23", "100000000000000000000000"), "two spellings at most: never the double's exact integer")
+        self.assertEqual(pp.number_spellings("1e+16", 1e+16), ("1e+16", "10000000000000000"))
+        self.assertEqual(pp.number_spellings("1.000000e+5", 100000.0), ("1.000000e+5", "100000.0"))
+        self.assertEqual(pp.number_spellings("1.0000000e+2", pp._number_value("1.0000000e+2")), ("1.0000000e+2", "100.00000"))
+        self.assertEqual([pp.numeric_probe(s) for s in pp.number_spellings("1.5e-05", pp._number_value("1.5e-05"))], [False, True],
+                         "a listed 1.5e-05 is armed as its expansion alone")
+        self.assertEqual([pp.numeric_probe(s) for s in pp.number_spellings("1e+16", pp._number_value("1e+16"))], [False, True])
+        self.assertEqual(pp._number_value("1000000e-400"), 0.0, "the entry underflows to a finite zero, so the finite check alone would expand it")
+        self.assertEqual(pp.number_spellings("1000000e-400", pp._number_value("1000000e-400")), ("1000000e-400",),
+                         "an entry that underflows to 0.0 has its leading exponent at -394, outside the bound, so it keeps its one spelling: no long "
+                         "plain fraction (the head before the closing re-run expanded it) and never a bare 0")
+        for value in (5000.0, 0.037, 2.5, 180.0, 1.37e11, 409600, 100.5, 0.0, 1234.5678, 12345678e-4, -4242424):
+            self.assertEqual(pp.number_spellings(json.dumps(value), value), (json.dumps(value),), "no exponent, one spelling: %r" % (value,))
+        for text in (".5678", "1234567.", "1e400", "12345670000000000", "1234567", "+4242424", "(12345678)", "1234 5678"):
+            self.assertEqual(pp.number_spellings(text, pp._number_value(text)), (text,),
+                             "a fragment, an overflow, a plus, an integer or a text json cannot read keeps its one spelling: %r" % (text,))
+        self.assertEqual(pp.number_spellings("12345678e-4", pp._number_value("12345678e-4")), ("12345678e-4", "1234.5678"),
+                         "a listed exponent form is applied as its plain spelling too")
+
+    def test_the_plain_expansion_is_bounded_by_the_exponent_and_an_entry_beyond_any_double_keeps_its_one_spelling_said_once(self):
+        """THE EXPANSION BOUND (the closing re-run of 2026-09-19, finding 5; the comment at pp.EXPANSION_EXPONENT_MAX).
+        format(Decimal(text), 'f') writes about as many digits as the exponent, so the expansion's work is exponential in an
+        ENTRY'S LENGTH while PRIVATE_STRINGS_MAX bounds only the file: a listed 1e-1000000000, thirteen characters, asked for a
+        billion digits and took `romp perf export --public` and `romp perf upload` down with an uncaught MemoryError.
+        number_spellings expands only when the leading digit's exponent, Decimal(text).adjusted(), has magnitude at most 324
+        (pp.expansion_bounded), the bound derived from the double: 5e-324 is the smallest positive double (adjusted -324) and
+        repr(sys.float_info.max) the largest (308), so every finite leaf's wire spelling is inside it, and an entry outside it
+        is the spelling of no leaf and expands longer than any leaf's spelling, so skipping it loses no protection. Pinned at
+        the edge with literals: 1e-324 (adjusted -324, inside; json reads it as 0.0) has two spellings and the second is 326
+        characters, 0. then zeros then 1; 5e-324 and the largest double have two; 1e-325 (adjusted -325) has one; 1000000e-400
+        (adjusted -394) has one. The bound is symmetric, 324 in magnitude, so on the positive side it admits exponents 309 to
+        324 that no double reaches (1e+309 and 1e+324 expand, to at most 325 digits, harmless; 1e+325 does not). THE GUARD'S
+        OWN LIMIT (the re-run's verification): the decimal module refuses to construct an exponent past decimal.MAX_EMAX,
+        about 1e18, with InvalidOperation, while json reads the same text as 0.0, so 1e-10000000000000000000 (exponent 10**19,
+        23 characters) and 1e- followed by sixty thousand nines (which the reader's 64 KiB admits) reached the guard and killed
+        all three verbs with that traceback where the first cut asked Decimal(text).adjusted() bare; expansion_bounded reads
+        the refusal as False and each keeps its one spelling with no exception. machine_probes says once which listed entries
+        kept their one spelling for this reason (pp.LIST_EXPANSION_SKIPPED, by list line, never the text, never the path),
+        BEFORE the under-floor line, since the skip explains why the entry has one spelling, which the floor line then judges:
+        a list of the two MAX_EMAX entries gets the skip line, 2 of 2, list lines 1 and 2, and nothing else (each carries
+        twenty-one or more digits as written, so it is armed as itself, not under the floor, and the probe is the entry as
+        written); a list of 1e-400 alone gets the skip line and then the under-floor line (1 of 1, list line 1: its one
+        spelling has four digits). The skip counts only an entry WRITTEN with an exponent: a plain decimal of 403 characters,
+        0. then four hundred zeros then 1 (adjusted -401, no e), is armed by its 402 digits, is never expanded (no exponent in
+        the text) and gets no line, so a long plain decimal is never reported as written with an exponent. An overflow (1e400,
+        infinity) keeps the older silent road: _number_value is None, nothing expands, no skip line, and the floor line alone
+        counts its four digits. THE BILLION-DIGIT ENTRY IS NOT FORMATTED IN THIS PROCESS: 1e-1000000000 stays in the
+        expansion_bounded truth table (that call never formats) and in the three children under their address-space caps
+        (the export and restart modules, and the upload module), where a removed guard fails fast with a MemoryError under the
+        cap; an in-process number_spellings call on it would, with the guard removed, format a billion digits inside the
+        pytest worker and then die building the diff (the re-run's verification saw the worker OOM-killed at 8 GB), a red by
+        the process dying rather than by assertion. Dropping `and expansion_bounded(text)` from number_spellings' guard reds
+        the one-spelling pin on 1e-325 (a 327-character second spelling), the MAX_EMAX pins (InvalidOperation out of format's
+        Decimal) and the three children; the try/except removed from expansion_bounded reds the MAX_EMAX truth-table pins and
+        the two-entry skip line with InvalidOperation in the message; a bound of 323 reds the two-spelling pins on 1e-324 and
+        5e-324 (a real leaf excluded); a bound of 325 reds the one-spelling pin on 1e-325; dropping the skip line reds the
+        stderr equalities; writing it after the under-floor line reds the 1e-400 order; dropping the `e` in the text from the
+        skip's filter reds the long plain decimal's silence."""
+        self.assertEqual(pp.number_spellings("1e-325", 0.0), ("1e-325",), "adjusted -325: outside the bound, one spelling")
+        two = pp.number_spellings("1e-324", 0.0)
+        self.assertEqual(len(two), 2, "adjusted -324: inside the bound, two spellings (a bound of 323 excludes the smallest double's exponent)")
+        self.assertEqual((two[0], len(two[1]), two[1][:2], two[1][-1], set(two[1][2:-1])), ("1e-324", 326, "0.", "1", {"0"}),
+                         "the expansion is 326 characters, 0. then zeros then 1")
+        self.assertEqual(len(pp.number_spellings("5e-324", 5e-324)), 2, "the smallest positive double is expanded")
+        self.assertEqual(len(pp.number_spellings("5e-324", 5e-324)[1]), 326, "the longest leaf expansion there is")
+        self.assertEqual(len(pp.number_spellings(repr(sys.float_info.max), sys.float_info.max)), 2, "and the largest double")
+        self.assertEqual(pp.number_spellings("1000000e-400", 0.0), ("1000000e-400",), "adjusted -394: one spelling")
+        past = "1e-10000000000000000000"                                    # exponent 10**19, past decimal.MAX_EMAX: the constructor refuses it
+        long_past = "1e-" + "9" * 60000                                     # 60003 characters, inside the reader's 64 KiB bound
+        for text in (past, long_past):
+            with self.assertRaises(pp.InvalidOperation, msg=text[:30]):
+                pp.Decimal(text)
+            self.assertEqual(pp._number_value(text), 0.0, "json reads it as a finite zero, so the finite check alone would reach the guard")
+            self.assertIs(pp.expansion_bounded(text), False, "a construction the decimal module refuses is beyond the bound by construction")
+            self.assertEqual(pp.number_spellings(text, 0.0), (text,), "one spelling, and no exception")
+        for text, adjusted, bounded in (("1e-1000000000", -1000000000, False), ("1e-325", -325, False), ("1e-324", -324, True), ("5e-324", -324, True),
+                                        (repr(sys.float_info.max), 308, True), ("1000000e-400", -394, False), ("1e-400", -400, False),
+                                        ("1.5e-05", -5, True), ("1e+16", 16, True), ("1e+308", 308, True), ("1e+309", 309, True),
+                                        ("1e+324", 324, True), ("1e+325", 325, False)):
+            self.assertEqual(pp.Decimal(text).adjusted(), adjusted, text)
+            self.assertIs(pp.expansion_bounded(text), bounded, text)
+        skip = pp.LIST_EXPANSION_SKIPPED % (1, 1, "list line 1", 324) + "\n"
+        self.assertEqual(skip, "romp: 1 of 1 private-strings entries (list line 1) are written with an exponent beyond 324, further than any number "
+                               "in an export reaches, so each is checked by its own text and not by its plain decimal expansion\n",
+                         "the literal the upload road pins, rendered from the module's template")
+        listed = os.path.join(self.state, "list.txt")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write(past + "\n" + long_past + "\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            probes = pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_EXPANSION_SKIPPED % (2, 2, "list lines 1 and 2", 324) + "\n",
+                         "the skip line and nothing else: twenty-one and sixty thousand digits as written, so each entry is armed as itself")
+        self.assertEqual([(p.text, p.line) for p in probes if p.kind == pp.PRIVATE_KIND], [(past, 1), (long_past, 2)], "the probes are the entries as written")
+        for word in (past, "InvalidOperation", "Traceback", listed):
+            self.assertNotIn(word, err.getvalue(), "the line names no entry's text, no exception and not the list's path: %s" % word[:30])
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e-400\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), skip + pp.LIST_UNDER_NUMERIC_FLOOR % (1, 1, "list line 1", 7, 7) + "\n",
+                         "skipped, then under the floor by its one spelling of four digits: two lines in that order")
+        plain = "0." + "0" * 400 + "1"                                      # adjusted -401 and no exponent written: armed by 402 digits, never expanded
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write(plain + "\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            probes = pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), "", "a long plain decimal carries no exponent: not skipped, not under the floor, nothing said")
+        self.assertEqual([(p.text, p.line) for p in probes if p.kind == pp.PRIVATE_KIND], [(plain, 1)], "and the probe is the entry as written")
+        self.assertEqual(pp.number_spellings(plain, pp._number_value(plain)), (plain,), "one spelling: no exponent in the text, nothing to expand")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e400\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 1, "list line 1", 7, 7) + "\n",
+                         "an overflow was never expanded: no skip line, the floor line alone")
+        self.assertEqual(pp.EXPANSION_EXPONENT_MAX, 324, "the constant the edge pins above derive from, last so that a moved bound reds on behaviour first")
+
+    def test_a_key_and_a_string_value_are_scanned_by_every_spelling_of_a_listed_entry_so_an_exponent_written_entry_protects_its_digits_there_too(self):
+        """The closing re-run of 2026-09-19 (finding 1, taken as the fix): identifier_hits built the expanded spellings of a
+        listed entry into the list applied to NUMBERS alone and scanned a key or a string value by the entry's own text, so a
+        listed 1.5e-05 refused the number 1.5e-05 and sent the string 0.000015 and the key zz0.000015 (the report's executed
+        table: rc 0, the digits POSTed), while docs/reference.md already promised the operator that a listed 1.5e-05 reaches the
+        floor as 0.000015 with nothing scoping that to numbers. Now every spelling of a listed entry (pp.number_spellings: its
+        text and its plain expansion) is applied to keys and string values, with no floor, as the entry's text always was: G, a
+        listed 1.5e-05 on line 8, hits the string value 0.000015 at zzn and the key zz0.000015 under the root, each one Hit
+        carrying line 8; H, a listed 1e+16 on line 2, hits the seventeen-digit string and key naming line 2; an expansion with
+        fewer digits than the entry is applied too (a listed 1.0000000e+2 as 100.00000 against the string 100.00000: the key
+        and string scan has no floor, so the expansion is applied on the same terms as the entry itself), and so is an
+        expansion UNDER the floor, which never enters the numeric list (a listed 1e5 as 100000 against the string 100000 and
+        the key zz100000, and not against the number 100000: the discriminating pin, since 100.00000 carries eight digits
+        and is a numeric probe in its own right). Controls: the string
+        x0.00015 is no hit for G (a different fraction), a listed 0.000015 still hits the string 0.000015 (the base's behaviour,
+        unchanged), the number pins stay (G hits the leaf 1.5e-05 and the leaf 0.000015), and a word probe over a key is as
+        before, a whole-token match. THE REVERSE DIRECTION IS NOT PROMISED AND IS PINNED AS THE BOUNDARY: the entry is
+        expanded and never the document's string, so a listed plain 0.000015 refuses the number 1.5e-05 (the leaf is
+        expanded) and not a string value spelled 1.5e-05 nor a key zz1.5e-05 (the re-run's verification executed the sending
+        cases on all three roads; identifier_hits' docstring and docs/reference.md state the boundary where the promise is
+        made). The cost on this machine's own list is nil, 0 of 11 entries gain a spelling (derived by
+        running number_spellings over the list, counting only). Scanning a key or a string by `probes` instead of the spelled
+        list reds the four spelled pins and both export-road pins while the number pins stay green (the hole exactly as
+        filed); appending only the numeric spellings to the spelled list reds the 1e5 pins (and the four-digit entry's own
+        text in the exponent test); dropping the line from the spelled Probe reds the line assertions."""
+        G = pp.Probe(pp.PRIVATE_KIND, "1.5e-05", 8)
+        H = pp.Probe(pp.PRIVATE_KIND, "1e+16", 2)
+        self.assertEqual(pp.identifier_hits({"zzn": "0.000015"}, [G]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 8)], "the string value, by the expansion")
+        self.assertEqual(pp.identifier_hits({"zz0.000015": 1}, [G]), [pp.Hit(pp.PRIVATE_KIND, True, "", 0, 8)], "the key, by the expansion")
+        self.assertEqual(pp.identifier_hits({"zzn": "10000000000000000"}, [H]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 2)])
+        self.assertEqual(pp.identifier_hits({"zz10000000000000000": 1}, [H]), [pp.Hit(pp.PRIVATE_KIND, True, "", 0, 2)])
+        self.assertEqual(pp.identifier_hits({"zzn": "100.00000"}, [pp.Probe(pp.PRIVATE_KIND, "1.0000000e+2", 3)]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 3)],
+                         "an expansion with fewer digits than the entry is applied to a string too: the key and string scan has no floor")
+        short = pp.Probe(pp.PRIVATE_KIND, "1e5", 4)                        # its expansion 100000 has six digits: never a numeric probe, still a spelling
+        self.assertEqual([pp.numeric_probe(s) for s in pp.number_spellings("1e5", pp._number_value("1e5"))], [False, False], "under the floor in both spellings")
+        self.assertEqual(pp.identifier_hits({"zzn": "100000"}, [short]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 4)],
+                         "an under-floor expansion is applied to a string: the same protection a listed 100000 has there")
+        self.assertEqual(pp.identifier_hits({"zz100000": 1}, [short]), [pp.Hit(pp.PRIVATE_KIND, True, "", 0, 4)], "and to a key")
+        self.assertEqual(pp.identifier_hits({"zzn": 100000}, [short]), [], "and not to the number: the floor is the numeric arm's alone")
+        self.assertEqual(pp.identifier_hits({"zzn": "x0.00015"}, [G]), [], "a different fraction: no hit")
+        self.assertEqual(pp.identifier_hits({"zzn": "0.000015"}, [pp.Probe(pp.PRIVATE_KIND, "0.000015", 1)]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 1)],
+                         "the base's behaviour, unchanged")
+        for value in (1.5e-05, 0.000015):
+            self.assertEqual(pp.identifier_hits({"zzn": value}, [G]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 8)], "the number pins stay: %r" % (value,))
+        plain = pp.Probe(pp.PRIVATE_KIND, "0.000015", 1)
+        self.assertEqual(pp.identifier_hits({"zzn": 1.5e-05}, [plain]), [pp.Hit(pp.PRIVATE_KIND, False, "zzn", 1, 1)], "the leaf is expanded: refused")
+        self.assertEqual(pp.identifier_hits({"zzn": "1.5e-05"}, [plain]), [], "the boundary: a string spelled with an exponent is never expanded")
+        self.assertEqual(pp.identifier_hits({"zz1.5e-05": 1}, [plain]), [], "nor is a key")
+        self.assertEqual(_hits({"testhost": 1}, [("hostname", "testhost")]), [("hostname", "a key under the root")], "a word probe over a key is as before")
+        self.assertEqual(_hits({"zztesthost": 1}, [("hostname", "testhost")]), [], "and still a whole-token match")
+
+    def test_a_listed_digit_run_under_seven_digits_is_not_applied_to_a_number_and_one_of_seven_is_with_its_list_line(self):
+        """THE NUMERIC FLOOR (2026-09-19, the comment at pp.NUMERIC_PROBE_MIN_DIGITS; its predicate corrected by the closing delta
+        the same day): identifier_hits applies a listed private string to a number's spellings only through a spelling of the
+        entry that carries at least seven digits counted across the whole spelling (pp.digit_count, pp.numeric_probe), because
+        a shorter listed value collides with some number of a real export by coincidence too often for a match to be evidence
+        (measured on a real export of 3,770 numbers: a listed four-digit run matched some number about one export in four, a
+        seven-digit run about one in 7,000). The quantity is the DIGIT COUNT, never the longest run, never the character length
+        and never the alphabet: the first floor gated on the longest run and excluded a listed 1234.5678 (eight
+        digits, longest run four) while it kept a bare 4242424, dropping a protection the base had; a length gate would admit
+        1234.56 (seven characters, six digits); the closing delta's first cut required the entry to be spelled like a number
+        (pp.number_shaped) and so dropped the base's token-run match of a listed (12345678), _12345678 or 12345678/ to the leaf
+        12345678, three refusals turned into sends. The boundary is pinned by execution with literals, never the constant: a
+        six-digit listed run is no hit in any number that carries it (whole, inside a longer one, as a float, a negative, an
+        exponent spelling, a fraction, a list element) and stays a hit in a key and in a string value; a seven-digit listed run
+        is a hit as an integer, a float, a negative, an exponent spelling that canonicalises to it, inside a longer run and as a
+        fraction, at the value's path, and the Hit carries the entry's LIST LINE (Probe.line) and never its text; a listed
+        1234.5678 (line 5) hits the leaves 1234.5678 and 12345678e-4 carrying line 5 (the restored assertion); a listed 1234.56
+        hits no number carrying it and still hits the string and the key; a listed 12345678 does NOT hit the leaf 1234.5678 (the
+        trap the first stderr line advised: that number's spelling carries no eight consecutive digits); a listed (12345678)
+        (line 1) hits the leaf 12345678 by its token run and not the leaf 1234.5678, a listed 1234 5678 (line 2) hits 1234.5678
+        and not 12345678 (the groups split differently), a listed _12345678 and 12345678/ hit 12345678, and a listed zz4242424 is
+        armed and hits nothing (no number's token is zz4242424), all as the base before the floor had them; abc12 is under the floor
+        by its two digits. The truth tables of digit_count, number_shaped and numeric_probe pin the count, the alphabet the
+        stderr line reads (the ASCII digits; a lone `e`, the empty string, a space and a comma are not shaped) and that the arm
+        reads the count alone (zz4242424 and (12345678) are numeric probes, abc12 is not). A word probe keeps today's token-run
+        match over numbers and an all-digit session-id prefix, eight digits, is above the floor, so the floor's one effect is on
+        the list. A floor of eight turns the seven-digit assertions red; a floor of six turns the six-digit ones red; the longest
+        run back turns the 1234.5678 hits red; a length gate turns the 1234.56 no-hits red; the alphabet back in the arm turns
+        the token-run hits and the numeric_probe truth table red."""
+        six = [pp.Probe(pp.PRIVATE_KIND, "424242", 4)]
+        for value in (424242, 1424242, 424242.0, -424242, 4.24242e5, 0.424242, [424242]):
+            self.assertEqual(pp.identifier_hits({"a": {"n": value}}, six), [], "a six-digit listed run is not applied to a number: %r" % (value,))
+        self.assertEqual(_hits({"a": {"n": "x424242"}}, six), [(pp.PRIVATE_KIND, "the value at a/n")], "a string value is checked as before")
+        self.assertEqual(_hits({"a": {"424242": 1}}, six), [(pp.PRIVATE_KIND, "a key under a")], "a key is checked as before")
+        seven = [pp.Probe(pp.PRIVATE_KIND, "4242424", 3)]
+        for value in (4242424, 4242424.0, -4242424, 4.242424e6, 14242424, 0.4242424, 4242424.5):
+            self.assertEqual(json.dumps(value).count("4242424"), 1, repr(value))
+            hits = pp.identifier_hits({"a": {"n": value}}, seven)
+            self.assertEqual(hits, [pp.Hit(pp.PRIVATE_KIND, False, "a/n", 2, 3)], "a seven-digit listed run is a hit in a number: %r" % (value,))
+            self.assertEqual(hits[0].line, 3, "the Hit carries the entry's list line")
+            self.assertNotIn("4242424", repr(hits), "and never its text")
+        self.assertEqual(pp.identifier_hits({"a": {"n": 4242424}}, [(pp.PRIVATE_KIND, "4242424")])[0].line, None, "a plain tuple probe has no line")
+        pointed = [pp.Probe(pp.PRIVATE_KIND, "1234.5678", 5)]
+        for value in (1234.5678, 12345678e-4, -1234.5678, 91234.5678, 1234.56789):
+            hits = pp.identifier_hits({"a": {"n": value}}, pointed)
+            self.assertEqual(hits, [pp.Hit(pp.PRIVATE_KIND, False, "a/n", 2, 5)], "a listed 1234.5678, eight digits, is applied to a number: %r" % (value,))
+            self.assertNotIn("1234", repr(hits), "and never its text")
+        six_pointed = [pp.Probe(pp.PRIVATE_KIND, "1234.56", 6)]
+        for value in (1234.56, 91234.56, -1234.56):
+            self.assertIn("1234.56", json.dumps(value), repr(value))
+            self.assertEqual(pp.identifier_hits({"a": {"n": value}}, six_pointed), [],
+                             "a listed 1234.56, seven characters and six digits, is applied to no number: %r" % (value,))
+        self.assertEqual(_hits({"a": {"n": "x1234.56"}}, six_pointed), [(pp.PRIVATE_KIND, "the value at a/n")], "and stays a hit in a string value")
+        self.assertEqual(_hits({"a": {"1234.56": 1}}, six_pointed), [(pp.PRIVATE_KIND, "a key under a")], "and in a key")
+        self.assertEqual(pp.identifier_hits({"a": {"n": 1234.5678}}, [pp.Probe(pp.PRIVATE_KIND, "12345678", 7)]), [],
+                         "a listed eight-digit run protects only a number whose spelling carries it, and 1234.5678 carries no eight consecutive digits")
+        self.assertEqual([pp.digit_count(s) for s in ("1234.5678", "1234.56", "424242", "4242424", "1.5e-05", "12345670000000000", "0.000015", "abc12", "abc", "")],
+                         [8, 6, 6, 7, 4, 17, 7, 2, 0, 0])
+        self.assertEqual([pp.number_shaped(s) for s in ("1234.5678", "-4242424", "1.5e-05", ".5678", "4242424", "abc12", "zz4242424", "e", "", "1234 5678", "1,234")],
+                         [True, True, True, True, True, False, False, False, False, False, False])
+        self.assertEqual([pp.numeric_probe(s) for s in ("1234.5678", "4242424", "-4242424", "12345678e-4", "0.000015", "zz4242424", "(12345678)", "1234 5678",
+                                                         "424242", "1234.56", "1.5e-05", "abc12")],
+                         [True, True, True, True, True, True, True, True, False, False, False, False], "the arm reads the digit count and nothing else")
+        # the alphabet is not asked of the arm: an entry carrying other characters is applied by its token run, as the base did
+        for text, line, hit, miss in (("(12345678)", 1, 12345678, 1234.5678), ("1234 5678", 2, 1234.5678, 12345678),
+                                      ("_12345678", 3, 12345678, 1234.5678), ("12345678/", 4, 12345678, 1234.5678)):
+            probe = [pp.Probe(pp.PRIVATE_KIND, text, line)]
+            hits = pp.identifier_hits({"a": {"n": hit}}, probe)
+            self.assertEqual(hits, [pp.Hit(pp.PRIVATE_KIND, False, "a/n", 2, line)], "a listed %s is applied to the number %r by its token run" % (text, hit))
+            self.assertNotIn("12345678", repr(hits) + repr(hits[0].line), "and never its text")
+            self.assertEqual(pp.identifier_hits({"a": {"n": miss}}, probe), [], "the groups of %r split unlike %s" % (miss, text))
+        self.assertEqual(pp.identifier_hits({"a": {"n": 4242424}}, [pp.Probe(pp.PRIVATE_KIND, "zz4242424", 5)]), [],
+                         "an armed entry carrying a letter matches no number: no number's token is zz4242424")
+        self.assertEqual(_hits({"a": {"n": 4242}}, [("hostname", "4242")]), [("hostname", "the value at a/n")], "a word probe over a number is as before")
+        self.assertEqual(_hits({"a": {"n": 911111111}}, [("session id", "11111111")]), [("session id", "the value at a/n")],
+                         "an eight-digit id prefix is above the floor")
+
+    def test_the_stderr_line_counts_the_listed_entries_under_the_numeric_floor_once_by_their_list_lines_and_names_no_text(self):
+        """machine_probes says once on stderr how many listed entries could match a number (pp.number_matchable: spelled like one,
+        or a run of digit-only tokens; the closing re-run of 2026-09-19 widened the count from the alphabet alone) but carry
+        fewer digits than the floor in every spelling (pp.LIST_UNDER_NUMERIC_FLOOR), WHICH by the line of the list each is on (list lines 3 and 6 here,
+        pp.list_lines_phrase; never an entry's text and never the list's path, the review of 2026-09-19): those are checked in
+        keys and string values and not in numbers, and the line says what does protect a number (an entry of seven or more digits, as written or as the plain decimal
+        spelling of an entry written with an exponent, matched against the number's own spelling: a listed 1234.5678 protects the
+        number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits protects no number), so that a reader
+        whose private value is a short number knows the numeric arm does not protect it and that listing a longer bare run
+        would silence this line without protecting the value (the trap the first line laid; the closing delta of 2026-09-19).
+        Over a list of a comment, a word, a six-digit run, a word with two digits, a seven-digit run, 1234.56, 1.5e-05 and
+        1234.5678: two of seven (424242 and 1234.56 are spelled like a number and under the floor; 1.5e-05 is four digits as
+        written and seven as its expansion 0.000015, which is the spelling armed, so it is NOT counted, where the delta's first
+        cut counted it and told the operator a value it protected was unprotected; abc12 carries letters, so no number can
+        carry it and it is not counted, where the first trigger counted it; 4242424 and 1234.5678 are armed), the line's exact
+        text, and each probe carries its file line, the comment counting. The line names no entry's TEXT: the two values it
+        spells, 1234.5678 and 12345678, are the template's own worked example, there for every list; it points at the counted
+        entries by list line, 3 and 6, with uncounted entries on lines 2, 4 and 5 around and between them, so a phrase built
+        from the entries' positions in the count (1 and 2) or from every listed line reds here; and it names no path, the
+        list's own (ROMP_PRIVATE_STRINGS here) least of all. The silent lists are the next
+        test's, on their own so that a trigger change that keeps this count and fires for one of them reds by name. Removing
+        the line turns this red; so does a floor of eight (four of seven: 4242424 and 0.000015 fall under it), a floor of six
+        (the line silent: 424242 and 1234.56 reach it), the longest-run trigger (five of seven: abc12 and 1234.5678 counted,
+        1.5e-05 by its run of two), an any-digit trigger (four of seven, abc12 counted), a length gate (one of seven: 1234.56
+        and 1.5e-05 are seven characters), or the floor decided on the entry's text alone (three of seven, 1.5e-05 counted);
+        naming the counted entries by their position in the count (list lines 1 and 2), spelling an entry's text in the line or
+        adding the list's path reds the exact text and the named pin for each."""
+        listed = os.path.join(self.state, "list.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("# a comment on line 1\nzzcoinedzz\n424242\nabc12\n4242424\n1234.56\n1.5e-05\n1234.5678\n")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            probes = pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), ("romp: 2 of 7 private-strings entries (list lines 3 and 6) could match a number, by their spelling or by their digit "
+                                          "groups, but carry fewer than 7 digits, "
+                                          "so they are checked in keys and string values and not in numbers; a number is checked against a listed entry only "
+                                          "when the entry, or the plain decimal spelling of an entry written with an exponent, carries 7 or more digits, and "
+                                          "the match is against the number's own spelling: a listed 1234.5678 protects the number 1234.5678, a listed "
+                                          "12345678 does not, and a listed entry of fewer digits protects no number\n"))
+        self.assertEqual(err.getvalue().count("romp:"), 1, "said once")
+        for entry in ("zzcoinedzz", "424242", "abc12", "4242424", "1.5e-05", "0.000015"):
+            self.assertNotIn(entry, err.getvalue(), "the line names no entry")
+        self.assertIn("(list lines 3 and 6)", err.getvalue(), "the counted entries by their list lines, in file order")
+        self.assertNotIn("(list lines 1 and 2)", err.getvalue(), "not their positions in the count")
+        self.assertNotIn(listed, err.getvalue(), "the line does not name the list's path")
+        self.assertNotIn(self.state, err.getvalue(), "nor any part of it")
+        self.assertIn("a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not", pp.LIST_UNDER_NUMERIC_FLOOR,
+                      "the two values the line spells are the template's worked example, not the list's entries")
+        self.assertEqual([(p.text, p.line) for p in probes if p.kind == pp.PRIVATE_KIND],
+                         [("zzcoinedzz", 2), ("424242", 3), ("abc12", 4), ("4242424", 5), ("1234.56", 6), ("1.5e-05", 7), ("1234.5678", 8)],
+                         "each probe carries the file's line, the comment counting")
+        self.assertTrue(all(p.line is None for p in probes if p.kind != pp.PRIVATE_KIND), "a machine string has no line")
+
+    def test_the_stderr_line_is_silent_for_a_list_with_nothing_spelled_like_a_number_under_the_floor(self):
+        """The silent side of the line above, each list on its own so a trigger change that keeps the count and fires for one of
+        these reds naming it: two words; two runs at or over the floor; the empty list; a word with digits beside a run with
+        letters (abc12, zz424242: the construction that fired the first line on every run on this box's list, whose entries all
+        carry a letter and appear in no number); a pointed value and a negative at the floor; an exponent-spelled 1.5e-05 and
+        1e+16 (four and one digit as written, seven and seventeen as 0.000015 and 10000000000000000, the spellings the arm
+        applies: an entry armed through its expansion is protected, and the line must not say otherwise, which the delta's
+        first cut did); an IP-shaped 10.0.0.1 beside an eight-digit run (an arrangement no number spells but the alphabet admits:
+        it is counted, the cost the comment at pp.NUMBER_CHARS names, so that list is the one loud case here, 1 of 2). Any of
+        the first cut's triggers (the longest run, any digit, the entry's text alone) reds a case here by name."""
+        listed = os.path.join(self.state, "list.txt")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        for content in ("zzcoinedzz\nsecond-coined\n", "4242424\n12345678\n", "", "abc12\nzz424242\n", "1234.5678\n-4242424\n", "1.5e-05\n1e+16\n"):
+            with open(listed, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            err = io.StringIO()
+            with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+                pp.machine_probes(None, env=env)
+            self.assertEqual(err.getvalue(), "", "nothing spelled like a number under the floor, nothing said: %r" % content)
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("10.0.0.1\n12345678\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, "list line 1", 7, 7) + "\n",
+                         "an IP-shaped entry is inside the alphabet and is counted, by its list line")
+
+    def test_the_stderr_line_counts_an_under_floor_run_of_digit_only_tokens_too_and_not_an_entry_with_a_letter_and_its_silence_is_not_a_claim(self):
+        """The widened count (the closing re-run of 2026-09-19, finding 3, ruled as widen): the line counts an under-floor entry
+        that COULD MATCH A NUMBER (pp.number_matchable), spelled in the number alphabet (number_shaped) or a run of digit-only
+        tokens, since the token-run arm applies such an entry at seven digits ((1234567), _1234567 and 1234567/ each refuse the
+        leaf 1234567, executed here as literals), so the operator whose private value is an underscored or parenthesised
+        six-digit id is told it is unprotected in numbers; the head the closing re-run read counted the alphabet alone and said 2 of 6 over
+        the report's six-shape list (the two in the number alphabet, 12-3456 and 123456), justified by a clause execution falsified (an entry outside the alphabet was said to be
+        matched by no number, so the remedy could not reach it), and that clause is gone from the module (the negative source
+        pins here; the docs/reference.md side is the Docs class's, in the upload module). The truth table of number_matchable;
+        the six-shape list gives 6 of 6, list lines 1 to 6, no entry's punctuated text in the line; abc12 and zz424242 stay
+        silent (a letter in a token outside the number alphabet), while a listed 1e5 alone, in the alphabet and carrying the
+        one letter a number spells, an exponent's e, IS counted, 1 of 1, list line 1 (the re-run's verification found the
+        round's first wording, that no number's token carries a letter, false by that entry: TOKEN splits 1.5e-05 into 1, 5e
+        and 05, and this test's own truth table has number_matchable("1e-5") True); (123456) against the leaf 123456 is no hit
+        (under the floor, which is what the line is for). Finding 9: the line reports the digit-count side only, so its silence is not a
+        claim that an entry it does not count matches a number: a listed 192.168.100.200 (twelve digits, armed) matches no
+        number, four digit groups spelling no json number, and gets no line while 10.0.0.1 beside it is counted, 1 of 2, list
+        line 1, and machine_probes' docstring says so. Reverting the count to number_shaped reds the six-shape pin (2 of 6); an
+        any-digit predicate (the trigger at the head the closing check read) reds the abc12 silence and the truth table; the old template phrase reds the
+        six-shape literal; the clause back in the module reds the source pin; the silence sentence deleted reds the __doc__
+        pin; the letter clause re-asserted in the module reds the negative source pin."""
+        for text in ("(1234567)", "_1234567", "1234567/", "(123456)", "1 23456", "12-3456", "10.0.0.1", "1.5e-05", "1e-5", "4242424"):
+            self.assertTrue(pp.number_matchable(text), text)
+        for text in ("zz424242", "abc12", "e", "", "()", "_"):
+            self.assertFalse(pp.number_matchable(text), text)
+        for text in ("(1234567)", "_1234567", "1234567/"):
+            self.assertEqual(pp.identifier_hits({"a": {"n": 1234567}}, [pp.Probe(pp.PRIVATE_KIND, text, 1)]), [pp.Hit(pp.PRIVATE_KIND, False, "a/n", 2, 1)],
+                             "the token-run arm applies %s to the leaf 1234567: the remedy the line names reaches this entry" % text)
+        self.assertEqual(pp.identifier_hits({"a": {"n": 123456}}, [pp.Probe(pp.PRIVATE_KIND, "(123456)", 1)]), [], "six digits: under the floor, no hit")
+        listed = os.path.join(self.state, "list.txt")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        shapes = ["(123456)", "_123456", "123456/", "1 23456", "12-3456", "123456"]
+        self.assertEqual([s for s in shapes if pp.number_shaped(s)], ["12-3456", "123456"],
+                         "the docstring's 2 of 6 sentence, recomputed: the two shapes of the six in the number alphabet")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("".join(s + "\n" for s in shapes))
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (6, 6, "list lines 1, 2, 3, 4, 5 and 6", 7, 7) + "\n", "every shape is counted")
+        self.assertIn("(list lines 1, 2, 3, 4, 5 and 6) could match a number, by their spelling or by their digit groups, but carry fewer than 7 digits",
+                      err.getvalue())
+        for entry in ("(123456)", "_123456", "123456/", "1 23456", "12-3456"):
+            self.assertNotIn(entry, err.getvalue(), "no entry's text is in the line: %s" % entry)
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("abc12\nzz424242\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), "", "a letter in a token outside the number alphabet: nothing is counted")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e5\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 1, "list line 1", 7, 7) + "\n",
+                         "the one letter a number spells, an exponent's e: in the alphabet, six digits as 100000, counted")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("10.0.0.1\n192.168.100.200\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, "list line 1", 7, 7) + "\n",
+                         "the long address is armed and not counted, the short one is counted")
+        self.assertEqual(pp.identifier_hits({"a": {"n": 192168100200}}, [pp.Probe(pp.PRIVATE_KIND, "192.168.100.200", 3)]), [],
+                         "armed, and matching no number: four digit groups spell no json number; the line said nothing about it")
+        self.assertIn("silence is not a claim", pp.machine_probes.__doc__)
+        with open(pp.__file__, encoding="utf-8") as fh:
+            source = fh.read()
+        for clause in ("substring of no number", "remedy cannot apply", "since no number's token carries"):
+            self.assertNotIn(clause, source, "the falsified clause is gone from the module: %s" % clause)
+
+    def test_the_stderr_line_names_the_counted_entries_by_list_line_in_file_order_and_never_their_text_or_the_path(self):
+        """The review of 2026-09-19: the line points at each entry it counts by the ONE-BASED LINE of the list it is on
+        (pp.list_lines_phrase: `list line 4`, `list lines 3 and 6`, `list lines 2, 5 and 9`), the number an editor shows and the
+        number a refusal names, so the operator can find the entry without the line spelling its text (the list exists to keep
+        those off every output, stderr included) and without the list's path (there is one location, the docs name it, and a
+        home path on stderr every run is noise). Over a list of a comment, 4242 (line 2), a word, a blank, 98.76 (line 5),
+        4242424 (armed, seven digits), abc12 (a letter, in no number), 1e+16 (armed through its expansion), -42.5 (line 9) and
+        zz4242424 (a letter): eight entries, three counted, and the line is exactly the template with 3, 8, `list lines 2, 5 and
+        9` and the floor twice, the uncounted entries on lines 3, 6, 7, 8 and 10 around and between the counted ones, so a
+        phrase built from the entries' positions in the count (1, 2 and 3) or from every listed line reds here; no entry's text
+        is in the line, and the list's path is not. A repeated entry is counted once per line (1234.56, 1234.56, 424242: 3 of 3,
+        list lines 1, 2 and 3), machine_probes' docstring's own example. The phrase alone: one line, two, three and four, the
+        last two joined by `and` and the rest by commas, one phrase inside the one line, and past pp.LIST_LINES_NAMED, six, the
+        first six and `and N more` (the phrase alone here; the list-driven cases are the next test's). Removing the lines from
+        the template, rendering them from the count's positions, spelling an entry's text in the line or adding the path each
+        reds a pin here by name; so do the cap removed, a cap of five and a remainder off by one, on the phrase pins."""
+        self.assertEqual(pp.list_lines_phrase([4]), "list line 4")
+        self.assertEqual(pp.list_lines_phrase([3, 6]), "list lines 3 and 6")
+        self.assertEqual(pp.list_lines_phrase([2, 5, 9]), "list lines 2, 5 and 9")
+        self.assertEqual(pp.list_lines_phrase([2, 5, 9, 12]), "list lines 2, 5, 9 and 12")
+        self.assertEqual(pp.list_lines_phrase([2, 5, 9, 12, 15, 18]), "list lines 2, 5, 9, 12, 15 and 18", "six: the plain list")
+        self.assertEqual(pp.list_lines_phrase([2, 5, 9, 12, 15, 18, 21]), "list lines 2, 5, 9, 12, 15, 18 and 1 more", "seven: six and the rest counted")
+        self.assertEqual(pp.list_lines_phrase([2, 5, 9, 12, 15, 18, 21, 24, 27]), "list lines 2, 5, 9, 12, 15, 18 and 3 more")
+        listed = os.path.join(self.state, "list.txt")
+        entries = ["# strings that must never be published", "4242", "zzcoinedzz", "", "98.76", "4242424", "abc12", "1e+16", "-42.5", "zz4242424"]
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(entries) + "\n")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            probes = pp.machine_probes(None, env=env)
+        line = err.getvalue()
+        self.assertEqual(line, pp.LIST_UNDER_NUMERIC_FLOOR % (3, 8, "list lines 2, 5 and 9", 7, 7) + "\n")
+        self.assertEqual(line.count("romp:"), 1, "said once")
+        self.assertIn("romp: 3 of 8 private-strings entries (list lines 2, 5 and 9) could match a number", line,
+                      "the counted entries by the list lines they are on, in file order")
+        for wrong in ("(list lines 1, 2 and 3)", "(list lines 2, 3, 5, 6, 7, 8, 9 and 10)"):
+            self.assertNotIn(wrong, line, "not the positions in the count, not every listed line")
+        for entry in entries[1:]:
+            if entry:
+                self.assertNotIn(entry, line, "no entry's text is in the line: %s" % entry)
+        self.assertNotIn(listed, line, "the list's path is not in the line")
+        self.assertNotIn(self.state, line, "nor any part of it")
+        self.assertEqual([p.line for p in probes if p.kind == pp.PRIVATE_KIND], [2, 3, 5, 6, 7, 8, 9, 10], "every entry is a probe carrying its line")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1234.56\n1234.56\n424242\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (3, 3, "list lines 1, 2 and 3", 7, 7) + "\n",
+                         "a repeated entry is counted once per line and named by each")
+
+    def test_the_stderr_line_names_at_most_six_list_lines_in_file_order_and_counts_the_rest(self):
+        """The cap on the enumeration (pp.LIST_LINES_NAMED, six; the review of 2026-09-19): an advisory that wraps is one nobody
+        reads, so past six counted entries the line names the first six lines in file order and counts the rest, `and N more`,
+        N the counted entries past the six. Over a list with nine counted entries on lines 2, 5, 9, 12, 15, 18, 21, 24 and 27
+        and words and comments between them (25 entries): the line is exactly the template with 9, 25, `list lines 2, 5, 9, 12,
+        15, 18 and 3 more` and the floor twice, one newline and it at the end, the counted set recomputed from the list through
+        the module's own predicates (number_matchable, numeric_probe over number_spellings) equal to those nine lines, the
+        remainder the three past six, and the lines past the cap absent by name. The same list cut to six counted entries (6 of
+        17) renders all six and counts nothing as more, so every pin at or under six holds byte for byte. The cap removed
+        (nine lines listed), a cap of five (`15 and 4 more` here, `15 and 1 more` at six) and a remainder off by one (`and 4
+        more`) each red the exact line."""
+        listed = os.path.join(self.state, "list.txt")
+        env = {"HOME": HOME, "USER": "tester", "ROMP_PRIVATE_STRINGS": listed}
+        counted_at = [2, 5, 9, 12, 15, 18, 21, 24, 27]                                   # nine counted entries, words and comments between
+        values = ["4242", "98.76", "-42.5", "1.5", "777", "12.34", "0.5", "9999", "-1"]
+        rows = [values[counted_at.index(n)] if n in counted_at else "# a comment on line %d" % n if n % 10 == 0
+                else "zz" + "abcdefghijklmnopqrstuvwxyz"[n % 26] * 3 for n in range(1, 28)]
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(rows) + "\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        line = err.getvalue()
+        self.assertEqual(line, pp.LIST_UNDER_NUMERIC_FLOOR % (9, 25, "list lines 2, 5, 9, 12, 15, 18 and 3 more", 7, 7) + "\n",
+                         "nine counted: the first six lines in file order, then the rest counted")
+        self.assertIn("(list lines 2, 5, 9, 12, 15, 18 and 3 more) could match", line)
+        self.assertEqual(line.count("\n"), 1, "one line: no newline inside it")
+        self.assertTrue(line.endswith("\n"))
+        self.assertEqual(len(rows) - sum(1 for r in rows if r.startswith("#")), 25, "the list's length is every entry")
+        counted = [n for n, t in pp.private_entries(env) if pp.number_matchable(t.lower())
+                   and not any(pp.numeric_probe(sp) for sp in pp.number_spellings(t.lower(), pp._number_value(t.lower())))]
+        self.assertEqual(counted, counted_at, "the counted set is the counted set")
+        self.assertEqual(len(counted) - 6, 3, "and the remainder is the counted entries past the six named")
+        for absent in (", 21", ", 24", ", 27", "and 27", "and 9 more", "and 2 more", "and 4 more"):
+            self.assertNotIn(absent, line, "the lines past the cap are counted, not named: %s" % absent)
+        rows = rows[:18]                                                                  # six counted entries: no cap, no `more`
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(rows) + "\n")
+        err = io.StringIO()
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"), contextlib.redirect_stderr(err):
+            pp.machine_probes(None, env=env)
+        self.assertEqual(err.getvalue(), pp.LIST_UNDER_NUMERIC_FLOOR % (6, 17, "list lines 2, 5, 9, 12, 15 and 18", 7, 7) + "\n",
+                         "six counted: every line named, none counted")
+        self.assertNotIn(" more) are", err.getvalue(), "at the cap nothing is counted as more (the template's own `or more digits` stays)")
+
+    def test_the_private_strings_list_feeds_the_probes_when_present_and_is_a_no_op_absent(self):
+        """The machine-local list the repository's pre-push hook reads (~/.config/romp/private-strings.txt: one string per
+        line, `#` comments, blanks) is the maintainer's own list of what must never be published, a coined project nickname
+        among them, which fits the identifier grammar and is neither the hostname nor the login, so no other probe knew it
+        and a document carrying one passed all three checks (the upload's second review round, 2026-09-18). Each entry is a
+        probe of kind `private string` (PRIVATE_KIND), lower-cased, PROBE_MIN NOT applied (the list is the maintainer's
+        explicit choice, not the heuristic the floor exists for: the floor dropped a three-character entry silently and a
+        document carrying it was sent, the third review round), matched as a SUBSTRING or a run of whole tokens, the union
+        (the same round: the hook matches a plain substring, so a listed token glued to letters must be a hit here too, and
+        the token run keeps a dotted entry found under another join, which the hook's substring grep misses); the path is
+        resolved the way the hook resolves it (ROMP_PRIVATE_STRINGS, else XDG_CONFIG_HOME, else HOME/.config); no file is
+        no probe, so a clone that never set one up is unchanged. The bound: PRIVATE_STRINGS_MAX + 1 bytes are read and a
+        file over the bound is cut back to its last complete line, so no fragment of an entry becomes a probe (a 12-byte
+        fragment did, falsely refused an unrelated document, and the entry it was cut from travelled), with one loud stderr
+        line saying the entries past the bound are not checked; and a listed entry that did not become a probe is said on
+        stderr the same way, so the list is never silently not in force. This widens the shared check: the export,
+        restart-metrics --json --public and the upload all run it. Fails before: no such kind existed; then abc was dropped,
+        the glued forms passed and the fragment was a probe."""
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, True)
+        env = {"HOME": home, "USER": "tester"}
+        with mock.patch.object(pp.socket, "gethostname", return_value="TESTHOST.example"):
+            self.assertEqual([p for p in pp.machine_probes(None, env=env) if p[0] == "private string"], [], "no file, no probe")
+            self.assertEqual(pp.private_strings(env), [])
+            self.assertEqual(pp.private_strings({}), [], "no HOME and no variable: no path at all, no traceback")
+            os.makedirs(os.path.join(home, ".config", "romp"))
+            with open(os.path.join(home, ".config", "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
+                fh.write("# the list the pre-push hook reads\n\n   ZZCOINEDZZ   \nabc\nsecond-coined # trailing comment\n")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                probes = pp.machine_probes(None, env=env)
+            self.assertEqual([s for kind, s in probes if kind == "private string"], ["zzcoinedzz", "abc", "second-coined"],
+                             "comments and blanks dropped, lower-cased, in file order; the three-character line KEPT, PROBE_MIN not applied to the list")
+            self.assertEqual(err.getvalue(), "", "every entry became a probe: nothing to say")
+            self.assertEqual(pp.private_strings(env), ["ZZCOINEDZZ", "abc", "second-coined"], "the raw entries, as the hook reads them")
+            self.assertEqual(pp.PRIVATE_KIND, "private string")
+            self.assertNotIn(pp.PRIVATE_KIND, pp.WORD_KINDS, "not a word probe alone: the union")
+            self.assertEqual(pp.WORD_KINDS, frozenset({"hostname", "username"}))
+            self.assertEqual(_hits({"a": {"b": "zzcoinedzz-app"}}, probes), [("private string", "the value at a/b")])
+            self.assertEqual(_hits({"a": {"b": "app_ZZcoinedZZ"}}, probes), [("private string", "the value at a/b")], "case-insensitive")
+            self.assertEqual(_hits({"a": {"zzcoinedzzs": 1}}, probes), [("private string", "a key under a")],
+                             "a substring, as the hook's grep would find it (a whole-token match alone passed this)")
+            self.assertEqual(_hits({"a": {"zzcoinedzzChat": 1}}, probes), [("private string", "a key under a")], "the token glued to letters, as a key")
+            self.assertEqual(_hits({"a": {"b": "chatZzcoinedzz"}}, probes), [("private string", "the value at a/b")], "and as a value")
+            self.assertEqual(_hits({"a": {"b": "abc"}}, probes), [("private string", "the value at a/b")], "the three-character entry is a probe")
+            self.assertEqual(_hits({"a": {"b": "xabcx"}}, probes), [("private string", "the value at a/b")])
+            self.assertEqual(_hits({"second": 1, "coined": 1}, probes), [], "the run must be contiguous")
+            self.assertEqual(_hits({"a": {"second.coined": 1}}, probes), [("private string", "a key under a")])
+            self.assertEqual(_hits({"a": {"second_coined": 1}}, probes), [("private string", "a key under a")],
+                             "the token run: a dotted entry under another join, which the hook's substring grep misses and the union keeps")
+            self.assertEqual(_hits({"a": {"b": "SECOND-COINED"}}, probes), [("private string", "the value at a/b")])
+            self.assertEqual(_hits({"a": {"b": "secondcoined"}}, probes), [], "neither a substring nor the token run")
+            # the loud line: an entry that did not become a probe (the reader returns no blank, so a blank stands in for a filter
+            # a later change adds) is counted and said once on stderr; nothing is said when every entry became one
+            err = io.StringIO()
+            with mock.patch.object(pp, "private_entries", return_value=[(1, "zzcoinedzz"), (2, "   ")]), contextlib.redirect_stderr(err):
+                self.assertEqual([s for k, s in pp.machine_probes(None, env=env) if k == "private string"], ["zzcoinedzz"])
+            self.assertEqual(err.getvalue(), "romp: 1 of 2 private-strings entries did not become probes and are not checked; the list is not fully in force\n")
+            err = io.StringIO()
+            with mock.patch.object(pp, "private_entries", return_value=[(1, "zzcoinedzz"), (2, "abc"), (3, "ABC")]), contextlib.redirect_stderr(err):
+                self.assertEqual([s for k, s in pp.machine_probes(None, env=env) if k == "private string"], ["zzcoinedzz", "abc"])
+            self.assertEqual(err.getvalue(), "", "a repeated entry became the one probe it spells: nothing dropped, nothing said")
+            # the path, the way the hook resolves it: the variable first, then XDG_CONFIG_HOME, then HOME/.config
+            xdg = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, xdg, True)
+            os.makedirs(os.path.join(xdg, "romp"))
+            with open(os.path.join(xdg, "romp", "private-strings.txt"), "w", encoding="utf-8") as fh:
+                fh.write("xdgcoined\n")
+            explicit = os.path.join(xdg, "explicit.txt")
+            with open(explicit, "w", encoding="utf-8") as fh:
+                fh.write("explicitcoined\n")
+            self.assertEqual(pp.private_strings_path(env), os.path.join(home, ".config", "romp", "private-strings.txt"))
+            self.assertEqual(pp.private_strings_path(dict(env, XDG_CONFIG_HOME=xdg)), os.path.join(xdg, "romp", "private-strings.txt"))
+            self.assertEqual(pp.private_strings_path(dict(env, XDG_CONFIG_HOME=xdg, ROMP_PRIVATE_STRINGS=explicit)), explicit)
+            self.assertEqual([s for k, s in pp.machine_probes(None, env=dict(env, XDG_CONFIG_HOME=xdg)) if k == "private string"], ["xdgcoined"])
+            self.assertEqual([s for k, s in pp.machine_probes(None, env=dict(env, ROMP_PRIVATE_STRINGS=explicit)) if k == "private string"], ["explicitcoined"])
+            # the bound: a large file costs PRIVATE_STRINGS_MAX and its tail is dropped, never a traceback; a line of bytes that are
+            # not UTF-8 is not an entry and is said (the fourth review round, 2026-09-19: replaced, it was a probe that matched
+            # nothing while the list read as in force)
+            with open(explicit, "wb") as fh:
+                fh.write(b"first\n" + b"\xff\xfe\n" + b"x" * pp.PRIVATE_STRINGS_MAX + b"\nlast\n")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                got = pp.private_strings(dict(env, ROMP_PRIVATE_STRINGS=explicit))
+            self.assertEqual(got, ["first"], "the good line is an entry, the undecodable one is not, the tail past the bound is cut")
+            self.assertEqual(pp.PRIVATE_STRINGS_MAX, 64 * 1024)
+            self.assertEqual(err.getvalue(), "romp: the private-strings list is over 65536 bytes; entries past the bound are not checked\n"
+                                             "romp: 1 line(s) of the private-strings list at %s are not UTF-8 and are not checked\n" % explicit)
+            # the cut falls back to the last complete line: a list built so the bound lands mid-line, the fragment is not an entry,
+            # the last complete entry before the bound is, the entry past it is not, and the loud line is said once; a file exactly
+            # at the bound is read whole and nothing is said (fails before: a 12-byte fragment of an entry was a probe of its own)
+            whole = (pp.PRIVATE_STRINGS_MAX - 1) // 12                                          # 12-byte lines, as many as fit whole
+            head = b"".join(b"entry%06d\n" % i for i in range(whole))
+            straddle = b"straddle-entry-cut-by-the-bound\n"
+            self.assertLess(len(head), pp.PRIVATE_STRINGS_MAX)
+            self.assertGreater(len(head) + len(straddle), pp.PRIVATE_STRINGS_MAX, "the bound falls inside the straddling line")
+            fragment = straddle[:pp.PRIVATE_STRINGS_MAX - len(head)].decode()                  # what a cut at the bound would leave of it
+            self.assertEqual(fragment, "stra")
+            with open(explicit, "wb") as fh:
+                fh.write(head + straddle + b"pastbound\n")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                got = pp.private_strings(dict(env, ROMP_PRIVATE_STRINGS=explicit))
+            self.assertEqual(got[-1], "entry%06d" % (whole - 1), "the last complete entry inside the bound is the last entry")
+            self.assertEqual(len(got), whole)
+            self.assertNotIn(fragment, got, "the fragment the bound cut is not an entry")
+            self.assertNotIn(straddle.strip().decode(), got, "the entry the bound cut is not checked (said on stderr), not a fragment of it")
+            self.assertNotIn("pastbound", got)
+            self.assertEqual(err.getvalue(), "romp: the private-strings list is over 65536 bytes; entries past the bound are not checked\n")
+            with open(explicit, "wb") as fh:
+                fh.write(b"a" * (pp.PRIVATE_STRINGS_MAX - 1) + b"\n")                          # exactly the bound: read whole, nothing said
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                got = pp.private_strings(dict(env, ROMP_PRIVATE_STRINGS=explicit))
+            self.assertEqual(got, ["a" * (pp.PRIVATE_STRINGS_MAX - 1)])
+            self.assertEqual(err.getvalue(), "")
+        # through the export's own check, as a value and as a key, the kind and the path named and never the string
+        probes = [pp.Probe("private string", "zzcoinedzz", 3)] + SYNTHETIC_PROBES      # the entry on line 3 of its list
+        doc = pe.export_document(leak_snapshot())
+        doc["perf"]["heap"]["note"] = "zzcoinedzz"
+        with mock.patch.object(pe.pp, "machine_probes", return_value=probes):
+            self.assertEqual(pe.check_document(doc, pe.Path(tempfile.mkdtemp())),
+                             "a string this machine knows (private string) survives as the value at perf/heap/note; "
+                             "edit line 3 of the private-strings list or that value; nothing written")
+            doc = pe.export_document(leak_snapshot())
+            doc["perf"]["heap"]["zzcoinedzz"] = 1
+            self.assertEqual(pe.check_document(doc, pe.Path(tempfile.mkdtemp())),
+                             "a string this machine knows (private string) survives as a key under perf/heap; "
+                             "edit line 3 of the private-strings list or that key; nothing written")
+            self.assertIsNone(pe.check_document(pe.export_document(leak_snapshot()), pe.Path(tempfile.mkdtemp())))
+
+    def test_the_private_list_is_read_to_the_bound_plus_one_byte_and_never_whole(self):
+        """The read bound on the private list, pinned where it is decided (tests-2, the third review round: replacing
+        read(PRIVATE_STRINGS_MAX + 1) with read() left every case green, since the over-the-bound cases assert what the cut
+        left, which is the same whether the bound or the whole file was read). open_regular is replaced by a recording file
+        whose payload is far past the bound; the one read asked for is PRIVATE_STRINGS_MAX + 1 bytes, the over-the-bound line
+        is said, and the entries are the whole lines inside the bound. The mutant reads the whole payload and records -1."""
+        asked = []
+
+        class Recording:
+            payload = b"entry\n" * (pp.PRIVATE_STRINGS_MAX // 2)               # 6-byte lines, three times the bound
+
+            def read(self, n=-1):
+                asked.append(n)
+                return self.payload if n is None or n < 0 else self.payload[:n]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        err = io.StringIO()
+        with mock.patch.object(pp, "open_regular", return_value=Recording()), contextlib.redirect_stderr(err):
+            got = pp.private_strings({"ROMP_PRIVATE_STRINGS": "/no/such/list.txt"})
+        self.assertEqual(asked, [pp.PRIVATE_STRINGS_MAX + 1], "one bounded read, never an unbounded one")
+        self.assertEqual(err.getvalue(), pp.LIST_OVER_BOUND + "\n")
+        self.assertEqual(got, ["entry"] * (pp.PRIVATE_STRINGS_MAX // 6), "the whole lines inside the bound, and no more")
+
+    def test_a_short_listed_entry_is_checked_and_the_export_child_refuses_a_document_carrying_it(self):
+        """The three-character entry the PROBE_MIN floor dropped is a probe (correctness-2, the third review round, 2026-09-18):
+        the export child, with ROMP_PRIVATE_STRINGS naming a list that carries `abc`, refuses a snapshot whose app table
+        carries the same string as a key, naming the kind and the path and never the string, and writes nothing; the same
+        snapshot without the list exports. Fails before: the entry was dropped silently, exit 0, the file written."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("zzcoinedzz\nabc\n")
+        snap = leak_snapshot()
+        snap["pusher"]["connectPush"]["byApp"]["abc"] = {"count": 1}
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "romp perf export: refused: a string this machine knows (private string) survives as a key under "
+                                   "perf/pusher/connectPush/byApp; edit line 2 of the private-strings list or that key; nothing written\n")
+        self.assertNotIn("abc", r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+        r = _run(["--public", "--from", self.src], state=self.state)
+        self.assertEqual(r.returncode, 0, r.stderr + " (without the list, abc is a grammar-fitting word)")
+
+    def test_a_listed_digit_run_a_counter_spells_refuses_the_export_naming_the_value_path_and_never_the_number(self):
+        """The scan over numbers (identifier_hits, the upload's fourth review round, 2026-09-19) is the shared check's, so the
+        export child refuses a snapshot whose counter spells a listed digit run, an integer or a float, naming the kind and the
+        value's path and never the number, and writes nothing; the same snapshot without the list exports, the counter a
+        number like any other. This is the cost the reference states for a listed string that is romp vocabulary, and the
+        remedy is the same, editing the list. Two roads the closing check of 2026-09-19 found open on this verb are refused
+        here too. A listed 1234.5678 (eight digits, at the floor by digit count) as pusher.cycle_ms_p50, the shape that counter
+        has on a real kernel: the base before the floor refused it and the first floor's longest-run gate sent it; the digits are in no
+        output, and the stderr line's own worked example, which spells 1234.5678, is not there either, since an armed entry is
+        not under the floor and nothing else is listed. A listed 12345670000000000 as pusher.cycles, spelled 1.234567e+16 by
+        json.dump (repr puts the point after the first digit) and spelled as the integer: both refused, the first by the
+        plain decimal expansion. And the token run the closing delta's first cut dropped by gating the arm on the alphabet: a
+        listed (12345678), characters no number spells around the run, with pusher.cycles carrying 12345678 is refused naming
+        line 1, as the base did (the closing check's Refuted section measured that cut as three refusals turned into sends).
+        The negative control the first stderr line's trap relied on: a listed 12345678 with the same 1234.5678 counter is the
+        next test's. Fails before: exit 0 and the file written with the run in it (the first case); exit 0 and the value
+        written (the closing check's two, and the token-run case under the first cut)."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        refusal = ("romp perf export: refused: a string this machine knows (private string) survives as the value at "
+                   "%s; edit line 1 of the private-strings list or that value; nothing written\n")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("4242424242\n")
+        for value in (4242424242, 4242424242.0, 4.242424242e9):
+            snap = leak_snapshot()
+            snap["pusher"]["cycles"] = value
+            with open(self.src, "w") as fh:
+                json.dump(snap, fh)
+            r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+            self.assertEqual(r.returncode, 1, repr(value) + "\n" + r.stdout + r.stderr)
+            self.assertEqual(r.stderr, refusal % "perf/pusher/cycles", repr(value))
+            self.assertNotIn("4242424242", r.stdout + r.stderr, repr(value))
+            self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(value))
+        r = _run(["--public", "--from", self.src], state=self.state)
+        self.assertEqual(r.returncode, 0, r.stderr + " (without the list, the counter is a number like any other)")
+        shutil.rmtree(os.path.join(self.state, "perf-exports"))
+        # the restored protection: a pointed value of eight digits, the shape pusher.cycle_ms_p50 has on a real kernel; the
+        # fixture's sha abbreviates to 0123456789ab, a STRING value carrying the bare run 12345678, so it goes: this case and
+        # its control are about the number
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1234.5678\n")
+        snap = leak_snapshot()
+        snap.pop("kernel_sha")
+        snap["pusher"]["cycle_ms_p50"] = 1234.5678
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, refusal % "perf/pusher/cycle_ms_p50")
+        for digits in ("1234.5678", "12345678"):
+            self.assertNotIn(digits, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+        # the exponent spelling: one value, as json.dump spells the float and as the integer
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("12345670000000000\n")
+        for value in (1.234567e+16, 12345670000000000):
+            snap = leak_snapshot()
+            snap["pusher"]["cycles"] = value
+            with open(self.src, "w") as fh:
+                json.dump(snap, fh)
+            with open(self.src, encoding="utf-8") as fh:
+                self.assertIn('"cycles": ' + json.dumps(value), fh.read(), "the snapshot spells the value as json does: %r" % (value,))
+            r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+            self.assertEqual(r.returncode, 1, repr(value) + "\n" + r.stdout + r.stderr)
+            self.assertEqual(r.stderr, refusal % "perf/pusher/cycles", repr(value))
+            for digits in ("12345670000000000", "1.234567e+16", "1234567"):
+                self.assertNotIn(digits, r.stdout + r.stderr, repr(value))
+            self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(value))
+        # the token run: an entry carrying characters no number spells, applied by its whole-token run as the base did (the
+        # closing delta's first cut gated the arm on the alphabet and sent this document); the sha string carries the bare run
+        # and not the parenthesised entry, so it stays, and the refusal is the number's
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("(12345678)\n")
+        snap = leak_snapshot()
+        snap["pusher"]["cycles"] = 12345678
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, refusal % "perf/pusher/cycles")
+        self.assertNotIn("12345678", r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+        r = _run(["--public", "--from", self.src], state=self.state)
+        self.assertEqual(r.returncode, 0, r.stderr + " (without the list, the counter is a number like any other)")
+
+    def test_a_listed_bare_eight_digit_run_neither_protects_a_pointed_value_nor_is_said_to(self):
+        """The negative control the first stderr line's trap relied on (the closing check of 2026-09-19): with 12345678 listed
+        and pusher.cycle_ms_p50 carrying 1234.5678, the export is written, rc 0, the file carrying the value, and stderr is
+        EMPTY. An eight-digit entry is above the floor, so it is applied to numbers and nothing is under the floor to be said;
+        and it protects only a number whose spelling carries that run, which 1234.5678 does not (its longest run is four). The
+        first line advised listing more of the value's digits, which produced exactly this: the line silenced and the value on
+        the wire; the new line says what does protect a number instead, and the previous test pins that a listed 1234.5678
+        refuses. The fixture's sha abbreviation, a string carrying the run, is dropped so the control is about the number. A
+        floor of nine turns the empty-stderr assertion red (the entry falls under the floor and the line fires); an advisory
+        that counts every number-shaped entry, floor ignored, turns it red the same way."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("12345678\n")
+        snap = leak_snapshot()
+        snap.pop("kernel_sha")
+        snap["pusher"]["cycle_ms_p50"] = 1234.5678
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "", "an eight-digit entry is above the floor, so nothing is under it and nothing is said")
+        written = os.listdir(os.path.join(self.state, "perf-exports"))
+        self.assertEqual(len(written), 1)
+        with open(os.path.join(self.state, "perf-exports", written[0]), encoding="utf-8") as fh:
+            self.assertIn('"cycle_ms_p50": 1234.5678', fh.read(), "the value travels: a listed bare run protects only a number whose spelling carries it")
+
+    def test_a_listed_six_digit_run_inside_a_byte_total_exports_with_the_stderr_line_and_a_seven_digit_run_refuses_naming_the_list_line(self):
+        """The floor by the export child (2026-09-19). With a list of a comment, a word, a blank and a six-digit run (line 4), a
+        snapshot whose rss_kb carries the run inside a byte total (9424242) exports, exit 0, the file written with the number
+        in it, and stderr is exactly the one line saying 1 of 2 entries (list line 4: the entry by the line it is on, never its text
+        or the list's path) could match a number but carry fewer than 7 digits, so they are checked in keys and string values
+        and not in numbers, and what does protect a number (the closing delta's
+        text, 2026-09-19: the first line advised listing more digits, which for a pointed value silenced the line and protected
+        nothing); the same holds for the pointed 1234.56 (seven characters, six digits) listed on line 4 with pusher.cycle_ms_p50
+        carrying it, the case the floor lets through by design, pinned green on purpose: the value travels and the line says so
+        once; the same run as a KEY is refused as before, naming line 4, the loud line before the refusal. With the run
+        lengthened to seven digits on the same line 4, a counter that spells it, as an integer, a float, a negative and an
+        exponent spelling, and a byte total that carries it, is refused naming the kind, the value's path and line 4 of the
+        list with the remedy, the run in no output, nothing written, and stderr is that one line, since no entry is under
+        the floor. The boundary is by execution with literals: 424242 passes, 4242424 refuses. Fails before: the six-digit run
+        refused the export, exit 1, and no refusal named a line."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        loud = ("romp: 1 of 2 private-strings entries (list line 4) could match a number, by their spelling or by their digit groups, but carry fewer "
+                "than 7 digits, so they are checked "
+                "in keys and string values and not in numbers; a number is checked against a listed entry only when the entry, or the plain "
+                "decimal spelling of an entry written with an exponent, carries 7 or more digits, and the match is against the number's own "
+                "spelling: a listed 1234.5678 protects the number 1234.5678, a listed 12345678 does not, and a listed entry of fewer digits "
+                "protects no number\n")
+        self.assertEqual(loud, pp.LIST_UNDER_NUMERIC_FLOOR % (1, 2, pp.list_lines_phrase([4]), 7, 7) + "\n",
+                         "the literal here is the module's line with its four numbers and the counted entry's list line")
+        for entry, block, leaf, value, spelled in (("424242", "process", "rss_kb", 9424242, '"rss_kb": 9424242'),
+                                                   ("1234.56", "pusher", "cycle_ms_p50", 1234.56, '"cycle_ms_p50": 1234.56')):
+            with open(listed, "w", encoding="utf-8") as fh:
+                fh.write("# strings that must never be published\nzzcoinedzz\n\n%s\n" % entry)
+            snap = leak_snapshot()
+            snap[block][leaf] = value
+            with open(self.src, "w") as fh:
+                json.dump(snap, fh)
+            r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+            self.assertEqual(r.returncode, 0, entry + "\n" + r.stdout + r.stderr)
+            self.assertEqual(r.stderr, loud, entry)
+            written = os.listdir(os.path.join(self.state, "perf-exports"))
+            self.assertEqual(len(written), 1, entry)
+            with open(os.path.join(self.state, "perf-exports", written[0]), encoding="utf-8") as fh:
+                self.assertIn(spelled, fh.read(), "the number carrying the six-digit entry is written: %s" % entry)
+            shutil.rmtree(os.path.join(self.state, "perf-exports"))
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("# strings that must never be published\nzzcoinedzz\n\n424242\n")
+        snap = leak_snapshot()
+        snap["pusher"]["connectPush"]["byApp"]["424242"] = {"count": 1}
+        with open(self.src, "w") as fh:
+            json.dump(snap, fh)
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, loud + "romp perf export: refused: a string this machine knows (private string) survives as a key under "
+                                          "perf/pusher/connectPush/byApp; edit line 4 of the private-strings list or that key; nothing written\n")
+        self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")))
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("# strings that must never be published\nzzcoinedzz\n\n4242424\n")
+        for plant, path in (({"pusher": {"cycles": 4242424}}, "perf/pusher/cycles"), ({"pusher": {"cycles": 4242424.0}}, "perf/pusher/cycles"),
+                            ({"pusher": {"cycles": -4242424}}, "perf/pusher/cycles"), ({"pusher": {"cycles": 4.242424e6}}, "perf/pusher/cycles"),
+                            ({"process": {"rss_kb": 94242424}}, "perf/process/rss_kb")):
+            snap = leak_snapshot()
+            for block, leaf in plant.items():
+                snap[block].update(leaf)
+            with open(self.src, "w") as fh:
+                json.dump(snap, fh)
+            r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+            self.assertEqual(r.returncode, 1, repr(plant) + "\n" + r.stdout + r.stderr)
+            self.assertEqual(r.stderr, "romp perf export: refused: a string this machine knows (private string) survives as the value at "
+                                       "%s; edit line 4 of the private-strings list or that value; nothing written\n" % path, repr(plant))
+            self.assertNotIn("4242424", r.stdout + r.stderr, repr(plant))
+            self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(plant))
+        r = _run(["--public", "--from", self.src], state=self.state)
+        self.assertEqual(r.returncode, 0, r.stderr + " (without the list, the counter is a number like any other)")
+
+    def test_a_listed_entry_with_an_exponent_beyond_any_double_exports_under_a_finite_address_space_with_one_line_and_no_traceback(self):
+        """The refusable input of the closing re-run (2026-09-19, finding 5) through the export child: ROMP_PRIVATE_STRINGS
+        naming a list of 1e-1000000000, the entry whose plain decimal expansion asked for a billion digits and took the
+        verb down with an uncaught MemoryError at the head the closing re-run read (rc 1, no file, a traceback ending in
+        number_spellings' format call), while the head the closing check read, before the expansion, exported the same list with rc 0, and, on line 2, 1e-10000000000000000000, the entry whose
+        exponent (10**19) the decimal module refuses to construct (past decimal.MAX_EMAX, about 1e18), which the first cut of
+        the bound read bare and died on with an uncaught InvalidOperation out of expansion_bounded (the re-run's verification:
+        rc 1 and a traceback from this verb, the upload and restart-metrics alike, on 3.10, 3.12, 3.13 and 3.14t). Now: rc 0,
+        the file written, stdout the path and size line, and stderr EXACTLY the one skip line (pp.LIST_EXPANSION_SKIPPED: 2 of
+        2, list lines 1 and 2, the bound 324), with Traceback, MemoryError and InvalidOperation in neither stream and neither
+        entry's text in either. THE CHILD RUNS UNDER A FINITE ADDRESS-SPACE CAP
+        (ADDRESS_SPACE_CAP, RLIMIT_AS of 1.5 GiB: the report's reproduction set 768 MiB with ulimit -v 786432, which the
+        free-threaded 3.14t interpreter exceeds before any code runs, and 2 GiB lets the billion-digit expansion complete, so
+        the cap is 1.5 GiB on every interpreter), so the refusable input fails fast under a bound, a MemoryError in under a
+        second, rather than allocating without bound when the guard is removed. Dropping
+        `and expansion_bounded(text)` from number_spellings' guard reds this with the MemoryError traceback under the cap; the
+        try/except removed from expansion_bounded reds it with rc 1 and InvalidOperation in stderr."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1e-1000000000\n1e-10000000000000000000\n")
+        r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state, address_space=ADDRESS_SPACE_CAP)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, pp.LIST_EXPANSION_SKIPPED % (2, 2, "list lines 1 and 2", 324) + "\n", "the skip line and nothing else")
+        for word in ("Traceback", "MemoryError", "InvalidOperation", "1e-1000000000", "1e-10000000000000000000"):
+            self.assertNotIn(word, r.stdout + r.stderr, word)
+        m = re.match(r"^(\S+) \((\d+) bytes\)\n$", r.stdout)
+        self.assertIsNotNone(m, r.stdout)
+        self.assertEqual(os.path.dirname(m.group(1)), os.path.join(self.state, "perf-exports"))
+        self.assertEqual(os.path.getsize(m.group(1)), int(m.group(2)), "the file is written")
+
+    def test_a_listed_exponent_written_entry_refuses_the_export_when_its_plain_digits_sit_in_a_string_value_or_a_key(self):
+        """The export road of the key and string fix (the closing re-run of 2026-09-19, finding 1): a list of 1.5e-05 alone and
+        a snapshot carrying zzn: "0.000015" as a top-level string (IDENT admits it, so the fold keeps it and the walk passes
+        it, and only the identifier scan can refuse) is refused, rc 1, stderr exactly the refusal naming the value at perf/zzn
+        and line 1 of the list with the remedy, nothing written, nothing on stdout, the digits and the entry's text in no
+        output; then the same digits as the KEY zz0.000015 with a count under it: refused naming a key under perf and line 1.
+        Before the fix both exported with rc 0 (the report's executed table: the string and the key POSTed by the upload,
+        which shares the check). Without the list both export. Scanning keys and strings by the entry's text alone reds both
+        legs with rc 0."""
+        listed = os.path.join(self.xdg, "private-strings.txt")
+        with open(listed, "w", encoding="utf-8") as fh:
+            fh.write("1.5e-05\n")
+        for plant, spelled in (({"zzn": "0.000015"}, "the value at perf/zzn; edit line 1 of the private-strings list or that value"),
+                               ({"zz0.000015": 1}, "a key under perf; edit line 1 of the private-strings list or that key")):
+            snap = leak_snapshot()
+            snap.update(plant)
+            with open(self.src, "w") as fh:
+                json.dump(snap, fh)
+            r = _run(["--public", "--from", self.src], env_extra={"ROMP_PRIVATE_STRINGS": listed}, state=self.state)
+            self.assertEqual(r.returncode, 1, repr(plant) + "\n" + r.stdout + r.stderr)
+            self.assertEqual(r.stderr, "romp perf export: refused: a string this machine knows (private string) survives as %s; nothing written\n" % spelled,
+                             repr(plant))
+            self.assertEqual(r.stdout, "", repr(plant))
+            for text in ("0.000015", "1.5e-05"):
+                self.assertNotIn(text, r.stdout + r.stderr, repr(plant))
+            self.assertFalse(os.path.exists(os.path.join(self.state, "perf-exports")), repr(plant))
+            r = _run(["--public", "--from", self.src], state=self.state)
+            self.assertEqual(r.returncode, 0, r.stderr + " (without the list, the digits are an identifier like any other)")
+            shutil.rmtree(os.path.join(self.state, "perf-exports"))
+
+    def test_a_fifo_at_the_private_strings_path_is_no_list_said_on_stderr_and_the_export_returns_at_once(self):
+        """The private list must be a REGULAR file (pp.open_regular: opened O_NONBLOCK, fstat'ed, S_ISREG required); anything
+        else is no list, [], AND IS SAID: one stderr line naming the path and what was there (pp.LIST_UNREADABLE, the
+        fourth review round, 2026-09-19; until then the fifo disabled the whole list in silence and this case pinned the
+        silence). A fifo at the path hung `romp perf export --public` and `romp restart-metrics --json --public`
+        indefinitely: a plain open of a fifo blocks until a writer arrives, before any read the bound could cover (the
+        upload's second review round, 2026-09-18). THE CHILD IS RUN UNDER A TIMEOUT AND HARD-KILLED WHEN IT EXPIRES, AND IT
+        RUNS BEFORE THE UNIT CALL: the defect is a hang, so a plain wait, or the unit call first, would take the runner with
+        it; subprocess.run kills the child on TimeoutExpired and the case fails instead. Do not simplify this back into
+        _run's sixty-second wait or move the unit call above the child. Fails before: stderr was empty."""
+        fifo = os.path.join(self.xdg, "private-strings.fifo")
+        os.mkfifo(fifo)
+        out = os.path.join(self.xdg, "public.json")
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ROMP_") and k not in ("CLAUDE_CODE_SESSION_ID", "XDG_CONFIG_HOME")}
+        env.update({"XDG_STATE_HOME": self.xdg, "HOME": HOME, "USER": "tester", "LOGNAME": "tester", "ROMP_KERNEL_PORT": "1",
+                    "ROMP_PRIVATE_STRINGS": fifo})
+        try:
+            r = subprocess.run([sys.executable, "-c", CHILD, EXPORT, "--public", "--from", self.src, "--out", out],
+                               capture_output=True, text=True, timeout=8, env=env)
+        except subprocess.TimeoutExpired:
+            self.fail("the export child hung on the fifo at the private-strings path (killed after 8 s)")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(os.path.exists(out), "the export was written: a fifo adds no probe and blocks nothing")
+        self.assertEqual(r.stderr, "romp: no private-strings list was read from %s (a fifo); no listed string is checked\n" % fifo,
+                         "and the list turning itself off is said, naming the path and the reason")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(pp.private_strings({"ROMP_PRIVATE_STRINGS": fifo}), [], "the unit, after the child proved the open returns: a fifo is no list")
+        self.assertEqual(err.getvalue(), pp.LIST_UNREADABLE % (fifo, "a fifo") + "\n")
+        self.assertIsNone(pp.open_regular(fifo))
+
+    def test_every_road_to_no_list_but_the_derived_defaults_absence_is_said_on_stderr_naming_the_path_and_the_reason(self):
+        """A private-strings path that EXISTS but yields no list (unreadable, a directory, a fifo, a device node, a socket)
+        turned the WHOLE list off in silence, and the upload then sent a document carrying a listed string with nothing on
+        stderr, while the two loud lines the third round added covered the over-the-bound case and a case the reader
+        cannot produce (extra4-1, the upload's third review round, 2026-09-18). Now every road to [] but two writes
+        pp.LIST_UNREADABLE once, the path and the reason: a directory, a fifo, a socket and a character device by kind, whether
+        the fstat or the open itself found them (a socket is ENXIO at the open); an unreadable regular file and a parent that
+        is not a directory by the error's class; a ROMP_PRIVATE_STRINGS that names
+        a file that is not there as absent (the operator named it, so its absence is a typo, not a clone without a list); and
+        a symbolic link whose target is gone, at the derived path or the named one, as a link whose target is absent (a list
+        set up once and now pointing at nothing is the protection turning itself off, the fourth round's verifier: os.open
+        follows the link and reports FileNotFoundError like a plain absence, so the derived road was silent until lstat told
+        the two apart). The two silent roads: no path at all, and the DERIVED default PLAINLY absent, nothing at the path, the
+        normal case of a clone that never set a list up, which stays silent so every export on such a clone does not nag. A
+        readable list still reads with nothing said, and a line that is not UTF-8 is dropped and counted in pp.LIST_NOT_UTF8
+        rather than replaced into a probe that matches nothing. Fails before: every one of these returned [] in silence, the
+        dangling link at the derived path among them after the others were said."""
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, True)
+        derived = os.path.join(home, ".config", "romp", "private-strings.txt")
+
+        def read(env):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                got = pp.private_strings(env)
+            return got, err.getvalue()
+
+        self.assertEqual(read({"HOME": home}), ([], ""), "the derived default plainly absent: a clone without a list, silent")
+        self.assertEqual(read({}), ([], ""), "no path at all: silent")
+        missing = os.path.join(home, "no-such-list.txt")
+        self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": missing}), ([], pp.LIST_UNREADABLE % (missing, "absent") + "\n"),
+                         "a file the operator named and which is not there is said")
+        os.makedirs(os.path.dirname(derived))
+        os.symlink(os.path.join(home, "moved-away.txt"), derived)
+        self.assertTrue(os.path.islink(derived) and not os.path.exists(derived))
+        self.assertEqual(read({"HOME": home}), ([], pp.LIST_UNREADABLE % (derived, "a symbolic link whose target is absent") + "\n"),
+                         "a dangling link at the DERIVED path is a list that was set up and points at nothing: said, where a plain absence is not")
+        self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": derived}),
+                         ([], pp.LIST_UNREADABLE % (derived, "a symbolic link whose target is absent") + "\n"), "and the same link named by the operator")
+        os.unlink(derived)
+        os.rmdir(os.path.dirname(derived))
+        for make, kind in ((os.mkdir, "a directory"), (os.mkfifo, "a fifo")):
+            path = os.path.join(home, kind.split()[-1])
+            make(path)
+            self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": path}), ([], pp.LIST_UNREADABLE % (path, kind) + "\n"), kind)
+        sock_path = os.path.join(home, "sock")
+        sock = socket.socket(socket.AF_UNIX)
+        self.addCleanup(sock.close)
+        sock.bind(sock_path)
+        self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": sock_path}), ([], pp.LIST_UNREADABLE % (sock_path, "a socket") + "\n"),
+                         "a socket: the open itself fails with ENXIO, and the reason is the kind all the same")
+        if os.path.exists("/dev/null"):
+            self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": "/dev/null"}), ([], pp.LIST_UNREADABLE % ("/dev/null", "a character device") + "\n"))
+        os.makedirs(os.path.dirname(derived))
+        with open(derived, "w", encoding="utf-8") as fh:
+            fh.write("zzcoinedzz\n")
+        self.assertEqual(read({"HOME": home}), (["zzcoinedzz"], ""), "a readable list at the derived path reads with nothing said")
+        if os.geteuid() != 0:                    # root reads a mode-000 file, so the road does not exist for it
+            os.chmod(derived, 0)
+            self.assertEqual(read({"HOME": home}), ([], pp.LIST_UNREADABLE % (derived, "PermissionError") + "\n"),
+                             "the derived path present and unreadable is said: only its absence is the normal case")
+            os.chmod(derived, 0o600)
+        with open(derived, "wb") as fh:
+            fh.write(b"zzcoinedzz\n\xff\xfe\n\xc3\x28 # a truncated sequence\nabc\n")
+        self.assertEqual(read({"HOME": home}), (["zzcoinedzz", "abc"], pp.LIST_NOT_UTF8 % (2, derived) + "\n"),
+                         "two lines that are not UTF-8 are not entries and are counted once; the good lines stay in force")
+        notdir = os.path.join(home, "file-as-parent")
+        with open(notdir, "w") as fh:
+            fh.write("x")
+        inside = os.path.join(notdir, "list.txt")
+        self.assertEqual(read({"HOME": home, "ROMP_PRIVATE_STRINGS": inside}), ([], pp.LIST_UNREADABLE % (inside, "NotADirectoryError") + "\n"),
+                         "a parent that is a file: the open's own error, by class, never a claim that the path exists")
+        for line in (pp.LIST_UNREADABLE % ("p", "r"), pp.LIST_NOT_UTF8 % (1, "p")):
+            self.assertNotEqual(line, pp.LIST_OVER_BOUND)
+            self.assertNotIn("not fully in force", line, "a third and a fourth loud line, distinct from the two the third round added")
+
     def test_a_name_probe_matches_whole_tokens_and_an_id_probe_matches_anywhere(self):
         # a hostname or a login is a word, and romp's own vocabulary contains common ones as substrings: a user named
         # mark, a machine named work or arch, must not refuse every export over intrMarks, cpu_ms_workers and archive
@@ -1045,6 +3002,74 @@ class Cli(unittest.TestCase):
         ids = [("session id", SID2[:8]), ("session directory", HOME + "/code/notes-api")]
         self.assertEqual(_hits({"a": "sid%sx" % SID2[:8]}, ids), [("session id", "the value at a")])
         self.assertEqual(_hits({"a": "in %s/code/notes-api/x" % HOME}, ids), [("session directory", "the value at a")])
+
+
+class Docs(unittest.TestCase):
+    """The export section's sentence about --usage in docs/reference.md, pinned flattened so a rewrap survives. The closing
+    check (2026-09-19, HIGH 1 and finding 3) found the section calling the action counts "the user's actions and an attached
+    kernel's posts" and the view counts "the panes opened", provenance the code contradicts (kernel.py's _remote_forward_status
+    and _via_forward relay a dashboard's POST to another machine's kernel, hooks/romp-usertodo-context.sh posts
+    /usertodo/context from a SessionStart hook, strip.ts fetches /usage on every page load, a peer kernel polls /views once a
+    minute, the postal bus GETs /tunnels at every start), and the sentence now says what a count is (the http table's count for
+    the route, whoever made the requests) and what the block is (packaging of leaves the plain export already carries). The
+    wire's side is pinned in tests/test_perf_upload.py (the plain export's http rows and the usage block equal to their counts)
+    and the whole block's derivation in tests/test_perf_stats.py (Disclosed); this case holds the WORDING and pins the two
+    provenance claims absent."""
+
+    def test_the_reference_says_the_usage_block_is_packaging_of_leaves_the_plain_export_carries_and_names_no_maker(self):
+        with open(os.path.join(ROOT, "docs", "reference.md"), encoding="utf-8") as fh:
+            text = " ".join(fh.read().split())       # asserted by boolean, so a failure names the words and never dumps the page
+        sentence = ("`--usage` adds a `usage` block, off by default: the session counts, one count per action route served and one per "
+                    "pane route served, each the http table's count for that route under the route's name, whoever made the requests, "
+                    "and the kernel's uptime bucket, all from leaves the plain export already carries, so the block adds packaging and "
+                    "no number.")
+        self.assertTrue(sentence in text, "not in the reference: " + sentence)
+        # the second closing check (2026-09-19): the export section says what the block writes in place of a count it cannot
+        # read from an older snapshot, the leaf by name and its fixed value, and the three outcomes (a count, parsed null for a
+        # number no double can hold, or the leaf; exactly one), the ruling of 2026-09-19 restating the two outcomes as three
+        absence = ("A snapshot that gives no parsed count has none for the block to copy, and the block says so in place of the count: "
+                   "`sessions.parsedUnavailable`, one of two fixed strings, each true of the snapshot that carries it: "
+                   "`predates-parses.perSession` when the snapshot has no `parses.perSession` block (saved by a kernel from before it "
+                   "counted parsed sessions), and `perSession.sessions-not-a-number` when the block is there and its `sessions` is not a "
+                   "number (absent, a string, a boolean or null). Where the snapshot's count is a number no double can hold (a NaN, an "
+                   "infinity or an integer past about 1.8e308), `parsed` is null and no `parsedUnavailable` is written beside it: null is "
+                   "the export's output for every such number. So `sessions` carries exactly one of three, a `parsed` count, `parsed` null "
+                   "or `parsedUnavailable` in the count's place, never two and never none, and a reader comparing two exports can tell a "
+                   "count the export could not read from a kernel that parsed nothing, an old snapshot from a malformed one, and either "
+                   "from a count no double can hold.")
+        self.assertTrue(absence in text, "not in the reference: " + absence)
+        # the ruling of 2026-09-19 restating the two outcomes as three: the two-outcome wording is gone from the page, both passages
+        two_outcomes = "present exactly when the count is absent"
+        self.assertFalse(two_outcomes in text, "the two-outcome wording is back in the reference: " + two_outcomes)
+        # the ruling of 2026-09-19 on the leaf: the one-reason wording, false for the malformed shape, is gone
+        one_reason = "the fixed string `predates-parses.perSession`, present exactly when the count is absent"
+        self.assertFalse(one_reason in text, "the one-reason wording is back in the reference: " + one_reason)
+        # the export section's denylist paragraph, narrowed by range with the integer rule (the closing check at the re-run's
+        # head, HIGH 2): an integer a double can hold passes whatever its size, one it cannot hold is null in the export's output
+        integer = ("an integer a double can hold is a byte total or a count, which a long-lived kernel's lifetime totals carry into the "
+                   "window within hours, and passes whatever its size (one a double cannot hold, at about 1.8e308 and above, is null in "
+                   "the export's output, as a NaN is, and refused at the upload's parse)")
+        self.assertTrue(integer in text, "not in the reference: " + integer)
+        for clause in ("the user's actions and an attached kernel's posts", "the panes opened"):
+            self.assertFalse(clause in text, "the provenance claim the code contradicts is back in the reference: " + clause)
+        # the cli README's row says the same in one line: the session counts are copies of perf leaves and the feature counts
+        # the http table's counts relabelled (the closing check at the re-run's head's verification found the row reading as
+        # if the session counts were http counts too)
+        with open(os.path.join(ROOT, "cli", "README.md"), encoding="utf-8") as fh:
+            readme = " ".join(fh.read().split())
+        row = ("`--usage` adds session counts copied from the perf block and feature counts, the http table's route counts relabelled, "
+               "so a plain export carries every number already; the flag is required, there is no raw mode.")
+        self.assertTrue(row in readme, "not in cli/README.md: " + row)
+        # the sentence's own claim about the code, executed: the block's action and view counts are the http table's, relabelled
+        snap = leak_snapshot()
+        plain, withu = pe.export_document(snap), pe.export_document(snap, usage=True)
+        self.assertNotIn("usage", plain)
+        http = plain["perf"]["http"]
+        self.assertEqual(withu["usage"]["actions"], {pe._feature_name(k.partition(" ")[2]): row["count"] for k, row in http.items()
+                                                     if k.startswith("POST ") and k.partition(" ")[2] not in pe.ACTION_SKIP})
+        self.assertEqual(withu["usage"]["views"], {pe._feature_name(k.partition(" ")[2]): row["count"] for k, row in http.items()
+                                                   if k.startswith("GET ") and k.partition(" ")[2] in pe.VIEW_ROUTES})
+        self.assertEqual((withu["usage"]["actions"], withu["usage"]["views"]), ({"send": 7, "new": 2}, {"feed": 3}))
 
 
 class ServedKernel(unittest.TestCase):

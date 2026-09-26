@@ -73,6 +73,7 @@ EOF
     _romp_cmd "romp perf [--interval <s>|--json|log on|off]" - "Kernel performance counters as rates over two snapshots (pusher cycles, stage times, build cache hits, bytes sent, goal loads, judge passes, rss, cpu); --json one raw snapshot; log on|off flips the romp-perf stderr log without a restart"
     _romp_cmd "romp perf stacks [--json]" - "One stack per kernel thread right now (GET /perf?stacks=1): the thread's kind, its stage mark and its frames innermost last, so a slow boot names the lock a thread waits on; --json the raw rows"
     _romp_cmd "romp perf export --public [--from F|--usage|--out P]" - "Write one paste-safe copy of the kernel's counters (every key and string folded to a code identifier or other, the by-path, by-session and stack tables and every clock stamp dropped; measurements stay, so it is not unlinkable) as perf-exports/perf-export-<stamp>.json under the state directory; --from a saved snapshot, --usage adds session and feature counts; nothing leaves the machine"
+    _romp_cmd "romp perf upload <file> [--yes|--receiver URL]" - "Send one export written by romp perf export --public to the configured receiver (--receiver, else ROMP_PERF_RECEIVER, else ~/.config/romp/perf-receiver; refused when none is set): the file is re-checked as it stands against the export's rule (paste-safe, not unlinkable: what the export dropped or coarsened is refused, the measurements it keeps pass), the path, size and the URL dialled are printed and a yes is asked for on a terminal (--yes is the agent's form; off a terminal the verb refuses without it), then ONE POST; the only answer accepted is a 201 receipt, printed with the retention period"
     _romp_cmd "romp perf client [--minutes <n>|--json]" - "Browser-side performance of the open dashboards (client-diag.jsonl, surface perf): handler ms/min by frame type with window p50/p90/p99 and max, main-thread-free p90, long animation frames and their attributed callbacks, the worst minute, heap and DOM, the slowest frames — per dashboard and pane over the last <n> minutes (default 10)"
     _romp_cmd "romp api-health"            -            "The API-health signal across your sessions (GET /api-health as JSON: per-key/family retry rates and a thrash state)"
     _romp_cmd "romp fork <parent> <name>"  -            "Branch a session into a new parallel one (parent untouched; --at <uuid> picks the cut)"
@@ -349,14 +350,22 @@ fi
 # `romp perf export --public [--from SNAPSHOT.json] [--usage] [--out PATH]` writes one paste-safe copy of the
 # snapshot under the state directory (perf-exports/), the shape rule and denylist of cli/perf_public.py
 # applied to the whole document; it delegates to romp-perf-export (python, cli/perf_export.py), the
-# restart-metrics pattern, and the flag is required: the verb has no raw mode.
+# restart-metrics pattern, and the flag is required: the verb has no raw mode. `romp perf upload FILE
+# [--yes] [--receiver URL]` sends one such file to the configured receiver (romp-perf-upload, python,
+# cli/perf_upload.py, the same pattern): the file re-checked as it stands against the export's rule
+# (paste-safe, not unlinkable), opt-in per invocation, a yes on a terminal or --yes, one POST, a 201
+# receipt the only answer accepted; with no receiver configured it refuses and names the setting.
 if [[ "${1:-}" == "perf" ]]; then
     shift
     _kport="${ROMP_KERNEL_PORT:-29855}"
-    _usage="usage: romp perf [--interval <s>] [--json] | romp perf log on|off | romp perf stacks [--json] | romp perf client [--minutes <n>] [--json] | romp perf export --public [--from SNAPSHOT.json] [--usage] [--out PATH]"
+    _usage="usage: romp perf [--interval <s>] [--json] | romp perf log on|off | romp perf stacks [--json] | romp perf client [--minutes <n>] [--json] | romp perf export --public [--from SNAPSHOT.json] [--usage] [--out PATH] | romp perf upload FILE [--yes] [--receiver URL]"
     if [[ "${1:-}" == "export" ]]; then
         shift
         exec romp-perf-export "$@"
+    fi
+    if [[ "${1:-}" == "upload" ]]; then
+        shift
+        exec romp-perf-upload "$@"
     fi
     # One kernel round trip: the body on stdout and 0 when the kernel answered 2xx. curl's -f folds a
     # refused token (403) into the same exit as a dead kernel, and on a diagnostic verb that sends the
