@@ -2764,8 +2764,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // right or a middle press. The context menu and the auxclick still come. Chromium keeps :active through a held press it
     // cancelled, so the held control paints its pressed dress (file-figure-open-browser.test.ts, pressedLegible); Firefox sets
     // no :active once the press is cancelled, so there the held control paints as on hover (not measured here: the pressed dress
-    // is read in Chromium alone, the Firefox and WebKit cells being the tap gate's, which read no dress). The web control alone:
-    // a local one opens this viewer, and a press focuses it as before.
+    // is read in Chromium alone, and no Firefox or WebKit cell reads it). The web control alone: a local one opens this viewer,
+    // and a press focuses it as before.
     const c = figureControlOf(ev.target as Element | null, body);
     if (c && c.classList.contains(FIGOPEN_WEB_CLASS)) { ev.preventDefault(); return; }
     const x = ev.button === 1 ? linkOf(ev.target as Element | null) : null;
