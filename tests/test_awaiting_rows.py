@@ -491,7 +491,9 @@ class NestedWaits(unittest.TestCase):
         km._live_map = lambda: {SID: {}}
         km._bg_live_norm = lambda sid, path, live=None: [{"tid": "tu_bash1", "desc": "build the docs", "t": 130, "type": "local_bash"}]
         saved = km._agent_launch_ids
-        km._agent_launch_ids = lambda p: (_ for _ in ()).throw(AssertionError("read a transcript with no agent to attribute to"))
+        # the stub takes one argument or the call site's two, (ap, faults), so a regression that reaches it raises the
+        # named AssertionError, not a TypeError over the number of arguments
+        km._agent_launch_ids = lambda p, faults=None: (_ for _ in ()).throw(AssertionError("read a transcript with no agent to attribute to"))
         try:
             aw = km._session_awaiting(SID, self.path, True)
         finally:

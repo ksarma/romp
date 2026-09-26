@@ -3666,15 +3666,56 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   it was listed, served while every identity stands because a directory
   entry's creation, removal or renaming moves its parent's stamps and every
   parent is in the list, with `hit` and `miss` (trees vouched for by one stat
-  per known directory against trees walked), `evict` (roots dropped because
+  per known directory against trees walked; what each counts, a failed
+  validation before a walk included: the comment at `_SUBAGENT_TREE_STATS`
+  in `kernel/kernel.py`), `scoped` (reads served from the
+  cycle's one sample with no stat at all: one sample per subagents root per
+  pusher cycle, jobs pass or connect push since 2026-09-18, the first reader
+  validating or walking and every later reader of the cycle served it, so
+  scoped over hit plus miss plus scoped is the share of reads that re-sampled
+  a root another reader took in the same cycle), `evict` (roots dropped because
   no alive session's transcript names them, on every jobs pass and, as a
   belt, after each feed build and from the tracking-off frame), `dirStats`
-  (the stats validations paid), `walkMs` and `validateMs` (the time in each,
+  (what it counts: the comment at `_SUBAGENT_TREE_STATS` in
+  `kernel/kernel.py`; the agent-file lookup's directory stats joined it on
+  2026-09-19, so a figure from before that change and one from after are not
+  one series; the cost the memo's reads pay, road by road with the case that
+  pins each term: `_subagent_tree_memo_report`'s docstring in
+  `kernel/kernel.py`), `walkMs` and `validateMs` (the time in each,
   every thread), and the gauges `roots` (entries) and `dirs` (directories
   held); a directory stamped within the last two seconds, or one whose
   listing failed, is stored unvouched and walked again until it is quiet and
   lists cleanly, the racy-stamp rule, since a filesystem stamps with a
-  coarser clock than the wall clock and a failure moves no stamp;
+  coarser clock than the wall clock and a failure moves no stamp; the key a
+  chat build records for a subagents tree the agent-file miss walk looked
+  through (recorded by every build that looks the agent up: the walk's own,
+  and a lookup the agent-file memo or a held launch fold answers replays the
+  walk's noted keys; the project directory the walk lists is no build's
+  dependency: the scope of that record and that residual are stated once in
+  `_subagent_file`'s docstring in `kernel/kernel.py`) is the stamp per
+  directory of the read that answered the walk, never a stat taken after it,
+  so a file landing after the cycle's sample under a directory the sampled
+  listing lacked leaves the recorded key behind the next signature's re-stat
+  and the tab is rebuilt; a root whose lstat fails for a reason other than
+  absence (EACCES from a parent, EIO) is not read as absent: its readers
+  answer their standing entries unheld or an unreadable marker (the feed
+  key's component; the chat build is told to read again), except that with
+  no entry standing the sidecar map answers `{}` and the agent-file lookup
+  answers a caller that passes no faults list `None`, so while the fault
+  lasts the viewer says the agent's transcript is missing and the Agent
+  card shows no steps (`ViewerUnderAnUnreadableTree` in
+  `tests/test_subagent_tree_memo.py`; having the viewer state the fault
+  is a follow-up fix after #882); the agent-file walk excludes that tree
+  from its search and nothing else, answering a file found under any
+  other tree (`FaultExcludesItsOwnTree` in the same module), the shape
+  stated once in `_subagent_tree`'s docstring in `kernel/kernel.py`, and
+  a fault on the walk's read of any other place it searches (a place
+  below a tree's root, a candidate file, a project-directory entry, the
+  listing) excludes that place alone (the places:
+  `_subagent_file_walk`'s docstring; `FaultOnTheWalksOwnRead`); a launch
+  fold that did not read the file, the reader's fail path, is held for the
+  one read that observed it, so that read folds it once, not once per agent
+  whose owner it was consulted for, and the next read folds it again;
   `nudgeGate` is the auto-nudge walk's
   planner-placement gate, derived once per (parse, store) and served while
   both stand, and on this fork while `cleared.jsonl` stands too, its stat a
