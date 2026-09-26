@@ -5763,9 +5763,7 @@ PEER_STATE = {}                            # host -> its row. THE ROW'S SHAPE: e
 #                                            (round 6 of fork PR #897, the reviewer's round-5 ruling E and decision 5 on round 5;
 #                                            tests/test_postal_remote_sids_mirror.py
 #                                            test_the_peer_state_shape_comment_names_every_key_each_writer_stores runs every writer
-#                                            the lock's census finds, on the branches its docstring names (a peer's dial and
-#                                            its answer to ours, each carrying a bus id, the down notify of a heard host, and a
-#                                            dial refused with 409 and one refused with 403 and a body), and requires the keys
+#                                            the lock's census finds, on the branches its docstring lists, and requires the keys
 #                                            stored there to be these, no more and no fewer; a key a writer stores only on
 #                                            another branch is not seen, a stated limit with its witness there). Each recorder
 #                                            files its row whole (peer_exchange_handle for a peer's dial, peer_exchange_apply for its
