@@ -120,7 +120,7 @@ so there is no list to write. **gitleaks** covers them, in two places:
 - **`.githooks/pre-push`** reads for itself the changes a push would publish:
   the lines the pushed commits add, a merge by its combined diff (the lines in
   none of its parents, so a secret typed into a conflict resolution is read
-  too), and a merge's binary path whole (below). It hands exactly those bytes
+  too), and a merge's binary path whole (below). It hands those bytes
   to gitleaks, which runs no git, and refuses the push on a hit. It needs
   gitleaks 8.25.0 or later: the hook's flags need 8.24.0, and this
   repository's `.gitleaks.toml` uses the `[[allowlists]]` form, which gitleaks
