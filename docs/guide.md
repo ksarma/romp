@@ -719,6 +719,14 @@ A picture opened as a file of its own whose bytes will not decode, because it is
 written or was cut short, shows a line in its place (**this image failed to decode: it may be
 mid-write or truncated**), then the file's path, and **Download**, which saves the file to your
 device.
+An SVG picture loads from the file's address after the file is read; when that load fails, the
+viewer reads the file again. If the file cannot be read, the reason shows in the picture's place
+with the file's path; if it can and the picture fails again, a line says so (**this image failed
+to load or decode: the connection may have dropped, or the file may be mid-write or
+truncated**), then the file's path, and **Download**. Either way, the viewer then tries again by
+itself when the connection returns, and on the next few updates it receives. When the file is read
+again for another reason (**Reload**, or the Comments panel after the file changes) and that read
+fails, the reason shows the same way, and the viewer does not try again by itself.
 
 **PDFs.** A PDF opens in the browser's own PDF viewer. While **Comments** is open, the viewer
 draws the pages itself instead, one below the other, so a rectangle can be dragged on a page

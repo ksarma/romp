@@ -4038,6 +4038,10 @@ body.drop-over::after { content: ""; position: fixed; inset: 0; pointer-events: 
 .path-full-retry.path-retry-flash, .path-load-note.path-retry-flash { animation: path-retry-flash 0.45s ease; }
 @keyframes path-retry-flash { 0% { background: rgba(255, 255, 255, 0.3); } 100% { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .path-full-retry.path-retry-flash, .path-load-note.path-retry-flash { animation: none; } }
+/* a tap on the retrying swirl (preview.ts ackTap, on the wait element that carries the tap) pulses the element itself, so the
+   tap reads as heard even when the attempt it asks for is already under way and nothing else on screen changes */
+.path-full-wait.path-retry-flash { animation: path-retry-flash 0.45s ease; }
+@media (prefers-reduced-motion: reduce) { .path-full-wait.path-retry-flash { animation: none; } }
 /* VS Code's host-round-trip image chip while the bytes are still on their way (render.ts fillPathImg) —
    pure-CSS pulse, the sandbox can't fetch the swirl asset */
 .user-img-path.img-pending::after { content: " ···"; letter-spacing: 2px;

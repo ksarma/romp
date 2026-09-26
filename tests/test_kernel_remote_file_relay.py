@@ -521,6 +521,27 @@ class RemoteFileRelay(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, e.read(), e.headers
 
+    def test_the_v_key_changes_no_relayed_answer_for_an_svg(self):
+        # file-view.ts fetchFile's svg landing shows a remote session's picture from the relay's address plus a v key (the landed
+        # mtime): the relayed answer, GET and HEAD, must be exactly the answer to the same request without v. Whether the relay
+        # forwards v is left open: a relay that dropped keys it does not know would still leave every picture working.
+        self._register("gpu1", self.fake.server_address[1])
+        base = "/remote/gpu1/file?path=%2Ftmp%2Fchart.svg&sid=11111111-2222-4333-8444-000000000913"
+
+        def answer(method, path):
+            # status, Content-Type, body, and every header pair but Date as a list, so a name with two values keeps both
+            status, body, msg = self._get_msg(path, method=method)
+            return status, msg.get("Content-Type"), body, [(k, v) for k, v in msg.items() if k.lower() != "date"]
+
+        for method in ("GET", "HEAD"):
+            plain = answer(method, base)
+            self.assertEqual(plain[0], 200, method)
+            self.assertEqual(answer(method, base + "&v=1757145600000000001"), plain,
+                             "%s: the v key on the relay's picture address (file-view.ts fetchFile's svg landing) changed the "
+                             "relayed answer" % method)
+        # the control: two requests without v, compared the same way, are equal
+        self.assertEqual(answer("GET", base), answer("GET", base), "the comparison holds for two answers to the same request")
+
     def test_a_remote_svg_is_a_sandboxed_document_by_the_relays_own_policy(self):
         # The relay derives every header that tells THIS browser how to interpret the bytes (the type, the
         # disposition) from the requested extension and discards the remote's, so the local route's SVG

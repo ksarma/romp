@@ -309,7 +309,7 @@ test("the paint pass: unpaintChanges before each repaint, the change painters af
   assert.match(pc, /return col && col\.color \? \{ "--fc-author": col\.color\.bg \} : \{\};/, "the author's session colour as --fc-author; nothing when unknown (the sheet's neutral)");
   assert.match(pc, /const aid = authorIdOf\(store, c\.id\);/, "the sidecar record's authorId, since toHunks drops it");
   assert.match(pc, /paintChangesRendered\(root, src, changes, stylesFor, \{ trim: !deferTrim \}\)/, "the Rendered painter trims its own marks unless the pass defers the trim"); assert.match(pc, /paintChangesRaw\(root, src, changes, stylesFor\)/);
-  assert.match(pc, /if \(!s \|\| !\(s\.hunks \|\| \[\]\)\.length \|\| !this\.textCurrent\(s\)\) return;/, "offsets index the text the host read: no marks over other bytes");
+  assert.match(pc, /if \(!s \|\| !\(s\.hunks \|\| \[\]\)\.length \|\| !this\.paintCurrent\(s\)\) return;/, "offsets index the text the host read, read over the text the body shows (paintCurrent): no marks over other bytes; a source pin only, whose executed witness is file-comments-about.test.ts's case on the change marks and a selection's changes from a landing to its paint (a repaint while the older text shows marks nothing over it, and one while the status's text shows keeps the marks)");
   assert.match(pc, /this\.mark\(m\);/, "a change mark is the panel's own (mark: owns, and the registry the chat pane's link handler reads), like a comment highlight");
   assert.match(SRC, /const rv = btn\("Reveal", "fcreveal"\); rv\.dataset\.id = c\.key;/, "Reveal on a change card carries the card's key");
   assert.match(SRC, /if \(c\.kind === "del" \|\| !painted\) \{/, "Reveal on a deletion and on any change the view does not show");

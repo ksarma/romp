@@ -11,8 +11,9 @@
 // that probe's failure, nor does that probe's failure, arriving after the URL has failed AGAIN, shorten or delete
 // the fresh budget or clear a newer probe's in-flight mark (a failure counts only for the probe whose token
 // is current); the reconnect-class heal probes every remembered URL, on the page or not (a turn evicted from
-// the rendered window, a closed tab); and the chat's post-pass parks a re-rendered img with a remembered URL before the
-// browser fetches it. The module remembers failed URLs for the page life, so fresh() heals every remembered URL off
+// the rendered window, a closed tab); the chat's post-pass parks a re-rendered img with a remembered URL before the
+// browser fetches it; and the file viewer's own picture, in its picture box, is not the heal's (the viewer asks its address
+// again itself), while a figure of a markdown file the viewer renders parks and heals as any other. The module remembers failed URLs for the page life, so fresh() heals every remembered URL off
 // the DOM through the public reconnect path before each test: every test starts with an empty memory.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -325,6 +326,27 @@ test("the reconnect-class heal probes a remembered URL whose turn is outside the
   probes.length = 0;
   P.refreshSettledPreviews();
   assert.equal(probes.length, 0, "a healed URL is forgotten: the next reconnect has nothing to probe");
+});
+
+test("the file viewer's own picture, in its picture box, is not the heal's: its failure parks nothing, and its served URL gets no per-message probe and no reconnect probe, while a figure of a markdown file the viewer renders, in its Rendered body, parks and heals as any markdown image does", async () => {
+  const P = await fresh();
+  /** An img inside elements of these classes, as closest() answers for it. */
+  const within = (img: FakeEl, ...classes: string[]): FakeEl => { (img as any).closest = (sel: string) => (classes.some((c) => sel === "." + c) ? {} : null); return img; };
+  const PICTURE_URL = servedUrl("topology.svg") + "&v=1757145600000000001";
+  const picture = within(mdImg(PICTURE_URL, "/home/user/notes-api/plots/topology.svg"), "fileview-imgbox", "fileview-body", "fileview");
+  const figure = within(mdImg(servedUrl("latency-hist.png"), "Latency histogram"), "fileview-md", "fileview-body", "fileview");
+  fail(picture); fail(figure);
+  assert.equal(picture.getAttribute("src"), PICTURE_URL, "the viewer's picture keeps its src: the heal parks nothing of it");
+  assert.equal(picture._cls.has("md-img-failed"), false, "and marks nothing");
+  assert.equal(figure.hasAttribute("src"), false, "the rendered figure is parked: no src");
+  assert.ok(figure._cls.has("md-img-failed"), "and marked");
+  for (let i = 0; i < 3; i++) P.retryFailedPreviews();   // three kernel messages
+  assert.deepEqual(probes.map((x) => x.src), [servedUrl("latency-hist.png")], "one per-message probe, the figure's, and none of the viewer's picture");
+  (probes[0] as any).onload();
+  assert.equal(figure.src, servedUrl("latency-hist.png"), "the figure's probe loaded: the picture lands on it");
+  assert.equal(figure._cls.has("md-img-failed"), false, "unparked");
+  P.refreshSettledPreviews();                            // a reconnect-class event
+  assert.deepEqual(probes.slice(1).map((x) => x.src), [], "the reconnect-class heal probes nothing: the figure healed, and the viewer's picture was never the heal's");
 });
 
 test("render.ts installs the listener once, parks known-failed URLs on its OWN markdown output only, and files the page's bundle build once per load", () => {
