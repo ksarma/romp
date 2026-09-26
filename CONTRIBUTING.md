@@ -44,9 +44,13 @@ worker count, build the tests and start the runner yourself, from `vscode-extens
 
 `tests/gitleaks-config.bats` checks the secret-scanning rules in `.gitleaks.toml`
 against the real scanner and skips itself when `gitleaks` is not installed
-(`brew install gitleaks`, or a release binary; `ROMP_GITLEAKS` names one that is
-not on `PATH`). Installing it also arms the credential half of the `pre-push`
-hook, which is worth having before you push anything.
+(`brew install gitleaks`, or a release binary, 8.25.0 or later; `ROMP_GITLEAKS`
+names one that is not on `PATH`). Installing it also arms the credential half of
+the `pre-push` hook, which is worth having before you push anything. The floor
+is 8.25.0 because the hook's flags need 8.24.0 and this repository's
+`.gitleaks.toml` uses the `[[allowlists]]` form, which gitleaks reads correctly
+from 8.25.0 on; CI pins 8.28.0, above that floor. Under an older gitleaks the
+hook refuses a push that has something to scan and names the version it found.
 
 The Python and shell suites are also the CI gate, across Python 3.10 to 3.13 on
 Linux; the macOS cells run on demand from the Actions tab (they are billed even

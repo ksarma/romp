@@ -378,6 +378,7 @@ class Collector(unittest.TestCase):
         # the three identity memos' readers land here (review find, 2026-09-08: they had no consumer)
         self.assertEqual(set(snap["memos"]), {"pass", "shared", "chain", "nudgeGate", "nudgeWalk", "convergeDeclined", "sessionsListing", "cleared", "courierSkip", "backref", "captions", "goalArchive", "plannerSkip", "ghostDropped",
                                               "bgTops", "liftGate", "intrMarks", "deadWait", "tickSeen", "statesOverlay", "lanes", "spendTree", "summaryAnchor",
+                                              "parkedHandoffs",   # the feed's parked-handoff fold over the postal log (2026-09-18)
                                               "judgingBand",   # the judging band's per-row memo and horizon cursor (2026-09-16)
                                               "subagentTree",   # the subagents directory walk memo (2026-09-16): served vs walked, roots held
                                               "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks",   # the chat build's fixed-cost memos (2026-09-09)
@@ -416,6 +417,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["memos"]["intrMarks"], km._intr_marks_memo_report())
         self.assertEqual(set(snap["memos"]["statesOverlay"]), {"hit", "append", "refold", "fail", "evict", "entries"})
         self.assertEqual(snap["memos"]["statesOverlay"], km._states_overlay_report())
+        self.assertEqual(set(snap["memos"]["parkedHandoffs"]), {"hit", "append", "refold", "restore", "cold", "fail", "entries"},
+                         "the parked-handoff fold's paths, pre-seeded so the key set is fixed, and its occupancy (2026-09-18)")
+        self.assertEqual(snap["memos"]["parkedHandoffs"], km._parked_fold_report())
         for blk in ("intrMarks", "statesOverlay"):
             for k, v in snap["memos"][blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))
@@ -972,7 +976,9 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty", "memo"})   # dirty: this fork's forced-rebuild counter beside the memo
         memo = snap["builds"]["feed"]["memo"]
         self.assertEqual(set(memo), {"hit", "miss", "evict", "entries", "bytes", "bound", "derived", "miss_by",
-                                     "failed", "failing"})   # failed: derivations that raised, cumulative; failing: sessions whose last one did (2026-09-17)
+                                     "failed", "failing",   # failed: derivations that raised, cumulative; failing: sessions whose last one did (2026-09-17)
+                                     "row_by",            # a row miss by the row position that moved (2026-09-18)
+                                     "coldLive", "coldFlip"})   # coldLive: living sessions whose cache-only parse read missed, per build; coldFlip: those re-read in place because the memo held them warm (2026-09-18)
         # ...and the reference's builds.feed.memo paragraph names every counter the block serves, so a counter cannot
         # ship undocumented (2026-09-18: `failed` and `failing` arrived with the card-build containment and the paragraph
         # named the eight older ones only). The slice: from the paragraph's opening line to the next block's bullet.
@@ -982,6 +988,7 @@ class Collector(unittest.TestCase):
         for k in memo:
             self.assertIn("`%s`" % k, para, "builds.feed.memo `%s` is not named in the reference's memo paragraph" % k)
         self.assertEqual(set(memo["miss_by"]), set(km._FEED_MEMO_LABELS) | {"cold"})
+        self.assertEqual(set(memo["row_by"]), set(km._FEED_ROW_FIELDS) | {"presence"})
         self.assertEqual(memo["bound"], km.FEED_MEMO_BYTES)
         self.assertEqual(memo, km._feed_memo_report())
         for k, v in memo.items():

@@ -11,7 +11,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { FederationManager, mergeHostTimelines, socketVerdict,
+import { FederationManager, PANE_CHANNELS, mergeHostTimelines, socketVerdict,
          REMOTE_STALE_MS, REMOTE_CONNECT_MS, REMOTE_REDIAL_MS, REMOTE_PROVISIONAL_MS } from "./federation";
 
 const U = "11111111-2222-3333-4444-555555555555";
@@ -735,6 +735,576 @@ test("…but never drops an EMPTY merged feed onto a page still waiting for its 
   } finally {
     if (hadFetch) g.fetch = prevFetch; else delete g.fetch;
   }
+});
+
+test("a page that renders no pushed channel pends nothing and tells the shell nothing: settings and files (2026-09-18)", async () => {
+  // the /settings page and the file browser load this module (the gear's fan-out, the host routing) but receive no pushed
+  // view, so no frame of theirs could retire a host: the settings frame's manager posted every attached host as pending
+  // for good and the network panel read every connected remote as "loading sessions…" from the first gear open
+  for (const app of ["settings", "files"]) {
+    await withManager((fm, _e, _d, posted) => {
+      fm.app = app;
+      fm.openRemote("TESTHOST", true);
+      assert.deepEqual(fm.pendingFor(), [], app + ": no channel to be heard on, nothing pending");
+      fm.inbound("", localFeed);
+      fm.inbound("", { type: "data", data: { sessions: [], turns: {}, messages: [], judging: [], now: 1000 } });
+      assert.equal(posted.filter((m) => m && m.romp === "hostsPending").length, 0, app + ": never posts hostsPending");
+      fm.conns.get("TESTHOST").closed = true;
+    });
+  }
+});
+
+test("the WAITING pane renders the feed payload too, so it pends its attached host, tells the shell, and is retired by that host's feed payload (fork pin, review round 1, 2026-09-21)", async () => {
+  // the fork's fifth pushed-channel pane: the kernel pushes the feed payload to the feed pane, the Outline AND the
+  // Waiting-on-you pane (kernel.py _push's feed branch; waiting.ts reads feed.userTodoRows). The project's
+  // PANE_CHANNELS named its own four panes, and this pane dropped out of the shell's pending signal: its merged feed still
+  // carried pendingHosts (the pane's own loading line) while the network panel heard nothing from it.
+  await withManager((fm, _e, _d, posted) => {
+    const hp = () => posted.filter((m) => m && m.romp === "hostsPending");
+    fm.app = "waiting";
+    fm.openRemote("TESTHOST", true);
+    assert.deepEqual(fm.pendingFor(), ["TESTHOST"], "attached and dialed, no feed payload from it yet");
+    fm.inbound("", localFeed);
+    assert.deepEqual(hp().pop(), { romp: "hostsPending", app: "waiting", hosts: ["TESTHOST"] },
+      "the waiting pane pends TESTHOST until its feed payload lands, and says so to the shell");
+    fm.inbound("", { ...localFeed, buildId: 2 });
+    assert.equal(hp().length, 1, "unchanged set: nothing re-posted");
+    fm.inbound("TESTHOST", { type: "feed", asks: [], items: [], working: [], order: [], sessions: [], now: 1000 });
+    assert.deepEqual(fm.pendingFor(), [], "its first feed payload retires it");
+    assert.deepEqual(hp().pop(), { romp: "hostsPending", app: "waiting", hosts: [] }, "and the follow-up post clears the host in the shell");
+    assert.equal(hp().length, 2, "exactly the pend and the retire");
+    fm.closeRemote("TESTHOST");
+  });
+});
+
+// ── the pushed-channel roster, derived from the kernel's send loop (review rounds 1 to 3, 2026-09-21) ────────────────
+// Enough of Python's surface to read _push's body as statements: comments dropped, a backslash continuation joined, a
+// newline inside brackets folded to one space (a wrapped tuple reads as one line), every other newline kept. Per output
+// character: whether it sits inside a string literal (an f-string field, a docstring's prose), the output index of its
+// innermost open bracket (a % format's operand tuple), and its source line for the failure messages.
+function pyNormalise(src: string, firstLine: number): { text: string; inStr: boolean[]; encl: number[]; line: number[] } {
+  const out: string[] = [], inStr: boolean[] = [], encl: number[] = [], line: number[] = [];
+  const stack: number[] = [];
+  let ln = firstLine;
+  const emit = (ch: string, s: boolean) => { out.push(ch); inStr.push(s); encl.push(stack.length ? stack[stack.length - 1] : -1); line.push(ln); };
+  const n = src.length;
+  let i = 0;
+  while (i < n) {
+    const ch = src[i];
+    const pm = /^([rRbBuUfF]{0,2})("""|'''|"|')/.exec(src.slice(i, i + 5));   // a string literal, with any prefix letters
+    if (pm && (pm[1] === "" || i === 0 || !/[A-Za-z0-9_]/.test(src[i - 1]))) {
+      for (const p of pm[1]) emit(p, false);
+      i += pm[1].length;
+      const q = pm[2];
+      for (const qc of q) emit(qc, true);
+      i += q.length;
+      while (i < n) {
+        if (src[i] === "\\" && i + 1 < n) {                 // an escape: the next character is the string's, whatever it is
+          if (src[i + 1] === "\n") ln++;
+          emit(src[i], true); emit(src[i + 1], true); i += 2; continue;
+        }
+        if (src.startsWith(q, i)) { for (const qc of q) emit(qc, true); i += q.length; break; }
+        if (src[i] === "\n") ln++;
+        emit(src[i], true); i++;
+      }
+      continue;
+    }
+    if (ch === "#") { while (i < n && src[i] !== "\n") i++; continue; }                        // a comment, to its line's end
+    if (ch === "\\" && src[i + 1] === "\n") {                                                // a continuation: one line
+      i += 2; ln++;
+      while (i < n && (src[i] === " " || src[i] === "\t")) i++;
+      emit(" ", false); continue;
+    }
+    if (ch === "\n") {
+      ln++; i++;
+      if (stack.length) { while (i < n && (src[i] === " " || src[i] === "\t")) i++; emit(" ", false); continue; }   // wrapped
+      emit("\n", false); continue;
+    }
+    if (ch === "(" || ch === "[" || ch === "{") { emit(ch, false); stack.push(out.length - 1); i++; continue; }
+    if (ch === ")" || ch === "]" || ch === "}") { stack.pop(); emit(ch, false); i++; continue; }
+    emit(ch, false); i++;
+  }
+  return { text: out.join(""), inStr, encl, line };
+}
+
+// The forms a read of the "app" key in _push's body can take. Two the census READS as an audience; one it can rule out
+// as no audience at all (the value becomes text: the send log line's `%` operand); every other form it cannot see
+// through, so each is NAMED, counted over the body and asserted absent, the way tests/test_card_boards.py's
+// _other_card_forms enumerates what its card census cannot read (review round 3, 2026-09-21: both refuters defeated a
+// wider regex with a named constant, `c["app"] in NOTE_APPS`, which no pattern over literals can read; the enumeration
+// turns it red instead of invisible). Keyed on the KEY written as a string literal, however spaced or wrapped (a
+// subscript or a .get with any whitespace around the literal and around the call's dot, name and paren; a subscript
+// wrapped over a line, which pyNormalise folds to the spaced form), so a renamed loop variable is still read. A key
+// that is NOT a literal is keyed on the shape of its read, never on its spelling (review round 6, 2026-09-21): a
+// subscript or a .get whose key is a bare name (`c[APP_KEY]`, `c.get(key)`) is the ninth named form, NAME_KEY_FORM,
+// listed with its statement and asserted absent whatever the name, if the name is ASCII (every key _push reads at the
+// head is written as a literal, so the form has nothing to fire on until a key is held in a name; the bracket arm needs
+// a receiver before the bracket, whatever can end a primary in Python's grammar, so a one-element list display is not
+// listed and a generic annotation such as `list[str]` is, review rounds 7 and 8, the bound stated at the arm, where the
+// receiver-class text also says the key is read as an ASCII name); and every "app" literal in the body that no detector
+// read (bound to a name in any shape, a default, a keyword argument, a passed value) is listed under UNREAD_LITERAL and
+// asserted absent, so the road from inside the body to a key held in a name is red at both ends, the literal and, for
+// an ASCII name, the read. What stays disclosed, not detected: a key named with a character past ASCII and bound
+// outside the body, and a key held in a dict or a list, reached through an attribute or returned by a call
+// (`c[KEYS[0]]`, `c[self.key]`, `c[pick()]`), whose value the body never spells as a literal.
+const READ_TUPLE = "a tuple of string literals (the audience, read)";
+const READ_SINGLE = "a singleton, == a string literal (the audience, read)";
+const READ_TEXT = "a value formatted into text (a % format's operand, a .format argument, a field inside a string literal): no audience";
+const OTHER_FORMS = [
+  "a membership test against a name, an attribute or a call (a named constant, a variable)",
+  "a membership test against a list or a set literal",
+  "a tuple with a member that is not a string literal",
+  "a negated test (!= or not in)",
+  "an equality test against something other than a string literal",
+  "a .get(\"app\", ...) with a default",
+  "the read bound to a name (an assignment or a walrus)",
+  "a read in any other position (a call's argument, a returned value, a comparison's right operand, a yield): not followed",
+] as const;
+// The ninth named form, keyed on the SHAPE of the read rather than on the key: a subscript or a .get whose key is a
+// bare name. Listed whatever the name, if the name is ASCII (the census cannot tell it from a read of the app key), and
+// asserted absent; a key named with a character past ASCII is not listed (the receiver-class text at pushAudiences'
+// bracket arm).
+const NAME_KEY_FORM = "a subscript or a .get whose key is a bare name (a constant, a variable, a parameter; a generic annotation such as list[str] shares the bracket): which key it reads is not known here";
+// Python's keywords (3.12's keyword.kwlist) and the two soft keywords that precede a bracket in their keyword role
+// (keyword.softkwlist's match and case: `match [c]:` a subject, `case [c]:` a sequence pattern): a bracket directly behind
+// one of these as a STANDALONE token is a list display or a pattern and is not listed; after a dot, spaced or tight,
+// match and case alone are identifiers (`self.match[k]`), read by the arm below, since of this set only those two can
+// follow an attribute's dot (a hard keyword after a dot, as in `1. in [k]`, is still the keyword; review round 9,
+// 2026-09-24). The other two soft keywords, _ and type, are
+// not here: neither ever precedes a bracket in its keyword role (a type alias is `type Name = ...`, a wildcard pattern
+// `_` stands alone), so `type[int]` and `_[k]` are subscripts and are listed. The residual, disclosed here, in
+// federation.ts's PANE_CHANNELS comment and in the ledger entry: a bare variable named match or case, subscripted
+// (`match[k]`), reads as the keyword and is not listed (review round 7, 2026-09-23; round 8, the set derived from where a
+// keyword-role bracket can stand, not from the soft-keyword list).
+const PY_KEYWORDS = new Set([
+  "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif",
+  "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or",
+  "pass", "raise", "return", "try", "while", "with", "yield",
+  "case", "match",
+]);
+// The one label for every "app" literal in the body that none of the detectors read, whatever holds it.
+const UNREAD_LITERAL = "the app literal in a position the census does not read (bound to a name in any shape, a default, a keyword argument, a passed value)";
+type Audiences = { tuples: string[][]; singles: string[]; text: string[]; other: Map<string, string[]>; reads: number; unread: string[]; byName: string[] };
+function pushAudiences(kernel: string): Audiences {
+  const at = kernel.indexOf("\ndef _push(targets");
+  assert.ok(at >= 0, "kernel.py's _push(targets, ...) is the pusher's send loop");
+  const body = kernel.slice(at + 1, kernel.indexOf("\ndef ", at + 1));   // _push's own body, up to the next top-level def
+  const { text, inStr, encl, line } = pyNormalise(body, kernel.slice(0, at + 1).split("\n").length);
+  const a: Audiences = { tuples: [], singles: [], text: [], other: new Map(OTHER_FORMS.map((f) => [f, []])), reads: 0, unread: [], byName: [] };
+  const lit = /(["'])([^"'\\]*)\1/g;
+  const whereAt = (p: number) => {   // kernel.py:line and the statement, for the failure messages
+    const ls = text.lastIndexOf("\n", p) + 1;
+    const le = text.indexOf("\n", p);
+    return "kernel.py:" + line[p] + " " + text.slice(ls, le < 0 ? text.length : le).trim().slice(0, 120);
+  };
+  const consumed = new Set<number>();   // the positions of the "app" literals the detectors below read: the key, a tuple's members, a singleton's operand
+  for (const m of text.matchAll(/\[\s*(["'])app\1\s*\]|\.\s*get\s*\(\s*(["'])app\2/g)) {   // the KEY as a literal, however spaced (a wrapped subscript is one space here; any whitespace around a .get's dot, name and paren)
+    const p = m.index!;
+    let e = p + m[0].length;
+    a.reads++;
+    consumed.add(p + m[0].indexOf(m[1] ?? m[2]));
+    const ls = text.lastIndexOf("\n", p) + 1;
+    const where = whereAt(p);
+    const other = (form: string) => a.other.get(form)!.push(where);
+    if (inStr[p]) { a.text.push(where); continue; }
+    if (m[2]) {                                            // `.get("app"`: closed at once, or a default follows
+      const tail = /^\s*\)/.exec(text.slice(e));
+      if (!tail) { other(OTHER_FORMS[5]); continue; }
+      e += tail[0].length;
+    }
+    const after = text.slice(e);
+    let mm: RegExpExecArray | null;
+    if ((mm = /^\s*==\s*(["'])([^"'\\]+)\1/.exec(after))) { consumed.add(e + mm[0].indexOf(mm[1])); a.singles.push(mm[2]); continue; }   // the compared value is read
+    if (/^\s*==/.test(after)) { other(OTHER_FORMS[4]); continue; }
+    if (/^\s*!=/.test(after) || /^\s+not\s+in\b/.test(after)) { other(OTHER_FORMS[3]); continue; }
+    if ((mm = /^\s+in\s*\(/.exec(after))) {                  // zero or more spaces after the keyword (review round 6)
+      const q = e + mm[0].length - 1;                      // the tuple's "(": its members run to the matching ")"
+      let d = 0, r = q;
+      for (; r < text.length; r++) {
+        if (inStr[r]) continue;
+        if (text[r] === "(") d++;
+        else if (text[r] === ")" && --d === 0) break;
+      }
+      const inner = text.slice(q + 1, r);
+      const lits = [...inner.matchAll(lit)];
+      for (const l of lits) consumed.add(q + 1 + l.index!);   // the members are read, into the roster or to refuse the tuple
+      const members = lits.map((l) => l[2]);
+      if (members.length >= 1 && inner.replace(lit, "").replace(/[\s,]/g, "") === "") { a.tuples.push(members); continue; }
+      other(OTHER_FORMS[2]); continue;
+    }
+    if (/^\s+in\s*[\[{]/.test(after)) { other(OTHER_FORMS[1]); continue; }   // zero or more spaces after the keyword (review round 6)
+    if (/^\s+in\b/.test(after)) { other(OTHER_FORMS[0]); continue; }
+    if (/(?:^|[\s,(])[A-Za-z_]\w*\s*(?::\s*[\w\[\], ]+)?\s*:?=\s*[A-Za-z_][\w.]*(?:\[[^\]]*\])*\s*$/.test(text.slice(ls, p))) { other(OTHER_FORMS[6]); continue; }   // `name = <receiver>` before the key (any whitespace before a .get's dot)
+    const enc = encl[p];
+    if (enc >= 0 && text[enc] === "(" && /(?:(["'])\s*%|\.format)\s*$/.test(text.slice(0, enc))) { a.text.push(where); continue; }
+    other(OTHER_FORMS[7]);
+  }
+  // Every "app" literal in the body that none of the detectors above read (the key, a tuple's members, a singleton's
+  // compared value), listed under one label whatever holds it: a binding of any shape (an assignment, a tuple unpacking,
+  // an annotated one however the annotation is spelled, a walrus, a for target, a parameter default), a keyword argument,
+  // a passed value, a parenthesised or a call-wrapped literal. Keyed on the PROPERTY (a literal the census did not read),
+  // not on a binding's spelling (review round 6, 2026-09-21: a scan keyed on four binding spellings missed a tuple
+  // unpacking, a parenthesised literal, an unspaced union annotation and a string annotation, and listed a keyword
+  // argument as a bound name), so the road from inside the body to a key held in a name starts red at the literal,
+  // whatever binds it. A literal inside a string (a docstring's prose) is skipped: its opening quote follows a character
+  // inside the string, where a literal of its own follows code (or a prefix letter, which pyNormalise emits as code).
+  for (const m of text.matchAll(/(["'])app\1/g)) {
+    const p = m.index!;
+    if (consumed.has(p) || (p > 0 && inStr[p - 1])) continue;
+    a.unread.push(whereAt(p));
+  }
+  // The ninth named form, keyed on the SHAPE of the read: a subscript or a .get whose key is a bare name, outside a
+  // string, whatever the name (a constant, a variable, a parameter) if the name is ASCII. Which key it reads is not
+  // known here, so it is listed and asserted absent (every key _push reads at the head is written as a literal, so the
+  // form has nothing to fire on until a key is held in a name) rather than disclosed. Tolerates the whitespace the
+  // literal read tolerates. The bracket arm is a subscript only behind a receiver primary directly before the bracket,
+  // joined by spaces or tabs only; the statement's text before the bracket is read from its line start, and pyNormalise
+  // folds a newline inside brackets to one space, so a newline never lets one statement's tail become the next bare
+  // bracket's receiver. The receiver-class text, word for word here, in federation.ts's PANE_CHANNELS comment and in
+  // the ledger entry (the three-homes case below holds the three equal): a subscript is listed only behind a receiver,
+  // which is whatever can end a subscriptable primary in Python's grammar: a name that is not a standalone keyword, a
+  // closing parenthesis, a closing bracket, a closing brace or a closing quote, double or single, so `pick(c)[k]`,
+  // `targets[0][k]`, `{**c}[k]`, `"abc"[k]`, `'abc'[k]`, `self.match[k]` and a generic annotation such as `list[str]`
+  // are listed, while a one-element list display (`xs = [c]`, `return [c]`) and a sequence pattern behind the soft
+  // keyword case (`case [k]:`) are not. The derived set: a name is a whole identifier token, ASCII or not; a number of
+  // any spelling, an Ellipsis or a keyword constant (None, True, False) before a bracket is unlisted; a name after a
+  // dot is an identifier only where Python allows one there (match and case). So a name never starts behind an
+  // identifier character: `1j[k]`, `0x1f[k]`, `0xff[k]` and `1e5[k]` are not listed through their tails, and a name
+  // with a character past ASCII is listed whole. Nor does a name start directly behind a number's trailing dot (a digit
+  // run that starts a token, then the dot): `1.e5[k]` and `1_0.j[k]`, one number token each, are not listed, while
+  // `v5.e5[k]` and `1.5.e5[k]`, attributes, are. Both rules are lookbehinds on the census's name alternative alone, so
+  // a closing parenthesis still ends `f(x)[k]`'s receiver. A hard keyword after a dot is still the keyword, so a list
+  // display behind a float's trailing dot or an Ellipsis (`1. in [k]`, `... in [k]`) is not listed. The key, unlike the
+  // receiver, is read as an ASCII name: a subscript or a `.get` whose key is a bare name holding a character past ASCII
+  // is not listed. Where such a name is bound to the app literal inside `_push`'s body, the unread-literal scan lists
+  // the literal; where it is bound outside the body (a module-level constant), the key is listed nowhere, and the
+  // census's premise case plants such keys, each asserted unlisted. Deliberately unlisted and disclosed, then: a key
+  // named with a character past ASCII and bound outside `_push`'s body; a number, an Ellipsis or a keyword constant
+  // before a bracket, none of which can hold the client record; and a bare variable named match or case, subscripted,
+  // which reads as the keyword (PY_KEYWORDS). How the arm below reads it: the name alternative's characters are an
+  // identifier's, \w or any code unit past ASCII (outside a string or a comment, valid Python holds one only in an
+  // identifier), with both lookbehinds inside that alternative; a name in PY_KEYWORDS is no receiver as a STANDALONE
+  // token only (`case [k]:`, `in [k]`, `return [c]`), and for match and case alone the text before the name is read for
+  // a dot followed by spaces or tabs, so after a dot, tight or spaced (`self.match[k]`, `c . case[k]`), the spelling is
+  // an identifier and its bracket a subscript; and the key classes are [A-Za-z_]\w*, whose \w is ASCII in JavaScript,
+  // so the key is read as an ASCII name (review round 7, 2026-09-23: the arm listed every one-name bracket, so a list
+  // display in the body turned the census red with a cause and a remedy that did not apply; round 8: the receiver class
+  // derived from the grammar after a name-paren-bracket class fitted to the examples left a dict display and a string
+  // literal unlisted; round 9, 2026-09-24: the name alternative matched a run of ASCII characters, so a number was
+  // listed through its letter tail and a name with a character past ASCII was not, and the dot test read any dot before
+  // a keyword as an attribute's; round 9's rulings, 2026-09-25: the three homes had drifted apart, and they claimed
+  // every bare-name key was listed while the key class read ASCII names only).
+  for (const m of text.matchAll(/\[\s*[A-Za-z_]\w*\s*\]|\.\s*get\s*\(\s*[A-Za-z_]\w*\s*[,)]/g)) {
+    const p = m.index!;
+    if (inStr[p]) continue;
+    if (m[0].endsWith("]")) {   // the bracket arm: the receiver, if any, ends the statement's text before the bracket
+      const before = text.slice(text.lastIndexOf("\n", p) + 1, p);
+      const rcv = /((?<![\w\u0080-\uFFFF])(?<!(?<![\w\u0080-\uFFFF.])\d[\d_]*\.)[A-Za-z_\u0080-\uFFFF][\w\u0080-\uFFFF]*|[)\]}"'])[ \t]*$/.exec(before);
+      if (!rcv || (PY_KEYWORDS.has(rcv[1]) && !((rcv[1] === "match" || rcv[1] === "case") && /\.[ \t]*$/.test(before.slice(0, rcv.index))))) continue;   // no receiver (a list display, a number), or a standalone keyword before the bracket (after a dot, match and case alone are identifiers)
+    }
+    a.byName.push(whereAt(p));
+  }
+  return a;
+}
+
+test("every app the kernel's _push addresses is a pushed-channel pane here, on the channel its audience names: the roster is derived from every read of the app key written as a string literal in _push's body, however spaced or wrapped (a tuple of string literals however wrapped or spaced, a singleton of any name, or a value formatted into text), every other form is named and asserted absent, a subscript or a .get whose key is a bare ASCII name is named and asserted absent, and every app literal the census did not read is listed and asserted absent, so a pane added to any of _push's audiences in any spelling of the key as a literal reads red here, in the roster or as a named form, a key held in a name reads red at the name if it is ASCII or at the literal a name would be bound to in the body, a key named past ASCII and bound outside the body, or held in a dict or reached through an attribute, is disclosed as outside, and a member _push never addresses reads red (review rounds 1 to 6, 2026-09-21; round 9's rulings, 2026-09-25)", async () => {
+  // Keyed on the PRODUCER, not on the compliant sites: a set that names the panes it knows cannot see the one it misses,
+  // and the project's four-name set missed this fork's fifth. Round 1 read the first `if c["app"] in (...):` alone, the
+  // feed branch, so a pane added to the timeline's or the chat's audience (a `==` widened to a tuple) took no verdict.
+  // Round 2 matched every one-line tuple and singleton of lowercase names, so a pane added in a wrapped tuple, under a
+  // name with a hyphen or a digit, or through a named constant took no verdict either. The belt (pushAudiences above):
+  // every read of the "app" key in _push's body is accounted for, as a tuple of string literals (the body normalised
+  // first: comments dropped, continuations joined, a newline inside brackets folded, the separator a comma plus any
+  // whitespace), a singleton of any name, or a value formatted into text (the send log line, no audience), and every
+  // other form is NAMED and counted (OTHER_FORMS): the premise is asserted here as an empty set, and each detector is
+  // shown to fire in the case below. A tuple's channel is the one of feed, chat, timeline it names, a singleton's its own
+  // name, and each member is driven through the manager on that channel with the other two channels' frames refused, so
+  // a non-feed member cannot fall silently to perHostFeed in pendingFor's selector (federation.ts), where every app that
+  // is not the timeline or the chat reads the feed.
+  // The harm of a missed pane, as the round 3 refuters measured it: NOT every attached host pending forever. pendingFor
+  // returns [] for an app outside PANE_CHANNELS, so the pane posts no hostsPending at all: the shell loses its
+  // "connected, loading sessions" caveat for that pane while the pane's own loading line still shows (the 2026-09-18
+  // waiting-pane dropout). The forever-pending direction is the other miss, a set member _push never addresses, which the
+  // second roster assertion below catches.
+  // SCOPE: this census reads _push's body, the pusher's send loop. Senders outside it test the app key on their own
+  // (_feed_first's cold first feed frame, _send_feed_now's ready-time frame, the tab strips of _push_session_now and
+  // _confirm_close_now), each addressing a pane _push also addresses; none is read here, so a pane pushed ONLY by a
+  // route outside _push's body is outside this case's claim. And the key is read as a STRING LITERAL, however spaced or
+  // wrapped; a key held in a name is caught at both ends (review round 6, 2026-09-21): a subscript or a .get whose key
+  // is a bare name (c[APP_KEY], c.get(key)) is listed whatever the name, if the name is ASCII, and so is every "app"
+  // literal in the body the census did not read (the literal a name would be bound to, in any binding's spelling); both
+  // are asserted absent here. What stays disclosed, not detected: a key named with a character past ASCII and bound
+  // outside the body (the receiver-class text at pushAudiences' bracket arm), and a key held in a dict or a list,
+  // reached through an attribute or returned by a call (c[KEYS[0]], c[self.key]), whose value the body never spells as
+  // a literal.
+  const kernel = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  const { tuples, singles, other, unread, byName } = pushAudiences(kernel);
+  assert.deepEqual([...other].filter(([, hits]) => hits.length), [],
+    "a read of the app key in _push's body the census cannot read, as [form, [kernel.py:line statement]]: write the audience as a tuple of string literals or a singleton, or teach pushAudiences the form and say what it reads");
+  assert.deepEqual(byName, [],
+    NAME_KEY_FORM + ", in _push's body, as kernel.py:line statement: the census cannot tell it from a read of the app key, so write the key as a string literal, or teach pushAudiences what the name holds");
+  assert.deepEqual(unread, [],
+    UNREAD_LITERAL + ", in _push's body, as kernel.py:line statement: a name bound to it carries the key past every detector here, so read the key as a literal where it is used, or say in the SCOPE note what the literal is for");
+  assert.ok(tuples.length >= 1, "the send loop's `c[\"app\"] in (...)` feed branch is an audience");
+  const union = new Set<string>([...tuples.flat(), ...singles]);
+  assert.ok(union.has("feed") && union.has("waiting"), "the feed audience carries the feed pane and this fork's Waiting-on-you pane (" + [...union].sort().join(", ") + ")");
+  assert.deepEqual([...union].filter((a) => !PANE_CHANNELS.has(a)), [],
+    "an app _push addresses that PANE_CHANNELS misses: add it there, or, if it renders no pushed view, name it here as excluded with the reason");
+  assert.deepEqual([...PANE_CHANNELS].filter((a) => !union.has(a)), [],
+    "a PANE_CHANNELS member _push never addresses would pend every attached host forever: drop it, or push to it");
+  // each member's channel, from the audience that names it
+  const CH = ["feed", "chat", "timeline"];
+  const channelOf = new Map<string, string>();
+  for (const t of tuples) {
+    const named = CH.filter((c) => t.includes(c));
+    if (named.length !== 1) continue;   // a tuple naming none or two of the channel apps places nothing: its members are placed by another
+    for (const a of t) {
+      assert.ok(!channelOf.has(a) || channelOf.get(a) === named[0], a + ": named in the audiences of two channels (" + channelOf.get(a) + ", " + named[0] + ")");
+      channelOf.set(a, named[0]);
+    }
+  }
+  for (const a of singles) if (!channelOf.has(a) && CH.includes(a)) channelOf.set(a, a);
+  for (const a of union) assert.ok(channelOf.has(a), a + ": no audience names its channel (feed, chat or timeline); place it");
+  const frames: Record<string, any> = {
+    feed: { type: "feed", asks: [], items: [], working: [], order: [], sessions: [], now: 1000 },
+    chat: { type: "tabOrder", order: [], tabs: [] },
+    timeline: { type: "data", data: { sessions: [], turns: {}, messages: [], judging: [], now: 1000 } },
+  };
+  for (const app of [...union].sort()) {
+    const ch = channelOf.get(app)!;
+    await withManager((fm, _e, _d, posted) => {
+      const hp = () => posted.filter((m) => m && m.romp === "hostsPending");
+      fm.app = app;
+      fm.openRemote("TESTHOST", true);
+      assert.deepEqual(fm.pendingFor(), ["TESTHOST"], app + ": pends its attached host");
+      if (ch === "feed") {
+        fm.inbound("", localFeed);
+        assert.deepEqual(hp().pop(), { romp: "hostsPending", app, hosts: ["TESTHOST"] }, app + ": pends its attached host on the feed channel, and says so to the shell");
+      }
+      for (const other of CH) {
+        if (other === ch) continue;
+        fm.inbound("TESTHOST", frames[other]);
+        assert.deepEqual(fm.pendingFor(), ["TESTHOST"], app + ": the host's " + other + " frame is not its channel and retires nothing");
+      }
+      fm.inbound("TESTHOST", frames[ch]);
+      assert.deepEqual(fm.pendingFor(), [], app + ": retired by the host's " + ch + " frame, its channel");
+      if (ch === "feed") assert.deepEqual(hp().pop(), { romp: "hostsPending", app, hosts: [] }, app + ": retired by that host's feed payload, in the shell too");
+      fm.closeRemote("TESTHOST");
+    });
+  }
+});
+
+test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings, a tuple with no space after its in, and the key spaced inside its subscript or its .get call, around the call's dot, name and paren, or wrapped over a line, a formatted value and a docstring's prose read as text, a subscript by a bare name behind each receiver the grammar allows (a name, ASCII or not, a call, a subscript, a dict display, a string literal, double- or single-quoted, an attribute named by a soft keyword with the dot tight or spaced, an attribute after a name ending in a digit or after a float, the builtin type and the variable _) and a generic annotation are listed where planted, and a one-element list display, a sequence pattern behind the soft keyword case, a number of each spelling before a bracket and a list display behind a hard keyword after a float's trailing dot or an Ellipsis are not, nor is a subscript or a .get keyed by a name holding a character past ASCII or an audience keyed through a module-level constant so named (the key class is ASCII, disclosed), no app literal is listed as unread, and every read of the key lands in exactly one form (review rounds 3, 5 and 6, 2026-09-21; rounds 7 and 8, 2026-09-23; round 9, 2026-09-24; round 9's rulings, 2026-09-25)", () => {
+  // the synthetic body, one read per tagged line: T a tuple the roster reads, S a singleton, X text, a number the
+  // OTHER_FORMS index that must fire there, U a read keyed by a bare name holding a character past ASCII, which no
+  // detector sees (the disclosed key class), null a line with no read of its own (the module-level constant ahead of
+  // the def, a wrapped tuple's continuation lines, a one-element list display, a match statement and its sequence
+  // pattern, a number before a bracket, a list display behind a hard keyword)
+  const T = READ_TUPLE, S = READ_SINGLE, X = READ_TEXT, N = NAME_KEY_FORM;
+  const U = "a read keyed by a bare name holding a character past ASCII (the key class is ASCII: not listed, disclosed)";
+  const plant: [string, string | number | null][] = [
+    ['APP_K\u00c9Y = "app"', null],                               // a module-level constant named past ASCII, bound to the key outside _push's body, where the unread-literal scan does not read (round 9's rulings, 2026-09-25)
+    ["def _push(targets, connect=False, live_map=None):", null],
+    ['    """prose naming c["app"] in NOTE_APPS or c[KEY] is text, not a test or a read by a name"""', X],   // a bare-name subscript inside a string is no ninth form (review round 6)
+    ['    if c["app"] in ("feed",   # a wrapped tuple, a comment inside it, a hyphen, a digit, a trailing comma', T],
+    ['                    "outline",', null],
+    ['                    "waiting-2", "x9",):', null],
+    ["        pass", null],
+    ['    if c["app"] in ("timeline","notes"):', T],
+    ["        pass", null],
+    ['    if c["app"] in("chat", "tight"):', T],                    // no space after the keyword (review round 6)
+    ["        pass", null],
+    ['    ok = any(c["app"] \\', S],
+    ['             == "chat" for c in targets)', null],
+    ["    tl = [t for t in targets if t.get('app') == 'timeline']", S],
+    ["    if c[ 'app' ] in (\"chat\", \"spaced\"):", T],           // the key spaced inside its subscript (review round 5)
+    ["        pass", null],
+    ['    sp = [t for t in targets if t.get( "app" ) == "feed"]', S],   // the key spaced inside its .get call
+    ['    sq = [t for t in targets if t.get ("app") == "chat"]', S],    // the .get call spaced between its name and its paren (review round 6)
+    ["    if c[", T],                                              // the key wrapped over a line inside its subscript:
+    ['        "app"] in ("timeline", "wrapped"):', null],           // pyNormalise folds the newline to one space
+    ["        pass", null],
+    ['    sys.stderr.write("push send %s (%s)\\n" % ("feed", c.get("app")))', X],
+    ["    log(f\"push {c['app']}\")", X],
+    ['    if c["app"] in NOTE_APPS:', 0],
+    ["        pass", null],
+    ['    if c["app"] in ["feed", "outline"]:', 1],
+    ["        pass", null],
+    ['    if c["app"] in["feed", "tight"]:', 1],                   // no space after the keyword (review round 6)
+    ["        pass", null],
+    ['    if c["app"] in ("feed", OUTLINE_APP):', 2],
+    ["        pass", null],
+    ['    if c["app"] != "chat":', 3],
+    ["        pass", null],
+    ['    if c["app"] not in ("a", "b"):', 3],
+    ["        pass", null],
+    ['    if c["app"] == APP:', 4],
+    ["        pass", null],
+    ['    if c.get("app", "") == "chat":', 5],
+    ["        pass", null],
+    ['    app = c["app"]', 6],
+    ['    if (a := c.get("app")) == "x":', 6],
+    ["        pass", null],
+    ['    b = c . get("app")', 6],                                 // the read bound to a name, through a .get spaced around its dot (review round 6)
+    ['    if c[APP_KEY] in ("feed", "outline"):', N],              // the key held in a name: the ninth form, keyed on the shape (review round 6)
+    ["        pass", null],
+    ["    seen: list[str] = []", N],                               // a generic annotation shares the bracket: a subscript with a bare-name key, listed (review round 7)
+    ["    xs = [c]", null],                                        // a one-element list display: no receiver before its bracket, not listed (review round 7)
+    ["    dd = {**c}[APP_KEY]", N],                                // a dict display subscripted: a closing brace is a receiver (review round 8, 2026-09-23)
+    ['    ss = "feedchat"[i]', N],                                 // a string literal subscripted: a closing double quote is a receiver (review round 8)
+    ["    qs = 'feedchat'[i]", N],                                 // the same single-quoted: a closing single quote is a receiver (red where the class drops the single quote; review round 9, 2026-09-24)
+    ["    vv = self.type[APP_KEY]", N],                            // an attribute named by a soft keyword outside PY_KEYWORDS: listed as a name (review round 8)
+    ["    ww = self . type[APP_KEY]", N],                          // the same with the dot spaced (review round 8)
+    ["    mm = self.match[APP_KEY]", N],                           // an attribute named by a soft keyword IN PY_KEYWORDS: match after a dot is an identifier, the dot read, listed (review round 8)
+    ["    cc = c . case[APP_KEY]", N],                             // the same with the dot spaced, the tolerance the .get read has (review round 8)
+    ["    tt = type[int]", N],                                     // the builtin type subscripted: type is not in PY_KEYWORDS, it never precedes a keyword-role bracket (review round 8)
+    ["    uu = _[k]", N],                                          // the variable _ subscripted: _ is not in PY_KEYWORDS either (review round 8)
+    ["    nn = targets[0][APP_KEY]", N],                           // a subscript subscripted: a closing bracket is a receiver, and [0] holds no bare name (review round 8)
+    ["    pp = pick(c)[APP_KEY]", N],                              // a call subscripted: a closing parenthesis is a receiver (review round 8)
+    ["    n7 = 7[APP_KEY]", null],                                 // a letter-free number before a bracket: no name ends the text, not listed (the control, unlisted before round 9 and after)
+    ["    cj = 1j[APP_KEY]", null],                                // an imaginary number: its j is the number's tail, not a name, not listed (red where the name arm matched a run of letters inside a token and listed j; review round 9)
+    ["    hx = 0x1f[APP_KEY]", null],                              // a hex number ending in a digit: not listed (red where the name arm listed x1f)
+    ["    hf = 0xff[APP_KEY]", null],                              // a hex number ending in a letter: not listed (red where the name arm listed xff)
+    ["    ex = 1e5[APP_KEY]", null],                               // an exponent: not listed (red where the name arm listed e5)
+    ["    fe = 1.e5[APP_KEY]", null],                              // a float with a bare trailing dot before its exponent, one number token: not listed (red where a name directly after a number's trailing dot was a name, e5 listed)
+    ["    fj = 1_0.j[APP_KEY]", null],                             // the same with an underscore-grouped digit run before an imaginary j: not listed (red where j was listed, or where the run before the dot was read as one digit)
+    ["    q1 = v5.e5[APP_KEY]", N],                                // an attribute after a name ending in a digit: the digit run is the name's, so no number ends at the dot, listed (red where any digit run before the dot counted as a number)
+    ["    r5 = 1.5.e5[APP_KEY]", N],                               // an attribute of a float: the digit run before the dot follows the fraction's dot, so no number ends at this dot, listed (red where a digit run after a dot counted as a number)
+    ["    e1 = \u00e95.e5[APP_KEY]", N],                           // the same after a name whose first character is past ASCII and whose last is a digit: listed (red where a digit run after such a character counted as a number)
+    ["    cf = caf\u00e9[APP_KEY]", N],                            // a name whose last character is past ASCII (the e accented): a whole identifier token, listed (red where the name arm was a run of ASCII characters and left it unlisted)
+    ["    ea = \u00e9a[APP_KEY]", N],                              // a name whose first character is past ASCII: listed (red where the name arm's first character was ASCII only, which leaves the a behind that character no start)
+    ["    k1 = c[cl\u00e9]", U],                                  // a subscript keyed by a name whose last character is past ASCII: not listed, the key class being ASCII (the disclosed gap; red the day the key class's continuation widens; round 9's rulings, 2026-09-25)
+    ["    k2 = c.get(cl\u00e9)", U],                              // the same through a .get
+    ["    k3 = c[\u00e9a]", U],                                   // a subscript keyed by a name whose first character is past ASCII: not listed (red the day the key class's start widens)
+    ["    k4 = c.get(\u00e9a)", U],                               // the same through a .get
+    ['    if c[APP_K\u00c9Y] == "newpane":', U],                  // an audience keyed through the module-level constant above: read by no form, so its pane is in no roster (the disclosed escape)
+    ["        pass", null],
+    ["    if 1. in [k]:", null],                                   // a list display behind the hard keyword in after a float's trailing dot: only match and case follow an attribute's dot, so in is the keyword, not listed (red where the dot test read any dot before a keyword as an attribute's; review round 9)
+    ["        pass", null],
+    ["    el = ... in [k]", null],                                 // the same after an Ellipsis: not listed (red where the Ellipsis's last dot was read as an attribute's)
+    ["    match c:", null],                                        // a match statement: no bracket of its own
+    ["        case [k]:", null],                                   // a sequence pattern behind the standalone soft keyword case: not listed (review round 8)
+    ["            pass", null],
+    ['    _serve(c["app"])', 7],
+    ['    return c["app"]', 7],
+    ["    return [c]", null],                                      // a one-element list display behind a keyword: not listed (review round 7)
+  ];
+  const src = "\n" + plant.map(([l]) => l).join("\n") + "\n\ndef _next():\n    pass\n";
+  const a = pushAudiences(src);
+  const lineOf = (w: string) => parseInt(w.slice("kernel.py:".length), 10);
+  const linesTagged = (tag: string | number) => plant.flatMap(([, t], i) => (t === tag ? [i + 2] : []));   // the leading newline: plant[0] is line 2
+  assert.deepEqual(a.tuples, [["feed", "outline", "waiting-2", "x9"], ["timeline", "notes"], ["chat", "tight"], ["chat", "spaced"], ["timeline", "wrapped"]], T);
+  assert.deepEqual(a.singles, ["chat", "timeline", "feed", "chat"], S);
+  assert.deepEqual(a.unread, [], "the plant leaves no app literal unread: OTHER_FORMS[6]'s `app = c[\"app\"]` binds a name to the READ, not to the key, every tuple member and every compared value is a read, and the module-level constant's literal lies outside _push's body, which is all the scan reads");
+  const listDisplays = plant.flatMap(([l, t], i) => (t === null && /\[c\]/.test(l) ? [i + 2] : []));
+  assert.equal(listDisplays.length, 2, "the two one-element list displays are planted (xs = [c], return [c])");
+  assert.deepEqual(a.byName.map(lineOf).filter((l) => listDisplays.includes(l)), [], "a one-element list display has no receiver before its bracket and is no subscript: not listed as the ninth form (review round 7)");
+  const patterns = plant.flatMap(([l, t], i) => (t === null && /^\s*case \[/.test(l) ? [i + 2] : []));
+  assert.equal(patterns.length, 1, "the sequence pattern behind the soft keyword case is planted (case [k]:)");
+  assert.deepEqual(a.byName.map(lineOf).filter((l) => patterns.includes(l)), [], "a sequence pattern behind the standalone soft keyword case is no subscript: not listed as the ninth form (review round 8)");
+  // The key class is ASCII, and the three homes' receiver-class text says so (round 9's rulings, 2026-09-25, taking the
+  // disclose option over widening the key class): a subscript or a .get keyed by a bare name holding a character past
+  // ASCII, first or later, is not listed, and an audience keyed through a module-level constant so named reaches no
+  // form, so its pane is in no roster. Red the day the key class widens: then retag these N and say so in the homes.
+  const pastAscii = linesTagged(U);
+  assert.equal(pastAscii.length, 5, "the keys named past ASCII are planted: a subscript and a .get by a name whose last character is past ASCII, the same by a name whose first is, and an audience keyed through a module-level constant so named");
+  assert.deepEqual(a.byName.map(lineOf).filter((l) => pastAscii.includes(l)), [], "a subscript or a .get whose key is a bare name holding a character past ASCII is not listed: the key class is ASCII, the gap disclosed in the receiver-class text's three homes");
+  assert.ok(![...a.tuples.flat(), ...a.singles].includes("newpane"), "the audience keyed through the module-level constant named past ASCII is read by no form: the disclosed escape, its pane in no roster");
+  assert.deepEqual(a.byName.map(lineOf), linesTagged(N), N);
+  assert.deepEqual(a.text.map(lineOf), linesTagged(X), X);
+  OTHER_FORMS.forEach((form, k) => {
+    assert.ok(linesTagged(k).length >= 1, form + ": planted at least once, so the detector is known to fire");
+    assert.deepEqual(a.other.get(form)!.map(lineOf), linesTagged(k), form);
+  });
+  assert.equal(a.reads, a.tuples.length + a.singles.length + a.text.length + [...a.other.values()].flat().length,
+    "every read of the app key landed in exactly one form");
+  assert.equal(a.reads, plant.filter(([, t]) => t !== null && t !== N && t !== U).length, "and the plant's reads were all seen (the ninth form's read is of a key the census does not know, and a read keyed by a name past ASCII is seen by no detector)");
+  // the message a red carries names the form, the line and the statement
+  assert.match(a.other.get(OTHER_FORMS[0])![0], /^kernel\.py:\d+ if c\["app"\] in NOTE_APPS:$/);
+});
+
+test("an app literal in _push's body in a position the census does not read is listed with its statement, whatever holds it (an assignment, a tuple unpacking, an annotated one with a spaced, an unspaced union or a string annotation, a walrus, a parameter default, a for target, a parenthesised target, a parenthesised or a call-wrapped literal, a keyword argument, a passed value) and never from a docstring's prose, another literal, a read key, a compared value or a tuple's member, and a read through a bare name is listed as a subscript or a .get by a name: the road to a key held in an ASCII name is red at both ends (review rounds 5 and 6, 2026-09-21)", () => {
+  const src = [
+    "",
+    "def _push(targets, connect=False, live_map=None):",
+    '    """prose saying KEY = "app" is text, not a binding"""',
+    '    KEY = "app"',
+    '    if c[KEY] in ("feed", "outline"):',
+    "        pass",
+    "    key2: str = 'app'",
+    '    if (k3 := "app") and c.get(k3) == "chat":',
+    "        pass",
+    '    def inner(k4="app"):',
+    "        return c.get(k4)",
+    '    tag = "app-2"',
+    '    if c["app"] == "app":',
+    "        pass",
+    '    k5, k6 = "x", "app"',                 // a tuple unpacking (review round 6: the shapes a scan keyed on a binding's spelling missed)
+    '    k7 = ("app")',                        // a parenthesised literal
+    '    k8: str|None = "app"',                // an unspaced union annotation
+    '    k9: "str" = "app"',                   // a string annotation
+    '    for k10 in ("app",):',                // a for target
+    "        pass",
+    '    k11 = str("app")',                    // a call-wrapped literal
+    '    (k12) = "app"',                       // a parenthesised target
+    '    opts = dict(kind="app")',             // a keyword argument (round 5 listed it too, as a bound local name: the wrong cause)
+    '    _serve("app")',                       // a passed value
+    '    if c["app"] in ("app", "feed"):',     // a tuple's member is read into the roster, not listed
+    "        pass",
+    "",
+    "def _next():",
+    "    pass",
+    "",
+  ].join("\n");
+  const a = pushAudiences(src);
+  const lineOf = (w: string) => parseInt(w.slice("kernel.py:".length), 10);
+  assert.deepEqual(a.unread.map(lineOf), [4, 7, 8, 10, 15, 16, 17, 18, 19, 21, 22, 23, 24],
+    "the thirteen literals the census does not read, and neither the docstring's prose, the other literal, the read key, the compared value nor the tuple's member");
+  assert.match(a.unread[0], /^kernel\.py:4 KEY = "app"$/);
+  assert.deepEqual(a.byName.map(lineOf), [5, 8, 11], "c[KEY], c.get(k3) and c.get(k4): each read through a bare name is listed as the ninth form");
+  assert.match(a.byName[0], /^kernel\.py:5 if c\[KEY\] in \("feed", "outline"\):$/);
+  assert.equal(a.reads, 2, "the three reads through a name are no reads of the app key the census knows; the literal reads are the two");
+  assert.deepEqual(a.singles, ["app"]);
+  assert.deepEqual(a.tuples, [["app", "feed"]]);
+});
+
+test("the three homes of the receiver-class text agree word for word: pushAudiences' comment at its bracket arm, federation.ts's PANE_CHANNELS comment and the pane-channels ledger entry each hold one span from the rule's opening clause to its last disclosed exclusion, found once in each and, with comment markers and line breaks normalised away, the same in all three (round 9's rulings, 2026-09-25: two homes lacked the 0xff example and the trailing-dot rule the census's comment had gained, and none disclosed the ASCII key class; round 10's rulings, 2026-09-26: the span began ten words into the text, past the rule's own clause)", () => {
+  // The span's first and last words, joined at run time so this case's own source never holds either phrase whole (a
+  // copy here would be a second match in this file). The span starts at the rule's opening clause, so a drift in any of
+  // the text's words, the opening clause's included, reads red. Those first words were absent from all three homes at
+  // the head round 9's rulings read, where the drift was found, so at that head this case is red at the first-words
+  // assertion, the red round 9's D.3 requires, rather than on the texts differing.
+  const first = ["a subscript is listed", "only behind a receiver"].join(" ");
+  const last = ["which reads as", "the keyword"].join(" ");
+  const homes = ["ui/webview/federation-reconnect.test.ts", "ui/webview/federation.ts", "upstream/2026-09-21-pane-channels-audience-census.md"];
+  const spans = homes.map((rel) => {
+    const raw = fs.readFileSync(path.resolve(process.cwd(), "..", rel), "utf8");
+    const flat = raw.replace(/\n[ \t]*\/\/ ?/g, "\n").replace(/\s+/g, " ");   // a line comment's marker, however indented, then every line break and run of spaces as one space
+    const at = flat.indexOf(first);
+    assert.ok(at >= 0, rel + ": the receiver-class text's first words are here");
+    assert.equal(flat.indexOf(first, at + 1), -1, rel + ": the receiver-class text's first words stand once");
+    const end = flat.indexOf(last, at);
+    assert.ok(end >= 0, rel + ": the receiver-class text's last words follow its first");
+    return flat.slice(at, end + last.length);
+  });
+  for (let k = 1; k < homes.length; k++) {
+    let d = 0;
+    while (d < spans[0].length && spans[0][d] === spans[k][d]) d++;
+    const near = (t: string) => JSON.stringify(t.slice(Math.max(0, d - 60), d + 60));
+    assert.ok(spans[k] === spans[0], homes[k] + "'s receiver-class text departs from " + homes[0] + "'s at character " + d
+      + " of " + spans[0].length + ": " + near(spans[k]) + " where the census's comment reads " + near(spans[0]) + "; state the one text in all three homes");
+  }
+});
+
+test("a pane's FIRST publish posts even an empty list, so a reloaded pane replaces the list its predecessor left (2026-09-18)", async () => {
+  await withManager((fm, _e, _d, posted) => {
+    fm.app = "feed";
+    fm.inbound("", localFeed);   // no remote attached: the fresh instance still declares its (empty) list once
+    assert.deepEqual(posted.filter((m) => m && m.romp === "hostsPending").pop(), { romp: "hostsPending", app: "feed", hosts: [] },
+      "the first publish is never gated by the empty signature");
+    fm.inbound("", { ...localFeed, buildId: 2 });
+    assert.equal(posted.filter((m) => m && m.romp === "hostsPending").length, 1, "…and posts again only on a change");
+  });
 });
 
 test("the CHAT pane pends on the TAB LIST channel — the set its pin prune reads as __rompFed.pending (render.ts reachableHosts): an attached host pends from openRemote until its own tabOrder lands here, whatever else arrives; a detach retires it", async () => {

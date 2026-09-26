@@ -30,8 +30,8 @@ setup() {
 
 teardown() { rm -rf "$TEST_DIR"; }
 
-# The suite's case count, from its own text, so the expectations below move with it (ten at this
-# writing). A count of zero would make every assertion below vacuous, so it is refused.
+# The suite's case count, from its own text, so the expectations below move with it. A count of
+# zero would make every assertion below vacuous, so it is refused.
 suite_cases() {
     local n
     n=$(grep -c '^@test ' "$SUITE" || true)

@@ -209,6 +209,8 @@ class ServedBootParses(unittest.TestCase):
         after = self._parses()
         asked = after["kernel"] + after["hits"]     # stage 2: the judges may have parsed a tab first, then the kernel's ask is a hit
         self.assertGreaterEqual(asked, 1, "a connected chat client's own tabs are parsed or served on demand: %r" % after)
+        # the feed's warm-to-stale re-read (2026-09-18) would count here only if a key file moved after a feed build that
+        # held the session warm; the lab writes none of them after boot, so the bound stands as the tabs' own parses
         self.assertLessEqual(after["kernel"] - before, len(ALL), "and nothing beyond the shown tabs (every living session is a tab here): %r" % after)
         self.assertLessEqual(after["perSession"]["sessions"], len(ALL), after["perSession"])   # a count, never the sids (2026-09-18)
         self.assertNotIn("bySid", after)

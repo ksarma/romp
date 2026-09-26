@@ -645,7 +645,12 @@ class AppTable(unittest.TestCase):
                             "%s: a card field feed.ts reads off a card today" % f)
         self.assertEqual(set(km.FEED_PHONE_FACE_ACTIVE), {"working", "needs_input"},
                          "active is the Working and Blocked columns; Completed is not")
-        self.assertIn('column: "working" | "needs_input" | "completed"', feed_src, "the card's column values, as feed.ts types them")
+        # since upstream 1837 (cards carry board and category) feed.ts types the card's column as the board definition's
+        # category, whose union in board-def.ts is the kernel's raw vocabulary that FEED_PHONE_FACE_ACTIVE names; feed.ts's own
+        # `type Column` (asks, needsInput, completed) is the pane's column ids, which askColumn maps the category to
+        self.assertIn("column: FeedCategory;", feed_src, "the card's column, typed as the board definition's category")
+        self.assertIn('export type FeedCategory = "working" | "needs_input" | "completed";', self._src("board-def.ts"),
+                      "the card's column values, as the board definition feed.ts imports types them")
         # federation.js loads on every feed-slot page ahead of the pane's bundle and hands it the merged frame. Most
         # fields it merges through, and the pane's own read counts them; the fields it CONSUMES on the pane's behalf
         # are the local frame's fields mergeHostFeeds reads by name (clearedForeign: applyViewerClears drops the remote

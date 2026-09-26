@@ -1175,7 +1175,7 @@ two. Every session's tab menu offers Move to folder.
   manager and the supervised service use. Set either and the other follows; set
   both to different values and the kernel refuses to start rather than picking
   one for you.
-- `ROMP_POSTAL_PORT=<port>` moves the postal bus off the default `25302`.
+- `ROMP_POSTAL_PORT=<port>` moves the postal bus off the default `25302`. The kernel dials the port the bus actually bound, read from the bus's record `postal/postal-port` under the state directory (written after the bind, removed on a clean exit), and falls back to this variable for any record it cannot trust as its own bus's (absent or unreadable, with no positive port or pid, stale with its pid no longer running, or another bus's with a token mark that is not this kernel's), or when its `ensure` at boot neither started the bus nor found the machine's own answering (a client-only host, whose `ensure` only pings its tunnel; a tunnel or another environment's bus answering the port), a road the kernel's log names once; a mismatch between the two is said once in the kernel's log. The two can disagree when a unit or profile sets the variable for one process and not the other, or when a stale legacy tunnel still reverse-forwards another machine's bus onto the fixed port: the operator's two checks when a held message's approve comes back refused.
 
 Set these if something else on the machine already holds the default. Both have
 to agree across everything that talks to the kernel, so export them where the
@@ -3407,7 +3407,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `watch`, `subagents`, `usage`, `offer`, `auth`, `downtime`, `debug`,
   `interrupting`, `closer`, `todos`, `queued`, `peers`, plus `cold` for a
   session with no entry) to the re-derivations it caused; a miss with several moved
-  components counts under each. Nudge facts invalidate only entries that read
+  components counts under each. `row_by` splits the `row` misses further by
+  the live-row position that moved (`state`, `since`, `billing` (the row's
+  authLive, auth, authLogin, authLoginLive and authLabel; distinct from
+  `miss_by`'s `auth`, the machine's key on hand), `retry`, `agents`, `tasks`,
+  plus `presence` for a row that appeared, left or changed shape): the key
+  folds only the row fields a card reads, so a context refresh or a
+  background agent's tool call moves no key. `reg` is the SDK registry
+  record's state plus the two fields a card reads, `bgLedger` and
+  `spawnedAt`, and the death marker's identity; the record's other fields
+  move `reg` no further, and a transcript-less live row's `cwd`, `lastSid`
+  and `name` reach the key through its session row, under `transcript` and
+  `names`. Nudge facts invalidate only entries that read
   the changed node's count, failure state or displayed history. The key on hand, the
   host-suspension spans and the debug mode are board-wide inputs: a change
   to one re-derives every session. The clock is not a component of the key:
@@ -3426,6 +3437,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   decodes, else absent for that build; the fault is said once per session per
   cause episode on stderr and as a bell row of the refused kind, anew after a
   build serves or derives the session.
+  `coldLive` counts the living sessions whose cache-only parse read missed,
+  per session per build (a session no client and no judge has parsed rides
+  it every build, so a standing count is those cold-by-design sessions, not
+  a fault), and `coldFlip` the ones the memo held under a warm key and
+  re-read in place through the parser instead of deriving cold (one kernel
+  parse each, counted under `parses` too).
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.
@@ -3666,7 +3683,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   it was listed, served while every identity stands because a directory
   entry's creation, removal or renaming moves its parent's stamps and every
   parent is in the list, with `hit` and `miss` (trees vouched for by one stat
-  per known directory against trees walked), `evict` (roots dropped because
+  per known directory against trees walked), `scoped` (reads served from the
+  cycle's one sample with no stat at all: one sample per subagents root per
+  pusher cycle, jobs pass or connect push since 2026-09-18, the first reader
+  validating or walking and every later reader of the cycle served it, so
+  scoped over hit plus miss plus scoped is the share of reads that re-sampled
+  a root another reader took in the same cycle), `evict` (roots dropped because
   no alive session's transcript names them, on every jobs pass and, as a
   belt, after each feed build and from the tracking-off frame), `dirStats`
   (the stats validations paid), `walkMs` and `validateMs` (the time in each,
@@ -3925,7 +3947,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `fail`: a read that failed on a file that exists, answered as no overlay,
   memoized nothing and named once per episode on the kernel's stderr;
   `evict`: entries dropped for sessions that left the alive set; and the
-  gauge `entries`). The interrupt tick drops from `intrMarks`
+  gauge `entries`). `parkedHandoffs` is the feed's fold over the postal log
+  for the handoffs parked in a dead session's maildir (2026-09-18): one
+  carried set of the parked sends not yet recalled or bounced, so a quiet log
+  is one cursor check per feed build where the scan walked every row of the
+  log before (`hit`, `append`, `refold` and `fail` as above, the failure
+  answered as no parked handoffs for that build, memoized nothing and named
+  once per episode on the kernel's stderr; `restore`: the cursor came from
+  the log's checkpoint and the tail alone was stepped; `cold`: a checkpointed
+  cursor without its state, stepped from its cut; and the gauge `entries`,
+  the candidates held). Whether each candidate is still parked is read from
+  the maildir at every build, as before, for no more than the paths the walk
+  checked; the fold only spares the walk. The interrupt tick drops from `intrMarks`
   and `statesOverlay` the entries of sessions outside its alive set each
   cycle; past 256 entries the `statesOverlay` cache also sheds the cursors
   whose reader entry is gone or replaced (they could only refold or restore);
@@ -3980,13 +4013,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   building only the user rows that carry text, so the two say whether a
   dropped echo days back should hold the floor at all. `chatPostal` is
   the chat fold's memo of a tab's sealed postal cards, keyed on the values
-  the cards embed from outside the transcript (the message log's identity
-  and, per card, its caption and its peer's name and colour): `gate` (gate
-  checks that re-hydrated a tab's sealed cards because one of those values
-  moved, or because the entry was sealed outside the pusher's names snapshot
-  and had to be verified), `hit` (checks that verified the sealed cards from
-  their recorded values without hydrating), and `commit_new` (raw postal
-  events hydrated at fold commits; each is hydrated once, when it is first
+  the cards embed from outside the transcript (this session's revision of
+  the postal index: the records addressed to or from it, their outcomes and
+  the records with no recipient, and, per card, its caption and its peer's
+  name and colour; since 2026-09-18 a message between two other sessions
+  moves none of these, so it is a `hit`): `gate` (gate checks that
+  re-hydrated a tab's sealed cards because one of those values moved, or
+  because the entry was sealed outside the pusher's names snapshot and had to
+  be verified), `hit` (checks that verified the sealed cards from their
+  recorded values without hydrating), and `commit_new` (raw postal events
+  hydrated at fold commits; each is hydrated once, when it is first
   sealed). Before this memo every judge pass re-hydrated every tab's sealed
   cards, although a caption is the only judge-written value a card carries.
   `chatLedger` is the chat build's memo of a session's goal-tree walk and
@@ -4549,15 +4585,23 @@ orphan reply) carry synthetic uuids keyed by their second and ordinal.
 Stage three of the process split (plans/judges-process.md) moves the judge pass into one long-lived child, `romp-judge
 --serve`, that the kernel starts at boot and speaks to over a line protocol on the child's stdin and stdout (JSON, one
 object per line). The child announces `{"op":"ready","pid","judgeVersion","protocolVersion"}` once; the kernel sends
-`{"op":"pass","seq","now","mayStart"}` per producer wake and `{"op":"quit"}` to end; the child answers exactly one
-`{"op":"done","seq","wallMs","tierStarts","tierCpuMs","workerCpuMs","failures","recovered","recordCache","asmCheckpoint",
-"parses","goalIo"}` per pass. Every counter on it is a PER-PASS figure: `wallMs`, `tierCpuMs` and `workerCpuMs` are the
-pass's own, `failures` its tier crashes, and the four blocks (`recordCache` and `asmCheckpoint` from the event model,
-`parses` as the parse store's misses and hits, `goalIo` as the goal-store loads, saves and writes) are the DIFFERENCES
-against the previous pass's snapshot for every counter, so the kernel can feed its `/perf` counters per pass, while each
-block's GAUGES ride as their current values: in `recordCache` the keys `entries`, `bytes` (the cache's contents now),
-`budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document memo's size and cap);
-`parses` and `goalIo` carry counters only. `asmCheckpoint.restoreMs` is a counter like its neighbours (the restore's parts
+`{"op":"pass","seq","mayStart"}` per producer wake, with an OPTIONAL `now`, and `{"op":"quit"}` to end; the child
+answers exactly one `{"op":"done","seq","wallMs","tierStarts","tierCpuMs","workerCpuMs","failures","recovered",
+"recordCache","asmCheckpoint","parses","goalIo","tierGate"}` per pass. The request's `now`: absent or null, the tiers read
+their own clock during the pass, the in-process producer's behaviour, so a measured comparison of the two roads isolates
+the process split from the clock semantics; a number is the explicit clock variant, truncated to the second and handed
+to both tiers for the whole pass, available for a measurement that wants it on its own (2026-09-18). This kernel sends a
+live clock on every pass (`tests/test_judges_process.py` pins the request's fields), so the absent-or-null road is the
+child's tolerance rather than a road this kernel takes, and a comparison of the two roads on it does not isolate the
+process split from the clock semantics. Every counter on
+the done line is a PER-PASS figure: `wallMs`, `tierCpuMs` and `workerCpuMs` are
+the pass's own, `failures` its tier crashes, and the five blocks (`recordCache` and `asmCheckpoint` from the event model,
+`parses` as the parse store's misses and hits, `goalIo` as the goal-store loads, saves and writes, `tierGate` as the tiers'
+gate counters per stage (`plan`, `group`, `close`, `distill`, `unblock`, `consolidate`): `ran`, `skipped`, `stamped`,
+`bypassed`, `incomplete`, `due_clock`, the admittance the pass ran under) are the DIFFERENCES against the previous pass's snapshot for every counter, so the kernel can feed its `/perf`
+counters per pass, while each block's GAUGES ride as their current values: in `recordCache` the keys `entries`, `bytes`
+(the cache's contents now), `budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document
+memo's size and cap); in `tierGate` the key `stamps` (the stage stamps held now); `parses` and `goalIo` carry counters only. `asmCheckpoint.restoreMs` is a counter like its neighbours (the restore's parts
 since boot, as described above), so the line carries the pass's own restore time. A non-numeric value (a name) rides as
 current too. `recovered` is the child's judge-module recovery flag (the once-per-storm
 edge `consume_judge_recovery` reads), consumed by the child and acted on by the kernel, which re-arms its given-up cards on

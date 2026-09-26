@@ -68,8 +68,8 @@ This repo may go public; assume every commit is permanent and world-readable.
   and symlink targets), plus, for every commit new to every fetched remote, the
   lines it ADDS, its message, and the domain of any author or committer address
   the clone is not configured to use (`user.email` in any scope, or the
-  environment's), and an annotated tag's own tagger and message, for the strings in
-  `~/.config/romp/private-strings.txt` (absent file → no-op, so contributors
+  environment's), and an annotated tag's own tagger and message, for the strings
+  in `~/.config/romp/private-strings.txt` (absent file → no-op, so contributors
   are unaffected; it reads pushed shas, not the working tree, so it arms every
   worktree — a working-tree scan missed a leak pushed from a peer worktree on
   2026-07-25; added lines rather than every commit's tree, so a branch that
@@ -78,8 +78,33 @@ This repo may go public; assume every commit is permanent and world-readable.
   remote, so a clone with a fork and the project as two remotes is not refused
   over the project's own history when it pushes a branch cut from the project's
   main to the fork — 2026-09-07; and the metadata since 2026-09-09, when a
-  clone with no `user.email` had git stamp `<login>@<hostname -f>`, a tailnet
-  name, on a slice's commits and a pushed merge, through both content scans);
+  clone with no `user.email` had git stamp `<login>@<hostname -f>` on a
+  branch's commits and a pushed merge, through both content scans); a text
+  file whose diff attribute marks it binary (a `-diff` line or the `binary`
+  macro in `.gitattributes`, `.git/info/attributes` or the file
+  `core.attributesFile` names, or a driver with `diff.<driver>.binary` true)
+  is refused rather than read, since git's grep and diff both skip such a file
+  and a banned string in one published (2026-09-21); the refusal names the
+  path and the attribute as the cause, and the remedy: remove the attribute
+  for that path, or keep the file text on purpose with an explicit `diff`
+  line for it that outranks the `-diff`; a rename or copy of such a file is
+  refused the same way, since its bytes reach the remote under the new path;
+  the same refusal covers any other text blob that git's own read calls
+  binary, whatever rule made it so, when that blob is absent from the pushed
+  tip (one the tip holds is read by the tip's own scan): a blob over
+  `core.bigFileThreshold`, where the refusal names the blob's size and the
+  key's value, since no attribute of the path accounts for the verdict, and
+  the remedy: an explicit `diff` line for the path, which outranks the key,
+  or the key raised above the size or unset (for a symlink's target only the
+  key helps); and a commit that turns a file binary by its bytes into text,
+  where the refusal names the previous version's bytes as the cause, since
+  git prints no text diff for such a pair and the scan could not read the
+  new text, and the remedy: fetch the remote whose history already holds the
+  commit and push again, or, when no remote holds it yet, set an explicit
+  `<path> diff` line in `.gitattributes` on the previous version's path (the
+  old path for a rename; the file's own path otherwise, a merge's parents'
+  included), so git prints the change and the scan reads it; the hook names
+  `--no-verify` last, since it publishes the new text unread;
   and the maintainer's clone carries an UNTRACKED
   `tests/test_no_personal_identifiers.py` that scans the working tree for the
   same strings plus that machine's hostname and home path. The pytest file is
@@ -92,21 +117,67 @@ This repo may go public; assume every commit is permanent and world-readable.
 The rule above is about identifiers a human can enumerate. Credentials are the
 other half and cannot work that way: nobody knows a token's text until it leaks,
 so there is no list to write. **gitleaks** covers them, in two places:
-- **`.githooks/pre-push`** runs it over the commits a push would publish (a
-  merge by its first-parent diff, so a secret typed into a conflict resolution
-  is read too) and refuses the push on a hit. No gitleaks on the machine means a
+- **`.githooks/pre-push`** reads for itself the changes a push would publish:
+  the lines the pushed commits add, a merge by its combined diff (the lines in
+  none of its parents, so a secret typed into a conflict resolution is read
+  too), and a merge's binary path whole (below). It hands those bytes
+  to gitleaks, which runs no git, and refuses the push on a hit. It needs
+  gitleaks 8.25.0 or later: the hook's flags need 8.24.0, and this
+  repository's `.gitleaks.toml` uses the `[[allowlists]]` form, which gitleaks
+  reads correctly from 8.25.0 on (CI's pinned 8.28.0 is above the floor). A
+  push with something to scan is refused under an older gitleaks, or one whose
+  version the hook cannot read, and the refusal names the floor and the
+  remedies. No gitleaks on the machine means a
   loud notice and no scan (requiring an install to push would break every clone
   that never asked for it); a gitleaks that fails to run refuses the push and
-  says so. `ROMP_NO_GITLEAKS=1` skips the scan, `ROMP_GITLEAKS` points at a
-  binary. The hook's scan reads git's plain patch stream, so a path a committed
-  `.gitattributes` marks `-diff` (or `binary`) passes it unscanned until the hook
-  carries `--text`, which PR #875 brings; CI's history scan, the next bullet,
-  carries `--text`. This is the same hook as the identifier scan and both report
-  before it refuses, so one push tells you about both.
+  says so, and so does one that ran but cannot show what it scanned: an error
+  line in its own log, or a scanned-byte figure that is not the count of bytes
+  the hook handed it, or no figure at all (the two coverage conditions). The
+  hook's read carries `--text`, so a diff attribute cannot hide a credential
+  in a commit that is not a merge: a path git would otherwise call binary (a
+  `-diff` line or the `binary` macro in an attributes file, or a blob over
+  `core.bigFileThreshold`) is diffed as text and scanned like any other, while
+  a plain patch stream prints no hunk for it. A merge's combined diff applies
+  git's binary verdict whatever `--text` says, so the hook reads a merge's
+  binary path whole from the merge's result blob. That whole read has a cost:
+  a push is now refused when the blob holds a credential already published.
+  Its witness is the round 10b case in `tests/pre-push-hook.bats` titled
+  "A.2's disclosed cost, with its witness".
+  The hook also refuses a push on a line of git's answer it cannot read, and a
+  push carrying a commit of 64 or more parents (the identifier scan refuses
+  that too), since git's combined diff drops or garbles the lines such a merge
+  adds.
+  The hook refuses a push with something to scan when the gitleaks config gives
+  any rule a path condition, naming the rule and the config file, since the
+  scan cannot apply the condition; support for such rules is a held follow-up.
+  Two path values are exempt: an empty one, which gitleaks reads as no
+  condition, and, on each of the five gitleaks default rules scoped to a path,
+  that rule's default path exactly as the hook's own table spells it, so a
+  config copied from gitleaks' default passes. The hook reads the config before
+  any scan: the repository's `.gitleaks.toml`, or, with none, the one
+  `GITLEAKS_CONFIG` or `GITLEAKS_CONFIG_TOML` gives, each with the files its
+  `[extend]` names. With none of these, gitleaks uses its own default, which
+  the hook does not read. It refuses the push on a construct it cannot parse,
+  and every scanner run reads the hook's copy of the config, so the hook's
+  check and the scan read the same bytes.
+  `ROMP_NO_GITLEAKS=1` skips the credential scan for one push, and
+  `ROMP_GITLEAKS` points at a binary. A clone that carries any replace ref
+  (`git replace`) is refused before either scan runs when either scan is armed,
+  whatever the ref replaces and whether or not that object is in the push: under
+  a replacement what a scan reads and what the push transfers can differ, so a
+  clean report could be false; the remedy is `git replace -d <object>`, or a
+  push from a clone that carries none. This is the same hook as the identifier
+  scan and both report before it refuses, so one push tells you about both.
 - **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
   tag the checkout brings, on every PR and every push to `main`, from a
   pinned, checksummed binary. It needs `fetch-depth: 0`: a default checkout
-  scans one commit and reports clean.
+  scans one commit and reports clean. Its history scan carries `--text` too,
+  so a committed `-diff` attribute cannot hide a path's credential from it: a
+  plain patch stream prints no hunk for such a path, and the job's tree scan
+  reads `HEAD` alone, where a removed file is gone (the road was verified
+  2026-09-21 on the pinned scanner and closed by the fork's PR 890; the tree's
+  one `.gitattributes` sets `-text`, not `-diff`, so no commit here was
+  hidden).
 
 Three things follow for anyone touching this:
 - **A hit means rotate, not amend.** A credential that reached a commit is
