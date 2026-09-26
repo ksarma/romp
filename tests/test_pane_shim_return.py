@@ -20,6 +20,7 @@ regex. Synthetic data only: no real session content, TESTHOST as the host.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -1587,6 +1588,13 @@ fireFrom(window,location.origin,"message",{romp:"panes",on:{test:true},avail:{fi
 out({onScreen:onScreen===undefined?"unset":onScreen});""")
         self.assertEqual(r["onScreen"], "unset", "no shell, so no panes word is heard")
 
+    # a message listener in any spelling text can show (the method named or by a computed member, the event type in any
+    # quotes), and an onmessage handler on the window; tests/test_shell_source_check.py reads all of kernel.py the same way
+    MESSAGE_LISTEN = re.compile(r"(?:(?<![\w$])addEventListener|\[\s*(['\"`])addEventListener\1\s*\])\s*\(\s*(['\"`])message\2")
+    ONMESSAGE = re.compile(r"(?:(?<![\w$.])(?:window|self|globalThis)\s*(?:\.\s*onmessage|\[\s*(['\"`])onmessage\1\s*\])"
+                           r"|(?<![\w$.])onmessage)\s*=(?!=)")
+    SHELL_HEAD = 'function(e){if(!fromShell(e))return;'
+
     def test_source_both_listeners_open_with_the_shell_check(self):
         js = km._shim("feed", 3)
         self.assertIn('function fromShell(e){return !!e&&window.parent!==window&&e.source===window.parent&&e.origin===location.origin;}', js)
@@ -1594,8 +1602,46 @@ out({onScreen:onScreen===undefined?"unset":onScreen});""")
                       'if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;', js, "the link listener")
         self.assertIn('try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;'
                       'if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];', js, "the on-screen listener")
-        self.assertEqual(js.count('window.addEventListener("message",'), 2,
-                         "the shim's window message listeners are these two; a third decides its senders here")
+        # in every spelling the text shows, for the shim as four apps build it (with and without no_stale): these two
+        # and no third (a third decides its senders here), and no onmessage handler on the window. Each served page, its
+        # shim included, is tests/test_shell_source_check.py's KernelListenerCensus and ServedPagesExecuted
+        for app, kw in (("feed", {}), ("chat", {}), ("files", {"no_stale": True}), ("settings", {"no_stale": True})):
+            with self.subTest(app=app):
+                js = km._shim(app, 3, **kw)
+                heads = [js[m.start():m.start() + 80] for m in self.MESSAGE_LISTEN.finditer(js)]
+                self.assertEqual(len(heads), 2, "the shim's window message listeners are these two: %r" % heads)
+                for h in heads:
+                    self.assertTrue(h.startswith('addEventListener("message",' + self.SHELL_HEAD), h)
+                self.assertEqual([m.group(0) for m in self.ONMESSAGE.finditer(js)], [], "an onmessage handler on the window")
+
+    def test_the_census_reads_each_spelling(self):
+        for src in ('window.addEventListener("message",f)', "window.addEventListener('message',f)",
+                    "addEventListener(`message`,f)", "window['addEventListener']('message',f)", 'self [ "addEventListener" ] ( "message" ,f)'):
+            with self.subTest(src=src):
+                self.assertEqual(len(self.MESSAGE_LISTEN.findall(src)), 1)
+        for src in ("window.onmessage=f", "window['onmessage']=f", "self.onmessage = f", ";onmessage=f"):
+            with self.subTest(src=src):
+                self.assertEqual(len(self.ONMESSAGE.findall(src)), 1)
+        for src in ("window.addEventListener('resize',f)", "ws.onmessage=f", "removeEventListener('message',f)"):
+            with self.subTest(src=src):
+                self.assertEqual(self.MESSAGE_LISTEN.findall(src) + self.ONMESSAGE.findall(src), [])
+
+    def test_run_the_shim_registers_exactly_these_two_and_no_onmessage_handler(self):
+        # executed, so a listener in any spelling that reaches the window's addEventListener counts, whether it registers
+        # at boot or on a road a pane's life drives (an open, a frame, a hide and a return, a watchdog tick, the timers,
+        # the dispatch flush, the shell's words)
+        r = _run(r"""
+function listeners(){return {n:(winL.message||[]).length,heads:(winL.message||[]).map(function(f){return String(f).slice(0,HEADLEN);}),
+onmessage:typeof window.onmessage};}
+var atBoot=listeners();
+open();recv({type:"ka"});caps();word({test:true},"up");fireWin("message",{romp:"link",link:"up"});
+hide();NOW+=46000;show();tick();fireTimers();runFlushes();sock().readyState=3;sock().onclose&&sock().onclose({});fireTimers();tick();
+out({atBoot:atBoot,afterLife:listeners()});""".replace("HEADLEN", str(len(self.SHELL_HEAD))))
+        for when in ("atBoot", "afterLife"):
+            with self.subTest(when=when):
+                self.assertEqual(r[when]["n"], 2, "the shim's window message listeners are these two")
+                self.assertEqual(r[when]["heads"], [self.SHELL_HEAD] * 2, "each opens with the shell check")
+                self.assertEqual(r[when]["onmessage"], "undefined", "no onmessage handler on the window")
 
 
 if __name__ == "__main__":
