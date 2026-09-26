@@ -22,6 +22,7 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 km = load_source("romp_kernel_mobile", os.path.join(BIN, "romp-kernel"))
 sys.path.insert(0, HERE)
 from test_pane_shim_return import HARNESS as _PANE_HARNESS   # noqa: E402  the pane shim's node fakes (never its TestCases), for the linked runs below
+import served_css   # noqa: E402  the served page's parsed rules (loads no romp code)
 
 
 def _mobile_js():
@@ -30,6 +31,45 @@ def _mobile_js():
     placeholder left for an executor to fill and the harness runs the template as served. Kept as the ONE door every
     executor class reads the script through, so a future splice is a one-line adoption here and nowhere else."""
     return km._LANDING_MOBILE_JS
+
+
+def _viewport_meta_tokens(html):
+    """The viewport META's content attribute as its comma-separated tokens, read from the ONE live meta element through the
+    parser (served_css.meta_content; the standalone flip rewrites the attribute from script and serves no second tag). A pin
+    over these reads the element it pins: the fit script's served comments spell the same tokens in prose, and a substring
+    assertion over the whole page was satisfied by a comment after the meta had lost the token it exists to pin (D1, the maintainer's round 1,
+    2026-09-19). The author's pass 9 (2026-09-20, the maintainer's round 5 ruling): the helper had found the meta by a regular expression
+    over the RAW page, so a meta written inside an HTML comment read as the live one, the exact case it existed to stop; the
+    element layer reads a commented meta as comment text and a live one whatever its attribute order or quoting."""
+    return (served_css.meta_content(html, "viewport") or "").split(",")
+
+
+class ViewportMetaReader(unittest.TestCase):
+    """The viewport meta helper reads the ELEMENT (the author's pass 9, 2026-09-20, the maintainer's round 5 ruling): it had matched a regular
+    expression over the raw page, so a meta written inside an HTML comment read as the live one, the exact case the helper existed
+    to stop, and it pinned one attribute order and one quoting. Each case here was green under the regex where it should have
+    refused, or refused where it should have read. The reader feeds the whole page to the tokenizer in one call, so a tag split
+    across a chunk boundary is not a state it can be in (no chunked case)."""
+    LIVE = "<meta name=viewport content='a=1,b=2'>"
+
+    def test_a_meta_inside_a_comment_or_a_script_string_is_not_the_live_meta(self):
+        commented = "<!-- <meta name=viewport content='x=9'> -->"
+        self.assertEqual(_viewport_meta_tokens("<head>%s%s</head>" % (commented, self.LIVE)), ["a=1", "b=2"], "the live meta beside a commented copy")
+        with self.assertRaises(AssertionError) as cm:
+            _viewport_meta_tokens("<head>%s</head>" % commented)
+        self.assertIn("found 0", str(cm.exception), "a commented meta alone is no meta: the helper refuses loudly")
+        self.assertEqual(_viewport_meta_tokens("<head><script>var s=\"<meta name=viewport content='x=9'>\";</script>%s</head>" % self.LIVE), ["a=1", "b=2"])
+
+    def test_the_live_meta_is_read_whatever_its_spelling(self):
+        for meta in ("<META NAME=Viewport CONTENT='a=1,b=2'>", '<meta content="a=1,b=2" name="viewport">', "<meta content=a=1,b=2 name=viewport>",
+                     "<meta charset=utf-8 name=viewport content='a=1,b=2'/>"):
+            self.assertEqual(_viewport_meta_tokens("<head>%s</head>" % meta), ["a=1", "b=2"], meta)
+        with self.assertRaises(AssertionError):
+            _viewport_meta_tokens("<head><meta name=' viewport ' content='a=1'></head>")   # the name is compared as written: not this meta
+        with self.assertRaises(AssertionError) as cm:
+            _viewport_meta_tokens("<head>%s%s</head>" % (self.LIVE, self.LIVE))
+        self.assertIn("found 2", str(cm.exception))
+        self.assertEqual(_viewport_meta_tokens("<head><meta name=viewport></head>"), [""], "a meta with no content has no tokens, and a pin over the tokens fails on it")
 
 
 class LandingShell(unittest.TestCase):
@@ -96,16 +136,27 @@ class LandingShell(unittest.TestCase):
         # the box and the keyboard — the fixed bar's reserved height (--mtabs-h) showing through while the
         # bar itself was hidden behind the keyboard. Collapse the reservation to 0 when the keyboard is open
         # (visual viewport much shorter than the layout viewport), restore it when the keyboard closes.
+        # The author's pass 6 (2026-09-20): these are source pins on upstream's lines, and since D1 rebound barfit the
+        # write pinned last runs only on the FALLBACK road (no bar, no visualViewport, a style object without
+        # getPropertyValue, a run before fit() published the band; reached through barfitVV), so this test no
+        # longer decides the phone's strip: a rebound write reserving the bar's whole height while the keyboard
+        # hides it keeps every line here green. The behaviour for the 2026-07-22 report is held by
+        # MobileFitExecutes (test_the_2026_07_22_dead_band_the_strip_collapses_while_the_keyboard_hides_the_bar,
+        # the keyboard legs and the sweep), which execute the served script; the rebound write's own bytes are
+        # pinned once, in test_shell_viewport_fit.
         js = km._LANDING_MOBILE_JS
         # scale-aware (the user 2026-08-19): a desktop pinch shrinks vv.height by the zoom factor; height*scale
         # recovers the layout height, so a pinch never reads as "keyboard open" (or re-fits --app-h smaller)
         self.assertIn("function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}", js)
-        # desktop (fine pointer) uses innerHeight outright — pinch-immune in every browser, no scale
-        # arithmetic (desktop Firefox does not reliably report vv.scale during a pinch); the visual
-        # viewport drives the fit only on coarse-pointer devices, where keyboards/toolbars live
+        # the fine-pointer road: upstream's line reads innerHeight (its premise, "pinch-immune in every browser", and the fork's
+        # contrary engine model both live in kernel.py's fit() comment, the one home, with their evidence status; the author's pass 8,
+        # 2026-09-20), and the fork lines after it read the layout viewport once, as documentElement.clientHeight, for every
+        # road (the author's pass 9, 2026-09-20) and take it as this road's height; the visual viewport drives the fit only on
+        # coarse-pointer devices, where keyboards/toolbars live
         self.assertIn("var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;", js)
         self.assertIn("var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));", js)
-        self.assertIn("--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px'", js)
+        self.assertIn("var L=document.documentElement.clientHeight||window.innerHeight;\nif(!coarse||!vv)h=L;", js)   # the fork's re-read of the layout viewport (the author's pass 8; one read for every road, the author's pass 9)
+        self.assertIn("--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px'", js)   # upstream's write: the fallback road's own pin
 
     def test_usage_modal_dismisses_via_a_real_backdrop_not_a_document_click(self):
         # the user 2026-07-22: on mobile the Usage panel got STUCK — an outside tap landed on a content
@@ -113,7 +164,7 @@ class LandingShell(unittest.TestCase):
         # modal never closed. Fix: a real full-screen backdrop in the SHELL document (like the net panel's
         # #rnet-back) catches the tap, so any tap over it dismisses. The #ru-tip is pointer-events:none, so
         # a tap that visually lands on the panel still reaches the backdrop underneath and closes it.
-        html, js = km._landing(), km._LANDING_USAGE_JS
+        html, js = km._landing(), served_css.js_code(km._LANDING_USAGE_JS)   # the code, comments blanked (a comment names the backdrop too)
         self.assertIn("ru-back", js)                              # the backdrop element is created
         self.assertIn("back.onclick=off", js)                    # a tap on the backdrop closes the modal
         self.assertIn("back.classList.add('on')", js)            # ...shown when the panel opens
@@ -149,15 +200,18 @@ class LandingShell(unittest.TestCase):
         # One pane fills a phone screen, so a 3px sliver of backdrop down its edge reads as a rendering
         # fault, not as slack. The desktop longhand survives the media query unless it is named there.
         html = km._landing()
-        i = html.index("@media (max-width:820px),(pointer:coarse)")
-        mobile = html[i:i + 2000]
-        self.assertIn("padding-right:0", mobile, "the mobile .col must cancel the desktop strip")
+        # the .col rule inside the mobile block, read as a parsed rule (the author's pass 9, 2026-09-20: a 2000-character window of raw page
+        # text after the query's first spelling had stood for the block)
+        mobile = ("@media " + km._MOBILE_MQ,)
+        col = [(p, v) for r in served_css.rules(html) if r.at == mobile and ".col" in served_css.subjects(r.selector) for p, v in r.decls]
+        self.assertIn(("padding-right", "0"), col, "the mobile .col must cancel the desktop strip: %r" % (col,))
 
     def test_mobile_pane_has_explicit_height_not_auto(self):
         # regression: the mobile pane was sized with height:auto + bottom offset; mobile browsers read
         # height:auto on an iframe as "size to content" and collapse it (chat shrank to its tab bar).
         html = km._landing()
-        self.assertIn("100dvh", html)                          # explicit, address-bar-aware viewport height
+        # the unit read from the parsed declarations (a served comment spells 100dvh too; a page-text pin was satisfiable by it)
+        self.assertTrue(any("100dvh" in v for r in served_css.rules(html) for _, v in r.decls), "explicit, address-bar-aware viewport height")
         self.assertNotIn("height:auto;display:none", html)     # the collapsing iframe rule is gone
 
     def test_shell_reserves_the_bar_height_so_it_cannot_cover_the_pane(self):
@@ -167,7 +221,7 @@ class LandingShell(unittest.TestCase):
         # ABOVE the bar and it can't cover the composer. One pane shows at a time, keyed off body[data-tab].
         html = km._landing()
         self.assertIn("padding-bottom:var(--mtabs-h", html)    # .col reserves the bar's height
-        self.assertIn("--mtabs-h", km._LANDING_MOBILE_JS)      # ...measured from the live bar (offsetHeight)
+        self.assertIn("--mtabs-h", served_css.js_code(km._LANDING_MOBILE_JS))      # ...measured from the live bar (offsetHeight); the code, comments blanked
         self.assertIn("#f-timeline.m-on{display:block}", html) # timeline is a mobile tab pane (it lives in the row now)
         self.assertIn("data-tab", km._LANDING_MOBILE_JS)       # show() marks the active pane on <body>
 
@@ -202,7 +256,9 @@ class LandingShell(unittest.TestCase):
         # registers as its refused fallback — its own script so a banner throw cannot take the reload with it
         # +1: the bottom bar's API health cell (_LANDING_APIH_JS), after the usage script whose backdrop it shares
         # +1 2026-09-08: the chat split columns (_LANDING_SPLIT_JS), after the pane controller it leans on
-        self.assertEqual(html.count("<script>"), 21)
+        # the count is of live script ELEMENTS with no attributes, the isolated blocks (the author's pass 9, 2026-09-20: a raw count of the
+        # tag's spelling over the page had stood for it); the bundles' <script src=...> elements are outside it
+        self.assertEqual(len([e for e in served_css.elements(html) if e.kind == "script" and not e.attrs]), 21)
 
     def test_bottom_bar_is_text_only_and_compact(self):
         html = km._landing()
@@ -221,15 +277,18 @@ class LandingShell(unittest.TestCase):
         self.assertIn("padding-bottom:var(--mtabs-h", html)
         self.assertNotIn("#mtabs{flex:", html)                   # the bar is NOT itself a flex child anymore
         # the reservation is measured from the live bar, so it tracks the gesture-area inset exactly
-        self.assertIn("setProperty('--mtabs-h'", km._LANDING_MOBILE_JS)
-        self.assertIn("offsetHeight", km._LANDING_MOBILE_JS)
+        code = served_css.js_code(km._LANDING_MOBILE_JS)   # the code, comments blanked: the barfit comment spells offsetHeight too (the author's pass 6, 2026-09-20)
+        self.assertIn("setProperty('--mtabs-h'", code)
+        self.assertIn("bar.offsetHeight", code)
 
     def test_landing_disables_browser_pinch_zoom(self):
         # the top document governs pinch-zoom for the whole visual viewport (incl. the timeline iframe), so
         # it must disable page zoom or iOS page-zooms on a timeline pinch instead of running the gesture.
-        html = km._landing()
-        self.assertIn("user-scalable=no", html)
-        self.assertIn("maximum-scale=1", html)
+        # read from the meta's own content attribute, never the page text (_viewport_meta_tokens: a served comment names
+        # these tokens too)
+        tokens = _viewport_meta_tokens(km._landing())
+        self.assertIn("user-scalable=no", tokens)
+        self.assertIn("maximum-scale=1", tokens)
 
     def test_landing_avoids_viewport_fit_cover(self):
         # regression (the user 2026-06-17): viewport-fit=cover made Android Chrome report a non-zero
@@ -244,13 +303,19 @@ class LandingShell(unittest.TestCase):
         # navigator.standalone, which is iOS-only and standalone-only. No Android browser can ever take
         # that branch, so the 2026-06-17 regression cannot recur through it.
         html = km._landing()
-        self.assertIn("<meta name=viewport content='width=device-width,initial-scale=1,"
-                      "maximum-scale=1,user-scalable=no,interactive-widget=resizes-content'>", html)   # the static meta: no cover
-        self.assertEqual(html.count("viewport-fit=cover"), 1)         # exactly the runtime flip…
-        self.assertIn("if(navigator.standalone)", html)               # …behind the iOS-standalone gate
-        self.assertLess(html.index("if(navigator.standalone)"), html.index("viewport-fit=cover"))
-        self.assertIn("100dvh", html)            # still address-bar-aware
-        self.assertIn("user-scalable=no", html)  # pinch-zoom governance preserved alongside the change
+        # the static meta's content, read from the element (the author's pass 9, 2026-09-20: it had been a substring of the page): no cover
+        self.assertEqual(served_css.meta_content(html, "viewport"),
+                         "width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,interactive-widget=resizes-content")
+        # exactly the runtime flip, in the code of one live script (comments removed), behind the iOS-standalone gate, and the token
+        # in no markup (the author's pass 9: a count and an ordering over the raw page had stood for these)
+        scripts = served_css.scripts(html)
+        flips = [js for js in scripts if "viewport-fit=cover" in js]
+        self.assertEqual(sum(js.count("viewport-fit=cover") for js in scripts), 1)
+        self.assertEqual(len(flips), 1)
+        self.assertLess(flips[0].index("if(navigator.standalone)"), flips[0].index("viewport-fit=cover"))
+        self.assertNotIn("viewport-fit=cover", served_css._blank(html, [(s, e) for s, e, _ in served_css.element_spans(html)]), "the token is in no markup")
+        self.assertTrue(any("100dvh" in v for r in served_css.rules(html) for _, v in r.decls), "still address-bar-aware (a parsed declaration, not page text)")
+        self.assertIn("user-scalable=no", _viewport_meta_tokens(html))  # pinch-zoom governance preserved alongside the change, read from the meta
 
     def test_keyboard_shrinks_content_and_never_strands_a_scroll(self):
         """The composer tap used to scroll the whole shell up behind the soft keyboard (the user
@@ -261,7 +326,7 @@ class LandingShell(unittest.TestCase):
         pinned: interactive-widget=resizes-content makes engines that honor it (Android Chrome)
         SHRINK the layout viewport instead of panning, and fit() undoes the stray page offset iOS
         still forces (a UA input-reveal scroll bypasses overflow:hidden)."""
-        self.assertIn("interactive-widget=resizes-content", km._landing())
+        self.assertIn("interactive-widget=resizes-content", _viewport_meta_tokens(km._landing()))   # the meta's token, not a comment's
         self.assertIn("if(window.scrollY||document.documentElement.scrollTop)window.scrollTo(0,0);",
                       km._LANDING_MOBILE_JS)
 
@@ -278,7 +343,9 @@ class LandingShell(unittest.TestCase):
         # keyed on html.ios-standalone — a class set only under navigator.standalone, which no Android
         # browser exposes — reclaims the inset there and nowhere else.
         html = km._landing()
-        self.assertEqual(html.count("env(safe-area-inset"), 1)        # exactly the standalone rule below
+        # exactly the standalone rule below, as a parsed declaration (the author's pass 9, 2026-09-20: a raw count over the page had stood for it)
+        insets = [(r.selector, p) for r in served_css.rules(html) for p, v in r.decls if "env(safe-area-inset" in v]
+        self.assertEqual(insets, [("html.ios-standalone #mtabs", "padding-bottom")])
         self.assertIn("html.ios-standalone #mtabs{padding-bottom:env(safe-area-inset-bottom,0px)}", html)
         self.assertIn("#mtabs{display:flex;position:fixed;left:0;right:0;bottom:0", html)
 
@@ -300,12 +367,17 @@ class TimelineTouchSurface(unittest.TestCase):
         # that into a native horizontal scroller that beat the one-finger pan gesture. On a touch device the
         # SVG must fit the screen (width:100%) with no overflow scroller, so the gesture owns horizontal pan.
         # The wrapper styles moved to ui/webview/timeline-pane.css (shared with the VS Code view); the
-        # kernel reads that file live, so pin the served page rather than a constant.
-        css = km._timeline_page()
-        self.assertIn("@media (pointer:coarse)", css)
-        self.assertIn("overflow-x:hidden", css)
-        self.assertIn("touch-action:pan-y", css)
-        self.assertIn(".romp-tl-wrap svg{width:100%", css)
+        # kernel reads that file live, so pin the served page rather than a constant. The declarations are read from
+        # the PARSED rule (the author's pass 4, 2026-09-20): two served script comments spell touch-action:pan-y, so a page-text pin
+        # was satisfied with the declaration gone. The runtime authority for the gesture is the inline style the view
+        # sets unconditionally when it builds the wrap (ui/romp-timeline-view.js, `this.wrap.style.touchAction = 'pan-y'`
+        # in the constructor that creates .romp-tl-wrap); this rule is the sheet's copy for a wrap before or without it.
+        page = km._timeline_page()
+        coarse = [r for r in served_css.rules(page) if r.at == ("@media (pointer:coarse)",)]
+        self.assertTrue(coarse, "the coarse-pointer media block is in the served timeline page")
+        wrap = [dict(r.decls) for r in coarse if r.selector == ".romp-tl-wrap"]
+        self.assertEqual(wrap, [{"overflow-x": "hidden", "touch-action": "pan-y"}], "the wrap's coarse-pointer declarations")
+        self.assertEqual([dict(r.decls).get("width") for r in coarse if r.selector == ".romp-tl-wrap svg"], ["100%"], "the SVG fits the screen")
 
 
 class ChatSessionPicker(unittest.TestCase):
@@ -472,16 +544,25 @@ global.matchMedia = () => ({ matches: true });                 // a coarse point
 global.requestAnimationFrame = (f) => { RAF.push(f); return RAF.length; };
 global.setInterval = () => 0;   // D3 (2026-09-18): the shell socket's watchdog tick; a no-op here so node exits (ShellLinkProbe drives its own)
 global.addEventListener = on(WIN);
-global.visualViewport = { height: 844, scale: 1, addEventListener: on(VV) };
+global.visualViewport = { height: 844, scale: 1, offsetTop: 0, addEventListener: on(VV) };   // offsetTop: the pan (D1, 2026-09-19)
 const pane = (id) => ({ id, classList: { toggle() {} }, contentDocument: {},
   contentWindow: { addEventListener: on(id === 'f-chat' ? CHAT : {}) },
   addEventListener: (k) => { if (k === 'load') LOADS.push(id); } });
 const PANES = { 'f-chat': pane('f-chat'), 'f-fleet': pane('f-fleet'), 'f-feed': pane('f-feed'), 'f-timeline': pane('f-timeline') };
-const BAR = { offsetHeight: 44, querySelectorAll: () => [] };
+// the LAYOUT viewport's height (the author's pass 7, 2026-09-20): document.documentElement.clientHeight, what the pinch road's clamp and (the author's pass 8)
+// the fine-pointer road read. It is innerHeight unless a scenario parts the two (LAYOUT.h), the engine model kernel.py's fit()
+// comment states with its evidence status (the one home): the stub models it, and a model is not a measurement
+const LAYOUT = { h: null };
+const layoutH = () => (LAYOUT.h === null ? global.innerHeight : LAYOUT.h);
+// the bar's BOX (D1, 2026-09-19): a fixed bottom:0 bar sits at the layout viewport's bottom, its height above layoutH(), unless a
+// scenario leaves it elsewhere (BAR.top: an engine that shrank innerHeight but kept the bar at the old bottom)
+const BAR = { offsetHeight: 44, querySelectorAll: () => [], top: null,
+  getBoundingClientRect() { const top = BAR.top === null ? layoutH() - BAR.offsetHeight : BAR.top; return { top, bottom: top + BAR.offsetHeight, left: 0, right: 390 }; } };
 global.document = {
   visibilityState: 'visible',
   addEventListener: on(DOC),
-  documentElement: { scrollTop: 0, style: { setProperty: (k, v) => { PROPS[k] = v; SETS.push(k); } } },
+  documentElement: { scrollTop: 0, get clientHeight() { return layoutH(); },   // the layout viewport (the author's pass 7, 2026-09-20)
+    style: { setProperty: (k, v) => { PROPS[k] = v; SETS.push(k); }, getPropertyValue: (k) => PROPS[k] || '' } },   // the published band, read back by barfit (the author's pass 4, 2026-09-20)
   body: { setAttribute() {} },
   getElementById: (id) => (id === 'mtabs' ? BAR : (PANES[id] || null)),
 };
@@ -535,6 +616,319 @@ out.each = each;
 // a page offset the UA forced (iOS's input reveal) is undone on the same frame
 global.scrollY = 120; let scrolled = null; global.scrollTo = (x, y) => { scrolled = [x, y]; global.scrollY = 0; };
 fire(VV, 'scroll'); flush(); out.scrollReset = scrolled;
+// D1 (2026-09-19), the PAN: iOS moves the visual viewport down the layout viewport to reveal the focused composer while
+// innerHeight stands still; vv.height shrinks, offsetTop grows, and the visual viewport's scroll event is where the pan lands
+const appTop = () => PROPS['--app-top'];
+out.restTop = appTop();
+visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.pan = { appTop: appTop(), appH: appH(), barH: barH() };
+// the author's pass 8 (2026-09-20): the measured road's rounding (panPx, the one reading both writing roads share): 0.4 rounds to no pixel and
+// 0.5 up to one; the 0px road's flips below drive the same two values on its side
+visualViewport.offsetTop = 0.4; fire(VV, 'scroll'); flush(); out.subPixelMeasured = appTop();
+visualViewport.offsetTop = 0.5; fire(VV, 'scroll'); flush(); out.halfPixelMeasured = appTop();
+visualViewport.offsetTop = 83; fire(VV, 'scroll'); flush();
+// the author's pass 8 (2026-09-20): the pinch CUT, derived from the measured road's rounding: a zoom at scale s pans the visual viewport by at
+// most L(1 - 1/s) with no keyboard behind it, L the LAYOUT viewport the visual viewport's top ranges over, and the measured road
+// stores round(offsetTop), so the cut is the scale at which that largest zoom pan reaches the half pixel that rounds up,
+// s = L/(L - 0.5): 1.00059 at L 844. The author's pass 9 (2026-09-20): these cells had taken the cut at the coarse road's h of 460, the band's
+// height with the keyboard up, which is not the height a zoom pans over; both roads take it at L now (kernel.py, beside pinched).
+// Below the cut (1.0005: the largest zoom pan 0.42 px, no pixel) the measured road stores the pan it reads, 90 from 90.4; at or
+// above it (1.0007: 0.59 px, one pixel) the report is a pinch and the road publishes the pan LESS the zoom's pixel, 97 from 97.6,
+// not the hold (90) and not the raw reading (98). The author's pass 8 had held 90 there (driven at 1.0012 with the same reading); the
+// maintainer's round 5 ruling re-ruled it: refusing the pan cost the whole keyboard pan where the zoom's share was a pixel
+visualViewport.scale = 1.0005; visualViewport.height = 459.77; visualViewport.offsetTop = 90.4; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.cutBelow = { appTop: appTop(), appH: appH(), zoomShare: 844 * (1 - 1 / 1.0005) };
+visualViewport.scale = 1.0007; visualViewport.height = 459.68; visualViewport.offsetTop = 97.6; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.cutAbove = { appTop: appTop(), appH: appH(), zoomShare: 844 * (1 - 1 / 1.0007) };
+visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+// the author's pass 9 (2026-09-20): the state the author's pass 8's cut REGRESSED (the maintainer's round 5 ruling): the keyboard raised under a LIGHT zoom,
+// a scale between the cut and the 1.01 the literal had allowed, with NO hold standing. From rest at scale 1 the measured road
+// stores 0, so the hold is 0; the keyboard then comes up at scale 1.003 (h 460: the visual viewport 458.62 tall, panned 83.7).
+// The author's pass 8's road read the report as a pinch and fell to the hold, 0px, the band under the composer this change exists to close.
+// The measured road now publishes the pan a pure zoom CANNOT explain: the measured pixels (84) less the zoom's share at that
+// scale, 844(1 - 1/1.003) = 2.52 px, 3 in pixels: 81px, at most the share below the keyboard's pan and never 0
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.restBeforeLightZoom = appTop();
+visualViewport.scale = 1.003; visualViewport.height = 458.62; visualViewport.offsetTop = 83.7; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.kbUpLightZoomNoHold = { appTop: appTop(), appH: appH(), zoomShare: 844 * (1 - 1 / 1.003) };
+// the two states that must not regress with it. A REAL pinch with no keyboard publishes no band, driven at the deepest pan a pure
+// zoom of the layout viewport can reach (scale 2: the visual viewport 422 tall at offsetTop 422, exactly the zoom's share, so the
+// bound is tight and nothing is left over for a keyboard); the hold stands at 0
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 2; visualViewport.height = 422; visualViewport.offsetTop = 422; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.zoomDeepestNoHold = { appTop: appTop(), appH: appH() };
+// a keyboard raised UNDER a real pinch with no hold: its pan (83) is inside the zoom's share (422), so the road cannot tell it from a
+// zoom's and publishes the hold, 0 (the outcome before the author's pass 9 too, kept: the band shows until the zoom ends or the keyboard is
+// raised at scale 1, where the measured road stores its pan); a keyboard raised BEFORE the pinch is the pinchPanned pin below
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.kbUnderZoomNoHold = { appTop: appTop(), appH: appH() };
+// the visual viewport dragged LOWER under that pinch than a pure zoom could put it (offsetTop 500 against a share of 422; the band
+// 500..730 lies inside the layout viewport): the excess, 78, is a keyboard's, published and stored; dragged back to 83 the hold road
+// publishes that 78 (the excess became the hold, an estimate of the keyboard's pan within the zoom's share; disclosed)
+visualViewport.offsetTop = 500; fire(VV, 'scroll'); flush();
+out.kbUnderZoomDragged = { appTop: appTop(), appH: appH() };
+visualViewport.offsetTop = 83; fire(VV, 'scroll'); flush();
+out.kbUnderZoomDraggedBack = { appTop: appTop(), appH: appH() };
+// the fixer pass of the author's pass 9: the bound's SHAPE and the derivation's DOMAIN, by execution. (a) The published value is an
+// integer from two roundings (panPx and zoomPx), so it lies within the share plus a pixel BELOW the keyboard's own pan and a pixel
+// ABOVE it, never one-sided: a reading of 86.5 at scale 1.002959 (share 2.49 px, 2 in pixels) publishes 85 (87 less 2), a pixel above
+// a keyboard pan of 84.01 if the zoom panned its whole share; a reading of 84 at scale 1.02 (share 16.55, 17 in pixels) publishes 67,
+// 17 below a keyboard pan of 84 if the zoom panned nothing, more than the share. Each cell starts from rest (the hold 0)
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 1.002959; visualViewport.height = 458.64; visualViewport.offsetTop = 86.5; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.roundedUp = { appTop: appTop(), appH: appH(), offsetTop: 86.5, zoomShare: 844 * (1 - 1 / 1.002959) };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 1.02; visualViewport.height = 450.98; visualViewport.offsetTop = 84; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.roundedDown = { appTop: appTop(), appH: appH(), offsetTop: 84, zoomShare: 844 * (1 - 1 / 1.02) };
+// (b) a scale BELOW 1 (a zoom-out, or a pinch-out bounce; whether iOS reports one is unverified): the visual viewport is the taller
+// and its top sits at or above the layout viewport's, so a pure zoom-out's share is 0, never the negative L(1 - 1/s). With no
+// keyboard nothing is published and the hold stays 0 (the head kernel published 94 at scale 0.9 and stored it); the centred
+// report, a negative offsetTop, the same; a keyboard's pan under it is published whole (the share is 0 below scale 1)
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 0.9; visualViewport.height = 937.78; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.zoomOutNoKb = { appTop: appTop(), appH: appH() };
+visualViewport.offsetTop = -46.89; fire(VV, 'scroll'); flush();
+out.zoomOutCentred = { appTop: appTop(), appH: appH() };
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.zoomOutHold = appTop();   // the hold road under a real pinch publishes the hold: what the zoom-out cells left in it
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 0.9; visualViewport.height = 511.11; visualViewport.offsetTop = 84; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.zoomOutKb = { appTop: appTop(), appH: appH() };
+// (c) the premise test to the pixel: a visual viewport FLUSH at the layout viewport's bottom with the keyboard up under a real pinch,
+// its two values as an engine hands them over (float32, Math.fround), sums to L plus an ulp in doubles; an exact offsetTop + height
+// <= L read it as outside the layout viewport and sent it to the hold road (0px with no hold), where the excess arm publishes the
+// keyboard's pan: 512 less the share's 235, 277
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+{ const s = 1.38562, h = Math.fround(460 / s), ot = Math.fround(844 - 460 / s);
+  visualViewport.scale = s; visualViewport.height = h; visualViewport.offsetTop = ot; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+  out.flushBottomFloat32 = { appTop: appTop(), appH: appH(), offsetTop: ot, height: h, sumMinusL: ot + h - 844, zoomShare: 844 * (1 - 1 / s) }; }
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+// the author's pass 4 (2026-09-20): a height report the run REFUSES (h 0) publishes no pan either. The pan belongs to the height it was
+// measured with, so a report of height 0 with offsetTop 300 leaves --app-top and --app-h where the last valid run put them
+// (83 and 460); publishing the pan alone had moved the fixed body 300 px down under a height that never followed
+visualViewport.height = 0; visualViewport.offsetTop = 300; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.refusedHeight = { appTop: appTop(), appH: appH(), barH: barH() };
+// the keyboard goes: the visual viewport grows back and the pan with it
+visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+out.panDown = { appTop: appTop(), appH: appH(), barH: barH() };
+// a keyboard that shrinks the LAYOUT viewport too (an engine honouring interactive-widget=resizes-content): innerHeight,
+// vv.height and --app-h agree, so the height difference says no keyboard. The reservation follows the bar's BOX: left at
+// the old bottom, below the visible band, the bar is hidden and reserves nothing; riding the shrunken bottom (Android
+// Chrome) it shows above the keyboard and keeps its strip, so it never covers the composer
+global.innerHeight = 460; visualViewport.height = 460; visualViewport.offsetTop = 0; BAR.top = 800; fire(WIN, 'resize'); flush();
+out.shrunkHidden = { appH: appH(), barH: barH(), appTop: appTop() };
+BAR.top = null; fire(WIN, 'resize'); flush();   // fixed bottom:0 at innerHeight 460: the box starts at 416, inside the band
+out.shrunkVisible = { appH: appH(), barH: barH() };
+global.innerHeight = 844; visualViewport.height = 844; fire(WIN, 'resize'); flush();
+out.shrunkBack = { appH: appH(), barH: barH() };
+// a PINCH (scale above 1) pans and shortens the visual viewport with no keyboard behind it: --app-h holds (upstream's
+// scale arithmetic), the pan is not published, and the bar's strip stays reserved though its box is outside the zoomed band
+visualViewport.scale = 2; visualViewport.height = 422; visualViewport.offsetTop = 200; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.pinch = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+out.pinchBack = { appTop: appTop(), appH: appH(), barH: barH() };
+// the author's pass 2 (2026-09-19): a pinch taken WHILE the keyboard is up holds the pan (the hold, from a state where --app-top is NOT
+// already 0px), and a keyboard dismissed while still zoomed cannot leave that pan behind: --app-h returns to the full height
+// on the same run, and a held 83 would place the body at 83..927 in an 844 viewport with the composer row below it, so the
+// held value is clamped to the layout viewport's height less h (the author's pass 7, 2026-09-20: read from documentElement.clientHeight, not innerHeight)
+visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.panAgain = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.pinchPanned = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.height = 422; visualViewport.offsetTop = 200; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.kbDownZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
+// the author's pass 6 (2026-09-20): a height report the run refuses (0) UNDER the zoom: the pinch road publishes no pan either (the guard's
+// other half, held by source text alone before), so --app-top and --app-h stay where the run above put them
+visualViewport.height = 0; visualViewport.offsetTop = 200; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.refusedZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
+// the author's pass 4 (2026-09-20): the keyboard raised AGAIN while the zoom still holds. The clamp bounded what the run above published
+// and left the hold standing, so this run publishes the pan the keyboard was measured with (83, slack under the clamp:
+// 844 - 460). A clamp that wrote its result back had lowered the hold to 0 and laid the shell out at pan 0 under a
+// keyboard-sized --app-h, the band reopened for as long as the zoom held
+visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.kbUpAgainZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.zoomBack = { appTop: appTop(), appH: appH(), barH: barH() };
+// the author's pass 2 (2026-09-19): the geometric reading's EDGE. The bar is hidden when its box STARTS at or below the visible band's
+// bottom edge (>=): a bar whose top is exactly offsetTop + vv.height has no pixel inside the band. innerHeight 460 with
+// vv.height 460 reads no keyboard by the height difference, so the bar's box alone decides
+global.innerHeight = 460; visualViewport.height = 460; visualViewport.offsetTop = 0; BAR.top = 460; fire(WIN, 'resize'); flush();
+out.barAtTheEdge = { appH: appH(), barH: barH() };
+BAR.top = 459; fire(WIN, 'resize'); flush();   // one pixel inside the band: visible, reserved
+out.barOnePxIn = { appH: appH(), barH: barH() };
+BAR.top = null; global.innerHeight = 844; visualViewport.height = 844; fire(WIN, 'resize'); flush();
+out.barEdgeBack = { appH: appH(), barH: barH() };
+// the author's pass 3 (2026-09-19): the bar INSIDE the band under a pan. The keyboard up (vv.height 460 in an 844 layout viewport) and the
+// visual viewport dragged down the layout viewport until the fixed bottom:0 bar (800..844) is in the visible band: the fixed
+// body follows the pan, so the composer rides at the band's bottom edge and would meet the bar. The bar's box decides
+// whenever it can be read: at offsetTop 340 the band ends at 800 and the bar is hidden (no strip); at 341 its top pixel is
+// in the band and the strip is reserved; at 384 (the band 384..844, the bar wholly inside) too. The first cut took upstream's
+// height difference first (844 - 460 > 120: a keyboard) and collapsed the strip over the composer in the last two
+visualViewport.height = 460; visualViewport.offsetTop = 340; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.barUnderTheBand = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.offsetTop = 341; fire(VV, 'scroll'); flush();
+out.barEntersTheBand = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.offsetTop = 384; fire(VV, 'scroll'); flush();
+out.barInTheBand = { appTop: appTop(), appH: appH(), barH: barH() };
+// the author's pass 4 (2026-09-20): a PINCH over the deep pan. The band the shell published stands (the pan holds at 384, --app-h is
+// upstream's 230 * 2) and the bar is wholly inside it, so the strip stands too. The author's pass 3 reading handed a pinch back to
+// upstream's height difference (844 - 460 > 120: a keyboard), which collapsed the strip and put the bar over the composer
+// for as long as the zoom held
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 384; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.barInTheBandZoomed = { appTop: appTop(), appH: appH(), barH: barH() };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+out.barInTheBandBack = { appTop: appTop(), appH: appH(), barH: barH() };
+// the author's pass 4 (2026-09-20): the strip is PROPORTIONAL. The keyboard up (vv.height 460) and the pan swept across one bar height:
+// the band ends at offsetTop + 460 and the fixed bottom:0 bar is 800..844, so the strip is the part of the bar inside the
+// band, offsetTop - 340 clamped to 0..44: nothing at 340 and below, one pixel at 341, the whole bar at 384 and beyond. The
+// all-or-nothing strip reserved 44 px from 341 up, a bar-tall band over a bar showing a few pixels.
+// The author's pass 6 (2026-09-20): BOTH edges. The first proportional form read the band's bottom edge only (clamp(bandBottom - bar.top,
+// 0, height)), so a band whose top sat below the bar's top reserved pixels above the band: the whole bar over a bar with no
+// pixel inside it, more than a short band holds. The sweep drives every state where a variable of the overlap changes which
+// operand min or max takes: the band's top passing the bar's top (800) and the bar's bottom (844); the bar's bottom passing
+// the band's top (BAR.top 296, 320, 339, 340 against a band from 340) and a bar wholly above the band (BAR.top 100); a short
+// band (vv.height 60) panned deep; the band a refused height report leaves standing after a rotation (innerHeight 390 puts
+// the bar at 346..390 while the last published band, 384..844, stands); a band shorter than the bar (vv.height 30: the first
+// form reserved more than the band holds); and the deep pan (384), the CONTROL: the test asserts both forms agree on it and
+// on every state whose band top is not below the bar's top, and differ on every state whose band top is (the author's pass 8, 2026-09-20).
+// Each record carries the bar's box and the band the shell published, so the test derives the overlap from the geometry
+// it reads back, not from a formula of its own.
+const sweep = [];
+const box = () => { const b = BAR.getBoundingClientRect(); return { top: b.top, bottom: b.bottom }; };
+const step = (label, vvH, ot, barTop) => {
+  BAR.top = barTop === undefined ? null : barTop; visualViewport.height = vvH; visualViewport.offsetTop = ot;
+  fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+  sweep.push({ label, innerHeight: global.innerHeight, vvHeight: vvH, ot, bar: box(), appTop: appTop(), appH: appH(), barH: barH() });
+};
+for (const ot of [336, 340, 341, 345, 351, 362, 373, 380, 383, 384, 388]) step('ot' + ot, 460, ot);
+for (const ot of [799, 800, 801, 810, 822, 843, 844, 845]) step('top' + ot, 460, ot);    // the band's top passes the bar's box
+for (const bt of [100, 296, 320, 339, 340]) step('bar' + bt, 460, 340, bt);               // the bar's bottom passes the band's top
+step('short810', 60, 810);                                                                  // a short band panned deep
+step('short30', 30, 810);                                                                   // a band shorter than the bar: 810..840
+step('deep384', 460, 384);
+// the stale band: a rotation moves the bar's box (innerHeight 390, the bar 346..390) and the height report is refused (0), so
+// the band last published (384..844) stands and the bar's pixels inside it are 384..390
+global.innerHeight = 390; visualViewport.height = 0; visualViewport.offsetTop = 0; fire(WIN, 'resize'); fire(VV, 'resize'); flush();
+sweep.push({ label: 'staleAfterRotation', innerHeight: 390, vvHeight: 0, ot: 0, bar: box(), appTop: appTop(), appH: appH(), barH: barH() });
+global.innerHeight = 844; BAR.top = null;
+out.sweep = sweep;
+visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+// the author's pass 2 (2026-09-19): the writer's other population. fit() publishes a pan only off a coarse pointer; a FINE pointer writes
+// 0px whatever the visual viewport says (no soft keyboard to pan for), so a fine-pointer window the mobile query still
+// matches by width alone (at or under 820 px) takes the fixed body at top 0. From a panned state, the pointer turns fine
+// (the stub answers the coarse probe; the layout query object was captured at parse and is not re-read). The stub is a
+// module-scope global, restored before the next step. --mtabs-h IS read here (the author's pass 6, 2026-09-20): on the fine-pointer road
+// the published band is 0 to the layout viewport (clientHeight; the author's pass 9, 2026-09-20: it had said innerHeight, the fallback only)
+// whatever the visual viewport says, the bar's box (800..844) is wholly inside it, and
+// the strip is the bar's whole height, 44. That is a behaviour change from upstream's pointer-ungated kbOpen, which read
+// 844 - 460 > 120 as a keyboard and collapsed the strip, the bar over the composer, on a fine pointer whose visual viewport
+// was shorter than the layout viewport (a desktop zoom reported at scale 1).
+visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+const savedMatchMedia = global.matchMedia; global.matchMedia = () => ({ matches: false });
+fire(WIN, 'resize'); flush();
+out.finePointer = { appTop: appTop(), appH: appH(), barH: barH() };
+global.matchMedia = savedMatchMedia;
+visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+out.finePointerBack = { appTop: appTop(), appH: appH(), barH: barH() };
+// the author's pass 4 (2026-09-20): the 0px road and the hold. From a pan (83) the pointer turns fine (0px published) with the keyboard
+// still up and its pan standing, then coarse again under a zoom whose clamp is slack (230 * 2 = 460, so 844 - 460 leaves room
+// for 83). The author's pass 6 (2026-09-20): the hold STANDS across that flip, so the pinch road publishes the keyboard's pan, 83; the author's pass 4
+// had the 0px road write the hold on every fine run, so this state published 0px under a keyboard-sized --app-h, the band
+// reopened for as long as the zoom held (and the leg pinned that value as right)
+visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+global.matchMedia = () => ({ matches: false }); fire(WIN, 'resize'); flush();
+out.fineFromPan = appTop();
+global.matchMedia = savedMatchMedia;
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.coarseAgainZoomed = { appTop: appTop(), appH: appH() };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); flush();
+out.coarseAgainBack = { appTop: appTop(), appH: appH(), barH: barH() };
+// the author's pass 6 (2026-09-20): the 0px road's CONDITION, both sides of every variable in it. The road clears the hold only in a true
+// no-pan state, one the measured road would store as 0: no visual viewport, or one under the cut (pinched: L/(L - 0.5), the scale
+// at which a zoom's own pan can round to a pixel, 1.0006 at the layout viewport L of 844, the height both roads take the cut at
+// since the author's pass 9, 2026-09-20, when the coarse road had taken it at its own h; the cut itself is a pinch, so the hold stands there) whose
+// offsetTop rounds to no positive pixel, the reading the measured road stores (panPx; the author's pass 8, 2026-09-20:
+// the road had read the raw offsetTop, so 0.4 kept the hold here and stored 0 there) (the keyboard gone in the same run the
+// pointer turned fine, the kernel-4 case); a
+// standing pan (one pixel) or a standing zoom (scale 1.02) leaves it. Each state: the hold from a pan (83), the pointer turns
+// fine in the given visual-viewport state (one run), coarse again under the slack zoom so the pinch road publishes the hold
+const flips = {};
+const flip = (label, vvState) => {
+  visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+  const saved = global.visualViewport;
+  if (vvState === null) global.visualViewport = null; else Object.assign(visualViewport, vvState);
+  global.matchMedia = () => ({ matches: false }); fire(WIN, 'resize'); flush();
+  const fine = { appTop: appTop(), appH: appH() };
+  global.visualViewport = saved; global.matchMedia = savedMatchMedia;
+  visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+  flips[label] = { fine, coarseAgainZoomed: { appTop: appTop(), appH: appH() } };
+  visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+};
+flip('noVV', null);                                             // no visual viewport: no pan is possible, cleared
+flip('atRest', { height: 844, offsetTop: 0, scale: 1 });        // the keyboard gone in the flip's own run: cleared
+flip('scaleUnderCut', { height: 843.578, offsetTop: 0, scale: 1.0005 }); // under the cut (a zoom pan of at most 0.42 px), unzoomed: cleared (the author's pass 8)
+flip('scaleOverCut', { height: 843.41, offsetTop: 0, scale: 1.0007 });   // over the cut (0.59 px could round to a pixel): a pinch, the hold stands (the author's pass 8)
+flip('scaleAtCut', { height: 843.5, offsetTop: 0, scale: 844 / 843.5 });  // AT the cut, the same double the helper computes: a pinch, the hold stands (the author's pass 8, the fixer pass)
+flip('scaleAboveCut', { height: 844, offsetTop: 0, scale: 1.02 }); // a standing zoom: the hold stands
+flip('onePixelPan', { height: 460, offsetTop: 1, scale: 1 });   // a standing pan of one pixel: the hold stands
+flip('subPixelPan', { height: 460, offsetTop: 0.4, scale: 1 }); // rounds to no pixel, the measured road would have stored 0: cleared (the author's pass 8)
+flip('halfPixelPan', { height: 460, offsetTop: 0.5, scale: 1 }); // rounds up to one pixel, a pan on both roads: the hold stands (the author's pass 8)
+flip('zoomedTop', { height: 422, offsetTop: 0, scale: 2 });     // zoomed with the keyboard gone, at the top: the hold stands
+flip('zoomPan', { height: 422, offsetTop: 200, scale: 2 });     // a zoom pan with the keyboard gone: the hold stands
+out.flips = flips;
+// the author's pass 8 (2026-09-20, the fixer pass): the fine road with NO layout height (h 0: innerHeight 0 and the document element's
+// clientHeight 0, LAYOUT.h null). The cut L/(L - 0.5) is undefined there and pinched() counts the report as a pinch, so the hold
+// stands where a resting visual viewport at h 844 (the atRest flip) clears it; the --app-h write is skipped (h 0) and --app-top
+// is written 0px. A cell on the helper's third outcome: the item-1 kernel cleared the hold here and nothing drove it
+visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+global.innerHeight = 0; Object.assign(visualViewport, { height: 844, offsetTop: 0, scale: 1 });
+global.matchMedia = () => ({ matches: false }); fire(WIN, 'resize'); flush();
+out.h0Fine = { appTop: appTop(), appH: appH(), innerHeight: global.innerHeight, clientHeight: document.documentElement.clientHeight };
+global.innerHeight = 844; global.matchMedia = savedMatchMedia;
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.h0CoarseAgainZoomed = { appTop: appTop(), appH: appH() };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+// the author's pass 7 (2026-09-20): the ENGINE MODEL of innerHeight under a pinch, and every sign of the clamp's difference. The model (Chromium
+// keeps window.innerHeight at the layout viewport's height under a pinch, WebKit shrinks it to the visual viewport's) and the
+// reachability of a pinch on iOS Safari are the two premises kernel.py's fit() comment states, with their evidence status, in one
+// place; this block drives the model, it does not verify it. A clamp reading innerHeight saw a difference below 0 on every zoomed
+// run under it and published 0px whatever the hold, the band under the composer reopened for as long as the zoom held; every
+// step above kept innerHeight at 844 through the pinch, the Chromium model. The clamp reads
+// document.documentElement.clientHeight, the layout viewport in both models, and the stub parts the two here: LAYOUT.h holds
+// the layout height while innerHeight tracks vv.height, and the bar's box stays at the layout viewport's bottom (800..844), as a
+// fixed bottom:0 box does under a WebKit pinch. The difference's three states: SLACK (844 - 460: the hold, 83, is published),
+// ZERO (844 - 844, the keyboard gone under the zoom: 0px), and NEGATIVE (a rotation under the standing zoom: the layout
+// viewport is 390 while the visual viewport's last report still says 422 at scale 2, h 844, so max(0, 390 - 844) binds at 0 and
+// the road publishes 0px, never -454px). Each record carries innerHeight and clientHeight, so the test derives the model and
+// the sign from what it reads back.
+visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+const clientHeight = () => document.documentElement.clientHeight;
+LAYOUT.h = 844; BAR.top = 800;
+global.innerHeight = 230; visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(WIN, 'resize'); fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.webkitPinchPanned = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+global.innerHeight = 422; visualViewport.height = 422; visualViewport.offsetTop = 200; fire(WIN, 'resize'); fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.webkitKbDownZoomed = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+// the rotation under the zoom: the layout viewport is 390 (the fixed bar rides its bottom, 346..390) and the visual viewport's
+// report is still the one above (422 at scale 2), so h is 844 against a layout height of 390
+LAYOUT.h = 390; BAR.top = null; fire(WIN, 'resize'); flush();
+out.rotatedUnderZoom = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight(),
+  vvBottom: Math.round(visualViewport.offsetTop + visualViewport.height) };   // the stale report's bottom edge, what inside() compares
+// the author's pass 8 (2026-09-20): the FINE-POINTER road under the same model. The pointer turns fine while the zoom stands and the layout
+// viewport (844) is parted from innerHeight (422 at scale 2): the road reads the layout viewport (clientHeight, the fork line after
+// upstream's h assignment), so the published band is 0..844 and the bar (800..844) is wholly inside it, the strip its whole height.
+// It had read innerHeight and published a 422 px band with the bar outside it (appH 422px, barH 0px). Then the same parting with
+// no visualViewport at all (the other population of that road; barfit falls to upstream's reading there, which reserves the bar)
+LAYOUT.h = 844; BAR.top = 800; global.innerHeight = 422; visualViewport.scale = 2; visualViewport.height = 422; visualViewport.offsetTop = 0;
+global.matchMedia = () => ({ matches: false }); fire(WIN, 'resize'); flush();
+out.finePointerWebKit = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+global.matchMedia = savedMatchMedia;
+const savedVV = global.visualViewport; global.visualViewport = null; fire(WIN, 'resize'); flush();
+out.noVVWebKit = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+global.visualViewport = savedVV;
+LAYOUT.h = null; BAR.top = null; global.innerHeight = 844; visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(WIN, 'resize'); fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.webkitBack = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
 console.log(JSON.stringify(out));
 """
 
@@ -580,6 +974,19 @@ class MobileFitExecutes(unittest.TestCase):
         # the first paint is right without waiting a frame; the bar's reservation is measured too
         self.assertEqual(self.out["boot"], {"appH": "844px", "barH": "44px", "rafPending": 0})
 
+    def test_the_2026_07_22_dead_band_the_strip_collapses_while_the_keyboard_hides_the_bar(self):
+        # the user 2026-07-22: the fixed bar's reserved strip showed as a dead band between the composer and the keyboard
+        # while the bar itself was hidden behind it. LandingShell's pin on upstream's write no longer decides the phone
+        # (barfit is rebound; upstream's line is the fallback road's), so the report's behaviour is held here, executed: with
+        # the keyboard up and the bar's box below the band, the strip is 0, in every sweep state with the bar wholly below
+        # the band (derived from the box and the band each record carries, and there must be such states)
+        self.assertEqual(self.out["kbUp"]["barH"], "0px", "the keyboard up: the bar hidden behind it reserves nothing")
+        self.assertEqual(self.out["pan"]["barH"], "0px", "under iOS's pan too")
+        px = lambda v: int(v[:-2])
+        below = [r for r in self.out["sweep"] if r["bar"]["top"] >= px(r["appTop"]) + px(r["appH"])]
+        self.assertGreaterEqual(len(below), 2, "sweep states with the bar wholly below the band")
+        self.assertEqual({r["label"]: r["barH"] for r in below}, {r["label"]: "0px" for r in below})
+
     def test_the_keyboard_shrinks_the_shell_and_the_composers_blur_alone_grows_it_back(self):
         self.assertEqual(self.out["kbUp"], {"appH": "460px", "barH": "0px"})
         self.assertEqual(self.out["blurBeforeFrame"], "460px", "events schedule a frame; they do not fit inline")
@@ -604,6 +1011,335 @@ class MobileFitExecutes(unittest.TestCase):
 
     def test_a_ua_forced_page_offset_is_undone_on_the_same_frame(self):
         self.assertEqual(self.out["scrollReset"], [0, 0])
+
+    # D1 (2026-09-19): the empty band between the composer and the keyboard on the installed iPhone app (the user
+    # 2026-09-18 and 2026-09-19, with a screenshot). Two causes, both closed: the visual viewport's PAN, which fit() now
+    # publishes as --app-top for the mobile body rule to sit at; and the bar's reservation surviving a keyboard that
+    # shrinks the layout viewport too, which the rebound barfit now reads from the bar's own box against the band the shell published (upstream's kbOpen untouched).
+    def test_the_visual_viewports_pan_is_published_for_the_body_to_sit_at(self):
+        self.assertEqual(self.out["restTop"], "0px", "no pan at rest")
+        self.assertEqual(self.out["pan"], {"appTop": "83px", "appH": "460px", "barH": "0px"})
+        # the author's pass 4 (2026-09-20): the pan is published under the height's validity guard (the maintainer's round 1's fresh-3, landing here). A
+        # report of height 0 with offsetTop 300 is refused whole: --app-h keeps 460 as before, and --app-top keeps 83 rather
+        # than moving the fixed body by a pan measured against no height (the base tree published 300px).
+        self.assertEqual(self.out["refusedHeight"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "a refused height report publishes no pan")
+        self.assertEqual(self.out["panDown"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+
+    def test_a_keyboard_that_shrinks_the_layout_viewport_collapses_the_reservation_only_for_a_hidden_bar(self):
+        # innerHeight, vv.height and --app-h agree (an engine honouring resizes-content), so the height difference is
+        # 0: the bar's box decides. Left below the visible band it is hidden and reserves nothing (the empty band);
+        # riding the shrunken bottom it is visible above the keyboard and keeps its strip (Android Chrome today), so
+        # the fixed bar never lands on the composer
+        self.assertEqual(self.out["shrunkHidden"], {"appH": "460px", "barH": "0px", "appTop": "0px"})
+        self.assertEqual(self.out["shrunkVisible"], {"appH": "460px", "barH": "44px"})
+        self.assertEqual(self.out["shrunkBack"], {"appH": "844px", "barH": "44px"})
+
+    def test_a_pinch_publishes_no_pan_and_keeps_the_bars_strip(self):
+        # a pinch pans the visual viewport too, with no keyboard behind it: nothing about the shell's layout may move
+        # under a pinch (the pinch-aware fit, 2026-08-19)
+        self.assertEqual(self.out["pinch"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+        self.assertEqual(self.out["pinchBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+
+    def test_a_pan_held_through_a_pinch_cannot_outlive_the_height_it_was_measured_with(self):
+        # the author's pass 2 (2026-09-19). The hold, from a PANNED state (the pinch pin above starts from --app-top already 0px, which the
+        # opposite stance, zero on a pinch, satisfies identically): zoomed with the keyboard still up, the pan stands and --app-h
+        # keeps upstream's scale arithmetic (230 * 2). Then the keyboard goes while the zoom holds: --app-h returns to the full
+        # height on the same run and the held pan is clamped to the layout viewport's height less h, 0 here, so the body stays inside the layout
+        # viewport. The base tree kept 83px and hung the body's bottom 83 px, the composer row, below the viewport.
+        self.assertEqual(self.out["panAgain"], {"appTop": "83px", "appH": "460px", "barH": "0px"})
+        self.assertEqual(self.out["pinchPanned"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "the hold, from a pan")
+        self.assertEqual(self.out["kbDownZoomed"], {"appTop": "0px", "appH": "844px", "barH": "44px"}, "the clamp")
+        # the author's pass 6 (2026-09-20): the validity guard's pinch half. A height report of 0 under the zoom publishes no pan: the
+        # values stand where the clamp put them (a pinch road without the guard published min(83, 844 - 0) = 83px here)
+        self.assertEqual(self.out["refusedZoomed"], {"appTop": "0px", "appH": "844px", "barH": "44px"}, "a refused height report under the zoom publishes no pan")
+        # the author's pass 4 (2026-09-20): the clamp bounds what is published and leaves the hold standing, so the keyboard raised again
+        # under the same zoom finds the pan it was measured with. A clamp that wrote its result back (the author's pass 2 shape) had
+        # lowered the hold to 0 the first time it bound, and this run then published 0px under a keyboard-sized --app-h.
+        self.assertEqual(self.out["kbUpAgainZoomed"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "the hold survives the clamp")
+        self.assertEqual(self.out["zoomBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+
+    def test_a_bar_whose_box_starts_exactly_at_the_bands_bottom_edge_is_hidden(self):
+        # the author's pass 2 (2026-09-19): the edge of the geometric reading, held by source text alone before. At exactly offsetTop +
+        # vv.height the bar has no pixel inside the band and reserves nothing; one pixel higher, one pixel of it is inside the
+        # band and the strip is that one pixel (the author's pass 4, 2026-09-20: the strip follows the pixels; it had reserved the whole bar)
+        self.assertEqual(self.out["barAtTheEdge"], {"appH": "460px", "barH": "0px"})
+        self.assertEqual(self.out["barOnePxIn"], {"appH": "460px", "barH": "1px"})
+        self.assertEqual(self.out["barEdgeBack"], {"appH": "844px", "barH": "44px"})
+
+    def test_a_bar_inside_the_band_under_a_pan_keeps_its_strip_whatever_the_height_difference_says(self):
+        # the author's pass 3 (2026-09-19): the first cut read upstream's height difference FIRST and the bar's box only when that said no
+        # keyboard, so with the keyboard up (844 - 460 > 120) and the visual viewport dragged down the layout viewport until
+        # the fixed bar was inside the visible band, the strip still collapsed while the fixed body, following the pan, put
+        # the composer at the band's bottom edge under the bar. The box decides whenever it can be read: hidden with the band
+        # ending at the bar's top (offsetTop 340), one pixel inside one pixel further (341) and wholly inside (384). The first
+        # cut gave 0px in all three; the author's pass 3 strip gave 44px at 341, a bar-tall strip over one pixel of bar (the author's pass 4,
+        # 2026-09-20: the strip is the part of the bar inside the band, the sweep test below)
+        self.assertEqual(self.out["barUnderTheBand"], {"appTop": "340px", "appH": "460px", "barH": "0px"})
+        self.assertEqual(self.out["barEntersTheBand"], {"appTop": "341px", "appH": "460px", "barH": "1px"}, "one pixel of the bar in the band")
+        self.assertEqual(self.out["barInTheBand"], {"appTop": "384px", "appH": "460px", "barH": "44px"}, "the bar wholly inside the band")
+        self.assertEqual(self.out["barInTheBandBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+
+    def test_the_strip_is_the_part_of_the_bar_inside_the_band_across_the_pan_range(self):
+        # the author's pass 4 (2026-09-20): pinning an endpoint does not pin a range. With the keyboard up (vv.height 460 in an 844 layout
+        # viewport) and the fixed bottom:0 bar at 800..844, the band ends at offsetTop + 460, so the bar's pixels inside the
+        # band are offsetTop - 340 clamped to 0..44, and --mtabs-h is exactly that at every position: the composer then sits
+        # flush above the bar's visible part and no strip stands over bar the keyboard hides. The author's pass 3 strip was the
+        # visibility verdict times the whole height, 44px at every interior position from 341 up: over a bar showing 1 to 43
+        # pixels the shell reserved 44, a dark band of up to 43 px between the composer and the keyboard, the artifact this
+        # change exists to close. The author's pass 6 (2026-09-20): the strip is the overlap of two INTERVALS, the bar's box and the band
+        # the shell published, and the expectation is derived from the geometry each record carries (the box read back from
+        # the stub, the band from the published variables), never from a formula of the test's own: the author's pass 4 expectation
+        # was the one-edge formula itself (offsetTop - 340 clamped), so it agreed with the shell in every state it swept and
+        # could not see that a band whose top sat below the bar's top reserved pixels above the band (the whole bar over a
+        # bar with no pixel inside it; more than a short band holds). The sweep must cover every state where a variable
+        # changes which operand min or max takes, both edges of each interval, or the derivation proves nothing.
+        sweep = self.out["sweep"]
+        self.assertGreaterEqual(len(sweep), 20, "the sweep: %r" % ([r["label"] for r in sweep],))
+        px = lambda v: int(v[:-2])
+        band = {r["label"]: (px(r["appTop"]), px(r["appTop"]) + px(r["appH"])) for r in sweep}
+        bar = {r["label"]: (r["bar"]["top"], r["bar"]["bottom"]) for r in sweep}
+        heights = {b - t for t, b in bar.values()}
+        self.assertEqual(len(heights), 1, "one bar height across the sweep: %r" % (heights,))
+        bar_h = heights.pop()
+        expected = {k: "%dpx" % max(0, min(bar[k][1], band[k][1]) - max(bar[k][0], band[k][0])) for k in band}
+        self.assertEqual({r["label"]: r["barH"] for r in sweep}, expected, "the strip is the part of the bar's box inside the band")
+        # the states the sweep must reach, each derived from the geometry and failing on an empty sweep
+        interior = [k for k, v in expected.items() if 0 < px(v) < bar_h]
+        self.assertGreaterEqual(len(interior), 6, "interior positions, the strip between 0 and the bar's height: %r" % (expected,))
+        top_below = [k for k in band if band[k][0] > bar[k][0]]
+        self.assertGreaterEqual(len(top_below), 6, "the band's top below the bar's top, the states the one-edge form over-counted: %r" % (top_below,))
+        self.assertTrue([k for k in top_below if px(expected[k]) == 0] and [k for k in top_below if 0 < px(expected[k]) < bar_h],
+                        "with the band's top below the bar's top: a bar wholly above the band and a bar straddling its top: %r" % ({k: expected[k] for k in top_below},))
+        self.assertTrue([k for k in band if bar[k][1] <= band[k][0]], "a bar wholly above the band (its bottom at or above the band's top)")
+        self.assertTrue([k for k in band if bar[k][0] >= band[k][1]], "a bar wholly below the band (its top at or below the band's bottom)")
+        self.assertTrue([k for k in band if band[k][1] - band[k][0] < bar_h], "a band shorter than the bar")
+        for edge, hit in (("band top = bar top", lambda k: band[k][0] == bar[k][0]), ("band top = bar bottom", lambda k: band[k][0] == bar[k][1]),
+                          ("band bottom = bar top", lambda k: band[k][1] == bar[k][0]), ("band bottom = bar bottom", lambda k: band[k][1] == bar[k][1])):
+            self.assertTrue([k for k in band if hit(k)], "the sweep reaches the edge " + edge)
+        # the author's pass 8 (2026-09-20): the fifth outcome of the formula, the band wholly INSIDE the bar (min takes the band's bottom and max
+        # its top), was reached by one state and guarded by proxy only: the length guard above accepts a short band disjoint from
+        # the bar. Beside it, the three outcomes the ties and the C states had satisfied on their behalf: the clamp firing (a
+        # strictly negative difference, the bar wholly above or below the band with a gap), the bar straddling the band's BOTTOM
+        # edge (the author's pass 4 case), and the bar strictly inside the band. Each derived from the geometry, each failing on an empty
+        # sweep, each red once by dropping its states.
+        self.assertTrue([k for k in band if bar[k][0] < band[k][0] and band[k][1] < bar[k][1]],
+                        "a band wholly inside the bar: min takes the band's bottom and max its top")
+        self.assertTrue([k for k in band if bar[k][1] < band[k][0]], "the clamp fires: a bar wholly above the band with a gap")
+        self.assertTrue([k for k in band if bar[k][0] > band[k][1]], "the clamp fires: a bar wholly below the band with a gap")
+        self.assertTrue([k for k in band if band[k][0] < bar[k][0] < band[k][1] < bar[k][1]], "the bar straddles the band's bottom edge")
+        self.assertTrue([k for k in band if band[k][0] < bar[k][0] and bar[k][1] < band[k][1]], "the bar strictly inside the band")
+        stale = [r for r in sweep if r["vvHeight"] == 0]
+        self.assertEqual(len(stale), 1, "the stale band after a refused height report following a rotation is one state")
+        self.assertEqual((band[stale[0]["label"]], stale[0]["innerHeight"]), ((384, 844), 390), "the band last published stands while the layout viewport changed")
+        # the band the shell published at each position: the pan and the height it was measured with (the stale state keeps the last)
+        self.assertEqual({r["label"]: (r["appTop"], r["appH"]) for r in sweep if r["vvHeight"]},
+                         {r["label"]: ("%dpx" % r["ot"], "%dpx" % r["vvHeight"]) for r in sweep if r["vvHeight"]})
+
+    def test_the_deep_pan_is_the_control_on_which_both_forms_agree_and_the_sweep_discriminates_elsewhere(self):
+        # the author's pass 8 (2026-09-20): the deep pan (384) had been called the control in a comment and in the body, and no test computed
+        # the one-edge form or asserted agreement; every guard stayed green without it. The one-edge form the author's pass 6 replaced,
+        # clamp(bandBottom - barTop, 0, barHeight), is computed here beside the two-interval form: the two agree exactly where the
+        # band's top is at or above the bar's top and differ everywhere else, so the sweep's discriminating half is exactly the
+        # top_below states. The recorded strip equals BOTH forms on every agreeing state (deep384 among them, the control) and
+        # differs from the one-edge form on every discriminating state, so the shell computes the two-interval form and the sweep
+        # can tell (a shell writing the one-edge form reds this by name, not only the derived expectation above).
+        sweep = self.out["sweep"]
+        px = lambda v: int(v[:-2])
+        band = {r["label"]: (px(r["appTop"]), px(r["appTop"]) + px(r["appH"])) for r in sweep}
+        bar = {r["label"]: (r["bar"]["top"], r["bar"]["bottom"]) for r in sweep}
+        strip = {r["label"]: px(r["barH"]) for r in sweep}
+        bar_h = {b - t for t, b in bar.values()}.pop()
+        two_edge = {k: max(0, min(bar[k][1], band[k][1]) - max(bar[k][0], band[k][0])) for k in band}
+        one_edge = {k: max(0, min(bar_h, band[k][1] - bar[k][0])) for k in band}
+        top_below = [k for k in band if band[k][0] > bar[k][0]]
+        agree = [k for k in band if k not in top_below]
+        self.assertTrue(agree and top_below, "both halves of the sweep: %r / %r" % (agree, top_below))
+        self.assertIn("deep384", agree, "the deep pan is an agreeing state: %r" % (agree,))
+        self.assertEqual({k: two_edge[k] for k in agree}, {k: one_edge[k] for k in agree}, "the two forms agree where the band's top is not below the bar's top")
+        self.assertEqual({k: strip[k] for k in agree}, {k: one_edge[k] for k in agree}, "the recorded strip equals both forms on the agreeing states: the control")
+        self.assertEqual([k for k in top_below if one_edge[k] == two_edge[k]], [], "the two forms differ on every state whose band top is below the bar's top")
+        self.assertEqual([k for k in top_below if strip[k] == one_edge[k]], [], "the shell's strip is never the one-edge form on a discriminating state")
+        self.assertEqual({k: strip[k] for k in top_below}, {k: two_edge[k] for k in top_below}, "and is the two-interval form there")
+
+    def test_a_pinch_over_a_deep_pan_keeps_the_strip_the_published_band_gives(self):
+        # the author's pass 4 (2026-09-20): the bar wholly inside the band under a deep pan (384: the band 384..844), then a pinch (scale 2,
+        # vv.height 230). The shell publishes the same band (the pan holds, --app-h is 230 * 2), so the bar is still inside it
+        # and the strip stands. The author's pass 3 reading handed a pinch back to upstream's height difference (844 - 460 > 120: a
+        # keyboard), so crossing the pinch cut (then the literal 1.01) flipped the strip from 44px to 0 and the bar painted over the composer's bottom
+        # while the zoom held. kbDownZoomed (the clamp test above) is unchanged by this: with the keyboard gone under the zoom
+        # the published band is the whole layout viewport and the bar is inside it there too.
+        self.assertEqual(self.out["barInTheBandZoomed"], {"appTop": "384px", "appH": "460px", "barH": "44px"}, "the strip under the zoom")
+
+    def test_a_fine_pointer_writes_no_pan_whatever_the_visual_viewport_says(self):
+        # the author's pass 2 (2026-09-19): the writer is gated on the pointer and the fixed body on the layout query, two populations. A
+        # fine-pointer window at or under 820 px takes the fixed body and gets the 0px this branch writes (from a panned state,
+        # so a held or stale value would show), with the height read from the layout viewport (documentElement.clientHeight, innerHeight
+        # only where the document element has none; the author's pass 9, 2026-09-20); the served populations leg drives the
+        # real query at 800 px. The base tree's only pin on this branch was its source text.
+        # the author's pass 6 (2026-09-20): the strip too. The band a fine pointer publishes is 0 to the layout viewport, so the bar is wholly
+        # inside it and the strip is its whole height; upstream's pointer-ungated kbOpen read the short visual viewport as a
+        # keyboard and collapsed the strip over the composer (0px at the base tree), a behaviour change disclosed here
+        self.assertEqual(self.out["finePointer"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+        self.assertEqual(self.out["finePointerBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+
+    def test_the_0px_road_clears_the_hold_only_where_no_pan_stands(self):
+        # the author's pass 6 (2026-09-20). The author's pass 4 had the 0px road write the hold on every fine run (a pointer that turns fine and coarse
+        # again under a zoom then published the 0 the fine window laid out), and that reopened this change's own band: with
+        # the keyboard up and its pan standing the pinch road published 0px under a keyboard-sized --app-h. The road now clears
+        # the hold only in a true no-pan state, one the measured road would store as 0 (no visual viewport, or one under the
+        # cut, taken at the layout viewport L on both roads since the author's pass 9, 2026-09-20, whose offsetTop rounds to no positive
+        # pixel); with a pan standing, or under a standing zoom, the hold stands for the keyboard it
+        # was measured with. Every writing road writes the value it publishes; the clamp road writes nothing. The author's pass 8
+        # (2026-09-20): the no-pan test reads the value the measured road stores, one helper (panPx) for both roads, so a
+        # sub-pixel offsetTop is the same answer on both: 0.4 is no pan (cleared here, 0px stored there) and 0.5 a pan (the
+        # hold stands here, 1px stored there); the road had read the raw offsetTop, so 0.4 kept the hold the measured road
+        # would have zeroed.
+        self.assertEqual(self.out["fineFromPan"], "0px", "the fine pointer published 0px from the pan")
+        self.assertEqual(self.out["coarseAgainZoomed"], {"appTop": "83px", "appH": "460px"}, "the hold stands across a flip with the keyboard's pan standing")
+        self.assertEqual(self.out["coarseAgainBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
+        flips = self.out["flips"]
+        self.assertEqual({k: v["fine"] for k, v in flips.items()}, {k: {"appTop": "0px", "appH": "844px"} for k in flips}, "the fine pointer publishes 0px and the layout viewport's height in every state")
+        self.assertEqual({k: v["coarseAgainZoomed"] for k, v in flips.items()},
+                         {"noVV": {"appTop": "0px", "appH": "460px"}, "atRest": {"appTop": "0px", "appH": "460px"}, "scaleUnderCut": {"appTop": "0px", "appH": "460px"},
+                          "scaleOverCut": {"appTop": "83px", "appH": "460px"}, "scaleAtCut": {"appTop": "83px", "appH": "460px"},
+                          "scaleAboveCut": {"appTop": "83px", "appH": "460px"}, "onePixelPan": {"appTop": "83px", "appH": "460px"},
+                          "subPixelPan": {"appTop": "0px", "appH": "460px"}, "halfPixelPan": {"appTop": "83px", "appH": "460px"},
+                          "zoomedTop": {"appTop": "83px", "appH": "460px"}, "zoomPan": {"appTop": "83px", "appH": "460px"}},
+                         "cleared where no pan stands and the viewport is unzoomed; kept under a standing pan or zoom")
+        self.assertEqual((self.out["subPixelMeasured"], self.out["halfPixelMeasured"]), ("0px", "1px"),
+                         "the measured road stores the same reading: 0.4 rounds to no pixel, 0.5 up to one")
+
+    def test_the_pinch_cut_is_the_scale_at_which_a_zooms_own_pan_can_round_to_a_pixel(self):
+        # the author's pass 8 (2026-09-20): the cut between an unzoomed report and a pinch had been the literal 1.01, undriven inside (1, 1.01)
+        # and derived nowhere (its origin commit said only "above 1"). It is derived from the measured road's own rounding: a zoom
+        # at scale s pans by at most L(1 - 1/s) with no keyboard behind it, L the layout viewport the visual viewport's top ranges
+        # over, and the measured road stores round(offsetTop), so the cut is s = L/(L - 0.5), the scale at which the largest zoom
+        # pan reaches the half pixel that rounds up (1.00059 at L 844). The author's pass 9 (2026-09-20, the maintainer's round 5 ruling): both
+        # roads take the cut at L (the cells had taken it at the coarse road's h of 460, the band's height with the keyboard up, a
+        # height no zoom pans over), and at or over the cut the measured road no longer stands down: it publishes the measured
+        # pixels less the zoom's share in pixels (the author's pass 8 held the hold there, which with no hold standing was the band). Cells on
+        # both sides on both roads: under the cut the zoom's share is no pixel and the road stores the pan it reads (90 from 90.4 at
+        # 1.0005); at or over it the share is one pixel and the road publishes 97 from 97.6 (not the hold, 90; not the raw 98); the
+        # 0px road's flips clear under the cut (1.0005 at 844) and keep the hold over it (1.0007). The shares are derived here from
+        # the driven scales, so the pixel the cell subtracts is the cell's own arithmetic.
+        below, above = self.out["cutBelow"], self.out["cutAbove"]
+        self.assertEqual((round(below["zoomShare"]), round(above["zoomShare"])), (0, 1), "the zoom's share in pixels on each side of the cut: %r %r" % (below, above))
+        self.assertEqual({k: below[k] for k in ("appTop", "appH")}, {"appTop": "90px", "appH": "460px"}, "under the cut the measured road stores its reading")
+        self.assertEqual({k: above[k] for k in ("appTop", "appH")}, {"appTop": "%dpx" % (98 - round(above["zoomShare"])), "appH": "460px"},
+                         "at or over the cut the road publishes the reading less the zoom's pixel: not the hold (90), not the raw reading (98)")
+        flips = self.out["flips"]
+        self.assertEqual((flips["scaleUnderCut"]["coarseAgainZoomed"]["appTop"], flips["scaleAtCut"]["coarseAgainZoomed"]["appTop"], flips["scaleOverCut"]["coarseAgainZoomed"]["appTop"]),
+                         ("0px", "83px", "83px"), "the 0px road clears under the cut and keeps the hold at it and over it (the fixer pass: the cut is a pinch)")
+        # the fixer pass: the helper's third outcome, no layout height (h 0), where the cut is undefined and the report counts as a pinch:
+        # the fine run writes 0px and skips --app-h, and the hold stands (the item-1 kernel cleared it here; nothing had driven the state)
+        h0 = self.out["h0Fine"]
+        self.assertEqual((h0["innerHeight"], h0["clientHeight"]), (0, 0), "the state driven is h 0 on both reads: %r" % (h0,))
+        self.assertEqual({k: h0[k] for k in ("appTop", "appH")}, {"appTop": "0px", "appH": "460px"}, "0px written, the height write skipped at h 0")
+        self.assertEqual(self.out["h0CoarseAgainZoomed"], {"appTop": "83px", "appH": "460px"}, "the hold stands across a fine run with no layout height")
+
+    def test_a_keyboard_raised_under_a_light_zoom_with_no_hold_publishes_its_pan(self):
+        # the author's pass 9 (2026-09-20), the maintainer's round 5 ruling: the author's pass 8's derived cut (1.0006 at 844) had every scale between it and
+        # the literal 1.01 it replaced fall to the hold road, and with no hold standing (the state after any rest at scale 1) the hold
+        # road publishes 0px: a keyboard raised while a light zoom held left the band under the composer bare, the defect D1 exists to
+        # close. The measured road publishes the pan a pure zoom cannot explain, the measured pixels less the zoom's share L(1 - 1/s)
+        # in pixels (kbPx in kernel.py, derived beside it): 81px here (84 less 3), never 0, and the error against the keyboard's own
+        # pan is bounded by the share plus the two roundings (a pixel below, a pixel above; the fixer pass: it had read one-sided and at
+        # most the share, and the two roundings deny both, the cells below). The share is derived from the driven scale, so the bound
+        # the cell checks is the cell's own arithmetic, not a figure copied from the kernel.
+        r = self.out["kbUpLightZoomNoHold"]
+        px = lambda v: int(v[:-2])
+        self.assertEqual(self.out["restBeforeLightZoom"], "0px", "the hold is 0: the measured road stored 0 at rest")
+        share = round(r["zoomShare"])
+        self.assertTrue(0 < share <= 8, "a light zoom's share, between a pixel and the 8 px of the old 1.01 literal: %r" % (r,))
+        self.assertEqual({k: r[k] for k in ("appTop", "appH")}, {"appTop": "%dpx" % (84 - share), "appH": "460px"},
+                         "the keyboard's pan less the zoom's share, not the hold (0): %r" % (r,))
+        # the keyboard's own pan is the reading (83.7) less whatever part the zoom took, in [83.7 - share, 83.7]; the derived bound puts
+        # the published integer within the share plus a pixel below it and a pixel above it (two roundings; the fixer pass)
+        lo, hi = 83.7 - r["zoomShare"], 83.7
+        self.assertTrue(lo - r["zoomShare"] - 1 <= px(r["appTop"]) <= hi + 1, "within the share plus a pixel of the keyboard's own pan: %r" % (r,))
+        # the two states that must not regress with it
+        self.assertEqual(self.out["zoomDeepestNoHold"], {"appTop": "0px", "appH": "844px"}, "a real pinch at the deepest pan a pure zoom can reach: the share is tight, nothing is published")
+        self.assertEqual(self.out["kbUnderZoomNoHold"], {"appTop": "0px", "appH": "460px"}, "a keyboard under a real pinch with no hold: its pan is inside the zoom's share, the hold (0) is published")
+        self.assertEqual(self.out["kbUnderZoomDragged"], {"appTop": "78px", "appH": "460px"}, "dragged below the zoom's share under the pinch: the excess is a keyboard's and is published")
+        self.assertEqual(self.out["kbUnderZoomDraggedBack"], {"appTop": "78px", "appH": "460px"}, "the excess became the hold")
+
+    def test_the_published_pan_lies_within_the_share_plus_a_pixel_below_and_a_pixel_above_the_keyboards_own(self):
+        # the fixer pass of the author's pass 9 (unruled): the kernel's, the harness's and the body's statement of the bound had read
+        # "one-sided and at most the share", and the formula rounds twice (panPx, zoomPx), each at most half a pixel off, so the
+        # published integer lies within the share plus a pixel BELOW the keyboard's own pan and a pixel ABOVE it. Both sides driven:
+        # a reading of 86.5 at a share of 2.49 publishes 85 (87 less 2), above a keyboard pan of 84.01 (the zoom panned its whole
+        # share) by 0.99; a reading of 84 at a share of 16.55 publishes 67 (84 less 17), below a keyboard pan of 84 (the zoom panned
+        # nothing) by 17, more than the share. A single rounding of the unrounded difference would publish 84 in the first cell and
+        # break the reading the 0px road shares below the cut (kbPx equals panPx there only with the share rounded on its own)
+        up, down = self.out["roundedUp"], self.out["roundedDown"]
+        px = lambda v: int(v[:-2])
+        self.assertEqual((round(up["zoomShare"]), round(down["zoomShare"])), (2, 17), "the shares in pixels, from the driven scales: %r %r" % (up, down))
+        self.assertEqual({k: up[k] for k in ("appTop", "appH")}, {"appTop": "85px", "appH": "460px"}, "87 less 2: %r" % (up,))
+        kb_low = up["offsetTop"] - up["zoomShare"]   # the keyboard's own pan when the zoom panned its whole share
+        self.assertGreater(px(up["appTop"]), kb_low, "the published pan exceeds the keyboard's own: the error is not one-sided: %r" % (up,))
+        self.assertLessEqual(px(up["appTop"]) - kb_low, 1, "and by at most a pixel: %r" % (up,))
+        self.assertEqual({k: down[k] for k in ("appTop", "appH")}, {"appTop": "67px", "appH": "460px"}, "84 less 17: %r" % (down,))
+        short = down["offsetTop"] - px(down["appTop"])   # below the keyboard's own pan when the zoom panned nothing
+        self.assertGreater(short, down["zoomShare"], "the published pan falls short of the keyboard's own by more than the share: %r" % (down,))
+        self.assertLessEqual(short, down["zoomShare"] + 1, "and by at most the share plus a pixel: %r" % (down,))
+
+    def test_a_scale_below_one_has_no_share_and_a_flush_report_is_inside_to_the_pixel(self):
+        # the fixer pass of the author's pass 9 (unruled), two cells on the derivation's premises. (b) Its domain is a scale of 1 or
+        # more; below 1 the visual viewport is the taller and a pure zoom-out pans nothing downward, so the share is 0: the head kernel
+        # returned the negative L(1 - 1/s) and published the reading PLUS it, 94px at scale 0.9 with no keyboard, stored as the hold.
+        # Nothing is published, the hold stays 0, and a keyboard's pan under a zoom-out is published whole. (c) The premise test
+        # (inside) compares the report's bottom edge to the pixel: float32 values flush at the layout viewport's bottom sum to L plus
+        # an ulp in doubles, which an exact test read as outside, so a keyboard flush at the bottom under a real pinch fell to the hold
+        # road and published 0 where the excess arm publishes 277 (512 less the share's 235)
+        self.assertEqual(self.out["zoomOutNoKb"], {"appTop": "0px", "appH": "844px"}, "a zoom-out with no keyboard publishes no pan (the head: 94px)")
+        self.assertEqual(self.out["zoomOutCentred"], {"appTop": "0px", "appH": "844px"}, "the centred report (a negative offsetTop) the same")
+        self.assertEqual(self.out["zoomOutHold"], "0px", "the hold stayed 0 through the zoom-out cells")
+        self.assertEqual(self.out["zoomOutKb"], {"appTop": "84px", "appH": "460px"}, "a keyboard's pan under a zoom-out is published whole: the share is 0")
+        f = self.out["flushBottomFloat32"]
+        self.assertTrue(0 < f["sumMinusL"] < 0.5, "the premise of the cell: the float32 report's bottom edge sums past L by an ulp, under the half pixel: %r" % (f,))
+        self.assertEqual({k: f[k] for k in ("appTop", "appH")}, {"appTop": "%dpx" % (round(f["offsetTop"]) - round(f["zoomShare"])), "appH": "460px"},
+                         "the reading less the share, 277, not the hold (0): the report is inside to the pixel: %r" % (f,))
+
+    def test_the_clamp_reads_the_layout_viewport_in_both_engine_models_and_binds_only_below_zero(self):
+        # the author's pass 7 (2026-09-20). The clamp had read window.innerHeight as the layout viewport's height, which holds in Chromium
+        # and not in WebKit under the engine model kernel.py's fit() comment states with its evidence status (the one home; this
+        # comment points there and restates nothing, the fixer pass of the author's pass 8): there every zoomed run had
+        # innerHeight - h below 0 and the pinch road published 0px whatever the hold (the band under the composer, back for as
+        # long as the zoom held), while every step above kept innerHeight at 844 through the pinch and could not see it. The clamp
+        # reads document.documentElement.clientHeight, the layout viewport in both models. The records carry both readings, so
+        # the stub's model (innerHeight parted from clientHeight) and the sign of the difference are derived, not assumed.
+        px = lambda v: int(v[:-2])
+        wp, wd, rot, back = (self.out[k] for k in ("webkitPinchPanned", "webkitKbDownZoomed", "rotatedUnderZoom", "webkitBack"))
+        self.assertLess(wp["innerHeight"], wp["clientHeight"], "the WebKit model: innerHeight shrunk to the visual viewport under the pinch: %r" % (wp,))
+        self.assertEqual({k: wp[k] for k in ("appTop", "appH", "barH")}, {"appTop": "83px", "appH": "460px", "barH": "0px"},
+                         "the hold is published under a WebKit pinch (innerHeight 230 - 460 would have bound at 0)")
+        self.assertEqual({k: wd[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"}, "the keyboard gone under the zoom: the clamp binds at zero slack")
+        self.assertEqual({k: rot[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"},
+                         "a rotation under the zoom with a stale visual-viewport report: the difference is negative and the max binds at 0, no negative pan")
+        # the close of the author's pass 9: the stale report's bottom edge against the layout height, the overshoot inside() refuses, is
+        # the figure the kernel's kbPx comment names (232: offsetTop 200 plus height 422 against 390; it had said 654, the coarse road's
+        # h of 844 substituted for the visual viewport's height, a number inside() never reads)
+        self.assertEqual((rot["vvBottom"], rot["clientHeight"], rot["vvBottom"] - rot["clientHeight"]), (622, 390, 232),
+                         "the stale report is outside the layout viewport by inside()'s own operands: %r" % (rot,))
+        signs = {k: (r["clientHeight"] - px(r["appH"]) > 0) - (r["clientHeight"] - px(r["appH"]) < 0) for k, r in (("slack", wp), ("zero", wd), ("negative", rot))}
+        self.assertEqual(signs, {"slack": 1, "zero": 0, "negative": -1}, "the clamp's difference driven at both signs and zero: %r" % (signs,))
+        self.assertEqual({k: back[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"})
+        self.assertEqual(back["innerHeight"], back["clientHeight"], "the models rejoin at scale 1")
+
+    def test_the_fine_pointer_road_reads_the_layout_viewport_in_both_engine_models(self):
+        # the author's pass 8 (2026-09-20): the sibling read. The fine-pointer road, and the road with no visualViewport, had taken innerHeight
+        # as the layout height, licensed by upstream's "pinch-immune in every browser" premise, which the fork's engine-model
+        # premise contradicts (both live in kernel.py's fit() comment, the one home, with their evidence status); the road reads
+        # document.documentElement.clientHeight too, a no-op wherever innerHeight was right. Driven here with the two parted: the
+        # published band is the layout viewport and the bar inside it keeps its strip (the head kernel gave 422px and 0px on the
+        # fine pointer, and a 422 px band with no visualViewport).
+        fp, nv = self.out["finePointerWebKit"], self.out["noVVWebKit"]
+        for r in (fp, nv):
+            self.assertLess(r["innerHeight"], r["clientHeight"], "the model parted on this road: %r" % (r,))
+        self.assertEqual({k: fp[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"},
+                         "a fine pointer under the WebKit model publishes the layout viewport, and the bar inside it keeps its strip")
+        self.assertEqual({k: nv[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"},
+                         "no visualViewport under the WebKit model: the layout viewport, and upstream's reading reserves the bar")
 
 
 # A node stand-in for the installed phone app with a REAL class list: the shell's mobile script and

@@ -7,6 +7,7 @@ SYNTHETIC fixtures only — invented hosts and placeholder shas, no real machine
 """
 import json
 import os
+import sys
 import unittest
 from romp_load import load_source
 import tempfile
@@ -20,6 +21,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_autoupd", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 LOCAL = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 REMOTE = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -206,7 +209,9 @@ class BannerAndPopoverWiring(unittest.TestCase):
         self.assertIn("if(d&&d.autoUpdate){box.classList.remove('show');phase='idle';return;}", km._RDRIFT_JS)
 
     def test_the_popover_offers_the_checkbox_and_writes_it_to_the_kernel(self):
-        self.assertIn("Automatically update", km._landing())
+        # the label, read from the page's code and markup with its comments blanked: two served comments spell it too, and a
+        # page-text pin was satisfiable by them (tests/test_served_pins_read_elements.py)
+        self.assertIn("Automatically update", served_css.code(km._landing()))
         self.assertIn("id=rnet-auto", km._landing())
         self.assertIn("/tunnels/autoupdate", km._LANDING_REMOTES_JS)
         self.assertIn("if(autoCb&&!autoCb.disabled)autoCb.checked=_auto;", km._LANDING_REMOTES_JS,

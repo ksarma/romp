@@ -10,6 +10,7 @@ import inspect
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 import unittest
@@ -23,6 +24,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 km = load_source("romp_kernel_spenddetail", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 WEB, API, TESTS = ("11111111-2222-3333-4444-000000000001", "11111111-2222-3333-4444-000000000002",
                    "11111111-2222-3333-4444-000000000003")
@@ -593,12 +596,12 @@ class SpendDetail(unittest.TestCase):
                       "Escape closes it through the shell's one Escape chain")
         self.assertIn("#rsp-back{position:fixed;inset:0;z-index:205;display:flex;align-items:center;justify-content:center;"
                       "background:rgba(0,0,0,0.55)}", html, "the panel rule: a centered card over rgba(0,0,0,0.55)")
-        self.assertNotIn("__ROMP_LOADER__", html.split("_LANDING_JS")[0] if "_LANDING_JS" in html else html,
-                         "the loader markup is spliced, not left as a placeholder")
-        self.assertIn("rl-word", html)
+        self.assertNotIn("__ROMP_LOADER__", html, "the loader markup is spliced, not left as a placeholder")   # (the author's pass 9: a dead split stood here)
+        code = served_css.code(html)   # the code and markup with every served comment blanked: the spend script's comments spell these strings too
+        self.assertIn("rl-word", code)
         self.assertNotIn("this machine only", html, "T247c: every attached kernel's sessions are in — no such note")
-        self.assertIn("not reachable", html)
-        self.assertIn("older build", html)
+        self.assertIn("not reachable", code)
+        self.assertIn("older build", code)
         self.assertIn("aligned by clock time across machines", html)
         self.assertIn("recorded before per-session tracking", html, "unattributed spend is named, never folded")
         self.assertIn("var rows=spendRowsHTML(LAST||[]);", html, "the modal's window numbers are the hover's own renderer")
@@ -632,7 +635,8 @@ class SpendDetail(unittest.TestCase):
         menu = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "tag-menu.ts")).read()
         shared = re.search(r'chip\.setAttribute\("style", "([^"]+)"\s*\n\s*\+ "border-radius:9px;"', menu)
         self.assertTrue(shared, "the shared tagChip's style is where the pin expects it")
-        twin = re.search(r"function spTagChip\(s\)\{var c=spColor\(s\);return '<span class=rsp-tag-chip style=\"([^\"]+)\"", js)
+        # the chip's inline twin lives in a script's code: searched over the live script elements' code (the fixer pass of the author's pass 9: the regex ran over the page)
+        twin = re.search(r"function spTagChip\(s\)\{var c=spColor\(s\);return '<span class=rsp-tag-chip style=\"([^\"]+)\"", "\n".join(served_css.scripts(js)))
         self.assertTrue(twin, "the landing page inlines the chip")
         self.assertTrue(twin.group(1).startswith(shared.group(1) + "border-radius:9px;border:1px solid "), "the pill, byte for byte up to the colour (the row's size: no font-size)")
         self.assertIn(";background:transparent;white-space:nowrap;font-weight:400;letter-spacing:normal;", twin.group(1), "the tail after the colour: the shared weight and tracking")

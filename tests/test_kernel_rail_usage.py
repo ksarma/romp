@@ -6,6 +6,7 @@ data to the shell ({romp:'usage'}) and the shell renders compact vertical bar-pa
 import inspect
 import os
 import pathlib
+import sys
 import unittest
 from romp_load import load_source
 import tempfile
@@ -19,11 +20,16 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 
 class RailUsage(unittest.TestCase):
     def setUp(self):
         self.html = km._landing()
+        # the code and markup with every served comment blanked: the usage script's comments spell several of the tokens
+        # pinned below, and a page-text pin was satisfiable by them (tests/test_served_pins_read_elements.py)
+        self.code = served_css.code(self.html)
 
     def test_the_rail_usage_leads_the_scroll_group_with_refresh_and_settings_pinned_right(self):
         # the user 2026-06-26/27; bottom bar 2026-07-05: usage sits in the scrollable group (after the toggles);
@@ -42,10 +48,12 @@ class RailUsage(unittest.TestCase):
     def test_the_shell_renders_the_posted_usage_colormapped_with_a_hover_panel(self):
         self.assertIn("romp==='usage'", self.html, "the shell listens for the timeline's usage post")
         for win in ("fiveHour", "sevenDay"):
-            self.assertIn(win, self.html, "renders both rate-limit windows")
+            # the code, not the page: the usage script's comments spell both window names (the author's pass 5, 2026-09-20: the literal
+            # reached assertIn through the loop variable, outside the pins census's derivation until it read the loop form)
+            self.assertIn(win, self.code, "renders both rate-limit windows")
         # the used bar wears the SELECTED COLORMAP colour (server-computed in _usage_limits, read here as seg.color)
-        self.assertIn("seg.color", self.html, "the used bar is colored by the selected colormap")
-        self.assertIn("seg.tone", self.html, "and the yatharth themes pick the tone shipped beside it (PR #763)")
+        self.assertIn("seg.color", self.code, "the used bar is colored by the selected colormap")
+        self.assertIn("seg.tone", self.code, "and the yatharth themes pick the tone shipped beside it (PR #763)")
         self.assertIn('"color": list(cm.ramp(pct / 100.0, cm.stops_for(_colormap())))', inspect.getsource(km._usage_limits),
                       "classic seg.color stays the recency-colormap sample, byte-identical to main (PR #763 item 1)")
         self.assertIn("cm.context_rgb(pct)", inspect.getsource(km._usage_limits),
@@ -71,12 +79,14 @@ class RailUsage(unittest.TestCase):
         # order within a window: label, then the bars, then % — all inline
         # anchor past the spend chip (it wears ru-name/ru-pct too, with no bars — the user 2026-08-04):
         # the slice must start at a WINDOW row, whose label is built from the WINS table
-        one = self.html[self.html.index("<div class=ru-name>'+w"):]
+        # the window is inside one live script's code (the author's pass 9, 2026-09-20: it had been sliced from the raw page)
+        one = next(js for js in served_css.scripts(self.html) if "<div class=ru-name>'+w" in js)
+        one = one[one.index("<div class=ru-name>'+w"):]
         self.assertLess(one.index("ru-name"), one.index("ru-bars"))
         self.assertLess(one.index("ru-bars"), one.index("ru-pct"))
         # expanded labels use the 5th WINS field (plenty of horizontal room)
-        self.assertIn("'5 hours'", self.html)
-        self.assertIn("'7 days'", self.html)
+        self.assertIn("'5 hours'", self.code)
+        self.assertIn("'7 days'", self.code)
 
     def test_the_usage_tooltip_is_one_shared_panel_reproducing_both_windows_bars(self):
         # a SINGLE tooltip on the whole rail-usage area (mouseenter on el), not a per-window panel
@@ -96,7 +106,7 @@ class RailUsage(unittest.TestCase):
         # hover — the compact level — must say there is more underneath (progressive disclosure: never
         # a dead end). One footnote line in the hover's own footnote style (.ru-tip-age size and
         # opacity, no new font size), on the DESKTOP tip only: the phone panel has its "By session" button.
-        js = self.html.split('_LANDING_USAGE_JS')[0] if False else self.html
+        js = self.html   # (the author's pass 9, 2026-09-20: a dead split of the page stood here)
         self.assertIn("Click for the full breakdown by session.", js)
         self.assertIn("tip.classList.remove('ru-modal');tip.innerHTML=h+'<div class=ru-tip-hint>Click for the full breakdown by session.</div>';", js,
                       "the desktop tip ends in the affordance line")
@@ -149,7 +159,7 @@ class RailUsage(unittest.TestCase):
         # detail is per HOST now, one object per fleet row — the footer itself is unchanged.)
         self.assertIn("det._t=(typeof r.usage.t==='number')?r.usage.t:null", self.html,
                       "the renderer keeps each host's snapshot time")
-        self.assertIn("ru-tip-age", self.html, "the tooltip carries an age footer")
+        self.assertIn("ru-tip-age", self.code, "the tooltip carries an age footer")
         self.assertIn("updated '+fmtAgo(d._t)", self.html, "formatted as 'updated ... ago'")
         self.assertIn("function fmtAgo(ep)", self.html)
 

@@ -16,6 +16,7 @@ Synthetic only — no network, no real DOM.
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from romp_load import load_source
@@ -29,6 +30,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_errc", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  a served text with its comments blanked (loads no romp code)
 
 HARNESS = r"""
 'use strict';
@@ -413,7 +416,8 @@ class ErrorCenterWiring(unittest.TestCase):
         self.assertIn("{romp:'revealCard',itemId:n.tgt.itemId||'',sid:n.tgt.sid||'',gesture:true}", html)
         # timestamps wear the SHARED recency ramp: the standalone dist bundle is loaded BEFORE the
         # errs script and read behind a feature test (dim default if the bundle is stale/missing)
-        self.assertLess(html.index("/dist/age-color-global.js"), html.index("window.__rompAgeColor"))
+        code = served_css.code(html)   # offsets preserved, comments blanked: a script comment spells __rompAgeColor before the code does
+        self.assertLess(code.index("/dist/age-color-global.js"), code.index("window.__rompAgeColor"))
         self.assertIn("if(window.__rompAgeColor)tm.style.color=window.__rompAgeColor(", html)
         self.assertIn("window.__rompNotify=function", html)
         # the mobile bar routes its bell to the same popover

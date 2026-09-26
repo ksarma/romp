@@ -33,6 +33,8 @@ jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["ROMP_SERVE_TOKEN"] = "testtok"            # known token for the serve-security test
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 # The ACCOUNT gate (_limit_hold: a usage limit / monthly spend cap parks every drive op, tested in
 # tests/test_kernel_limit_queue.py) is a SEPARATE axis from the compaction/busy gates this module
@@ -7577,7 +7579,10 @@ class ServeSecurity(unittest.TestCase):
         with urllib.request.urlopen("http://127.0.0.1:%d/timeline?token=testtok" % self.port, timeout=5) as r:
             self.assertEqual(r.status, 200)
             body = r.read().decode("utf-8", "replace")
-        self.assertIn("TimelinePanel", body, "the shared obsidian view is injected")
+        # the page's CODE, comments blanked (the author's pass 8, 2026-09-20, the fixer pass): the view's own comments and the pane sheet's spell
+        # the name, so a pin over the fetched body was satisfiable by three of its eight occurrences (the pins census reads a formatted
+        # fetch as its route's text now and named this row)
+        self.assertIn("TimelinePanel", served_css.code(body), "the shared obsidian view is injected")
         self.assertIn("app=timeline", body, "the page drives panel.update over the kernel WS")
 
     def test_landing_has_three_panes(self):
@@ -7687,7 +7692,8 @@ class ServeSecurity(unittest.TestCase):
         html = km._landing()
         self.assertIn("<script src=/dist/shell-perf.js?v=", html)
         self.assertLess(html.index("/dist/age-color-global.js"), html.index("/dist/shell-perf.js"))
-        self.assertLess(html.index("/dist/shell-perf.js"), html.index("window.__rompAgeColor"))   # before the errs script
+        code = served_css.code(html)   # offsets preserved, comments blanked: a script comment spells __rompAgeColor before the code does
+        self.assertLess(code.index("/dist/shell-perf.js"), code.index("window.__rompAgeColor"))   # before the errs script
         self.assertLess(html.index("/dist/shell-perf.js"), html.index("/dist/palette-main.js"))
         # the socket it posts through is the shell's own, defined by the mobile-shell script, which runs
         # later: the bundle reads window.__rompShellSend at call time, so the order is fine
@@ -7791,9 +7797,15 @@ class ServeSecurity(unittest.TestCase):
         import urllib.request
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=testtok" % self.port, timeout=5) as r:
             body = r.read().decode("utf-8", "replace")
-        self.assertIn("visualViewport", body)               # the live-visible-height source
-        self.assertIn("--app-h", body)                      # the custom prop the JS drives
-        self.assertIn("height:var(--app-h,100dvh)", body)   # body height reads it, dvh only as fallback
+        # read from the fetched page's code with its comments blanked and from its parsed rules: the fit script's comments spell
+        # both tokens, so a page-text pin was satisfiable by them (tests/test_served_pins_read_elements.py, which reads this
+        # formatted fetch as the landing's text since the fixer pass of the author's pass 8, 2026-09-20; it had been re-pointed by hand)
+        code = served_css.code(body)
+        rules = served_css.rules(body)
+        self.assertIn("visualViewport", code)               # the live-visible-height source
+        self.assertIn("setProperty('--app-h'", code)        # the custom prop the JS drives
+        self.assertIn(("height", "var(--app-h,100dvh)"), [d for r in rules if r.selector in ("body", "html,body") for d in r.decls],
+                      "body height reads it, dvh only as fallback")
 
     def test_cross_site_origin_rejected(self):
         self.assertEqual(self._code("/feed", {"Origin": "http://evil.example"}), 403)

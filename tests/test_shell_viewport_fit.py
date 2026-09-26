@@ -15,9 +15,13 @@ tablet is too wide for both mobile breakpoints, so it took the desktop branch.
 Verified in real Firefox before/after by forcing --app-h shorter than 100vh (the iOS toolbar case): the
 rail measured 870..900 inside a 600px-tall body before, and 570..600 after.
 """
+import inspect
 import os
+import re
+import sys
 import tempfile
 import unittest
+from html.parser import HTMLParser
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -29,6 +33,12 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_vhfit", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and scripts (loads no romp code)
+
+
+# D1's fixed body (the mobile block; tests below)
+_FIXED_BODY_RULE = "body{position:fixed;left:0;right:0;top:var(--app-top,0px);height:var(--app-h,100dvh)}"
 
 
 class OneHeightBasis(unittest.TestCase):
@@ -66,10 +76,703 @@ class OneHeightBasis(unittest.TestCase):
         self.assertIn("body.picker-open iframe.lifted{display:block;position:fixed;left:0;right:0;top:0;"
                       "height:var(--app-h,100dvh);z-index:200;background:transparent}", self.html)
 
+    def test_the_mobile_body_sits_at_the_visual_viewports_pan(self):
+        # D1 (2026-09-19): inside the mobile media block, and only there, the body is FIXED at --app-top (the pan fit()
+        # publishes) with the same height chain as the flex body rule before it, so under an iOS keyboard pan the body
+        # covers exactly the visible band and no bare background shows between the composer and the keyboard. No
+        # transform, filter or contain on the body, so the shell's fixed panels keep the viewport as their containing block:
+        # test_no_html_or_body_rule_gives_the_fixed_panels_a_new_containing_block, over the served CSS.
+        html = self.html
+        # the rule as parsed (the author's pass 9, 2026-09-20: a count of its spelling and three raw index pins over the page had stood for it):
+        # exactly one body rule with these declarations, inside the mobile block, after the flex body rule it extends
+        rules = served_css.rules(html)
+        mobile = ("@media " + km._MOBILE_MQ,)
+        fixed = [r for r in rules if r.selector == "body" and "body{%s}" % r.declarations == _FIXED_BODY_RULE]
+        self.assertEqual(len(fixed), 1, [(r.at, r.declarations) for r in rules if r.selector == "body"])
+        self.assertEqual(fixed[0].at, mobile, "the fixed body is a mobile rule")
+        flex = [r for r in rules if r.selector == "body" and r.declarations == "display:flex;flex-direction:column;height:100vh;height:var(--app-h,100dvh)"]
+        self.assertEqual(len(flex), 1)
+        self.assertLess(flex[0].index, fixed[0].index, "after the flex body rule it extends")
+        # the only position:fixed body rule is the one inside the mobile block, so a document outside _MOBILE_MQ (a fine
+        # pointer above 820 px, a coarse one above 1024 px) keeps its body in flow, and the base html,body chain
+        # (test_the_shell_height_chain_applies_at_every_width) carries no top or position. Inside the block a fine pointer at
+        # or under 820 px takes this fixed body too, at the 0px fit() writes whenever the pointer is not coarse (the author's pass 2, 2026-09-19:
+        # test_kernel_mobile's finePointer scenario, and the populations legs in test_keyboard_gap_served)
+        self.assertEqual([r.at for r in rules if r.selector == "body" and served_css.is_fixed(r, rules)], [mobile])
+        # the author's pass 4 (2026-09-20): the consumers of --app-top DERIVED by the parser over every served style element, through any
+        # custom-property alias, rather than a substring over the page's prefix (which saw nothing after the block): exactly
+        # the two rules the census below holds to the origin, both inside the mobile block, so the population claim in
+        # fit()'s comment (a coarse document outside the block publishes a pan nothing consumes) rests on this. A new
+        # consumer anywhere, inside the block or outside it, joins this list on purpose: a tripwire, not a defect. Inline
+        # style attributes and script-inserted rules are outside the served CSS and outside this scan.
+        rules = served_css.rules(html)
+        app_top = served_css.closure(rules, "--app-top")
+        consumers = sorted((r.at, r.selector) for r in rules if any(served_css.names_any(v, app_top) for _, v in r.decls))
+        mobile = ("@media " + km._MOBILE_MQ,)
+        self.assertEqual(consumers, [(mobile, "body"), (mobile, "body.picker-open iframe.lifted")],
+                         "every consumer of --app-top is a census member's origin inside the mobile block")
+
+    def test_no_html_or_body_rule_gives_the_fixed_panels_a_new_containing_block(self):
+        # the author's pass 2 (2026-09-19): the first cut looped over the test's own literal for these properties, a guard no kernel.py could
+        # fail. The invariant is page-wide: a transform (or one of its longhands translate, rotate and scale, or an
+        # offset-path), a filter or backdrop-filter, a contain or content-visibility, a will-change or a perspective on html
+        # or body makes THAT box the containing block of every position:fixed descendant, and the shell's fixed panels (the
+        # tab bar glued to the true bottom above all) would move with the fixed body's pan. So the scan reads the served CSS,
+        # every style element and every media block. The population is every rule whose selector has html, body or :root as
+        # its SUBJECT (the last compound: 'body.picker-open iframe.lifted' names body as an ancestor, where a transform is
+        # legitimate, and is out), and a property matches at a declaration boundary (text-transform is not transform, and
+        # transform:scale(...) is a transform value, not a scale declaration). The author's pass 3 (2026-09-19): the list was six; the
+        # five added (translate, rotate, scale, content-visibility, offset-path) each displaced a fixed bottom:0 bar into the
+        # body's box in Chromium and WebKit the way will-change:transform does, and the six-item scan stayed green for them.
+        # The author's pass 4 (2026-09-20): the property is read from the PARSED declaration, and an optional vendor prefix is allowed
+        # (-webkit-transform and -webkit-filter create the containing block in Chromium and WebKit, -webkit-backdrop-filter
+        # in WebKit; the unprefixed alternation stayed green for all three). The population is html, body and :root only:
+        # the picker's lift sits four levels down the tree, and a containing-block property on an intermediate ancestor
+        # (.pane, .col) would re-parent it too; that road is guarded by the served leg, tests/test_keyboard_gap_served.py,
+        # which reads the lift's box against the body's in a real engine under the pan (a static scan cannot see a class
+        # added at runtime or a script-inserted rule, so the engine leg is the instrument for the ancestors, not this one).
+        # The author's pass 8 (2026-09-20): transform-style joins the list, measured to displace a fixed bottom:0 bar into the fixed body's
+        # box in both engines exactly as the listed properties do; the guard matches the property, not the value, so
+        # transform-style:flat is caught too, harmless, the same over-catch the list already has for filter:none,
+        # perspective:none and will-change:opacity (no value logic). A roster is a sample, so the measured NON-members are
+        # recorded beside the members and kept out on purpose: container-type, the container shorthand and
+        # view-transition-name did not displace the bar in either engine.
+        rules = served_css.rules(self.html)
+        subject = re.compile(r"^(html|body|:root)(?![\w-])")
+        pop = [r for r in rules if any(subject.match(x) for x in served_css.subjects(r.selector))]
+        self.assertGreaterEqual(len(pop), 4, "the html/body population is the base chain, the mobile chain, the flex body and the fixed body at least: %r"
+                                % ([r.selector for r in pop],))
+        self.assertIn(_FIXED_BODY_RULE, ["%s{%s}" % (r.selector, r.declarations) for r in pop], "the fixed body rule is in the population")
+        prop = re.compile(r"^(?:-[a-z]+-)?(transform|transform-style|translate|rotate|scale|filter|backdrop-filter|contain|content-visibility|will-change|perspective|offset-path)$")
+        self.assertEqual([(r.at, r.selector, p, v) for r in pop for p, v in r.decls if prop.match(p)], [],
+                         "a containing-block property on html or body moves every fixed panel with the fixed body's pan")
+
+    def test_every_fixed_box_sized_by_the_shells_height_sits_at_its_pan(self):
+        # D1, the author's pass 2 (2026-09-19): the pan gave the shell a second origin, and the first review found the ONE other fixed box
+        # sized by --app-h, the new-session picker's lift (body.picker-open iframe.lifted, top:0), still at layout y 0 under
+        # the pan, so the band the body rule removes from the composer survived under the picker; the comment over the body
+        # rule had listed six fixed panels by hand and missed it. The consumers are DERIVED here from the served CSS, never
+        # listed. The author's pass 4 (2026-09-20): the derivation PARSES the sheet (tests/served_css.py) instead of substring-searching
+        # it, which had four blind spots: a sizing keyed to --app-h through a custom property (resolved to a fixed point
+        # here, so a chain of aliases is seen too), whitespace inside the var() call (a parsed declaration, not a substring),
+        # an element whose position:fixed and whose sizing sit under two different selector STRINGS (the settings lift is
+        # such an element: #f-settings{display:none} and body.settings-open #f-settings{...position:fixed...}), and a style
+        # element carrying an attribute (every <style> is read, and the parse refuses when a tag opening was not consumed).
+        # The join is per ELEMENT. The author's pass 5 (2026-09-20): it had been keyed on the subject compound's exact string, so a box
+        # whose position:fixed and whose sizing sat under two compounds that select one element but differ by a simple
+        # selector (iframe#f-x and #f-x; #f-x and #f-x.big; .ovl and iframe.ovl) landed on two keys, neither both fixed
+        # and sized, and was outside the population. A member is now a PAIR of a fixed compound and a sized compound that
+        # can select one element (served_css.can_match: one's restricting selectors are a subset of the other's, so a
+        # compound is paired with itself too), the element known by the union of the two compounds' simple selectors and
+        # named by the canonical compound of that set (served_css.compound: body, iframe.lifted). Pairs, not a union-find
+        # over the whole sheet: through a bare `iframe` rule a class join unites every iframe compound, so a second fixed
+        # iframe sized by --app-h would have been one member with the lift and the lift's origin would have answered for it.
+        # Each member sits at var(--app-top) in a rule inside the mobile block (the lift's base rule is upstream's line and
+        # stays byte-identical; the mobile block re-tops it, so a coarse desktop layout keeps the lift at the static body's
+        # origin); the origin's rule must SURELY select the element (served_css.surely: its subject's restricting selectors
+        # all among the element's, none selecting by a state the sheet cannot show), and its top must BE the pan (a bare var(--app-top) or an alias declared as one,
+        # served_css.bare_var and aliases; the author's pass 5: a mention had counted, so top:calc(var(--app-top) - 40px) read as the
+        # origin), the last top-edge declaration of its own rule, without !important. The cascade is judged over EVERY rule
+        # whose subject CAN match the element (a subset or superset of its restricting selectors: iframe, .lifted, `*`,
+        # iframe[id], iframe:not(.x); the author's pass 5: `*`, attribute selectors and functional pseudo-classes had been read as
+        # selectors the element must carry), by specificity, then order, an !important winning outright however spaced
+        # (served_css.important), over every property that sets the top edge (top and the inset, inset-block and
+        # inset-block-start shorthands, which the sheet uses fourteen times, and `all`, the one shorthand that resets the
+        # position and the top edge together; the author's pass 6, 2026-09-20). A selector sharing no restricting selector with the
+        # member (body.picker-open #f-chat) is outside this reading; the served leg reads the boxes themselves. The author's pass 6
+        # closed four more holes the plants had not covered: an origin's rule must carry no attribute selector or functional
+        # pseudo-class (served_css.surely refuses them: body:not(.picker-open) cannot be known to select the body, and the
+        # reading had dropped them as can_match rightly does); position:fixed is read through a custom-property indirection
+        # as the sizing is (served_css.is_fixed with the sheet); the alias table is per member (served_css.aliases with the
+        # element: a name a rule that can select the member re-declares to a constant is no alias of the pan there); and
+        # the page must link no external stylesheet and import none, or the parse refuses (the population claim below is
+        # over the rules the parse returns, and a linked or imported sheet adds or re-tops rules it never sees).
+        self.assertEqual(served_css.linked_sheets(self.html), [], "the landing links no external stylesheet (a link whose rel set carries the token, the parser's own predicate): every rule the census judges is in a style element it parses")
+        rules = served_css.rules(self.html)
+        self.assertGreater(len(rules), 100, "the parse read the served stylesheets: %d rules" % len(rules))
+        app_h = served_css.closure(rules, "--app-h")
+        sized = lambda r: any(served_css.names_any(v, app_h) for _, v in r.decls)
+        fixed_c = sorted({c for r in rules if served_css.is_fixed(r, rules) for c in served_css.subjects(r.selector)})
+        sized_c = sorted({c for r in rules if sized(r) for c in served_css.subjects(r.selector)})
+        self.assertTrue(fixed_c and sized_c, "derived population empty: fixed compounds %r, --app-h sized compounds %r" % (fixed_c, sized_c))
+        known = {}   # canonical compound -> the element's known simple selectors
+        for f in fixed_c:
+            for sz in sized_c:
+                if served_css.can_match(f, sz):
+                    k = served_css.restricting(f) | served_css.restricting(sz)
+                    known.setdefault(served_css.compound(k), frozenset(k))
+        fixed_h = sorted(known)
+        self.assertTrue(fixed_h, "derived population empty: no element both position:fixed and sized by --app-h in the served CSS: fixed %r, sized %r"
+                        % (fixed_c, sized_c))
+        # the split-selector element the per-selector census could not see: the settings lift is position:fixed under one
+        # selector string and hidden under another, and the join sees one element. It is NOT sized by --app-h today (inset:0
+        # spans the whole layout viewport, so no bare band shows under it; moving it onto the band is a design change the
+        # owner decides), so it is outside the census; a sizing by --app-h under EITHER of its selectors puts it in.
+        settings = [r for r in rules if "#f-settings" in served_css.subjects(r.selector)]
+        self.assertTrue(any(served_css.is_fixed(r, rules) for r in settings) and len({r.selector for r in settings}) >= 2,
+                        "the settings lift's rules sit under two selector strings with one subject: %r" % ([(r.at, r.selector) for r in settings],))
+        self.assertIn("#f-settings", fixed_c)
+        self.assertNotIn("#f-settings", fixed_h, "the settings lift is not sized by --app-h; when it is, it joins the census and takes the origin")
+        # the census as of this change, each member named by its canonical compound. A new fixed consumer of --app-h joins
+        # this list AND takes the pan (the loop below), or the band opens again under whatever it covers.
+        self.assertEqual(fixed_h, ["body", "iframe.lifted"])
+        mobile = ("@media " + km._MOBILE_MQ,)
+        top_edge = {"top", "inset", "inset-block", "inset-block-start", "all"}
+        for el in fixed_h:
+            k = known[el]
+            app_top = served_css.aliases(rules, "--app-top", el)   # the pan's aliases FOR THIS ELEMENT (the author's pass 6)
+            is_origin = lambda p, v, names=app_top: p == "top" and served_css.bare_var(v) in names
+            sure = [r for r in rules if any(served_css.surely(served_css.subject(m), k) for m in served_css.members(r.selector))]
+            may = [r for r in rules if any(served_css.can_match(served_css.subject(m), el) for m in served_css.members(r.selector))]
+            origins = [r for r in sure if r.at == mobile and any(is_origin(p, v) for p, v in r.decls)]
+            self.assertTrue(origins, "%s has no --app-top origin inside the mobile block in a rule that surely selects it: %r"
+                            % (el, [(r.at, r.selector, r.declarations) for r in sure]))
+            # the origin is INSIDE the mobile block only (the author's pass 4, 2026-09-20, the maintainer's round 2's tests-1): outside it, on a coarse desktop layout
+            # wider than the query, the body stays in flow at layout y 0, and a lift moved to the pan there would part from
+            # the pane rect render.ts placeLifted measures for the transcript backing. The kernel comment over the lift's
+            # origin states that condition; this is the assertion that holds it (over every rule that CAN select the element).
+            self.assertEqual([(r.at, r.selector, r.declarations) for r in may if r.at != mobile and any(is_origin(p, v) for p, v in r.decls)], [],
+                             "%s: a --app-top origin outside the mobile block would move the box on a coarse desktop layout" % el)
+            for r in origins:
+                tops = [(p, v) for p, v in r.decls if p in top_edge]
+                self.assertTrue(is_origin(*tops[-1]), "%s: the origin is not the last top-edge declaration of its own rule: %r" % (el, r.declarations))
+                self.assertFalse(any(served_css.important(v) for p, v in tops), "%s: the origin rule's top edge carries no !important: %r" % (el, r.declarations))
+            spec = max(served_css.specificity(m) for r in origins for m in served_css.members(r.selector) if served_css.surely(served_css.subject(m), k))
+            last = max(r.index for r in origins)
+            winners = [(r.at, m, p, v) for r in rules for m in served_css.members(r.selector) if served_css.can_match(served_css.subject(m), el)
+                       for p, v in r.decls if p in top_edge and not is_origin(p, v)
+                       and (served_css.important(v) or served_css.specificity(m) > spec or (served_css.specificity(m) == spec and r.index > last))]
+            self.assertEqual(winners, [], "%s: a rule that can match the element sets its top edge and wins the cascade over the --app-top origin" % el)
+
     def test_an_unpainted_pane_is_dark_not_white(self):
         # a pane whose document has not painted is a white rectangle in a dark frame (Firefox shows it
         # plainly) — which is exactly what "a white strip at the bottom" looks like
         self.assertIn("iframe{background:#1e1e1e}", self.html)
+
+
+class ParsedSheetReads(unittest.TestCase):
+    """The instrument the census reads through (tests/served_css.py), pinned on the forms the author's pass 5 (2026-09-20) found it
+    misreading: each case was green under the reading it replaces and is red once against it."""
+
+    def test_a_style_or_script_inside_an_html_comment_is_not_an_element(self):
+        # the census had accepted an origin that existed only in commented-out markup, and a pin over scripts() was
+        # satisfiable by a commented-out script; the tag-opening count guard counted the commented opening too
+        self.assertEqual(served_css.rules("<!-- <style>#x{top:0}</style> -->"), [])
+        self.assertEqual(served_css.scripts("<!-- <script>var y=1;</script> -->"), [])
+        self.assertEqual(served_css.style_blocks("<!-- <style>#x{top:0}</style> -->"), [])
+        page = "<style>#a{top:0}</style><!-- <style>#x{top:0}</style> --><script>var a=1;</script><!-- <script>var y=1;</script> -->"
+        self.assertEqual([r.selector for r in served_css.rules(page)], ["#a"])
+        self.assertEqual(served_css.scripts(page), ["var a=1;"])
+        # the commented markup is comment text to the pins census, and code() blanks it
+        self.assertEqual([page[s:e] for s, e in served_css.comment_spans(page)],
+                         ["<!-- <style>#x{top:0}</style> -->", "<!-- <script>var y=1;</script> -->"])
+        self.assertNotIn("#x", served_css.code(page))
+        # a <!-- inside a live script is script text, not a comment: the served timeline script spells one in a regular
+        # expression and in its own comments, and a comment opened there would swallow the element's end
+        page = '<script>x="<!--";</script><!-- c --><script>y="-->";</script>'
+        self.assertEqual(served_css.scripts(page), ['x="<!--";', 'y="-->";'])
+        self.assertEqual([page[s:e] for s, e in served_css.comment_spans(page)], ["<!-- c -->"])
+
+    def test_a_style_elements_media_attribute_conditions_every_rule_it_holds(self):
+        # the author's pass 8 (2026-09-20): style_blocks and rules read every live style element's rules with no regard for the element's own
+        # media attribute, so CSS that never applies on screen read as unconditional, and the fixed-box census passed over a page
+        # whose only --app-top origin sat in a <style media=print>. The attribute is the outermost prelude of every rule in the
+        # element, so such an origin's `at` is not the mobile block's and the census refuses it (the plant in the record)
+        rules = served_css.rules("<style media=print>@media (x){#a{top:var(--app-top)}}</style><style>@media (x){#b{top:0}}</style>")
+        self.assertEqual([(r.selector, r.at) for r in rules], [("#a", ("@media print", "@media (x)")), ("#b", ("@media (x)",))])
+        self.assertEqual([r.selector for r in rules if r.at == ("@media (x)",)], ["#b"], "the print rule is not the (x) block's")
+
+    def test_a_style_elements_type_attribute_is_css_or_the_element_refuses(self):
+        # the author's pass 8 (2026-09-20, the fixer pass): the sibling hole of the media attribute. HTML applies a style element's content as CSS
+        # only when its type is absent, empty or text/css; any other type is inert in every engine, and the parse had read such an
+        # element's rules as live, so a census over what applies would have passed over a page whose only origin sat in a
+        # <style type=text/plain>. The element refuses (no served page carries one); the CSS spellings read as before
+        # the author's pass 9 (2026-09-20, the maintainer's round 5 ruling): HTML compares the type AS WRITTEN, so ' text/css ' is inert in every
+        # engine; the compare had stripped and this row had pinned the stripped answer as live. It refuses, and so does a
+        # whitespace-only type (neither empty nor the match)
+        for t in ("text/plain", "text/x-scss", "TEXT/PLAIN", "'text/css; charset=utf-8'", "' text/css '", "' '"):
+            with self.assertRaises(AssertionError, msg=t) as cm:
+                served_css.rules("<style type=%s>#a{top:var(--app-top)}</style>" % t)
+            self.assertIn("is not CSS", str(cm.exception))
+        for t in ("text/css", '"text/css"', "''", '""', "TEXT/CSS"):
+            self.assertEqual([(r.selector, r.at) for r in served_css.rules("<style type=%s>#a{top:0}</style>" % t)], [("#a", ())], t)
+        self.assertEqual([(r.selector, r.at) for r in served_css.rules("<style type=text/css media=print>#a{top:0}</style>")], [("#a", ("@media print",))])
+        # a script element's type is read and not judged (the module's disclosure): a data block is still script text to scripts()
+        self.assertEqual(served_css.scripts("<script type=application/json>{\"a\":1}</script>"), ['{"a":1}'])
+
+    def test_a_cdata_marked_section_refuses_and_every_other_declaration_reads_as_html_does(self):
+        # the author's pass 9 (2026-09-20), the maintainer's round 5 ruling: html.parser consumes a `<![CDATA[ ... ]]>` section whole where HTML
+        # reads `<!` followed by anything but `--` or DOCTYPE as a bogus comment ending at the FIRST `>`, so a live style element
+        # after a `>` inside such a section was invisible to elements() and rules() with no refusal, the fourth silent divergence
+        # on this module's roads and the first on the parser road. The section refuses now, wherever it sits and however it ends
+        # (the plant: a page that passed silently before, with the style unread)
+        for page in ("<![CDATA[ x > <style>#a{top:0}</style> ]]>", "<![CDATA[ x > ]]><style>#a{top:0}</style>", "<![CDATA[ oops <style>#a{top:0}</style>",
+                     "<style>#b{top:0}</style><![CDATA[]]>"):
+            with self.assertRaises(AssertionError, msg=page) as cm:
+                served_css.rules(page)
+            self.assertIn("CDATA", str(cm.exception), page)
+        # the other declarations html.parser hands over end where HTML's bogus comments end, at the first `>`, and read as comment
+        # text: a conditional-comment section, a bogus `<!foo>`, a processing instruction; the style after each is live, and each
+        # span is comment text to the pins census (a token inside one is comment-satisfiable)
+        for page, spans in (("<![if !IE]><style>#a{top:0}</style><![endif]>", ["<![if !IE]>", "<![endif]>"]),
+                            ("<!foo bar><style>#a{top:0}</style>", ["<!foo bar>"]),
+                            ("<?xml version='1.0'?><style>#a{top:0}</style>", ["<?xml version='1.0'?>"])):
+            self.assertEqual([r.selector for r in served_css.rules(page)], ["#a"], page)
+            self.assertEqual([page[s:e] for s, e in served_css.html_comment_spans(page)], spans, page)
+        # the DOCTYPE is a declaration HTML reads as its own token, to the first `>`, and nothing inside it: an event, no span
+        page = "<!DOCTYPE html><style>#a{top:0}</style>"
+        self.assertEqual(([r.selector for r in served_css.rules(page)], served_css.html_comment_spans(page)), (["#a"], []))
+        # inside foreign content HTML does read a CDATA section as text; this reader refuses the container itself (below), so the
+        # section is never reached there as a live read
+        with self.assertRaises(AssertionError):
+            served_css.rules("<svg><![CDATA[ <style>#a{top:0}</style> ]]></svg>")
+
+    def test_an_abruptly_closed_comment_refuses_where_html_parser_reads_past_it(self):
+        # the fixer pass of the author's pass 9 (unruled): html.parser closes a comment at the NEXT `-->` or `--!>` and takes `<!-->` or
+        # `<!--->` as an abrupt close only when no later close exists, where HTML closes an abruptly closed comment at its own `>`, so
+        # every live style, link and meta between the two was invisible to elements(), rules(), linked_sheets() and meta_content() with
+        # no refusal: the same silent class the CDATA refusal closed, on every interpreter (3.10.20 to 3.14.6 carry the same
+        # parse_comment). Both engines read an empty comment and the elements live (measured). Refused wherever it sits, the shape HTML
+        # reads as an empty comment included (no later close, or `-->` as text after it: a loud over-refusal; no served page carries
+        # one); the closed shapes read as before, `--!>` closing and `<!----->` holding a `-`
+        for page in ("<!--><style>#a{top:0}</style><!-- x -->", "<!---><style>#a{top:0}</style><!-- x -->", "<!--><style>#a{top:0}</style>", "<!--->",
+                     "<!--><meta name=viewport content=a><!-- x --><meta name=viewport content=b>", "<!--><link rel=stylesheet href=x.css><!-- x -->",
+                     "<!-->--><style>#a{top:0}</style>", "<div><!---></div>"):
+            with self.assertRaises(AssertionError, msg=page) as cm:
+                served_css.elements(page)
+            self.assertIn("abruptly closed comment", str(cm.exception), page)
+        for page, spans in (("<!-- --><style>#a{top:0}</style><!-- x -->", ["<!-- -->", "<!-- x -->"]), ("<!--x--><style>#a{top:0}</style>", ["<!--x-->"]),
+                            ("<!----><style>#a{top:0}</style>", ["<!---->"]), ("<!-----><style>#a{top:0}</style>", ["<!----->"]),
+                            ("<!-- x --!><style>#a{top:0}</style>", ["<!-- x --!>"]), ("<!-- -> --><style>#a{top:0}</style>", ["<!-- -> -->"])):
+            self.assertEqual(([r.selector for r in served_css.rules(page)], [page[s:e] for s, e in served_css.html_comment_spans(page)]), (["#a"], spans), page)
+
+    def test_a_tracked_element_under_a_container_html_parses_otherwise_refuses(self):
+        # the author's pass 9 (2026-09-20), the maintainer's round 5 ruling: the reader read a script's or style's content as raw text everywhere,
+        # and inside <svg> both engines parse it as MARKUP, so the extent was wrong there; the author's pass 8 roster of untracked containers
+        # named template and noscript, justified by "no served page carries either", and omitted svg, which two served pages carry.
+        # The reader refuses a tracked element under any container whose content HTML does not parse as the reader does (the set in
+        # served_css.REFUSED_CONTAINERS, each named in the docstring); the roster is a derived census now
+        # (tests/test_served_pins_read_elements.py). Each case here read as live before (or, for the text elements, depends on the
+        # tokenizer release: a refusal or no element, never a live read)
+        for page in ("<svg><style>#a{top:0}</style></svg>", "<svg><script>var a=1;</script></svg>", "<math><style>#a{top:0}</style></math>",
+                     "<svg><link rel=stylesheet href=x.css></svg>", "<svg><meta name=viewport content=x></svg>",
+                     "<template><style>#a{top:0}</style></template>", "<template/><style>#a{top:0}</style>",
+                     "<noscript><style>#a{top:0}</style></noscript>", "<div><svg><g><style>#a{top:0}</style></g></svg></div>",
+                     "<html><head></head><frameset><style>#a{top:0}</style></frameset></html>", "<frameset><link rel=stylesheet href=x.css></frameset>"):
+            with self.assertRaises(AssertionError, msg=page) as cm:
+                served_css.elements(page)
+            self.assertIn("HTML does not parse its content as this reader does", str(cm.exception), page)
+        # the fixer pass of the author's pass 9: inside <frameset> HTML IGNORES a tracked start tag (both engines drop the style,
+        # measured), a container the author's pass 9 set had not named; tree construction's other rules are outside the model, and the modes a
+        # served page could put a style in were measured live in both engines: select, option, table, td and colgroup, live here too
+        for page in ("<select><style>#a{top:0}</style></select>", "<select><option><style>#a{top:0}</style></option></select>", "<table><style>#a{top:0}</style></table>",
+                     "<table><tr><td><style>#a{top:0}</style></td></tr></table>", "<table><colgroup><style>#a{top:0}</style></colgroup></table>"):
+            self.assertEqual([r.selector for r in served_css.rules(page)], ["#a"], page)
+        self.assertIn("frameset", served_css.REFUSED_CONTAINERS)
+        # the container closed, the element after it is live (the stack pops to the match); a self-closing svg is empty to HTML
+        for page in ("<svg></svg><style>#a{top:0}</style>", "<svg/><style>#a{top:0}</style>", "<div><svg><g></g></svg></div><style>#a{top:0}</style>",
+                     "<template></template><style>#a{top:0}</style>"):
+            self.assertEqual([r.selector for r in served_css.rules(page)], ["#a"], page)
+        # the text elements: a tokenizer release that knows the set reads the inner style as text (no element); one that does not
+        # (3.10 knows script and style alone) hands the reader a start tag under the container, refused. Never a live rule
+        for page in ("<title><style>#a{top:0}</style></title>", "<textarea><style>#a{top:0}</style></textarea>", "<iframe><style>#a{top:0}</style></iframe>",
+                     "<xmp><style>#a{top:0}</style></xmp>", "<plaintext><style>#a{top:0}</style>"):
+            try:
+                self.assertEqual(served_css.rules(page), [], page)
+            except AssertionError as e:
+                self.assertIn("HTML does not parse its content as this reader does", str(e), page)
+        # the stack's one-sided error, disclosed: HTML's breakout tags (<b>, <p>, <div> and the rest) close the svg, so HTML reads
+        # this style as HTML content; the reader keeps the svg open and refuses, too much and never too little
+        with self.assertRaises(AssertionError):
+            served_css.rules("<svg><b>x</b><style>#a{top:0}</style></svg>")
+        # the stack an element carries, outermost first, and the tag counts the census reads
+        page = "<html><head><meta name=x content=y><link rel=icon href=i></head><body><div><style>#a{top:0}</style></div><svg></svg></body></html>"
+        self.assertEqual([(e.kind, e.stack) for e in served_css.elements(page)],
+                         [("meta", ("html", "head")), ("link", ("html", "head")), ("style", ("html", "body", "div"))])
+        self.assertEqual(served_css.tag_counts(page), {"html": 1, "head": 1, "meta": 1, "link": 1, "body": 1, "div": 1, "style": 1, "svg": 1})
+
+    def test_the_tokenizers_handler_surface_is_enumerated_by_the_module(self):
+        # the author's pass 9 (2026-09-20): the module's account of what html.parser hands it is DERIVED from the class, not kept by hand (the
+        # hand-kept enumeration had named CSS and JS tokenizing and the script-data escaped states, and not the marked section that
+        # passed silently). Every handle_* method and unknown_decl on the class is a row of TOKENIZER_SURFACE with a verb the reader
+        # actually implements (an override for a verb other than `event`, none for `event` where the base method is inherited), the
+        # element sets the tokenizer reads as text are all refused containers, and the constructor's parameters are the two the
+        # module sets or leaves. A handler a Python release adds reds here until the module classifies it.
+        handlers = sorted(n for n in dir(HTMLParser) if n.startswith("handle_") or n == "unknown_decl")
+        self.assertEqual(handlers, sorted(served_css.TOKENIZER_SURFACE), "a handler the module's table does not classify")
+        verbs = {"read", "comment", "event", "refused"}
+        for name, (verb, what) in served_css.TOKENIZER_SURFACE.items():
+            self.assertIn(verb, verbs, name)
+            self.assertTrue(what and "HTML" in what, "the HTML behaviour stands beside the reader's: %s" % name)
+            overridden = name in vars(served_css._Elements)
+            self.assertTrue(overridden, "%s: the reader implements every handler (the position event at least)" % name)
+        text_sets = set(getattr(HTMLParser, "CDATA_CONTENT_ELEMENTS", ())) | set(getattr(HTMLParser, "RCDATA_CONTENT_ELEMENTS", ()))
+        self.assertTrue(text_sets >= {"script", "style"}, text_sets)
+        self.assertEqual(sorted(text_sets - served_css.TOKENIZER_TEXT_ELEMENTS), [], "an element the tokenizer reads as text that the module does not name")
+        self.assertEqual(sorted(served_css.TOKENIZER_TEXT_ELEMENTS - {"script", "style"} - served_css.REFUSED_CONTAINERS), [],
+                         "every text element but script and style is a refused container for a tracked element")
+        params = sorted(inspect.signature(HTMLParser.__init__).parameters)
+        self.assertEqual(sorted(set(params) - {"self", "convert_charrefs", "scripting"}), [], "a constructor parameter the module has not considered: %r" % (params,))
+
+    def test_the_tokenizers_extent_rules_are_enumerated_and_pinned_by_execution(self):
+        # the fixer pass of the author's pass 9 (unruled): the handler table covers what the tokenizer HANDS the reader, and the extent
+        # of each construct (where a comment closes, where a tag ends, where a declaration's `>` is) is decided in the parse_* layer and
+        # the loop around it, which no row named, so a release changing an extent could not red here (the abrupt comment's close is
+        # such an extent). The rest of the class's public surface is enumerated in TOKENIZER_EXTENTS, red on a member the table does
+        # not name; every extent rule is pinned by an executed shape, the tokenizer's extent against HTML's; the two unreached methods
+        # by a spy
+        members = sorted(n for n in dir(HTMLParser) if not n.startswith("_") and callable(getattr(HTMLParser, n)) and not (n.startswith("handle_") or n == "unknown_decl"))
+        self.assertEqual(members, sorted(served_css.TOKENIZER_EXTENTS), "a public tokenizer method the module's extent table does not classify")
+        for name, (kind, what) in served_css.TOKENIZER_EXTENTS.items():
+            self.assertIn(kind, {"extent", "unreached", "plumbing"}, name)
+            self.assertTrue(what and "HTML" in what, "HTML's extent stands beside the tokenizer's: %s" % name)
+        self.assertEqual(sorted(n for n, (kind, _) in served_css.TOKENIZER_EXTENTS.items() if kind == "unreached"), ["parse_declaration", "parse_marked_section"])
+        rules = lambda page: [r.selector for r in served_css.rules(page)]
+        spans = lambda page: [page[s:e] for s, e in served_css.html_comment_spans(page)]
+        els = lambda page: [(e.kind, e.start, e.content_start, e.content_end, e.end) for e in served_css.elements(page)]
+        # goahead: a `<` before a non-letter is text, `</3>` a bogus comment to the first `>`, `</>` no token at all
+        self.assertEqual((rules("a < b <3 <style>#a{top:0}</style>"), spans("a < b <3 <style>#a{top:0}</style>")), (["#a"], []))
+        self.assertEqual(spans("<div></3 x><style>#a{top:0}</style>"), ["</3 x>"])
+        self.assertEqual((rules("<div></><style>#a{top:0}</style>"), spans("<div></><style>#a{top:0}</style>")), (["#a"], []))
+        # parse_starttag and check_for_whole_start_tag: the tag ends at the first `>` outside a quoted value; a quote never closed yields
+        # no element and no refusal (HTML emits nothing at EOF inside a tag either); the tag name runs to whitespace, `/` or `>`, so
+        # `<style<b>` is the tag style<b to both, and the stray </style> after it refuses
+        self.assertEqual(len(served_css.linked_sheets("<link title='a>b' rel=stylesheet href=x>")), 1)
+        self.assertEqual(els("<style a='x\">#a{top:0}</style>"), [])
+        with self.assertRaises(AssertionError) as cm:
+            served_css.elements("<style<b>#a{top:0}</style>")
+        self.assertIn("no open style element", str(cm.exception))
+        # parse_endtag: the end tag ends after a quoted `>`; inside style content only the element's own end tag followed by whitespace,
+        # `/` or `>` closes it
+        self.assertEqual(els("<style>#a{top:0}</style a='>'>#b{top:0}"), [("style", 0, 7, 16, 28)])
+        self.assertEqual(els("<style>#a{top:0}</styleX>#b{top:0}</style>"), [("style", 0, 7, 34, 42)])
+        self.assertEqual([els("<style>#a{top:0}</style%s>x" % t)[0][3] for t in ("/", "\t", "")], [16, 16, 16])
+        # parse_comment: the close rules (the abrupt shapes refuse, the test above)
+        self.assertEqual(spans("<!-- x --!><!----><!-----><style>#a{top:0}</style>"), ["<!-- x --!>", "<!---->", "<!----->"])
+        # parse_bogus_comment, parse_pi, parse_html_declaration: to the first `>`; the DOCTYPE to its first `>` even inside a quoted
+        # identifier (HTML's abrupt-doctype-public-identifier rule ends it there too)
+        self.assertEqual(spans("<!foo bar><?php 'a>b' ?><![foo><![if a]><style>#a{top:0}</style>"), ["<!foo bar>", "<?php 'a>", "<![foo>", "<![if a]>"])
+        self.assertEqual(els("<!DOCTYPE html PUBLIC '>'><style>#a{top:0}</style>"), [("style", 26, 33, 42, 50)])
+        # set_cdata_mode and clear_cdata_mode: content runs to the element's own end tag
+        self.assertEqual(served_css.scripts("<script>x='</style>';</script><style>#a{top:0}</style>"), ["x='</style>';"])
+        # the unreached methods, by a spy: html.parser handles `<![` and `<!` itself on this release, so neither is called
+        class Spy(served_css._Elements):
+            def parse_marked_section(self, *a, **k):
+                raise RuntimeError("parse_marked_section reached")
+            def parse_declaration(self, *a, **k):
+                raise RuntimeError("parse_declaration reached")
+        for page in ("<![if a]><style>#a{top:0}</style><![endif]>", "<![foo><style>#a{top:0}</style>", "<!foo><style>#a{top:0}</style>", "<!DOCTYPE html><style>#a{top:0}</style>"):
+            self.assertEqual([e.kind for e in Spy(page).elements], ["style"], page)
+        with self.assertRaises(AssertionError):   # the CDATA refusal, not the spy
+            Spy("<![CDATA[x]]>")
+        # getpos and updatepos: offsets on a CRLF page with a multi-line start tag and a multi-line comment
+        page = "<!--\r\n a\r\n--><link\r\n rel='style\r\nsheet'\r\n href=x>\r\n<style\r\n>\r\n#a{top:0}</style>"
+        self.assertEqual(spans(page), ["<!--\r\n a\r\n-->"])
+        self.assertEqual([(e.kind, e.start, page[e.content_start:e.content_end]) for e in served_css.elements(page)],
+                         [("link", page.index("<link"), ""), ("style", page.index("<style"), "\r\n#a{top:0}")])
+        # close: an unterminated `<!--`, `<?`, `<!` or `<![` is a comment span to the end of the page and an unterminated DOCTYPE a DOCTYPE
+        # to the end; an unterminated start tag or end tag emits NOTHING, no element, no span and no text (the close of the author's pass 9:
+        # the row had said text). The events are captured on the reader itself, so what the tokenizer hands it at the end is what is pinned
+        class Events(served_css._Elements):
+            def __init__(self, html):
+                self.seen = []
+                super().__init__(html)
+            def handle_data(self, data):
+                self.seen.append(("data", data))
+                super().handle_data(data)
+            def handle_decl(self, decl):
+                self.seen.append(("decl", decl))
+                super().handle_decl(decl)
+            def handle_starttag(self, tag, attrs):
+                self.seen.append(("start", tag))
+                super().handle_starttag(tag, attrs)
+        self.assertEqual([spans(p) for p in ("<link rel=stylesheet href=x><!-- x <style>#a{top:0}</style>", "x<?y", "x<!", "<![if a]")],
+                         [["<!-- x <style>#a{top:0}</style>"], ["<?y"], ["<!"], ["<![if a]"]])
+        self.assertEqual(([e.kind for e in Events("<link rel=stylesheet href=x><!-- x <style>#a{top:0}</style>").elements], Events("<!DOCTYPE html").seen),
+                         (["link"], [("decl", "DOCTYPE html")]))
+        for p in ("<div", "<div a='x", "</div", "<link rel=stylesheet href=x><div"):
+            r = Events(p)
+            self.assertEqual(([e.kind for e in r.elements], r.comments, [ev for ev in r.seen if ev[0] != "start" or ev[1] != "link"]),
+                             (["link"] if p.startswith("<link") else [], [], []), "an unterminated tag emits nothing at the end of the page: %r" % (p,))
+        self.assertEqual(Events("x<div").seen, [("data", "x")], "the text before the unterminated tag is all the tokenizer emits")
+
+    def test_the_viewport_meta_is_read_from_the_element(self):
+        # the author's pass 9 (2026-09-20): meta elements join the layer (D in the maintainer's round 5 ruling: the one regex over raw page text
+        # this change had added); the reader compares the name as written, ASCII-folded, and refuses zero or two matches
+        page = "<!-- <meta name=viewport content='x'> --><META Name=Viewport content=\"a,b\"><meta name=other content=c>"
+        self.assertEqual(served_css.meta_content(page, "viewport"), "a,b")
+        self.assertEqual([(e.kind, served_css.attr(e, "name")) for e in served_css.elements(page)], [("meta", "Viewport"), ("meta", "other")])
+        for page in ("<meta name=other content=c>", "<meta name=viewport content=a><meta name=viewport content=b>", "<meta name=' viewport ' content=a>"):
+            with self.assertRaises(AssertionError, msg=page):
+                served_css.meta_content(page, "viewport")
+        self.assertIsNone(served_css.meta_content("<meta name=viewport>", "viewport"))
+
+    def test_every_attribute_compare_follows_the_html_rule_for_that_attribute(self):
+        # the author's pass 9 (2026-09-20), the maintainer's round 5 ruling asked once, of every road: the style type refusal had stripped the
+        # value before comparing where HTML compares the attribute as written, and the census this test is asks the same of EVERY
+        # attribute the reader compares. The population is every compare of an attr() value in tests/served_css.py (type, media,
+        # rel; the viewport meta's name, read through the same layer) plus the tokenizer's tag and attribute names, enumerated in
+        # the module docstring with the HTML rule beside each; one row per attribute per rule (whitespace: stripped or not, split or
+        # not; case: ASCII-folded, never Unicode-folded). A compare added to the module joins that paragraph and this test.
+        rules = lambda page: [(r.selector, r.at) for r in served_css.rules(page)]
+        ats = lambda page: [r.at for r in served_css.rules(page)]
+        # style type, whitespace: compared as written (HTML's update-a-style-block step returns for a value that is neither empty
+        # nor the match): leading, trailing or inner ASCII whitespace refuses, and so does a tab
+        for t in ("' text/css'", "'text/css '", "'\ttext/css'", "'text/ css'"):
+            with self.assertRaises(AssertionError, msg=t) as cm:
+                served_css.rules("<style type=%s>#a{top:0}</style>" % t)
+            self.assertIn("is not CSS", str(cm.exception), t)
+        # style type, case: an ASCII case-insensitive match; a letter outside ASCII is another character, however it folds
+        self.assertEqual(rules("<style type=Text/CSS>#a{top:0}</style>"), [("#a", ())])
+        with self.assertRaises(AssertionError):
+            served_css.rules("<style type=\uff54ext/css>#a{top:0}</style>")   # a fullwidth t
+        # style media, whitespace: a media query list, its surrounding ASCII whitespace consumed by CSS Syntax (space, tab, newline,
+        # form feed, carriage return), so these condition nothing; a no-break space is part of a CSS ident, so it is kept and the
+        # element is conditioned (its prelude is not the mobile block's)
+        for media in ("' all '", "'\tscreen\n'", "'\f\rall'"):
+            self.assertEqual(ats("<style media=%s>#a{top:0}</style>" % media), [()], media)
+        self.assertEqual(ats("<style media='\xa0all'>#a{top:0}</style>"), [("@media \xa0all",)])
+        self.assertEqual(ats("<style media='screen\tand\n(x)'>#a{top:0}</style>"), [("@media screen and (x)",)], "inner ASCII whitespace runs collapse in the prelude")
+        # style media, case: media types match ASCII case-insensitively
+        self.assertEqual(ats("<style media=SCREEN>#a{top:0}</style>"), [()])
+        self.assertEqual(ats("<style media=\u017fcreen>#a{top:0}</style>"), [("@media \u017fcreen",)], "a long s is not an s to an ASCII fold")
+        # link rel, whitespace: a set of space-separated tokens split on ASCII whitespace; a no-break space joins two words into one
+        # token, which is no keyword, so the element loads no sheet in HTML and refuses nothing here (the Unicode split had parted
+        # them and refused a sheet no engine loads)
+        self.assertEqual(len(served_css.linked_sheets("<link rel='preload\tstylesheet\n' href=x.css>")), 1)
+        self.assertEqual(served_css.linked_sheets("<link rel='preload\xa0stylesheet' href=x.css>"), [])
+        # link rel, case: each token ASCII case-insensitive
+        self.assertEqual(len(served_css.linked_sheets("<link rel=STYLESHEET href=x.css>")), 1)
+        self.assertEqual(served_css.linked_sheets("<link rel=\u017ftylesheet href=x.css>"), [])
+        # a duplicated attribute: HTML keeps the first and drops the later one, on any attribute
+        with self.assertRaises(AssertionError):
+            served_css.rules("<style type=text/plain type=text/css>#a{top:0}</style>")
+        self.assertEqual(rules("<style type=text/css type=text/plain>#a{top:0}</style>"), [("#a", ())])
+        self.assertEqual(ats("<style media=print media=all>#a{top:0}</style>"), [("@media print",)])
+        # tag and attribute names: HTML lower-cases them over ASCII and the tokenizer over Unicode; the two part on a letter outside
+        # ASCII whose lowercase is inside it (the Kelvin sign, which the tokenizer reads as k, so <lin\u212a> would be a link element
+        # to it and not to HTML), and the reader refuses a name outside ASCII rather than take the fold, in a start tag, a
+        # self-closing tag and an end tag; ASCII upper case folds as HTML folds it
+        for page in ("<lin\u212a rel=stylesheet href=x.css>", "<style \u212aind=x>#a{top:0}</style>", "<lin\u212a rel=stylesheet/>",
+                     "<div>x</di\u00dc>", "<div \u00dc=1>"):
+            with self.assertRaises(AssertionError, msg=page) as cm:
+                served_css.elements(page)
+            self.assertIn("outside ASCII", str(cm.exception), page)
+        self.assertEqual(len(served_css.linked_sheets("<LINK REL=StyleSheet HREF=x.css>")), 1)
+        self.assertEqual(rules("<STYLE TYPE=text/css MEDIA=all>#a{top:0}</STYLE>"), [("#a", ())])
+        # a value outside ASCII is a value, not a name: read as written
+        el = served_css.elements("<link title='\u00dc>x' rel=stylesheet href=x.css>")[0]
+        self.assertEqual((el.kind, served_css.attr(el, "title")), ("link", "\u00dc>x"))
+        # attribute VALUES (the fixer pass of the author's pass 9): the tokenizer decodes character references by html.unescape's text
+        # rule; HTML's attribute rule keeps a legacy named reference without its `;` as written when `=` or an ASCII alphanumeric
+        # follows the name, and keeps a control or noncharacter code point a numeric reference names where html.unescape drops it.
+        # Both engines measured: a&amp=b, &ampx, &notit;x, &AMP=b, &amp1 and a&#x0b;b stay literal or whole there (the reader had read
+        # a&=b, &x, \xacit;x, &=b, &1 and ab); &notin;x, &amp;x, &amp x, &a=b, a&#44;b, &amp-, &Amp;x, &amp and &lt;b&gt; read the same in
+        # both. The divergent shapes refuse, on a meta's content and on a link's rel; the agreeing shapes read the tokenizer's value; a
+        # reference on an element the reader does not track is not judged (no value of it is read)
+        meta = lambda page: served_css.meta_content(page, "viewport")
+        for v in ("a&amp=b", "&ampx", "&notit;x", "&AMP=b", "&amp1", "a&#x0b;b", "&#1;"):
+            with self.assertRaises(AssertionError, msg=v) as cm:
+                meta("<meta name=viewport content='%s'>" % v)
+            self.assertIn("character reference", str(cm.exception), v)
+        with self.assertRaises(AssertionError) as cm:
+            served_css.linked_sheets("<link rel='stylesheet &ampx' href=x>")
+        self.assertIn("character reference", str(cm.exception))
+        for v, read in (("&notin;x", "\u2209x"), ("&amp;x", "&x"), ("&amp x", "& x"), ("&a=b", "&a=b"), ("a&#44;b", "a,b"), ("&amp-", "&-"), ("&Amp;x", "&Amp;x"),
+                        ("&amp", "&"), ("x&", "x&"), ("&lt;b&gt;", "<b>"), ("&#0;", "\ufffd")):
+            self.assertEqual(meta("<meta name=viewport content='%s'>" % v), read, v)
+        self.assertEqual(rules("<div title='a&amp=b'></div><style>#a{top:0}</style>"), [("#a", ())])
+
+    def test_a_statement_at_rule_is_consumed_and_the_rule_after_it_is_read(self):
+        # a statement at-rule had accumulated into the next rule's prelude, which then began with @ and was dropped with its
+        # declarations as a nested at-rule, silently (the author's pass 6, 2026-09-20: the case had used @import, which refuses now)
+        sheet = '<style>@charset "utf-8";#planted{position:fixed;height:var(--app-h)}#q{color:red}</style>'
+        self.assertEqual([r.selector for r in served_css.rules(sheet)], ["#planted", "#q"])
+        sheet = "<style>#a{top:0}@layer base;#planted{position:fixed;height:var(--app-h)}</style>"
+        self.assertEqual([r.selector for r in served_css.rules(sheet)], ["#a", "#planted"])
+        with self.assertRaises(AssertionError):   # a ; that ends no statement at-rule is refused, not folded
+            served_css.rules("<style>#a{top:0};#b{top:0}</style>")
+
+    def test_css_the_parser_cannot_read_refuses_the_way_an_unconsumed_style_tag_does(self):
+        # the author's pass 6 (2026-09-20): the parse refused an unconsumed <style opening and passed a <link rel=stylesheet> and an
+        # @import in silence, though the sheet either names is outside every rule it returns; the census then judged a
+        # population an external file could add to or re-top unseen. Both refuse now, unless the caller says the page links
+        # its stylesheets by design and wants the style elements alone
+        with self.assertRaises(AssertionError) as cm:
+            served_css.rules("<link rel=stylesheet href=x.css><style>#a{top:0}</style>")
+        self.assertIn("links 1 external stylesheet", str(cm.exception))
+        with self.assertRaises(AssertionError):
+            served_css.rules("<link href=x.css rel='stylesheet'><style>#a{top:0}</style>")
+        with self.assertRaises(AssertionError) as cm:
+            served_css.rules("<style>@import url(x.css);#a{top:0}</style>")
+        self.assertIn("@import", str(cm.exception))
+        with self.assertRaises(AssertionError):
+            served_css.rules('<style>@IMPORT "x.css";#a{top:0}</style>')
+        self.assertEqual([r.selector for r in served_css.rules("<link rel=stylesheet href=x.css><style>#a{top:0}</style>", linked=True)], ["#a"])
+        # a link inside a script string or an HTML comment is not a link element
+        self.assertEqual([r.selector for r in served_css.rules('<script>x="<link rel=stylesheet>";</script><!-- <link rel=stylesheet href=y.css> --><style>#a{top:0}</style>')], ["#a"])
+        # the author's pass 7 (2026-09-20): rel is a SET of tokens and the keyword applies wherever it sits; the token after another had
+        # passed in silence while the same sheet under rel=stylesheet refused. linked_sheets is the predicate both the parse
+        # and the census's pin read
+        for rel in ("'preload stylesheet'", '"stylesheet preload"', "'alternate stylesheet'", "StyleSheet", "'a stylesheet b'"):
+            # the author's pass 8 (2026-09-20): with the rel after an attribute whose quoted value holds a `>` too, the shape the regex extent
+            # (`<link\b[^>]*\brel`) could not cross, so such a link passed in silence while the same rel first refused
+            for page in ("<link rel=%s href=x.css><style>#a{top:0}</style>" % rel, "<link title='a>b' href=x.css rel=%s><style>#a{top:0}</style>" % rel):
+                with self.assertRaises(AssertionError, msg=page) as cm:
+                    served_css.rules(page)
+                self.assertIn("links 1 external stylesheet", str(cm.exception), page)
+                self.assertEqual(len(served_css.linked_sheets(page)), 1, page)
+        for rel in ("'preload'", '"stylesheets"', "'my-stylesheet'", "icon"):   # no stylesheet token in the set
+            page = "<link rel=%s href=x.css><style>#a{top:0}</style>" % rel
+            self.assertEqual([r.selector for r in served_css.rules(page)], ["#a"], rel)
+            self.assertEqual(served_css.linked_sheets(page), [], rel)
+        # the author's pass 7 (2026-09-20): a statement at-rule ends at the end of the element as well as at a `;` (CSS Syntax), so a
+        # style element that is one `@import` with no semicolon loads the sheet in every engine; the parse had read it as an
+        # empty element and refused nothing, and `#a{top:0}@import url(x.css)` returned the #a rule alone
+        for sheet in ("<style>@import url(x.css)</style>", "<style>@import 'x.css'</style>", "<style>#a{top:0}@import url(x.css)</style>", "<style>@import url(x.css)\n</style>"):
+            with self.assertRaises(AssertionError, msg=sheet) as cm:
+                served_css.rules(sheet)
+            self.assertIn("@import", str(cm.exception), sheet)
+        self.assertEqual(served_css.rules("<style>@charset 'utf-8'</style>"), [], "a trailing statement at-rule that is no import is consumed")
+        self.assertEqual([r.selector for r in served_css.rules("<style>#a{top:0}@layer base</style>")], ["#a"])
+        with self.assertRaises(AssertionError):   # trailing text that is no at-rule is a parse the instrument cannot account for
+            served_css.rules("<style>#a{top:0}#b</style>")
+
+    def test_the_element_layer_reads_tags_and_attributes_as_the_tokenizer_does(self):
+        # the author's pass 8 (2026-09-20): the element and attribute layer is the standard library's HTML tokenizer (html.parser), not a set
+        # of regular expressions over the markup, after the same silent-pass shape closed three times in this module: a linked
+        # sheet passed unread (the author's pass 6), a `rel="preload stylesheet"` passed a start-anchored token read (the author's pass 7), and a `>`
+        # inside a quoted attribute value before rel ended the regex's element early while a `<style media=print>` was read as
+        # unconditional CSS (the author's pass 8). The three are this layer's cases; each was green under the reading it replaces.
+        # (1) the linked sheet, whichever way the tag is written
+        for page in ("<link rel=stylesheet href=x.css>", "<link rel=stylesheet href=x.css/>", "<LINK REL=StyleSheet href=x.css>"):
+            self.assertEqual(len(served_css.linked_sheets(page)), 1, page)
+        # (2) rel is a set of tokens the tokenizer hands over unquoted, the keyword anywhere in it
+        el = served_css.elements("<link title='a>b' href=x.css rel='preload stylesheet'>")[0]
+        self.assertEqual((el.kind, served_css.attr(el, "title"), served_css.attr(el, "href"), sorted(served_css.rel_tokens(el))), ("link", "a>b", "x.css", ["preload", "stylesheet"]))
+        # (3) a `>` inside a quoted value does not end the tag (an element's extent is the tokenizer's), for a link and for a
+        # script's body; a media attribute conditions every rule its style element holds, folded into `at` as the outermost
+        # prelude, and `all`, `screen` and an empty value condition nothing (the census compares `at` by equality)
+        self.assertEqual(len(served_css.linked_sheets('<link title="a>b" rel=stylesheet href=x.css>')), 1)
+        self.assertEqual(served_css.linked_sheets('<link title="a>b" rel=icon href=x.css>'), [])
+        self.assertEqual(served_css.scripts('<script data-x="a>b">var a=1;</script>'), ["var a=1;"])
+        self.assertEqual([r.at for r in served_css.rules("<style media=print>#a{top:0}</style>")], [("@media print",)])
+        self.assertEqual([r.at for r in served_css.rules("<style media='screen and (max-width: 600px)'>@media (x){#a{top:0}}#b{top:0}</style>")],
+                         [("@media screen and (max-width: 600px)", "@media (x)"), ("@media screen and (max-width: 600px)",)])
+        for media in ("all", "screen", "''", '""', "ALL", " all "):
+            self.assertEqual([r.at for r in served_css.rules("<style media=%s>#a{top:0}</style>" % media)], [()], media)
+        self.assertEqual([r.at for r in served_css.rules("<style>#a{top:0}</style>")], [()])
+        # the layer's own refusals: an element the page never closes (the count guard it replaces refused the same), and a
+        # self-closing script or style tag, which HTML reads as a start tag
+        with self.assertRaises(AssertionError) as cm:
+            served_css.rules("<style>#a{top:0}")
+        self.assertIn("never closes", str(cm.exception))
+        with self.assertRaises(AssertionError):
+            served_css.scripts("<script/>var a=1;</script>")
+        # offsets are absolute across lines (getpos is line and column): the spans index the page
+        page = "line1\n<style>\n#a{top:0}\n</style>\n<script>\nvar a;\n</script>"
+        self.assertEqual(served_css.element_spans(page), [(13, 24, "style"), (41, 49, "script")])
+        self.assertEqual([page[s:e] for s, e, _ in served_css.element_spans(page)], ["\n#a{top:0}\n", "\nvar a;\n"])
+
+    def test_surely_refuses_a_selector_that_selects_by_a_state_the_sheet_cannot_show(self):
+        # the author's pass 6 (2026-09-20): surely() had dropped attribute selectors and functional pseudo-classes the way can_match
+        # rightly does, so body:not(.picker-open){top:var(--app-top)} was accepted as the body's origin: a rule that may not
+        # select the member at all. can_match keeps its reading (a MAY predicate)
+        for c in ("body:not(.picker-open)", ":is(#f-chat)", "body[data-x]", "body:where(.a)", "body:nth-child(2)", "[hidden]"):
+            self.assertFalse(served_css.surely(c, {"body"}), c)
+            self.assertTrue(served_css.can_match(c, "body"), c)
+        self.assertTrue(served_css.surely("body", {"body"}) and served_css.surely("*", {"body"}) and served_css.surely("body:hover", {"body", ":hover"}))
+        self.assertFalse(served_css.surely("body:hover", {"body"}))
+
+    def test_position_fixed_is_read_through_a_custom_property_as_the_sizing_is(self):
+        # the author's pass 6 (2026-09-20): is_fixed read the literal keyword while the sizing half of the census resolved var() to a
+        # fixed point, so a box whose position came through a var was never in the population. With the sheet, a bare var()
+        # resolves against every declaration of the name and against its fallback when undeclared
+        rules = served_css.rules("<style>:root{--pos:fixed;--abs:absolute;--via:var(--pos)}#p{position:var(--pos)}#q{position:var(--nope,fixed)}"
+                                 "#r{position:var(--abs)}#s{position:var(--via) !important}#t{position:var(--nope,var(--pos))}#u{position:var(--loop)}:root{--loop:var(--loop)}</style>")
+        by = {r.selector: r for r in rules if r.selector != ":root"}
+        self.assertTrue(served_css.is_fixed(by["#p"], rules))
+        self.assertTrue(served_css.is_fixed(by["#q"], rules), "the fallback text when the name is undeclared")
+        self.assertFalse(served_css.is_fixed(by["#r"], rules))
+        self.assertTrue(served_css.is_fixed(by["#s"], rules), "two levels of indirection, with !important")
+        self.assertTrue(served_css.is_fixed(by["#t"], rules), "a fallback that is itself a var()")
+        self.assertFalse(served_css.is_fixed(by["#u"], rules), "a self-referential name ends")
+        self.assertFalse(served_css.is_fixed(by["#p"]), "with no sheet the keyword alone is read")
+        # a name redeclared per element counts if ANY declaration reads fixed (over-inclusive by design)
+        rules = served_css.rules("<style>#a{--pos:fixed}#b{--pos:static}#c{position:var(--pos)}</style>")
+        self.assertTrue(served_css.is_fixed(rules[2], rules))
+
+    def test_an_alias_a_rule_that_can_select_the_member_redeclares_is_no_alias_for_it(self):
+        # the author's pass 6 (2026-09-20): aliases() read the sheet globally, so --x:var(--app-top) declared on the lift's own origin
+        # rule made top:var(--x) the pan even though the next rule re-declared --x:0 on the same element, and the whole
+        # census stayed green while the lift sat at layout y 0 under the pan
+        sheet = ("<style>@media (x){body.picker-open iframe.lifted{--x:var(--app-top);top:var(--x)}iframe.lifted{--x:0}"
+                 "#f-chat{--y:0}:root{--y:var(--app-top)}}</style>")
+        rules = served_css.rules(sheet)
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top")), ["--app-top", "--x", "--y"], "the sheet-global table")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "iframe.lifted")), ["--app-top", "--y"],
+                         "--x is re-declared by a rule that can select the lift; --y only by #f-chat, which cannot")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "#f-chat")), ["--app-top", "--x"])
+        # the author's pass 7 (2026-09-20): the refusal follows the CHAIN on the member's rules. --y declared on the lift's own rule as a
+        # bare var() of --x, which the same rule re-declares to 0: the engine computes --y on the lift from the lift's own --x,
+        # 0, so top:var(--y) is no origin; the one-pass refusal had kept --y (its value named --x, then still in the set)
+        rules = served_css.rules("<style>:root{--x:var(--app-top)}iframe.lifted{--y:var(--x);--x:0;top:var(--y)}</style>")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "iframe.lifted")), ["--app-top"], "--y follows --x out of the table")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top")), ["--app-top", "--x", "--y"], "the sheet-global table still lists both")
+        # ...and stays where the chain's link is declared on :root: the root computes --y as the pan and the lift inherits it,
+        # whatever the lift's own --x says
+        rules = served_css.rules("<style>:root{--x:var(--app-top);--y:var(--x)}iframe.lifted{--x:0;top:var(--y)}</style>")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "iframe.lifted")), ["--app-top", "--y"])
+        # a longer chain on the member's rules empties the same way
+        rules = served_css.rules("<style>:root{--x:var(--app-top)}iframe.lifted{--z:var(--y);--y:var(--x);--x:0;top:var(--z)}</style>")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "iframe.lifted")), ["--app-top"])
+
+    def test_can_match_reads_only_the_selectors_that_tell_elements_apart(self):
+        # `*`, an attribute selector and a functional pseudo-class had been read as selectors the other compound must also
+        # carry, so `*{top:0!important}` was no competitor for the lift's origin
+        for other in ("*", "iframe[id]", "iframe:not(.foo)", "iframe:nth-child(2)", "[hidden]", ":is(.a,.b)"):
+            self.assertTrue(served_css.can_match(other, "iframe.lifted"), other)
+            self.assertTrue(served_css.can_match("iframe.lifted", other), other)
+        self.assertEqual(served_css.restricting("iframe:not(.foo)[id]"), {"iframe"})
+        self.assertEqual(served_css.restricting("*"), set())
+        # what a static reading still cannot unite: a different id, a pseudo-element's own box, a keyframe step
+        self.assertFalse(served_css.can_match("#f-chat", "iframe.lifted"))
+        self.assertFalse(served_css.can_match("iframe::before", "iframe.lifted"))
+        self.assertFalse(served_css.can_match("0%", "iframe"))
+        self.assertTrue(served_css.can_match("iframe.lifted::before", "iframe::before"))
+        # the element join's two readings: surely (an origin's rule) and the canonical name
+        known = served_css.restricting("iframe#f-x") | served_css.restricting("#f-x")
+        self.assertEqual(served_css.compound(known), "iframe#f-x")
+        self.assertEqual(served_css.compound({".ovl", "iframe"}), "iframe.ovl")
+        self.assertEqual(served_css.compound({"#planted", ".big"}), "#planted.big")
+        self.assertEqual(served_css.compound(set()), "*")
+        self.assertTrue(served_css.surely("#f-x", known) and served_css.surely("iframe", known) and served_css.surely("*", known))
+        self.assertFalse(served_css.surely("iframe#f-x.big", known))
+        self.assertFalse(served_css.surely("0%", known))
+
+    def test_keywords_functions_and_important_are_read_as_css_reads_them(self):
+        # case-insensitive keywords and function names; a custom property's NAME stays case-sensitive
+        self.assertTrue(served_css.is_fixed(served_css.Rule(0, (), "#p", "", (("position", "FIXED"),))))
+        self.assertTrue(served_css.is_fixed(served_css.Rule(0, (), "#p", "", (("position", "fixed !important"),))))
+        self.assertFalse(served_css.is_fixed(served_css.Rule(0, (), "#p", "", (("position", "absolute"),))))
+        self.assertEqual(served_css.var_names("VAR(--app-h)"), {"--app-h"})
+        self.assertEqual(served_css.var_names("var( --App-h )"), {"--App-h"})
+        self.assertEqual(served_css.declarations("--App-h:1px;Position:FIXED"), [("--App-h", "1px"), ("position", "FIXED")])
+        for v in ("0!important", "0 ! important", "0!IMPORTANT", "var(--x) !important"):
+            self.assertTrue(served_css.important(v), v)
+        self.assertFalse(served_css.important("0"))
+        self.assertFalse(served_css.important("important"))
+
+    def test_a_bare_var_is_the_value_and_a_mention_is_not(self):
+        # the origin must BE the pan: top:calc(var(--app-top) - 40px) names it and sits 40 px off it
+        for v in ("var(--app-top,0px)", "var(--app-top)", " var( --app-top , calc(1px + 2px) ) ", "VAR(--app-top)!important"):
+            self.assertEqual(served_css.bare_var(v), "--app-top", v)
+        for v in ("calc(var(--app-top,0px) - 40px)", "var(--app-top,0px) - 40px", "var(--a,0px) + var(--b)", "var(--a) var(--b)", "0px"):
+            self.assertIsNone(served_css.bare_var(v), v)
+        rules = served_css.rules("<style>:root{--x:var(--app-top)}:root{--y:calc(var(--x) - 4px)}:root{--z:var(--y,1px)}</style>")
+        self.assertEqual(sorted(served_css.closure(rules, "--app-top")), ["--app-top", "--x", "--y", "--z"], "every mention, for the consumers tripwire")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top")), ["--app-top", "--x"], "the names whose value IS the pan, for the origin")
+        self.assertEqual(sorted(served_css.aliases(rules, "--app-top", "body")), ["--app-top", "--x"], "no rule re-declares --x: the member form agrees")
 
 
 class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
@@ -77,13 +780,98 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         self.js = km._LANDING_MOBILE_JS
 
     def test_it_drives_app_h_off_the_live_visual_viewport(self):
-        # pinch-aware since 2026-08-19: desktop (fine pointer) reads innerHeight outright — pinch-immune
-        # in every browser, no scale arithmetic (desktop Firefox does not reliably report vv.scale during
-        # a pinch); the visual viewport drives the fit only on coarse-pointer devices, where the soft
-        # keyboards and collapsing toolbars it exists for live, scale-guarded against mobile pinches.
+        # pinch-aware since 2026-08-19: the fine-pointer road reads innerHeight on upstream's line (its premise, "pinch-immune in
+        # every browser", and the fork's contrary engine model both live in the fit() comment, the one home, with their evidence
+        # status), and the fork line after it re-reads the layout viewport as documentElement.clientHeight before the --app-h
+        # write (the author's pass 8, 2026-09-20; a no-op wherever innerHeight was right: standards mode is pinned by execution, the served legs'
+        # pan and pinch figures in tests/test_keyboard_gap_served.py flipping to 0 in quirks mode, and the page is overflow:hidden);
+        # the visual viewport drives the fit only on coarse-pointer devices, where the soft keyboards and collapsing toolbars it
+        # exists for live, scale-guarded against mobile pinches. Behaviour: test_kernel_mobile.MobileFitExecutes drives that road
+        # with innerHeight parted from clientHeight.
         self.assertIn("var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;", self.js)
         self.assertIn("var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));", self.js)
+        self.assertIn("\nvar L=document.documentElement.clientHeight||window.innerHeight;\nif(!coarse||!vv)h=L;\nif(h)document.documentElement.style.setProperty('--app-h',h+'px');", self.js,
+                      "the layout viewport read once for every road (the author's pass 9, 2026-09-20), and the fork's re-read of it on the fine-pointer road, right before the --app-h write")
         self.assertIn("setProperty('--app-h',h+'px')", self.js)
+        # D1 (2026-09-19): the visual viewport's PAN rides beside the height. iOS reveals a focused input by moving the
+        # visual viewport down the layout viewport (offsetTop > 0) with no document scroll to undo, so a body sized to
+        # vv.height at layout y 0 left the bottom offsetTop pixels of the screen bare under the composer. fit() publishes
+        # the pan as --app-top under the same coarse guard (a fine pointer writes 0px whatever the visual viewport says; the
+        # consumer is gated on the layout query, a different population, see the fit() comment). Under a pinch (pinched: a scale at or
+        # above L/(L - 0.5), the smallest zoom whose own pan can round to a pixel, L the layout viewport both roads take the cut at,
+        # derived in the kernel beside the helper; the author's pass 8, 2026-09-20, it had been the literal 1.01; the author's pass 9, the coarse road had
+        # taken it at its own h, the band's height with the keyboard up) the measured road publishes the part of the pan a pure
+        # zoom cannot explain, the measured pixels less the zoom's share L(1 - 1/s) in pixels (kbPx; the author's pass 9: it had stood down at
+        # the cut, and with no hold standing that published 0, the band under a light zoom), and where nothing is left the last pan
+        # holds, a zoom alone pans too and never re-lays the shell, CLAMPED AT USE to the layout viewport less the height the same
+        # run publishes, so a keyboard dismissed while zoomed cannot leave the body hanging below the viewport (the author's pass 2,
+        # 2026-09-19); the layout viewport is document.documentElement.clientHeight, the same height in both engine models
+        # (the author's pass 7, 2026-09-20: it had read window.innerHeight, which WebKit shrinks to the visual viewport's height under a
+        # pinch under the engine model the fit() comment states with its evidence status, the one home (this comment points
+        # there and restates nothing), so there the difference was below 0 on every zoomed
+        # run and the road published 0px whatever the hold; the harness drives both models); the clamp bounds what is published and never writes back into the hold (the author's pass 4, 2026-09-20: it had,
+        # so the hold decayed to 0 the first time the clamp bound and a keyboard raised again under the zoom reopened the
+        # band). Every road that WRITES the hold writes the value it publishes: the measured road its measurement less the zoom's
+        # share (the measurement itself below the cut), the 0px road a zero, and that only in a true no-pan state, one the
+        # measured road would store as 0 (no visual viewport, or one under the cut, taken at the layout viewport on both roads,
+        # whose offsetTop rounds to no positive pixel, panPx, the one reading the measured road stores there, so a sub-pixel
+        # pan is the same answer on both roads, the author's pass 8, 2026-09-20; the author's pass 6, 2026-09-20: written on every fine run, the zero had reopened the band after a pointer flip under a keyboard or a
+        # zoom); the clamp road publishes a bound of the hold and stores nothing, so --app-top can sit below the hold until a
+        # road WRITES it, the measured road or the 0px road in a no-pan state (the author's pass 8, 2026-09-20: the 0px road runs without
+        # writing under a standing pan or zoom; the author's pass 6: this comment had said the hold is the last value published on every road, which
+        # the clamp road contradicts whenever it binds, and the harness asserts that state). Both coarse branches sit under
+        # the height's own validity guard (h truthy, the `if(h)` of the --app-h write above them): a refused height report
+        # publishes no pan either, so the prior pan stands beside the prior height (the author's pass 4, 2026-09-20, as the maintainer's round 1
+        # confirmed it); the 0px road has no height to belong to and publishes unconditionally. Behaviour:
+        # test_kernel_mobile.MobileFitExecutes.
+        self.assertIn("\nvar lastPan=0;\n", self.js)
+        self.assertIn("\nfunction panPx(vv){return Math.round(vv.offsetTop||0);}\n", self.js, "the one reading of the pan, declared before fit()")
+        self.assertIn("\nfunction zoomPx(vv,L){return Math.max(0,Math.round(L*(1-1/(vv.scale||1))));}\n", self.js,
+                      "a pure zoom's share of the reading in pixels, over the layout viewport L (the author's pass 9, 2026-09-20), never negative below scale 1 (the fixer pass), declared before fit()")
+        self.assertIn("\nfunction pinched(vv,L){return !(L>0&&(vv.scale||1)<L/(L-0.5));}\n", self.js,
+                      "the pinch cut, derived from the measured road's rounding (the author's pass 8, 2026-09-20), at the layout viewport (the author's pass 9), declared before fit()")
+        self.assertIn("\nfunction kbPx(vv,L){return Math.max(0,panPx(vv)-zoomPx(vv,L));}\nfunction inside(vv,L){return Math.round((vv.offsetTop||0)+(vv.height||0))<=L;}\nfunction fit(){", self.js,
+                      "the pan a pure zoom cannot explain, and the premise its bound rests on, the report's bottom edge to the pixel (the author's pass 9, 2026-09-20; the fixer pass), declared before fit()")
+        self.assertNotIn("1.01", served_css.js_code(self.js), "the cut is derived, not a literal (the code, comments blanked: the derivation's comment names the old literal)")
+        self.assertIn("if(!coarse||!vv){if(!vv||(!pinched(vv,L)&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}", self.js)
+        self.assertNotIn("vv.offsetTop>0", self.js, "the 0px road reads the shared rounding, never the raw offsetTop")
+        self.assertIn("else if(h&&(!pinched(vv,L)||(inside(vv,L)&&kbPx(vv,L)>0)))document.documentElement.style.setProperty('--app-top',(lastPan=kbPx(vv,L))+'px');\n"
+                      "else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,L-h))+'px');", self.js)
+        self.assertNotIn("pinched(vv,h)", served_css.js_code(self.js), "both roads take the cut at the layout viewport L, never at the coarse road's h (the author's pass 9, 2026-09-20)")
+        self.assertNotIn("innerHeight-h", self.js,
+                         "the clamp reads the layout viewport (clientHeight), not innerHeight, which the engine model in the fit() comment (the one home, with its evidence status) has WebKit shrink under a pinch")
+        self.assertNotIn("lastPan=Math.min", self.js, "the clamp is at use: nothing writes its result back into the hold")
+        # the write sits inside fit(), after the --app-h write and before the stray-scroll reset, so one frame publishes both
+        self.assertLess(self.js.index("setProperty('--app-h',h+'px')"), self.js.index("setProperty('--app-top'"))
+        self.assertLess(self.js.index("setProperty('--app-top'"), self.js.index("if(window.scrollY||document.documentElement.scrollTop)window.scrollTo(0,0);"))
+
+    def test_the_bars_reservation_follows_the_bars_own_box(self):
+        # D1 (2026-09-19): barfit is rebound rather than edited because fit() calls it by name; upstream's declaration stands,
+        # saved as barfitVV, and upstream's kbOpen stands untouched beside it. The strip is the part of the bar's BOX inside
+        # the band the same run PUBLISHED (--app-top to --app-top + --app-h, read back from the style object, so a pinch,
+        # whose pan holds and whose height is upstream's scale arithmetic, is judged against the shell it laid out): the
+        # overlap of the two intervals, max(0, min(bar.bottom, bandBottom) - max(bar.top, bandTop)): 0 for a bar starting at
+        # or below the band's bottom edge or ending at or above its top edge, the whole height wholly inside, the overlap
+        # between (the author's pass 4, 2026-09-20: the reservation had been all-or-nothing on a visibility verdict, a bar-tall strip
+        # over a bar showing a few pixels; and the pinch term had handed the verdict back to upstream's height difference,
+        # which collapsed the strip at the pinch cut (then the literal 1.01) under a deep pan; the author's pass 6, 2026-09-20: the first proportional
+        # form read the bottom edge only, so a band whose top sat below the bar's top reserved pixels above the band, the
+        # whole bar over a bar with no pixel inside it). Upstream's barfit stands only where the box or the band cannot be
+        # read (no bar, no visualViewport, no getPropertyValue, a run before both variables are published). Behaviour:
+        # test_kernel_mobile.MobileFitExecutes (the sweep across the pan range, the pinch over the deep pan).
+        self.assertIn("function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}", self.js)
+        self.assertIn("function barfit(){try{var bar=document.getElementById('mtabs');if(!bar)return;\n"
+                      "document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px');}catch(e){}}\n", self.js)
+        self.assertIn("var barfitVV=barfit;\nbarfit=function(){try{var vv=window.visualViewport,bar=document.getElementById('mtabs'),st=document.documentElement.style;\n"
+                      "if(!vv||!bar||typeof bar.getBoundingClientRect!=='function'||typeof st.getPropertyValue!=='function'){barfitVV();return;}\n"
+                      "var top=parseFloat(st.getPropertyValue('--app-top')),h=parseFloat(st.getPropertyValue('--app-h'));\n"
+                      "if(!(top>=0)||!(h>0)){barfitVV();return;}\n"
+                      "var r=bar.getBoundingClientRect().top;st.setProperty('--mtabs-h',Math.max(0,Math.min(r+(bar.offsetHeight||0),top+h)-Math.max(r,top))+'px');}catch(e){}};", self.js)
+        self.assertNotIn("kbOpen=function", self.js, "kbOpen is not rebound: the strip is barfit's own reading now")
+        self.assertLess(self.js.index("barfit=function(){"), self.js.index("fit();window.addEventListener('resize',refit)"),
+                        "rebound before the boot fit, so the first paint already reads the proportional strip")
+        # the band is published before barfit reads it: both writes precede the barfit() call inside fit()
+        self.assertLess(self.js.index("setProperty('--app-top'"), self.js.index("barfit();}catch(e){}}"))
 
     def test_it_refits_on_the_events_ios_actually_changes_the_height_on(self):
         # iOS collapses its toolbars AS YOU SCROLL, with no window resize; the visual viewport's own

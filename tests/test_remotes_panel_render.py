@@ -17,6 +17,7 @@ import json
 import time
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from romp_load import load_source
@@ -28,6 +29,8 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 km = load_source("romp_kernel_rpanel", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  a served text with its comments blanked (loads no romp code)
 
 TUNNELS = {
     "tunnels": [{
@@ -471,7 +474,7 @@ class RemotesPanelRender(_PanelHarness, unittest.TestCase):
         self.assertIn("reading how your machines hold each other", out.get("html", ""))
 
     def test_pair_binding_posts_the_trust_remote_route(self):
-        js = km._LANDING_REMOTES_JS
+        js = served_css.js_code(km._LANDING_REMOTES_JS)   # the code, comments blanked: a served comment spells the token too (tests/test_served_pins_read_elements.py)
         self.assertIn("select[data-pt-on]", js)
         self.assertIn("/tunnels/trust-remote", js)
         self.assertIn("/tunnels/pairs", js)

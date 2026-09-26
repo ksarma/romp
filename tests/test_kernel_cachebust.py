@@ -6,9 +6,11 @@ serves HTML no-cache, so a reload always pulls fresh JS. We pin the page-builder
 """
 import os
 from romp_load import load_source
+import sys
 import tempfile
 
-BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
+HERE = os.path.dirname(os.path.realpath(__file__))
+BIN = os.path.join(os.path.dirname(HERE), "bin")
 # Hermetic state BEFORE the loads — they resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
@@ -17,6 +19,8 @@ load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 km = load_source("romp_kernel_cb", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  a served text with its comments blanked (loads no romp code)
 
 
 def test_dist_ver_is_int():
@@ -101,7 +105,8 @@ def test_landing_shows_build_staleness_banner():
     assert "id=rstale" in html
     assert "rstale-reload" in html and "rstale-dismiss" in html
     assert "__LOADEDVER__" not in html, "load-time version must be interpolated, not a placeholder"
-    assert "/version" in html and "location.reload()" in html
+    code = served_css.code(html)   # comments blanked: four served comments spell /version too (tests/test_served_pins_read_elements.py)
+    assert "/version" in code and "location.reload()" in code
     # narrow screens: the message spans the full row and the buttons wrap beneath it (the user
     # 2026-08-13 — the one-row layout read as a cramped, tall left column on a phone)
     assert "@media (max-width:640px){#rstale{flex-wrap:wrap" in html

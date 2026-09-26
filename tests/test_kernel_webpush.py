@@ -79,6 +79,8 @@ jd.STATE = Path(_STATE_TD.name)
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_webpush", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's parsed rules and comment-free code (loads no romp code)
 
 
 def _b64u(b):
@@ -206,7 +208,10 @@ class ServiceWorkerRoute(unittest.TestCase):
         # kernel's routing block rides the notification's data; a live window gets it over
         # postMessage, a cold start gets the kernel's deep link (ServiceWorkerExecutes runs it).
         _, body = _serve_get("/sw.js", headers={"X-Romp-Token": km.TOKEN})
-        js = body.decode()
+        # the worker's CODE, comments blanked (the author's pass 8, 2026-09-20): the worker's own comment spells setAppBadge, so a pin over
+        # the fetched body was satisfiable by it (the pins census reads a fetched route as its getter's text now and names such a
+        # row; a body read through served_css.js_code is not comment-satisfiable by construction)
+        js = served_css.js_code(body.decode())
         self.assertIn("data:(n.data&&typeof n.data==='object')?n.data:{sid:d.sid||''}", js,
                       "the routing block verbatim; an older kernel's flat sid still lands")
         self.assertIn("if(n.tag){opts.tag=n.tag;opts.renotify=!quiet;}", js, "one notification per session, still audible unless it is the quiet card push that yields the buzz")
@@ -1865,7 +1870,7 @@ class LandingRevealPins(unittest.TestCase):
         for what in ("settle('landed',", "settle('superseded',", "settle('dropped',"):
             self.assertIn(what, km._LANDING_REVEAL_JS, what)
         self.assertIn("fetch('/reveal'", html)     # ONE activation path: the kernel aims the focus…
-        self.assertIn("romp:wid", html)            # …at the shell's own per-window id
+        self.assertIn("romp:wid", served_css.code(html))   # …at the shell's own per-window id (the code, comments blanked: a comment spells the key too)
         self.assertIn("romp:'revealCard'", html)   # a card kind also scrolls the feed to the card…
         self.assertIn("m.romp==='ready'&&m.app==='feed'", html)   # …once the feed has its cards
         # the TAP's scripts post no focus straight into the chat iframe any more (the kernel aims it). The split
@@ -1894,8 +1899,7 @@ class LandingRevealPins(unittest.TestCase):
         # pinned absent from the script's code lines and the served shell: any store or replay, any build comparison, any
         # element the script would own, any word for /reveal but the four roads, any timer
         import re
-        code = lambda src: "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("//"))   # the prose may name what went; the code may not
-        js = code(km._LANDING_REVEAL_JS)
+        js = served_css.js_code(km._LANDING_REVEAL_JS)   # the code with its comments blanked: the prose may name what went; the code may not (the fixer pass of the author's pass 9: a lambda had stripped // lines by hand)
         for word in ("caches", "/__romp/", "tapReplay", "tapLanded", "registration.update", "r.update()", "PAGEV", "__ROMP_SWV__",
                      "'store'", "'offer'", "'closed'", "tap-resume", "sw-stale", "sw-update", "tap-offer", "/push/dismissed", "setTimeout",
                      "fingerprint(", "resume(", "pushReveal"):
@@ -1911,10 +1915,14 @@ class LandingRevealPins(unittest.TestCase):
         # comment at the landing site names the conflation, its cause and the decision, so nobody reads the road as an
         # oversight and takes it out
         js = km._LANDING_REVEAL_JS
-        self.assertIn("'vanish'", js)
-        self.assertIn("function displayed()", js)
+        code = served_css.js_code(js)   # the code, comments blanked (a comment spells 'vanish' too)
+        self.assertIn("'vanish'", code)
+        self.assertIn("function displayed()", code)
+        # the words are the COMMENT's, so they are read from the comment spans on purpose (the pins census reads a bare
+        # membership over the constant as a pin a comment can satisfy; this one means the comment)
+        comment = "".join(js[s:e] for s, e in served_css.js_comment_spans(js))
         for word in ("notificationclick", "notificationclose", "swipe", "2026-09-10", "accepted"):
-            self.assertIn(word, js, "the landing site's comment names it: " + word)
+            self.assertIn(word, comment, "the landing site's comment names it: " + word)
         self.assertIn("vanish", km._push_pending.__doc__)
 
     def test_the_boot_flag_follows_the_chat_panes_own_socket(self):
@@ -1933,7 +1941,7 @@ class LandingRevealPins(unittest.TestCase):
     def test_shell_ws_trues_up_the_badge(self):
         html = km._landing()
         self.assertIn("{type:'ready'}", html)      # connect → the kernel answers with the current count
-        self.assertIn("setAppBadge", html)
+        self.assertIn("setAppBadge", served_css.code(html))   # the code, comments blanked: a served comment spells the API too
         self.assertIn("clearAppBadge", html)       # zero clears, never leaves a stale number
 
     def test_the_shell_files_its_own_diag_rows_over_a_socket_that_carries_its_wid(self):
