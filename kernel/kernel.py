@@ -25282,12 +25282,13 @@ def _live_map():
 # of the child ssh procs). ONE ssh per host carries both directions:
 #     -L <local_port>:127.0.0.1:<remote_kernel_port>   this kernel → remote kernel  (dashboard relay)
 #     -R <bus_port>:127.0.0.1:<bus_port>               remote sessions → this bus (postal messaging)
-# The browser reaches a remote kernel via GET /remote/<host>/ws on THIS kernel, which splices the
-# connection onto the -L port byte-for-byte (_remote_ws). It has to be a relay: the forwarded port
+# The browser reaches a remote kernel via GET /remote/<host>/ws on THIS kernel, which relays the
+# connection onto the -L port (_remote_ws): it reads the remote's 101 head and writes the one it
+# rebuilds (_ws_head_allowlist), then splices the frames byte for byte. It has to be a relay: the forwarded port
 # lives on THIS machine's loopback, so when the browser dialed it directly, any dashboard viewed
 # from OFF this machine — the phone, through `tailscale serve` — reached its own loopback instead
 # and every remote host silently vanished, with no disconnected mark (the user 2026-07-30). The
-# kernel still reads nothing (no frame parsing; the remote enforces its own token per connection),
+# kernel parses no frames (the remote enforces its own token per connection),
 # and this registry still just opens the door + reports state. It persists to STATE/remotes.json
 # so attached hosts survive a kernel restart (the supervisor re-spawns their procs).
 

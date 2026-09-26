@@ -5,8 +5,9 @@ The federated dashboard merges hosts IN THE BROWSER: one WebSocket per kernel. T
 used to go straight to 127.0.0.1:<ssh -L forwarded port>, an address that only exists on the
 kernel's own machine — from a phone reading the dashboard through `tailscale serve`, that is the
 phone's own loopback, so every remote host's sessions silently vanished with no disconnected mark
-(2026-07-30). The kernel now relays: GET /remote/<host>/ws splices the browser's socket onto the
-host's forwarded port byte-for-byte, after the normal local auth gate, and rewrites the remote
+(2026-07-30). The kernel now relays: GET /remote/<host>/ws connects the browser's socket to the
+host's forwarded port after the normal local auth gate, writes the 101 head it rebuilds from the
+host's, then splices the frames byte for byte, and rewrites the remote
 kernel's own token into the forwarded query so the per-host trust boundary is unchanged.
 
 These tests run the real Handler against a fake "remote kernel" (a raw loopback socket that speaks
