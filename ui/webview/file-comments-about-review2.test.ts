@@ -500,7 +500,8 @@ test("the option unchecked survives the prune of another id; a status that holds
   const m = await save(w, aside, "Plain.");
   assert.equal("changeIds" in m.args, false);
   assert.match(SRC, /this\.pruneAbout\(\);\s+\/\/ the changes the composer's comment is about/, "applyStatus prunes: the status is the event");
-  assert.equal(SRC.match(/this\.pruneAbout\(\)/g)!.length, 1, "…and nothing else does");
+  assert.equal(SRC.match(/this\.pruneAbout\(\)/g)!.length, 2, "…and so does a refused comment's return to the box, against the status already applied, and nothing else does (a pin on where the code lives; the return's prune is executed by file-comments-save-held-composer.test.ts \"a refused comment about a change waits in its note named by what the change did…\", red when the return prunes nothing)");
+  assert.match(SRC, /this\.composer = h\.c;\n\s*this\.pruneAbout\(\);/, "…the return's prune, in restoreRefused (a pin on where the code lives; its witness is named above)");
 });
 
 // ── a deletion's point at the selection's start ───────────────────────────────────────────────────
