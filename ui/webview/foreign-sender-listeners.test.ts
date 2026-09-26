@@ -517,6 +517,273 @@ test("the binding census reads what it claims: a local, a parameter, an aliased 
   for (const [file, src, why] of refused) assert.match(String(senderBinding(file, src)), why, file + ": " + src);
 });
 
+// ── the census: every addEventListener in ui/ is one the census above can read ──
+//
+// The census above reads a registration spelled addEventListener("message", fn), its event type a string literal. A
+// registration that reaches the method any other way escapes it: through .call or .apply
+// (EventTarget.prototype.addEventListener.call(window, "message", f)), an alias or a bound copy
+// (const add = window.addEventListener.bind(window); add("message", f)), a destructured name, or a call whose event type
+// is not a literal (window.addEventListener(type, f)). tests/test_shell_source_check.py refuses those in kernel.py
+// (_loose_add_tokens); this is the same rule for ui/, read by the TypeScript parser, so a spelling in a comment or inside
+// a longer string is none. Every addEventListener in a ui/ source file (tests excluded) must be one of:
+//   - the method called directly with a string literal for its event type (the census above reads the "message" ones);
+//   - the method called directly with an event type the parser resolves to strings, none of them "message": a const
+//     initialised to a string, in the file or exported so by the ui/ module it is imported from (`export const`); the
+//     const variable of a for...of over a list of strings; or the first parameter, never written, of a callback handed
+//     to such a list's forEach. A list is an array literal of strings, inline or held by a const that is not exported and
+//     whose every other mention is a for...of's list or a forEach's receiver;
+//   - a read whose value is only tested (typeof x.addEventListener === "function", if (x.addEventListener) ...), which
+//     registers nothing;
+//   - the name of a member declared in a type or on an object or class (a stand-in's method), which registers nothing.
+// Anything else fails, with where it is and why.
+
+/** The expression under any parentheses, casts and non-null marks. */
+const unwrap = (n: any): any => {
+  while (ts.isParenthesizedExpression(n) || ts.isAsExpression(n) || ts.isTypeAssertionExpression(n) || ts.isNonNullExpression(n)
+         || (ts.isSatisfiesExpression && ts.isSatisfiesExpression(n))) n = n.expression;
+  return n;
+};
+/** `n` with every parenthesis, cast and non-null mark around it: the node whose parent uses its value. */
+const outer = (n: any): any => {
+  while (n.parent && (ts.isParenthesizedExpression(n.parent) || ts.isAsExpression(n.parent) || ts.isTypeAssertionExpression(n.parent)
+         || ts.isNonNullExpression(n.parent) || (ts.isSatisfiesExpression && ts.isSatisfiesExpression(n.parent)))) n = n.parent;
+  return n;
+};
+const MEMBER_NAMES = [ts.SyntaxKind.MethodSignature, ts.SyntaxKind.PropertySignature, ts.SyntaxKind.MethodDeclaration,
+  ts.SyntaxKind.PropertyDeclaration, ts.SyntaxKind.PropertyAssignment, ts.SyntaxKind.GetAccessor, ts.SyntaxKind.SetAccessor];
+const COMPARISONS = [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken, ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken];
+/** True when the value of `n` is only tested: a typeof's or a !'s operand, a side of a comparison, a condition, or the left
+ *  of an && (which passes on only a falsy value). The right of an &&, and either side of an || or a ??, pass the value on,
+ *  so they are tested only when that whole expression is. */
+function onlyTested(n: any): boolean {
+  const m = outer(n), p = m.parent;
+  if (!p) return false;
+  if (ts.isTypeOfExpression(p)) return true;
+  if (ts.isPrefixUnaryExpression(p) && p.operator === ts.SyntaxKind.ExclamationToken) return true;
+  if ((ts.isIfStatement(p) || ts.isWhileStatement(p) || ts.isDoStatement(p)) && p.expression === m) return true;
+  if ((ts.isForStatement(p) || ts.isConditionalExpression(p)) && p.condition === m) return true;
+  if (ts.isBinaryExpression(p)) {
+    const op = p.operatorToken.kind;
+    if (COMPARISONS.includes(op)) return true;
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken && p.left === m) return true;
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken) return onlyTested(p);
+  }
+  return false;
+}
+/** Whether the binding name `b` (an identifier or a destructuring pattern) binds `name`. */
+const bindsName = (b: any, name: string): boolean => !!b && (ts.isIdentifier(b) ? b.text === name
+  : (ts.isObjectBindingPattern(b) || ts.isArrayBindingPattern(b)) && b.elements.some((e: any) => !ts.isOmittedExpression(e) && bindsName(e.name, name)));
+/** The declaration the identifier `id` refers to, found by walking out through the scopes around it, or null. A
+ *  destructured declaration is found too, and resolves to no string below. */
+function declOf(id: any): any {
+  const name = id.text;
+  const binds = (d: any) => !!d && bindsName(d.name, name);
+  for (let s = id.parent; s; s = s.parent) {
+    if ((ts.isForOfStatement(s) || ts.isForInStatement(s) || ts.isForStatement(s)) && s.initializer && ts.isVariableDeclarationList(s.initializer)) {
+      const d = s.initializer.declarations.find(binds);
+      if (d) return d;
+    }
+    if (ts.isFunctionLike(s)) {
+      const p = (s.parameters || []).find(binds);
+      if (p) return p;
+      if (ts.isFunctionExpression(s) && s.name && s.name.text === name) return s;
+    }
+    if (ts.isCatchClause(s) && binds(s.variableDeclaration)) return s.variableDeclaration;
+    if (ts.isBlock(s) || ts.isSourceFile(s) || ts.isModuleBlock(s) || ts.isCaseClause(s) || ts.isDefaultClause(s)) {
+      for (const st of s.statements) {
+        if (ts.isVariableStatement(st)) { const d = st.declarationList.declarations.find(binds); if (d) return d; }
+        if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st) || ts.isEnumDeclaration(st)) && st.name && st.name.text === name) return st;
+        if (ts.isImportDeclaration(st) && st.importClause) {
+          const c = st.importClause, nb = c.namedBindings;
+          if (c.name && c.name.text === name) return c;
+          if (nb && ts.isNamespaceImport(nb) && nb.name.text === name) return nb;
+          if (nb && ts.isNamedImports(nb)) { const sp = nb.elements.find((e: any) => e.name.text === name); if (sp) return sp; }
+        }
+      }
+    }
+  }
+  return null;
+}
+const isConstDecl = (d: any): boolean => ts.isVariableDeclaration(d) && ts.isVariableDeclarationList(d.parent) && (d.parent.flags & ts.NodeFlags.Const) !== 0;
+const isExported = (st: any): boolean => !!st && !!st.modifiers && st.modifiers.some((m: any) => m.kind === ts.SyntaxKind.ExportKeyword);
+/** Whether anything inside `scope` writes the name `name`: an assignment whose target mentions it, or a ++ or --. */
+function writesName(scope: any, name: string): boolean {
+  const mentions = (n: any): boolean => { let hit = ts.isIdentifier(n) && n.text === name; if (!hit) ts.forEachChild(n, (c: any) => { if (!hit && mentions(c)) hit = true; }); return hit; };
+  let hit = false;
+  const visit = (n: any): void => {
+    if (hit) return;
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && mentions(n.left)) hit = true;
+    if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && mentions(n.operand)) hit = true;
+    ts.forEachChild(n, visit);
+  };
+  visit(scope);
+  return hit;
+}
+/** The strings a list holds: an array literal of string literals, or a const initialised to one that is not exported and
+ *  whose every other mention in the file is a for...of's list or a forEach's receiver; else null. */
+function listOf(e: any, sf: any): string[] | null {
+  e = unwrap(e);
+  if (ts.isArrayLiteralExpression(e)) return e.elements.every((x: any) => ts.isStringLiteralLike(x)) ? e.elements.map((x: any) => x.text) : null;
+  if (!ts.isIdentifier(e)) return null;
+  const d = declOf(e);
+  if (!d || !isConstDecl(d) || !ts.isIdentifier(d.name) || isExported(d.parent.parent) || !d.initializer || !ts.isArrayLiteralExpression(unwrap(d.initializer))) return null;
+  let onlyAsList = true;
+  const visit = (n: any): void => {
+    if (!onlyAsList) return;
+    if (ts.isIdentifier(n) && n.text === d.name.text && n !== d.name && declOf(n) === d) {
+      const m = outer(n), p = m.parent;
+      const call = ts.isPropertyAccessExpression(p) ? outer(p).parent : null;
+      onlyAsList = (ts.isForOfStatement(p) && p.expression === m)
+        || (ts.isPropertyAccessExpression(p) && p.expression === m && p.name.text === "forEach" && !!call && ts.isCallExpression(call) && call.expression === outer(p));
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return onlyAsList ? listOf(d.initializer, sf) : null;
+}
+/** The string a ui/ module exports under `name` as `export const name = "..."`, or null. */
+function exportedString(mod: string, name: string): string[] | null {
+  for (const ext of [".ts", ".js"]) {
+    const p = path.join(UI, mod + ext);
+    if (!fs.existsSync(p)) continue;
+    const sf = ts.createSourceFile(p, fs.readFileSync(p, "utf8"), ts.ScriptTarget.Latest, true, ext === ".ts" ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+    for (const st of sf.statements) {
+      if (!ts.isVariableStatement(st) || !isExported(st) || !(st.declarationList.flags & ts.NodeFlags.Const)) continue;
+      const d = st.declarationList.declarations.find((x: any) => ts.isIdentifier(x.name) && x.name.text === name);
+      if (d && d.initializer && ts.isStringLiteralLike(unwrap(d.initializer))) return [unwrap(d.initializer).text];
+    }
+    return null;
+  }
+  return null;
+}
+/** The event types a registration's type argument can be, read by the parser (the shapes the comment above lists), or null. */
+function eventTypes(e: any, sf: any, file: string, depth = 0): string[] | null {
+  e = unwrap(e);
+  if (ts.isStringLiteralLike(e)) return [e.text];
+  if (!ts.isIdentifier(e) || depth > 4) return null;
+  const d = declOf(e);
+  if (!d) return null;
+  if (isConstDecl(d) && ts.isIdentifier(d.name)) {
+    const loop = d.parent.parent;
+    if (ts.isForOfStatement(loop) && loop.initializer === d.parent) return listOf(loop.expression, sf);
+    return d.initializer ? eventTypes(d.initializer, sf, file, depth + 1) : null;
+  }
+  if (ts.isParameter(d) && ts.isIdentifier(d.name)) {
+    const fn = d.parent, call = outer(fn).parent;
+    if (fn.parameters[0] !== d || writesName(fn, d.name.text)) return null;
+    if (!call || !ts.isCallExpression(call) || call.arguments[0] !== outer(fn)) return null;
+    const callee = unwrap(call.expression);
+    return ts.isPropertyAccessExpression(callee) && callee.name.text === "forEach" ? listOf(callee.expression, sf) : null;
+  }
+  if (ts.isImportSpecifier(d)) {
+    const from = d.parent.parent.parent.moduleSpecifier.text;
+    return from.startsWith("./") ? exportedString(path.posix.join(path.posix.dirname(file), from), (d.propertyName || d.name).text) : null;
+  }
+  return null;
+}
+type LooseAdd = { file: string; line: number; why: string; text: string };
+/** Every addEventListener in `src` that is none of the shapes the comment above lists, and how many it read. */
+function looseAddTokens(file: string, src: string): { read: number; loose: LooseAdd[] } {
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+  const loose: LooseAdd[] = [];
+  let read = 0;
+  const refuse = (n: any, why: string): void => {
+    loose.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1, why,
+                 text: src.slice(Math.max(0, n.getStart(sf) - 30), Math.min(src.length, n.getEnd() + 40)).replace(/\s+/g, " ") });
+  };
+  const check = (tok: any): void => {
+    const p = tok.parent;
+    if (MEMBER_NAMES.includes(p.kind) && p.name === tok) return;   // a member's name
+    if (ts.isStringLiteralLike(tok) && ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.InKeyword && p.left === tok) return;   // "addEventListener" in x
+    let acc: any = null;
+    if (ts.isPropertyAccessExpression(p) && p.name === tok) acc = p;
+    else if (ts.isElementAccessExpression(p) && p.argumentExpression === tok) acc = p;
+    else if (ts.isIdentifier(tok) && ts.isCallExpression(outer(tok).parent) && outer(tok).parent.expression === outer(tok)) acc = tok;   // a bare call
+    if (!acc) return refuse(tok, "not the method called or tested: in a " + ts.SyntaxKind[p.kind]);
+    const m = outer(acc), call = m.parent;
+    if (ts.isCallExpression(call) && call.expression === m) {
+      const arg = call.arguments[0];
+      if (arg && ts.isStringLiteralLike(arg)) return;
+      const types = arg ? eventTypes(arg, sf, file) : null;
+      if (!types) return refuse(acc, "a call whose event type the census cannot read");
+      if (types.includes("message")) return refuse(acc, "a message listener whose event type is not a string literal");
+      return;
+    }
+    if (onlyTested(acc)) return;
+    refuse(acc, "the method reached, not called with its event type: in a " + ts.SyntaxKind[call.kind]);
+  };
+  const visit = (n: any): void => {
+    if ((ts.isIdentifier(n) || ts.isStringLiteralLike(n)) && n.text === "addEventListener") { read++; check(n); }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return { read, loose };
+}
+
+test("census: every addEventListener in ui/ is a direct call the census reads (its event type a literal, or strings that are not \"message\"), a read that is only tested, or a member's name", () => {
+  const bad: string[] = [];
+  const readIn = new Map<string, number>();
+  for (const f of uiSources()) {
+    const src = fs.readFileSync(path.join(UI, f), "utf8");
+    if (!src.includes("addEventListener")) continue;
+    const { read, loose } = looseAddTokens(f, src);
+    readIn.set(f, read);
+    for (const l of loose) bad.push(l.file + ":" + l.line + ": " + l.why + ": " + l.text);
+  }
+  // the census read the files the shapes above come from: every gated site's, a for...of over a const list (actions.ts), a
+  // forEach callback (gear.js), imported event names (palette-main.ts), member names (test-dom-shim.ts), a tested read
+  // ahead of a call (romp-timeline-view.js)
+  for (const f of [...GATED.map(([g]) => g), "webview/actions.ts", "webview/render.ts", "test-dom-shim.ts", "romp-timeline-view.js"]) {
+    assert.ok((readIn.get(f) || 0) > 0, "the census read the addEventListener mentions in " + f);
+  }
+  assert.deepEqual(bad, [], "an addEventListener in ui/ that the message census cannot read (a call or apply, an alias or a bound copy, " +
+    "a destructured name, or an event type it cannot resolve): register with a string literal, or with a type the parser resolves\n" + bad.join("\n"));
+});
+
+test("the addEventListener census reads what it claims: every way around the literal is refused, and the resolved shapes and tested reads are accepted", () => {
+  const loose = (src: string) => looseAddTokens("webview/probe.ts", src).loose.map((l) => l.why);
+  const refused = [
+    "EventTarget.prototype.addEventListener.call(window, \"message\", f);",
+    "window.addEventListener.apply(window, [\"message\", f]);",
+    "const add = window.addEventListener.bind(window); add(\"message\", f);",
+    "const add = window.addEventListener; add(\"message\", f);",
+    "const { addEventListener } = window; addEventListener(\"message\", f);",
+    "(0, window.addEventListener)(\"message\", f);",
+    "Reflect.apply(window.addEventListener, window, [\"message\", f]);",
+    "window[\"addEventListener\"].call(window, \"message\", f);",
+    "const k = \"addEventListener\"; (window as any)[k](\"message\", f);",
+    "const on = x && x.addEventListener; on(\"message\", f);",
+    "let T = \"message\"; window.addEventListener(T, f);",
+    "const T = \"message\"; window.addEventListener(T, f);",
+    "window.addEventListener((\"message\" as any), f);",
+    "window.addEventListener(type, f);",
+    "for (const t of [\"click\", \"message\"]) window.addEventListener(t, f);",
+    "for (let t of [\"click\"]) { t = \"message\"; window.addEventListener(t, f); }",
+    "const L = [\"click\"]; L.push(\"message\"); for (const t of L) window.addEventListener(t, f);",
+    "export const L = [\"click\"]; for (const t of L) window.addEventListener(t, f);",
+    "[\"click\"].forEach(function (k) { k = \"message\"; window.addEventListener(k, f); });",
+    "[\"click\"].forEach(function (a, k) { window.addEventListener(k, f); });",
+    "import { NOT_EXPORTED_HERE } from \"./keybindings\"; window.addEventListener(NOT_EXPORTED_HERE, f);",
+  ];
+  for (const src of refused) assert.ok(loose(src).length >= 1, "refused: " + src);
+  const accepted = [
+    "window.addEventListener(\"message\", f); el.addEventListener('click', f); window[\"addEventListener\"](`resize`, f);",
+    "x.addEventListener?.(\"load\", f);",
+    "for (const ev of [\"mousedown\", \"touchstart\"]) document.addEventListener(ev, f, true);",
+    "const R = [\"pointerup\", \"pointercancel\"]; for (const t of R) el.addEventListener(t, f); for (const t of R) el.removeEventListener(t, f);",
+    "['wheel', 'keydown'].forEach(function (k) { window.addEventListener(k, f); });",
+    "import { KEYS_EVENT } from \"./keybindings\"; window.addEventListener(KEYS_EVENT, f);",
+    "const T = \"romp:local\"; window.addEventListener(T, f);",
+    "if (typeof x.addEventListener === \"function\") x.addEventListener(\"load\", f);",
+    "if (doc && doc.addEventListener) doc.addEventListener(\"visibilitychange\", f);",
+    "const ok = !!(x && x.addEventListener); const has = \"addEventListener\" in x;",
+    "const o = { addEventListener(t: string, g: unknown) { return [t, g]; } }; type T = { addEventListener(type: string): void };",
+    "const s = \"call addEventListener here\"; // addEventListener in a comment",
+  ];
+  for (const src of accepted) assert.deepEqual(loose(src), [], "accepted: " + src);
+});
+
 test("census: every gated site has an executed leg in this file (installed, or lifted by its marker)", () => {
   const legs = new Set<string>();
   for (const leg of INSTALLED) { const ss = messageSites(leg.site); assert.equal(ss.length, 1, leg.site + " has one window message listener"); legs.add(leg.site + ":" + ss[0].line); }
