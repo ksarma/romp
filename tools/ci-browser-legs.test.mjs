@@ -62,9 +62,11 @@
 //     without is executed by ui/webview/real-viewer-leg-switch.test.ts (a child node --test with PLAYWRIGHT_BROWSERS_PATH
 //     emptied), which the vscode-extension job runs under npm test and, rostered, in the step itself;
 //   - each line switchLines finds (its docstring) in the files stepFiles derives from the step (its docstring) is a row
-//     of SWITCH_LINES by its text, whose docstring names the roles: inBrowser's read, inside inBrowser, is the one read
-//     that can change an outcome, and the script, run through the stub, exits the same status with the switch set to 1,
-//     set to yes and unset over each record and roster of its table.
+//     of SWITCH_LINES by its text, whose docstring names the roles, and each row's role agrees with the reads
+//     switchLines gives its line (a row of role inBrowser or message reads the switch's value, child or naming reads
+//     none): inBrowser's read, inside inBrowser, is the one read that can change an outcome, and the script, run through
+//     the stub, exits the same status with the switch set to 1, set to yes and unset over each record and roster of its
+//     table.
 // Synthetic values only in the script's trees. Run: node --test tools/ci-browser-legs.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -1408,10 +1410,10 @@ test('stepFiles\' table: each row\'s files derived as stepFiles\' docstring stat
   assert.deepEqual(wrong, [], 'each row of stepFiles\' table is derived as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
 });
 
-/** The switch's lines in `files` ([{ rel, text }], each a path and its text): each line, as { rel, n, text } with n
- *  from 1, that holds the switch's name, ROMP_BROWSER_LEGS_REQUIRE, as text anywhere in it (a comment, a string or a
- *  key, a longer name holding it included); that holds a variable the same file binds to the name; or that holds a
- *  value variable of the same file. A shell file is one whose path ends .sh; every other file is read as TypeScript. A
+/** The switch's lines in `files` ([{ rel, text }], each a path and its text): each line, as { rel, n, text, reads }
+ *  with n from 1 and reads as below, that holds the switch's name, ROMP_BROWSER_LEGS_REQUIRE, as text anywhere in it (a
+ *  comment, a string or a key, a longer name holding it included); that holds a variable the same file binds to the
+ *  name; or that holds a value variable of the same file. A shell file is one whose path ends .sh; every other file is read as TypeScript. A
  *  variable bound to the name: in the shell, X=NAME, the name quoted or not, and in TypeScript, const, let or var X = a
  *  string literal holding the name alone; it is held as $X, ${X or ${!X in the shell and as the word X in TypeScript. A
  *  line reads the switch's value when it holds, in the shell, $NAME, ${NAME or ${!X for X bound to the name, in
@@ -1422,7 +1424,11 @@ test('stepFiles\' table: each row\'s files derived as stepFiles\' docstring stat
  *  too, transitively. It is held as a variable bound to the name is. Not found: a read spelled without the name or such
  *  a variable, among them a key built by concatenation, a copy of the name made on a line of its own (m=$S, then
  *  ${!m}), a variable bound by destructuring, a variable a command sets (read, printenv's output), and a whole
- *  environment handed to a child that reads it. Its table: SWITCH_LINE_ROWS, run by the test after it. */
+ *  environment handed to a child that reads it. A line's reads is true when the line reads the switch's value as above
+ *  (a value variable among those reads) and false for every other line found, a line whose read of the value is
+ *  spelled otherwise included (the destructuring line const { NAME: on } = process.env among them), so the census below
+ *  holds each row's role to this predicate and to no wider read. Its table: SWITCH_LINE_ROWS, run by the test after
+ *  it. */
 function switchLines(files) {
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const out = [];
@@ -1446,37 +1452,37 @@ function switchLines(files) {
         }
       }
     }
-    lines.forEach((l, i) => { if (l.includes('ROMP_BROWSER_LEGS_REQUIRE') || holds(l, bound, true) || holds(l, values, true)) out.push({ rel, n: i + 1, text: l }); });
+    lines.forEach((l, i) => { if (l.includes('ROMP_BROWSER_LEGS_REQUIRE') || holds(l, bound, true) || holds(l, values, true)) out.push({ rel, n: i + 1, text: l, reads: readsValue(l) }); });
   }
   return out;
 }
 /** switchLines' table: each row synthetic files ([path, text]) with N standing for the switch's name, and the lines
- *  switchLines finds in them ([path, n]), one spelling inside and one outside each family its docstring names. */
+ *  switchLines finds in them ([path, n, reads]), one spelling inside and one outside each family its docstring names. */
 const SWITCH_LINE_ROWS = [
-  ['a TypeScript line reading process.env.N', [['a.ts', 'const x = 1;\nif (process.env.N) f();\n']], [['a.ts', 2]]],
-  ['a bracketed string key', [['a.ts', 'const x = 1;\nif (process.env["N"]) f();\n']], [['a.ts', 2]]],
-  ['a comment naming N', [['a.ts', '// N is the switch\nconst y = 2;\n']], [['a.ts', 1]]],
-  ['a longer name holding N (a loud over-read)', [['a.ts', 'const z = process.env.N_X;\n']], [['a.ts', 1]]],
+  ['a TypeScript line reading process.env.N', [['a.ts', 'const x = 1;\nif (process.env.N) f();\n']], [['a.ts', 2, true]]],
+  ['a bracketed string key', [['a.ts', 'const x = 1;\nif (process.env["N"]) f();\n']], [['a.ts', 2, true]]],
+  ['a comment naming N', [['a.ts', '// N is the switch\nconst y = 2;\n']], [['a.ts', 1, false]]],
+  ['a longer name holding N (a loud over-read)', [['a.ts', 'const z = process.env.N_X;\n']], [['a.ts', 1, false]]],
   ['a key built by concatenation, not found', [['a.ts', 'const k = "ROMP_" + "BROWSER_LEGS_REQUIRE";\nif (process.env[k]) f();\n']], []],
-  ['a TypeScript variable bound to N and the read through it', [['a.ts', 'const K = "N";\nconst x = 1;\nif (process.env[K]) f();\n']], [['a.ts', 1], ['a.ts', 3]]],
-  ['a TypeScript value variable and its use', [['a.ts', 'const on = process.env.N;\nconst x = 1;\nif (on) process.exit(0);\n']], [['a.ts', 1], ['a.ts', 3]]],
-  ['a value variable assigned from a value variable, transitively', [['a.ts', 'const on = process.env.N;\nconst x = 1;\nlet off = !on;\nconst y = 2;\nif (off) process.exit(0);\n']], [['a.ts', 1], ['a.ts', 3], ['a.ts', 5]]],
-  ['a comparison is not an assignment', [['a.ts', 'if (x === process.env.N) f();\nconst y = x;\n']], [['a.ts', 1]]],
-  ['a variable bound by destructuring, its use not found', [['a.ts', 'const { N: on } = process.env;\nif (on) process.exit(0);\n']], [['a.ts', 1]]],
+  ['a TypeScript variable bound to N and the read through it', [['a.ts', 'const K = "N";\nconst x = 1;\nif (process.env[K]) f();\n']], [['a.ts', 1, false], ['a.ts', 3, true]]],
+  ['a TypeScript value variable and its use', [['a.ts', 'const on = process.env.N;\nconst x = 1;\nif (on) process.exit(0);\n']], [['a.ts', 1, true], ['a.ts', 3, true]]],
+  ['a value variable assigned from a value variable, transitively', [['a.ts', 'const on = process.env.N;\nconst x = 1;\nlet off = !on;\nconst y = 2;\nif (off) process.exit(0);\n']], [['a.ts', 1, true], ['a.ts', 3, true], ['a.ts', 5, true]]],
+  ['a comparison is not an assignment', [['a.ts', 'if (x === process.env.N) f();\nconst y = x;\n']], [['a.ts', 1, true]]],
+  ['a variable bound by destructuring, its use not found', [['a.ts', 'const { N: on } = process.env;\nif (on) process.exit(0);\n']], [['a.ts', 1, false]]],
   ['a whole environment handed to a child, not found', [['a.ts', 'spawnSync(process.execPath, ["x.js"], { env: process.env });\n']], []],
-  ['a shell binding of N and the indirect read through it', [['s.sh', 'S=N\nx=1\nif [ -n "${!S:-}" ]; then echo a; fi\n']], [['s.sh', 1], ['s.sh', 3]]],
-  ['a quoted shell binding, and $S and ${S}', [['s.sh', 'S="N"\necho "$S"\necho "${S}"\necho "$SX"\n']], [['s.sh', 1], ['s.sh', 2], ['s.sh', 3]]],
-  ['a shell value variable and its use', [['s.sh', 'S=N\nv="${!S:-}"\nx=1\n[ -n "$v" ] && exit 0\n']], [['s.sh', 1], ['s.sh', 2], ['s.sh', 4]]],
-  ['a direct shell read of N and the variable it assigns', [['s.sh', 'v=$N\n[ "$v" = x ] && exit 0\n']], [['s.sh', 1], ['s.sh', 2]]],
-  ['a variable assigned beside $S, the name alone, not a value variable', [['s.sh', 'S=N\nm="$S is set"\necho "$m"\n']], [['s.sh', 1], ['s.sh', 2]]],
-  ['a copy of the name on a line of its own, the read through the copy not found', [['s.sh', 'S=N\nm=$S\n[ -n "${!m:-}" ] && exit 0\n']], [['s.sh', 1], ['s.sh', 2]]],
-  ['a variable a command sets, not followed', [['s.sh', 'S=N\nread -r v <<<"${!S:-}"\n[ -n "$v" ] && exit 0\n']], [['s.sh', 1], ['s.sh', 2]]],
-  ['a variable bound in one file, not held in another', [['s.sh', 'S=N\n'], ['t.sh', 'echo "${!S:-}"\n']], [['s.sh', 1]]],
+  ['a shell binding of N and the indirect read through it', [['s.sh', 'S=N\nx=1\nif [ -n "${!S:-}" ]; then echo a; fi\n']], [['s.sh', 1, false], ['s.sh', 3, true]]],
+  ['a quoted shell binding, and $S and ${S}', [['s.sh', 'S="N"\necho "$S"\necho "${S}"\necho "$SX"\n']], [['s.sh', 1, false], ['s.sh', 2, false], ['s.sh', 3, false]]],
+  ['a shell value variable and its use', [['s.sh', 'S=N\nv="${!S:-}"\nx=1\n[ -n "$v" ] && exit 0\n']], [['s.sh', 1, false], ['s.sh', 2, true], ['s.sh', 4, true]]],
+  ['a direct shell read of N and the variable it assigns', [['s.sh', 'v=$N\n[ "$v" = x ] && exit 0\n']], [['s.sh', 1, true], ['s.sh', 2, true]]],
+  ['a variable assigned beside $S, the name alone, not a value variable', [['s.sh', 'S=N\nm="$S is set"\necho "$m"\n']], [['s.sh', 1, false], ['s.sh', 2, false]]],
+  ['a copy of the name on a line of its own, the read through the copy not found', [['s.sh', 'S=N\nm=$S\n[ -n "${!m:-}" ] && exit 0\n']], [['s.sh', 1, false], ['s.sh', 2, false]]],
+  ['a variable a command sets, not followed', [['s.sh', 'S=N\nread -r v <<<"${!S:-}"\n[ -n "$v" ] && exit 0\n']], [['s.sh', 1, false], ['s.sh', 2, true]]],
+  ['a variable bound in one file, not held in another', [['s.sh', 'S=N\n'], ['t.sh', 'echo "${!S:-}"\n']], [['s.sh', 1, false]]],
 ];
 test('switchLines\' table: each row\'s lines found as switchLines\' docstring states', () => {
   const wrong = [];
   for (const [what, files, found] of SWITCH_LINE_ROWS) {
-    const got = switchLines(files.map(([rel, text]) => ({ rel, text: text.replace(/(?<![A-Za-z])N(?![a-z])/g, SWITCH) }))).map((h) => [h.rel, h.n]);
+    const got = switchLines(files.map(([rel, text]) => ({ rel, text: text.replace(/(?<![A-Za-z])N(?![a-z])/g, SWITCH) }))).map((h) => [h.rel, h.n, h.reads]);
     if (!isDeepStrictEqual(got, found)) wrong.push(what + ': switchLines over ' + JSON.stringify(files) + ' finds ' + JSON.stringify(got) + ', not ' + JSON.stringify(found));
   }
   assert.deepEqual(wrong, [], 'each row of switchLines\' table is found as its docstring states; the rows read otherwise: ' + JSON.stringify(wrong));
@@ -1487,7 +1493,9 @@ test('switchLines\' table: each row\'s lines found as switchLines\' docstring st
  *  script derived from it, to choose or word a message, which changes no exit status (the test below runs the script
  *  over each record and roster of its table with the switch set to 1, set to yes and unset); child, a child run's
  *  environment the switch test builds, whose read is inBrowser's in that child; naming, a line that names the switch
- *  and reads no value (a comment, a title, a message's text or pattern, the script's binding of the name). */
+ *  and reads no value (a comment, a title, a message's text or pattern, the script's binding of the name). The test
+ *  below holds each row's role to the reads switchLines gives its line (its docstring): a row of role inBrowser or
+ *  message is a line that reads the switch's value, and a row of role child or naming a line that reads none. */
 const SWITCH_LINES = [
   ['the header', 'vscode-extension/scripts/ci-browser-legs.sh', '# with ROMP_BROWSER_LEGS_REQUIRE=1. The one shared launcher, inBrowser in ui/webview/real-viewer-leg.ts, reads the', 'naming'],
   ['the roster rule\'s words', 'vscode-extension/scripts/ci-browser-legs.sh', '# inBrowser\'s rejection, so the rejection fails its test; it does not change ROMP_BROWSER_LEGS_REQUIRE, and hands inBrowser', 'naming'],
@@ -1510,7 +1518,7 @@ const SWITCH_LINES = [
   ['inBrowser\'s docstring', 'ui/webview/real-viewer-leg.ts', '*  ROMP_BROWSER_LEGS_REQUIRE (CI\'s browser-legs step sets it to 1 after the job installs Chromium; any non-empty value counts, so', 'naming'],
   ['inBrowser\'s read', 'ui/webview/real-viewer-leg.ts', 'if (process.env.ROMP_BROWSER_LEGS_REQUIRE) assert.fail("ROMP_BROWSER_LEGS_REQUIRE is set and this leg cannot run: " + why);', 'inBrowser'],
 ];
-test('the switch\'s lines in the files the step runs, as switchLines finds them (its docstring) over the files stepFiles derives from the step (its docstring), each the row of SWITCH_LINES its text names: inBrowser\'s read, inside inBrowser, is the one read that can change an outcome, and the script\'s reads word its messages alone, its exit status the same with the switch set to 1, set to yes and unset over each record and roster of the table below', (t) => {
+test('the switch\'s lines in the files the step runs, as switchLines finds them (its docstring) over the files stepFiles derives from the step (its docstring), each the row of SWITCH_LINES its text names, whose role agrees with switchLines\' read of the switch\'s value (a row of role inBrowser or message reads it, child or naming reads none): inBrowser\'s read, inside inBrowser, is the one read that can change an outcome, and the script\'s reads word its messages alone, its exit status the same with the switch set to 1, set to yes and unset over each record and roster of the table below', (t) => {
   const job = extensionJob();
   const step = steps(job).find((s) => s.name === STEP);
   assert.ok(step, 'the step exists (the first test holds the rest of its shape)');
@@ -1518,10 +1526,17 @@ test('the switch\'s lines in the files the step runs, as switchLines finds them 
   assert.ok(wd, 'the job names its default working directory, from which the step\'s run field is read');
   const readRel = (rel) => { const p = path.join(REPO, rel); return fs.existsSync(p) && fs.statSync(p).isFile() ? read(p) : null; };
   const files = stepFiles(step.fields.run, wd[1], readRel);
-  const found = switchLines(files.map((rel) => ({ rel, text: readRel(rel) }))).map((h) => h.rel + ': ' + h.text.trim());
+  const hits = switchLines(files.map((rel) => ({ rel, text: readRel(rel) })));
+  const found = hits.map((h) => h.rel + ': ' + h.text.trim());
   const rowed = SWITCH_LINES.map(([, file, text]) => file + ': ' + text);
   const less = (a, b) => { const left = [...b]; return a.filter((x) => { const i = left.indexOf(x); if (i < 0) return true; left.splice(i, 1); return false; }); };
-  assert.deepEqual({ unrowed: less(found, rowed), gone: less(rowed, found) }, { unrowed: [], gone: [] }, 'each line switchLines finds in the files the step runs has its row in SWITCH_LINES, and each row its line (unrowed: a line found with no row, to be classified there, and a read of the switch that can change an outcome, other than inBrowser\'s, is not one of the roles; gone: a row whose line is no longer found). The files: ' + JSON.stringify(files));
+  assert.deepEqual({ unrowed: less(found, rowed), gone: less(rowed, found) }, { unrowed: [], gone: [] }, 'each line switchLines finds in the files the step runs has its row in SWITCH_LINES, and each row its line (unrowed: a line found with no row, to be rowed there with its role, which the next assertion holds to switchLines\' read of the switch\'s value, and a read of the switch that can change an outcome, other than inBrowser\'s, is not one of the roles; gone: a row whose line is no longer found). The files: ' + JSON.stringify(files));
+  // each row's role against the reads switchLines gives its line (its docstring; lines of one file with the same text
+  // get the same reads, since the variables it follows are per file): a line that reads the switch's value rowed as
+  // naming or child is red here, and so is a row of role inBrowser or message whose line reads none
+  const readsOf = new Map(hits.map((h) => [h.rel + ': ' + h.text.trim(), h.reads]));
+  const misrole = SWITCH_LINES.filter(([, file, text, role]) => readsOf.get(file + ': ' + text) !== (role === 'inBrowser' || role === 'message'));
+  assert.deepEqual(misrole, [], 'each row\'s role agrees with the reads switchLines gives its line (its docstring): a row of role inBrowser or message is a line that reads the switch\'s value, and a row of role child or naming a line that reads none; the rows whose role disagrees, each [what, its file, its text, its role]: ' + JSON.stringify(misrole));
   const reads = SWITCH_LINES.filter(([, , , role]) => role === 'inBrowser');
   assert.equal(reads.length, 1, 'one row is inBrowser\'s read: ' + JSON.stringify(reads));
   const [, lf, lt] = reads[0];
