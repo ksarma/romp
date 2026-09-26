@@ -245,12 +245,17 @@ class RemoteFileRelay(unittest.TestCase):
     def test_a_relayed_file_carries_the_openers_policy_like_a_local_one(self):
         # a remote session's figure opened in a tab of its own is a document on this origin too, so it declares
         # Cross-Origin-Opener-Policy: same-origin as the local /file route does (the relay answers through _send,
-        # tests/test_kernel_auth_hardening.py OpenerIsolation), so the dashboard's window.open still returns a handle
+        # tests/test_kernel_auth_hardening.py OpenerIsolation), so the dashboard's window.open still returns a handle.
+        # Read off the wire, every copy: exactly one header, since a browser that receives two cannot parse it and
+        # applies no policy (a dict of the headers keeps one copy and would hide the second)
         self._register("gpu1", self.fake.server_address[1])
-        status, body, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fplot.png")
+        req = urllib.request.Request("http://127.0.0.1:%d/remote/gpu1/file?path=%%2Ftmp%%2Fplot.png" % self.port)
+        req.add_header("X-Romp-Token", km.TOKEN)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            status, body, coop = r.status, r.read(), r.headers.get_all("Cross-Origin-Opener-Policy")
         self.assertEqual(status, 200)
         self.assertEqual(body, PNG_BYTES)
-        self.assertEqual(headers.get("Cross-Origin-Opener-Policy"), "same-origin")
+        self.assertEqual(coop, ["same-origin"], "one Cross-Origin-Opener-Policy header on the wire, same-origin")
 
     def test_a_remote_pdf_is_served_inline_with_its_own_name_derived_here_never_the_remotes(self):
         # a remote session's PDF opens in its own browser tab too (2026-09-06): the tab's title and a Save's

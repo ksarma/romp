@@ -68,8 +68,22 @@ def _serve_get(path, headers=None):
     return status, body
 
 
+class _SentHeaders(dict):
+    """The response's headers: as a dict, the last value sent under each name (what most tests read), and in `calls`
+    every send_header call in the order made, so a header sent twice shows as two. A doubled header is not a repeated
+    fact: a browser that receives two Cross-Origin-Opener-Policy values cannot parse the header and applies none."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def all(self, name):
+        """Every value sent under `name` (header names match without regard to case), in order."""
+        return [v for k, v in self.calls if k.lower() == name.lower()]
+
+
 def _serve_get_full(path, headers=None):
-    """_serve_get with the response headers too: (status, {header: value}, body)."""
+    """_serve_get with the response headers too: (status, _SentHeaders, body)."""
     h = km.Handler.__new__(km.Handler)
     h.client_address = ("127.0.0.1", 0)
     h.headers = dict(headers or {})
@@ -80,19 +94,21 @@ def _serve_get_full(path, headers=None):
     h.rfile = io.BytesIO()
     h.close_connection = True
     captured = {}
+    sent = _SentHeaders()
 
     def send_response(code, *a):
         captured["status"] = code
 
     def send_header(k, v):
-        captured.setdefault("headers", {})[k] = v
+        sent.calls.append((k, v))
+        sent[k] = v
 
     h.send_response = send_response
     h.send_header = send_header
     h.end_headers = lambda: None
     h.log_message = lambda *a: None
     h.do_GET()
-    return captured.get("status"), captured.get("headers", {}), h.wfile.getvalue().decode("utf-8", "replace")
+    return captured.get("status"), sent, h.wfile.getvalue().decode("utf-8", "replace")
 
 
 def _auth(peer="127.0.0.1", headers=None, token=None):
@@ -476,25 +492,27 @@ class OpenerIsolation(unittest.TestCase):
     needs. It rides _send, so every page carries it, and so do the dashboard's own tabs: a /file image or PDF it opens
     with window.open is a same-origin document with the same policy, so window.open still returns a handle
     (ui/webview/preview.ts openFileTab reads only that). Executed on the shell, every pane page, the sign-in page, a
-    static asset and a served /file image."""
+    static asset and a served /file image. Each carries the header exactly once, read from every send_header call
+    (_SentHeaders.all): a second copy, even of the same value, leaves a browser with a header it cannot parse and so
+    with no policy. The /remote/<host>/file relay's copy is read off the wire in tests/test_kernel_remote_file_relay.py."""
 
     def test_every_page_the_kernel_serves_carries_coop_same_origin(self):
         status, sent, _ = _serve_get_full("/?token=" + TOK)
         self.assertEqual(status, 200)
-        self.assertEqual(sent.get("Cross-Origin-Opener-Policy"), "same-origin", "the shell")
+        self.assertEqual(sent.all("Cross-Origin-Opener-Policy"), ["same-origin"], "the shell: one header, same-origin")
         for path in ("/chat", "/feed", "/fleet", "/waiting", "/files", "/timeline", "/settings",
                      "/media/romp-swirl-glyph.svg"):
             with self.subTest(path=path):
                 status, sent, _ = _serve_get_full(path, headers={"X-Romp-Token": TOK})
                 self.assertEqual(status, 200)
-                self.assertEqual(sent.get("Cross-Origin-Opener-Policy"), "same-origin")
+                self.assertEqual(sent.all("Cross-Origin-Opener-Policy"), ["same-origin"], "one header, same-origin")
 
     def test_the_sign_in_page_carries_it_too(self):
         # an unauthorized browser load of the shell gets the token sign-in page: a top-level document as well
         status, sent, body = _serve_get_full("/")
         self.assertEqual(status, 200)
         self.assertEqual(body, km._TOKEN_LOGIN_HTML, "no credential: the sign-in page, not the dashboard")
-        self.assertEqual(sent.get("Cross-Origin-Opener-Policy"), "same-origin")
+        self.assertEqual(sent.all("Cross-Origin-Opener-Policy"), ["same-origin"], "one header, same-origin")
 
     def test_a_file_the_dashboard_opens_in_its_own_tab_carries_the_same_policy(self):
         png = bytes.fromhex(
@@ -508,8 +526,17 @@ class OpenerIsolation(unittest.TestCase):
             status, sent, _ = _serve_get_full("/file?path=" + quote(p), headers={"X-Romp-Token": TOK})
         self.assertEqual(status, 200)
         self.assertEqual(sent.get("Content-Type"), "image/png")
-        self.assertEqual(sent.get("Cross-Origin-Opener-Policy"), "same-origin",
-                         "the tab matches its opener's policy, so window.open still returns a handle")
+        self.assertEqual(sent.all("Cross-Origin-Opener-Policy"), ["same-origin"],
+                         "the tab matches its opener's policy (one header), so window.open still returns a handle")
+
+    def test_the_recorder_shows_a_header_sent_twice_as_two(self):
+        # the tests above read every send_header call, so a doubled header, even one that repeats its value, is seen
+        sent = _SentHeaders()
+        for k, v in (("Cross-Origin-Opener-Policy", "same-origin"), ("cross-origin-opener-policy", "same-origin")):
+            sent.calls.append((k, v))
+            sent[k] = v
+        self.assertEqual(sent.all("Cross-Origin-Opener-Policy"), ["same-origin", "same-origin"])
+        self.assertEqual(sent.get("Cross-Origin-Opener-Policy"), "same-origin", "which the dict view alone hides")
 
 
 class _DrainSpy:
