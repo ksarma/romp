@@ -1268,11 +1268,13 @@ test("an app literal in _push's body in a position the census does not read is l
   assert.deepEqual(a.tuples, [["app", "feed"]]);
 });
 
-test("the three homes of the receiver-class text agree word for word: pushAudiences' comment at its bracket arm, federation.ts's PANE_CHANNELS comment and the pane-channels ledger entry each hold one span from the receiver's definition to its last disclosed exclusion, found once in each and, with comment markers and line breaks normalised away, the same in all three (round 9's rulings, 2026-09-25: two homes lacked the 0xff example and the trailing-dot rule the census's comment had gained, and none disclosed the ASCII key class)", () => {
+test("the three homes of the receiver-class text agree word for word: pushAudiences' comment at its bracket arm, federation.ts's PANE_CHANNELS comment and the pane-channels ledger entry each hold one span from the rule's opening clause to its last disclosed exclusion, found once in each and, with comment markers and line breaks normalised away, the same in all three (round 9's rulings, 2026-09-25: two homes lacked the 0xff example and the trailing-dot rule the census's comment had gained, and none disclosed the ASCII key class; round 10's rulings, 2026-09-26: the span began ten words into the text, past the rule's own clause)", () => {
   // The span's first and last words, joined at run time so this case's own source never holds either phrase whole (a
-  // copy here would be a second match in this file). They are words the three homes already shared when the drift was
-  // found, so at that head this case is red on the texts differing, not on an end gone missing.
-  const first = ["whatever can end a", "subscriptable primary in Python's grammar"].join(" ");
+  // copy here would be a second match in this file). The span starts at the rule's opening clause, so a drift in any of
+  // the text's words, the opening clause's included, reads red. Those first words were absent from all three homes at
+  // the head round 9's rulings read, where the drift was found, so at that head this case is red at the first-words
+  // assertion, the red round 9's D.3 requires, rather than on the texts differing.
+  const first = ["a subscript is listed", "only behind a receiver"].join(" ");
   const last = ["which reads as", "the keyword"].join(" ");
   const homes = ["ui/webview/federation-reconnect.test.ts", "ui/webview/federation.ts", "upstream/2026-09-21-pane-channels-audience-census.md"];
   const spans = homes.map((rel) => {
