@@ -6175,8 +6175,9 @@ descriptor_loops() {   # <bash file>: the count of while-read loops that read th
     # commit loop, the byte judge's, since round 9b the addresses loop, whose IFS=$'\t' the count reads, and since
     # round 10a the loop over a merge's binary paths, merge_binary_reads, whose reads are judged_read calls), and
     # since round 9d four loops of the credential scan that run no tool but read on a descriptor all the same (the
-    # index read into arrays, the two passes over the path-scoped index, the report's findings): eleven
-    [ "$(descriptor_loops "$HOOK")" -eq 11 ]
+    # index read into arrays, the two passes over the path-scoped index, the report's findings), and since round 11a
+    # a fifth, gitleaks_config's read of a config file's lines on descriptor 7: twelve
+    [ "$(descriptor_loops "$HOOK")" -eq 12 ]
     { sed -n '1p' "$HOOK"; printf '%s\n' 'while read -r x; do' '    git cat-file -t "$x"' 'done <<< "$refs"'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/loop-a.sh"
     run stdin_loops_running_tools "$TEST_DIR/loop-a.sh"
     [ "$output" = "2-4: git" ]
@@ -10583,4 +10584,352 @@ r10b_long_witness() {   # <rule> <suffix>: the rule's witness under a long name 
     [[ "$output" != *"the previous version of the file in parent 2 of the merge is binary by its bytes"* ]]   # the merges-only marker's clause
     [[ "$output" != *"Where a line names the previous version's bytes as the cause"* ]]
     [[ "$output" == *"git push --no-verify"* ]]
+}
+
+# ── round 11a: the config both scanner runs are handed, read by the hook (the coordinator's decisions 6 and 5) ──
+# The round 10 checkers (2026-09-26) found a path the config gives a rule firing in neither run: the scan reads the
+# pushed lines as pieces named by number, and gitleaks evaluates a rule's path against a piece's name, so a custom
+# rule on .env (S1), a path-only rule on .jks (S2), generic-api-key given a .py path (S3) and hashicorp-tf-password
+# widened to .tfvars (S4) each published a credential that the hook's scan over real paths, before round 9, refused.
+# The coordinator ruled a text reader that refuses visibly (decision 6): the hook reads the config population (the
+# work tree's .gitleaks.toml and its [extend] chain, or the file GITLEAKS_CONFIG names, or GITLEAKS_CONFIG_TOML's
+# text; gitleaks' default never) and refuses a [[rules]] table carrying a path key, naming the rule and the file,
+# and a construct it does not parse, naming it; and ruled a relative [extend] path resolved as gitleaks resolved it
+# from the work tree's root (decision 5: until round 11 such a config refused every push with content on gitleaks'
+# own FTL line). W7 of the round 10 rulings (kubernetes-secret-yaml's own path narrowed under useDefault) is a
+# reader witness here. Each case pushes for real with the identifier scan off, the real scanner armed and the
+# environment's gitleaks config unset unless the case sets it; every value is assembled at run time.
+
+r11a_base() {   # r9d_base, with the environment's gitleaks config unset
+    r9d_base
+    unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML
+}
+r11a_config() {   # <config text> [<path in the work tree, .gitleaks.toml by default>]: the text written there with a final newline, committed and pushed without the hook (BASE moves)
+    local path=${2:-.gitleaks.toml}
+    mkdir -p "$(dirname "$REPO/$path")"
+    printf '%s\n' "$1" > "$REPO/$path"
+    git -C "$REPO" add -- "$path"
+    git -C "$REPO" commit -qm "a gitleaks config at $path"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+}
+r11a_shape_config() {   # <S1|S2|S3|S4|W7>: the shape's config on stdout, each under useDefault (the round 10 rulings' A)
+    printf '[extend]\nuseDefault = true\n\n[[rules]]\n'
+    case "$1" in
+        S1) printf 'id = "r11a-env-rule"\nregex = %s\npath = %s\n' "'''zzenv_[0-9a-f]{16}'''" "'''(?i)\\.env\$'''" ;;
+        S2) printf 'id = "r11a-jks-by-name"\npath = %s\n' "'''(?i)\\.jks\$'''" ;;
+        S3) printf 'id = "generic-api-key"\npath = %s\n' "'''(?i)\\.py\$'''" ;;
+        S4) printf 'id = "hashicorp-tf-password"\npath = %s\n' "'''(?i)\\.(?:tf|hcl|tfvars)\$'''" ;;
+        W7) printf 'id = "kubernetes-secret-yaml"\npath = %s\n' "'''(?i)^k8s/.*\\.ya?ml\$'''" ;;
+        *) echo "r11a_shape_config: no shape $1" >&2; return 1 ;;
+    esac
+}
+r11a_shape_rule() {   # <S1|S2|S3|S4|W7>: the id of the rule the shape's config gives a path
+    case "$1" in S1) echo r11a-env-rule ;; S2) echo r11a-jks-by-name ;; S3) echo generic-api-key ;; S4) echo hashicorp-tf-password ;; W7) echo kubernetes-secret-yaml ;; esac
+}
+r11a_witness() {   # <S1|S2|S3|S4|W7>: the shape's credential written under its path, one the default rules miss in the main run (S3: generic-api-key's alone), committed; sets wfile
+    case "$1" in
+        S1) wfile=config/prod.env; mkdir -p "$REPO/config"; printf 'ENV_NAME=prod\nbuild=zzenv_%s%s\n' 0123456789 abcdef > "$REPO/$wfile" ;;
+        S2) wfile=keys/release.jks; mkdir -p "$REPO/keys"; head -c 600 /dev/zero | tr '\0' '\301' > "$REPO/$wfile" ;;
+        S3) wfile=app/settings.py; mkdir -p "$REPO/app"; printf 'api_key = "%s%s"\n' Zq8Xk2Lm9P w4Rt7Vy3Nb6Hc1 > "$REPO/$wfile" ;;
+        S4) wfile=env/prod.tfvars; mkdir -p "$REPO/env"; printf 'administrator_login_pass%s = "%s"\n' word "$(printf 'abcde%.0s' 1 2)ab" > "$REPO/$wfile" ;;
+        W7) wfile=k8s/secret.yaml; mkdir -p "$REPO/k8s"; printf 'apiVersion: v1\nkind: Sec%s\nmetadata:\n  name: probe\ndata:\n  blob: %s\n' ret "$(printf 'QUJD%.0s' 1 2 3)RA==" > "$REPO/$wfile" ;;
+        *) echo "r11a_witness: no shape $1" >&2; return 1 ;;
+    esac
+    git -C "$REPO" add -- "$wfile"
+    git -C "$REPO" commit -qm "the shape's credential"
+}
+r11a_build_token() { printf 'build=zzbld_%s%s\n' 0123456789 abcdef; }   # a line only the cases' pathless custom rule catches
+R11A_BUILD_RULE="$(printf '[[rules]]\nid = "r11a-build-rule"\nregex = %s' "'''zzbld_[0-9a-f]{16}'''")"
+r11a_rule_line() {   # <rule id> <the file as the line names it>: the reader's refusal of a rule carrying a path condition
+    printf '%s' "romp pre-push: rule $1 of the gitleaks config $2 carries a path condition (a path key), which the credential scan cannot apply: it reads the pushed lines as pieces named by number, not by their files' paths; a rule without a path condition is scanned, so remove the condition, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+}
+r11a_construct_line() {   # <line> <the file as the line names it> <construct>: the reader's refusal of a construct it does not parse
+    printf '%s' "romp pre-push: line $1 of the gitleaks config $2 holds $3, which the hook's reader does not parse, so whether a rule there carries a path condition is unknown; rewrite it with [[rules]] and [extend] tables, plain keys and closed strings, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+}
+r11a_refused_by_reader() {   # <expected line>: the push just made was refused with that line, neither scanner run made, the remote at its base
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$1"* ]]
+    [[ "$output" != *"scanned ~"* ]]
+    [[ "$output" == *"gitleaks could not scan"* ]]
+    at_base
+}
+R11A_WT=".gitleaks.toml (the work tree's)"
+r11a_shape_case() {   # <S1|S2|S3|S4|W7>: the shape's config in the work tree, its credential pushed for real: refused by the reader's line naming the rule and the file
+    r11a_base
+    r11a_config "$(r11a_shape_config "$1")"
+    r11a_witness "$1"
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_rule_line "$(r11a_shape_rule "$1")" "$R11A_WT")"
+}
+
+@test "round 11a (decision 6, S1): a custom rule with a regex and a path condition on .env, in the work tree's .gitleaks.toml under useDefault, and a credential only it catches in config/prod.env: refused by the reader's line naming the rule and the file, neither scanner run made, the remote at its base (published at 93684a4d1, both scanners: the rule's path is evaluated against a piece's number and never fires)" {
+    r11a_shape_case S1
+}
+
+@test "round 11a (decision 6, S2): a path-only custom rule on .jks and a keystore at keys/release.jks: refused by the reader's line naming the rule and the file, the remote at its base (published at 93684a4d1, both scanners)" {
+    r11a_shape_case S2
+}
+
+@test "round 11a (decision 6, S3): generic-api-key given a path condition on .py and a token at app/settings.py that rule alone catches: refused by the reader's line naming generic-api-key and the file, the remote at its base (published at 93684a4d1, both scanners: the default rule narrowed to a path fires on no piece)" {
+    r11a_shape_case S3
+}
+
+@test "round 11a (decision 6, S3's control): the same token at app/settings.py with no config at all is refused by the scan naming generic-api-key, the commit and the file, the reader silent (refused at every head)" {
+    r11a_base
+    r11a_witness S3
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (generic-api-key) in: app/settings.py"* ]]
+    [[ "$output" != *"of the gitleaks config"* ]]
+    at_base
+}
+
+@test "round 11a (decision 6, S4): hashicorp-tf-password's path widened to .tfvars and a low-entropy password at env/prod.tfvars: refused by the reader's line naming the rule and the file, the remote at its base (published at 93684a4d1, both scanners)" {
+    r11a_shape_case S4
+}
+
+@test "round 11a (decision 6, S4's control): the same password at env/prod.tfvars with no config at all passes, the default path taking no .tfvars, the reader silent (passes at every head)" {
+    r11a_base
+    r11a_witness S4
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 11a (decision 6, W7 as a reader witness): kubernetes-secret-yaml's own path narrowed to k8s/ under useDefault and a Secret at k8s/secret.yaml: refused by the reader's line naming the rule and the file, the remote at its base (published at 93684a4d1, both scanners, where the additive run's copy at 1/1.yaml meets the narrowed path)" {
+    r11a_shape_case W7
+}
+
+@test "round 11a (decision 6, W7's same-verdict witness): under W7's config a clean .github/workflows/ci.yml is refused by the reader too, whatever the push carries: the reader refuses the config, not the file (passes at 93684a4d1, where the probe of round 11b would refuse it on the copy's name; the reader's line comes first)" {
+    r11a_base
+    r11a_config "$(r11a_shape_config W7)"
+    mkdir -p "$REPO/.github/workflows"
+    printf 'name: ci\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n' > "$REPO/.github/workflows/ci.yml"
+    git -C "$REPO" add .github/workflows/ci.yml
+    git -C "$REPO" commit -qm "a clean workflow"
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_rule_line kubernetes-secret-yaml "$R11A_WT")"
+}
+
+@test "round 11a (decision 6): a config holding allowlists and no rule path (a global allowlist on vendor/, a pathless custom rule with a per-rule allowlist keyed on a path) passes a clean push with the reader silent, and a credential only that custom rule catches is refused naming it (both at every head)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n[[allowlists]]\npaths = [%s]\n\n%s\n[[rules.allowlists]]\npaths = [%s]\n' "'''(^|/)vendor/'''" "$R11A_BUILD_RULE" "'''(^|/)fixtures/'''")"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r10a_passes
+    [ "$(grep -c 'INF scanned ~' <<< "$output")" -eq 1 ]
+    r11a_build_token > "$REPO/build.txt"
+    git -C "$REPO" add build.txt
+    git -C "$REPO" commit -qm "the custom rule's credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (r11a-build-rule) in: build.txt"* ]]
+    [[ "$output" != *"of the gitleaks config"* ]]
+    at_base
+}
+
+@test "round 11a (decision 6): this repository's own .gitleaks.toml, its triple-double-quoted description and triple-single-quoted regex among them, is read and passes: a clean push passes with the reader silent (at every head)" {
+    r11a_base
+    cp "$ROMP_DIR/.gitleaks.toml" "$REPO/.gitleaks.toml"
+    grep -q '^description = """$' "$REPO/.gitleaks.toml"
+    grep -q "^regexes = \['''" "$REPO/.gitleaks.toml"
+    git -C "$REPO" add .gitleaks.toml
+    git -C "$REPO" commit -qm "the repository's config"
+    git -C "$REPO" push -q origin main
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 11a (decision 6): a work tree with no config and no environment config passes a clean push with the reader silent, gitleaks reading its default (at every head)" {
+    r11a_base
+    [ ! -e "$REPO/.gitleaks.toml" ]
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r10a_passes
+    [[ "$output" != *"gitleaks config"* ]]
+}
+
+@test "round 11a (decision 6): with no work-tree config, S1's rule in the file GITLEAKS_CONFIG names is refused by the reader's line naming the rule and that file, the remote at its base (published at 93684a4d1, both scanners)" {
+    r11a_base
+    r11a_shape_config S1 > "$TEST_DIR/env-config.toml"
+    export GITLEAKS_CONFIG="$TEST_DIR/env-config.toml"
+    r11a_witness S1
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_rule_line r11a-env-rule "$TEST_DIR/env-config.toml (the file GITLEAKS_CONFIG names)")"
+}
+
+@test "round 11a (decision 6): with no work-tree config and no GITLEAKS_CONFIG, S1's rule in GITLEAKS_CONFIG_TOML's text is refused by the reader's line naming the rule and that text, the remote at its base (published at 93684a4d1, both scanners)" {
+    r11a_base
+    GITLEAKS_CONFIG_TOML="$(r11a_shape_config S1)"
+    export GITLEAKS_CONFIG_TOML
+    r11a_witness S1
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_rule_line r11a-env-rule "GITLEAKS_CONFIG_TOML's text")"
+}
+
+@test "round 11a (decision 5): a work tree config whose [extend] names a relative path (gitleaks-base.toml, beside it) passes a clean push, the scanner handed a copy of the chain with the path made absolute, and under it a credential only the extended file's rule catches, and a default rule's credential, are each refused naming the commit and the file (the clean push refused at 93684a4d1, both scanners, on gitleaks' FTL line: the path read against the scratch directory)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n%s' "$R11A_BUILD_RULE")" gitleaks-base.toml
+    r11a_config "$(printf '[extend]\npath = "gitleaks-base.toml"')"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r10a_passes
+    r11a_build_token > "$REPO/build.txt"
+    commit_file k.py "k = \"$(probe_token)\"" "a default rule's credential"
+    git -C "$REPO" add build.txt
+    git -C "$REPO" commit -qm "the extended rule's credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    ksha="$(git -C "$REPO" rev-parse HEAD~1)"
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (r11a-build-rule) in: build.txt"* ]]
+    [[ "$output" == *"romp pre-push: commit ${ksha:0:10} ADDS a credential (github-pat) in: k.py"* ]]
+    [[ "$output" != *"FTL"* ]]
+    at_base
+}
+
+@test "round 11a (decision 5): a relative [extend] of a relative [extend] (the work tree's config naming cfg/one.toml, which names cfg/two.toml, both read against the work tree's root as gitleaks reads them) passes a clean push, and a credential only the second file's rule catches is refused naming it (the clean push refused at 93684a4d1, both scanners, on gitleaks' FTL line)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n%s' "$R11A_BUILD_RULE")" cfg/two.toml
+    r11a_config "$(printf '[extend]\npath = "cfg/two.toml"')" cfg/one.toml
+    r11a_config "$(printf '[extend]\npath = "cfg/one.toml"')"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r10a_passes
+    r11a_build_token > "$REPO/build.txt"
+    git -C "$REPO" add build.txt
+    git -C "$REPO" commit -qm "the second file's credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (r11a-build-rule) in: build.txt"* ]]
+    at_base
+}
+
+@test "round 11a (decision 5): a third level of [extend] (cfg/two.toml naming cfg/three.toml), which gitleaks 8.28.0 and 8.30.1 ignore, is refused visibly by the reader naming the file, the line and the path, neither scanner run made, the remote at its base" {
+    r11a_base
+    r11a_config "$(printf '[extend]\npath = "cfg/three.toml"')" cfg/two.toml
+    r11a_config "$(printf '[extend]\npath = "cfg/two.toml"')" cfg/one.toml
+    r11a_config "$(printf '[extend]\npath = "cfg/one.toml"')"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "romp pre-push: line 2 of the gitleaks config cfg/two.toml (the [extend] of cfg/one.toml) names a third level of [extend] (cfg/three.toml), which gitleaks 8.28.0 and 8.30.1 ignore and the hook's reader does not read; remove it, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+}
+
+@test "round 11a (decision 5, extended to GITLEAKS_CONFIG): a relative GITLEAKS_CONFIG (tools/leaks.toml, from the work tree's root, where git runs the hook) is made absolute for the scanner: a clean push passes, and a credential only its rule catches is refused naming it (the clean push refused at 93684a4d1, both scanners, on gitleaks' FTL line: the path read against the scratch directory)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n%s' "$R11A_BUILD_RULE")" tools/leaks.toml
+    export GITLEAKS_CONFIG=tools/leaks.toml
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r10a_passes
+    r11a_build_token > "$REPO/build.txt"
+    git -C "$REPO" add build.txt
+    git -C "$REPO" commit -qm "the rule's credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} ADDS a credential (r11a-build-rule) in: build.txt"* ]]
+    at_base
+}
+
+@test "round 11a (decision 6, fail closed): the rules written as an inline array (rules = [ { ... path = ... } ]) are refused naming the construct and its line, neither scanner run made, the remote at its base (published at 93684a4d1, both scanners: gitleaks reads the array's rule, and its path fires on no piece)" {
+    r11a_base
+    r11a_config "$(printf 'rules = [ { id = "r11a-inline-rule", regex = %s, path = %s } ]' "'''zzenv_[0-9a-f]{16}'''" "'''(?i)\\.env\$'''")"
+    r11a_witness S1
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_construct_line 1 "$R11A_WT" "the rules written as a key (rules = ...: an inline table or array of them), where the reader reads [[rules]] tables")"
+}
+
+@test "round 11a (decision 6, fail closed): a triple-quoted string that does not close is refused naming the construct and the line where the file ends, neither scanner run made, the remote at its base (refused at 93684a4d1 on gitleaks' own FTL line, not naming the construct)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "r11a-open"\ndescription = """\nnever closed')"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_construct_line 7 "$R11A_WT" "a triple-quoted string that does not close")"
+}
+
+@test "round 11a (decision 6, fail closed): a table header the reader does not recognize ([[rule]], which gitleaks ignores) is refused naming the header and its line, neither scanner run made, the remote at its base (a clean push passes at 93684a4d1)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\nuseDefault = true\n\n[[rule]]\nid = "r11a-typo"\nregex = %s' "'''zzenv_[0-9a-f]{16}'''")"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_construct_line 4 "$R11A_WT" "the table header [[rule]], which the reader does not recognize")"
+}
+
+@test "round 11a (decision 6, fail closed): an extend file the reader cannot read (r11a-missing.toml, absent) is refused naming it, neither scanner run made, the remote at its base (refused at 93684a4d1 on gitleaks' own FTL line)" {
+    r11a_base
+    r11a_config "$(printf '[extend]\npath = "r11a-missing.toml"')"
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "romp pre-push: the gitleaks config r11a-missing.toml (the [extend] of .gitleaks.toml) could not be opened for reading, so whether a rule in it carries a path condition is unknown; make it readable, or set ROMP_NO_GITLEAKS=1 for one push; the scan is incomplete, so the push is refused"
+}
+
+@test "round 11a (decision 6, fail closed): a quoted key holding an escape (\"p\\u0061th\", which gitleaks decodes to path) is refused naming the construct and its line, neither scanner run made, the remote at its base (published at 93684a4d1, both scanners)" {
+    r11a_base
+    r11a_config "$(printf '[[rules]]\nid = "r11a-escaped"\nregex = %s\n"p\\u0061th" = %s' "'''zzenv_[0-9a-f]{16}'''" "'''(?i)\\.env\$'''")"
+    grep -qF "\"p$(printf '\\')u0061th\"" "$REPO/.gitleaks.toml"          # the escape as written: the key is not spelled path
+    r11a_witness S1
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_construct_line 4 "$R11A_WT" "a quoted key holding an escape")"
+}
+
+@test "round 11a (decision 6, fail closed): a quoted key holding a byte outside printable ASCII ([[\"rule\" and U+017F]], which gitleaks case-folds to rules) is refused naming the construct and its line, neither scanner run made, the remote at its base (published at 93684a4d1, both scanners)" {
+    r11a_base
+    r11a_config "$(printf '[["rule\305\277"]]\nid = "r11a-folded"\nregex = %s\npath = %s' "'''zzenv_[0-9a-f]{16}'''" "'''(?i)\\.env\$'''")"
+    r11a_witness S1
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_construct_line 1 "$R11A_WT" "a quoted key holding a byte outside printable ASCII")"
+}
+
+@test "round 11a (decision 6, fail closed): a NUL byte in the config, which the shell's read drops, is refused as a read short of the file's byte count, naming both numbers, neither scanner run made, the remote at its base (refused at 93684a4d1 on gitleaks' own FTL line)" {
+    r11a_base
+    printf '# a\000b\n[extend]\nuseDefault = true\n' > "$REPO/.gitleaks.toml"
+    git -C "$REPO" add .gitleaks.toml
+    git -C "$REPO" commit -qm "a config holding a NUL"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    nb=$(wc -c < "$REPO/.gitleaks.toml"); nb=${nb//[[:space:]]/}
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "romp pre-push: the gitleaks config $R11A_WT was read short (the shell read $((nb - 1)) bytes of the $nb wc -c counts: a read cut short, or a NUL byte, which the shell's read drops and TOML allows nowhere); the scan is incomplete, so the push is refused"
+}
+
+@test "round 11a (decision 6, fail closed): an [extend] path holding an escape (gitleaks-base\\u002etoml) is refused naming the construct and its line, neither scanner run made, the remote at its base" {
+    r11a_base
+    r11a_config "$(printf '[extend]\npath = "gitleaks-base\\u002etoml"')"
+    grep -qF "gitleaks-base$(printf '\\')u002etoml" "$REPO/.gitleaks.toml"          # the escape as written
+    commit_file ok.txt "nothing to see" "a clean commit"
+    push_main_through_hook_with_shim
+    r11a_refused_by_reader "$(r11a_construct_line 2 "$R11A_WT" "an [extend] path that is not a one-line string with no escape")"
+}
+
+@test "round 11a table case: the BYTE COUNT of a gitleaks config file: a wc silent on wc -c over the work tree's .gitleaks.toml alone (keyed on its input, which carries the config's marker comment), through a real push of a clean commit, is refused naming the shell's byte count and the empty answer, neither scanner run made, and the remote stays at its base" {
+    r11a_base
+    r11a_config "$(printf '# r11a byte count marker\n[extend]\nuseDefault = true')"
+    nb=$(wc -c < "$REPO/.gitleaks.toml"); nb=${nb//[[:space:]]/}
+    commit_file ok.txt "nothing to see" "a clean commit"
+    calls_silent_on_input wc cfg-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "r11a byte count marker"
+    push_main_through_hook_with_shim
+    fired cfg-count "wc -c"
+    r11a_refused_by_reader "romp pre-push: the gitleaks config $R11A_WT was read by the shell ($nb bytes) while its BYTE COUNT reads \"\" (wc -c), not a count, so whether the read is whole is unknown; the scan is incomplete, so the push is refused"
+}
+
+@test "round 11a short case: the BYTE COUNT of a gitleaks config file: a wc whose wc -c over the work tree's .gitleaks.toml answers the first digit of its count (exit 0), through a real push of a clean commit, is refused naming both numbers, neither scanner run made, and the remote stays at its base" {
+    r11a_base
+    r11a_config "$(printf '# r11a byte count marker\n[extend]\nuseDefault = true')"
+    nb=$(wc -c < "$REPO/.gitleaks.toml"); nb=${nb//[[:space:]]/}
+    [ "${#nb}" -ge 2 ]
+    commit_file ok.txt "nothing to see" "a clean commit"
+    calls_short_on_input wc cfg-count '[ "${1:-}" = -c ] && [ "$#" -eq 1 ]' "r11a byte count marker" bytes:1
+    push_main_through_hook_with_shim
+    fired_short cfg-count "wc -c"
+    r11a_refused_by_reader "romp pre-push: the gitleaks config $R11A_WT was read short (the shell read $nb bytes of the ${nb:0:1} wc -c counts: a read cut short, or a NUL byte, which the shell's read drops and TOML allows nowhere); the scan is incomplete, so the push is refused"
 }
