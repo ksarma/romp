@@ -8631,19 +8631,24 @@ author's div of locate-toast, fixed, opaque and letting a press through, painted
 elementsFromPoint skips such an element as elementFromPoint does, measured in Chromium, Firefox and WebKit); author content the hit test
 does not see stays below the control, whose z-index keeps it on top where no stacking context stands around the picture, the viewer
 having taken off the classes the sheets would raise it to the control's stacking level and, from a figure's ancestors, the classes that
-would make one a stacking context around it, and a top-level table's shift into the gutters being a position and a left, which make no
-stacking context (`dropStackClasses`, below; the file review's round 17, extra9-1, and the coordinator's decision 4 on it), the outbound
+would make one a stacking context around it, a top-level table's shift into the gutters being a position and a left, which make no
+stacking context, and the sanitizer removing an author's marquee, whose own rendering made one around what it held (`dropStackClasses`,
+below, and md-sanitize.ts's forbidden tags; the file review's round 17, extra9-1, and the coordinator's decision 4 on it), the outbound
 mark of a picture with no control excepted, which has no stacking level of its own, a stated boundary (its round 17, extra7-1); a same-origin parent's own
 chrome over the frame is not read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
 and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click: a click by a pointer reads the
 record under its own pointerId or, with none, the press a one-click slot took at the last pointerup, the slot emptied by any
 pointerdown, pointercancel or keydown and by the click that takes it and never by time, a key's or a script's click reads neither
-and is read at the click, and a primary press ends every earlier record whatever its pointer type (in the three engines measured,
+and is read at the click, and a primary press ends every earlier record whatever its pointer type, a mousedown that no pointerdown
+announced counting as one, its verdict taken there and handed to the slot at the pointerup after it, since WebKit sends the mouse's
+next press after its drag of a picture that way, the drag having ended with no pointerup and no pointercancel (in the three engines measured,
 Chromium's tap click carries the touch's own pointerId and Firefox's its press's, while in WebKit under Playwright's touch
 emulation on Linux, a stand-in for WebKitGTK on a touchscreen, a tap's click carries pointerId 1 of type mouse where its press
 carried the touch's, so there it finds its press in the slot; iOS WebKit's source gives an iPhone tap's click the touch's own
 pointerId, read and not run on a device; the slot's clears are defensive, the slot refilled at every pointerup and read by no
-key's or script's click; the file review's round 17, tests-1 with regression-1);
+key's or script's click; the clear's cost on a device with a mouse and a touchscreen: a contact held on a picture while a primary
+press of the other pointer type lands elsewhere loses its record, so its click opens nothing and reveals; the file review's round 17,
+tests-1 with regression-1);
 a refused gesture opens nothing and scrolls the sign into view (`revealSign`, block and inline "nearest", the same-origin frames and
 a pinch zoom's visual viewport included), moving no focus, so the next gesture opens; where the reveal cannot put the sign on the
 screen the gate stays closed, stated limits measured in Chromium: the chat page's modal framed by the dashboard under a pinch zoom of
@@ -8653,7 +8658,8 @@ round 16 disclosed for an author's element of a page class laid over the figure 
 `dropStackClasses` takes off had placed over the figure no longer covers the control, and one that a page class the viewer keeps
 positions over a picture that wears the control rests below the control, whose z-index keeps it on top, so the control opens the
 picture on every gesture while a click on the picture's own body lands on that element and opens nothing, the same inside what was a
-stacking context around the picture (its round 17, extra9-2, a shape the context drop and a top-level table's position and left close),
+stacking context around the picture (its round 17, extra9-2, a shape the context drop, a top-level table's position and left, and the
+sanitizer's removal of an author's marquee close),
 and one that a kept page class positions over a picture that wears the mark still keeps that picture from opening, since the mark has
 no stacking level of its own and no button for a key to reach (its round 17, fresh-1); a refused key closes the viewer's own text-size
 flyout as well, which no other key but Escape closes, so the next key opens where the flyout had covered the control; the later events of one gesture take its
@@ -8885,11 +8891,13 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests alone (58 files, the ledger entry's where line; run 2026-09-26 at the head that carries the fixes for the
-file review's round 17, tests-1 with regression-1 and extra9-1,
+upstream or tests alone (60 files, the ledger entry's where line; run 2026-09-26 at the head that carries the fixes for the
+file review's round 17, tests-1 with regression-1 and extra9-1, and the sanitizer's removal of an author's marquee,
 where the merge-base is fa3ef54b5, the fork's main the
 branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch PR 907, and the listing is the
-branch's whole delta over it; the run at the head that carries the fixes for that round's tests-1 with regression-1, from the
+branch's whole delta over it; the run at the head before that removal, from the merge-base fa3ef54b5, listed 58, before
+ui/webview/md-sanitize.ts and its node suite ui/webview/md-sanitize.test.ts, modules of main, joined the delta; the run at the
+head that carries the fixes for that round's tests-1 with regression-1, from the
 merge-base fa3ef54b5, listed 57, before ui/webview/file-figure-open-stacking.ts, the one gate's stacking cells, joined the delta;
 the run at the head that carries the fixes ruled in the file review's round 16, the author's closing
 pass over them and the re-aimed containment test of the sanitizer's browser leg, from the merge-base fa3ef54b5, listed 55, before
@@ -8961,13 +8969,15 @@ measured at 22px at the figure's top, the Raw switch landing on the img's own ro
 the structural read's exclusion of the control in the real layout, which the node scene in
 ui/webview/file-view-place-blocks.test.ts stands in for with a fixture box) and, since the fixes for the file review's round 17
 (tests-1 with regression-1), ui/webview/file-figure-open-engines-browser.test.ts (the one gate's tap cells in WebKit, on a
-phone's pages and a hybrid page, and in Firefox, on the hybrid page, each engine launched through real-viewer-leg.ts's inBrowser
-with the engine named; the cells are ui/webview/file-figure-open-taps.ts's, a module of the cells alone that the Chromium leg
-runs too, so one set reads all three engines) and, since the fixes for that round's extra9-1 (with the coordinator's decision 4),
-ui/webview/file-figure-open-stacking.ts (the one gate's stacking cells, a module of the cells alone that the same two legs run in
-the three engines, on the chat modal and the Files pane: a remote picture in a top-level table and inside author elements of page
-classes that would make a stacking context around it, each followed by a positioned author element or by an svg whose shadow is
-placed over the control). The review's round 1 added two modules outside those two stems:
+phone's pages and a hybrid page, and in Firefox, on the hybrid page, the clicks of the mouse after a drag on a plain page too,
+each engine launched through real-viewer-leg.ts's inBrowser with the engine named; the cells are ui/webview/file-figure-open-taps.ts's,
+a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and a case of WebKit's alone that
+reads the window errors of the Files pane as its Comments aside opens beside a document of top-level tables) and, since the fixes
+for that round's extra9-1 (with the coordinator's decision 4), ui/webview/file-figure-open-stacking.ts (the one gate's stacking
+cells, a module of the cells alone that the same two legs run in the three engines, on the chat modal and the Files pane: a remote
+picture in a top-level table, inside author elements of page classes that would make a stacking context around it and inside an
+author's marquee, each followed by a positioned author element or by an svg whose shadow is placed over the control, and a click
+on the picture's own body under the positioned element, a stated cost). The review's round 1 added two modules outside those two stems:
 ui/webview/file-view-figure-shapes.test.ts (the source pins for L3's round-1 rules: figureTarget's web test before
 the model's join, the one decision's order in figureWantsControl (the state, the floor, the target, any link above),
 the measure's reads, the bare
@@ -9028,8 +9038,8 @@ or re-aimed, tests/test_guide_trail_chords_and_figure_button.py and tests/test_g
 and the road that runs the legs with a browser where landing is gated is the shared roster of browser legs,
 vscode-extension/ci-browser-legs.txt, one compiled bundle path per line, read by a step of that job after its Chromium
 install, a change of its own that this branch does not carry, so this follow-on's legs join the roster once both are in
-the tree, all but ui/webview/file-figure-open-engines-browser.test.ts, which launches WebKit and Firefox and so stands in the
-roster's exclusions file with that reason, since the roster's job installs Chromium alone; tools/markdown-viewer-plan-linknav.test.mjs derives the legs BY NAME, the modules under ui/webview whose file name
+the tree, all but ui/webview/file-figure-open-engines-browser.test.ts, which launches WebKit and Firefox and so stays off the
+roster, since the roster's job installs Chromium alone; tools/markdown-viewer-plan-linknav.test.mjs derives the legs BY NAME, the modules under ui/webview whose file name
 carries the suffix -browser before .test.ts and whose own text names this follow-on, a name and not the property that makes a module a browser leg
 (that property, a call of the shared launcher's inBrowser through any binding or a playwright package named, is what the
 census of browser legs PR 887 brings reads off each module's tree with the compiler,
@@ -9069,9 +9079,10 @@ the tree for the roster, its exclusions file (vscode-extension/ci-browser-legs-e
 that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE, reached by inBrowser through
 ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
 four it holds every leg to a roster line outside the exclusions, the leg that launches WebKit and Firefox to an exclusions
-line and no roster line, and the roster's own tree test to exist, and a tree with
+line and no roster line (the module's own model of the convention, which PR 887's section on who owes what at the landing
+revises), and the roster's own tree test to exist, and a tree with
 some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
-landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-two standing suites were re-aimed, not undone:
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-three standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -9138,7 +9149,9 @@ loses the class, so the test reads the class gone and the element in the note's 
 it, reads the class's fixed position on an element of the page's own, and keeps the fixed box put into the note after render as
 the box whose containment it measures, read again where the body scrolled to, since no page class the viewer keeps on a file
 document's author markup makes an element fixed, which the test reads at run time over every sheet a page of either host loads;
-the leg launches through real-viewer-leg.ts's inBrowser, as this follow-on's legs do). The guide's Links in a file paragraph gained two sentences, the trail's and
+the leg launches through real-viewer-leg.ts's inBrowser, as this follow-on's legs do), and since the sanitizer's removal of an
+author's marquee, ui/webview/md-sanitize.test.ts (the profile's list of forbidden tags holds the marquee, whose own rendering
+makes a stacking context around what it holds with no class or style of the author's). The guide's Links in a file paragraph gained two sentences, the trail's and
 the figure control's, and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
 scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail

@@ -969,9 +969,11 @@ const offRoute = (code) => {
 const legsOffRoster = (files, legs) => files.filter((f) => /^ui\/webview\/[\w-]+-browser\.test\.ts$/.test(f)).map((f) => f.replace(/^ui\/webview\//, '')).filter((f) => !legs.includes(f)).sort();
 /** The follow-on's legs that stay off the shared roster, each with the words its own header gives for it: a leg that launches an
  *  engine the roster's job does not install, where a test in a rostered file would not run (the file review's round 17, tests-1 with
- *  regression-1, and the coordinator's decision 2 on it: the one gate's tap cells in WebKit and Firefox). Each is a derived leg whose
- *  header carries those words, the plan's disclosure names it, a leg whose code names Firefox or WebKit as a string literal is among
- *  them, and where the tree carries the convention (state A) it is an exclusions line and no roster line. */
+ *  regression-1, and the coordinator's decision 2 on it: the one gate's tap cells and stacking cells in WebKit and Firefox). Each is
+ *  a derived leg whose header carries those words, the plan's disclosure names it, a leg whose code names Firefox or WebKit as a
+ *  string literal is among them, and where the tree carries the convention (state A) it is an exclusions line and no roster line:
+ *  this pin's own model of the convention (ROSTER and EXCLUDED below), which PR 887's section on who owes what at the landing
+ *  revises, not a statement of what PR 887 holds. */
 const OFF_ROSTER = [['file-figure-open-engines-browser.test.ts', 'that roster\'s job installs Chromium alone']];
 /** The legs among `legs` whose comment-stripped code names Firefox or WebKit as a whole string literal, the engine a launch names. */
 const otherEngineLegs = (legs, codeOf) => legs.filter((f) => /(["'`])(?:firefox|webkit)\1/.test(codeOf(f))).sort();

@@ -4646,7 +4646,10 @@ const SHEET_STACK_CLASSES: ReadonlySet<string> = new Set([
  *  shows. Held to the sheets both ways by file-figure-open.test.ts, which derives the list by this rule, names each class the sheets
  *  would make a stacking context around a picture that the list lacks and each listed class they no longer do, and names each rule
  *  that would make an element a stacking context with no class in its subject, an element that could hold a picture's control
- *  (no void element and no tag the sanitizer removes) and no id: no drop of a class undoes such a rule's reach. */
+ *  (no void element and no tag the sanitizer removes) and no id: no drop of a class undoes such a rule's reach. Two of
+ *  the listed classes carry an author's own layout: fileview-load and wt-hostload style a picture's wrapper (a flex row,
+ *  and the inner picture's size and its spin), so dropping them takes that layout from a note whose author used the class,
+ *  though the picture and its control stay. */
 const SHEET_CONTEXT_CLASSES: ReadonlySet<string> = new Set([
   "ask-btn", "composer-stage-btn", "ctx-swatch", "fask-secbtn", "fc-arrivals", "fc-clip", "fc-replies", "fc-sec", "fconfirm-btn",
   "feed-cols", "fileview-load", "fl-prov-swirl", "fold-caret", "host-dial-swirl", "meta-held-mark", "path-load-spin",

@@ -1,7 +1,7 @@
 // The real viewer in a real page, first for the Slice 2 browser legs (plans/markdown-viewer.md, "layout follows the
 // pane, reader keeps their place") and then for every browser leg after them: file-view.ts bundled from this tree as the
 // webview build bundles it (and through it the REAL Comments panel, which the module registers itself), served into
-// headless Chromium (or Firefox or WebKit, for the one gate's tap cells: inBrowser's engine) under each surface's own
+// headless Chromium (or Firefox or WebKit, for the one gate's tap cells and stacking cells: inBrowser's engine) under each surface's own
 // sheet (the chat modal: styles.css; the feed modal: feed.css; the Files pane: styles.css and files-pane.css under
 // body.fileview-pane), with a fetch that answers the kernel's file route from
 // a table the test edits (so a reload can bring different bytes under a new mtime) and a poster that answers the
@@ -158,7 +158,7 @@ let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
 /** Launch a headless browser and run `body` with it, or skip LOUDLY (CI installs no browsers), as the other legs do: Chromium
- *  unless `launch.engine` names Firefox or WebKit, which the one gate's tap cells launch from a leg of their own
+ *  unless `launch.engine` names Firefox or WebKit, which the one gate's tap cells and stacking cells launch from a leg of their own
  *  (file-figure-open-engines-browser.test.ts, off the shared roster of browser legs, whose job installs Chromium alone; the file
  *  review's round 17, tests-1 with regression-1). `launch.args` is handed to playwright's launch: a case that needs Chromium's own
  *  device settings (the touchscreen laptop, a `--blink-settings` flag, since CDP's touch emulation flips the primary pointer and
