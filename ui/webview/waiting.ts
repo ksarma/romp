@@ -302,7 +302,15 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   // the link). Gone with the modal: close() drops it, and it drops itself if the overlay was removed some
   // other way (a second Reply replacing this one, above).
   const onFocus = () => { if (!overlay.isConnected) { window.removeEventListener("focus", onFocus); return; } input.focus(); };
-  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("focus", onFocus); };
+  // THE KEYBOARD (the user 2026-09-19, a phone screenshot: the detail filled the sheet and the answer box was one squeezed
+  // line). The shell sizes this iframe to the VISIBLE height, so the on-screen keyboard opening or closing lands here as
+  // this window's own resize: the picker's fold (render.ts kbFit), on this overlay: short window → kb-tight, and
+  // styles.css pins the sheet to the top under a 12px frame and lets the box scroll (#ut-reply-prompt.kb-tight, the
+  // .picker-overlay.kb-tight rules the class shares). The same resize re-runs grow: the answer's cap is the room the
+  // box has left, and the keyboard opening or closing changes the room. Gone with the modal: close() drops it, and it
+  // drops itself when the overlay was removed some other way (a second Reply replacing this one), as onFocus does.
+  const kbFit = () => { if (!overlay.isConnected) { window.removeEventListener("resize", kbFit); return; } overlay.classList.toggle("kb-tight", window.innerHeight < 480); grow(true); };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("focus", onFocus); window.removeEventListener("resize", kbFit); };
   const go = () => {
     const text = input.value.trim();
     if (!text) { input.classList.add("bad"); input.focus(); return; }
@@ -314,11 +322,60 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   send.addEventListener("click", go);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  // the box grows with the answer (render.ts growComposer's auto-then-measure idiom): height auto measures the floor,
+  // three rows (rows=3; styles.css min-height), then the content's scroll height plus the border a border-box height
+  // carries. The cap is the ROOM the box has left, read from the box itself, never a share of the window (the
+  // maintainer's round 1 ruling: a window-share cap laid Cancel and Send out below the box's clip at 390x508 with the
+  // keyboard up, and a tap there fell on the backdrop): the wanted height is written, the box's overflow past its own
+  // cap read, and the height gives that overflow back, never under the floor. Run on the window's resize too (kbFit),
+  // so a keyboard opening or closing re-fits an answer already grown; the box's own scroll (styles.css
+  // #ut-reply-prompt .picker-box) is the backstop for a window the floors alone overflow. A height the person DRAGGED
+  // stands against typing (the textarea keeps resize: vertical): the guard is file-comments.ts autosize's, compared
+  // string to string, an inline height that is not what this handler last wrote was dragged there, before the first
+  // keystroke or since (the maintainer's round 1 ruling: without it every keystroke snapped a dragged box back to its
+  // content). On the window's resize (kbFit) that height is the person's PREFERENCE: clamped to the room the box has,
+  // never under the floor, and returned toward when the room comes back, never re-fit to the content (the author's pass
+  // after the maintainer's round 1, composition-3: before, a box dragged at 900 kept its height under the keyboard and
+  // Send lay below the frame). growComposer is the precedent for the auto-then-measure idiom only: it discards a dragged
+  // height too (only its cap survives a drag). render.ts showUserTodoReply carries the same block, byte for byte
+  // (reply-sheet-keyboard.test.ts pins the two equal).
+  let sizedTo = "";   // what grow last wrote ("" before its first write): an inline height that is not it is the person's drag
+  let pref = 0;   // the height the person dragged to, in px (0 until a drag): their preference, which a keystroke leaves alone and a resize clamps to the room
+  const grow = (resized = false) => {
+    const stood = input.style.height;
+    if (stood !== sizedTo) pref = parseFloat(stood) || 0;   // dragged since the last write (resize: vertical writes the inline height, fires no input): the person's height is the preference from here on
+    if (pref > 0 && !resized) return;   // and it stands against typing; only the room's change (kbFit) re-fits it, to the room and back toward the preference
+    input.style.height = "auto";
+    const floor = input.offsetHeight;
+    if (!(floor > 0)) { input.style.height = stood; return; }   // no layout to measure (a box not laid out): keep what stood
+    const want = pref > 0 ? Math.max(floor, pref) : input.scrollHeight + floor - input.clientHeight;   // the preference, or the content's height plus the border
+    input.style.height = want + "px";
+    const over = box.scrollHeight - box.clientHeight;   // the box past its own cap with the answer at that height
+    if (over > 0) input.style.height = Math.max(floor, want - over) + "px";
+    sizedTo = input.style.height;
+  };
+  input.addEventListener("input", () => grow());
+  // NOT a tap on the backdrop: a click whose press began inside the sheet. Chromium and WebKit dispatch a click whose press
+  // and release targets differ to their common ancestor, here the overlay, so a grip pull released past the box's bottom
+  // edge (the box at its cap cannot grow with the answer box, so the pointer leaves it) and a text selection dragged out of
+  // the box arrived as backdrop clicks and closed the sheet with the answer (the author's pass after the maintainer's round
+  // 1, composition-2, and the reviewer's ruling on the pass's selection-drag observation). A backdrop tap is the whole
+  // gesture on the backdrop, press and release both: the overlay's pointerdown records whether the last press began inside
+  // the sheet (any target but the overlay itself), and the click line closes only when the click's target is the overlay
+  // and that press did not, which closes both roads and any future drag out of the sheet with one condition. Every click an
+  // engine dispatches follows a press, so the click line only reads the record. Firefox retargets such a click to the
+  // pressed node, so there these roads never reached this handler. What a dismiss DOES (close with no save) is the filed
+  // discard item's, untouched here. reply-sheet-keyboard.test.ts executes these three lines out of each builder and pins
+  // the two builders' equal
+  let pressedInside = false;   // the last press began inside the sheet (on the box or anything in it), not on the backdrop
+  overlay.addEventListener("pointerdown", (e) => { pressedInside = e.target !== overlay; });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay && !pressedInside) close(); });
   box.append(h, d); if (chip) box.appendChild(chip); if (lchip) box.appendChild(lchip); if (dd) box.appendChild(dd); box.append(input, actions);
   actions.append(cancel, send);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
+  window.addEventListener("resize", kbFit);
+  kbFit();   // synced at open too, not only on the first resize: the keyboard may already be up
   document.addEventListener("keydown", onKey, true);
   window.addEventListener("focus", onFocus);
   input.focus();
@@ -364,7 +421,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   const reply = el("button", "ut-btn ut-reply");
   reply.dataset.act = "utreply"; reply.dataset.tid = w.todo.id; reply.dataset.sid = w.sid;
   (reply as any)._uttext = w.todo.text;          // the modal quotes the need it answers…
-  (reply as any)._utdetail = w.todo.detail || "";   // …and its detail, so the whole need is in view
+  (reply as any)._utdetail = w.todo.detail || "";   // …and its detail, quoted beneath the line, capped and scrolling within itself
   (reply as any)._utfile = w.todo.file || "";       // …and the file it names, as the row's chip
   (reply as any)._utlink = w.todo.link || "";       // …and the address it carries, as the row's other chip
   reply.textContent = "Reply";

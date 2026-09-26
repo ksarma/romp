@@ -2956,6 +2956,46 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
   border: 1px solid var(--box-border); border-radius: 6px; outline: none; resize: vertical; }
 .ut-reply-input:focus { border-color: var(--accent); }
 .ut-reply-input.bad { border-color: #ff6a6a; }
+/* THE SHEET ON A PHONE WITH THE KEYBOARD UP (the user 2026-09-19, screenshot): a todo's long detail filled the
+   sheet and the answer box was one squeezed line above Cancel and Send. .confirm-box is a column flex box capped at
+   the window (max-height, overflow hidden) whose children all shrink; a wrapped text block's automatic minimum
+   (min-height: auto) refuses to give, the textarea's (overflow auto) resolves to zero, so the box took the whole
+   deficit and the cap clipped instead of scrolling. Three rules on this dialog's own selectors, never on .confirm-box
+   or .picker-box (seven dialogs share them): the answer box never shrinks and holds three rows (rows=3; resize:
+   vertical stays), the detail is the part that gives way, capped and scrolling within itself (#pinned-notes above is
+   the precedent; overflow-y: auto is what lets it shrink, the same rule that zeroes the textarea's minimum, since a
+   scroll container's automatic flex minimum is zero) down to a FLOOR of two of its own lines (2lh, with 32px ahead of it
+   for an engine without the lh unit: two lines at the default 13px, 0.86em at line-height 1.4): the picker's fold keeps
+   one row of its list for the same reason (.picker-overlay.kb-tight .picker-list below), a region that gives way must
+   never give way to NOTHING, invisible and unscrollable, with no sign anything was dropped; without the floor the detail
+   resolved to 0px at 390x508 once the answer had grown (the maintainer's round 1 ruling). One line would show a passage
+   as a single moving line; two is the smallest window in which a scroll visibly moves text and a link keeps a line of
+   context. The deficit past the floor goes to the box, which scrolls (the fourth rule below). The cap is 12em of the
+   detail's own font, about eight and a half of its lines (line-height 1.4), the most of a long detail the sheet shows
+   at rest on any window; it is NOT what governs with the keyboard up, where the flex shrink takes the detail down
+   toward its floor (a 35dvh arm once stood beside it as the keyboard-up cap and never bound: at 508px it resolved to
+   177.8px against 12em's 134px at the default font, and under about 383px, where it would be the smaller, the shrink
+   has already taken the detail below both; the maintainer's round 1 ruling). A scroll container's overflow-x
+   computes to auto once overflow-y is set, so an unbreakable token (a long identifier, a bare path with no link) made
+   the detail a sideways scroller; overflow-wrap: anywhere breaks the token as .pn-detail and .ut-reply-quote already
+   do, and overflow-x: hidden is #pinned-notes's companion declaration, kept so a token the wrap cannot break is
+   clipped rather than scrolled sideways; it is not inert: a non-visible overflow on either axis makes the element a
+   scroll container on both (a visible half beside it computes to auto), so it also keeps the detail scrolling
+   should overflow-y ever go, which is why only a spelling pin guards that declaration on its own. And a short window (the
+   keyboard up; both builders toggle kb-tight on this window's own resize, as the picker does) pins the sheet to the
+   top under the picker's 12px frame so the buttons sit above the keyboard. The picker's kb-tight rules on
+   .picker-overlay reach this overlay through the class it shares (the dvh cap, overflow-y auto on the box).
+   A fourth rule, the box's own scroll at EVERY height (the maintainer's round 1 ruling): the shared .picker-box is
+   overflow hidden and scrolls only under the fold, so above 480px a row laid out past the box's cap was clipped, and
+   clipped content is not hit-testable. At 390x508 with the keyboard up, a wrapped ask with both chips and an answer
+   grown to the window-share cap put Cancel and Send below the clip, and a tap where Send was painted fell on the
+   backdrop, which closes the sheet: the typed answer was gone. The box scrolls instead, whatever the window's height;
+   the grow handlers in both builders cap the answer at the room the box has left (read from the box, never from the
+   window), so the scroll is the backstop for the state the floors alone overflow, never the everyday path. */
+#ut-reply-prompt .ut-reply-input { flex: 0 0 auto; min-height: calc(3lh + 16px); }
+#ut-reply-prompt .ut-detail.open { flex: 1 1 auto; min-height: 32px; min-height: 2lh; max-height: 12em; overflow-y: auto; overflow-x: hidden; overflow-wrap: anywhere; overscroll-behavior: contain; }
+#ut-reply-prompt.kb-tight { align-items: flex-start; padding: 12px 16px; }
+#ut-reply-prompt .picker-box { overflow-y: auto; }
 
 /* ---------- postal cards (romp peer mail) + teammate messages ---------- */
 /* Both are THE notice since 2026-09-08 (renderPostalService / renderTeammate): a peer's mail wears its
