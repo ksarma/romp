@@ -11,9 +11,9 @@
 // forwards — the same event source the web rail rides.
 //
 // Every kernel fetch routes through media.ts kernelUrl(): it prepends the
-// host-injected base AND appends ?token= when the host injected one — the
-// kernel gates every request on the serve token (loopback included), and a
-// webview's cross-origin fetch carries no cookie.
+// host-injected base AND appends ?token= when the host injected one: the
+// kernel gates every request on the serve token or a browser sign-in made with
+// it (loopback included), and a webview's cross-origin fetch has no sign-in.
 import { kernelUrl } from "./media";
 import { durLabel } from "./duration";
 

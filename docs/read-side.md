@@ -958,10 +958,11 @@ The Python kernel (`kernel/kernel.py`) closes it.
   origin plus known local client origins (the browser at the kernel's host, the
   `vscode-webview://` extension, the timeline), reject everything cross-site. This
   kills ClawJacked for free; legit local clients send the right Origin/Host.
-- **Token REQUIRED on every gated route, loopback included** (Jupyter's model:
-  loopback is one network stack shared by every local UID, so the `0600` token
-  file — not the socket — is the same-user trust boundary; the gate keeps a
-  same-host co-tenant out of `/send` and the bus). Accepted forms: `X-Romp-Token`
+- **Token REQUIRED on every gated route, loopback included, directly or through
+  a browser sign-in made with it** (Jupyter's model: loopback is one network
+  stack shared by every local UID, so the `0600` token file, not the socket, is
+  the same-user trust boundary; the gate keeps a same-host co-tenant out of
+  `/send` and the bus). Accepted forms: `X-Romp-Token`
   (CLI/hooks/daemons, read from the file) and `?token=`, from any client; a
   browser presents `?token=` once, and that response signs it in with a session
   cookie that opens only the page documents and static files, a page key in site

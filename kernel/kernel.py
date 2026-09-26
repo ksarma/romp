@@ -3854,13 +3854,14 @@ def _serve_token_read_or_mint(f, who):
 
 def _load_token():
     """The serve token, baked into launch so the human never passes --token: ROMP_SERVE_TOKEN if
-    set, else a stable random token persisted under the state dir at 0600 — file perms are the
-    same-user gate (Jupyter's model). Required on EVERY request, loopback included: loopback is
-    reachable by any local user, so a token-free loopback would let a same-host co-tenant drive
-    sessions. Local clients read the file (same user) and send X-Romp-Token; a browser presents
-    ?token= (or a one-time ?c= code) once, on a page navigation, which signs it in with a session
-    cookie that opens the page documents and static files, and a page key for every other request (a
-    /file load carries a capability made from it; Handler._authorize). The file is read or minted by
+    set, else a stable random token persisted under the state dir at 0600: file perms are the
+    same-user gate (Jupyter's model). Required on EVERY request, loopback included, presented
+    directly or through a browser sign-in made with it: loopback is reachable by any local user, so
+    a token-free loopback would let a same-host co-tenant drive sessions. Local clients read the
+    file (same user) and send X-Romp-Token; a browser presents ?token= (or a one-time ?c= code)
+    once, on a page navigation, which signs it in with a session cookie that opens the page
+    documents and static files, and a page key for every other request (a /file load carries a
+    capability made from it; Handler._authorize). The file is read or minted by
     _serve_token_read_or_mint (locked, born 0600, never rotated by a read fault); a fault there at
     import refuses to start the kernel rather than hand out a token no client holds (under
     bin/romp-manager the respawn backoff repeats that refusal until the file is repaired, then the
@@ -26521,7 +26522,8 @@ CHECKIN_REFRESH_S = 300      # the slow steady re-announce floor while checked i
 def _checkin_handshake(r):
     """Tell the hub (through our own -L to its kernel) where our reverse forwards landed and hand it
     our token — the PUSH that replaces the hub ever fetching credentials. Authorizes with the HUB's
-    token (r["token"], fetched at attach — the hub requires it on every request, loopback included).
+    token (r["token"], fetched at attach: the hub requires it, or a browser sign-in made with it, on every
+    request, loopback included).
     True on ack; the caller records success per tunnel incarnation and retries otherwise.
 
     A REFUSAL is read, said and held (review find, 2026-09-08: only the reply's status was read, so the
@@ -73573,9 +73575,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    # ── serve-layer security (docs/read-side.md): Origin/Host gate always; token required for ALL
-    # access, loopback included (Jupyter's model — loopback is shared by every local user on the
-    # machine, so it is not a trust boundary; the 0600 token file is the same-user gate) ──
+    # ── serve-layer security (docs/read-side.md): Origin/Host gate always; the token, presented directly
+    # or through a browser sign-in made with it, required for ALL access, loopback included (Jupyter's
+    # model: loopback is shared by every local user on the machine, so it is not a trust boundary; the
+    # 0600 token file is the same-user gate) ──
     def _origin_ok(self):
         """Reject cross-site browser origins — the ClawJacked/WS hole (WS isn't covered by CORS, so
         this is the real gate). Allow same-origin, the local kernel origin, vscode-webview, and an
@@ -79245,11 +79248,11 @@ def main():
     url = "http://127.0.0.1:%d" % PORT
     sys.stderr.write("romp-kernel: serving the ported UI at %s  (Ctrl-C to stop)\n" % url)
     sys.stderr.write("romp-kernel: records under %s ; bundles from %s\n" % (jd.STATE, DIST))
-    sys.stderr.write("romp-kernel: every request needs the serve token (loopback included) — "
-                     "browser entry: `romp`\n")
+    sys.stderr.write("romp-kernel: every request needs the serve token or a browser sign-in made with it "
+                     "(loopback included); browser entry: `romp`\n")
     if BIND != "127.0.0.1":
         # reachable off-box (tailnet/phone): the Origin gate blocks cross-site browsers token-free,
-        # and the token is required everywhere. Open from the phone:
+        # and the token, or a browser sign-in made with it, is required everywhere. Open from the phone:
         sys.stderr.write("romp-kernel: bound %s — open from the phone:\n"
                          "  http://<this-host>:%d/?token=%s\n" % (BIND, PORT, TOKEN))
     if not os.environ.get("ROMP_KERNEL_NO_OPEN"):

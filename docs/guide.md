@@ -1326,15 +1326,17 @@ tooltip says which of the two is off.
 Romp drives agents that run tools and shell commands as you, so reaching its API
 is equivalent to running code as you. Everything below follows from that.
 
-**One token, required on every request.** The kernel and the postal bus both
-demand a token on every request, local ones included. Loopback is not a
-security boundary: on a multi-user machine every local account can reach your
-ports, so without this any other user could inject prompts into your live
-sessions. The token is 144-bit random and lives at
-`~/.local/state/romp/serve-token` with mode `0600` (readable only by your own
-user account). Local tools (the CLI, hooks, the bus, the editor extension) read
-that file and send it automatically, so you never type it. A few requests skip
-the token: the liveness probes (`/healthz`, `/version`, `/busy`, and the bus's
+**One token, required on every request, directly or through a browser sign-in
+made with it.** The kernel and the postal bus both demand the token on every
+request, local ones included, and a browser signed in to the kernel presents
+that sign-in instead (below). Loopback is not a security boundary: on a
+multi-user machine every local account can reach your ports, so without this
+any other user could inject prompts into your live sessions. The token is
+144-bit random and lives at `~/.local/state/romp/serve-token` with mode `0600`
+(readable only by your own user account). Local tools (the CLI, hooks, the bus,
+the editor extension) read that file and send it automatically, so you never
+type it. A few requests need neither the token nor a sign-in: the liveness
+probes (`/healthz`, `/version`, `/busy`, and the bus's
 `/ping`); the sign-in page (`/login`, a fixed form); the notification worker's
 acknowledgement (`POST /push/ack`, admitted by the notification's own
 unguessable id); and the files a browser fetches without credentials when you

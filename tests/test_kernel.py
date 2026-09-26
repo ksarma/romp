@@ -7301,9 +7301,10 @@ class WsFraming(unittest.TestCase):
 
 class ServeSecurity(unittest.TestCase):
     """The serve-layer gate (docs/read-side.md): Origin validation on every request AND the /ws
-    upgrade (kills the cross-site WS hole token-free), + the serve token REQUIRED on every gated
-    route, loopback included (Jupyter's model — loopback is reachable by every local user, so the
-    0600 token file, not the socket, is the same-user boundary). Runs the REAL handler over a
+    upgrade (kills the cross-site WS hole token-free), + the serve token, presented directly or
+    through a browser sign-in made with it, REQUIRED on every gated route, loopback included
+    (Jupyter's model: loopback is reachable by every local user, so the 0600 token file, not the
+    socket, is the same-user boundary). Runs the REAL handler over a
     loopback server (GET /feed is a static page → no model calls)."""
 
     @classmethod

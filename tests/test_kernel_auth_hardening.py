@@ -3,10 +3,11 @@
 
   L2 — the serve token is compared in constant time (hmac.compare_digest), not
        with ==, so a network (tailnet) client gets no timing oracle on the token.
-  Token-everywhere — the serve token is REQUIRED on every gated route, loopback
-       included (Jupyter's model: loopback is reachable by every local user on
-       the machine, so the 0600 token file — not the socket — is the same-user
-       trust boundary). The old loopback bypass (and with it the whole notion of
+  Token-everywhere: the serve token, presented directly or through a browser
+       sign-in made with it, is REQUIRED on every gated route, loopback included
+       (Jupyter's model: loopback is reachable by every local user on the
+       machine, so the 0600 token file, not the socket, is the same-user trust
+       boundary). The old loopback bypass (and with it the whole notion of
        "locality") is gone: a token-less loopback request is denied, and the Host
        header carries no authorization weight in any direction. Accepted forms:
        the serve token as ?token= or the X-Romp-Token header (CLI/hooks/daemons),

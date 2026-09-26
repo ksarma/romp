@@ -58,8 +58,8 @@ teardown() { rm -rf "$TEST_DIR"; }
 }
 
 @test "romp-wake sends the serve token header (env override form)" {
-    # The kernel gates every request on the serve token, loopback included — the poke
-    # must carry X-Romp-Token or it 403s silently and the judges fall back to the backstop.
+    # The kernel gates every request on the serve token, or a browser sign-in made with
+    # it, loopback included. The poke must carry X-Romp-Token or it 403s silently and the judges fall back to the backstop.
     ROMP_SERVE_TOKEN=tok-from-env run bash -c 'echo "{}" | "'"$HOOK"'"'
     [ "$status" -eq 0 ]
     for _ in $(seq 1 40); do [ -s "$CURL_STDIN" ] && break; sleep 0.05; done

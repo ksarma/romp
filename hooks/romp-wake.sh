@@ -24,8 +24,8 @@ cat >/dev/null 2>&1 || true
 # Either spelling of the kernel's listen port (bin/romp-serve owns that seam and exports both);
 # ROMP_SERVE_PORT first, so a session under an aux kernel keeps poking ITS kernel.
 port="${ROMP_SERVE_PORT:-${ROMP_KERNEL_PORT:-29855}}"
-# The kernel gates every request on the serve token, loopback included (Jupyter's model) — read it
-# the way the kernel resolves it: env override, else the 0600 state file. Missing token → the poke
+# The kernel gates every request on the serve token, or a browser sign-in made with it, loopback
+# included (Jupyter's model). Read it the way the kernel resolves it: env override, else the 0600 state file. Missing token → the poke
 # 403s silently, same posture as no kernel at all (the backstops cover it).
 tok="${ROMP_SERVE_TOKEN:-}"
 [[ -n "$tok" ]] || tok="$(cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/serve-token" 2>/dev/null || true)"
