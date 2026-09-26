@@ -1012,9 +1012,9 @@ PYTEST_CMD_RE = re.compile(r"^(?P<env>(?:[A-Za-z_][A-Za-z0-9_]*=\S*[ \t]+)*)"
 # 2026-09-21). An identifier that runs on past the word (an env: key PYTEST_ADDOPTS, pytest_args) is no mention unless
 # a `$` expands it. A mention that is not a command hit and not a pip install is `unparsed`.
 PYTEST_WORD_RE = re.compile(r"pytest\b|\bpy\.test\b|\$\{?pytest", re.I)
-# a pip install, keyed on the command's program: pip or pipx (by path, with a version suffix, as `python -m pip` or
-# `uv pip`), then `install` after the program's own options, matched at the start of one command. Until 2026-09-23 it
-# matched pip and install as words anywhere in the command, so a pytest command whose arguments spelled both (`uvx
+# a pip install, keyed on the command's program and matched at the start of one command; pytest_line_census's
+# docstring, the census's rule, states which programs and forms it matches. Until 2026-09-23 it matched pip and
+# install as words anywhere in the command, so a pytest command whose arguments spelled both (`uvx
 # pytest -k "pip and install"`) read as a pip install and gave no row, and the census excused its line (probed).
 PIP_INSTALL_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S*[ \t]+)*(?:\S*/)?(?:python[0-9.]*t?[ \t]+-m[ \t]*|uv[ \t]+)?"
                             r"pipx?[0-9.]*(?:[ \t]+-\S+)*[ \t]+install(?=\s|$)")
@@ -1359,7 +1359,8 @@ def pytest_invocations(src, read=None, switch_read=None):
     lines in the file's own layout; switch_line_census reds a spelling of the switch anywhere else), args (the command's own arguments: the rest
     of ITS command, the line split into commands at its operators and cut at a comment first by _shell_commands, so a
     line running two pytest commands is two invocations at one line and a flag in the next command or in a comment is
-    not this one's), run (the step's whole run text), job_run (every run text in the job) and cwd (the step's
+    not this one's), run (the step's whole run text, as the row's cell reads it for a step read per cell), job_run
+    (every run text in the job) and cwd (the step's
     working-directory, else the job's default, else None) and namesakes (the file lines of the pytest invocations in
     OTHER steps of the same job that carry this step's name: GitHub Actions does not require unique step names, and
     the listing and every report here key on (job, step name), so a shared name is `ambiguous` in verdict and red
@@ -1379,8 +1380,9 @@ def pytest_invocations(src, read=None, switch_read=None):
     whose run text holds expressions the evaluator reads, each matrix.os compared with one label choosing between two
     quoted values (matrix_os_texts, over command_on in tests/test_ci_pytest_workers.py), is read once for each label the
     expressions name and once for every other label (OTHER_OS), each text substituted as that cell's shell reads it:
-    each row carries its cell in `os` (os_phrase names it in a report), and rows equal in every field but the cell, as
-    many in every cell, are one row with `os` None; a step with no expression gives rows with `os` None. The switch's
+    each row carries its cell in `os` (os_phrase names it in a report), and rows equal in every field but the cell and
+    its run text (`run`, that cell's substituted text), as many in every cell, are one row with `os` None that carries
+    the first cell's run text; a step with no expression gives rows with `os` None. The switch's
     spellings in a step's own run text are counted in each cell's text, and in the job's other steps as the most their
     written text or any of their cells' texts holds, since a value can join the name across an expression's edge.
     `read`, when a list is given, receives {first, last, text} for every command line the parser read in a step's run,
@@ -1498,8 +1500,9 @@ def pytest_invocations(src, read=None, switch_read=None):
                 for row in cell_rows:
                     row["own_spellings"] = (cell_run.count(SWITCH), prefixes_here)
                 step_rows.extend(cell_rows)
-            # rows equal in every field but the cell they were read for, as many in every cell, are read for every cell
-            # (os None) and kept once; the rest keep their cell. In file order, the cells in turn within a line
+            # rows equal in every field but the cell they were read for and its run text, as many in every cell, are
+            # read for every cell (os None) and kept once with the first cell's run text; the rest keep their cell. In
+            # file order, the cells in turn within a line
             if cells is not None:
                 labels_all = [label for label, _cl in cells]
                 groups = {}
@@ -1607,8 +1610,10 @@ def pytest_line_census(src):
     (_continues, _join_continuation: nothing inserted, a backslash followed by a space or an escaped backslash joining
     nothing; each continuation line loses up to the first line's indentation, the block indentation YAML strips from a
     literal block's lines), split at every operator character (CENSUS_SPLIT_RE), each piece with a YAML key's prefix
-    stripped (YAML_KEY_PREFIX_RE); a pip install is a command whose program is pip (PIP_INSTALL_RE, at the start of
-    the command). A counted line is covered when it lies in the
+    stripped (YAML_KEY_PREFIX_RE); a pip install is a command whose program is pip or pipx (by path, with a version
+    suffix, run as `python -m pip`, or after `uv`), then `install` after the program's own options, each a word that
+    starts with `-` (PIP_INSTALL_RE, at the start of the command, after any VAR=value prefixes). A counted line is
+    covered when it lies in the
     span of lines the parser read for a row, parsed or unparsed: the row's first line through its last joined
     continuation (line..last_line). Keyed on the span, never the first line alone, which would red a compliant command
     whose pytest word sits on a continuation line. The census keys on the spelling over the whole file, not on YAML
@@ -1617,7 +1622,8 @@ def pytest_line_census(src):
     This docstring is the census's rule, in full (round 6's ruling D, 2026-09-25): the other texts that say which lines
     count point here rather than restate the exclusions, and PopulationCheckReds'
     test_the_line_census_excuses_what_its_rule_names_and_counts_the_rest is its table of spellings, a line on each side
-    of each exclusion, each asserted counted or excused as this rule says."""
+    of each exclusion and an excused line for each program and form this rule names for a pip install, each asserted
+    counted or excused as this rule says."""
     read = []
     found = pytest_invocations(src, read)
     covered = set()
@@ -4173,8 +4179,9 @@ class PopulationCheckReds(unittest.TestCase):
 
     def test_the_line_census_excuses_what_its_rule_names_and_counts_the_rest(self):
         # pytest_line_census's table of spellings (round 6's ruling D, 2026-09-25: its docstring is the census's rule,
-        # and the other texts point there): a line on each side of each exclusion it names, each in a step the parser
-        # reads no command from (a spaced run key, an action's input, a flow mapping), so the census alone judges it.
+        # and the other texts point there): a line on each side of each exclusion it names, and an excused line for
+        # each program and form it names for a pip install, each in a step the parser reads no command from (a spaced
+        # run key, an action's input, a flow mapping), so the census alone judges it.
         # The lines outside an exclusion include other keys' lines (an id:, an if:, an action's input), so an exclusion
         # widened past the name key's own line reds here. (label, step text, the step-relative lines the census names;
         # empty when it excuses them all)
@@ -4183,7 +4190,12 @@ class PopulationCheckReds(unittest.TestCase):
                 ("a trailing comment", "      - name: Commented\n        run : make test  # pytest later\n", ()),
                 ("a name: key's own line, after the dash", "      - name: Smoke (pytest)\n        run : make test\n", ()),
                 ("a name: key's own line, under the dash", "      - id: smoke\n        name: Smoke (pytest)\n        run : make test\n", ()),
-                ("a pip install", "      - name: Pip only\n        run : python -m pip install pytest pytest-timeout\n", ()),
+                ("a pip install, run as python -m pip", "      - name: Pip only\n        run : python -m pip install pytest pytest-timeout\n", ()),
+                ("a pip install by pipx", "      - name: Pipx\n        run : pipx install pytest\n", ()),
+                ("a pip install after uv", "      - name: Uv pip\n        run : uv pip install pytest\n", ()),
+                ("a pip install by path, with a version suffix, an option and a VAR=value prefix",
+                 "      - name: Pip by path\n        run : PIP_NO_INPUT=1 /usr/bin/pip3 --quiet install pytest\n", ()),
+                ("an install by a program that is neither pip nor pipx", "      - name: Pipenv\n        run : pipenv install pytest\n", (1,)),
                 ("a # inside a word, which starts no comment", "      - name: Hash\n        run : make test#pytest\n", (1,)),
                 ("an id: key's line", "      - name: Keyed\n        id: pytest-smoke\n        run : make test\n", (1,)),
                 ("an if: key's line", "      - name: Gated\n        if: contains(github.ref, 'pytest')\n        run : make test\n", (1,)),
