@@ -121,8 +121,7 @@ so there is no list to write. **gitleaks** covers them, in two places:
   the lines the pushed commits add, a merge by its combined diff (the lines in
   none of its parents, so a secret typed into a conflict resolution is read
   too), and a merge's binary path whole (below). It hands exactly those bytes
-  to gitleaks (with the probes below), which runs no git, and refuses the push
-  on a hit. It needs
+  to gitleaks, which runs no git, and refuses the push on a hit. It needs
   gitleaks 8.25.0 or later: the hook's flags need 8.24.0, and this
   repository's `.gitleaks.toml` uses the `[[allowlists]]` form, which gitleaks
   reads correctly from 8.25.0 on (CI's pinned 8.28.0 is above the floor). A
@@ -148,34 +147,19 @@ so there is no list to write. **gitleaks** covers them, in two places:
   push carrying a commit of 64 or more parents (the identifier scan refuses
   that too), since git's combined diff drops or garbles the lines such a merge
   adds.
-  The hook names each scratch file by number, so gitleaks never sees a pushed
-  file's path. Five of gitleaks' default rules fire only in files with certain
-  names (a `.p12` or `.pfx` keystore, a `nuget.config` password, a Kubernetes
-  Secret in `.yaml` or `.yml`, a Terraform password in `.tf` or `.hcl`, a
-  Freemius secret key in `.php`), so the hook runs those five over a copy of
-  each such file's lines, named to match the rule (`12/12.yaml`); the few names
-  gitleaks' global allowlist skips, such as `pnpm-lock.yaml`, are left out. A
-  config can drop a rule at that name where it would not at the file's path,
-  so the hook also puts a probe, a text the rule reports, at each copy's name,
-  and scans a second copy of the lines under another name. Every push that
-  copies a file this way costs one more scanner run, and it is refused when
-  the config drops the rule's probe, even when the file is clean and even
-  when the config treats the file's own path the same way (the round 11b cost
-  and same-verdict witnesses in `tests/pre-push-hook.bats`). One shape still
-  publishes: an allowlist that requires a value matching the credential and a
-  path that matches both copies' names but not the file's, a path with no
-  honest use. A gitleaks config whose rules carry a path condition also
-  refuses the push, naming the rule and the file, since the condition would
-  be tested against the number names, not the file's path; support for such
-  rules is a held follow-up. Two path values are exempt: an empty one, which
-  gitleaks reads as no condition, and, on one of the five rules, the default
-  path exactly as the hook's own table spells it, so a config copied from
-  gitleaks' default passes. The config is the repository's `.gitleaks.toml`,
-  or, with none, the one `GITLEAKS_CONFIG` or `GITLEAKS_CONFIG_TOML` gives,
-  each with the files its `[extend]` names (with none of these, gitleaks uses
-  its own default, which the hook does not read). The hook reads the config
-  before any scan and refuses a construct it cannot parse; every scanner run
-  then reads the hook's copy, so the check and the scan read the same bytes.
+  The hook refuses a push with something to scan when the gitleaks config gives
+  any rule a path condition, naming the rule and the config file, since the
+  scan cannot apply the condition; support for such rules is a held follow-up.
+  Two path values are exempt: an empty one, which gitleaks reads as no
+  condition, and, on each of the five gitleaks default rules scoped to a path,
+  that rule's default path exactly as the hook's own table spells it, so a
+  config copied from gitleaks' default passes. The hook reads the config before
+  any scan: the repository's `.gitleaks.toml`, or, with none, the one
+  `GITLEAKS_CONFIG` or `GITLEAKS_CONFIG_TOML` gives, each with the files its
+  `[extend]` names. With none of these, gitleaks uses its own default, which
+  the hook does not read. It refuses the push on a construct it cannot parse,
+  and every scanner run reads the hook's copy of the config, so the hook's
+  check and the scan read the same bytes.
   `ROMP_NO_GITLEAKS=1` skips the credential scan for one push, and
   `ROMP_GITLEAKS` points at a binary. A clone that carries any replace ref
   (`git replace`) is refused before either scan runs when either scan is armed,

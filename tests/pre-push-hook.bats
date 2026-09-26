@@ -6209,8 +6209,15 @@ AWK
     done < <(printf '%s\n' "${masked[@]}" | LC_ALL=C awk -f "$TEST_DIR/loops.awk")
 }
 loop_kinds() {   # <bash file>: the loop census's own list, one line per loop the awk reads: its keyword's line, its done's line, its kind of read (stdin, fd, bare or other) and its keyword (round 11c)
-    stdin_loops_running_tools "$1" > /dev/null
-    masked_text "$1" | LC_ALL=C awk -f "$TEST_DIR/loops.awk"
+    # The body runs in a subshell with errtrace and functrace off and the DEBUG trap cleared, as bats' run does: called
+    # bare, under the test's set -ET, bats' DEBUG trap is inherited into the census and fires on every command it runs,
+    # which put case 226 past CI's per-test bound, BATS_TEST_TIMEOUT (round 11c2, the round 11c audit's finding 1)
+    (
+        set +ET
+        trap - DEBUG
+        stdin_loops_running_tools "$1" > /dev/null
+        masked_text "$1" | LC_ALL=C awk -f "$TEST_DIR/loops.awk"
+    )
 }
 descriptor_loops() {   # <bash file>: the count of while-read loops that read their list with -u from a descriptor 1 to 9 (-u 0 is stdin), whatever IFS they set
     grep -cE 'while (IFS=[^[:space:]]* )?read -r -u [1-9]([^0-9]|$)' "$1" || true

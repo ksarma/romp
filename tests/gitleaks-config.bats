@@ -485,6 +485,13 @@ freemius-secret-key lib/Settings.PHP'
     run scan_pieces "$TEST_DIR/num" --config "$CFG" --enable-rule "$five"
     [ "$status" -eq 0 ] || { echo "a path-scoped rule fired on a probe named by its piece's number alone (exit $status):"; echo "$output"; false; }
     # The shape check: the names as the texts state them, composed from choose's own answers.
+    # It keys on spelling, not on firing. The refuter's x-prefix mutant (an "x" before the copy's
+    # name) is equivalent for firing: the five default paths key on the end of a name, so an
+    # x-prefixed copy name (x1.p12, xnuget.config, x5.yaml and the rest) fires every rule, under
+    # both scanners, and the firing check above stays green under it. A rename of the second copy's
+    # stem (romp-dup- for romp-copy-) keeps every rule firing the same way. So this check, whose
+    # expected names come from choose's executed answers, is the one that turns red under either
+    # (the round 10 rulings, the answer on round 11c's questions, 2026-09-26).
     for k in "${!paths[@]}"; do
         IFS=$'\t' read -r cpiece sfx osfx cterm <<< "${crow[$k]}"
         [ "$cterm" = . ] && [ "$cpiece" = "${pcs[$k]}" ] && [ -n "$osfx" ] && [[ "${paths[$k]}" == *"$osfx" ]] &&

@@ -958,8 +958,9 @@
 # the piece at the directory's root, named romp-copy-, the piece's number in
 # letters (a to j for 0 to 9), a dot when the suffix holds none, and the
 # file's own suffix as it spells it (romp-copy-bc.yaml,
-# romp-copy-bc.NuGet.Config): a name with no digit and no directory, which
-# each rule's default path matches and no global path of the default skips.
+# romp-copy-bc.NuGet.Config): a name with no directory and no digit outside
+# the file's own suffix, which each rule's default path matches and no
+# global path of the default skips.
 # It runs with the five rules alone and the same config, its figure checked
 # against the bytes written there; its exit 2 is expected, its findings (the
 # probes among them) are never shown, and its log is shown only when it
@@ -4605,7 +4606,8 @@ scan_credentials() {
         # PROBE at the copy's exact name (<piece>/<name>), a short text its
         # rule reports under the default rules, and a SECOND COPY of the piece
         # at the directory's root under the name the index gives it
-        # (romp-copy-<letters><suffix>, no digit and no directory). One more
+        # (romp-copy-<letters><suffix>, no directory and no digit outside the
+        # file's own suffix, so none from the piece's number). One more
         # scanner run over it, with the same five rules alone and the same
         # config, its figure checked against the probes' bytes and the
         # copies'; its exit 2 is expected, and its findings are never shown.
