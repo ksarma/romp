@@ -1492,8 +1492,8 @@ test("the sign-in rule's decode is bounded (the file review's round 16, regressi
 // The stand-in document has no elementFromPoint either, which the one gate's hit test reads since the file review's round 16
 // (extra5-1: a sign in view must be uncovered too, and a document without the read answers covered), so the scene gives it one:
 // the control for a point inside the control's placed box, the viewer's body anywhere else, or `cover`'s element when a case
-// lays one over the control.
-type KeyGate = { ctl: El; img: El; body: El; place: (r: Rect) => void; cover: (e: El | null) => void; frame: (f: StandInFrame | null, foreign?: "null" | "throws") => void; gate: () => boolean[] };
+// lays one over the control, over its whole box or over one region of it (the quarter-point cells).
+type KeyGate = { ctl: El; img: El; body: El; place: (r: Rect) => void; cover: (e: El | null, region?: Rect) => void; frame: (f: StandInFrame | null, foreign?: "null" | "throws") => void; gate: () => boolean[] };
 /** A same-origin parent for the framed cells: the frame element's box and border in the parent's viewport, the parent's layout
  *  viewport, an optional wrapper around the frame element with its padding box and overflow (and, for the cells of the file
  *  review's round 16, regression-1, its computed display and a client size apart from its box; for its tests-2, a read of its
@@ -1504,8 +1504,8 @@ const vvOf = (v: [number, number, number, number]) => ({ offsetLeft: v[0], offse
 /** The viewer open on one remote picture from a loaded host (`md`, a case's own document holding it, for the cells that wrap it in
  *  an author's element), its web control focused, and the region's inputs filled for the case and restored after it. `place` gives the control its box; `frame` hosts the window in a same-origin parent (a StandInFrame), in a
  *  parent of another origin (`foreign`: its frameElement reads null, or its read throws, the parent itself throwing on any read),
- *  or in none (null: the window its own parent); `cover` lays an element over the control for the document's elementFromPoint (null
- *  takes it off); `gate` dispatches keydown Enter, keydown Space and keyup Space on the control and returns whether each was
+ *  or in none (null: the window its own parent); `cover` lays an element over the control for the document's elementFromPoint, over
+ *  the whole of the control's box or, with `region`, over the points of the box inside that region alone (null takes it off); `gate` dispatches keydown Enter, keydown Space and keyup Space on the control and returns whether each was
  *  prevented. */
 async function keyGateScene(t: TestContext, md = '# R\n\n<img src="http://example.test/pic.svg" alt="big">\n'): Promise<KeyGate> {
   loadGatedHost("example.test", doc as unknown as ParentNode);
@@ -1533,10 +1533,11 @@ async function keyGateScene(t: TestContext, md = '# R\n\n<img src="http://exampl
   });
   ctl.focus();
   Object.defineProperty(ctl, "previousElementSibling", { get: () => img, configurable: true });   // the stand-in has no previousElementSibling, which figureOfControl reads for the picture a control stands after (a click on the control)
-  let placed: Rect | null = null, over: El | null = null;
-  (doc as any).elementFromPoint = (x: number, y: number): El => (placed && x >= placed.left && x <= placed.right && y >= placed.top && y <= placed.bottom ? over || ctl : o.body);
+  let placed: Rect | null = null, over: El | null = null, overRegion: Rect | null = null;
+  const inside = (r: Rect, x: number, y: number): boolean => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  (doc as any).elementFromPoint = (x: number, y: number): El => (placed && inside(placed, x, y) ? (over && (!overRegion || inside(overRegion, x, y)) ? over : ctl) : o.body);
   const place = (r: Rect): void => { placed = r; (ctl as any).getBoundingClientRect = () => r; };
-  const cover = (e: El | null): void => { over = e; };
+  const cover = (e: El | null, region?: Rect): void => { over = e; overRegion = region || null; };
   const frame = (f: StandInFrame | null, foreign?: "null" | "throws"): void => {
     unframe();
     if (foreign) {
@@ -1896,6 +1897,90 @@ test("how a click finds its press, the clicks by no pointer, a guard CI runs (th
   t.diagnostic("record " + JSON.stringify(got));
   assert.deepEqual(got, { enter: { opened: 1, reveals: 0 }, enterAfterRefusedTap: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], pressThenEnter: [{ opened: 0, reveals: 0 }, { opened: 1, reveals: 0 }], pressThenScript: [{ opened: 0, reveals: 0 }, { opened: 0, reveals: 1 }] },
     "each click by no pointer is read at the click: [the press or the tap before it, the click] (a property pin over window.open's calls and the scrollIntoView record)");
+});
+// ── the hit test's five samples, a guard CI runs (the file review's round 17, tests-2; the browser legs skip in CI) ── signUncovered
+// reads the element a press would reach at the centre of the sign's in-view part and at its four quarter points, so an element over
+// any one quarter point refuses the gesture though the centre is uncovered. Each row lays an element over a square 4px on a side
+// around one quarter point of the control's box, off the centre, and reads the three keys and a click dispatched on the control; the
+// keep row lays none. The mutants the checklist records are named T2-Q1 to T2-Q4 (one quarter point dropped) and T2-C (the centre
+// alone), so no label names one of the tap cells'.
+const QUARTERS: Array<[string, number, number]> = [["top left", 0.25, 0.25], ["top right", 0.75, 0.25], ["bottom left", 0.25, 0.75], ["bottom right", 0.75, 0.75]];
+test("the one gate's hit test samples the sign's centre and its four quarter points, a guard CI runs (the file review's round 17, tests-2): with the web control in view, an element laid over a square 4px on a side around one quarter point of the control's box, off its centre, the centre still hit-testing to the control and the quarter point to the element (the row's precondition, asserted), cancels Enter's keydown, Space's keydown and Space's keyup, and a click dispatched on the control opens nothing and reveals it, one row per quarter point; with nothing over the control the three keys are kept and the click opens once (a property pin over each key's defaultPrevented, window.open's calls and the scrollIntoView record; green at 0ab74924c by design, whose hit test sampled the same five points; each quarter row red under a hit test that drops that point, and all four red under one that samples the centre alone)", async (t) => {
+  const g = await keyGateScene(t);
+  g.frame(null);
+  g.place(IN_BOX);
+  const stub = openStub(t, g.ctl);
+  const efp = (x: number, y: number): unknown => (doc as any).elementFromPoint(x, y);
+  const cx = (IN_BOX.left + IN_BOX.right) / 2, cy = (IN_BOX.top + IN_BOX.bottom) / 2;
+  type Row = [string, [number, number] | null, [boolean[], number, number]];
+  const rows: Row[] = [
+    ...QUARTERS.map(([name, fx, fy]): Row => { const x = IN_BOX.left + IN_BOX.width * fx, y = IN_BOX.top + IN_BOX.height * fy; return ["an element over the " + name + " quarter point (" + x + ", " + y + "), off the centre (" + cx + ", " + cy + ")", [x, y], [OUT3, 0, 1]]; }),
+    ["nothing over the control (keep)", null, [IN3, 1, 0]],
+  ];
+  const got = rows.map(([what, q]) => {
+    const over = new El("div");
+    if (q) {
+      const region = boxAt(q[0] - 2, q[1] - 2, 4, 4);
+      assert.ok(!(cx >= region.left && cx <= region.right && cy >= region.top && cy <= region.bottom), what + ": the covered square holds no part of the centre (the row's precondition)");
+      g.cover(over, region);
+      assert.deepEqual([efp(cx, cy) === g.ctl, efp(q[0], q[1]) === over], [true, true], what + ": the centre hit-tests to the control and the quarter point to the element, [centre on the control, quarter point on the element] (the row's precondition)");
+    } else g.cover(null);
+    const keys = g.gate();
+    const a = stub.read();
+    click(g.ctl);
+    const b = stub.read();
+    return [what, [keys, b.opened - a.opened, b.reveals - a.reveals]] as const;
+  });
+  for (const [what, read] of got) t.diagnostic(what + ": " + JSON.stringify(read));
+  assert.deepEqual(got.map(([what, read]) => [what, read]), rows.map(([what, , want]) => [what, want]), "each row's [three keys cancelled, the click's opens, its reveals]: an element over any one quarter point refuses the keys and the click and reveals the control, and nothing over it keeps them (a property pin over defaultPrevented, window.open's calls and the scrollIntoView record)");
+});
+// ── the in-view re-reads after a shown start, guards CI runs (the file review's round 17, tests-3; the browser legs skip in CI) ── A
+// press read shown at its pointerdown is read in view again at its click (controlInView in webGestureShown), and a held key read shown
+// at its first keydown is read in view again at each repeat (keyOnHiddenWebControl), so a scroll between the start and the click, or
+// between the first keydown and a repeat, that takes the control out of view refuses it. The mutants the checklist records are named
+// T3-M2 (the click's re-read dropped) and T3-M4 (the repeat's re-read dropped).
+test("the one gate reads a shown press in view again at its click, a guard CI runs (the file review's round 17, tests-3): a fine press of the mouse held on the picture with the web control in view and uncovered, then the body scrolled until the control is out of view, then the release and its click (pointerId 1, detail 1): the click opens nothing and reveals the control, and with the control back in view the next press, release and click open once (a property pin over window.open's calls and the scrollIntoView record; green at 0ab74924c by design, which made the same re-read; the first click red under a gate that drops the click's in-view re-read, where it opens with the control out of view)", async (t) => {
+  const got = await gateCell(t, "a fine press held in view, the control scrolled out, then the release and its click; then the next press in view", (g, opens) => {
+    const mouse: GatePtr = { pointerId: 1, pointerType: "mouse", isPrimary: true, button: 0 };
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.img, { ...mouse });
+    g.place(OUT_BOX);                                                      // the body scrolled while the press is held
+    onWindow("pointerup", g.img, { ...mouse });
+    gateClick(g.img, 1, 1);
+    const first = opens();
+    g.place(IN_BOX);                                                       // where the reveal put it
+    pressUp(g.img, mouse);
+    gateClick(g.img, 1, 1);
+    return [first, opens()];
+  });
+  t.diagnostic("record " + JSON.stringify(got));
+  assert.deepEqual(got, [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }], "the click of a press begun shown and released with the control out of view opens nothing and reveals it, and the next press opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
+});
+test("the one gate reads a held key in view again at each repeat, a guard CI runs (the file review's round 17, tests-3): Enter pressed on the web control in view and uncovered opens once, then the body scrolled until the control is out of view, then two repeats of the held Enter (repeat true): each repeat is cancelled, so neither clicks the control, and nothing more opens or reveals (a property pin over each repeat's defaultPrevented, window.open's calls and the scrollIntoView record; green at 0ab74924c by design, which made the same re-read; both repeats red under a gate that drops the repeat's in-view re-read, where the first repeat's click is read at the click, refused and reveals the control, and the second, the control back in view, opens the tab again)", async (t) => {
+  const got = await gateCell(t, "Enter held in view, the control scrolled out, then two repeats", (g, opens) => {
+    const keydown = (repeat: boolean): boolean => {
+      onWindow("keydown", g.ctl, { key: "Enter", repeat });
+      const ev = new Ev("keydown", { key: "Enter" });
+      (ev as any).repeat = repeat;
+      g.ctl.dispatchEvent(ev);
+      if (!ev.defaultPrevented) gateClick(g.ctl, -1, 0);                  // Enter clicks a button at each keydown it lets through, a repeat's included: a key's click
+      return ev.defaultPrevented;
+    };
+    g.place(IN_BOX);
+    const first = [keydown(false), opens()];
+    g.place(OUT_BOX);                                                      // the body scrolled while the key is held
+    const repeats: unknown[] = [];
+    for (let i = 0; i < 2; i++) {
+      const prevented = keydown(true);
+      const read = opens();
+      repeats.push([prevented, read]);
+      if (read.reveals) g.place(IN_BOX);                                   // where a reveal puts it, before the next repeat
+    }
+    g.ctl.dispatchEvent(new Ev("keyup", { key: "Enter" }));
+    return [first, repeats];
+  });
+  t.diagnostic("record " + JSON.stringify(got));
+  assert.deepEqual(got, [[false, { opened: 1, reveals: 0 }], [[true, { opened: 0, reveals: 0 }], [true, { opened: 0, reveals: 0 }]]], "the first Enter opens once and each repeat after the scroll is cancelled with nothing opened or revealed, [[the first keydown cancelled, its opens], [[each repeat cancelled, its opens]]] (a property pin over defaultPrevented, window.open's calls and the scrollIntoView record)");
 });
 test("the one gate's window listeners go with the viewer, a guard CI runs (the file review's round 17, tests-1 with regression-1): an open adds five listeners of the gate on the window in its capture phase, pointerdown, pointerup, pointercancel, keydown and click, and the viewer's close removes each of them, the same function with the capture flag its add carried (a property pin over the window's add and remove calls; red at 0ab74924c, which added three, and red under a close that removes the three it added before the slot)", async (t) => {
   const TYPES = ["click", "keydown", "pointercancel", "pointerdown", "pointerup"];
