@@ -946,16 +946,19 @@ def _callback_params(c):
 def _callbacks(fn):
     """{name: [def or lambda, ...]} for each name every binding of which in `fn` (_scope_bindings, which counts the
     bindings of the scopes nested in `fn` too) is an undecorated def or async def of `fn`'s own scope or a plain
-    `name = lambda ...` assignment there, in whichever block of `fn`'s statements it stands: a call handed that name
-    runs one of those, whose body is `fn`'s own code (an async def's body runs only once what the call returns is
-    awaited, so reading it as run is on the safe side). The defs and lambda assignments are taken from `fn`'s own scope
-    alone, never from inside a def, lambda or class nested in it, so a name bound again in a nested scope (an inner
-    def's own def or lambda of that name, a method of a nested class) is left out, and so is a name also bound some
-    other way (`def poke(q)` and then `poke = _writer`, a parameter, a loop target, an import, a tuple target): the call
-    may run the other binding, or the module's function of that name, so _store_flow spells it by its name instead. A
-    decorated def is left out for the same reason: its decorator binds the name to what the decorator returns, another
-    callable, so `sorted([p], key=poke)` for an `@_wrap def poke(q)` runs _wrap's wrapper, not the def's body, and the
-    name is spelled by its name (the reviewer's ruling on round 2 of fork PR #909, extra5-2)."""
+    `name = lambda ...` assignment there, standing in `fn`'s body or, for a def or a lambda assignment, in an if block,
+    an except handler, a finally block or a match case of a statement there (the blocks the callbacks test pins): a
+    call handed that name runs one of those, whose body is `fn`'s own code (an async def's body runs only once what the
+    call returns is awaited, so reading it as run is on the safe side; one whose code `fn` swaps by reflection runs
+    other code, FlagWriterPopulation's stated limit). The defs and lambda assignments are taken from `fn`'s own scope
+    alone, never from inside a def, lambda or class nested in it, while every binding is counted, a nested scope's
+    included, so a name that an inner def or a nested class binds again through nonlocal is left out, and so is a name
+    also bound some other way (`def poke(q)` and then `poke = _writer`, a parameter, a loop target, an import, a tuple
+    target): the call may run the other binding, or the module's function of that name, so _store_flow spells it by
+    its name instead. A decorated def or async def is left out for the same reason: its decorator binds the name to
+    what the decorator returns, another callable, so `sorted([p], key=poke)` for an `@_wrap def poke(q)` runs _wrap's
+    wrapper, not the def's body, and the name is spelled by its name (the reviewer's ruling on round 2 of fork PR
+    #909, extra5-2)."""
     named = {}
     stack = list(ast.iter_child_nodes(fn))
     while stack:
@@ -1666,7 +1669,10 @@ class FlagWriterPopulation(unittest.TestCase):
     lambda of its own: reading that body with its parameters bound from the call would seed a callee from its caller,
     which the census does not do (the witness, a key that only reads, is
     StoreFlowReach.test_a_function_of_the_module_handed_as_a_callback_is_refused_unread; the nested namesakes are
-    cases of StoreFlowReach.test_a_callable_a_read_runs_is_read_or_refused). The stdlib's
+    cases of StoreFlowReach.test_a_callable_a_read_runs_is_read_or_refused). A callback whose code the function swaps
+    by reflection (`poke.__code__ = _w.__code__`, or the same through setattr) is read as its own body while the call
+    runs the swapped code, so a write there is outside the census, as reflection is (the witnesses are the two cases
+    of StoreFlowReach.test_a_callback_whose_code_is_swapped_by_reflection_is_read_as_its_def). The stdlib's
     handler enters do_GET and do_POST by a name it builds, which is where the roads end. These read WHERE the code
     lives, so they guard the population and the arms' shape, not the behaviour; the behaviour is executed in
     SocketFlagWhitelist (the socket op, in process and over a real socket) and in
@@ -1802,10 +1808,11 @@ class FlagWriterPopulation(unittest.TestCase):
     def test_the_census_is_one_derivation_over_one_parse_per_module(self):
         """The census's mechanism, read from counts. It is built once in this module's run however many tests read it
         (_CENSUS_BUILDS, which _flag_census keeps; a build per test reds here, and so that this holds whatever order the
-        tests run in, a second test of the class is run from here first, its whole run with setUp and tearDown). Of that
-        run this pin reads only that the test ran: its verdict belongs to that test's own run in the module, not to this
-        pin, so under a kernel change that reds it (a new setter) this pin still runs its build, walk and parse checks
-        below, and a build per test made in the same change reds here on the count. Nothing of the census is made before
+        tests run in, the class's setters test is run from here first). Of that run this pin reads only that unittest
+        counted the setters test as run (testsRun, which counts a skipped test too): its verdict belongs to that test's
+        own run in the module, not to this pin, so under a kernel change that reds it (a new setter) this pin still runs
+        its build, walk and parse checks below, and a build per test made in the same change reds here on the count.
+        Nothing of the census is made before
         the module's first test: setUpModule read no census built and no kernel module
         parsed (_BUILT_BEFORE), since both counts are the process's and a census built at import would otherwise pass
         as the module's one build while held through every module that sorts before this one. That
@@ -1818,7 +1825,7 @@ class FlagWriterPopulation(unittest.TestCase):
         and 2)."""
         other = unittest.TestResult()
         FlagWriterPopulation("test_the_setters_of_the_flags_store_are_the_two_the_doors_call").run(other)
-        self.assertEqual(other.testsRun, 1, "a second test of the class ran beside this one")
+        self.assertEqual(other.testsRun, 1, "unittest counted the setters test as run (a skipped test counts too)")
         self.assertEqual(_BUILT_BEFORE, (0, 0), "(censuses built, kernel modules parsed) before the module's first "
                          "test, as setUpModule read them: none, since a census or a tree made at import is held, "
                          "tracked, through every module that sorts before this one")
@@ -2724,8 +2731,9 @@ class StoreFlowReach(unittest.TestCase):
         A lambda, or a name bound only to undecorated defs or lambdas of the function's own scope, handed to a call is
         read with its parameters, of every kind (positional-only, positional, *args, keyword-only, **kwargs), bound
         from the call's other arguments, its keyword values and its receiver (_bindings), so its writes are the
-        function's, wherever in the function the call stands and in whichever block of the function's own statements
-        the def, async def or lambda assignment stands: the first group. Every other keyword value handed to sorted or
+        function's, wherever in the function the call stands, the def or lambda assignment standing in the function's
+        body or in an if block, an except handler, a finally block or a match case of a statement there, and an async
+        def in its body: the first group. Every other keyword value handed to sorted or
         json.loads beside the path, or beside what was read from it, but a constant, is a call by its spelling
         (_CALLBACK_READS), outside READS unless it is a read: a function of the module by name, also where a scope
         nested in the function binds that name to a def or lambda of its own (the call in the function's scope runs
@@ -2733,9 +2741,11 @@ class StoreFlowReach(unittest.TestCase):
         parse_int, parse_constant), a data name (sorted's reverse, and strict, which json.loads hands on to cls), a
         call's result, an if-else, an or, a walrus, a ** spread, a subscript, and nothing exempt for holding the path (a
         nested class, a list, a parameter's default); a name bound to a nested def and bound again to another callable
-        is no callback, so it is spelled by its name, and so is a decorated def's name, which its decorator binds to
-        what it returns (here a wrapper that writes what it is handed, while the def's own body only returns). Each case
-        reads one key of what the function sends outside READS; the controls are the next test's."""
+        is no callback, so it is spelled by its name, also where the second binding is an assignment through nonlocal
+        in an inner def or a nested class (a def or a lambda assignment of the function's own scope rebound to a
+        function of the module there, before the call), and so is the name of a decorated def or async def, which its
+        decorator binds to what it returns (here a wrapper that writes what it is handed, while the def's own body only
+        returns). Each case reads one key of what the function sends outside READS; the controls are the next test's."""
         p = '    p = jd.STATE / "session-flags.json"\n'
         d, d0 = 'def r(sid):\n' + p, 'def r():\n' + p   # the reader's head, with a parameter and without
         t = '    return p.stat().st_size\n'
@@ -2763,6 +2773,24 @@ class StoreFlowReach(unittest.TestCase):
              '        sorted([p], key=poke)\n' % w + t, "open", [5]),
             ("a lambda assigned in an if block, handed by its name in the same block",
              d + '    if sid:\n        poke = lambda q: %s\n        sorted([p], key=poke)\n' % w + t, "open", [4]),
+            ("a nested def in an except handler, handed by its name in the same block",
+             d + '    try:\n        pass\n    except Exception:\n        def poke(q):\n            %s\n'
+             '            return 0\n        sorted([p], key=poke)\n' % w + t, "open", [7]),
+            ("a lambda assigned in an except handler, handed by its name in the same block",
+             d + '    try:\n        pass\n    except Exception:\n        poke = lambda q: %s\n'
+             '        sorted([p], key=poke)\n' % w + t, "open", [6]),
+            ("a nested def in a finally block, handed by its name in the same block",
+             d + '    try:\n        pass\n    finally:\n        def poke(q):\n            %s\n'
+             '            return 0\n        sorted([p], key=poke)\n' % w + t, "open", [7]),
+            ("a lambda assigned in a finally block, handed by its name in the same block",
+             d + '    try:\n        pass\n    finally:\n        poke = lambda q: %s\n'
+             '        sorted([p], key=poke)\n' % w + t, "open", [6]),
+            ("a nested def in a match case, handed by its name in the same block",
+             d + '    match sid:\n        case _:\n            def poke(q):\n                %s\n'
+             '                return 0\n            sorted([p], key=poke)\n' % w + t, "open", [6]),
+            ("a lambda assigned in a match case, handed by its name in the same block",
+             d + '    match sid:\n        case _:\n            poke = lambda q: %s\n'
+             '            sorted([p], key=poke)\n' % w + t, "open", [5]),
             ("an async def handed as the key",
              d + '    async def poke(q):\n        %s\n    sorted([p], key=poke)\n' % w + t, "open", [4]),
             ("a def handed to json.loads as cls, a lambda holding the path beside it as object_hook, the def writing "
@@ -2780,6 +2808,9 @@ class StoreFlowReach(unittest.TestCase):
              d0 + '    data = json.loads(p.read_text())\n    return sorted(data, key=_poke)\n', "_poke", [4]),
             ("a decorated def of the function's own scope, handed by its name",
              wrap + d + '    @_wrap\n    def poke(q):\n        return 0\n    sorted([p], key=poke)\n' + t, "poke",
+             [11]),
+            ("a decorated async def of the function's own scope, handed by its name",
+             wrap + d + '    @_wrap\n    async def poke(q):\n        return 0\n    sorted([p], key=poke)\n' + t, "poke",
              [11]),
             ("a function of the module as the key, its name bound to a def nested in an inner def",
              m + d + '    def unused():\n        def _poke(q):\n            return 0\n        return _poke\n'
@@ -2830,6 +2861,20 @@ class StoreFlowReach(unittest.TestCase):
              + '    sorted([p], key=poke)\n' + t, "poke", [3]),
             ("a name bound to a nested def and bound again to a function of the module",
              d + '    def poke(q):\n        return 0\n    poke = _poke\n    sorted([p], key=poke)\n' + t, "poke", [6]),
+            ("a def of the function's own scope bound again to a function of the module by an inner def's nonlocal",
+             d + '    def poke(q):\n        return 0\n    def rebind():\n        nonlocal poke\n        poke = _poke\n'
+             '    rebind()\n    sorted([p], key=poke)\n' + t, "poke", [9]),
+            ("a lambda assignment of the function's own scope bound again to a function of the module by an inner "
+             "def's nonlocal",
+             d + '    poke = lambda q: 0\n    def rebind():\n        nonlocal poke\n        poke = _poke\n'
+             '    rebind()\n    sorted([p], key=poke)\n' + t, "poke", [8]),
+            ("a def of the function's own scope bound again to a function of the module by a nested class's nonlocal",
+             d + '    def poke(q):\n        return 0\n    class K:\n        nonlocal poke\n        poke = _poke\n'
+             '    sorted([p], key=poke)\n' + t, "poke", [8]),
+            ("a lambda assignment of the function's own scope bound again to a function of the module by a nested "
+             "class's nonlocal",
+             d + '    poke = lambda q: 0\n    class K:\n        nonlocal poke\n        poke = _poke\n'
+             '    sorted([p], key=poke)\n' + t, "poke", [7]),
         ]
         got = {what: self._outside(src, "r").get(key) for what, src, key, lines in cases}
         self.assertEqual(got, {what: lines for what, src, key, lines in cases},
@@ -2875,6 +2920,28 @@ class StoreFlowReach(unittest.TestCase):
         nested = 'def r():\n    p = %s\n' % s + ''.join('    ' + ln + '\n' for ln in key.splitlines()) + use
         self.assertEqual((self._outside(top, "r"), self._outside(nested, "r")), ({"_by_mtime": [5]}, {}),
                          "the module's function handed as the key is refused unread; the same key nested is read")
+
+    def test_a_callback_whose_code_is_swapped_by_reflection_is_read_as_its_def(self):
+        """The stated limit on the callback rule's reflection side, pinned by its witnesses (FlagWriterPopulation's
+        docstring names them): a def or lambda of the reader's own scope whose __code__ the reader sets to a module
+        function's, here one that writes the file it is handed, is still a callback, since an attribute store or a
+        setattr call binds no name, so the census reads the def's or lambda's own body, which only returns, while the
+        call runs the swapped code and writes; the reader passes. Reflection is outside the census, as a name or the
+        path read back by reflection is (the reviewer's ruling on round 2 of fork PR #909, applying fork PR #897's
+        ruling on reflection). Green by design: a change that closes the road reds here, and the stated limit moves
+        with it."""
+        p = '    p = jd.STATE / "session-flags.json"\n'
+        m = 'def _w(q):\n    open(q, "w").write("{}")\n    return 0\n'
+        t = '    sorted([p], key=poke)\n    return p.stat().st_size\n'
+        cases = [
+            ("a def whose __code__ is set to the module function's",
+             m + 'def r():\n' + p + '    def poke(q):\n        return 0\n    poke.__code__ = _w.__code__\n' + t),
+            ("a lambda whose __code__ is set through setattr",
+             m + 'def r():\n' + p + '    poke = lambda q: 0\n    setattr(poke, "__code__", _w.__code__)\n' + t),
+        ]
+        got = {what: self._outside(src, "r") for what, src in cases}
+        self.assertEqual(got, {what: {} for what, src in cases}, "a callback whose code is swapped by reflection is "
+                         "read as its own body, so the swapped code's write passes as a reader: the stated limit")
 
 
 class ViewsRoute(_Routes):
