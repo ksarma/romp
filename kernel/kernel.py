@@ -66585,7 +66585,10 @@ if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // source is this frame's parent on this page's origin, the one window that posts them (_LANDING_COLLAPSE_JS tell). A
 // window that opened this page, a frame inside it, a sandboxed frame (origin "null") and a pane page open on its own
 // (its parent is itself) are not the shell, and their words are ignored. tests/test_pane_shim_return.py runs both.
-function fromShell(e){return !!e&&window.parent!==window&&e.source===window.parent&&e.origin===location.origin;}
+// A const, so nothing later in this scope can put a laxer check in its place (2026-09-26): an assignment to it throws,
+// even one an eval builds from a computed name, so does an eval that declares the name again, and a second declaration
+// written in this scope is a syntax error.
+const fromShell=function(e){return !!e&&window.parent!==window&&e.source===window.parent&&e.origin===location.origin;};
 try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;
 if(m.link==="up"&&awaitLink&&!ws){awaitLink=false;if(returnAt&&linkUpMs<0)linkUpMs=Date.now()-foregroundedAt;connect();}});}catch(e){}
 // the link backstop: re-read the shell's link every 5 s while awaiting with no socket. An `up` we missed the word for

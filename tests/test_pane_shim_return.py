@@ -1595,6 +1595,41 @@ fireFrom(window,location.origin,"message",{romp:"panes",on:{test:true},avail:{fi
 out({onScreen:onScreen===undefined?"unset":onScreen});""")
         self.assertEqual(r["onScreen"], "unset", "no shell, so no panes word is heard")
 
+    # Ways later code in the shim could try to put a laxer check in fromShell's place, each spelled so that no text pin
+    # reads the name (a string an eval builds at run time): an assignment, at the check's own scope, from a function inside
+    # that scope, and from a listener's body when its event fires (a freeze listener, the road a mutant took, 2026-09-26);
+    # and an eval that declares the name again, as a var or as a function. The scenario runs where the shim's core runs
+    # (_run: the core's scope), after the core, as later code in the shim would.
+    REBINDS = (
+        ("an eval'd assignment at the check's scope", 'eval("from"+"Shell=function(e){return !!e;};");'),
+        ("an eval'd assignment from a function inside that scope", '(function(){eval("from"+"Shell=function(e){return !!e;};");})();'),
+        ("an eval'd assignment in a listener, on its event",
+         'document.addEventListener("freeze",function(){eval("from"+"Shell=function(e){return !!e;};");});fire("freeze");'),
+        ("an eval'd var declaration", 'eval("var from"+"Shell=function(e){return !!e;};");'),
+        ("an eval'd function declaration", 'eval("function from"+"Shell(e){return !!e;}");'),
+    )
+
+    def test_no_later_code_can_put_a_laxer_check_in_its_place(self):
+        # fromShell is a const: each attempt throws (a TypeError for the assignment, a SyntaxError for the declaration),
+        # and after it a link word from every sender but the shell still neither ends the wait nor dials, while the
+        # shell's own word still dials once. Declared as a function, each attempt replaced the check and a word from
+        # another origin dialed
+        for what, attempt in self.REBINDS:
+            with self.subTest(attempt=what):
+                r = _run(self.FOREIGN + r"""
+var threw="nothing";try{ATTEMPT}catch(x){threw=x&&x.name;}
+open();recv({type:"ka"});hide();NOW+=46000;
+parentLinkVal={up:false,connT:NOW};show();
+NOW+=300;parentLinkVal={up:true,connT:NOW};
+fromEach("message",{romp:"link",link:"up"});
+var afterForeign={sockets:sockets.length,awaiting:awaitLink};
+fireWin("message",{romp:"link",link:"up"});
+out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,awaiting:awaitLink}});""".replace("ATTEMPT", attempt))
+                self.assertEqual(r["afterForeign"], {"sockets": 1, "awaiting": True},
+                                 "the check stands: no sender but the shell ends the wait")
+                self.assertEqual(r["afterShell"], {"sockets": 2, "awaiting": False}, "and the shell's own word still dials once")
+                self.assertIn(r["threw"], ("TypeError", "SyntaxError"), "the attempt itself fails, threw " + str(r["threw"]))
+
     # a message listener in any spelling text can show (the method named or by a computed member, the event type in any
     # quotes), and an onmessage handler on the window; tests/test_shell_source_check.py reads all of kernel.py the same way
     MESSAGE_LISTEN = re.compile(r"(?:(?<![\w$])addEventListener|\[\s*(['\"`])addEventListener\1\s*\])\s*\(\s*(['\"`])message\2")
@@ -1602,17 +1637,21 @@ out({onScreen:onScreen===undefined?"unset":onScreen});""")
                            r"|(?<![\w$.])onmessage)\s*=(?!=)")
     SHELL_HEAD = 'function(e){if(!fromShell(e))return;'
 
-    # every mention of the name fromShell in code: its one declaration and the two listeners' reads. A second binding (a
-    # second function declaration, which replaces the first for the whole scope, a var, let or const, a parameter, a
-    # destructured name) or a write to it is a mention of another kind, and so is a mention in a /* */ comment or at the
-    # end of a code line; a line that is a // comment is text, not code. The pin reads spellings, so it first decodes
-    # every \uXXXX and \u{...} escape: JavaScript reads an escaped letter in an identifier as the letter, so
-    # `var \u0066romShell=...` binds fromShell a second time. Decoding one inside a string literal can only add a mention
-    # the pin refuses, never hide one. The executed legs above run what the shim does: a widening that lets one of their
-    # senders through fails them however it is spelled
+    # every mention of the name fromShell in code: its one declaration, a const, and the two listeners' reads. A second
+    # binding (a function declaration, a var, let or const, a parameter, a destructured name) or a write to it is a
+    # mention of another kind, and so is a mention in a /* */ comment or at the end of a code line; a line that is a //
+    # comment is text, not code. The pin reads spellings, so it first decodes every \uXXXX and \u{...} escape:
+    # JavaScript reads an escaped letter in an identifier as the letter, so `var \u0066romShell=...` binds fromShell a
+    # second time. Decoding one inside a string literal can only add a mention the pin refuses, never hide one. A write or
+    # a declaration that spells no name (an eval of a string built at run time) is no mention; the const is what stops
+    # it, executed by test_no_later_code_can_put_a_laxer_check_in_its_place. What neither covers: a change to the check's
+    # own text or to a listener's head, which test_source_both_listeners_open_with_the_shell_check holds as spelled and
+    # the FOREIGN legs above catch only for the senders they drive; and code in this page that replaces what the check
+    # reads (window.parent is a replaceable attribute of the window, so a script's assignment shadows it), which no pin
+    # here reads and no leg drives
     FROM_SHELL = re.compile(r"(?<![\w$])fromShell(?![\w$])")
     UNICODE_ESCAPE = re.compile(r"\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})")
-    FROM_SHELL_DECL = "function fromShell(e){"
+    FROM_SHELL_DECL = "const fromShell=function(e){"
     FROM_SHELL_READ = "if(!fromShell(e))return;"
 
     def _from_shell_mentions(self, js):
@@ -1623,7 +1662,7 @@ out({onScreen:onScreen===undefined?"unset":onScreen});""")
             line = js[js.rfind("\n", 0, m.start()) + 1:m.start()]
             if line.lstrip().startswith("//"):
                 continue
-            if js.startswith(self.FROM_SHELL_DECL, m.start() - len("function ")):
+            if js.startswith(self.FROM_SHELL_DECL, m.start() - len("const ")):
                 kinds.append("declaration")
             elif js.startswith(self.FROM_SHELL_READ, m.start() - len("if(!")):
                 kinds.append("read")
@@ -1632,14 +1671,14 @@ out({onScreen:onScreen===undefined?"unset":onScreen});""")
         return kinds
 
     def test_source_from_shell_is_bound_once_and_only_read(self):
-        # the two listeners read the one declaration: nothing in the shim binds the name again or writes it, so no later
-        # code can stand a laxer check in its place, for the shim as four apps build it
+        # the two listeners read the one declaration, a const: nothing in the shim spells another binding of the name or a
+        # write to it, for the shim as four apps build it (a write spelled no way, an eval's, is the executed test's below)
         for app, kw in (("feed", {}), ("chat", {}), ("files", {"no_stale": True}), ("settings", {"no_stale": True})):
             with self.subTest(app=app):
                 self.assertEqual(self._from_shell_mentions(km._shim(app, 3, **kw)), ["declaration", "read", "read"])
 
     def test_the_binding_census_reads_what_it_claims(self):
-        base = ("function fromShell(e){return !!e;}\n// fromShell, described in a comment line\n"
+        base = ("const fromShell=function(e){return !!e;};\n// fromShell, described in a comment line\n"
                 "a(function(e){if(!fromShell(e))return;});b(function(e){if(!fromShell(e))return;});\n")
         self.assertEqual(self._from_shell_mentions(base), ["declaration", "read", "read"])
         for extra in ("function fromShell(e){return true;}", "var fromShell=function(e){return true;};", "fromShell=function(){return true;};",
@@ -1649,10 +1688,16 @@ out({onScreen:onScreen===undefined?"unset":onScreen});""")
             with self.subTest(extra=extra):
                 kinds = self._from_shell_mentions(base + extra + "\n")
                 self.assertNotEqual(kinds, ["declaration", "read", "read"], "refused")
+        # the check declared as a function, which a later assignment (an eval's included) can replace, is no declaration
+        # the pin accepts, nor a var holding it
+        for decl in ("function fromShell(e){return !!e;}\n", "var fromShell=function(e){return !!e;};\n", "let fromShell=function(e){return !!e;};\n"):
+            with self.subTest(decl=decl):
+                self.assertNotEqual(self._from_shell_mentions(base.replace("const fromShell=function(e){return !!e;};\n", decl)),
+                                    ["declaration", "read", "read"], "refused")
 
     def test_source_both_listeners_open_with_the_shell_check(self):
         js = km._shim("feed", 3)
-        self.assertIn('function fromShell(e){return !!e&&window.parent!==window&&e.source===window.parent&&e.origin===location.origin;}', js)
+        self.assertIn('const fromShell=function(e){return !!e&&window.parent!==window&&e.source===window.parent&&e.origin===location.origin;};', js)
         self.assertIn('try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;'
                       'if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;', js, "the link listener")
         self.assertIn('try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;'
