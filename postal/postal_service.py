@@ -4553,7 +4553,8 @@ def _via_held(presence, bus, road, *prevs, built=None):
     cost (a) (the witness, tests/test_postal_remote_sids_mirror.py
     test_a_hub_from_before_viabus_renaming_a_far_host_holds_the_old_names_word_within_one_process_and_across_its_restart);
     a hub from before busId holds every word its roster omits; and a far host that answers a RESTARTED hub with an
-    empty listing leaves its word held until the hub names it again, since the restarted hub's omission of a host it
+    empty listing leaves its word held until the hub names it again or the host's own row speaks for it here (while
+    that row speaks), since the restarted hub's omission of a host it
     has not heard reads the same (cost (g)); all three the restricted side, and (g) closed by the carrier fix, each
     heard far host's answered bit carried independent of session rows. A second machine a hub on a build before round
     6 files under the host's name, answering that hub with an empty listing, reads the same as the host's own empty
@@ -4676,11 +4677,14 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
                dial this bus built after its last unanswered roster releases the bit; a hub's word about a far host
                stays heard, its bit False, across the hub's rosters that omit that host and cannot release it
                (_via_held, the thirty-first commit), until the hub names the host again with an answered word on
-               an answer placed after the hold, or the same hub process omits it in its answer to a dial this bus
+               an answer placed after the hold, the same hub process omits it in its answer to a dial this bus
                built after the host's last unanswered word (the host's next exchange with the hub carried no session
                row, the thirty-second commit; a far bus heard answering in this process, the reviewer's round-5
-               ruling B; the answer road, its ruling C). A carried hub's word this process heard and has seen leave
-               the hub's roster, released or answered, is written with its bit True, and holds nothing.
+               ruling B; the answer road, its ruling C), or the far host's own row speaks for it here, its answer to
+               a dial of this bus having released that row (_direct_row_speaks), when the word folds into that row
+               and holds nothing while the row speaks. A carried hub's word this process heard and has seen leave
+               the hub's roster, released or answered, is written with its bit True, and holds nothing; a carried
+               hub's word whose far host's own row speaks for it here is dropped ((3c) below).
                The bit is also the fold's gate: a heard row over a cache does not speak
                for its host, so a hub's word about that host stands as a via row beside it (_direct_row_speaks; the
                reviewer's verifier at the eleventh commit). A row kept across processes keeps its bit; a carried row
@@ -5044,10 +5048,16 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     listing-unanswered arm (kernel/judge.py _holds_the_arm reads a carried host row, `kind` peer or via, whose bit is
     False), and the host's first rosters in the new process hold its row, as every row starts held there (_fold_rows),
     until the host's answer to a dial this bus built after them; a far host's cached word through a hub is carried the
-    same way, its via row holding the arm until the hub names the host again with an answered word on an answer placed
-    after it, and following the hub when this process hears the hub's bus under another name first (the hub's dial
-    landing under the name it declares before this bus's dial folds it, as at every start of this bus: the carry's
-    `renamed` above). Until round 6 a carried row held nothing, and the session, in no row, answered rule 5 while
+    same way, its via row holding the arm until an answered roster from that host reaches this bus on the answer road
+    in the new process, as decision 4 states the end: the hub's answered word about the host on an answer placed after
+    the hold, or the host's own answer to a dial of this bus, whose row then speaks for it here, so the carry drops the
+    via row (_direct_row_speaks; the host's own dials release nothing, the first roster in the process held). A word
+    the hub gives about the host in this process replaces the carried row and is held or released by its own order
+    (_order_row, _via_held): an unanswered one by the same hub process's omission in an answer placed after it, once
+    the host's bus is heard answering here. The via row follows the hub when this process hears the hub's bus under
+    another name first (the hub's dial landing under the name it declares before this bus's dial folds it, as at every
+    start of this bus: the carry's `renamed` above). Until round 6 a carried row held nothing, and the session, in no
+    row, answered rule 5 while
     another host vouched, from this bus's restart until that host's first exchange in the new process. The cost, on the restricted
     side: a host whose last exchange before the restart served a cache and that never returns holds every sid for the
     file's life (costs (c) and (f) below), and a row this bus never dials stays held across restarts (cost (ii) below).
@@ -5055,6 +5065,8 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     test_residual_3c_a_session_whose_mail_landed_on_a_cached_exchange_before_this_bus_restarted_holds_until_its_host_answers_our_dial
     (named ..._answers_rule_5 until round 6, when it witnessed the residual left open), for the far host's face the
     last step of test_a_second_hubs_older_answered_word_does_not_release_the_first_hubs_held_word_and_neither_does_our_restart,
+    for its end by the far host's own answer, the hub never heard again after the restart,
+    test_decision_4_after_our_restart_a_far_hosts_carried_word_through_a_hub_ends_at_the_far_hosts_own_answer_to_our_dial,
     and with the hub dialing first under the name it declares
     test_decision_4_after_our_restart_a_hub_dialing_first_under_its_declared_name_leaves_the_far_hosts_carried_word_holding
     (its control, this bus's dial first, in the same test), with the carry itself in tests/test_postal_remote_sids_mirror.py
@@ -5200,8 +5212,10 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     its row not heard (the kernel's down notify makes it unreachable, never unheard), and whose carried row, its bit
     False, still holds the arm (the reviewer's decision 4 on round 5); and a hub's word about a far host whose last
     word was unanswered stays heard the same way across the hub's rosters that omit that host and cannot release it,
-    until the hub names it again or the same hub process omits it in its answer to a dial this bus built after that
-    word (a far bus heard answering in this process; for any other far bus the omission holds it, cost (a)):
+    until the hub names it again, the same hub process omits it in its answer to a dial this bus built after that
+    word (a far bus heard answering in this process; for any other far bus the omission holds it, cost (a)), or the far
+    host's own row speaks for it here, its answer to a dial of this bus having released that row (_direct_row_speaks),
+    while that row speaks:
       (a) a peer that lacks the field (an older bus, the project's own included), heard here or gossiped by a heard
           hub, holds rule 5 at cannot-determine for every sid (test_cost_a_a_peer_lacking_the_field_holds_every_sid_beside_a_vouching_host);
           and since round 6 (the reviewer's round-5 ruling B) through the same hub process's omission as well: a far
@@ -5264,8 +5278,12 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
       (g) so does a far host whose word is held across its hub's restart and that then answers the restarted hub with
           an EMPTY listing, its sessions all ended: the restarted hub's omission of a host it has not heard reads the
           same as that answer, so the word stays held and the arm holds every sid until the hub names the host again
-          with an answered word on an answer placed after the hold, and since round 6 across this bus's restart too
-          (the reviewer's decision 4 on round 5: the via row is carried with its bit False) (the thirty-second commit;
+          (an answered word on an answer placed after the hold releases it; an unanswered one takes its place, released
+          by that hub process's omission once the host's bus is heard answering here) or the host's own row speaks for
+          it here, its answer to a dial of this bus having released that row (_direct_row_speaks, while that row
+          speaks: test_the_far_hosts_own_answering_row_here_consumes_its_held_word_through_the_fold), and since
+          round 6 across this bus's restart too, until the same events in the new process (the reviewer's decision 4 on
+          round 5: the via row is carried with its bit False; (3c) above) (the thirty-second commit;
           test_cost_g_a_far_host_that_answers_a_restarted_hub_with_an_empty_listing_holds_every_sid_across_our_restart,
           named ..._until_a_restart until round 6); a hub from
           before busId, which cannot say that it is the same process, holds its omitted words the same way

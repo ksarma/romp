@@ -19591,9 +19591,10 @@ def _presumed_closed_verdict(sid, now):
     carrying that host's unanswered bit, whatever its link state, held down included (the writer's `heard`
     True with `answered` False, or a carried row of `kind` peer or via with `answered` False: _holds_the_arm; a
     hub's word stays heard across the hub's rosters that omit the far host and cannot release it, until the hub
-    names it again or the same hub process omits it in its answer to a dial the bus built after the host's last
-    unanswered word, the far host's empty answer, for a far bus heard answering in this process: round 6 of fork
-    PR #897, postal_service.py _via_held); a session started on that host during the blink is
+    names it again, the same hub process omits it in its answer to a dial the bus built after the host's last
+    unanswered word, the far host's empty answer, for a far bus heard answering in this process, or the far host's
+    own row speaks for it at the bus, while that row speaks: round 6 of fork PR #897, postal_service.py _via_held
+    and _direct_row_speaks); a session started on that host during the blink is
     in no roster, and its own
     mail reaches this judge on the exchange that omits it, so another host's vouch says nothing about it (until
     the twenty-ninth commit rule 5 presumed it closed whenever any other row vouched, the refuters' four roads
