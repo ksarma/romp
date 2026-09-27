@@ -327,13 +327,18 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   parse: with the trees kept in that cache, every full collection after the module
   walked them, and the perf-snapshot readers that run after it in the serial order
   slowed past main's spread; holding every tree until the module's end left them
-  slower than main too (the census's docstring gives the measurement). The module
-  changes no collector state: its `tearDownModule` asserts that no file was parsed
-  twice in its run, that the released object is gone (a weak reference) and that
+  slower than main too (the census's docstring gives the measurement). The census
+  changes no collector state and the module freezes nothing: its `tearDownModule`
+  asserts that no file was parsed twice by the census in its run, that the
+  released object is gone (a weak reference) and that
   `gc.get_freeze_count()` is not above what its
   `setUpModule` read, since `parse_cache.derived()` freezes the heap and every
-  perf-snapshot reader after the module then pays per read. Its docstring says
-  which figures are compared and which are not. The per-test half,
+  perf-snapshot reader after the module then pays per read, and then runs fork
+  PR #850's checks at the module's end. Fork PR #850's two tests of
+  `_COLLECTOR_STATE_TESTS` in the module turn automatic collection off, and its
+  cycle test runs `gc.collect()`, each putting the collector's state back as it
+  found it; the module's collector pin admits those two by name. The census's
+  docstring says which figures are compared and which are not. The per-test half,
   set in setUp and put back by a cleanup registered
   right after the write (`restore_env` from `tests/conftest.py`, or a method of the
   class; a tearDown restore is skipped when a subclass's setUp fails part-way, and

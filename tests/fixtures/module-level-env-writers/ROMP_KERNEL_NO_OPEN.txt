@@ -1,9 +1,13 @@
 # The modules under tests/ that write ROMP_KERNEL_NO_OPEN at module level, one path per line relative to tests/, the floor
-# modules aside; derived by the census of tests/test_hermetic_kernel_postal.py at round 2 of fork PR #894's review.
+# modules aside; derived by the census of tests/test_hermetic_kernel_postal.py at round 2 of fork PR #894's review,
+# and derived again at that PR's landing merge with main, which took in the writers of two modules that batch
+# fork PR #921 added (fork PR #842's test_nudge_walk_one_load_per_pass.py and fork PR #913's
+# test_record_cache_agent_end.py).
 # The census pin compares it with the census by equality (_writer_set_faults): a module that writes the name and is
 # not here faults as a new writer, and a module here that no longer writes it faults until its line is removed.
 # Lines leave as writers migrate; a new writer is not added (omit the write or move it to the conftest floor),
-# except as a rename of a line here.
+# except as a rename of a line here; the landing merge's lines were added on the reviewer's ruling of round 2 on
+# fork PR #894, which had the file derived again at that merge.
 bench_chatbuild.py
 permission_ask_feeder_drive.py
 test_anchor_mints.py
@@ -372,6 +376,7 @@ test_nudge_moot_supersede.py
 test_nudge_redundancy.py
 test_nudge_unblock_hold.py
 test_nudge_walk_gate.py
+test_nudge_walk_one_load_per_pass.py
 test_observability_routes.py
 test_obsidian_state_routes.py
 test_outline_provisional_rows.py
@@ -417,6 +422,7 @@ test_queued_copy_identity.py
 test_queued_copy_press_id.py
 test_queued_sends_kernel.py
 test_queued_sends_not_fused.py
+test_record_cache_agent_end.py
 test_reference_todo_file.py
 test_reference_todo_file_withdraw.py
 test_relay_context.py

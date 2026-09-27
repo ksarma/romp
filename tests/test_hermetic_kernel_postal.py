@@ -102,22 +102,27 @@ kernel spawn is found by the argv road (an element that is the path as written),
 resolved to a declaration bound to it), or neither, and a module the scan can read neither way is labelled refused.
 The guard test holds the lab modules on the argv road and no module refused, and reports the counts at whatever size the
 tree has. The table over the tree is read ONCE PER MODULE RUN from the module's own parse of each file (_tree_read, over
-_read_root, the one function that reads the tree and every plant), and the same read gives the peers test every file's
-module-level environment writes, so the trio test, the guard test, the comparison case, the --roads arm and the peers
-test's walk share one parse of each file (PR #850's ninth review round, after each had scanned or parsed the tree on its
-own); the placement test parses the tunnels module once more when it runs. Every tree and Bindings the module builds by
-a road it spells in its own text as one of the spellings _TREE_BUILDERS holds (among them ast.parse, compile's
-PyCF_ONLY_AST, `from ast import` and Bindings.of) comes from its two helpers, _parse_text, whose counter the parse pin
-reads, and _bindings_of (the helpers pin, which reads the module's tokens); a road by any other spelling is not read,
-among them getattr, __import__, a name bound at run time, compile's flag by value, and another module's function that
-parses (ast.literal_eval, which the module calls). The read keeps no tree: each file's tree and bindings are dropped
+_read_root, the one function that reads the tree and every plant), and the same read gives every file's module-level
+environment writes (_peers_writers reads them), so the trio test, the guard test, the comparison case and the --roads
+arm share one parse of each file (PR #850's ninth review round, after each had scanned or parsed the tree on its own);
+the placement test parses the tunnels module once more when it runs, and the module-level environment census
+(fork PR #894's, below) parses each file once more, by a road of its own (_own_tree, counted in _OWN_PARSES). Every
+tree and Bindings the module builds by a road it spells in its own text as one of the spellings _TREE_BUILDERS holds
+(among them ast.parse, compile's PyCF_ONLY_AST, `from ast import` and Bindings.of) comes from its two helpers,
+_parse_text, whose counter the parse pin reads, and _bindings_of, or from a def of fork PR #894's that _OWN_TREE_ROADS
+names, whose trees the parse pin does not count (the helpers pin, which reads the module's tokens); a road by any
+other spelling is not read, among them getattr, __import__, a name bound at run time, compile's flag by value, and
+another module's function that parses (ast.literal_eval, which the module calls). The read keeps no tree: each file's
+tree and bindings are dropped
 once its row is read (the bindings released, Bindings.release, so reference counting frees both), so it holds one file's
 tree at a time, and two counts the read's value carries pin it: `most_trees`, the most file trees alive at any file
 parse, read through weak references to the trees' roots (_parse), and `born`, the tree nodes and ast_bindings objects
 (ast.AST, Bindings, Scope, Declaration) made during the read and alive when its loop ends, by class, read through
 gc.get_objects() by identity against the list of those gc.get_objects() listed when the read started (_born; _held_alive
 states what such a list omits), which sees a node kept without its root, a tree's statements kept on a list among them
-(PR #850's eleventh review round, as in fork PR #894's pin by live objects). Neither count collects, freezes or
+(PR #850's eleventh review round, as in fork PR #894's pin by live objects), less the nodes of the trees the census's
+one owner holds (_census_held_nodes: the read's environment-write scan resolves an import-time call through the
+census's resolver, which keeps each module it reads for the module's run). Neither count collects, freezes or
 disables the collector. The cycle test holds both
 over its plant read and the release pin over the tree's read: one file tree at most, and nothing born. Neither sees a
 node kept without its root past the next file's parse and let go before the read's loop ends. The read's value is
@@ -281,11 +286,13 @@ probe compares client-only with the value the floor modules left. `python -m tes
 --census` prints the counts by name and shape (fork PR #871's by-product figures, derived by ast), with the parsed
 module count, a total line per name and the split between test_*.py files and the others; the census parses each file
 itself, once per run of this module, keeps the trees of the files its resolver may read and drops each other tree after
-its walk, and derives once per path tuple, what it keeps held by one object the module releases in its tearDownModule,
-and the module changes no collector state (the reviewer's rulings of
+its walk, and derives once per path tuple, what it keeps held by one object the module releases in its tearDownModule;
+the census changes no collector state, and the module freezes nothing (the reviewer's rulings of
 2026-09-24 on round 2 of fork PR #894: parse_cache.derived() freezes the heap, and every perf-snapshot reader after this
 module in a serial run then pays per read; the census's own parse rather than parse_cache's shared one, by the
-measurement module_level_env_census's docstring gives); that docstring also says which of its figures are compared and
+measurement module_level_env_census's docstring gives), fork PR #850's two tests of _COLLECTOR_STATE_TESTS being the
+module's code that changes collector state: each turns automatic collection off, and the cycle test runs gc.collect(),
+each putting the collector's state back as it found it; that docstring also says which of its figures are compared and
 which are not (the reviewer's ruling of round 1 on fork PR #894). Beside it,
 tests/conftest.py's run-end process check names a process whose environment, cwd, open files or argv hold a path under
 the run's roots and makes the run red; one of this user's that it cannot read (a non-dumpable one) and that started
@@ -1434,8 +1441,9 @@ def _hermetic(src):
 
 
 # -- the module's own parses (PR #850's review round 9, E ruled again): every tree and Bindings this module builds by a
-# -- road it spells as one of the spellings _TREE_BUILDERS holds comes from _parse_text or _bindings_of (the helpers
-# -- pin; a road by another spelling is not read); the read parses each file of the tree once per module run and holds
+# -- road it spells as one of the spellings _TREE_BUILDERS holds comes from _parse_text or _bindings_of, or from a def
+# -- _OWN_TREE_ROADS names (the helpers pin; a road by another spelling is not read); the read parses each file of the
+# -- tree once per module run and holds
 # -- one file's tree at a time (_parse counts the file trees alive at each parse, and the read counts the objects it
 # -- made that are alive when its loop ends, by class; the cycle test and the release pin hold them to one and none);
 # -- tearDownModule fails on a tree or Bindings still alive, on their objects made in the module's run and alive at its
@@ -1461,8 +1469,9 @@ def _text_key(text):
 
 
 def _parse_text(text, filename="<unknown>"):
-    """THE parse of this module (the helpers pin: no other code of the module spells a road to a tree as one of the
-    spellings _TREE_BUILDERS holds): ast.parse(text,
+    """THE parse of this module that the parse pin counts (the helpers pin: no other code of the module spells a road to
+    a tree as one of the spellings _TREE_BUILDERS holds but the defs of fork PR #894's that _OWN_TREE_ROADS names):
+    ast.parse(text,
     filename), counted in _PARSES under the text's key before the parse, and the tree's weak reference recorded in
     _TREES under `filename` once it parses (the release pin and tearDownModule read them). Nothing is kept: the tree
     lives while the caller holds it."""
@@ -1482,6 +1491,48 @@ def _bindings_of(tree, filename):
 
 _TREE_BUILDERS = (("ast", ".", "parse"), ("PyCF_ONLY_AST",), ("from", "ast", "import"), ("import", "ast", "as"),
                   ("Bindings", ".", "of"), ("Bindings", "("))
+
+_OWN_TREE_ROADS = (
+    "_conftest_fixture_env_names", "_conftest_fixture_env_writes", "_conftest_import_pops", "_deepest_call_chain", "_expr",
+    "_fixtures_scoped_above_module", "_fresh", "_own_tree", "_parser_singletons", "_proof_facets", "_proof_option_case",
+    "_reassert_sites", "_teardown_only_restore",
+    "HermeticKernelPostal._guard_class_source", "HermeticKernelPostal._guard_shape", "HermeticKernelPostal._guard_test",
+    "HermeticKernelPostal._the_drops_count_body",
+    "HermeticKernelPostal.test_a_bare_name_is_a_call_only_as_a_decorator_or_a_metaclass_and_a_base_runs_its_init_subclass",
+    "HermeticKernelPostal.test_a_call_chain_longer_than_the_cap_raises_naming_the_chain_and_a_cycle_is_cut",
+    "HermeticKernelPostal.test_a_fixture_another_modules_code_registers_over_by_name_re_asserts_nothing",
+    "HermeticKernelPostal.test_a_hook_that_may_keep_pytest_from_running_a_fixture_refuses_it_on_both_roads",
+    "HermeticKernelPostal.test_a_name_is_read_through_its_first_binding_alone_and_a_later_binding_or_a_parameter_makes_it_loud",
+    "HermeticKernelPostal.test_a_starred_value_is_a_licence_fault_naming_its_line_and_every_other_value_shape_round_trips",
+    "HermeticKernelPostal.test_a_tracked_dict_is_read_only_through_the_allowed_reads_and_any_other_reference_is_loud",
+    "HermeticKernelPostal.test_an_augmented_write_and_a_key_bound_as_a_target_are_read_with_no_value",
+    "HermeticKernelPostal.test_every_shape_named_outside_the_scan_writes_when_run_and_the_scan_reads_none",
+    "HermeticKernelPostal.test_the_fixture_spelling_scan_follows_an_alias_chain_to_the_pass_that_adds_nothing",
+    "HermeticKernelPostal.test_the_licence_check_reds_on_a_new_name_on_each_fixed_leak_put_back_and_on_a_value_outside_its_licence",
+    "HermeticKernelPostal.test_the_module_imports_no_copy_and_deep_copies_no_node",
+    "HermeticKernelPostal.test_the_module_road_refuses_every_fixture_it_cannot_read_and_names_why",
+    "HermeticKernelPostal.test_the_module_touches_no_collector_state_and_derives_nothing_through_parse_cache",
+    "HermeticKernelPostal.test_the_per_name_check_passes_the_floors_client_only_and_faults_every_other_leak_write",
+    "HermeticKernelPostal.test_the_placement_check_reds_on_a_planted_module_level_write_and_on_a_teardown_only_restore",
+    "HermeticKernelPostal.test_the_reader_counts_a_fixture_only_where_it_proves_pytest_runs_it",
+    "HermeticKernelPostal.test_the_resolver_reads_every_binding_of_a_name_in_every_import_time_block_and_follows_the_mapping_into_a_parameter",
+    "HermeticKernelPostal.test_the_scan_completes_and_derives_the_same_records_under_a_tag_another_census_left_on_the_parsers_shared_singletons",
+    "HermeticKernelPostal.test_the_scan_reads_every_write_shape_ignores_a_def_and_is_loud_on_a_key_it_cannot_read",
+)
+#   the defs of fork PR #894 that build a tree by a road of their own, by name (a module-level def, or Class.method),
+#   which the helpers pin admits beside _parse_text and _bindings_of and holds EQUAL to the defs outside the two helpers
+#   that spell one: the census's own parse of each file (_own_tree, counted in _OWN_PARSES, which the census's
+#   parse-once pins hold), its value reader's parses of a value's or an expression's text (_expr, _fresh), its readers
+#   of tests/conftest.py and of a synthetic conftest, and tests and helpers that parse a synthetic source or read a file
+#   of the tree for a pin of their own. The parse pin does not count these trees (_PARSES counts _parse_text's alone), the
+#   weak references of the release pin do not watch them, and the module end's count of what was made and left alive
+#   reads them as it reads every tree node (_still_held)
+
+
+def _def_named(qualname):
+    """The function this module binds under `qualname`: a module-level def's name, or Class.method (_OWN_TREE_ROADS)."""
+    head, *rest = qualname.split(".")
+    return functools.reduce(getattr, rest, globals()[head])
 
 
 def _tree_builder_spellings(text):
@@ -1571,11 +1622,14 @@ def _roads_row(name, src, tree, hand=()):
 def _read_root(root, skip=(), listing=None, count=False):
     """THE READ of a directory, one function for the real tree (_tree_read: `root` tests/, or the scratch directory the
     aborted read's pin hands it in tests/'s place, `skip` TREE_SKIP) and for every plant (among them _roads_table over
-    any other directory, and the tests' own reads of a plant directory, the peers test's handed to _peers_writers):
-    every .py under `root`, walked recursively (_tree_module_paths; over tests/ the peers test's population), and every
+    any other directory, and the tests' own reads of a plant directory, the one of
+    test_the_scan_reads_every_write_shape_ignores_a_def_and_is_loud_on_a_key_it_cannot_read handed to _peers_writers):
+    every .py under `root`, walked recursively (_tree_module_paths), and every
     module directly under `root` but `skip` (the table's population; over tests/ the trio test's, every module but this
     one), each file parsed ONCE (_parse) and its tree dropped before the next file is parsed, the bindings of its scan
-    released in _roads_row, so the read holds one file's tree at a time and none once it returns: _parse counts the file
+    released in _roads_row, so the read holds one file's tree at a time and none once it returns (the census's one
+    owner aside, which keeps each module the environment-write scan's resolver reads: _census_held_nodes): _parse
+    counts the file
     trees alive at each file parse, the read resets that count's maximum when it starts and carries it as `most_trees`;
     with `count`, the read also takes the list of the objects of _HELD_TYPES alive when it starts (_held_alive, once the
     directory is listed and before its first file is parsed) and, when its loop ends, carries as `born` those alive then
@@ -1638,8 +1692,9 @@ def _read_root(root, skip=(), listing=None, count=False):
 
 def _tree_read(root=None):
     """The real tree's read for this module run (_read_root over tests/ with TREE_SKIP), made by the first caller and
-    answered from _TREE_READ after, so the trio test, the guard test, the comparison case, the --roads arm and the
-    peers test share one parse of each file; _READS counts the reads made. A read that raises is recorded in _ABORTED,
+    answered from _TREE_READ after, so the trio test, the guard test, the comparison case, the --roads arm and
+    _peers_writers share one parse of each file; _READS counts the reads made. A read that raises is recorded in
+    _ABORTED,
     the file it stopped at and the cause (ReadAborted's), before the exception goes on, so the parse check expects no
     count and the module end reports the abort (PR #850's eleventh review round). `root` stands for tests/ in the
     aborted read's pin alone, which saves the module's state and puts it back. tearDownModule empties it (_release)."""
@@ -1663,8 +1718,8 @@ def _held_alive():
     module runs, and a run that puts the census first in the same process leaves the objects it froze out of every list
     this module takes, and so out of `born`. This module freezes nothing, so each object its run makes is listed.
     Reading the list changes no collector state (no collection, no freeze, no threshold): the list a read takes when it
-    starts (_read_root's `count`) and the module's at its start (setUpModule), each held until _born reads against
-    it."""
+    starts (_read_root's `count`), the module's at its start (setUpModule) and the census build's before its loop
+    (_census_build, THE DROP BY LIVE OBJECTS), each held until _born reads against it."""
     return [o for o in gc.get_objects() if isinstance(o, _HELD_TYPES)]
 
 
@@ -1818,8 +1873,8 @@ def _module_state_put_back():
 
 def _module_end_checks():
     """The release pin's and the parse pin's checks at the module's end in this process (PR #850's review round 9, E
-    ruled again: no tree and no Bindings of the module outlives it, and the tree's files are parsed once per module
-    run), fork PR #850's half of tearDownModule, which runs it after fork PR #894's release: once every test of the
+    ruled again: no tree and no Bindings of the module outlives it, and the tree's read parses each file once per
+    module run), fork PR #850's half of tearDownModule, which runs it after fork PR #894's release: once every test of the
     module that ran here has returned, any fault _module_end_faults reads fails the module's teardown, each named in the
     message. What the module holds is dropped (_release) either way. The release pin calls it alone, mid-run, over a
     state of its own (_module_state_put_back), since tearDownModule's other half removes the proof's copy and releases
@@ -2765,7 +2820,7 @@ def _import_time_statements(body):
 
 
 def _tree_module_paths(root=HERE):
-    """Every .py under `root`, walked recursively: under tests/, fixtures/ included, the peers test's population."""
+    """Every .py under `root`, walked recursively: under tests/, fixtures/ included."""
     return sorted(glob.glob(os.path.join(root, "**", "*.py"), recursive=True))
 
 
@@ -4412,7 +4467,8 @@ _Derivation = collections.namedtuple("_Derivation", "parsed counts records walks
 #   whose tree was still alive right after the loop dropped its own reference to it, in order, read through a weak
 #   reference taken just before the drop: the trees something else keeps (the census pin holds them equal to the files
 #   its own reader derives, _import_line_named_files); BORN, for a build that drops a tree, {class name: count} of the
-#   ast objects alive right after its loop that were not alive just before it, whatever holds them (_born, through
+#   ast objects (the objects of _HELD_TYPES; the census makes no ast_bindings object) alive right after its loop that
+#   were not alive just before it, whatever holds them (_born, through
 #   gc.get_objects(): the census pin holds it EQUAL to the node count, by class, of the trees of the files its own reader
 #   derives, _tree_classes), None for a build that drops none; HELD_BEFORE, the realpaths whose tree the holder held
 #   before the build, sorted (a tree held before is not born in it); PARTS_OUTLIVED, for a build over a
@@ -4488,7 +4544,8 @@ def _census_build(paths, root=None):
     drops a tree: the ast objects alive are listed just before the loop (_held_alive, the list held until the read
     after the loop, so none of it dies and no id among it is reused) and read again, by identity and by class, right
     after it (_born), before the build returns and long before teardown: `born`, the ast objects made in the build and
-    still alive, whatever holds them. The census pin holds `born` EQUAL, by class, to the nodes of the trees of the
+    still alive, whatever holds them (both reads take ast_bindings' objects too, _HELD_TYPES, of which the census makes
+    none). The census pin holds `born` EQUAL, by class, to the nodes of the trees of the
     files its own reader derives (_import_line_named_files, _tree_classes; the resolver targets derived, not the
     holder's list and not a figure), so a road that keeps any ast object of a dropped tree (its statement list on a
     list of its own, one statement, a node inside one), whatever holds it, which leaves the tree object to die and the
@@ -4523,10 +4580,11 @@ def _census_build(paths, root=None):
     the build neither runs nor counts) and after it, on the returning road and on the raising road (the build itself
     wrote on a node the parser shares with every tree: the build is counted and nothing is held, so the next read builds
     again; a raising build's exception is the AssertionError's __cause__ when the singletons carry attributes, else it
-    propagates as it was). No collector state is touched: no gc.freeze, gc.disable or gc.collect here or anywhere in the
-    module (the same ruling; the freeze is process-global, and the other two walk every tracked object); the drop's two
-    gc.get_objects() reads change none. What the build returns holds only strings, numbers, tuples, dicts and _Record
-    tuples, no node and no cycle."""
+    propagates as it was). No collector state is touched: no gc.freeze, gc.disable or gc.collect here, in the census's
+    other code or in its pins (the same ruling; the freeze is process-global, and the other two walk every tracked
+    object), the module's only such calls being fork PR #850's two tests of _COLLECTOR_STATE_TESTS, which put the
+    collector's state back as they found it; the drop's two gc.get_objects() reads change none. What the build returns
+    holds only strings, numbers, tuples, dicts and _Record tuples, no node and no cycle."""
     key = tuple(paths)
     where = "the census build over %s (tests/test_hermetic_kernel_postal.py)" % ("1 path" if len(key) == 1 else "%d paths" % len(key))
     PC.check_singletons("before %s: an earlier writer" % where)
@@ -4596,12 +4654,13 @@ def module_level_env_census(paths=None):
     derivation; _census_parsed_modules reads the same derivation's list of those files. Run it as
     `python -m tests.test_hermetic_kernel_postal --census` for a table. A write the scan cannot read raises, as the pin
     does: a census that skipped a write would be a floor with silent slack.
-    ONE PARSE PER FILE AND ONE DERIVATION PER PATH TUPLE PER RUN OF THE MODULE, HELD BY THE MODULE AND RELEASED AT ITS END
+    ONE CENSUS PARSE PER FILE AND ONE DERIVATION PER PATH TUPLE PER RUN OF THE MODULE, HELD BY THE MODULE AND RELEASED AT ITS END
     (the reviewer's rulings of 2026-09-24 on round 2 of fork PR #894). WHY NOT tests/parse_cache.py's derived(), round 1's
     shape: derived() freezes every object tracked after a build, and every later call of the kernel's _PerfStats.snapshot
     reads gc.get_freeze_count(), which walks the frozen objects, so every snapshot reader that sorts after this module in
-    a serial run paid per read; the module changes no collector state at all (no gc.freeze, gc.disable or
-    gc.collect). WHY NOT THE CACHE'S SHARED PARSE EITHER, this census's exception to tests/parse_cache.py's one-cache
+    a serial run paid per read; the census changes no collector state at all (no gc.freeze, gc.disable or gc.collect),
+    and the module freezes nothing (fork PR #850's two tests of _COLLECTOR_STATE_TESTS turn automatic collection off and
+    put it back). WHY NOT THE CACHE'S SHARED PARSE EITHER, this census's exception to tests/parse_cache.py's one-cache
     rule, chosen by the measured rule the reviewer set (the shape whose snapshot readers stay inside main's spread ships):
     read through source_and_tree, which freezes nothing, the trees stayed in that cache, tracked, for the rest of the
     process, and every full collection after this module walked them. THE MEASUREMENT, at round 2 of fork PR #894 (this
@@ -7764,9 +7823,22 @@ class _Link:
 
 
 _COLLECTOR_READS = ("get_freeze_count", "get_objects")
-#   the two attributes of gc this module may touch, each a read that changes no collector state: the freeze-count pin's
-#   (setUpModule, tearDownModule), and the list of tracked objects the drop's pin by live objects reads ast objects in
-#   (_held_alive and _born, read before and after the loop of a census build that drops a tree)
+#   the two attributes of gc this module may touch outside the tests of _COLLECTOR_STATE_TESTS, each a read that changes
+#   no collector state: the freeze-count pin's (setUpModule, tearDownModule), and the list of tracked objects that
+#   _held_alive and _born read (before and after the loop of a census build that drops a tree, THE DROP BY LIVE OBJECTS;
+#   at the start and the end of the tree's read that counts; setUpModule's start list and the module end's count)
+
+_COLLECTOR_STATE_TESTS = {
+    "test_the_read_drops_no_cycle_so_each_module_is_freed_by_reference_counting":
+        ("isenabled", "enable", "disable", "collect", "get_debug", "set_debug", "garbage", "DEBUG_SAVEALL"),
+    "test_a_scan_of_a_planted_source_leaves_no_cycle_holding_its_tree": ("isenabled", "enable", "disable"),
+}
+#   fork PR #850's two tests of HermeticKernelPostal that change the collector's state, which the merged module keeps
+#   (the reviewer's ruling of round 2 on fork PR #894, group C: every source-reading pin of either PR re-aimed and green
+#   on the merged module), each with the attributes of gc it may touch: both turn automatic collection off, putting the
+#   collector's state back as they found it by a cleanup registered before the change; the cycle test also runs
+#   gc.collect() twice, the second under DEBUG_SAVEALL, whose debug flags a cleanup registered before the change puts
+#   back
 
 
 def _collector_touches(tree):
@@ -7875,7 +7947,7 @@ def tearDownModule():
     if before is not None and after > before:
         problems.append("the freeze-count pin: tests/test_hermetic_kernel_postal.py froze objects in its run: "
                         "gc.get_freeze_count() read %d at setUpModule and %d at tearDownModule, after the release. The module "
-                        "changes no collector state (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894): its "
+                        "freezes nothing (the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894): its "
                         "census parses its own trees and never derives through parse_cache.derived, which calls gc.freeze() "
                         "after a build" % (before, after))
     if (made, _PROOF_COPY) != (min(reads, 1), []) or (scratch is not None and os.path.lexists(scratch)):
@@ -8315,33 +8387,37 @@ class HermeticKernelPostal(unittest.TestCase):
                          "arms, and neither a nested case's arm, a test of another word nor a catch-all arm")
 
     def test_the_tree_is_parsed_once_per_file_in_the_module_run_and_read_once(self):
-        """THE PARSE PIN (PR #850's review round 9, E ruled again): the trio test, the guard test and the peers test
+        """THE PARSE PIN (PR #850's review round 9, E ruled again): the trio test, the guard test and _peers_writers
         share one parse of each file per module run, counted by the module's own counter: _PARSES, which _parse_text
         moves once per parse against the text's key (_text_key), so a parse counts whatever filename it was given. Every
         tree the module builds by a road it spells in its own text as one of the spellings _TREE_BUILDERS holds comes
-        from _parse_text (the helpers pin); a road by any other spelling is not read, among them getattr, __import__, a
+        from _parse_text, or from a def of fork PR #894's that _OWN_TREE_ROADS names, whose parses this counter does not
+        see (the helpers pin); a road by any other spelling is not read, among them getattr, __import__, a
         name bound at run time, compile's flag by value, and another module's function that parses (ast.literal_eval,
         which the module calls). Their reads (_kernel_spawn_offenders, spawn_roads, _peers_writers), with the --roads
         arm's (_print_roads) and the comparison case's (_roads_table), answer from the module run's one read of the tree
         (_tree_read, made by whichever of them ran first) and hand back its objects; the module run read the tree once
-        (_READS); the read recorded a text key for every file it parsed and no other (its `keys`), its population the
-        peers test's (every .py under tests/) with the table's (the modules directly under tests/ but this one) inside
+        (_READS); the read recorded a text key for every file it parsed and no other (its `keys`), its population every
+        .py under tests/, walked recursively, with the table's (the modules directly under tests/ but this one) inside
         it; and each of those texts, as the read parsed it, was parsed once for each file that holds it
         (_parse_count_faults over the read's keys, so a file edited after the read is held to the text the read parsed,
-        PR #850's tenth review round). The one other parse of a file of the tree is the placement test's, of the tunnels
-        module, once per run of that test (_PLACEMENT_PARSES, under the key of the text it parsed), and nothing keeps
-        its tree (the release pin): that text's expected count adds those runs. The red: a reader that parses the tree
+        PR #850's tenth review round). The one other parse of a file of the tree through _parse_text is the placement
+        test's, of the tunnels module, once per run of that test (_PLACEMENT_PARSES, under the key of the text it
+        parsed), and nothing keeps its tree (the release pin): that text's expected count adds those runs. The census
+        parses each file of the tree once more by its own road (_own_tree, counted in _OWN_PARSES, which its parse-once
+        pins hold), and other defs _OWN_TREE_ROADS names parse a file of the tree for a pin of their own
+        (tests/conftest.py, this module): _PARSES counts neither. The red: a reader that parses the tree
         again through _parse_text moves the counter past the expected count of each file it reads. Read here, the count
         sees the parses of the tests that ran before this one in the process; tearDownModule reads the same count over
         the whole module run (_module_end_faults), so a re-parse in a test that runs after this one, or on another
         worker under xdist, fails the module's teardown. The read's population is also compared with a walk of tests/
-        taken here (_tree_module_paths), and the peers test compares it with an os.walk: a file added or removed under
-        tests/ during the module's run reds both, a stated residual; no test writes a .py under tests/, so the trigger
-        is a person or a session editing the tree mid-run."""
+        taken here (_tree_module_paths): a file added or removed under tests/ during the module's run reds it, a
+        stated residual; no test writes a .py under tests/, so the trigger is a person or a session editing the tree
+        mid-run."""
         read = _tree_read()
         _kernel_spawn_offenders(HERE, skip=TREE_SKIP)                  # the trio test's read
         roads = spawn_roads(HERE, skip=TREE_SKIP)                      # the guard test's
-        _peers_writers()                                               # the peers test's
+        _peers_writers()                                               # the read's environment writes
         with contextlib.redirect_stdout(io.StringIO()):
             _print_roads(HERE, skip=TREE_SKIP)                          # the --roads arm's
         again = _roads_table(HERE, TREE_SKIP)                          # the comparison case's
@@ -8350,7 +8426,7 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertIs(again, read.table, "the comparison case reads the same table")
         self.assertTrue(read.table.paths and len(read.table.paths) == len(read.table.roads), "the table read no module, or "
                         "its paths and its rows disagree: %d paths, %d rows" % (len(read.table.paths), len(read.table.roads)))
-        self.assertTrue(set(read.table.paths) <= set(read.paths), "the peers test's population holds every module the table read")
+        self.assertTrue(set(read.table.paths) <= set(read.paths), "the read's walk of tests/ holds every module the table read")
         self.assertEqual(sorted(read.keys), sorted(set(read.paths) | set(read.table.paths)), "the read recorded a text key "
                          "for every file it parsed and for no other: the population _parse_count_faults holds _PARSES to")
         self.assertEqual(list(read.paths), _tree_module_paths(), "the read's population against a walk of tests/ taken "
@@ -8423,23 +8499,27 @@ class HermeticKernelPostal(unittest.TestCase):
     def test_the_tree_read_keeps_no_tree_and_no_bindings_and_leaves_plain_values(self):
         """THE RELEASE PIN (PR #850's review round 9, E ruled again: no tree and no Bindings object of the module
         outlives it, and the table is left as plain values). Every tree and Bindings the module builds by a road it
-        spells in its own text as one of the spellings _TREE_BUILDERS holds comes from _parse_text or _bindings_of (the
-        helpers pin; a road by any other spelling is not read, among them getattr, __import__, a name bound at run time,
-        compile's flag by value, and another module's function that parses, ast.literal_eval, which the module calls),
-        each recording a weak reference (_TREES, _BINDINGS). After the reads of the trio test, the guard test and the
-        peers test (the module run's one read of the tree, made now or by an earlier test of the run): the records name
+        spells in its own text as one of the spellings _TREE_BUILDERS holds comes from _parse_text or _bindings_of,
+        each recording a weak reference (_TREES, _BINDINGS), or from a def of fork PR #894's that _OWN_TREE_ROADS names,
+        which records none (the helpers pin; a road by any other spelling is not read, among them getattr, __import__, a
+        name bound at run time, compile's flag by value, and another module's function that parses, ast.literal_eval,
+        which the module calls). After the reads of the trio test, the guard test and _peers_writers (the module run's
+        one read of the tree, made now or by an earlier test of the run): the records name
         a tree for every file of the read's population and a Bindings for every row of its table, so an empty record
         cannot pass; the read held one file's tree at a time, its most_trees (the most file trees alive at any file
         parse, _parse's count, reset when the read started) one, the tree just built (PR #850's tenth review round), and
-        its born empty: no tree node or ast_bindings object it made was alive when its loop ended (the objects of
-        _HELD_TYPES alive then that were not in the list it took when it started, by class, read through
+        its born empty: no tree node or ast_bindings object it made was alive when its loop ended but the nodes of the
+        trees the census's one owner holds (_census_held_nodes) (the objects of _HELD_TYPES alive then that were not in
+        the list it took when it started, by class, read through
         gc.get_objects() with no collection, so a node kept without its root is seen; PR #850's eleventh review round);
         and the read's value, walked whole, holds nothing but tuples, strings, numbers, None and the dicts and frozensets
-        that index them. Then tearDownModule, the module end's check, is called here twice on the module's state, which
-        is put back after each call so the later tests of the run read the same read. Over the state as it stands it
+        that index them. Then _module_end_checks, the module end's check (fork PR #850's half of tearDownModule), is
+        called here twice on the module's state, which is put back after each call so the later tests of the run read
+        the same read. Over the state as it stands it
         raises nothing and leaves every container empty: every tree and Bindings recorded in the module run so far, the
         read's and those of every test that ran before this one in the process, is gone, no tree node or ast_bindings
-        object made in the module's run so far is alive, no read of the tree aborted in the module run, and no text of
+        object made in the module's run so far is alive but the nodes of the trees the census's one owner holds, no read
+        of the tree aborted in the module run, and no text of
         the tree's read, as the read parsed it, was parsed other than expected (_module_end_faults; _still_held reads
         each weak reference and the objects of those types alive now that are not in setUpModule's list, by class, with
         no collection: a weak reference sees only the tree root or the Bindings it refers to, the count by class also a
@@ -8455,7 +8535,7 @@ class HermeticKernelPostal(unittest.TestCase):
         read = _tree_read()
         _kernel_spawn_offenders(HERE, skip=TREE_SKIP)                  # the trio test's read
         spawn_roads(HERE, skip=TREE_SKIP)                              # the guard test's
-        _peers_writers()                                               # the peers test's
+        _peers_writers()                                               # the read's environment writes
         population = {os.path.relpath(p, HERE) for p in set(read.paths) | set(read.table.paths)}
         self.assertEqual(sorted(population - {f for f, _ in _TREES}), [], "files of the read's population with no tree "
                          "recorded (_TREES)")
@@ -8514,8 +8594,12 @@ class HermeticKernelPostal(unittest.TestCase):
         """THE HELPERS PIN, which the parse pin and the release pin stand on (they count and watch what _parse_text and
         _bindings_of record): in this module's source, read by its tokens (_tree_builder_spellings), every road to a
         tree or a Bindings spelled as one of the spellings _TREE_BUILDERS holds (among them ast.parse, compile's
-        PyCF_ONLY_AST, `from ast import` and Bindings.of) lies inside _parse_text or _bindings_of, and each helper
-        spells its own road once: the one ast.parse is _parse_text's and the one Bindings.of is _bindings_of's. It reads
+        PyCF_ONLY_AST, `from ast import` and Bindings.of) lies inside _parse_text or _bindings_of, or inside a def of
+        fork PR #894's that _OWN_TREE_ROADS names (the merged module's other roads, whose trees the parse pin does not
+        count; the pin re-aimed so at the merged module on the reviewer's ruling of round 2 on fork PR #894, group C), the
+        list equal to the defs outside the two helpers that spell a road, so it names none that spells no road; and each helper
+        spells its own road once: outside those defs, the one ast.parse is _parse_text's and the one Bindings.of is
+        _bindings_of's. It reads
         by spelling, so a road by any other spelling is not read, among them getattr, __import__, a name bound at run
         time, compile's flag by value, and another module's function that parses (ast.literal_eval, which the module
         calls). The reader is held to every spelling _TREE_BUILDERS holds, in code: the samples below find one road
@@ -8527,10 +8611,20 @@ class HermeticKernelPostal(unittest.TestCase):
         for helper, spelling in ((_parse_text, "ast . parse"), (_bindings_of, "Bindings . of")):
             lines, start = inspect.getsourcelines(helper)
             inside[spelling] = range(start, start + len(lines))
-        outside = [(line, spelling) for line, spelling in found if line not in inside.get(spelling, ())]
-        self.assertEqual(outside, [], "roads to a tree or a Bindings outside _parse_text and _bindings_of (line, spelling)")
-        self.assertEqual(sorted(spelling for _, spelling in found), ["Bindings . of", "ast . parse"], "each helper spells its "
-                         "road once")
+        own = {}
+        for name in _OWN_TREE_ROADS:
+            lines, start = inspect.getsourcelines(_def_named(name))
+            own[name] = range(start, start + len(lines))
+
+        def owners(line):
+            return [name for name, span in own.items() if line in span]
+        outside = [(line, spelling) for line, spelling in found if line not in inside.get(spelling, ()) and not owners(line)]
+        self.assertEqual(outside, [], "roads to a tree or a Bindings outside _parse_text, _bindings_of and the defs of "
+                         "_OWN_TREE_ROADS (line, spelling)")
+        self.assertEqual(sorted({name for line, _ in found for name in owners(line)}), sorted(_OWN_TREE_ROADS),
+                         "_OWN_TREE_ROADS is the defs outside the two helpers that spell a road, and no other")
+        self.assertEqual(sorted(spelling for line, spelling in found if not owners(line)), ["Bindings . of", "ast . parse"],
+                         "each helper spells its road once")
         samples = ('t = ast.parse(src)\n', 't = ast.parse(\n    src)\n', 'c = compile(src, "m", "exec", ast.PyCF_ONLY_AST)\n',
                    'from ast import parse\n', 'import ast as a\n', 'b = ast_bindings.Bindings.of(t)\n',
                    'b = ast_bindings.Bindings(t)\n')
@@ -9004,9 +9098,11 @@ class HermeticKernelPostal(unittest.TestCase):
     def _the_fresh_plant_body(self):
         """The body test_a_body_run_in_a_fresh_interpreter_passes_here_only_where_it_passes_there runs in a fresh
         interpreter: as ROMP_TEST_HERMETIC_FRESH_PLANT says, it fails, skips, passes and ends its process with code 3 by
-        an exit handler, or passes and has the census parse one file twice, which tearDownModule's parse-once pin reds;
-        passing, it writes in the marker ROMP_TEST_HERMETIC_FRESH_MARKER names its pid and whether setUpModule ran
-        before it (_FREEZE_AT_START holds setUpModule's one read until tearDownModule takes it)."""
+        an exit handler, passes and has the census parse one file twice, which tearDownModule's parse-once pin reds, or
+        passes and keeps a tree it parsed through _parse_text on its class, which fork PR #850's checks in
+        tearDownModule red (_module_end_checks); passing, it writes in the marker ROMP_TEST_HERMETIC_FRESH_MARKER names
+        its pid and whether setUpModule ran before it, both halves (_FREEZE_AT_START holds setUpModule's one read until
+        tearDownModule takes it, and _AT_START its start list until the module's release)."""
         plant = os.environ.get("ROMP_TEST_HERMETIC_FRESH_PLANT")
         marker = os.environ["ROMP_TEST_HERMETIC_FRESH_MARKER"]
         if plant == "fail":
@@ -9021,23 +9117,28 @@ class HermeticKernelPostal(unittest.TestCase):
                 f.write("X = 1\n")
             _own_tree(marker + ".py", hold=False)
             _own_tree(marker + ".py", hold=False)
+        if plant == "held":
+            type(self)._fresh_held = _parse_text("x = 1\n", "fresh-held-plant.py")   # alive until the child exits
         with open(marker, "w", encoding="utf-8") as f:
-            json.dump({"pid": os.getpid(), "set up": len(_FREEZE_AT_START) == 1}, f)
+            json.dump({"pid": os.getpid(), "set up": len(_FREEZE_AT_START) == 1, "start list": len(_AT_START) == 1}, f)
 
     def test_a_body_run_in_a_fresh_interpreter_passes_here_only_where_it_passes_there(self):
         """THE FRESH-INTERPRETER ROAD (_in_a_fresh_interpreter, the cost cut of round 2 of fork PR #894), planted: the
-        road runs _the_fresh_plant_body five times, each with a plant of its own. Planted to pass, the child writes its
+        road runs _the_fresh_plant_body six times, each with a plant of its own. Planted to pass, the child writes its
         pid in a marker this process made, and the pid is not this process's: the body ran in another process; the
-        marker also says that this module's setUpModule ran in the child before the body. Planted to fail (the body's
-        own failure), to skip (unittest's `OK (skipped=1)`, return code 0), to pass and then exit with code 3 (the line
-        `OK` printed, an exit handler ending the child after it) and to pass with a file parsed twice by the census
-        (tearDownModule's parse-once pin, which runs after the body in the child), the road fails, naming the child's
-        failure where it has one, the last naming that pin. So a road that returned without starting the child, one
+        marker also says that this module's setUpModule ran in the child before the body, both its halves (fork PR
+        #894's read of the freeze count and fork PR #850's start list). Planted to fail (the body's own failure), to skip
+        (unittest's `OK (skipped=1)`, return code 0), to pass and then exit with code 3 (the line `OK` printed, an exit
+        handler ending the child after it), to pass with a file parsed twice by the census (tearDownModule's parse-once
+        pin, which runs after the body in the child) and to pass keeping a tree it parsed through _parse_text (fork PR
+        #850's checks, _module_end_checks, which the one tearDownModule runs after fork PR #894's release), the road
+        fails, naming the child's failure where it has one, the last two naming those pins, so the child's
+        tearDownModule is known to run both PRs' halves. So a road that returned without starting the child, one
         that read no result of it, and one that read the return code alone or the line alone are each red here, and so
         is a child whose runner sets up no module fixture (the verifier's finding at round 2's forty-ninth commit of
         fork PR #894: unittest's BaseTestSuite in _FRESH_RUNNER, which runs neither setUpModule nor tearDownModule, left
         every test green), red on each half alone: with no setUpModule the marker says it did not run, and with no
-        tearDownModule the twice-parsed file passes. The five children run at once (_at_once). The exiting child ends
+        tearDownModule the twice-parsed file passes. The six children run at once (_at_once). The exiting child ends
         by os._exit, which skips the tests package's removal of the child's own temporary root, so that child is handed
         a system temporary directory inside this test's scratch directory (TMPDIR and ROMP_TESTS_SYSTEM_TMPDIR), where
         it mints its root and where this test's clean-up removes it."""
@@ -9058,20 +9159,23 @@ class HermeticKernelPostal(unittest.TestCase):
                     return str(e)
                 return None
             return call
-        plants = ("pass", "fail", "skip", "exit", "teardown")
+        plants = ("pass", "fail", "skip", "exit", "teardown", "held")
         got = dict(zip(plants, _at_once([road(plant) for plant in plants])))
         self.assertIsNone(got["pass"], "planted to pass, the road passes")
         with open(os.path.join(d, "pass"), encoding="utf-8") as f:
             wrote = json.load(f)
         self.assertNotEqual(wrote["pid"], os.getpid(), "the body ran in another process")
-        self.assertTrue(wrote["set up"], "this module's setUpModule ran in the child before the body")
+        self.assertEqual((wrote["set up"], wrote["start list"]), (True, True),
+                         "this module's setUpModule ran in the child before the body, both halves")
         self.assertEqual({plant: got[plant] is not None for plant in plants[1:]}, dict.fromkeys(plants[1:], True),
-                         "planted to fail, to skip, to exit with code 3 after the line OK and to parse a file twice, "
-                         "the road fails: %s" % got)
+                         "planted to fail, to skip, to exit with code 3 after the line OK, to parse a file twice and to keep "
+                         "a tree, the road fails: %s" % got)
         self.assertIn("the planted failure in the fresh interpreter", got["fail"], "the road names the child's failure")
         self.assertIn("OK (skipped=1)", got["skip"], "the road names the child's skip")
         self.assertIn("the parse-once pin over the module's run", got["teardown"],
                       "the road names the failure of the child's tearDownModule")
+        self.assertIn("[('tree', 'fresh-held-plant.py')]", got["held"],
+                      "the road names the failure of fork PR #850's checks in the child's tearDownModule")
 
     def test_the_drops_count_by_every_node_sees_each_part_a_road_keeps_of_a_dropped_tree(self):
         """THE DROP BY LIVE OBJECTS' read, planted (the verifier's finding at round 2's thirty-first commit of fork PR
@@ -9079,8 +9183,9 @@ class HermeticKernelPostal(unittest.TestCase):
         references saw nothing while two million nodes stayed alive; the reviewer's ruling of 2026-09-24 21:09Z, (2)).
         Beside a tree held before the read began and one taken during it, five trees are parsed and dropped while five
         roads keep one part of each (the whole tree, its statement list, one statement, a node inside one, and nothing),
-        and what the census build reads as `born` (_born: the ast objects alive after that were not alive before, by
-        identity, counted by class) is exactly, class by class, the nodes of the tree taken during it and of the kept
+        and what the census build reads as `born` (_born: the ast objects, and ast_bindings' objects, of which none is
+        made here, alive after that were not alive before, by identity, counted by class) is exactly, class by class,
+        the nodes of the tree taken during it and of the kept
         parts (_tree_classes), the tree held before counted neither twice nor at all. THROUGH THE BUILD: _census_build over
         a synthetic tree whose temporary root stands in for tests/, with its walk (_walk_unit, replaced for the one build)
         keeping each walked tree's statement list on a list, keeps the file an import names and drops the other two, and
@@ -14326,17 +14431,35 @@ class HermeticKernelPostal(unittest.TestCase):
 
     def test_the_module_touches_no_collector_state_and_derives_nothing_through_parse_cache(self):
         """Clause 1 of the reviewer's ruling of 2026-09-24 on round 2 of fork PR #894, held on this module's own tree (a
-        comment or a string naming a call does not count): no gc.freeze, gc.disable, gc.collect, nor any other attribute
-        of gc but the two reads of _COLLECTOR_READS (the freeze-count read the behavioural pin makes, and gc.get_objects,
-        which the drop's pin by live objects reads ast objects in since round 2's thirty-second commit of fork PR #894;
-        neither changes collector state), and no parse_cache.derived, however the module is imported
-        (_collector_touches). Run over plants so the reader is known to see each spelling: each of those calls, another
-        read of gc outside the two (gc.get_referrers), an attribute taken without a call, a name imported from gc, gc
-        under an alias, and derived through each import road of tests/parse_cache.py (the package road, the script road,
-        a dotted import) is named with its line; the two reads and a string that spells a call are not. What the reader
-        does not see is in its docstring."""
-        self.assertEqual(_collector_touches(ast.parse(open(__file__, encoding="utf-8").read(), filename=__file__)), [],
-                         "the module changes no collector state and never derives through parse_cache.derived")
+        comment or a string naming a call does not count) outside fork PR #850's two tests of _COLLECTOR_STATE_TESTS: no
+        gc.freeze, gc.disable, gc.collect, nor any other attribute of gc but the two reads of _COLLECTOR_READS (the
+        freeze-count read the behavioural pin makes, and gc.get_objects, which _held_alive and _born read; neither changes
+        collector state); inside each of those two tests, no attribute of gc but the ones listed for it there, so no
+        freeze and no unfreeze, and each touches one at least, so the admission names no test that is gone or no longer
+        touches the collector (the merged module keeps them: the reviewer's ruling of round 2 on fork PR #894, group C);
+        and no parse_cache.derived anywhere, however the module is imported (_collector_touches). Run over plants so the
+        reader is known to see each spelling: each of those calls, another read of gc outside the two
+        (gc.get_referrers), an attribute taken without a call, a name imported from gc, gc under an alias, and derived
+        through each import road of tests/parse_cache.py (the package road, the script road, a dotted import) is named
+        with its line; the two reads and a string that spells a call are not. What the reader does not see is in its
+        docstring."""
+        tree = ast.parse(open(__file__, encoding="utf-8").read(), filename=__file__)
+        cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == type(self).__name__)
+        spans = {f.name: (f.lineno, f.end_lineno) for f in cls.body
+                 if isinstance(f, ast.FunctionDef) and f.name in _COLLECTOR_STATE_TESTS}
+        touches = _collector_touches(tree)
+        tree = cls = None     # dropped before any assertion: a red's traceback keeps no tree of the module past the test
+        self.assertEqual(sorted(spans), sorted(_COLLECTOR_STATE_TESTS), "each test _COLLECTOR_STATE_TESTS names is a test of this class")
+        outside, inside = [], {name: [] for name in spans}
+        for line, spelling in touches:
+            owner = [name for name, (first, last) in spans.items() if first <= line <= last]
+            (inside[owner[0]] if owner else outside).append((line, spelling))
+        self.assertEqual(outside, [], "the module changes no collector state outside the tests of _COLLECTOR_STATE_TESTS and "
+                                      "never derives through parse_cache.derived")
+        for name, allowed in sorted(_COLLECTOR_STATE_TESTS.items()):
+            self.assertTrue(inside[name], "%s touches the collector: the admission names a test that does" % name)
+            self.assertEqual([(line, s) for line, s in inside[name] if not (s.startswith("gc.") and s[3:] in allowed)], [],
+                             "%s touches no attribute of gc but the ones listed for it in _COLLECTOR_STATE_TESTS" % name)
         head = "import gc\nfrom . import parse_cache as PC\n"
         for body, want in (("gc.freeze()\n", "gc.freeze"), ("gc.disable()\n", "gc.disable"), ("gc.collect()\n", "gc.collect"),
                            ("gc.enable()\n", "gc.enable"), ("gc.unfreeze()\n", "gc.unfreeze"), ("f = gc.freeze\n", "gc.freeze"),
