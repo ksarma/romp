@@ -2506,3 +2506,21 @@ test("the one gate's window listeners go with the viewer, a guard CI runs (the f
   const gone = gate.map(([type, cb]) => [type, calls.remove.some(([rt, rcb, rcap]) => rt === type && rcb === cb && rcap)]);
   assert.deepEqual(gone, gate.map(([type]) => [type, true]), "each is removed at the close, the same function with the capture flag, [type, removed] (a property pin over the window's remove calls)");
 });
+test("how a click finds its press, Firefox's drag of the held picture before another document's tap, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): the mouse held on the picture with the control shown, its pointerdown and mousedown under pointerId 0, then another element over the control, then a tap on an element of another document over the control that hides at that tap's compatibility mousedown, which in Firefox starts a drag of the held picture, so this window hears a dragstart and then that tap's mouseup of detail 1 and its click on the picture under pointerId 0 typed touch, with no pointerdown, mousedown or pointerup of the tap: the dragstart ended the mouse's record, so the click opens nothing and reveals the control, and, that element gone, a click of the mouse on the picture opens once (a property pin over window.open's calls and the scrollIntoView record; red under a gate whose dragstart ends no record, where the click read the held mouse's record and opened, and green at 142ade155 and at 1a6470e72 by design, whose dragstart ends every record too)", async (t) => {
+  const got: Record<string, unknown> = {};
+  got.ff = await gateCell(t, "the mouse held on the picture, | then Firefox's dragstart and another document's tap", (g, opens) => {
+    const m: GatePtr = { pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0 };
+    g.place(IN_BOX);
+    onWindow("pointerdown", g.img, { ...m });                              // the mouse held on the picture
+    onWindow("mousedown", g.img, { button: 0 });
+    g.cover(new El("div"));
+    onWindow("dragstart", g.img);                                          // the drag of the held picture Firefox starts at the other tap
+    gateClick(g.img, 0, 1, true, "touch");                                 // that tap's mouseup of detail 1 and its click, its compatibility mousedown taken by the element
+    const first = opens();
+    g.cover(null);
+    ffMouseClick(g.img);
+    return [first, opens()];
+  });
+  t.diagnostic("record " + JSON.stringify(got));
+  assert.deepEqual(got, { ff: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }] }, "the other document's click after the drag of the held picture opens nothing and reveals the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
+});
