@@ -120,10 +120,10 @@ parse, read through weak references to the trees' roots (_parse), and `born`, th
 (ast.AST, Bindings, Scope, Declaration) made during the read and alive when its loop ends, by class, read through
 gc.get_objects() by identity against the list of those gc.get_objects() listed when the read started (_born; _held_alive
 states what such a list omits), which sees a node kept without its root, a tree's statements kept on a list among them
-(PR #850's eleventh review round, as in fork PR #894's pin by live objects), less the nodes of the trees the census's
-one owner holds (_census_held_nodes: the read's environment-write scan resolves an import-time call through the
-census's resolver, which keeps each module it reads for the module's run). Neither count collects, freezes or
-disables the collector. The cycle test holds both
+(PR #850's eleventh review round, as in fork PR #894's pin by live objects), less the nodes of the trees the census
+parsed itself that its one owner holds (_census_held_nodes: the read's environment-write scan resolves an import-time
+call through the census's resolver, which keeps each module it reads for the module's run). Neither count collects,
+freezes or disables the collector. The cycle test holds both
 over its plant read and the release pin over the tree's read: one file tree at most, and nothing born. Neither sees a
 node kept without its root past the next file's parse and let go before the read's loop ends. The read's value is
 tuples, strings, numbers, None and the dicts and frozensets that index them, among them each file's text key as the
@@ -1633,8 +1633,8 @@ def _read_root(root, skip=(), listing=None, count=False):
     trees alive at each file parse, the read resets that count's maximum when it starts and carries it as `most_trees`;
     with `count`, the read also takes the list of the objects of _HELD_TYPES alive when it starts (_held_alive, once the
     directory is listed and before its first file is parsed) and, when its loop ends, carries as `born` those alive then
-    that are not in that list, nor a node of a tree the census's one owner holds then (_census_held_nodes), by class
-    (_born: through gc.get_objects(), no collection), so a tree's node still alive
+    that are not in that list, nor a node of a tree the census parsed itself that its one owner holds then
+    (_census_held_nodes), by class (_born: through gc.get_objects(), no collection), so a tree's node still alive
     when the loop ends, root or not, is seen (one let go before then is not; the module docstring states it; PR #850's
     eleventh review round). Taking that list and reading `born` each walk every object gc.get_objects() lists, so a read
     that counts makes two walks when it completes, one when it stops at a file, and none when it stops at its listing.
@@ -1741,28 +1741,36 @@ def _still_held():
     """(held, born): `held` the (kind, filename) of every tree and every Bindings this module recorded (_TREES,
     _BINDINGS) that is still alive; `born` the objects of _HELD_TYPES made in the module's run and alive now, by class
     (_born against setUpModule's list, _AT_START), None when no start list was taken (setUpModule did not run in this
-    process), less the nodes of the trees the census's one owner holds (_census_held_nodes: none once tearDownModule's
-    release has run, so at the module's end nothing is left out). Neither read collects, freezes or disables the
-    collector (PR #850's eleventh review round). The weak references see a tree's root and a Bindings object; `born`
-    also sees what they miss, a node kept without its root (a list of a tree's statements) and a Scope or a Declaration
-    kept without its Bindings, whatever holds it."""
+    process), less the nodes of the trees the census parsed itself that its one owner holds (_census_held_nodes: none
+    once tearDownModule's release has run, so at the module's end nothing is left out). Neither read collects, freezes
+    or disables the collector (PR #850's eleventh review round). The weak references see a tree's root and a Bindings
+    object; `born` also sees what they miss, a node kept without its root (a list of a tree's statements) and a Scope or
+    a Declaration kept without its Bindings, whatever holds it."""
     held = ([("tree", f) for f, ref in _TREES if ref() is not None]
             + [("bindings", f) for f, ref in _BINDINGS if ref() is not None])
     return held, (_born(_AT_START[0] + _census_held_nodes()) if _AT_START else None)
 
 
 def _census_held_nodes():
-    """Every node of every tree the census's one owner holds now (_HELD's "trees", fork PR #894's), as a list, empty when
-    it holds none (before the first census read, and after tearDownModule's release). The owner keeps each file the
-    resolver reads for the module's run, whichever read reaches the resolver first, and the tree's read is one: its
-    environment-write scan (_module_level_env_writes) resolves an import-time call through the resolver, which holds
-    the callee's module. So the two counts of what the module made and left alive, the read's `born` (_read_root) and
-    the module end's (_still_held), leave these nodes out, as they leave out their start lists: the owner holds them
-    until tearDownModule releases it, before fork PR #850's checks read. The census's own count (_census_build's
-    `born`) leaves nothing out: it is held equal to these trees' nodes."""
+    """The nodes the two counts of what the module made and left alive leave out (the read's `born`, _read_root, and the
+    module end's, _still_held), as a list: every node of each tree the census parsed itself that its one owner holds
+    now, which is each value of _HELD's "trees" (fork PR #894's) that is an ast.Module under a key the census's own
+    parse counted, a realpath _OWN_PARSES counts above zero (_own_tree counts a file under its realpath before it holds
+    the tree under that key), and nothing else. A value of "trees" that is not an ast.Module (a statement of a tree, or
+    a list of statements) and an ast.Module under a key _OWN_PARSES never counted are not left out, so both counts see
+    them. Empty when the owner holds none (before the first census read, and after tearDownModule's release). Why these
+    are left out: the owner keeps each file the resolver reads for the module's run, whichever read reaches the resolver
+    first, and the tree's read is one: its environment-write scan (_module_level_env_writes) resolves an import-time
+    call through the resolver, which holds the callee's module. The two counts leave these nodes out as they leave out
+    their start lists: the owner holds them until tearDownModule releases it, before fork PR #850's checks read. The
+    census's own count (_census_build's `born`) leaves nothing out: it is held equal to these trees' nodes. The closing
+    check of round 2 of fork PR #894 found the set wider: every value of "trees" was left out, whatever it was and under
+    whatever key, so a read that kept each file's statements in "trees" under keys of its own ran green. The pin:
+    test_the_counts_leave_out_only_the_modules_the_census_parsed_itself_and_holds."""
     if not _HELD:
         return []
-    return [n for tree in _HELD[0]["trees"].values() for n in ast.walk(tree)]
+    return [n for real, tree in _HELD[0]["trees"].items() if isinstance(tree, ast.Module) and _OWN_PARSES[real] > 0
+            for n in ast.walk(tree)]
 
 
 def _parse_count_faults(read=None, reads=None):
@@ -1804,11 +1812,19 @@ def _parse_count_faults(read=None, reads=None):
 def _module_end_faults():
     """The module end's checks (tearDownModule), a message for each that fails: a tree or a Bindings the module recorded
     still alive, an object of _HELD_TYPES made in the module's run and alive, or no start list (_still_held), a read of
-    the tree that aborted, with the file it stopped at and the cause (_ABORTED), and
-    texts of the tree's read, as it parsed them, parsed other than expected (_parse_count_faults). Each is read over the
-    whole
-    module run in this process, so a test that keeps a tree or re-parses a file is seen whatever its place in the run's
-    order and whichever worker runs it."""
+    the tree that aborted, with the file it stopped at and the cause (_ABORTED), and texts of the tree's read, as it
+    parsed them, parsed other than expected (_parse_count_faults). Each is read over the whole module run in this
+    process, so a test that keeps a tree or re-parses a file is seen whatever its place in the run's order and whichever
+    worker runs it. A failed test counts as one that keeps what it held: the runner keeps a failed test's exception past
+    the test, and the exception's traceback holds the test's frames and their locals, so a tree, a node or a Bindings a
+    failed test held in a local when it failed is alive here and counted, as still alive or as made in the module's run
+    and alive. A run already red for that test then ends with this teardown error as well, naming what the test held;
+    where that is what it names, its cause is that failure's retained traceback, not a second leak, and it goes when the
+    failure is fixed. A test that must leave nothing for these checks when it fails drops its trees before its
+    assertions, as test_the_module_touches_no_collector_state_and_derives_nothing_through_parse_cache does. Measured on
+    3.12 and 3.10 with a scratch test that failed while a local held a tree built by _parse_text: the teardown named
+    that tree and its 16 nodes; the same failure after the local was dropped, and a pass while it held the tree, left no
+    teardown error (the closing check of round 2 of fork PR #894, its fourth low)."""
     held, born = _still_held()
     faults = []
     if held:
@@ -8512,8 +8528,8 @@ class HermeticKernelPostal(unittest.TestCase):
         cannot pass; the read held one file's tree at a time, its most_trees (the most file trees alive at any file
         parse, _parse's count, reset when the read started) one, the tree just built (PR #850's tenth review round), and
         its born empty: no tree node or ast_bindings object it made was alive when its loop ended but the nodes of the
-        trees the census's one owner holds (_census_held_nodes) (the objects of _HELD_TYPES alive then that were not in
-        the list it took when it started, by class, read through
+        trees the census parsed itself that its one owner holds (_census_held_nodes) (the objects of _HELD_TYPES alive
+        then that were not in the list it took when it started, by class, read through
         gc.get_objects() with no collection, so a node kept without its root is seen; PR #850's eleventh review round);
         and the read's value, walked whole, holds nothing but tuples, strings, numbers, None and the dicts and frozensets
         that index them. Then _module_end_checks, the module end's check (fork PR #850's half of tearDownModule), is
@@ -8521,8 +8537,8 @@ class HermeticKernelPostal(unittest.TestCase):
         the same read. Over the state as it stands it
         raises nothing and leaves every container empty: every tree and Bindings recorded in the module run so far, the
         read's and those of every test that ran before this one in the process, is gone, no tree node or ast_bindings
-        object made in the module's run so far is alive but the nodes of the trees the census's one owner holds, no read
-        of the tree aborted in the module run, and no text of
+        object made in the module's run so far is alive but the nodes of the trees the census parsed itself that its one
+        owner holds, no read of the tree aborted in the module run, and no text of
         the tree's read, as the read parsed it, was parsed other than expected (_module_end_faults; _still_held reads
         each weak reference and the objects of those types alive now that are not in setUpModule's list, by class, with
         no collection: a weak reference sees only the tree root or the Bindings it refers to, the count by class also a
@@ -8592,6 +8608,58 @@ class HermeticKernelPostal(unittest.TestCase):
                         % (len(statements), message[-400:]))
         self.assertEqual(left, dict.fromkeys(left, 0), "_module_end_checks that raises still drops what the module holds")
         del plant, statements
+
+    def test_the_counts_leave_out_only_the_modules_the_census_parsed_itself_and_holds(self):
+        """The reviewer's closing check of round 2 of fork PR #894, its first low: the two counts of what the module
+        made and left alive, the read's `born` (_read_root) and the module end's (_still_held), leave out the nodes
+        _census_held_nodes returns, and those are the nodes of each ast.Module in the census owner's "trees" held under
+        a realpath the census's own parse counted (_OWN_PARSES), and of nothing else the owner holds. Three plants in
+        "trees", each for a file of a fresh temporary directory: a module the census parses itself and holds
+        (_own_tree), which is left out; a statement of a tree, held under the realpath the census's own parse counted
+        for its file, in place of that file's tree, which is not an ast.Module and is counted; and a module parsed by
+        _parse_text, whose parses _OWN_PARSES does not count, held under the realpath of a file the census never parsed,
+        which is counted. Read as both counts read (_born over a list of what was alive before the plants and the nodes
+        _census_held_nodes returns), what the plants made and left alive is the second plant's nodes and the third's, by
+        class. The red: the leave-out as the closing check found it, every node of every value "trees" held, leaves out
+        all three plants and counts nothing (under it, a read that kept each file's statements in "trees" under keys of
+        its own ran green); leaving out every ast.Module whatever its key counts the second plant alone, and leaving out
+        every value under a counted key counts the third alone. The test's cleanup takes the plants out of "trees", and
+        no node is held in a local past the counts, so a red's traceback keeps none of them."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        real = {}
+        for name, text in (("held.py", "HELD = 1\n"), ("replaced.py", "REPLACED = 2\n"),
+                           ("uncounted.py", "UNCOUNTED = 3\n")):
+            path = os.path.join(d, name)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            real[name] = os.path.realpath(path)
+
+        def take_out():
+            for key in real.values():
+                if _HELD:
+                    _HELD[0]["trees"].pop(key, None)
+        self.addCleanup(take_out)
+        before = _held_alive()                     # held to the count below, so none of it dies and no id is reused
+        _own_tree(real["held.py"])                                                   # parsed, counted and held
+        _held()["trees"][real["replaced.py"]] = _own_tree(real["replaced.py"]).body[0]   # its module's root dies here
+        _held()["trees"][real["uncounted.py"]] = _parse_text("UNCOUNTED = 3\n", "uncounted.py")
+        nodes = _census_held_nodes()
+        born = _born(before + nodes)
+        left_out = {id(n) for n in nodes}
+        plants = {name: (type(_held()["trees"][key]).__name__, id(_held()["trees"][key]) in left_out, _OWN_PARSES[key])
+                  for name, key in real.items()}
+        before = nodes = left_out = None           # no node past here: a red's traceback keeps none of them
+        self.assertEqual((plants, born), ({"held.py": ("Module", True, 1), "replaced.py": ("Assign", False, 1),
+                                           "uncounted.py": ("Module", False, 0)},
+                                          {"Assign": 2, "Constant": 2, "Module": 1, "Name": 2}),
+                         "first, each plant (the class of the value \"trees\" holds for the file, whether "
+                         "_census_held_nodes leaves its root out, the census's own parses of the file): only the "
+                         "module the census parsed itself and holds under a counted realpath is left out; then the "
+                         "objects of _HELD_TYPES the plants made and left alive, by class, less the nodes "
+                         "_census_held_nodes returns (_born, as the read's count and the module end's read it): the "
+                         "statement held under a counted realpath and the module held under a realpath the census "
+                         "never parsed, each Assign(Name, Constant), and that module's root")
 
     def test_every_tree_and_bindings_the_module_builds_comes_from_its_two_helpers(self):
         """THE HELPERS PIN, which the parse pin and the release pin stand on (they count and watch what _parse_text and
