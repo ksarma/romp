@@ -5297,16 +5297,17 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           hub files the host's own dial under the hostname the host declares until its own dial to the alias its kernel
           dials folds the host there (_canon_peer_name), so the hub can name the upgraded host under the one name while
           the held word carries the other, and with a bus id the word does not carry: the word then stays held, this
-          bus's restart ending nothing, until a roster of the hub that this bus records on the row holding the word
-          names the host under the held word's name; that roster's word under that name replaces it, held or released
-          on that process's own evidence, and the word stays held for the file's life if no such roster comes. A
-          roster this bus files under the name a restarted hub declares, other than the name this bus dials the hub by
-          (_canon_peer_name), does not end it, and the fold that forgets that row when this bus's own dial to the hub
-          is answered carries only the answering roster's names: the forgotten row's naming ends nothing (the
-          reviewer's verifier at the seventy-fourth commit, by execution: on its road vfy2DeclHubRestartsFoldsFFirst
-          the restarted hub's dial, filed here under the name it declares, named the host under the held word's name
-          with a session; the hub folded the host under the alias before this bus's dial to it was answered; and the
-          word stayed held after that answer, two more exchanges and this bus's restart). That naming needs a session
+          bus's restart ending nothing, until the roster this bus stores on the row holding the word (the union
+          _order_row keeps) names the host under the held word's name, and that roster's word under that name then
+          replaces it, held or released on that process's own evidence; the word stays held for the file's life when no
+          roster stored on that row names the host so. Which namings reach that stored roster depends on the order of
+          this bus's dials and the hub's rosters: at an answer whose fold is handed its dial's build (_placed),
+          _order_row keeps a name of the rows it replaces and forgets that the answer does not carry only where the last
+          roster naming it was recorded after that build, so a naming can leave the word held (the reviewer's verifier
+          at the seventy-fourth commit, by execution: on its road vfy2DeclHubRestartsFoldsFFirst the restarted hub's
+          dial, filed here under the name it declares, named the host under the held word's name with a session; the hub
+          folded the host under the alias before this bus's dial to it was answered; and the word stayed held after that
+          answer, two more exchanges and this bus's restart). That naming needs a session
           of the host on the hub's row for it under that name, since a hub gossips a far host only through the session
           rows of its row for that host, each labelled with the name that row is filed under (presence_payload): the
           hub filing the host there with no session of it on that row does not name it there, and the word stays held.
