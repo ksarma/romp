@@ -101,10 +101,11 @@
 # refuse_commit_encodings): the text after "encoding " on a header line that
 # starts with it, the header ending at the first empty line, compared whole
 # and case-insensitively with the list this file holds (ASCII_SAFE_LABELS).
-# A commit with no encoding line is UTF-8 and passes. A commit whose label is not on the list, or whose header carries
-# two or more encoding lines (git converts by the first and ignores the rest,
-# so a reader of any one line could disagree with git about which applies),
-# is refused by name, with the label and the remedy: recommit it under UTF-8,
+# A commit with no encoding line is UTF-8 and passes. A commit whose label is
+# not on the list, or whose header carries two or more encoding lines (git
+# converts by the first and ignores the rest, so a reader of any one line
+# could disagree with git about which applies), is refused by name, with the
+# label (or the count of such lines) and the remedy: recommit it under UTF-8,
 # or push with --no-verify. The list is DERIVED by execution (2026-09-27, git
 # 2.43.0 and glibc 2.39's iconv, the library git calls): each of the 1,180
 # labels iconv -l prints, converted to UTF-8 as git's reencode_string_iconv
@@ -564,17 +565,20 @@
 #       round 12d2: the feed's diff-tree read each commit under its own
 #       defaults while main's hook, gitleaks' git log -p -U0, framed the hunks
 #       under the clone's diff.algorithm, diff.interHunkContext and
-#       diff.renames, and a PEM private key block beside blank lines under
-#       histogram or an interHunkContext of 3, and a key block moved under
-#       diff.renames=false, published where main's hook refused them;
-#       romp-manager's ruling on decision 5, 2026-09-26 18:58Z, its (a)): an
-#       answer whose last entry is not the marker, or that holds it twice, is
-#       refused as read short, an entry for a key it was not asked for as
-#       foreign, and a value the hook does not pass refuses naming the key,
-#       the feed unread. Its end: the tail marker, the answer's last entry, so
-#       an answer cut inside the marker or ahead of it, or silent, lacks the
-#       marker whole and is refused as read short (a cut of the NUL after it
-#       alone drops no byte of any entry)
+#       diff.renames, so a key block moved under diff.renames=false, and a
+#       repository rule's start-anchored key on the one line a copy edits
+#       under diff.renames=copies, published where main's hook refused them at
+#       0b6c76916, the last pushed head, and at af10f4c4b, the round 12d1
+#       head, and a PEM private key block beside blank lines under histogram
+#       or an interHunkContext of 3 at af10f4c4b alone, whose one hunk to a
+#       piece split it; romp-manager's ruling on decision 5, 2026-09-26
+#       18:58Z, its (a)): an answer whose last entry is not the marker, or
+#       that holds it twice, is refused as read short, an entry for a key it
+#       was not asked for as foreign, and a value the hook does not pass
+#       refuses naming the key, the feed unread. Its end: the tail marker, the
+#       answer's last entry, so an answer cut inside the marker or ahead of
+#       it, or silent, lacks the marker whole and is refused as read short (a
+#       cut of the NUL after it alone drops no byte of any entry)
 #   the CREDENTIAL FEED of the push
 #       each listed commit's head marker, its own name ahead of its diff
 #       (--always), in the order fed, read from the list file diff-tree reads:
@@ -1079,12 +1083,17 @@
 # (the DIFF SETTINGS read, diff_settings; romp-manager's ruling on decision
 # 5, 2026-09-26 18:58Z, its (a)): diff.algorithm as --diff-algorithm,
 # diff.interHunkContext as --inter-hunk-context, and diff.renames as -M,
-# --no-renames (false) or -C (copies, a copy then read by its edits). Until
-# round 12d2 a PEM private key block beside blank lines, one hunk under
-# histogram or an interHunkContext of 3 and two under diff-tree's myers, and
-# a key block added over two commits and then moved under
-# diff.renames=false, which git log reads as one new file, published where
-# main's hook refused them, both scanners. A value the hook does not pass
+# --no-renames (false) or -C (copies, a copy then read by its edits). A key
+# block added over two commits and then moved under diff.renames=false, which
+# git log reads as one new file, and a repository rule's start-anchored key on
+# the one line a copy edits under diff.renames=copies, which git log reads as
+# that edit, published where main's hook refused them at 0b6c76916, the last
+# pushed head, and at af10f4c4b, the round 12d1 head; a PEM private key block
+# beside blank lines, one hunk under histogram or an interHunkContext of 3 and
+# two under diff-tree's myers, published at af10f4c4b alone, whose one hunk to
+# a piece split it, where 0b6c76916's piece joined a file's hunks and refused
+# it; each verdict holds under both scanners (round 12d2's audit, finding 4,
+# executed again in round 12g). A value the hook does not pass
 # (one git log stops on, or a spelling of a count git reads and the hook does
 # not) refuses the push by name, and so does any diff.<driver>.algorithm,
 # which git log applies path by path and keeps for the paths it diffs after,
@@ -1279,8 +1288,7 @@
 # mirrored the merge's last line from its result blob: once every merge is
 # read first-parent it decides no verdict, romp-manager's ruling on round
 # 12e's audit, its (3)). And gitleaks skips a file whose first bytes its type
-# check (h2non/filetype v1.1.3) calls an application type, an archive,
-# document or
+# check (h2non/filetype v1.1.3) calls an application type, an archive, document or
 # executable signature (%PDF, PK, gzip, MZ, ELF, Mach-O, Dex, and ustar at
 # byte 257, DICM at 128 or CD001 at 32,769), where a skipped piece refuses
 # the push on the byte figure below; so a piece whose leading bytes would be
@@ -4424,13 +4432,20 @@ CRED_PIECES_AWK='
 # --diff-algorithm=<the algorithm>, --inter-hunk-context=<the count> and, for
 # diff.renames, -M (true, or unset), --no-renames (false) or -C (copies), so
 # its hunks are git log's. Until round 12d2 the feed read each commit under
-# diff-tree's defaults: a PEM private key block beside blank lines, which
+# diff-tree's defaults. A PEM private key block beside blank lines, which
 # histogram, or an interHunkContext of 3, keeps in one hunk where myers
 # splits it, published under either setting where main's hook refused it
-# through the default rule private-key (decision 5's check, finding 1); and a
-# key block added over two commits and then moved, which git log reads under
-# diff.renames=false as one new file, published where main's hook refused it
-# (found by the round 12d2 census, which named that third key). One read: git
+# through the default rule private-key at af10f4c4b, the round 12d1 head,
+# whose one hunk to a piece split it (decision 5's check, finding 1); at
+# 0b6c76916, the last pushed head, whose piece joined a file's hunks, it was
+# refused. A key block added over two commits and then moved, which git log
+# reads under diff.renames=false as one new file, and a repository rule's
+# start-anchored key on the one line a copy edits, which git log reads under
+# diff.renames=copies as that edit, published where main's hook refused them
+# at 0b6c76916 and at af10f4c4b, whose -M read the move as no lines and the
+# copy as a new file (found by the round 12d2 census, which named that third
+# key). Each verdict holds under both scanners (round 12d2's audit, finding
+# 4, executed again in round 12g). One read: git
 # config -z --get-regexp over those three keys and every
 # diff.<driver>.algorithm and diff.<driver>.textconv (a driver's name may be
 # empty, and is asked too), the clone's effective values in the order git
@@ -4447,11 +4462,17 @@ CRED_PIECES_AWK='
 # other than 0, or no value (-M), false, no, off, 0 or an empty value
 # (--no-renames), copies or copy (-C), in any case. A value git log stops on
 # (an algorithm it does not know, no value where one is needed, a count below
-# 0 or past git's int) refuses the push by name, as main's hook refused it
-# when git log stopped, with a remedy; so does a value git reads and the hook
-# does not (a count spelled in octal or hex, with a sign or a space, or a
-# count with a k, m or g read as a boolean), a false refusal on a spelling
-# the hook could widen to. And a diff.<driver>.algorithm key, set at all,
+# 0 or past git's int) refuses the push by name, with a remedy. Main's hook
+# published such a push unscanned: gitleaks' git mode logged git log's error
+# as an ERR line, scanned no commit and exited 0, so a commit adding a whole
+# PEM private key block published under diff.algorithm=fast or set with no
+# value, diff.interHunkContext=abc, -1, 3000000000 or set with no value, and
+# diff.renames=maybe, both scanners (round 12d2's audit, finding 3, executed
+# again in round 12g); the hook refuses each by name since round 12d2. A
+# value git reads and the hook does not (a count spelled in octal or hex,
+# with a sign or a space, or a count with a k, m or g read as a boolean)
+# refuses by name too, a false refusal on a spelling the hook could widen to.
+# And a diff.<driver>.algorithm key, set at all,
 # refuses the push by name: git log applies a driver's algorithm to the paths
 # the diff attribute gives that driver and keeps it for every path it diffs
 # after (git 2.43.0, executed), while --diff-algorithm makes diff-tree ignore

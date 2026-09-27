@@ -976,8 +976,10 @@ fail_diff_tree_stdin() { git_refusing '[[ " $* " == *" diff-tree "*" --text "* ]
 # Since round 9 the hook reads the lines the pushed commits add itself (one git
 # diff-tree over the push, each commit fed twice so its name bounds its diff at
 # both ends; a merge by the lines in none of its parents, a rename by its edits,
-# every blob of a root or one-parent commit as text, and since round 10a a
-# merge's binary path read whole from its result blob), writes them to pieces
+# every blob of a root or one-parent commit as text, since round 10a a merge's
+# binary path read whole from its result blob, and since round 12f every
+# pushed merge by its first-parent diff too, one more diff-tree over the
+# merges, as main's hook reads a merge), writes them to pieces
 # of at most 98,304 bytes, and
 # gitleaks scans that directory from inside it, running no git. The push is
 # refused as unscanned when the feed's markers or its count of commits read
@@ -12891,6 +12893,9 @@ r12b3_canary_answer_edit() {   # <awk program over the answer>: an awk that, for
 # scan off and the real scanner armed;
 # every value is assembled at run time. The type table's deriving case drives the hook's own awk text and the
 # running gitleaks; its witnesses push for real.
+# The PROBE run's probe at each copy's name mirrors one framing: a text ending in its newline, with no ~ line, the
+# framing of a one-hunk piece whose last line ends in a newline and whose leading bytes need no ~ line (decision 1: the
+# probe's texts and cases say which framing they mirror; the hook's probe paragraph and its probe loop say the same).
 
 r12d_pw() { printf '%s%s%s' Hk4Tn8 Qw2Zx7 Lp3Vb9Mc; }                                  # a nuget password value
 r12d_zz() { printf 'zz%s_%s%s' key 9f3a1c7e 5b2d8e4f; }                                 # the repository rules' key
@@ -13684,7 +13689,7 @@ r12d2_setting_refused() {   # <the clause the refusal line carries>: the push ju
     r12d2_setting_refused "the DIFF SETTINGS of this clone could not be read for the credential scan (git config exited 0 and answered an entry for user.zzsynth, a key it was not asked for), so what the answer holds is unknown"
 }
 
-@test "round 12d2 (ITEM A, a value the hook does not pass): diff.algorithm=fast, and diff.algorithm set with no value, each refuse a clean push by name with the remedy, the feed unread (git log stops on both, so main's hook refused them as a scan that could not run; red under the mutant that reads an algorithm it does not know as myers)" {
+@test "round 12d2 (ITEM A, a value the hook does not pass): diff.algorithm=fast, and diff.algorithm set with no value, each refuse a clean push by name with the remedy, the feed unread (git log stops on both, and main's hook published such a push unscanned, a key block included: gitleaks' git mode logged git log's error, scanned no commit and exited 0; the hook refuses it by name since round 12d2; red under the mutant that reads an algorithm it does not know as myers)" {
     r11a_base
     r12d_commit_file notes/clean.txt 'nothing to see\n'
     git -C "$REPO" config diff.algorithm fast
