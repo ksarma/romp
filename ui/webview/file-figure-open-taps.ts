@@ -86,15 +86,21 @@
 //   measurements of the closing check at 142ade155, and in Chromium 0 of 36 under a candidate of this gate with the slot's
 //   pointerId test, has no cell: no event the viewer hears tells it from the viewer's own tap, and whether to accept it is the
 //   owner's decision; under this gate the same check's probe read Firefox 16 of 16, WebKit 7 of 7 and Chromium 0 of 51, and every
-//   other order of the class it drives opened nothing. The chain rule's costs, none measured, each a refusal that reveals the
-//   control: on a Firefox touchscreen whose tap's click came typed touch under a pointerId other than its pointerup's every tap,
-//   the tab then opening only from the mouse or the keyboard; every tap of a pen in the touch order whose click comes typed mouse,
-//   as WebKitGTK would type it by analogy with a touch's, the tab still opening from a finger, the mouse or the keyboard; a tap
-//   during which another finger that touched the viewer lifts, in an engine that clicks after such a tap; every tap in an engine
-//   whose touchend came before its pointerup (none of the three measured); and a pointer's click with no primary mouseup of detail
-//   above 0 before it, an assistive technology's or an eraser's, while Enter or Space on the control still opens, and a pointer's
-//   click after whose pointerup a mouseup other than a primary one of detail above 0 came, an order none of the three engines
-//   measured sends before a click;
+//   other order of the class it drives opened nothing; a check of these fixes drove orders that probe does not and found two more
+//   of the class outside the residual that open, at 142ade155 and at 1a6470e72 too, for the owner with it, and no cell drives
+//   either (file-view.ts's gate comment states them): in WebKit the mouse held on the control or on the picture, or in Firefox
+//   the mouse pressed on the control and released over another pane, then a tap on another document's element over the control
+//   that hides at that tap's compatibility mousedown, whose click reads the mouse's record (WebKit 22 of 22, Firefox 7 of 7); and
+//   in Firefox, after that release, a mouse click on such an element, whose pointerup hands the mouse's record to the slot (10 of
+//   10); Chromium opened neither. The chain rule's costs, none measured, each a refusal that reveals the control: on a Firefox
+//   touchscreen whose tap's click came typed touch under a pointerId other than its pointerup's every tap, the tab then opening
+//   only from the mouse or the keyboard; every tap of a pen in the touch order whose click comes typed mouse, as WebKitGTK would
+//   type it by analogy with a touch's, the tab still opening from a finger, the mouse or the keyboard; a tap during which another
+//   finger that touched the viewer lifts, in an engine that clicks after such a tap; every tap in an engine whose touchend came
+//   before its pointerup (none of the three measured); and a pointer's click with no primary mouseup of detail above 0 before it,
+//   an assistive technology's or an eraser's, while Enter or Space on the control still opens, and a pointer's click after whose
+//   pointerup a mouseup other than a primary one of detail above 0 came, an order none of the three engines measured sends before
+//   a click;
 // - the clicks by no pointer: Enter on the control in view opens once, and so does Enter after a refused tap; a press with no click
 //   after it begun with the control out of view, the control then scrolled into view with no pointer or key event, then Enter on it
 //   opens once; the same press begun with the control shown, the flyout then shown over the control with no event, then a script's

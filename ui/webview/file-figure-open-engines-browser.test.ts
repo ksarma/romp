@@ -58,23 +58,30 @@
 // that cancels nothing, after the viewer's own tap whose compatibility mousedown an element of the top page took, so the viewer
 // heard that tap's mouseup of detail 0 and no click, opens nothing and the next click opens once, red at 142ade155 and, on the chat
 // and the Files pane, at 1a6470e72, whose gate had no mouseup's clear; the reads of these reds a private witness kept out of the
-// tree. The residual, an element of another same-origin document shown over the picture during the viewer's own tap and then a tap
-// on that element, which opens in both engines (the closing check at 142ade155 measured Firefox 16 of 16 and WebKit 7 of 7), has no
-// cell: no event the viewer hears tells that tap from the viewer's own, and whether to accept it is the owner's decision; under
-// this gate the same check's probe read Firefox 16 of 16, WebKit 7 of 7 and Chromium 0 of 51, and every other order of the class it
-// drives opened nothing. The gate's cost measured in WebKit, the same at 142ade155: WebKit's cost cell, the viewer's own tap whose
-// pointerup an element of the top page takes, shown at the tap's pointerdown and hidden at its pointerup, opens nothing and reveals
-// the control, and the next tap opens once, the tap's click carrying pointerId 1 and finding its press only in the slot, which no
+// tree. The residual, an element of another same-origin document shown over the picture during the viewer's own tap and then a
+// tap on that element, which opens in both engines (the closing check at 142ade155 measured Firefox 16 of 16 and WebKit 7 of 7),
+// has no cell: no event the viewer hears tells that tap from the viewer's own, and whether to accept it is the owner's decision;
+// under this gate the same check's probe read Firefox 16 of 16, WebKit 7 of 7 and Chromium 0 of 51, and every other order of the
+// class it drives opened nothing; a check of these fixes drove orders that probe does not and found two more of the class outside
+// the residual that open, at 142ade155 and at 1a6470e72 too, for the owner with it, and no cell drives either (file-view.ts's
+// gate comment states them): in WebKit the mouse held on the control or on the picture, or in Firefox the mouse pressed on the
+// control and released over another pane, then a tap on another document's element over the control that hides at that tap's
+// compatibility mousedown, whose click reads the mouse's record (WebKit 22 of 22, Firefox 7 of 7); and in Firefox, after that
+// release, a mouse click on such an element, whose pointerup hands the mouse's record to the slot (10 of 10); Chromium opened
+// neither. The gate's cost measured in WebKit, the same at 142ade155: WebKit's cost cell, the viewer's own tap whose pointerup an
+// element of the top page takes, shown at the tap's pointerdown and hidden at its pointerup, opens nothing and reveals the
+// control, and the next tap opens once, the tap's click carrying pointerId 1 and finding its press only in the slot, which no
 // pointerup of that tap filled. The chain rule's costs, none measured, each a refusal that reveals the control: a Firefox
-// touchscreen whose tap's click came typed touch under a pointerId other than its pointerup's would refuse every tap there, the tab
-// opening only from the mouse or the keyboard; a pen in the touch order whose click comes typed mouse, as WebKitGTK would type it
-// by analogy with a touch's, would refuse every tap of that pen, the tab still opening from a finger, the mouse or the keyboard; a
-// tap during which another finger that touched the viewer lifts, in an engine that clicks after such a tap, opens nothing and
-// reveals the control, the next tap opening once; an engine whose touchend came before its pointerup would refuse every tap (none
-// of the three measured); and a pointer's click with no primary mouseup of detail above 0 before it, an assistive technology's
-// trusted click with a pointerId and no mouseup or an eraser's tap whose mouseup does not carry the primary button, opens nothing
-// and reveals the control, while Enter or Space on the control still opens, and so does a pointer's click after whose pointerup a
-// mouseup other than a primary one of detail above 0 came, an order none of the three engines measured sends before a click.
+// touchscreen whose tap's click came typed touch under a pointerId other than its pointerup's would refuse every tap there, the
+// tab opening only from the mouse or the keyboard; a pen in the touch order whose click comes typed mouse, as WebKitGTK would
+// type it by analogy with a touch's, would refuse every tap of that pen, the tab still opening from a finger, the mouse or the
+// keyboard; a tap during which another finger that touched the viewer lifts, in an engine that clicks after such a tap, opens
+// nothing and reveals the control, the next tap opening once; an engine whose touchend came before its pointerup would refuse
+// every tap (none of the three measured); and a pointer's click with no primary mouseup of detail above 0 before it, an assistive
+// technology's trusted click with a pointerId and no mouseup or an eraser's tap whose mouseup does not carry the primary button,
+// opens nothing and reveals the control, while Enter or Space on the control still opens, and so does a pointer's click after
+// whose pointerup a mouseup other than a primary one of detail above 0 came, an order none of the three engines measured sends
+// before a click.
 // This leg stays off the shared roster of browser legs that PR 887 brings: that roster's job installs Chromium alone, so a WebKit or
 // Firefox test in a rostered file would not run there.
 // Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, and no job installs Firefox
