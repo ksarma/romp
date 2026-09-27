@@ -309,11 +309,12 @@ class SessionEndThreadGuard(unittest.TestCase):
         self.assertEqual(len(leaker), 1, "one process started the leaked thread:\n" + out)
         self.assertIn("plant-leaked", finish.get(leaker[0], {}).get("alive", []),
                       "the leaked thread was still running at pytest_sessionfinish, after the guard:\n" + out)
+        missing = {pid: [kind for kind in ("release", "atexit") if pid not in marks[kind]] for pid in started}
+        self.assertEqual({pid: kinds for pid, kinds in missing.items() if kinds}, {},
+                         "every process that ran tests wrote a release marker (the scratch conftest's stop at "
+                         "pytest_unconfigure ran) and an atexit marker (it exited: the interpreter runs atexit handlers "
+                         "only after joining its non-daemon threads); these processes are missing one:\n" + out)
         for pid in started:
-            self.assertIn(pid, marks["release"], "process %d, which ran tests, reached the scratch conftest's stop at "
-                          "pytest_unconfigure and wrote its release marker:\n%s" % (pid, out))
-            self.assertIn(pid, marks["atexit"], "process %d, which ran tests, exited: its atexit handler, which the "
-                          "interpreter runs only after joining its non-daemon threads, wrote its marker:\n%s" % (pid, out))
             self.assertGreaterEqual(marks["atexit"][pid], marks["release"][pid],
                                     "process %d's atexit marker follows its release marker" % pid)
 
@@ -331,10 +332,9 @@ class SessionEndThreadGuard(unittest.TestCase):
         self.assertIn("thread 'plant-busy-pool_0'", out, "so is a busy worker of a pool shut down with wait=False:\n" + out)
         self.assertEqual(out.count("thread 'asyncio_0'"), 2, "so are an event loop's default-executor workers, idle in a "
                          "loop never closed and busy in a closed one (each executor numbers its workers from 0):\n" + out)
-        self.assertEqual(out.count(EXECUTOR_LABEL), 4, "the four executor workers carry the label that names both "
-                         "causes:\n" + out)
         # a busy worker's block is keyed on its task's frame: its name alone cannot tell the closed loop's worker from
-        # the open loop's. Each in its own subTest, so each one's outcome is reported whatever the other's.
+        # the open loop's. Each in its own subTest, and both before any other label check, so each one's outcome is
+        # reported whatever the other's.
         blocks = self._report_blocks(out)
         for task, which in (("_busy_pool_task", "a pool shut down with wait=False"),
                             ("_busy_loop_task", "a closed event loop's default executor")):
@@ -343,6 +343,8 @@ class SessionEndThreadGuard(unittest.TestCase):
                 self.assertEqual(len(mine), 1, "one report block carries the %s frame:\n%s" % (task, out))
                 self.assertIn(RUNNING_TASK_CAUSE, mine[0].split("\n", 1)[0], "the label of the busy worker of %s names "
                               "the running-task cause:\n%s" % (which, mine[0]))
+        self.assertEqual(out.count(EXECUTOR_LABEL), 4, "the four executor workers carry the label that names both "
+                         "causes:\n" + out)
         self.assertIn(EXIT_CLAUSES, out, "the message states the exit clauses with the idle-worker and stopped-later "
                       "exceptions (a wording check):\n" + out)
         self.assertIn("after up to %g s for each to end" % LEAK_CAP_S, out, "the cap the scratch conftest set was the one used")
@@ -365,9 +367,9 @@ class SessionEndThreadGuard(unittest.TestCase):
         self.assertIn("thread 'asyncio_0'", out, "the idle worker of the event loop never closed is named:\n" + out)
         self.assertNotIn("plant-fx-", out, "threads the fixtures stop at teardown are not named")
         self.assertTrue(started, "the plant's tests recorded the processes that ran them:\n" + out)
-        for pid in started:
-            self.assertIn(pid, marks["atexit"], "process %d, which ran tests, exited: its atexit handler, which the "
-                          "interpreter runs only after joining its non-daemon threads, wrote its marker:\n%s" % (pid, out))
+        self.assertEqual(sorted(pid for pid in started if pid not in marks["atexit"]), [],
+                         "every process that ran tests exited: its atexit handler, which the interpreter runs only after "
+                         "joining its non-daemon threads, wrote its marker; these processes wrote none:\n" + out)
         self.assertIn(EXIT_CLAUSES, out, "a WORDING check: the message says an idle concurrent.futures worker lets the "
                       "process exit, serially and under pytest-xdist; the atexit markers above are the executed evidence "
                       "that it does:\n" + out)
