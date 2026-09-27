@@ -161,6 +161,8 @@ R_VIA_F2, R_VIA_F_DECL = "via:" + R_HUB2 + "/" + R_F, "via:" + R_HUB_DECL + "/" 
 R_G = "TESTHOST-g"                                   # a second far host behind the hub (the thirty-second commit)
 R_VIA_G = "via:" + R_HUB + "/" + R_G                 # the hub's word about G
 R_HUB_DECL2 = "TESTHOST-hub-hostname2"               # the name the hub declares once its hostname changes (the thirty-third commit)
+R_F_DECL = R_F + "-hostname"                         # the hostname F declares where the hub's kernel dials it by the alias R_F
+R_VIA_F_UNDER_DECL = "via:" + R_HUB + "/" + R_F_DECL   # the hub's word about F under that name (the second roads child's F_DECL)
 ROAD_SIDS = {                                        # private synthetic sids, the probe's
     "other": "a11f0001-1111-4222-8333-000000000101",     # a session on B (or on F), live at its host's last answered listing
     "goss": "a11f0001-1111-4222-8333-000000000102",      # a session started on B while our kernel holds B down: the hub names it
@@ -4105,6 +4107,107 @@ out["roads"][road]["filedAfterFold"] = sorted(h for h, st in us.PEER_STATE.items
 out["roads"][road]["aliasRoster"] = sorted(pa.get("id") for pa in (us.PEER_STATE.get(HUB) or {}).get("presence") or []
                                            if not pa.get("via"))
 step(road, "olderAnswerFolded", us, x3revived=S["x3revived"], nobody=S["nobody"])
+# DECISION 3 WHEN THE HUB RENAMES THE HOST AS IT UPGRADES (round 6 of fork PR #897, the reviewer's verifier at the
+# fifty-seventh commit, by execution with a real v0.15.0 bus as F): F, blink-honest with no presenceAnswered (v0.15.0 to
+# v0.17.1), declares the hostname F_DECL, and the hub's kernel dials it by the alias F, so the hub files F's own dial under
+# F_DECL until the hub's dial to F folds it (_canon_peer_name, _drop_peer_name_dupes). A held word ends only when the hub
+# names the host under the name the word carries or with the word's bus id (_via_held); once F upgrades (a new process, a
+# new bus id), the hub's word under the other name matches it by neither
+F_DECL = F + "-hostname"                           # the hostname F declares; F, the alias, is the name the hub's kernel dials
+def renamed_world(road):                           # F on its release behind the hub, whose kernel knows F by the alias alone
+    us = fresh_us(); f, hub, c = other(road, "f"), other(road, "hub"), other(road, "c")
+    LISTINGS["f"], LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["csid"]], [S["web"]]
+    notify(us, HUB, True); notify(us, C, True)
+    with As(hub):
+        hub.peer_update({"host": US, "port": 50001, "up": True})
+        hub.peer_update({"host": F, "port": 50003, "up": True})
+    with As(f):
+        f.peer_update({"host": HUB, "port": 50002, "up": True})
+    dial(c, C, us, US); dial(us, US, c, C)
+    dial(hub, HUB, us, US)
+    out["roads"][road] = {}
+    return us, f, hub, c, {f.BUS_ID: "f"}
+def renamed_new_f(road, label, buses):             # F runs this head: a new process, a new bus id
+    fx = other(road, label)
+    fx.road_label = "f"
+    buses[fx.BUS_ID] = label
+    with As(fx):
+        fx.peer_update({"host": HUB, "port": 50002, "up": True})
+    return fx
+def renamed_view(road, name, us, hub, buses):      # the hub's row here and the hub's own rows for F, each bus by its process
+    st = us.PEER_STATE.get(HUB) or {}
+    out["roads"][road].setdefault("words", {})[name] = {
+        "held": sorted([pa.get("via"), pa.get("id"), buses.get(pa.get("viaBus"), "?")] for pa in st.get("viaHeld") or []),
+        "roster": sorted([pa.get("via"), pa.get("id"), buses.get(pa.get("viaBus"), "?"), pa.get("viaAnswered")]
+                         for pa in st.get("presence") or [] if pa.get("via")),
+        "hubRows": sorted([k, buses.get(r.get("busId"), "?")] for k, r in hub.PEER_STATE.items() if k in (F, F_DECL))}
+def renamed_upgraded(road):                        # held under F_DECL, then named again under the alias with a new bus id
+    us, f, hub, c, buses = renamed_world(road)
+    dial(f, F_DECL, hub, HUB, strip_answered=True)     # F's own dial reaches the hub first: filed under the name it declares
+    dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+    LISTINGS["f"] = []                                 # F's sessions end: its next dial, still under F_DECL, is empty
+    dial(f, F_DECL, hub, HUB, strip_answered=True); dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+    renamed_view(road, "held", us, hub, buses)
+    step(road, "held", us, nobody=S["nobody"])
+    dial(hub, HUB, f, F, strip_answered=True)          # the hub's dial to the alias folds F under F, answered empty
+    dial(hub, HUB, us, US); dial(us, US, hub, HUB)     # our dial's answer omits F: the word held under F_DECL
+    renamed_view(road, "afterHubFold", us, hub, buses)
+    f2 = renamed_new_f(road, "f2", buses)
+    LISTINGS["f"] = [S["goss"]]                        # a session on the new process
+    dial(hub, HUB, f2, F)                              # the hub's dial reaches the new process first: filed under the alias
+    dial(hub, HUB, us, US); dial(us, US, hub, HUB)     # the hub's answer to our dial names F again, answered, under the alias
+    renamed_view(road, "namedAgainUnderTheAlias", us, hub, buses)
+    step(road, "namedAgainUnderTheAlias", us, nobody=S["nobody"], goss=S["goss"])
+    dial(f2, F_DECL, hub, HUB)                         # the new process's own dial: its bus id known, filed under the alias
+    dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+    renamed_view(road, "itsOwnDial", us, hub, buses)
+    step(road, "itsOwnDial", us, nobody=S["nobody"])
+    return us, f2, hub, c, buses
+road = "olderHonestFarRenamedAsItUpgrades"         # the end in this process: a later process of F dials the hub first
+us, f2, hub, c, buses = renamed_upgraded(road)
+f3 = renamed_new_f(road, "f3", buses)
+dial(f3, F_DECL, hub, HUB)
+dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+renamed_view(road, "filedUnderTheHeldName", us, hub, buses)
+step(road, "filedUnderTheHeldName", us, nobody=S["nobody"], goss=S["goss"])
+dial(hub, HUB, f3, F)                              # the hub's dial folds the new row under the alias
+dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+step(road, "afterTheHubsFold", us, nobody=S["nobody"], goss=S["goss"])
+road = "olderHonestFarRenamedAsItUpgradesHubRestarts"   # across our restart; the end: the hub restarts, F's dial first
+us, f2, hub, c, buses = renamed_upgraded(road)
+us = load_bus("us2")                               # our bus restarts over the same root
+notify(us, HUB, True); notify(us, C, True)
+dial(c, C, us, US); dial(hub, HUB, us, US); dial(us, US, c, C); dial(us, US, hub, HUB)
+step(road, "ourBusRestarted", us, nobody=S["nobody"], goss=S["goss"])
+hub = load_bus("hub", Path(others_root) / road / "hub")   # the hub's bus restarts over its own root: a new bus id
+LISTINGS["hub"] = [S["hubsid"]]
+with As(hub):
+    hub.peer_update({"host": US, "port": 50001, "up": True})
+    hub.peer_update({"host": F, "port": 50003, "up": True})
+dial(f2, F_DECL, hub, HUB)
+dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+renamed_view(road, "filedUnderTheHeldName", us, hub, buses)
+step(road, "filedUnderTheHeldName", us, nobody=S["nobody"], goss=S["goss"])
+dial(hub, HUB, f2, F)
+dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+step(road, "afterTheHubsFold", us, nobody=S["nobody"], goss=S["goss"])
+road = "olderHonestFarUpgradesUnderItsDeclaredName"   # the contrast: held under the alias, named again under F_DECL
+us, f, hub, c, buses = renamed_world(road)
+dial(hub, HUB, f, F, strip_answered=True)          # the hub's dial first: F filed under the alias
+dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+LISTINGS["f"] = []                                 # F's sessions end: the hub's dial to the alias is answered empty
+dial(hub, HUB, f, F, strip_answered=True); dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+renamed_view(road, "held", us, hub, buses)
+step(road, "held", us, nobody=S["nobody"])
+f2 = renamed_new_f(road, "f2", buses)
+LISTINGS["f"] = [S["goss"]]
+dial(f2, F_DECL, hub, HUB)                         # the new process's own dial first: no row carries its bus id, so F_DECL
+dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+renamed_view(road, "namedAgainUnderTheDeclaredName", us, hub, buses)
+step(road, "namedAgainUnderTheDeclaredName", us, nobody=S["nobody"], goss=S["goss"])
+dial(hub, HUB, f2, F)                              # the hub's next dial to the alias folds it under the alias
+dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+step(road, "afterTheHubsFold", us, nobody=S["nobody"], goss=S["goss"])
 print(json.dumps(out))
 """, HERE, BIN, str(others), json.dumps(ROAD_SIDS), R_US, R_B, R_C, R_HUB, R_F, R_HUB2, R_HUB_DECL, R_G, R_HUB_DECL2],
                                 capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
@@ -6012,8 +6115,9 @@ print(json.dumps(out))
         sessions ending again hold that word; and this bus's restart ends nothing (round 6 of fork PR #897, the reviewer's
         decision 4 on round 5, which governs decision 3's restart clause: the via row is carried with F's unanswered bit
         and holds the arm; until then the restart ended it, rule 5). For a host that stays on its release nothing ends
-        it: it lasts until the hub names that host again with an answered word, placed after the hold, which needs the
-        host on a release carrying presenceAnswered, with a session of it in that hub's roster. The leg after the host
+        it: it lasts until the hub names that host again, under the name its held word carries or with that word's bus
+        id (_via_held), with an answered word placed after the hold, which needs the host on a release carrying
+        presenceAnswered, with a session of it in that hub's roster. The leg after the host
         upgrades (the reviewer's verifier at the fifty-sixth commit, by execution): F runs this head as a new process
         with no session, answers the hub empty, and is heard answering, first by a second hub's answer to our dial
         relaying a session briefly on F, then by its own exchange here (answered on our dial to it); the hub's dials still
@@ -6022,7 +6126,23 @@ print(json.dumps(out))
         speak for the word (_direct_row_speaks); the hub's DIAL naming F again with an answered word holds (a dial
         releases nothing: the reviewer's round-5 ruling C), and its answer to our dial built after F's unanswered words
         ends it: rule 5 for the sid nothing names (at the forty-ninth commit the first omission, before the upgrade,
-        released it)."""
+        released it). The leg when the hub renames the host as it upgrades (round 6 of fork PR #897, the reviewer's
+        verifier at the fifty-seventh commit, by execution with a real v0.15.0 bus as F): F declares a hostname other
+        than the alias the hub's kernel dials it by, and its own dial reaches the hub first, so the hub files it under
+        the declared name (_canon_peer_name); its sessions end, the hub's dial to the alias folds F, answered empty, and
+        the hub's answer to our dial omits F, so its word is held under the declared name. F upgrades, the hub's dial
+        reaches the new process first, and the hub's answer to our dial names F again with an answered word, under the
+        alias and with the new process's bus id: that word matches the held word by neither, and the word stays held,
+        the sid nothing names cannot-determine, across the new process's own dial (filed under the alias, its bus id
+        known there) and, in the road where the hub restarts, across this bus's restart (the via row carried
+        unanswered). The hub files F under the held word's name again when F's own dial reaches it before the hub's
+        dial has reached F's current process: a later process of F (one road, in this bus's process) or F after
+        the hub restarts (the other, after this bus's restart). The hub's word under that name then replaces the held
+        or carried one, unanswered, since the hub holds that row until its next dial to the alias folds it, and the
+        answer to our dial after that fold releases it: rule 5 for the sid nothing names. The contrast, the word
+        held under the alias and F's new process's own dial reaching the hub first under the declared name: held while
+        the hub names F only under the declared name, released by the answer to our dial after the hub's next dial to
+        the alias folds F there. At the forty-ninth commit the first omission released the word, before F upgraded."""
         S = ROAD_SIDS
         via = UNANSWERED(R_VIA_F + " (listing unanswered)")
         for shape, got in self.roads.items():
@@ -6075,6 +6195,75 @@ print(json.dumps(out))
                                  ([[R_F, S["goss"]]], [], RULE_5),
                                  "the hub's answer to our dial built after F's unanswered words names F answered: the held word "
                                  "goes, rule 5 for the sid nothing names")
+            decl = UNANSWERED(R_VIA_F_UNDER_DECL + " (listing unanswered)")
+            for name in ("olderHonestFarRenamedAsItUpgrades", "olderHonestFarRenamedAsItUpgradesHubRestarts"):
+                with self.subTest(shape=shape, leg="when the hub renames the host as it upgrades", road=name):
+                    road = got["roads"][name]
+                    words = road["words"]
+                    self.assertEqual((words["held"], self._road(got, name, "held", "nobody")),
+                                     ({"held": [], "hubRows": [[R_F_DECL, "f"]], "roster": [[R_F_DECL, S["other"], "f", False]]},
+                                      decl), "F's own dial reached the hub first: the hub files F under the name F declares")
+                    self.assertEqual(words["afterHubFold"],
+                                     {"held": [[R_F_DECL, S["other"], "f"]], "hubRows": [[R_F, "f"]], "roster": []},
+                                     "DECISION 3: the hub's dial to the alias folds F, answered empty, and the hub's answer to "
+                                     "our dial omits F: its word is held under the declared name")
+                    self.assertEqual((words["namedAgainUnderTheAlias"], self._road(got, name, "namedAgainUnderTheAlias", "nobody"),
+                                      self._road(got, name, "namedAgainUnderTheAlias", "goss")),
+                                     ({"held": [[R_F_DECL, S["other"], "f"]], "hubRows": [[R_F, "f2"]],
+                                       "roster": [[R_F, S["goss"], "f2", True]]}, decl, RULE_4),
+                                     "THE HOLD: F upgrades and the hub's answer to our dial names F again, answered, under the "
+                                     "alias and with the new process's bus id; the held word carries the declared name and the "
+                                     "old bus id, matches by neither, and stays held, the sid nothing names cannot-determine")
+                    self.assertEqual((words["itsOwnDial"]["hubRows"], words["itsOwnDial"]["held"],
+                                      self._road(got, name, "itsOwnDial", "nobody")),
+                                     ([[R_F, "f2"]], [[R_F_DECL, S["other"], "f"]], decl),
+                                     "the new process's own dial is filed under the alias, its bus id known there: the declared "
+                                     "name does not come back, and the word stays held")
+            with self.subTest(shape=shape, leg="when the hub renames the host as it upgrades", end="a later process of F"):
+                name = "olderHonestFarRenamedAsItUpgrades"
+                road = got["roads"][name]
+                self.assertEqual((road["words"]["filedUnderTheHeldName"], self._road(got, name, "filedUnderTheHeldName", "nobody"),
+                                  [road["filedUnderTheHeldName"]["rows"][R_VIA_F_UNDER_DECL][i] for i in (0, 3, 6)]),
+                                 ({"held": [], "hubRows": [[R_F, "f2"], [R_F_DECL, "f3"]],
+                                   "roster": [[R_F, S["goss"], "f2", True], [R_F_DECL, S["goss"], "f3", False]]},
+                                  decl, [True, False, [S["goss"]]]),
+                                 "a later process of F dials the hub first, filed under the declared name, the hub's row for it "
+                                 "held there: the hub's word under that name replaces the held word, unanswered")
+                self.assertEqual((self._road(got, name, "afterTheHubsFold", "nobody"), self._road(got, name, "afterTheHubsFold", "goss")),
+                                 (RULE_5, RULE_4), "the hub's next dial to the alias folds it, and the answer to our dial "
+                                                   "releases it: rule 5 for the sid nothing names")
+            with self.subTest(shape=shape, leg="when the hub renames the host as it upgrades", end="the hub's restart"):
+                name = "olderHonestFarRenamedAsItUpgradesHubRestarts"
+                road = got["roads"][name]
+                self.assertEqual((self._road(got, name, "ourBusRestarted", "nobody"),
+                                  self._road(got, name, "ourBusRestarted", "goss")),
+                                 (UNANSWERED(R_VIA_F_UNDER_DECL + " (not heard, listing unanswered)"), RULE_4),
+                                 "this bus's restart ends nothing: the via row is carried unanswered and holds the arm")
+                self.assertEqual((road["words"]["filedUnderTheHeldName"], self._road(got, name, "filedUnderTheHeldName", "nobody"),
+                                  [road["filedUnderTheHeldName"]["rows"][R_VIA_F_UNDER_DECL][i] for i in (0, 3, 6)]),
+                                 ({"held": [], "hubRows": [[R_F_DECL, "f2"]], "roster": [[R_F_DECL, S["goss"], "f2", False]]},
+                                  decl, [True, False, [S["goss"]]]),
+                                 "the hub restarts and F's own dial reaches it first, filed under the declared name: the "
+                                 "hub's word under that name replaces the carried word, unanswered")
+                self.assertEqual((self._road(got, name, "afterTheHubsFold", "nobody"), self._road(got, name, "afterTheHubsFold", "goss")),
+                                 (RULE_5, RULE_4), "the restarted hub's dial to the alias folds it, and the answer to our "
+                                                   "dial releases it: rule 5 for the sid nothing names")
+            with self.subTest(shape=shape, leg="when the hub renames the host as it upgrades", contrast="held under the alias"):
+                name = "olderHonestFarUpgradesUnderItsDeclaredName"
+                road = got["roads"][name]
+                self.assertEqual((road["words"]["held"], self._road(got, name, "held", "nobody")),
+                                 ({"held": [[R_F, S["other"], "f"]], "hubRows": [[R_F, "f"]], "roster": []}, via),
+                                 "DECISION 3: F's word held under the alias")
+                self.assertEqual((road["words"]["namedAgainUnderTheDeclaredName"],
+                                  self._road(got, name, "namedAgainUnderTheDeclaredName", "nobody")),
+                                 ({"held": [[R_F, S["other"], "f"]], "hubRows": [[R_F, "f"], [R_F_DECL, "f2"]],
+                                   "roster": [[R_F_DECL, S["goss"], "f2", False]]},
+                                  UNANSWERED(R_VIA_F + " (listing unanswered)", R_VIA_F_UNDER_DECL + " (listing unanswered)")),
+                                 "F upgrades and its own dial reaches the hub first, filed under the declared name: the held "
+                                 "word under the alias stays held")
+                self.assertEqual((self._road(got, name, "afterTheHubsFold", "nobody"), self._road(got, name, "afterTheHubsFold", "goss")),
+                                 (RULE_5, RULE_4), "the hub's next dial to the alias names F there again, and the answer to "
+                                                   "our dial releases the word: rule 5 for the sid nothing names")
 
     def test_an_older_answer_folded_after_the_hubs_newer_dial_keeps_the_far_hosts_word_held(self):
         """The verifier's R1 at the thirty-second commit, as a pin: F answered through the hub; the hub's bus restarts;

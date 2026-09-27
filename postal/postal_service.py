@@ -4484,7 +4484,8 @@ def _via_held(presence, bus, road, *prevs, built=None):
     """The HELD WORDS a hub's PEER_STATE row keeps as `viaHeld`: the gossip rows of each far host whose last word
     through that hub, heard in this bus process, was UNANSWERED (`viaAnswered` not True as the row stored it: the far
     host's exchange with the hub served a cache, or the word is held under the order, _order_row) and that the hub's
-    merged roster `presence` no longer names, by the hub's name for the host or by the host's bus id (viaBus), unless
+    merged roster `presence` no longer names, by the name the word carries (the hub's name for the host when it gave
+    the word) or by the host's bus id the word carries (viaBus), unless
     `presence` is the hub's ANSWER to a dial this bus built after the host's last unanswered word (`road` "answer", and
     `built`, the capture that dial's build read, placed after the host's mark in the rows' viaMark: _placed), the hub
     is the bus PROCESS whose roster last named the word (its `hubBus`, the bus id of the roster that named it, from
@@ -4683,7 +4684,10 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
                dial this bus built after its last unanswered roster releases the bit; a hub's word about a far host
                stays heard, its bit False, across the hub's rosters that omit that host and cannot release it
                (_via_held, the thirty-first commit), until the hub names the host again with an answered word on
-               an answer placed after the hold, the same hub process omits it in its answer to a dial this bus
+               an answer placed after the hold (here and below, a hub names a far host again only under the name the
+               held word carries or with that word's bus id, _via_held; cost (a) below states how long the word of a
+               far host from a release before this PR stays held when the hub's name for it and its bus id both
+               change), the same hub process omits it in its answer to a dial this bus
                built after the host's last unanswered word (the host's next exchange with the hub carried no session
                row, the thirty-second commit; a far bus heard answering in this process, the reviewer's round-5
                ruling B; the answer road, its ruling C), or the far host's own row speaks for it here, its answer to
@@ -5271,7 +5275,8 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           caches), whose word a heard hub last gossiped unanswered, keeps that word held after the hub omits it, so for
           such a host whose sessions have really ended every sid on this machine stays at cannot-determine. How long,
           by population: a far bus from a release before this PR (the hosts on v0.15.0 to v0.17.1, blink-honest but
-          sending no presenceAnswered, among them), until the hub names that host again with an answered word on an
+          sending no presenceAnswered, among them), until the hub names that host again, under the name its held word
+          carries or with that word's bus id, with an answered word on an
           answer to a dial of this bus built after the hold, which needs the host on a release carrying
           presenceAnswered, with a session of it in that hub's roster; this bus's restart ends nothing since round 6
           (the via row is carried with its bit False and holds the arm: the reviewer's decision 4 on round 5, which
@@ -5280,18 +5285,26 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           such a release (a new process, with a new bus id), being heard answering by another road (its own exchange
           here, another hub's gossip) does not end it: the held word carries the older process's bus id, never heard
           answering, and the host's own row here, where its exchange made one, carries the new process's, so that row
-          does not speak for the word (_direct_row_speaks); the hub naming it again with an unanswered word makes that
-          word the new process's, held or released on that process's own evidence (round 6 of fork PR #897, the
-          reviewer's verifier at the fifty-sixth commit, by execution; the witnesses, tests/test_dead_session_staleness.py
-          ReaderFollowsTheWriter
+          does not speak for the word (_direct_row_speaks); the hub naming it again under the held word's name with an
+          unanswered word makes that word the new process's, held or released on that process's own evidence. And a
+          hub files the host's own dial under the hostname the host declares until its own dial to the alias its kernel
+          dials folds the host there (_canon_peer_name), so the hub can name the upgraded host under the one name while
+          the held word carries the other, and with a bus id the word does not carry: the word then stays held, this
+          bus's restart ending nothing, until the hub files the host under the held word's name again, whose word under
+          that name replaces it, held or released on that process's own evidence, and for the file's life if the hub
+          never does: it files the host under the alias again once its next dial to the alias folds the host there, and
+          under the declared name when the host's own dial reaches it before its own dial has reached the host's current
+          process (a later process of the host, or the host after the hub restarts) (round 6 of fork PR #897, the reviewer's verifier at the fifty-sixth and fifty-seventh commits, by execution; the
+          witnesses, tests/test_dead_session_staleness.py ReaderFollowsTheWriter
           test_cost_a_a_far_host_on_a_release_before_this_pr_whose_sessions_end_holds_its_word_until_the_hub_names_it_again_answered
-          (named ..._until_the_hub_names_it_again_or_our_bus_restarts until round 6's decision 4), with its leg after
-          the host upgrades, and for a far host with no bus id
+          (named ..._until_the_hub_names_it_again_or_our_bus_restarts until round 6's decision 4), with its legs after
+          the host upgrades and when the hub renames the host as it upgrades, and for a far host with no bus id
           test_a_far_host_with_no_bus_id_keeps_its_word_held_when_the_same_hub_process_omits_it_on_the_road_that_named_it
           there); a current bus heard only over caches, or only on rosters this bus holds (the far bus's own dials, a
           hub's dials, a hub it does not dial: cost (ii) below; the answered-bus set reads the stored rows, the
           reviewer's round-5 ruling C), until a hub's answer to a dial of this bus built after the hold relays its
-          answered word, its own row speaks for it here (_direct_row_speaks), or, once such an answer or its own answer
+          answered word under the held word's name or with its bus id, its own row speaks for it here
+          (_direct_row_speaks), or, once such an answer or its own answer
           here is heard, the same hub process's next omission of it in its answer to a dial built after its word, the
           release for a far bus heard answering; this bus's restart ends nothing (the same verifier; the witness,
           test_cost_a_a_current_far_host_heard_here_only_over_caches_that_answers_its_hub_empty_holds_its_word_until_its_answer_is_relayed

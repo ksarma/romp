@@ -3991,8 +3991,9 @@ class PeerStateLock(unittest.TestCase):
     test_every_read_modify_write_and_iteration_of_peer_state_holds_its_one_lock, catches a defect in the bus, and is red
     at the forty-ninth commit, where the recorders held no lock; a plant tests the census, not the bus, so it passes at
     any bus head and catches a census that loses the rule it plants. The three plant tests right after the census over
-    the bus, and test_the_census_follows_a_split_hold_through_a_match_capture_and_a_nested_def_by_name, each name the
-    mutant of the census whose red they owe.
+    the bus, test_the_census_follows_a_split_hold_through_a_match_capture_and_a_nested_def_by_name and, since the
+    seventy-third commit, test_the_census_refuses_the_answered_set_read_outside_the_lock_or_handed_on_by_name each name
+    the mutant of the census whose red they owe.
     Two rules joined at round 6 of fork PR #897, on the verifier's findings at the fiftieth commit: a function that writes
     the table reads it only under the lock (the fold's previous-row read hoisted before its hold passed every other pin
     and lost a far host's word under stress), and one mirror write reads the table only through its one copy (its link
@@ -4122,7 +4123,19 @@ class PeerStateLock(unittest.TestCase):
 
     def test_the_census_refuses_the_answered_set_read_outside_the_lock_or_handed_on_by_name(self):
         """THE ANSWERED SET (round 6 of fork PR #897, the reviewer's round-5 ruling B): the far bus ids heard answering
-        are written and read under _PEER_STATE_LOCK alone, each reference a membership test or an add."""
+        are written and read under _PEER_STATE_LOCK alone, each reference a membership test or an add. Refused by name: a
+        membership test outside the lock, an add in a helper with one call site outside it, the set bound to a name in a
+        hold and returned, and the set handed to sorted(), discarded from or copied by set() in a hold; accepted: an add
+        in a helper every call site of which holds the lock, and a membership test under the lock. The pairing (the
+        reviewer's ruling on group A's fix-up, as the three plant tests above state it): the census over the real bus,
+        test_every_read_modify_write_and_iteration_of_peer_state_holds_its_one_lock, catches a defect in the bus, a
+        reference to the set in the bus's own source outside the lock or handing the set on (the fold's note moved
+        after its hold is refused there, naming _heard_answering and the call outside the lock), and checks that the
+        set's population it derives is the recorders' note and the release's membership test; this plant catches a
+        census that loses the rule, and passes at any bus head, the forty-ninth commit's included, where the set did
+        not exist. Its red is the census mutant ANSWERED SET UNREAD, which reads no reference of the set
+        (answered_refs emptied): this test is red under it at its first assertion, the plant adding no refusal, and the
+        census over the real bus is red under it too, at its check of that population, which the mutant finds empty."""
         got = self._plant("def _planted_answered(bus):\n    return bus in _ANSWERED_BUSES\n")
         self.assertTrue(any("answered set outside the lock in _planted_answered" in r for r in got["refused"]), got["refused"])
         helper = ("def _planted_note(bus):\n    _ANSWERED_BUSES.add(bus)\n"
