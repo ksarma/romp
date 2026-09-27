@@ -20,13 +20,17 @@ where they stack):
   b. the same click, the pointer leaving the header at once;
   c. a card title clicked in the feed (the timeline jump), the pointer left on the card: as (a);
   d. a tab clicked in the chat's strip: the shell's relay of the tab reaches the feed and the section repaints in the
-     relay's own task, before the animation frame after it (the three panes share one main thread, so nothing paints
-     before the chat's switch handler and its post-switch frame return: locally the kernel's frame and the relay land in
-     the same idle gap; the relay's worth is a link the frame crosses slowly; the claim reads the frame clock, which
-     stretches with a loaded machine as a millisecond bound did not);
+     task of whichever reaches the feed's page code first, the relay or the kernel's activeChat frame (handed on by the
+     shim in a task of its own), before the animation frame after it (the three panes share one main thread, so nothing
+     paints before the chat's switch handler and its post-switch frame return: locally the kernel's frame and the relay
+     land in the same idle gap, in either order; the relay's worth is a link the frame crosses slowly; the claim reads
+     the frame clock, which stretches with a loaded machine as a millisecond bound did not);
   e. ArrowRight in the chat (a hot key): as (d);
   d2, e2. the same two with the kernel's activeChat frames withheld from the feed's handler (a slow link stood in
      for): the shell's relay alone moves the section, in the relay's own task;
+  d3, d4. the strip click with each order forced, the other signal held until two animation frames after the first
+     was handled: the kernel's frame first (the section moves in its task and the relay changes nothing), then the
+     relay first (the relay alone moves the section, and the late frame flips nothing back);
   f. a card of a CLOSED session (the kernel knows it dead) clicked: the feed's card says closed, so the section stays;
      the chat gets its confirmRevive prompt (dismissed);
   s. the claim's shape: two shell relays in two tasks inside one animation frame (api, then web) move the head and return
@@ -75,10 +79,11 @@ WEB_ANCHOR = "dddddddd-4160-2222-3333-000000000001"
 API_ANCHOR = "dddddddd-4160-2222-3333-000000000002"
 OLD_ANCHOR = "dddddddd-4160-2222-3333-000000000003"
 # The latency claims read the browser's frame clock, never a millisecond bound: the section repaints synchronously in the
-# task of the signal that moves it (the click, or the shell's relay), so the repaint lands before the animation frame that
-# follows that signal. A bound in milliseconds (one frame for a click, two for a relay) held here and read 43.6 ms on a
-# loaded CI runner for a repaint the record shows in the relay's own task; the frame clock stretches with the load, the
-# bound did not. The table still prints the milliseconds for the record.
+# task of the signal that moves it (the click, or on a chat-side change the first to reach the feed of the shell's relay
+# and the kernel's frame), so the repaint lands before the animation frame that follows that signal. A bound in
+# milliseconds (one frame for a click, two for a relay) held here and read 43.6 ms on a loaded CI runner for a repaint the
+# record shows in the relay's own task; the frame clock stretches with the load, the bound did not. The table still prints
+# the milliseconds for the record.
 
 
 def _free_port():
@@ -139,11 +144,26 @@ const runLayout = async (tag, width) => {
       try { const m = JSON.parse(d); if (m && ["activeTab", "openSession", "showOnTimeline"].includes(m.type)) note("send:" + m.type, { id: m.id || m.sid || null }); } catch (e) {}
       return S.call(this, d);
     };
+    // THE KERNEL'S FRAME HELD (a forced order, road d4): while window.__holdKernelFrame names a session, the socket's
+    // activeChat frames wait here, ahead of the shim, until window.__openFrameGate runs (two animation frames after the
+    // shell's relay for that session was handled, below), then go to the shim in their order, stamped recv as they do
+    const heldFrames = [];
+    window.__frameGate = null;   // null while frames are held; once open, the reason it opened
+    window.__openFrameGate = (why) => {
+      if (window.__frameGate) return;
+      window.__frameGate = why;
+      for (const h of heldFrames.splice(0)) {
+        note("released:activeChat", { id: h.m.id || null, why });
+        note("recv:activeChat", { id: h.m.id || null, reaffirm: !!h.m.reaffirm });
+        h.fn.call(h.ws, h.ev);
+      }
+    };
     const wrapIn = (fn) => function (ev) {
       try {
         const m = JSON.parse(ev.data);
         if (m && ["activeChat", "focus", "confirmRevive"].includes(m.type)) {
           if (m.type === "activeChat" && window.__dropActiveChat) { note("dropped:activeChat", { id: m.id || null }); return; }   // the socket's frame held back: a slow link
+          if (m.type === "activeChat" && window.__holdKernelFrame && !window.__frameGate) { heldFrames.push({ ws: this, fn, ev, m }); note("held:activeChat", { id: m.id || null }); return; }
           note("recv:" + m.type, { id: m.id || null, reaffirm: !!m.reaffirm });
         }
       } catch (e) {}
@@ -155,7 +175,52 @@ const runLayout = async (tag, width) => {
     Object.defineProperty(WebSocket.prototype, "onmessage", { configurable: true, get() { return desc.get.call(this); },
       set(fn) { desc.set.call(this, typeof fn === "function" ? wrapIn(fn) : fn); } });
     document.addEventListener("click", (e) => { note("click", { tgt: String((e.target && (e.target.className || e.target.tagName)) || "").slice(0, 40) }); noteFrame("click"); }, true);
-    window.addEventListener("message", (e) => { const d = e && e.data; if (d && typeof d.romp === "string" && (d.romp === "activeTab" || d.romp === "activeChat")) { note("msg:" + d.romp, { id: d.id || null }); if (d.romp === "activeChat") noteFrame("msg:activeChat", { id: d.id || null }); } }, true);
+    // THE RELAY HELD (a forced order, road d3), on the shell page: while window.__holdShellRelay names a session, the
+    // chat's activeTab posts wait here, ahead of the shell's own listener, until window.__openRelayGate runs (two animation
+    // frames after the feed's page code handled the kernel's activeChat frame for that session, below), then go to the
+    // shell's listener as they came (the same data, source and origin), so its relay reaches the feed after that frame
+    if (tag === "/") {
+      const heldPosts = [];
+      window.__relayGate = null;   // null while posts are held; once open, the reason it opened
+      window.__openRelayGate = (why) => {
+        if (window.__relayGate) return;
+        window.__relayGate = why;
+        for (const h of heldPosts.splice(0)) {
+          note("released:relay", { id: h.data.id || null, why });
+          window.dispatchEvent(new MessageEvent("message", { data: h.data, origin: h.origin, source: h.source }));
+        }
+      };
+      window.addEventListener("message", (e) => {
+        const d = e && e.data;
+        if (!window.__holdShellRelay || window.__relayGate || !d || d.romp !== "activeTab" || !e.source || e.source === window) return;
+        e.stopImmediatePropagation();
+        heldPosts.push({ data: d, origin: e.origin, source: e.source });
+        note("held:relay", { id: d.id || null });
+      }, true);
+    }
+    // two signals carry a chat's tab change to the feed's page code, each in a task of its own, in either order: the
+    // shell's relay ({romp:'activeChat'}, msg:activeChat) and the kernel's activeChat frame, which the shim takes in
+    // ws.onmessage (recv above) and hands to the page code in a later task by a window dispatch (handoff:activeChat).
+    // This capture listener runs first in either dispatch, ahead of the feed's own handler, in the same task
+    window.addEventListener("message", (e) => {
+      const d = e && e.data;
+      if (!d) return;
+      if (typeof d.romp === "string") {
+        if (d.romp !== "activeTab" && d.romp !== "activeChat") return;
+        note("msg:" + d.romp, { id: d.id || null });
+        if (d.romp !== "activeChat") return;
+        noteFrame("msg:activeChat", { id: d.id || null });
+        if (tag === "/feed" && window.__holdKernelFrame && window.__holdKernelFrame === d.id && !window.__frameGate)
+          requestAnimationFrame(() => requestAnimationFrame(() => window.__openFrameGate("relay")));
+      } else if (d.type === "activeChat") {
+        note("handoff:activeChat", { id: d.id || null, reaffirm: !!d.reaffirm });
+        noteFrame("handoff:activeChat", { id: d.id || null });
+        let top = null;
+        try { top = window.parent !== window && window.parent.__holdShellRelay ? window.parent : null; } catch (x) {}
+        if (tag === "/feed" && top && top.__holdShellRelay === d.id && !top.__relayGate)
+          requestAnimationFrame(() => requestAnimationFrame(() => top.__openRelayGate("handoff")));
+      }
+    }, true);
     document.addEventListener("keydown", (e) => { note("key", { key: e.key }); noteFrame("key"); }, true);
     if (tag === "/feed" && !localStorage.getItem("romp:feedview")) localStorage.setItem("romp:feedview", JSON.stringify({ v: 1, focused: true }));
   });
@@ -218,6 +283,16 @@ const runLayout = async (tag, width) => {
     return last;
   });
   const setDrop = (on) => page.evaluate((on) => { document.getElementById("f-feed").contentWindow.__dropActiveChat = on; }, on);
+  // the forced orders' holds (roads d3 and d4), each naming the session whose other signal opens it; switched off, a hold
+  // opens (anything it still holds goes on), so nothing waits past its road
+  const setHoldRelay = (sid) => page.evaluate((sid) => {
+    if (sid) { window.__relayGate = null; window.__holdShellRelay = sid; } else { window.__openRelayGate("off"); window.__holdShellRelay = null; }
+  }, sid);
+  const setHoldFrame = (sid) => page.evaluate((sid) => {
+    const w = document.getElementById("f-feed").contentWindow;
+    if (sid) { w.__frameGate = null; w.__holdKernelFrame = sid; } else { w.__openFrameGate("off"); w.__holdKernelFrame = null; }
+  }, sid);
+  const waitFeedHop = (ev, sid, why) => waitFn(([ev, sid]) => (document.getElementById("f-feed").contentWindow.__hops || []).some((h) => h.ev === ev && h.id === sid), [ev, sid], why);
   // the section's block layout: a row (the visible blocks side by side) or stacked (the container query's column direction)
   const layout = () => page.evaluate(() => {
     const f = document.getElementById("f-feed"); const d = f.contentDocument;
@@ -366,6 +441,29 @@ const runLayout = async (tag, width) => {
     return { within, before, to, headNow: await headName() };
   });
   await setDrop(false);
+  // d3/d4. the strip click with each order of the two signals forced. d3, the kernel's frame first: the shell holds the
+  // chat's post until two animation frames after the feed's page code handled the kernel's frame, so the section moves in
+  // that frame's task and the relay then finds nothing to change. d4, the relay first: the feed's socket holds the kernel's
+  // frame until two animation frames after the relay was handled, so the relay alone moves the section and the late frame
+  // flips nothing back. Two frames apart because the page's clock steps by 0.1 ms: the next task could read the same stamp
+  await settle(cfg.api, "api");
+  await setHoldRelay(cfg.web);
+  await road("d3_strip_click_kernel_frame_first", async () => {
+    await clickTab(cfg.web);
+    const within = await waitHead("web", 5000);
+    await waitFeedHop("frame-after:msg:activeChat", cfg.web, "the held relay never reached the feed");
+    return { within, settled: await settled(cfg.web), headNow: await headName() };
+  });
+  await setHoldRelay(null);
+  await settle(cfg.api, "api");
+  await setHoldFrame(cfg.web);
+  await road("d4_strip_click_relay_first", async () => {
+    await clickTab(cfg.web);
+    const within = await waitHead("web", 5000);
+    await waitFeedHop("frame-after:handoff:activeChat", cfg.web, "the held kernel frame never reached the feed's page code");
+    return { within, settled: await settled(cfg.web), headNow: await headName() };
+  });
+  await setHoldFrame(null);
   // f. a closed session's card, the feed's card saying closed: the section stays; the chat gets its confirmRevive
   await settle(cfg.web, "web");
   await road("f_closed_card_says_closed", async () => {
@@ -589,10 +687,16 @@ class FeedFocusLatencyServed(unittest.TestCase):
 
     def _chat_side(self, tag, key, road, target, sid, withheld=False):
         """A tab change made in the chat: the shell's relay reached the feed with the new tab, and the section repainted in the
-        relay's own task, before the animation frame after it. The three panes share one main thread, so nothing paints before
-        the chat's switch handler and its post-switch frame return, and on a loaded machine that wait stretches; the claim
-        reads the frame clock, which stretches with it. The relay's worth is a link the kernel's frame crosses slowly, which
-        `withheld` stands in for (the frame never reaches the feed's handler and the section must still follow)."""
+        task of the FIRST of the two signals to reach the feed's page code, before the animation frame after it. The chat
+        sends its tab on its socket and posts it to the shell in the same call; the shell hands the post to the feed in a task
+        of its own (the relay), and the kernel relays the socket's copy back as an activeChat frame, which the feed's shim
+        hands to the page code in a later task of its own (the handoff). Either task can run first: the feed's handler moves
+        the section on whichever does, and the other then finds nothing to change and paints nothing, so the bound reads the
+        first signal and not the relay alone (test_3c forces each order). The three panes share one main thread, so nothing
+        paints before the chat's switch handler and its post-switch frame return, and on a loaded machine that wait
+        stretches; the claim reads the frame clock, which stretches with it. The relay's worth is a link the kernel's frame
+        crosses slowly, which `withheld` stands in for (the frame never reaches the feed's handler, the relay is the only
+        signal, and the section must still follow in the relay's own task)."""
         legs = "\n".join("%+9.1f ms %s %s %s%s" % (dt, f, ev, ident, " reaffirm" if re_ else "") for f, ev, ident, dt, re_ in _legs(road["hops"]))
         head = _t(road, "head", name=target)
         self.assertIsNotNone(head, "%s/%s: the section never repainted to %s:\n%s" % (tag, key, target, legs))
@@ -600,12 +704,27 @@ class FeedFocusLatencyServed(unittest.TestCase):
         self.assertIsNotNone(relay, "%s/%s: the shell's relay of the chat's tab never reached the feed:\n%s" % (tag, key, legs))
         paint = _t(road, "tab-frame", id=sid) or _t(road, "tab", id=sid)
         self.assertIsNotNone(paint, "%s/%s: the chat's strip never showed the new tab:\n%s" % (tag, key, legs))
-        after = _t(road, "frame-after:msg:activeChat", id=sid)
-        self.assertIsNotNone(after, "%s/%s: no animation frame recorded after the relay:\n%s" % (tag, key, legs))
-        self.assertTrue(relay <= head <= after, "%s/%s: the repaint did not land in the relay's own task, before the animation frame after it (%.1f ms after the relay):\n%s" % (tag, key, head - relay, legs))
+        after_relay = _t(road, "frame-after:msg:activeChat", id=sid)
+        self.assertIsNotNone(after_relay, "%s/%s: no animation frame recorded after the relay:\n%s" % (tag, key, legs))
+        handoff = _t(road, "handoff:activeChat", id=sid, f="/feed")
+        # the first signal, and the animation frame after it: a frame requested in an earlier task never runs after one
+        # requested in a later task, so on a tie of the page's coarse clock the earlier of the two frames is the bound
+        first = relay if handoff is None else min(relay, handoff)
+        afters = []
+        if relay == first:
+            afters.append(after_relay)
+        if handoff == first:
+            after_handoff = _t(road, "frame-after:handoff:activeChat", id=sid)
+            self.assertIsNotNone(after_handoff, "%s/%s: no animation frame recorded after the kernel frame's handoff:\n%s" % (tag, key, legs))
+            afters.append(after_handoff)
+        after = min(afters)
+        by = "the relay" if relay == first else "the kernel's frame"
+        kernel = "absent" if handoff is None else "%+.1f ms from the relay" % (handoff - relay)
+        self.assertTrue(first <= head <= after, "%s/%s: the repaint did not land in the task of the first signal to reach the feed (%s), before the animation frame after it (%.1f ms after it; the kernel's frame %s):\n%s" % (tag, key, by, head - first, kernel, legs))
         if withheld:
             self.assertIsNotNone(_t(road, "dropped:activeChat", id=sid), "%s/%s: the kernel's frame was withheld as the road meant:\n%s" % (tag, key, legs))
             self.assertIsNone(_t(road, "recv:activeChat", id=sid), "%s/%s: no kernel frame for the new tab reached the feed's handler:\n%s" % (tag, key, legs))
+            self.assertIsNone(handoff, "%s/%s: no kernel frame for the new tab was handed to the feed's page code:\n%s" % (tag, key, legs))
         else:
             self.assertEqual(road["settled"], target, "%s/%s: the kernel's frame flipped the section back: %r" % (tag, key, road["settled"]))
 
@@ -625,6 +744,35 @@ class FeedFocusLatencyServed(unittest.TestCase):
             e = L["roads"]["e2_hot_key_frame_withheld"]
             self.assertTrue(e["within"] and e["to"], "%s: the section followed the hot key with no kernel frame: %r" % (tag, e))
             self._chat_side(tag, "e2", e, e["headNow"], e["to"], withheld=True)
+
+    def test_3c_whichever_signal_reaches_the_feed_first_moves_the_section(self):
+        """Each order of the two signals forced on a strip click. The kernel's frame first (d3: the shell holds the chat's
+        post until two animation frames after the feed's page code handled the kernel's frame): the section moves in that
+        frame's task and the relay arrives after it with nothing to change, the order in which a bound on the relay alone
+        failed though the section moved within the frame. The relay first (d4: the feed's socket holds the kernel's frame
+        until two animation frames after the relay was handled): the relay alone moves the section, before the kernel's
+        frame reaches the page code, and the late frame flips nothing back; with d2 and e2 (the frame never arrives) this
+        keeps the local signal's claim proven. The holds keep the two signals two frames apart, so the page's clock, which
+        steps by 0.1 ms, cannot give the second signal the first one's stamp."""
+        for tag, L in self._layouts():
+            k = L["roads"]["d3_strip_click_kernel_frame_first"]
+            legs = "\n".join("%+9.1f ms %s %s %s%s" % (dt, f, ev, ident, " reaffirm" if re_ else "") for f, ev, ident, dt, re_ in _legs(k["hops"]))
+            self.assertTrue(k["within"], "%s/d3: the section followed the strip click: %r" % (tag, k["headNow"]))
+            self._chat_side(tag, "d3", k, "web", SID_WEB)
+            handoff, after_handoff = _t(k, "handoff:activeChat", id=SID_WEB, f="/feed"), _t(k, "frame-after:handoff:activeChat", id=SID_WEB)
+            relay = _t(k, "msg:activeChat", id=SID_WEB, f="/feed")
+            self.assertTrue(handoff is not None and after_handoff is not None and after_handoff < relay,
+                            "%s/d3: the order was forced: the relay reached the feed only after the animation frame that followed the kernel frame's handoff:\n%s" % (tag, legs))
+            self.assertLess(_t(k, "head", name="web"), relay, "%s/d3: the section had moved before the relay reached the feed:\n%s" % (tag, legs))
+            r = L["roads"]["d4_strip_click_relay_first"]
+            legs = "\n".join("%+9.1f ms %s %s %s%s" % (dt, f, ev, ident, " reaffirm" if re_ else "") for f, ev, ident, dt, re_ in _legs(r["hops"]))
+            self.assertTrue(r["within"], "%s/d4: the section followed the strip click: %r" % (tag, r["headNow"]))
+            self._chat_side(tag, "d4", r, "web", SID_WEB)
+            after_relay = _t(r, "frame-after:msg:activeChat", id=SID_WEB)
+            handoff = _t(r, "handoff:activeChat", id=SID_WEB, f="/feed")
+            self.assertTrue(handoff is not None and after_relay < handoff,
+                            "%s/d4: the order was forced: the kernel's frame reached the feed's page code only after the animation frame that followed the relay:\n%s" % (tag, legs))
+            self.assertLess(_t(r, "head", name="web"), handoff, "%s/d4: the relay moved the section before the kernel's frame reached the feed's page code:\n%s" % (tag, legs))
 
     def test_4_a_closed_sessions_card_switches_nothing_and_a_stale_live_mark_comes_back_on_the_kernels_answer(self):
         for tag, L in self._layouts():
