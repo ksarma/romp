@@ -15,8 +15,8 @@ merged tree is the tree the sweep and CI tested.
 The tooling is `scripts/batch.py` (subcommands `plan`, `assemble`, `verify`, `summarize`, `pull`,
 `land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps a worktree's head
 and records the result, `check` reads it back), `scripts/land.sh`, which merges a batch PR by hand
-and nothing else (a single PR lands as a one-member batch), and `scripts/pr-orphans.sh`, which reports a merged PR whose content never reached main (it
-also runs on every push to main).
+and nothing else (a single PR lands as a one-member batch), and `scripts/pr-orphans.sh`, which
+reports a merged PR whose content never reached main (it also runs on every push to main).
 
 ## If you open a PR
 
@@ -47,8 +47,8 @@ also runs on every push to main).
    batch (`scripts/batch.py plan --only N`) on the maintainer's word. Nothing merges alone.
 7. Once the batcher has commented `in batch <name> at <sha>` on your PR, do not push to the branch.
    If a review finds something, push the fix, sweep the new head, and tell the batcher by postal
-   (kind: coordinate); it re-pins your head and rebuilds. A push after the cut leaves your PR open after the batch merges,
-   and `finish` reports that rather than hiding it.
+   (kind: coordinate); it re-pins your head and rebuilds. A push after the cut leaves your PR open
+   after the batch merges, and `finish` reports that rather than hiding it.
 8. When the batch merges, remove your worktree and local branch. `finish` deletes the remote one.
 9. Expect no CI on your PR. Its one check is the tier label, which runs when the PR opens or
    reopens and when its labels change, not on a push. The tests run in your own sweep at your head
@@ -98,9 +98,9 @@ Per batch, in order:
    merge is the one move it cannot catch). The button and `gh pr merge <B> --merge
    --match-head-commit <sha>` check neither. No CI runs on the merge to main, so use either only
    while the batch PR's checks on its head are green and main is still at the SHA the first block
-   names as contained; if main has moved, ask the batcher to merge it in, sweep and verify again. Member PRs
-   read merged on their own and their branches are deleted. If you merge by hand, tell the batcher
-   to run `finish`.
+   names as contained; if main has moved, ask the batcher to merge it in, sweep and verify again.
+   Member PRs read merged on their own and their branches are deleted. If you merge by hand, tell
+   the batcher to run `finish`.
 7. Nothing else. To revert a member later, `git revert -m 1 <its merge commit>` on a branch, as a PR.
 
 A PR that cannot wait lands as a one-member batch, never alone: `scripts/batch.py plan --only N`
@@ -171,11 +171,11 @@ subject; `verify` refuses the branch otherwise.
    fails by name when it is missing, stale (recorded at another commit), unfinished, red, invalid,
    incomplete or unreadable. A missing result names the directory verify read and the variable it
    came from (`ROMP_STATE_DIR`, `XDG_STATE_HOME` or `HOME`): a sweep run with another environment
-   wrote its result somewhere else. It also fails as "behind" when the batch head does not contain main as
-   origin has it now: CI does not run on the merge to main, so a batch lands only when the tree that
-   lands is the tree the sweep and the batch's CI ran on; run step 7, then steps 3 and 4 again. If
-   an earlier `assemble` died part-way, `verify` fails with "assembly incomplete"; run `assemble`
-   again first.
+   wrote its result somewhere else. It also fails as "behind" when the batch head does not contain
+   main as origin has it now: CI does not run on the merge to main, so a batch lands only when the
+   tree that lands is the tree the sweep and the batch's CI ran on; run step 7, then steps 3 and 4
+   again. If an earlier `assemble` died part-way, `verify` fails with "assembly incomplete"; run
+   `assemble` again first.
 5. `git push -u origin batch/<name>` (after a rebuild, `git push --force-with-lease origin
    batch/<name>`; `pull` pushes that way itself). If the pre-push hook refuses the push: it scans
    each pushed commit's tree, so a batch tip that inherits a pre-scrub string trips it although the
@@ -209,16 +209,16 @@ subject; `verify` refuses the branch otherwise.
    refuses if it moved, merges with a merge commit, and runs `finish`. GitHub's merge pins the
    head, not the base, so a merge to main between that last read and GitHub's merge is not caught.
    `land --auto` arms auto-merge instead, after the same CI read (it does not wait for a pending
-   run): it needs the repository's "Allow auto-merge" setting and a
-   rule on main that gates a merge (the maintainer section above names the types), reads both before
-   it retargets anything, and refuses naming what is missing or the rules it found instead; run
-   `finish` once the PR lands. Auto-merge merges later, when the rule is met, and land cannot check
-   main again then; on 2026-09-27 the fork had neither the setting nor such a rule, so `land --auto`
-   is refused and that case cannot arise yet. If the maintainer merged by the button or `gh pr merge`, check that the merge
-   commit's first parent is the main that verify saw (`git rev-parse <merge>^1` against the SHA the
-   body's first block names), then run `scripts/batch.py finish <name>` alone. If it is not, the tree
-   on main was never swept or tested: run `scripts/sweep.py run` on a worktree at the merge commit
-   now and tell the maintainer what it finds.
+   run): it needs the repository's "Allow auto-merge" setting and a rule on main that gates a merge
+   (the maintainer section above names the types), reads both before it retargets anything, and
+   refuses naming what is missing or the rules it found instead; run `finish` once the PR lands.
+   Auto-merge merges later, when the rule is met, and land cannot check main again then; on
+   2026-09-27 the fork had neither the setting nor such a rule, so `land --auto` is refused and
+   that case cannot arise yet. If the maintainer merged by the button or `gh pr merge`, check that
+   the merge commit's first parent is the main that verify saw (`git rev-parse <merge>^1` against
+   the SHA the body's first block names), then run `scripts/batch.py finish <name>` alone. If it is
+   not, the tree on main was never swept or tested: run `scripts/sweep.py run` on a worktree at the
+   merge commit now and tell the maintainer what it finds.
 
 ## Checked on the first batch
 
