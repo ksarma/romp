@@ -4071,8 +4071,9 @@ class PeerStateLock(unittest.TestCase):
         test_every_read_modify_write_and_iteration_of_peer_state_holds_its_one_lock, catches the defect in the bus, red
         at the forty-ninth commit, where the recorders wrote the table with no lock; this plant catches a census that
         loses the rule, and passes at any bus head. Its red is the census mutant WRITERS UNREFUSED, whose refusal loop
-        reads the iterations alone, so that no writer is refused: it accepts the plant, and the census over the real
-        bus passes under it."""
+        reads the iterations alone, so that no writer is refused: the plant's writer goes unrefused, while its read of
+        the table outside the lock is still refused, by READS IN A WRITER'S FUNCTION, and the census over the real bus
+        passes under it."""
         got = self._plant("def _planted_writer(host):\n    st = PEER_STATE.get(host)\n    st[\"planted\"] = True\n")
         self.assertTrue(any("writer outside the lock in _planted_writer" in r for r in got["refused"]), got["refused"])
         got = self._plant("def _planted_writer(host):\n    with _PEER_STATE_LOCK:\n        st = PEER_STATE.get(host)\n"
