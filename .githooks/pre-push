@@ -546,12 +546,16 @@
 #       hunk for the lines such a merge adds at 64 parents and prints each
 #       with a space in its last column at 65, so the feed could not read
 #       them, and merges of 64 and 65 parents published a credential through
-#       real pushes); its record, three counts or the word that says where the
-#       read fell short, refused when it is neither. Its end: each commit's
-#       name printed again after its parents, the tail marker its format asks
-#       for, without which the awk records untailed, refused naming the read,
-#       so a cut inside the parents of a merge of 64 or more, which would read
-#       as fewer, is refused
+#       real pushes); each merge, a commit of two or more parents, listed once
+#       for the FIRST-PARENT DIFF read (round 12f), as <merge> then <merge>
+#       <merge>, and the merges listed counted in the record, which that read
+#       compares with the merges its awk reads back, fewer refused naming
+#       both; its record, four counts or the word that says where the read
+#       fell short, refused when it is neither. Its end: each commit's name
+#       printed again after its parents, the tail marker its format asks for,
+#       without which the awk records untailed, refused naming the read, so a
+#       cut inside the parents of a merge of 64 or more, which would read as
+#       fewer, is refused
 #   the DIFF SETTINGS of this clone
 #       the TAIL marker its command line adds, romp-pre-push.tail=end, one -c
 #       entry git reads after every value of the clone's (the system, global,
@@ -591,15 +595,7 @@
 #       is the round 10b case in tests/pre-push-hook.bats titled "round 10b
 #       (A.2's disclosed cost, with its witness)"), and refuses it anywhere
 #       else; a commit of 64 or more parents is refused apart (the PARENT
-#       COUNTS read); in a diff --combined section the last line the awk
-#       writes is noted, with its number in the merge's result, and the notes
-#       are counted in the record (the RESULT BLOBS read, round 12d); each
-#       line it writes there, a line of the merge's own, is noted with its
-#       merge, its number in the merge's result and its path, the merge listed
-#       once, and those lines are counted in the record (the FIRST-PARENT DIFF
-#       read, round 12e); every path the sections name is listed once, with a
-#       tail marker, and counted in the record (the DIFF ATTRIBUTES read,
-#       round 12e); its record, eight counts or the word that says where the
+#       COUNTS read); its record, five counts or the word that says where the
 #       read fell short, refused when it is neither. Its end: each commit's
 #       TAIL marker, its name printed again after its diff for its second
 #       --stdin line (<rev> <rev>, an empty diff), without which the awk
@@ -609,55 +605,82 @@
 #       git read for the scan, cut inside a commit, published a credential
 #       through a real push, the read inside gitleaks with no row until round
 #       9 made it the hook's own)
-#   the FIRST-PARENT DIFF of the merges with lines of their own
+#   the FIRST-PARENT DIFF of the pushed merges
 #       each listed merge's head marker, its own name ahead of its
 #       first-parent diff (--always, under --diff-merges=first-parent), in the
-#       order fed, read from the merges' list the feed's awk wrote
-#       (merge_fp_pieces, round 12e: git's combined diff frames a merge's own
-#       lines in hunks --inter-hunk-context does not fuse, and a side commit's
-#       lines apart from the merge's, so a merge's own PEM private key block
-#       beside blank lines under diff.interHunkContext=3, and a block whose
-#       END line alone the merge wrote, published where main's hook, reading
-#       the merge's first-parent diff, refused them through the default rule
+#       order fed, read from the merges' list the PARENT COUNTS read wrote,
+#       every pushed merge once (merge_fp_pieces, round 12e for the merges
+#       that write a line of their own, and round 12f for every merge and
+#       every hunk: git's combined diff frames a merge's own lines in hunks
+#       --inter-hunk-context does not fuse, and a side commit's lines apart
+#       from the merge's, so a merge's own PEM private key block beside blank
+#       lines under diff.interHunkContext=3, a block whose END line alone the
+#       merge wrote, and a block two side commits split under a merge that
+#       writes no line of its own, published where main's hook, reading the
+#       merge's first-parent diff, refused them through the default rule
 #       private-key; romp-manager's ruling on round 12d2's audit, 2026-09-27
-#       01:25Z, its option (a)): a missing, foreign or out-of-order line is
-#       refused naming the read, and the awk's count of merges read whole is
-#       compared with the merges listed, fewer refused naming both; every line
-#       between a merge's two names is one of the shapes a two-way diff prints
+#       01:25Z, its option (a), widened by the ruling on round 12e's audit,
+#       03:31Z, its (1)): a missing, foreign or out-of-order line is refused
+#       naming the read, and the awk's count of merges read whole is compared
+#       with the merges listed, fewer refused naming both; every line between
+#       a merge's two names is one of the shapes a two-way diff prints
 #       (merge_fp_pieces lists them), any other refused naming the read and
-#       the merge; the merges' own lines the awk read from the feed's note
-#       file are compared with the count the feed's awk recorded, fewer
-#       refused as read back short; its record, five counts or the word that
-#       says where the read fell short, refused when it is neither. Its end:
-#       each merge's TAIL marker, its name printed again after its diff for
-#       its second --stdin line (<merge> <merge>, an empty diff), without
-#       which the awk records untailed, refused naming the read, and a line
-#       after the last tail is refused too; the tr ahead of the awk carries
-#       both markers, so a tr silent or cut short loses them
+#       the merge; the merges the awk read from the list are compared with the
+#       count the PARENT COUNTS read's awk recorded, fewer refused as read
+#       back short; its record, five counts or the word that says where the
+#       read fell short, refused when it is neither. Its end: each merge's
+#       TAIL marker, its name printed again after its diff for its second
+#       --stdin line (<merge> <merge>, an empty diff), without which the awk
+#       records untailed, refused naming the read, and a line after the last
+#       tail is refused too; the tr ahead of the awk carries both markers, so
+#       a tr silent or cut short loses them
+#   the NAME LISTING of the pushed commits
+#       each listed commit's head marker, its own name ahead of its name
+#       listing (--always), in the order fed, read from the list file the feed
+#       reads (name_listing, round 12f: git diff-tree --name-status under the
+#       feed's three options and --diff-merges=first-parent, made only when
+#       the clone gives a driver a textconv, so the DIFF ATTRIBUTES read is
+#       keyed on the paths git log diffs for the push, a merge's first-parent
+#       paths, both sides of a rename or a copy, a mode change and an empty
+#       file among them, where the round 12e key set, read from the feed's ---
+#       and +++ lines, missed every section that prints neither;
+#       romp-manager's ruling on round 12e's audit, 2026-09-27 03:31Z, its
+#       (2)): a missing, foreign or out-of-order line is refused naming the
+#       read, and the awk's count of commits read whole is compared with the
+#       count fed, another number refused naming both; every line between a
+#       commit's two names is a status line of --name-status (R or C and a
+#       score with two paths, or A, D, M, T, U or X with one, each after a
+#       tab), any other refused naming the read and the commit; each path is
+#       written once to the paths' list, the tail marker romp-pre-push.tail
+#       after the last; its record, two counts or the word that says where the
+#       read fell short, refused when it is neither. Its end: each commit's
+#       TAIL marker, its name printed again after its listing for its second
+#       --stdin line (<rev> <rev>, an empty listing), without which the awk
+#       records untailed, refused naming the read, and a line after the last
+#       tail is refused too
 #   the DIFF ATTRIBUTES of the pushed paths
-#       each answer's path, the path asked in the order of the pushed paths'
-#       list the feed's awk wrote (every path its sections name, the ---
-#       source and the +++ target, each once, in git's quoted form, which
-#       check-attr unquotes from its stdin and prints again under
-#       core.quotePath=true), then : diff: and the value (diff_attrs, round
-#       12e, made only when the clone gives a driver a textconv or an
-#       algorithm: git log reads a path whose diff attribute names a driver
-#       with a textconv through the driver's rendering, and applies a driver's
-#       algorithm to such a path and to the paths it diffs after, and a key
-#       block written reversed under a textconv of rev published where main's
-#       hook refused it; romp-manager's ruling on round 12d2's audit,
-#       2026-09-27 01:25Z): an answer that does not begin with the path asked,
-#       or one past the last, is refused naming the read, and the count of
-#       answers read whole is compared with the paths the feed's awk recorded
-#       and the tail marker, another number refused as read back short; each
-#       path whose value names a driver the clone gives a textconv or an
-#       algorithm refuses by name, the awk's count of those compared with the
-#       lines it printed; its record, two counts or the word that says where
-#       the read fell short, refused when it is neither. Its end: the TAIL
-#       marker, the path romp-pre-push.tail, which the feed's awk writes after
-#       the last pushed path, so its answer follows the last pushed path's,
-#       and an answer cut inside or after a pushed path's value lacks the
-#       marker's line and is refused as read short
+#       each answer's path, the path asked in the order of the paths' list the
+#       NAME LISTING read wrote (every path git's name listing names for the
+#       push, each once, in git's quoted form, which check-attr unquotes from
+#       its stdin and prints again under core.quotePath=true), then : diff:
+#       and the value (diff_attrs, round 12e, keyed on the NAME LISTING since
+#       round 12f, made only when the clone gives a driver a textconv: git log
+#       reads a path whose diff attribute names a driver with a textconv
+#       through the driver's rendering, and a key block written reversed under
+#       a textconv of rev published where main's hook refused it;
+#       romp-manager's ruling on round 12d2's audit, 2026-09-27 01:25Z, and on
+#       round 12e's, 03:31Z, its (2)): an answer that does not begin with the
+#       path asked, or one past the last, is refused naming the read, and the
+#       count of answers read whole is compared with the paths the NAME
+#       LISTING read's awk recorded and the tail marker, another number
+#       refused as read back short; each path whose value names a driver the
+#       clone gives a textconv refuses by name, the awk's count of those
+#       compared with the lines it printed; its record, two counts or the word
+#       that says where the read fell short, refused when it is neither. Its
+#       end: the TAIL marker, the path romp-pre-push.tail, which the NAME
+#       LISTING read's awk writes after the last path, so its answer follows
+#       the last path's, and an answer cut inside or after a path's value
+#       lacks the marker's line and is refused as read short
 #   the RESULT listing of a merge
 #       the path the merge's diff --combined section named when it printed
 #       Binary files differ, git's quoted form, compared as a string with the
@@ -690,24 +713,6 @@
 #       record, four counts, refused when it is not. Its end: the size, so any
 #       cut counts short, the last byte of a blob with no final newline
 #       included, since the newline appended ends every whole answer
-#   the RESULT BLOBS of the merges' own last lines
-#       each answer's header, the name asked, blob, its size and the rest of
-#       the line asked (%(rest) echoes it), compared with the note it answers,
-#       then its size in bytes and the newline cat-file appends, counted by
-#       the awk (merge_tail_blobs, round 12d: a merge's combined diff prints
-#       no no-newline notice, so a URL the default rule sidekiq-sensitive-url
-#       catches, on a merge's own last line in a file with no final newline,
-#       published where main's hook refused it; decision 5's check, item 3,
-#       ruled fixed by romp-manager, 2026-09-26 18:58Z): an answer that is not
-#       a blob under the name and line asked, or holds more bytes than its
-#       size, is refused naming the read, and the count of blobs read whole is
-#       compared with the notes, fewer refused as read short; a piece that no
-#       longer holds the bytes the feed recorded refuses naming the piece; its
-#       record, four counts or the word that says where the read fell short,
-#       refused when it is neither. Its end: each blob's size, so an answer
-#       cut inside a blob leaves it short of its size and its newline, and one
-#       cut between blobs leaves fewer blobs than notes, each refused as read
-#       short
 #   the VERSION of the scanner
 #       a dotted version on one line, three numbers of at most nine digits (a
 #       release's own answer, 8.30.1; a leading v taken), compared with the
@@ -777,21 +782,20 @@
 #   the BYTE COUNT line of the scanner log
 #       the bytes written for the run (the pieces for the scan of record and
 #       the path-scoped copies for the additive run, as the feed's awk
-#       recorded writing them, a merge's binary path read whole among them,
-#       and a piece the RESULT BLOBS read wrote again without a merge's
-#       missing final newline, since round 12d, as that read's awk recorded;
-#       for the probe run, a third run since round 11b, the probes the shell
-#       wrote for it and the second copies of the path-scoped pieces; for the
-#       skip canary's run, since round 12b3, its pieces), compared with the
-#       one scanned ~N bytes line gitleaks logs (read from the run's private
-#       log file since round 12b, the scan of record's and since round 12b3
-#       the skip canary's at gitleaks' trace level, where a TRC or DBG line is
-#       no INF line), which the awk answers as a word, a tab and digits: no
-#       such line, or two, is refused naming the count of lines, any other
-#       answer naming it, and another number naming both (round 9: the commit
-#       count it replaces held a scan whole at the granularity of commits
-#       alone). Its end: a cut figure is a prefix of its digits, another
-#       number than the record's
+#       recorded writing them, a merge's binary path read whole and, since
+#       round 12e, a merge's first-parent pieces among them, as those reads'
+#       awks recorded; for the probe run, a third run since round 11b, the
+#       probes the shell wrote for it and the second copies of the path-scoped
+#       pieces; for the skip canary's run, since round 12b3, its pieces),
+#       compared with the one scanned ~N bytes line gitleaks logs (read from
+#       the run's private log file since round 12b, the scan of record's and
+#       since round 12b3 the skip canary's at gitleaks' trace level, where a
+#       TRC or DBG line is no INF line), which the awk answers as a word, a
+#       tab and digits: no such line, or two, is refused naming the count of
+#       lines, any other answer naming it, and another number naming both
+#       (round 9: the commit count it replaces held a scan whole at the
+#       granularity of commits alone). Its end: a cut figure is a prefix of
+#       its digits, another number than the record's
 #   the PATH SKIPS in the trace log of the scan of record
 #       a closing line the awk prints last: end, the count of per-file lines
 #       ([Ss]canning path, one per scanned file in every release from 8.25.0
@@ -1036,13 +1040,11 @@
 # (creds.index, creds.pindex), the
 # feed's record (creds.record), the merges' binary paths the feed routes
 # (creds.binary) and the record of each one's whole read (creds.brecord),
-# the notes of the merges' own last lines (creds.tails, which the feed's awk
-# writes) and the record of their read (creds.trecord), whose awk writes
-# again, in place, a piece a note names (merge_tail_blobs), the lines the
-# merges write of their own and the list of those merges (creds.own and
-# creds.merges, which the feed's awk writes) and the record of their
-# first-parent read (creds.frecord), the pushed paths (creds.paths, which the
-# feed's awk writes) and the record of their attribute read (creds.arecord),
+# the list of the pushed merges (creds.merges, which the parent counts' awk
+# writes) and the record of their first-parent read (creds.frecord), the
+# paths git log diffs for the push (creds.paths, which the name listing's awk
+# writes), the record of that listing (creds.nrecord) and the record of
+# those paths' attribute read (creds.arecord),
 # the scanner's log (creds.log, one run's at a time, and the skip canary's
 # run's, creds.canary.log: written by the run's own
 # redirect under umask 077, whose failure fails the run, and deleted by an rm
@@ -1061,8 +1063,11 @@
 # everything the pushed tip reaches. It reads every line those commits add in
 # ONE git diff-tree over the push (credential_feed): a merge by the lines in
 # none of its parents (-c), where a line typed into a conflict resolution
-# lands, so a merge that brings in content a remote already holds adds
-# nothing; a rename by its edits (-M, or as the clone's diff.renames has git
+# lands, so in this read a merge that brings in content a remote already
+# holds adds nothing (every pushed merge is read by its first-parent diff too
+# since round 12f, below, which holds such content, so a merge that brings
+# in a credential a remote already holds is refused, as main's hook refuses
+# it); a rename by its edits (-M, or as the clone's diff.renames has git
 # log read one: below), so a pure rename adds nothing (within git's rename
 # limit, diff.renameLimit, which diff-tree reads as git log does: past it a
 # rename is read as a new file, more bytes, never fewer); every blob of a
@@ -1081,30 +1086,39 @@
 # diff.renames=false, which git log reads as one new file, published where
 # main's hook refused them, both scanners. A value the hook does not pass
 # (one git log stops on, or a spelling of a count git reads and the hook does
-# not) refuses the push by name. Two keys of a diff driver refuse by name
-# too, keyed on the pushed paths (the DIFF ATTRIBUTES read, attr_reads;
-# romp-manager's ruling on round 12d2's audit, 2026-09-27 01:25Z): ONE git
-# check-attr diff over every path the feed's sections name (both sides of
-# each, a deleted path's among them, and a merge's binary path), in the work
-# tree's attributes as git log reads them, made only when the clone gives
-# some driver a textconv or an algorithm. A pushed path whose diff attribute
-# names a driver with diff.<driver>.textconv set refuses, naming the path and
-# the driver: git log reads that path through the driver's rendering, while
-# the feed reads the bytes the push carries (--no-textconv), so a key block
-# written reversed under a textconv of rev published where main's hook
+# not) refuses the push by name, and so does any diff.<driver>.algorithm,
+# which git log applies path by path and keeps for the paths it diffs after,
+# a framing one pass over the push cannot mirror (a false refusal for a
+# driver no attribute names; romp-manager's ruling on round 12e's audit,
+# 2026-09-27 03:31Z, its (2), restoring the round 12d2 refusal: round 12e
+# keyed it on the pushed paths, and a path that only a pure rename, a mode
+# change, an empty file added or deleted, or a merge's first-parent diff
+# names escaped that key set and published a key block main's hook refused
+# through the default rule private-key, both scanners). A driver's textconv
+# refuses by name where git log would read a path through it (the DIFF
+# ATTRIBUTES read, attr_reads; romp-manager's ruling on round 12d2's audit,
+# 2026-09-27 01:25Z, its key set git's own name listing since the 03:31Z
+# ruling's (2)): when the clone gives some driver a textconv, ONE git
+# diff-tree --name-status over the push (the NAME LISTING read, name_reads)
+# lists the paths git log diffs for it, under the feed's options and
+# --diff-merges=first-parent, so a merge lists its first-parent paths, and
+# both sides of a rename or a copy, a mode change and an empty file added or
+# deleted are listed too (git log runs the driver over each of those
+# shapes, git 2.43.0, executed), and ONE git check-attr diff over those
+# paths, in the work tree's attributes as git log reads them, names each one
+# whose diff attribute names such a driver. That path refuses, naming the
+# path and the driver: git log reads it through the driver's rendering,
+# while the feed reads the bytes the push carries (--no-textconv), so a key
+# block written reversed under a textconv of rev published where main's hook
 # refused it, both scanners (round 12d2's audit, finding 8, executed in round
-# 12e). A pushed path whose attribute names a driver with
-# diff.<driver>.algorithm set refuses the same way: git log applies that
-# algorithm to the path and keeps it for the paths it diffs after, a deleted
-# path included (git 2.43.0, executed), a framing one pass over the push
-# cannot mirror. The remedy for each: review by hand, then ROMP_NO_GITLEAKS=1
-# for that push. A driver the clone configures that no pushed path's
-# attribute names refuses nothing (until round 12e any
-# diff.<driver>.algorithm refused the push, a false refusal for a driver no
-# attribute names, and a textconv refused nothing). The attribute's value is
+# 12e). The remedy: review the path by hand, then ROMP_NO_GITLEAKS=1 for
+# that push. A textconv driver no listed path's attribute names refuses
+# nothing; a listed path whose attribute names one refuses whatever its
+# rendering holds (a pure rename's, whose two sides render alike, among
+# them), a false refusal on the safe side. The attribute's value is
 # compared as a driver's name, so a driver named unspecified, set or unset,
 # words check-attr also prints for no attribute, a plain diff and -diff,
-# refuses every pushed path answered with that word, a false refusal on the
+# refuses every listed path answered with that word, a false refusal on the
 # safe side. The census of git's diff keys behind the
 # three (git 2.43.0 and 2.55.0), each key passed, read by diff-tree as git
 # log reads it, pinned by the feed's own options, refused, or inert for the
@@ -1203,58 +1217,70 @@
 # 11.9 s against 2.3 s with a file's hunks in one piece, decision 5's check,
 # and one of 4,000 hunks 6.3 to 6.5 s against 2.1 to 2.3 s, the round 12d1
 # audit; the ruling's (d)).
-# A merge that writes lines of its own is read twice. The feed reads a merge
-# by the lines in none of its parents (-c), git's combined diff framing them
-# in hunks of its own, which --inter-hunk-context does not fuse, each line
-# where the side commit that added it put it; main's hook reads a merge by
-# its first-parent diff under the clone's settings. So for each merge with a
-# line of its own (a line in none of its parents, which the feed notes with
-# its number in the merge's result), ONE more git diff-tree over those
-# merges (merge_fp_reads, merge_fp_pieces; romp-manager's ruling on round
-# 12d2's audit, 2026-09-27 01:25Z, its option (a)) reads each one's
-# first-parent diff under the clone's three settings, and each first-parent
-# hunk that holds a line the merge wrote is pieced as main frames it: its
-# added lines one fragment, its context and removed lines left out, the
-# newline mirror and the ~ line decided as for every piece, indexed to the
-# merge and the path, its bytes in the figure. Until round 12e a merge's own
-# PEM private key block beside blank lines under diff.interHunkContext=3
-# (evilI: one first-parent hunk, two combined ones; refused at 0b6c76916,
-# published at 97312fd98), and a block a side commit added without its END
-# line, which the merge's own resolution added (evilspan: whole in one
-# first-parent hunk, in no piece; published at 0b6c76916 and at 97312fd98),
-# published where main's hook refused them through the default rule
-# private-key, both scanners (round 12d2's audit, findings 1 and 2). The
-# cost: one more diff-tree per push that holds such a merge, over those
-# merges alone, its stream each one's whole first-parent diff (a side
-# branch's changes included) and its pieces only the hunks that hold a line
-# the merge wrote; a push with no merge line of its own runs none; and a
-# merge's own line is then read in two pieces, its combined one and its
-# first-parent one, a finding in both named once. What that leaves is a
-# stated limit for merges, named outside the closed class, since the hook
-# cannot probe a custom rule's value (the ruling's item 2, under decision
-# 5's (ii), narrowed by the 01:25Z ruling to what option (a) leaves): a
-# first-parent hunk holding no line the merge wrote carries only lines side
-# commits wrote, read in their own hunks, where a line that opens or closes
-# the first-parent hunk can sit inside a side commit's hunk and a rule
-# anchored at the start or the end of the text misses it. Its witnesses,
-# fpmerge (a repository rule ^zzkey_), fpnuget (nuget-config-password
-# redefined with ^, so it reaches one of the five) and fpm2 (M2's \s*$), are
-# merges that take the side's version and write no line of their own, each
-# published at the fix where main's hook refused it, both scanners
-# (tests/pre-push-hook.bats, round 12d2, the three cases titled "round 12d2
-# (item 2, OUTSIDE the closed class"); the same anchors in a first-parent
-# hunk that also holds a line the merge wrote are refused (round 12e).
+# Every pushed merge is read twice. The feed reads a merge by the lines in
+# none of its parents (-c), git's combined diff framing them in hunks of its
+# own, which --inter-hunk-context does not fuse, each line where the side
+# commit that added it put it; main's hook reads a merge by its first-parent
+# diff under the clone's settings. So ONE more git diff-tree over the pushed
+# merges, which the PARENT COUNTS read lists (merge_fp_reads,
+# merge_fp_pieces; romp-manager's ruling on round 12d2's audit, 2026-09-27
+# 01:25Z, its option (a), widened to every merge and every hunk by the
+# ruling on round 12e's audit, 03:31Z, its (1)), reads each one's
+# first-parent diff under the clone's three settings, and every first-parent
+# hunk is pieced as main frames it: its added lines one fragment, its context
+# and removed lines left out, the newline mirror and the ~ line decided as
+# for every piece, indexed to the merge and the path, its bytes in the
+# figure. So the hook frames a merge as main's hook does. Until round 12e a
+# merge's own PEM private key block beside blank lines under
+# diff.interHunkContext=3 (evilI: one first-parent hunk, two combined ones;
+# refused at 0b6c76916, published at 97312fd98), and a block a side commit
+# added without its END line, which the merge's own resolution added
+# (evilspan: whole in one first-parent hunk, in no piece; published at
+# 0b6c76916 and at 97312fd98), published where main's hook refused them
+# through the default rule private-key, both scanners (round 12d2's audit,
+# findings 1 and 2); and until round 12f, which reads every merge, a block
+# two side commits split, its END line in the second, under a clean merge
+# that writes no line of its own (spansides: whole in one first-parent hunk,
+# in neither side commit's piece; published at 0b6c76916, 97312fd98 and the
+# round 12e head, 5246a10a7, whose first-parent read took only the merges
+# and hunks that held a line the merge wrote), published the same way (round
+# 12e's audit, finding 3). The ruling's (1) retired item 2's stated limit
+# for a merge's first-parent anchors (under decision 5's (ii), narrowed at
+# 01:25Z): its witnesses fpmerge (a repository rule ^zzkey_), fpnuget
+# (nuget-config-password redefined with ^) and fpm2 (M2's \s*$), merges that
+# take the side's version and write no line of their own, published where
+# main's hook refused them, and are refused now, as at main
+# (tests/pre-push-hook.bats, round 12d2, the three item 2 cases, re-aimed).
+# The cost, each item with its witness in tests/pre-push-hook.bats: one more
+# diff-tree per push that holds a merge, over its merges alone, its stream
+# each one's whole first-parent diff, and none for a push that holds no
+# merge (round 12e, the case titled "round 12e (ITEM 1, the cost"); a side
+# commit's lines read twice, in their own commit's piece and in the merge's
+# first-parent piece, a finding there named for the side commit and for the
+# merge, as main's hook names both, and a merge's own lines twice, in its
+# combined piece and its first-parent piece, a finding in both named once
+# (round 12f, the case titled "round 12f (ITEM 1, the cost, lines read
+# twice)"); and a credential a remote already holds, which a side branch
+# added and a pushed merge brings in, is refused through the merge's
+# first-parent diff, as main's hook refuses it (parity with main, a refusal
+# the round 12e head made only where the merge wrote a line in the same
+# hunk, and earlier heads never; its witness, sidecred, round 12f, the case
+# titled "round 12f (ITEM 1, the cost, sidecred)").
 # A piece also ends as its hunk's added text ends: git's no-newline notice
-# after an added line drops that line's newline in the piece (a merge's
-# first-parent piece included), and a merge's own last line, after
-# which a combined diff prints no notice, loses it when the merge's result
-# blob ends without one (merge_tail_reads), so a rule ending in $ with no \s
-# beside it, the default sidekiq-sensitive-url among them, matches there as
-# git mode does (decision 1, the coordinator's ruling of 2026-09-26 17:20Z,
-# and item 3 of the 18:58Z ruling: that URL on the last line of a file with
-# no final newline published, in a commit and in a merge, where main's hook
-# refused it). And gitleaks skips a file whose first bytes its type check
-# (h2non/filetype v1.1.3) calls an application type, an archive, document or
+# after an added line drops that line's newline in the piece, a merge's
+# first-parent piece included, whose two-way diff prints the notice after a
+# merge's own last line where the combined diff prints none, so a rule
+# ending in $ with no \s beside it, the default sidekiq-sensitive-url among
+# them, matches there as git mode does (decision 1, the coordinator's ruling
+# of 2026-09-26 17:20Z, and item 3 of the 18:58Z ruling: that URL on the
+# last line of a file with no final newline published, in a commit and in a
+# merge, where main's hook refused it; the merge's through its first-parent
+# piece since round 12f, which retired the RESULT BLOBS read that had
+# mirrored the merge's last line from its result blob: once every merge is
+# read first-parent it decides no verdict, romp-manager's ruling on round
+# 12e's audit, its (3)). And gitleaks skips a file whose first bytes its type
+# check (h2non/filetype v1.1.3) calls an application type, an archive,
+# document or
 # executable signature (%PDF, PK, gzip, MZ, ELF, Mach-O, Dex, and ustar at
 # byte 257, DICM at 128 or CD001 at 32,769), where a skipped piece refuses
 # the push on the byte figure below; so a piece whose leading bytes would be
@@ -4060,12 +4086,15 @@ scan_identifiers() {
 # diff.ignoreSubmodules and diff.submodule (--ignore-submodules=none and
 # --submodule=short, so a gitlink change is its Subproject line), a driver's
 # binary key (--text; a merge's binary path is read whole, below). Refused
-# by name when a pushed path's diff attribute names the driver (attr_reads,
-# round 12e): a driver's textconv (the feed reads the bytes the push
-# carries, --no-textconv, where git log reads the driver's rendering of
-# them) and its algorithm (which git log keeps for the paths it diffs
-# after); a driver no pushed path's attribute names changes neither read.
-# Inert for the added lines' hunks:
+# by name (diff_settings): a driver's algorithm, which git log keeps for the
+# paths it diffs after (round 12d2, restored by romp-manager's ruling on
+# round 12e's audit, 2026-09-27 03:31Z, its (2)). Refused by name when a path
+# git log diffs for the push has a diff attribute naming the driver (the
+# NAME LISTING and DIFF ATTRIBUTES reads, name_reads and attr_reads, round
+# 12e, keyed on git's own name listing since round 12f): a driver's textconv
+# (the feed reads the bytes the push carries, --no-textconv, where git log
+# reads the driver's rendering of them); a textconv driver no listed path's
+# attribute names changes neither read. Inert for the added lines' hunks:
 # the colour and stat keys, diff.external and a driver's command (git log
 # runs neither without --ext-diff), the path prefixes (with diff.srcPrefix
 # and diff.dstPrefix, from git 2.45), the trustExitCode keys (from git 2.46,
@@ -4102,10 +4131,9 @@ scan_identifiers() {
 # lines start a new piece (the hunk header closes the piece before it, so no
 # piece holds two hunks' lines; what that costs and where it stops, a match
 # spanning two hunks published as at main, the time a file edited in many
-# places takes, a merge's first-parent hunks, read apart where they hold a
-# line the merge wrote (merge_fp_pieces, below the piecing), and the
-# first-parent anchors that read leaves, a stated limit, are in the header's
-# pieces paragraph), a file named by its sequence number in the
+# places takes, and every pushed merge's first-parent hunks, read apart
+# (merge_fp_pieces, below the piecing), are in the header's pieces
+# paragraph), a file named by its sequence number in the
 # piece directory, which begins with a line holding ~ only where gitleaks
 # would skip it by its type without one (the header; skipped, in the
 # piecing); a piece holds at most CAP bytes, and the line that would pass it
@@ -4139,46 +4167,32 @@ scan_identifiers() {
 # changes, empty files, symlinks, a gitlink added, changed and removed, a
 # missing final newline, quoted, spaced and tab names and a three-parent
 # octopus; git 2.43.0). It READS a diff header, the +++ target a header just
-# opened and the --- source (each path, /dev/null left out, written once to
-# the pushed paths' list, creds.paths, the tail marker romp-pre-push.tail
-# after the last, for the DIFF ATTRIBUTES read, attr_reads, round 12e), a
-# hunk header inside a section (1 to 63 columns: a commit of 64 or
-# more parents is refused apart, parent_counts; in a diff --combined section
-# also its result range, +<start> with an optional ,<count>, a header without
-# one foreign), a content line, its columns all + (in a commit two refs share,
-# recognized and not written again), the no-newline notice, which after a
-# content line the awk wrote drops that line's newline in the piece (decision
-# 1's mirror; after any other line it changes nothing the piece holds), and a
-# diff --combined section's index line, whose last name, the result blob
-# (--full-index spells it whole), the section's note takes. It RECOGNIZES AND
-# IGNORES, between a header and its first hunk, the
-# index (in a diff --git section), old mode, new mode, mode, new file mode,
+# opened, a hunk header inside a section (1 to 63 columns: a commit of 64 or
+# more parents is refused apart, parent_counts), a content line, its columns
+# all + (in a commit two refs share, recognized and not written again), and
+# the no-newline notice, which after a content line the awk wrote drops that
+# line's newline in the piece (decision 1's mirror; after any other line it
+# changes nothing the piece holds). It RECOGNIZES AND
+# IGNORES, between a header and its first hunk, the --- source line and the
+# index, old mode, new mode, mode, new file mode,
 # deleted file mode, similarity index, rename from and rename to lines, the
 # copy from and copy to lines -C prints (under diff.renames=copies, round
 # 12d2), and inside a hunk a line whose columns are a run of -, + and space
 # not all + (a context, removed or added-against-one-parent line, which the
-# content rule skips on purpose; in a diff --combined section one whose
-# columns hold no - is a line of the merge's result and advances the count
-# of its lines). The
-# note: for each diff --combined section in which the awk wrote a line, the
-# last such line's number in the merge's result, its piece, whether that
-# piece is path-scoped, and at the end whether it opens with the ~ line and
-# its bytes, written to the note file at the end and counted in the record,
-# unless the piece's newline was already dropped or the line is the
-# Subproject commit line of a gitlink (merge_tail_blobs reads the notes: a
-# combined diff prints no no-newline notice). And for each line it writes
-# in a diff --combined section, a line of the merge's own, the merge, the
-# line's number in the merge's result and the path, a line each in the own
-# lines' file (creds.own), counted in the record, the merge listed once in
-# the merges' file (creds.merges, as <merge>, then <merge> <merge>), for the
-# first-parent read (merge_fp_reads). And in a diff --combined
+# content rule skips on purpose). Until round 12f the awk also noted, for
+# each diff --combined section in which it wrote a line, that last line's
+# number in the merge's result for the RESULT BLOBS read, reading the
+# section's index line and each combined hunk header's result range for it,
+# and each line a merge wrote of its own for the round 12e first-parent read;
+# both are retired (romp-manager's ruling on round 12e's audit, 2026-09-27
+# 03:31Z, its (1) and (3)), and the merges the first-parent read takes come
+# from the PARENT COUNTS read. And in a diff --combined
 # section it ROUTES the line Binary files differ: a merge's combined diff
 # applies git's binary verdict whatever --text says (combine-diff.c computes
 # it without reading the text flag), printing that line and no hunk for a
 # path git calls binary in the result or in any parent, so the awk writes the
 # merge and the path the section's header names (git's quoted form) to the
-# binary file, a line each, counted in the record (and the path to the
-# pushed paths' list), and scan_credentials reads
+# binary file, a line each, counted in the record, and scan_credentials reads
 # that path whole from the merge's result blob (merge_binary_reads; the cost,
 # in the header: a merge whose binary path holds a credential a remote already
 # published refuses the push). Any other line is foreign: a dissimilarity
@@ -4190,20 +4204,17 @@ scan_identifiers() {
 # read, and a credential in a merge's binary path was published with every
 # count agreeing; the round 9 refuters, 2026-09-25). The record is one line: a
 # word that says where the read fell short (unmarked <n>, untailed <n>, short
-# <done>, foreign <n> <commit>, or nolist, the list file unread), or eight
+# <done>, foreign <n> <commit>, or nolist, the list file unread), or five
 # counts (commits read whole, pieces, bytes written, bytes of the path-scoped
-# pieces, binary notices routed, notes written, the merges' own lines noted,
-# and the pushed paths listed). The awk keeps draining
+# pieces, binary notices routed). The awk keeps draining
 # after a bad marker or a foreign line, so diff-tree is never cut off
 # mid-write and the record names the cause rather than a SIGPIPE status. Its
 # status, under pipefail, is diff-tree's, tr's or the awk's (a kill
 # included).
-# The piecing, one awk text for the four reads that write pieces
+# The piecing, one awk text for the three reads that write pieces
 # (credential_feed's awk, from the feed's added lines; merge_fp_pieces', from
-# a merge's first-parent hunks that hold a line it wrote; blob_pieces', from a
-# merge's binary path read whole; and merge_tail_blobs', which writes again
-# a piece that ends with a merge's own last line in a file with no final
-# newline), so all cut, replay, frame and index alike: the constants CAP, V,
+# a merge's first-parent hunks; and blob_pieces', from a merge's binary path
+# read whole), so all cut, replay, frame and index alike: the constants CAP, V,
 # LW and HEAD; put (a line counted and written, its newline held until the
 # next line or shut, so that nonl can drop it: git's added text ends without
 # one where the file does, and the piece ends as that text ends); the head
@@ -4276,7 +4287,6 @@ CRED_PIECES_AWK='
             if (!hd) head()
             if (nlp) printf "\n" > cur
             nlp = 0; close(cur); if (curq) pbytes += pb
-            if (pieces in pend) { cpb[pieces] = pb; ctl[pieces] = tl; cnl[pieces] = nl0 }
         }
         function newpiece(replay,   i, s, x) {
             shut()
@@ -4423,7 +4433,7 @@ CRED_PIECES_AWK='
 # (found by the round 12d2 census, which named that third key). One read: git
 # config -z --get-regexp over those three keys and every
 # diff.<driver>.algorithm and diff.<driver>.textconv (a driver's name may be
-# empty), the clone's effective values in the order git
+# empty, and is asked too), the clone's effective values in the order git
 # reads them (the system, global, local and worktree files, then the
 # environment's and the command line's), with a TAIL marker,
 # romp-pre-push.tail=end, given on this git's own command line and so read
@@ -4441,21 +4451,26 @@ CRED_PIECES_AWK='
 # when git log stopped, with a remedy; so does a value git reads and the hook
 # does not (a count spelled in octal or hex, with a sign or a space, or a
 # count with a k, m or g read as a boolean), a false refusal on a spelling
-# the hook could widen to. A diff.<driver>.algorithm or
-# diff.<driver>.textconv key refuses nothing here: its driver's name is noted
-# (drv_alg, drv_tc: each name followed by a newline, once), and the DIFF
-# ATTRIBUTES read (attr_reads, diff_attrs) refuses a pushed path whose diff
-# attribute names such a driver (romp-manager's ruling on round 12d2's
-# audit, 2026-09-27 01:25Z): git log applies a driver's algorithm to the
-# paths the diff attribute gives that driver and keeps it for every path it
-# diffs after (git 2.43.0, executed), while --diff-algorithm makes diff-tree
-# ignore a driver's algorithm, and diff-tree, reading the whole push in one
-# pass, walks the commits in another order than one git log per ref, so
-# neither framing can be mirrored; and git log reads such a path through a
-# driver's textconv, where the feed reads the pushed bytes. Until round 12e
-# any diff.<driver>.algorithm refused the push here, a false refusal for a
-# clone that sets the key for no pushed path, and a textconv refused
-# nothing. The census over git's diff keys (those git help --config lists,
+# the hook could widen to. And a diff.<driver>.algorithm key, set at all,
+# refuses the push by name: git log applies a driver's algorithm to the paths
+# the diff attribute gives that driver and keeps it for every path it diffs
+# after (git 2.43.0, executed), while --diff-algorithm makes diff-tree ignore
+# a driver's algorithm, and diff-tree, reading the whole push in one pass,
+# walks the commits in another order than one git log per ref, so neither
+# framing can be mirrored; a false refusal for a clone that sets the key for
+# no path (round 12d2's refusal, restored by romp-manager's ruling on round
+# 12e's audit, 2026-09-27 03:31Z, its (2): round 12e keyed it on the pushed
+# paths the feed's --- and +++ lines name, and a pure rename, a mode change,
+# an empty file added or deleted, and a path only a merge's first-parent
+# diff names escaped that key, each publishing a key block main's hook
+# refused through the default rule private-key). A diff.<driver>.textconv
+# key refuses nothing here: its driver's name is noted (drv_tc, each name
+# followed by a newline, once), and the DIFF ATTRIBUTES read (attr_reads,
+# diff_attrs) refuses a path git log diffs for the push whose diff attribute
+# names such a driver, since git log reads that path through the driver's
+# rendering, where the feed reads the pushed bytes; a blanket refusal would
+# refuse every push of a clone with a global textconv driver. The census
+# over git's diff keys (those git help --config lists,
 # git 2.43.0 and 2.55.0 executed, and gitattributes(5)'s
 # diff.<driver>.algorithm, which that listing lacks), each passed here, read
 # by diff-tree as git log reads it, pinned by
@@ -4463,11 +4478,11 @@ CRED_PIECES_AWK='
 # inert for the added lines' hunks, by execution: tests/pre-push-hook.bats,
 # round 12d2, the case titled "the diff keys are DERIVED". Status 1 when a
 # refusal was made (unscanned); feed_opts, the caller's, holds the three
-# options otherwise, and drv_tc and drv_alg the drivers' names.
-diff_settings() {   # sets feed_opts, drv_tc and drv_alg, the caller's
+# options otherwise, and drv_tc the textconv drivers' names.
+diff_settings() {   # sets feed_opts and drv_tc, the caller's
     local LC_ALL=C rec key val shown noval num mul tl_low="" alg=myers ihc=0 ren=-M n=0 marks=0 last="" bad="" f="$scratch/creds.diffcfg" drv
     local fixed="the credential feed was not read, and the scan follows once the setting is fixed"
-    feed_opts=(); drv_tc=""; drv_alg=""
+    feed_opts=(); drv_tc=""
     if ! judged_read gate="the DIFF SETTINGS of this clone" 0 "the DIFF SETTINGS of this clone could not be read for the credential scan (git config exited {rc}), so whether its diff.algorithm, diff.interHunkContext or diff.renames frames the pushed lines' hunks otherwise than git's defaults is unknown; $fixed" -o "$f" -- git -c romp-pre-push.tail=end config -z --get-regexp '^(diff\.algorithm|diff\.interhunkcontext|diff\.renames|diff\..*\.algorithm|diff\..*\.textconv|romp-pre-push\.tail)$'; then
         return 1
     fi
@@ -4511,8 +4526,7 @@ diff_settings() {   # sets feed_opts, drv_tc and drv_alg, the caller's
                 esac
                 [ "$bad" != x ] || bad="this clone's diff.renames is $shown, which is not a value the hook reads (true, yes, on or a count other than 0 for renames; false, no, off, 0 or an empty value for none; copies or copy; git log stops on a value it cannot read as one of those), so the credential feed cannot frame the pushed lines' hunks as gitleaks' git mode would; set it to one of those, or unset it (git config --unset-all diff.renames), or set ROMP_NO_GITLEAKS=1 for one push; $fixed" ;;
             diff.*.algorithm)
-                drv=${key#diff.}; drv=${drv%.algorithm}
-                case "$drv_alg" in "$drv"$'\n'*|*$'\n'"$drv"$'\n'*) ;; *) drv_alg="$drv_alg$drv"$'\n' ;; esac ;;
+                bad="this clone sets $key, a diff algorithm for the paths its diff attribute names, which git log applies path by path and keeps for the paths it diffs after, in the order it walks one ref's commits, so the credential feed, which reads the whole push in one pass, cannot frame the pushed lines' hunks as gitleaks' git mode would; unset it (git config --unset-all $key), or set ROMP_NO_GITLEAKS=1 for one push; $fixed" ;;
             diff.*.textconv)
                 drv=${key#diff.}; drv=${drv%.textconv}
                 case "$drv_tc" in "$drv"$'\n'*|*$'\n'"$drv"$'\n'*) ;; *) drv_tc="$drv_tc$drv"$'\n' ;; esac ;;
@@ -4529,45 +4543,41 @@ diff_settings() {   # sets feed_opts, drv_tc and drv_alg, the caller's
     return 0
 }
 # The DIFF ATTRIBUTES of the pushed paths (attr_reads; romp-manager's ruling
-# on round 12d2's audit, 2026-09-27 01:25Z): git log, gitleaks' git mode,
-# reads a path whose diff attribute names a driver with a textconv through
-# that driver's rendering, where the feed reads the bytes the push carries
-# (--no-textconv), so a credential only the rendering shows was refused at
-# main and published here; and it applies a driver's algorithm to such a
-# path and keeps it for the paths it diffs after, deleted paths included
-# (git 2.43.0, executed), which one pass over the push cannot mirror. So,
-# when diff_settings found a driver with either key (drv_tc and drv_alg: the
-# names, each followed by a newline), ONE git check-attr diff over every path
-# the feed's sections name (both sides of each: the --- source and the +++
-# target, /dev/null left out, and a merge's binary path; creds.paths, each
-# path once, in git's quoted form, which check-attr unquotes from its stdin
-# and prints again under core.quotePath=true, so each answer begins with the
-# path asked), with the tail marker romp-pre-push.tail the feed's awk writes
-# after the last path, answers each path in the order asked: <path>: diff:
-# <value>. check-attr reads the attributes git log reads (the work tree's
-# .gitattributes, .git/info/attributes, core.attributesFile, and
-# GIT_ATTR_SOURCE where set), as the hook's other attribute reads do. The awk
-# prints each path whose value is the name of a driver with a textconv, or
-# with an algorithm, a line each (textconv or algorithm, the driver, the
-# path): the value is compared as a name, so a driver named unspecified, set
-# or unset, words check-attr also prints for no attribute, a plain diff and
-# -diff, refuses the paths answered with that word (a false refusal for the
-# plain ones, on the safe side). Its record: a word (short <k>, the answers
-# read whole, the marker's among them, fewer than asked; foreign <k>, an
-# answer that does not begin with the path asked and ": diff: "; over <k>, an
-# answer past the last path; nolist, the path list unread), or two counts
-# (answers read whole, lines printed). Its status, under pipefail,
-# check-attr's or the awk's.
-diff_attrs() {   # <pushed paths file> <record file>: prints "<textconv|algorithm>\t<driver>\t<path>" for each path whose diff attribute names a driver drv_tc or drv_alg holds
+# on round 12d2's audit, 2026-09-27 01:25Z, keyed on git's own name listing
+# by the ruling on round 12e's audit, 03:31Z, its (2)): git log, gitleaks'
+# git mode, reads a path whose diff attribute names a driver with a textconv
+# through that driver's rendering, where the feed reads the bytes the push
+# carries (--no-textconv), so a credential only the rendering shows was
+# refused at main and published here. So, when diff_settings found a driver
+# with a textconv (drv_tc: the names, each followed by a newline), ONE git
+# check-attr diff over the paths the NAME LISTING read wrote (every path git
+# log diffs for the push, creds.paths, each path once, in git's quoted form,
+# which check-attr unquotes from its stdin and prints again under
+# core.quotePath=true, so each answer begins with the path asked), with the
+# tail marker romp-pre-push.tail that read's awk writes after the last path,
+# answers each path in the order asked: <path>: diff: <value>. check-attr
+# reads the attributes git log reads (the work tree's .gitattributes,
+# .git/info/attributes, core.attributesFile, and GIT_ATTR_SOURCE where set),
+# as the hook's other attribute reads do. The awk prints each path whose
+# value is the name of a driver with a textconv, a line each (textconv, the
+# driver, the path): the value is compared as a name, so a driver named
+# unspecified, set or unset, words check-attr also prints for no attribute,
+# a plain diff and -diff, refuses the paths answered with that word (a false
+# refusal for the plain ones, on the safe side). Its record: a word (short
+# <k>, the answers read whole, the marker's among them, fewer than asked;
+# foreign <k>, an answer that does not begin with the path asked and ":
+# diff: "; over <k>, an answer past the last path; nolist, the path list
+# unread), or two counts (answers read whole, lines printed). Its status,
+# under pipefail, check-attr's or the awk's.
+diff_attrs() {   # <listed paths file> <record file>: prints "textconv\t<driver>\t<path>" for each path whose diff attribute names a driver drv_tc holds
     git -c core.quotePath=true check-attr --stdin diff < "$1" \
-    | LC_ALL=C ROMP_ATTR_PATHS_FILE=$1 ROMP_ATTR_RECORD_FILE=$2 ROMP_TC_DRIVERS=$drv_tc ROMP_ALG_DRIVERS=$drv_alg awk '
+    | LC_ALL=C ROMP_ATTR_PATHS_FILE=$1 ROMP_ATTR_RECORD_FILE=$2 ROMP_TC_DRIVERS=$drv_tc awk '
         BEGIN {
             list = ENVIRON["ROMP_ATTR_PATHS_FILE"]; rec = ENVIRON["ROMP_ATTR_RECORD_FILE"]
             while ((r = (getline l < list)) > 0) want[++nw] = l
             if (r < 0) bad = "nolist"
             close(list)
             m = split(ENVIRON["ROMP_TC_DRIVERS"], a, "\n"); for (i = 1; i < m; i++) tc[a[i]] = 1
-            m = split(ENVIRON["ROMP_ALG_DRIVERS"], a, "\n"); for (i = 1; i < m; i++) alg[a[i]] = 1
             k = 0; np = 0
         }
         bad != "" { next }
@@ -4578,7 +4588,6 @@ diff_attrs() {   # <pushed paths file> <record file>: prints "<textconv|algorith
             if (k == nw) next
             v = substr($0, length(p) + 1)
             if (v in tc) { printf "textconv\t%s\t%s\n", v, want[k]; np++ }
-            if (v in alg) { printf "algorithm\t%s\t%s\n", v, want[k]; np++ }
         }
         END {
             if (bad != "")    print bad > rec
@@ -4586,87 +4595,113 @@ diff_attrs() {   # <pushed paths file> <record file>: prints "<textconv|algorith
             else              print k, np > rec
         }'
 }
-credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file> <binary paths file> <merges' last lines file> <merges' own lines file> <merges' list file> <pushed paths file> <diff-tree option>...: diff_settings' three
-    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:11}" -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short --full-index < "$1" \
+# The NAME LISTING of the pushed commits (name_reads; romp-manager's ruling
+# on round 12e's audit, 2026-09-27 03:31Z, its (2)): the key set of the DIFF
+# ATTRIBUTES read, the paths git log, gitleaks' git mode, diffs for the push,
+# taken from git's own name listing and not from the feed's --- and +++
+# lines, which a section with no content prints none of (a pure rename or
+# copy, a mode change, an empty file added or deleted), where git log runs a
+# driver's textconv over both sides all the same (git 2.43.0, executed: a
+# driver called for each of those shapes). ONE git diff-tree over the feed's
+# list, each commit fed twice as the feed feeds it, --name-status under the
+# feed's three options (diff_settings'), --diff-merges=first-parent, so a
+# merge lists the paths of its first-parent diff, as main's git log diffs
+# it, and every other commit its own, --root, -r and --ignore-submodules=none,
+# and core.quotePath=true, so each path comes in the quoted form check-attr
+# unquotes from its stdin. The awk reads the list file diff-tree reads,
+# checks each commit's head marker (its name, --always) and its tail marker
+# (its name again, for its second --stdin line) in the order fed, and writes
+# each path a status line names once to the paths' list (creds.paths): both
+# paths of a rename or a copy (R or C and a score, then two paths after a tab
+# each), the one path of any other status (A, D, M, T, U or X, then one path
+# after a tab), then the tail marker romp-pre-push.tail after the last path,
+# whatever the read met. Any other line between a commit's two names is
+# foreign. The record: a word that says where the read fell short (unmarked
+# <n>, untailed <n>, short <done>, foreign <n> <commit>, nolist), or two
+# counts (commits read whole, paths listed). Its status, under pipefail,
+# diff-tree's or the awk's.
+name_listing() {   # <list file> <record file> <paths file> <diff-tree option>...: diff_settings' three
+    git -c core.quotePath=true diff-tree --stdin -r --name-status "${@:4}" --diff-merges=first-parent --root --always --ignore-submodules=none < "$1" \
+    | LC_ALL=C ROMP_NL_LIST_FILE=$1 ROMP_NL_RECORD_FILE=$2 ROMP_PATHS_FILE=$3 awk '
+        BEGIN {
+            list = ENVIRON["ROMP_NL_LIST_FILE"]; rec = ENVIRON["ROMP_NL_RECORD_FILE"]; paths = ENVIRON["ROMP_PATHS_FILE"]
+            while ((r = (getline l < list)) > 0) if (index(l, " ") == 0) want[++nwant] = l ""
+            if (r < 0) bad = "nolist"
+            close(list); done = 0; state = 0; np = 0
+        }
+        function addpath(p) { if (!(p in pseen)) { pseen[p] = 1; print p > paths; np++ } }
+        bad != ""                        { next }
+        state == 0 {
+            if (done >= nwant || $0 "" != want[done + 1]) { bad = "unmarked " (done + 1); next }
+            sha = $0 ""; state = 1; next
+        }
+        $0 "" == sha                     { state = 0; done++; next }
+        {
+            k = split($0, a, "\t")
+            if (k == 3 && a[1] ~ /^[RC][0-9]*$/ && a[2] != "" && a[3] != "") { addpath(a[2]); addpath(a[3]); next }
+            if (k == 2 && a[1] ~ /^[ADMTUX]$/ && a[2] != "") { addpath(a[2]); next }
+            bad = "foreign " (done + 1) " " sha
+        }
+        END {
+            print "romp-pre-push.tail" > paths
+            if (bad != "")          print bad > rec
+            else if (state != 0)    print "untailed " (done + 1) > rec
+            else if (done != nwant) print "short " done > rec
+            else                    print done, np > rec
+        }'
+}
+credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file> <binary paths file> <diff-tree option>...: diff_settings' three
+    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short < "$1" \
     | LC_ALL=C tr '\000' '\001' \
-    | LC_ALL=C ROMP_LIST_FILE=$1 ROMP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 ROMP_BINARY_FILE=$6 ROMP_TAIL_FILE=$7 ROMP_OWN_FILE=$8 ROMP_MERGES_FILE=$9 ROMP_PATHS_FILE=${10} awk "$CRED_PIECES_AWK"'
+    | LC_ALL=C ROMP_LIST_FILE=$1 ROMP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 ROMP_BINARY_FILE=$6 awk "$CRED_PIECES_AWK"'
         BEGIN {
             list = ENVIRON["ROMP_LIST_FILE"]; rec = ENVIRON["ROMP_RECORD_FILE"]; dir = ENVIRON["ROMP_PIECE_DIR"]
-            idx = ENVIRON["ROMP_INDEX_FILE"]; pidx = ENVIRON["ROMP_PATH_INDEX_FILE"]; bin = ENVIRON["ROMP_BINARY_FILE"]; tails = ENVIRON["ROMP_TAIL_FILE"]
-            ownf = ENVIRON["ROMP_OWN_FILE"]; mlist = ENVIRON["ROMP_MERGES_FILE"]; paths = ENVIRON["ROMP_PATHS_FILE"]
+            idx = ENVIRON["ROMP_INDEX_FILE"]; pidx = ENVIRON["ROMP_PATH_INDEX_FILE"]; bin = ENVIRON["ROMP_BINARY_FILE"]
             while ((r = (getline l < list)) > 0) if (index(l, " ") == 0) want[++nwant] = l ""
             if (r < 0) bad = "nolist"
             close(list)
-            pieces_begin(); done = 0; state = 0; nbin = 0; nt = 0; ntail = 0; nown = 0; npath = 0
+            pieces_begin(); done = 0; state = 0; nbin = 0
             pluses = "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
-        }
-        function addpath(p) { if (!(p in pseen)) { pseen[p] = 1; print p > paths; npath++ } }
-        function endsec() {
-            if (kind == "combined" && last > 0 && ltext != "Subproject commit " res) { nt++; tsha[nt] = sha; tres[nt] = (res == "" ? "-" : res); tline[nt] = last; tpiece[nt] = lpiece; tq[nt] = lq; pend[lpiece] = 1 }
-            last = 0; res = ""
         }
                                          { wasplus = isplus; isplus = 0 }
         bad != ""                        { next }
         state == 0 {
             if (done >= nwant || $0 "" != want[done + 1]) { bad = "unmarked " (done + 1); next }
-            sha = $0 ""; state = 1; hdr = 0; n = 0; kind = ""; hp = ""; f = ""; base = ""; q = 0; open = 0; last = 0; res = ""
+            sha = $0 ""; state = 1; hdr = 0; n = 0; kind = ""; hp = ""; f = ""; base = ""; q = 0; open = 0
             skip = (sha in seen); seen[sha] = 1; next
         }
-        $0 "" == sha                     { endsec(); state = 0; done++; next }
-        /^diff --git /                   { endsec(); hdr = 1; kind = "git"; hp = ""; n = 0; f = ""; base = ""; q = 0; open = 0; next }
-        /^diff --combined /              { endsec(); hdr = 1; kind = "combined"; hp = substr($0, 17); n = 0; f = ""; base = ""; q = 0; open = 0; next }
+        $0 "" == sha                     { state = 0; done++; next }
+        /^diff --git /                   { hdr = 1; kind = "git"; hp = ""; n = 0; f = ""; base = ""; q = 0; open = 0; next }
+        /^diff --combined /              { hdr = 1; kind = "combined"; hp = substr($0, 17); n = 0; f = ""; base = ""; q = 0; open = 0; next }
         hdr && /^\+\+\+ / {
             f = substr($0, 5); sub(/\t$/, "", f)
             if (substr(f, 1, 2) == "b/") f = substr(f, 3)
             else if (substr(f, 1, 3) == "\"b/") f = "\"" substr(f, 4)
-            if (f != "/dev/null") addpath(f)
             choose(f); next
         }
-        hdr && /^--- / {
-            s = substr($0, 5); sub(/\t$/, "", s)
-            if (substr(s, 1, 2) == "a/") s = substr(s, 3)
-            else if (substr(s, 1, 3) == "\"a/") s = "\"" substr(s, 4)
-            if (s != "/dev/null") addpath(s)
-            next
-        }
-        hdr && kind == "combined" && /^index [0-9a-f,]+\.\.[0-9a-f]+( [0-7]+)?$/ { res = $0; sub(/.*\.\./, "", res); sub(/ .*/, "", res); next }
-        hdr && /^(index |old mode |new mode |mode |new file mode |deleted file mode |similarity index |rename from |rename to |copy from |copy to )/ { next }
+        hdr && /^(--- |index |old mode |new mode |mode |new file mode |deleted file mode |similarity index |rename from |rename to |copy from |copy to )/ { next }
         hdr && kind == "combined" && hp != "" && $0 == "Binary files differ" {
-            addpath(hp)
             if (!skip) { printf "%s\t%s\t.\n", sha, hp >> bin; nbin++ }
             next
         }
         kind != "" && /^@/ {
             match($0, /^@+/); n = RLENGTH - 1
             if (n < 1 || n > 63) { bad = "foreign " (done + 1) " " sha; next }
-            hdr = 0; open = 0; plus = substr(pluses, 1, n)
-            if (kind == "combined") { rn = $(n + 2); if (rn !~ /^\+[0-9]+(,[0-9]+)?$/) { bad = "foreign " (done + 1) " " sha; next } sub(/^\+/, "", rn); sub(/,.*/, "", rn); rn += 0 }
-            next
+            hdr = 0; open = 0; plus = substr(pluses, 1, n); next
         }
         !hdr && n > 0 && $0 == "\\ No newline at end of file" { if (wasplus) nonl(); next }
         !hdr && n > 0 && substr($0, 1, n) == plus {
-            if (!skip) {
-                if (!open) { open = 1; forget(); newpiece(0) }
-                emit(substr($0, n + 1)); isplus = 1
-                if (kind == "combined") {
-                    last = rn; lpiece = pieces; lq = curq; ltext = substr($0, n + 1)
-                    if (!(sha in mseen)) { mseen[sha] = 1; printf "%s\n%s %s\n", sha, sha, sha > mlist }
-                    printf "%s\t%d\t%s\t.\n", sha, rn, f > ownf; nown++
-                }
-            }
-            if (kind == "combined") rn++
+            if (!skip) { if (!open) { open = 1; forget(); newpiece(0) } emit(substr($0, n + 1)); isplus = 1 }
             next
         }
-        !hdr && n > 0 { pre = substr($0, 1, n); if (length(pre) == n && pre !~ /[^-+ ]/) { if (kind == "combined" && index(pre, "-") == 0) rn++; next } }
+        !hdr && n > 0 { pre = substr($0, 1, n); if (length(pre) == n && pre !~ /[^-+ ]/) next }
         { bad = "foreign " (done + 1) " " sha }
         END {
-            endsec(); shut()
-            for (k = 1; k <= nt; k++) if (!cnl[tpiece[k]]) { printf "%s %s %d %d %d %d %d .\n", tres[k], tsha[k], tline[k], tpiece[k], tq[k], ctl[tpiece[k]], cpb[tpiece[k]] > tails; ntail++ }
-            print "romp-pre-push.tail" > paths
+            shut()
             if (bad != "")          print bad > rec
             else if (state != 0)    print "untailed " (done + 1) > rec
             else if (done != nwant) print "short " done > rec
-            else                    print done, pieces, bytes, pbytes, nbin, ntail, nown, npath > rec
+            else                    print done, pieces, bytes, pbytes, nbin > rec
         }'
 }
 
@@ -4713,147 +4748,67 @@ blob_pieces() {   # <blob> <record file> <piece directory> <index file> <path-sc
         }'
 }
 
-# A merge's own last lines (merge_tail_reads, the header): a merge's
-# combined diff prints no no-newline notice (git 2.43.0), so the feed cannot
-# see that the last line a merge adds ends a file with no final newline, and
-# writes it with one; the default rule sidekiq-sensitive-url, which ends in $
-# with no \s beside it, then missed a URL on that line, where main's hook,
-# reading the merge first-parent, refused it (decision 5's check, item 3,
-# ruled fixed by romp-manager, 2026-09-26 18:58Z). The feed notes each
-# section of a merge whose last line written may end its file: the result
-# blob its --full-index index line names, that line's number in the result
-# (from the result range of each hunk header and the lines after it that
-# are in the result, those whose columns hold no -), the piece holding it,
-# whether that piece is path-scoped, whether it opens with the ~ line, and
-# its bytes; a gitlink's section is not noted (its line is git's own
-# Subproject commit line, with no blob behind it). ONE git cat-file --batch
-# for the push, fed that note file, answers each result blob whole: its
-# header (the name asked, blob, its size, and the rest of the line asked,
-# which %(rest) echoes and the awk compares with the line asked), then its
-# size in bytes and the newline cat-file appends. The awk counts the blob's
-# lines and reads its last byte: when the blob does not end in a newline and
-# the noted line is its last line, it checks that the piece holds the bytes
-# the feed recorded and writes the piece again through the piecing's own
-# put, nonl and shut, so the piece ends as the blob ends and its ~ line is
-# decided again on the bytes it now holds. The record: a word that says
-# where the read fell short (short <n> or cut <n>, the answers read whole
-# ahead of it; foreign <n>, an answer that is not a blob under the name and
-# line asked; over <n>, more bytes than its size; piece <n>, a piece that no
-# longer holds the bytes the feed wrote; nolist, the note file unread), or
-# four counts (blobs read whole, pieces written again, and the bytes of all
-# pieces and of the path-scoped ones, as they now stand). Its status, under
-# pipefail, is cat-file's, tr's or the awk's.
-merge_tail_blobs() {   # <note file> <record file> <piece directory> <bytes written> <path-scoped bytes written>
-    git cat-file --batch='%(objectname) %(objecttype) %(objectsize) %(rest)' < "$1" \
-    | LC_ALL=C tr '\000' '\001' \
-    | LC_ALL=C ROMP_TAIL_FILE=$1 ROMP_TAIL_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_TAIL_BYTES=$4 ROMP_TAIL_PBYTES=$5 awk "$CRED_PIECES_AWK"'
-        BEGIN {
-            list = ENVIRON["ROMP_TAIL_FILE"]; rec = ENVIRON["ROMP_TAIL_RECORD_FILE"]; dir = ENVIRON["ROMP_PIECE_DIR"]
-            while ((r = (getline l < list)) > 0) want[++nw] = l
-            if (r < 0) bad = "nolist"
-            close(list)
-            pieces_begin(); k = 0; st = 0; fits = 0; db = 0; dq = 0
-        }
-        function refit(   p, fl, r, l, m, old, i, t, qq) {
-            p = w[4]; qq = w[5] + 0; t = w[6] + 0; fl = dir "/" p; m = 0; old = 0
-            while ((r = (getline l < fl)) > 0) { old += length(l) + 1; ln[++m] = l }
-            close(fl)
-            if (r < 0 || old != w[7] + 0 || m < 1 + t || (t && ln[1] != "~")) { bad = "piece " k; return }
-            cur = fl; pb = 0; curq = qq; hd = 0; hn = 0; hb = 0; nlp = 0; nl0 = 0; tl = 0
-            for (i = 1 + t; i <= m; i++) put(ln[i])
-            nonl(); shut(); cur = ""
-            fits++; db += pb - old; if (qq) dq += pb - old
-            for (i = 1; i <= m; i++) delete ln[i]
-        }
-        bad != "" { next }
-        st == 0 {
-            if (++k > nw) { bad = "foreign " k; next }
-            split(want[k], w, " ")
-            if ($1 != w[1] || $2 != "blob" || $3 !~ /^[0-9]+$/ || substr($0, length($1 $2 $3) + 4) != substr(want[k], length(w[1]) + 2)) { bad = "foreign " k; next }
-            size = $3 + 0; got = 0; nr = 0; st = 1; next
-        }
-        {
-            got += length($0) + 1; nr++; tail = $0
-            if (got < size + 1) next
-            if (got > size + 1) { bad = "over " k; next }
-            st = 0
-            if (tail != "" && nr == w[3] + 0) refit()
-        }
-        END {
-            if (bad != "")     print bad > rec
-            else if (st != 0)  print "cut " (k - 1) > rec
-            else if (k != nw)  print "short " k > rec
-            else               print k, fits, ENVIRON["ROMP_TAIL_BYTES"] + db, ENVIRON["ROMP_TAIL_PBYTES"] + dq > rec
-        }'
-}
-
-# The first-parent hunks of the merges with lines of their own
-# (merge_fp_reads, the header; romp-manager's ruling on round 12d2's audit,
-# 2026-09-27 01:25Z, its option (a)). The feed reads a merge by the lines in
-# none of its parents (-c), and git's combined diff frames them by its own
-# hunks, which --inter-hunk-context does not fuse, while main's hook reads a
-# merge by its first-parent diff under the clone's settings: a merge's own
-# PEM private key block beside blank lines under diff.interHunkContext=3 was
-# one first-parent hunk and two combined ones (evilI), and a block a side
-# commit added without its END line, which the merge's own resolution
-# added, was whole in one first-parent hunk and in no piece (evilspan); each
-# published where main's hook refused it through the default rule
-# private-key, both scanners (round 12d2's audit, findings 1 and 2). So the
-# feed notes each line a merge writes of its own (the merge, the line's
-# number in the merge's result, the path; creds.own) and lists each such
-# merge once (creds.merges, fed as <merge>, then <merge> <merge>, as the
-# feed's list is), and ONE more git diff-tree over those merges alone
+# The first-parent hunks of every pushed merge (merge_fp_reads, the header;
+# romp-manager's ruling on round 12e's audit, 2026-09-27 03:31Z, its (1),
+# which widened the 01:25Z ruling's option (a) from the merges that write a
+# line of their own to every merge and every hunk). The feed reads a merge by
+# the lines in none of its parents (-c), and git's combined diff frames them
+# by its own hunks, which --inter-hunk-context does not fuse, while main's
+# hook reads a merge by its first-parent diff under the clone's settings: a
+# merge's own PEM private key block beside blank lines under
+# diff.interHunkContext=3 was one first-parent hunk and two combined ones
+# (evilI); a block a side commit added without its END line, which the
+# merge's own resolution added, was whole in one first-parent hunk and in no
+# piece (evilspan); and a block two side commits split, the merge writing no
+# line of its own, was whole in one first-parent hunk and in neither side
+# commit's piece (spansides); each published where main's hook refused it
+# through the default rule private-key, both scanners (round 12d2's audit,
+# findings 1 and 2, and round 12e's, finding 3). So parent_counts lists each
+# pushed merge once (creds.merges, fed as <merge>, then <merge> <merge>, as
+# the feed's list is), and ONE more git diff-tree over those merges alone
 # (--diff-merges=first-parent, which main's hook passes git log too, under
 # the clone's three settings, diff_settings', and the feed's own pins)
 # prints each merge's first-parent diff between its two name lines, the head
-# and the tail markers the feed's list gives. The awk reads the list file and
-# the own lines, checks each merge's markers in the order fed, and takes a
-# hunk when its result range (the +<start>,<count> of its header: the added
-# and context lines, in the result's numbering) holds a line the merge wrote
-# at that path; a taken hunk's added lines, context and removed lines left
-# out as gitleaks' git mode leaves them, are pieced as the feed pieces a
-# hunk (CRED_PIECES_AWK: one hunk to a piece, the ~ line decided on its
-# leading bytes, the no-newline notice after an added line dropping its
-# newline, so the piece ends as git's added text ends), numbered after the
-# pieces already written, indexed to the merge and the path, and listed in
-# the path-scoped index when choose takes the path's name; a hunk holding no
-# line the merge wrote is not written (its lines are a side commit's, read
-# in that commit, or already on a remote). It accounts for every line as the
-# feed does: a diff --git header, its +++ target, the header lines a two-way
-# diff prints (the --- source, index, the mode lines, similarity, rename and
-# copy lines), a hunk header of two @ (-<start>[,<count>] +<start>[,<count>]),
-# and inside a hunk an added, removed or context line or the no-newline
-# notice; any other line, a Binary notice among them (--text keeps a real git
-# from printing one), is foreign. The record: a word that says where the read
-# fell short (unmarked <n>, untailed <n>, short <done> <merges>, foreign <n>
-# <merge>, nolist), or five counts (merges read whole, own lines read from
-# the note file, pieces written, their bytes, and the bytes of the
-# path-scoped ones), which merge_fp_reads compares with the feed's count of
-# own lines. Its status, under pipefail, is diff-tree's, tr's or the awk's.
-merge_fp_pieces() {   # <merges' list file> <merges' own lines file> <record file> <piece directory> <index file> <path-scoped index file> <pieces already written> <diff-tree option>...: diff_settings' three
-    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:8}" --diff-merges=first-parent --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short --full-index < "$1" \
+# and the tail markers the list gives. The awk reads the list file, checks
+# each merge's markers in the order fed, and pieces every hunk's added lines,
+# context and removed lines left out as gitleaks' git mode leaves them, as
+# the feed pieces a hunk (CRED_PIECES_AWK: one hunk to a piece, the ~ line
+# decided on its leading bytes, the no-newline notice after an added line
+# dropping its newline, so the piece ends as git's added text ends), numbered
+# after the pieces already written, indexed to the merge and the path, and
+# listed in the path-scoped index when choose takes the path's name. It
+# accounts for every line as the feed does: a diff --git header, its +++
+# target, the header lines a two-way diff prints (the --- source, index, the
+# mode lines, similarity, rename and copy lines), a hunk header of two @
+# (-<start>[,<count>] +<start>[,<count>]), and inside a hunk an added,
+# removed or context line or the no-newline notice; any other line, a Binary
+# notice among them (--text keeps a real git from printing one), is foreign.
+# The record: a word that says where the read fell short (unmarked <n>,
+# untailed <n>, short <done> <merges>, foreign <n> <merge>, nolist), or five
+# counts (merges read whole, merges read from the list, pieces written,
+# their bytes, and the bytes of the path-scoped ones), which merge_fp_reads
+# compares with the count of merges parent_counts recorded. Its status, under
+# pipefail, is diff-tree's, tr's or the awk's.
+merge_fp_pieces() {   # <merges' list file> <record file> <piece directory> <index file> <path-scoped index file> <pieces already written> <diff-tree option>...: diff_settings' three
+    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" --diff-merges=first-parent --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short < "$1" \
     | LC_ALL=C tr '\000' '\001' \
-    | LC_ALL=C ROMP_FP_LIST_FILE=$1 ROMP_FP_OWN_FILE=$2 ROMP_FP_RECORD_FILE=$3 ROMP_PIECE_DIR=$4 ROMP_INDEX_FILE=$5 ROMP_PATH_INDEX_FILE=$6 ROMP_FP_PIECES=$7 awk "$CRED_PIECES_AWK"'
+    | LC_ALL=C ROMP_FP_LIST_FILE=$1 ROMP_FP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 ROMP_FP_PIECES=$6 awk "$CRED_PIECES_AWK"'
         BEGIN {
-            list = ENVIRON["ROMP_FP_LIST_FILE"]; ownf = ENVIRON["ROMP_FP_OWN_FILE"]; rec = ENVIRON["ROMP_FP_RECORD_FILE"]; dir = ENVIRON["ROMP_PIECE_DIR"]
+            list = ENVIRON["ROMP_FP_LIST_FILE"]; rec = ENVIRON["ROMP_FP_RECORD_FILE"]; dir = ENVIRON["ROMP_PIECE_DIR"]
             idx = ENVIRON["ROMP_INDEX_FILE"]; pidx = ENVIRON["ROMP_PATH_INDEX_FILE"]
             while ((r = (getline l < list)) > 0) if (index(l, " ") == 0) want[++nwant] = l ""
             if (r < 0) bad = "nolist"
             close(list)
-            nown = 0
-            while ((r = (getline l < ownf)) > 0) if (split(l, a, "\t") == 4 && a[4] == ".") { mine[a[1] "\t" a[3] "\t" (a[2] + 0)] = 1; nown++ }
-            if (r < 0) bad = "nolist"
-            close(ownf)
             pieces_begin(); first = ENVIRON["ROMP_FP_PIECES"] + 0; pieces = first; done = 0; state = 0
         }
                                          { wasplus = isplus; isplus = 0 }
         bad != ""                        { next }
         state == 0 {
             if (done >= nwant || $0 "" != want[done + 1]) { bad = "unmarked " (done + 1); next }
-            sha = $0 ""; state = 1; sec = 0; hdr = 0; n = 0; f = ""; base = ""; q = 0; open = 0; take = 0; next
+            sha = $0 ""; state = 1; sec = 0; hdr = 0; n = 0; f = ""; base = ""; q = 0; open = 0; next
         }
         $0 "" == sha                     { state = 0; done++; next }
-        /^diff --git /                   { sec = 1; hdr = 1; n = 0; f = ""; base = ""; q = 0; open = 0; take = 0; next }
+        /^diff --git /                   { sec = 1; hdr = 1; n = 0; f = ""; base = ""; q = 0; open = 0; next }
         hdr && /^\+\+\+ / {
             f = substr($0, 5); sub(/\t$/, "", f)
             if (substr(f, 1, 2) == "b/") f = substr(f, 3)
@@ -4863,17 +4818,12 @@ merge_fp_pieces() {   # <merges' list file> <merges' own lines file> <record fil
         hdr && /^(--- |index |old mode |new mode |new file mode |deleted file mode |similarity index |rename from |rename to |copy from |copy to )/ { next }
         sec && /^@/ {
             if ($0 !~ /^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@/) { bad = "foreign " (done + 1) " " sha; next }
-            hdr = 0; n = 1; open = 0; take = 0
-            c = $3; sub(/^\+/, "", c); d = 1
-            if (index(c, ",")) { d = substr(c, index(c, ",") + 1) + 0; c = substr(c, 1, index(c, ",") - 1) }
-            c += 0
-            for (i = c; i < c + d && !take; i++) if ((sha "\t" f "\t" i) in mine) take = 1
-            next
+            hdr = 0; n = 1; open = 0; next
         }
         !hdr && n > 0 && $0 == "\\ No newline at end of file" { if (wasplus) nonl(); next }
         !hdr && n > 0 && substr($0, 1, 1) == "+" {
-            if (take) { if (!open) { open = 1; forget(); newpiece(0) } emit(substr($0, 2)); isplus = 1 }
-            next
+            if (!open) { open = 1; forget(); newpiece(0) }
+            emit(substr($0, 2)); isplus = 1; next
         }
         !hdr && n > 0 && (substr($0, 1, 1) == "-" || substr($0, 1, 1) == " ") { next }
         { bad = "foreign " (done + 1) " " sha }
@@ -4882,7 +4832,7 @@ merge_fp_pieces() {   # <merges' list file> <merges' own lines file> <record fil
             if (bad != "")          print bad > rec
             else if (state != 0)    print "untailed " (done + 1) > rec
             else if (done != nwant) print "short " done " " nwant > rec
-            else                    print done, nown, pieces - first, bytes, pbytes > rec
+            else                    print done, nwant, pieces - first, bytes, pbytes > rec
         }'
 }
 
@@ -4896,11 +4846,15 @@ merge_fp_pieces() {   # <merges' list file> <merges' own lines file> <record fil
 # environment, as the feed's awk does), drops repeats the same way, and
 # checks each commit's header and its tail in the order given, so a cut
 # inside a commit's parents loses its tail and is refused; it prints each
-# commit of 64 or more parents with its count, and records one line: a word
+# commit of 64 or more parents with its count, lists each merge (a commit of
+# two or more parents) once in the merges' list (creds.merges, as <merge>,
+# then <merge> <merge>, the feed's head and tail marker shape) for the
+# first-parent read (merge_fp_reads, round 12f), and records one line: a word
 # that says where the read fell short (unmarked <n>, untailed <n>, short
-# <done>, or nolist), or three counts (commits read whole, lines of the list
-# read, commits of 64 or more parents printed), which scan_credentials
-# compares with the count it fed and the lines it read back. Its status,
+# <done>, or nolist), or four counts (commits read whole, lines of the list
+# read, commits of 64 or more parents printed, merges listed), which
+# scan_credentials compares with the count it fed and the lines it read
+# back, and merge_fp_reads with the merges its awk reads back. Its status,
 # under pipefail, is rev-list's or the awk's. rev-list re-encodes a format's
 # output into i18n.logOutputEncoding (or i18n.commitEncoding with that unset),
 # so its output encoding is pinned (--encoding=UTF-8), the tail marker then
@@ -4912,14 +4866,14 @@ merge_fp_pieces() {   # <merges' list file> <merges' own lines file> <record fil
 # (refuse_commit_encodings; the round 11 rulings' D), a false refusal on a
 # clean commit, disclosed in the header's identifier paragraph with the
 # list's other false refusals; this read still passes it.
-parent_counts() {   # <list file: one commit per line> <record file>: prints "<commit> <parent count>" for each commit of 64 or more parents
+parent_counts() {   # <list file: one commit per line> <record file> <merges' list file>: prints "<commit> <parent count>" for each commit of 64 or more parents, and lists each merge in the merges' list
     git rev-list --no-walk=unsorted --stdin --encoding=UTF-8 --format='%P%n%H' < "$1" \
-    | LC_ALL=C ROMP_REVS_FILE=$1 ROMP_COUNTS_FILE=$2 awk '
+    | LC_ALL=C ROMP_REVS_FILE=$1 ROMP_COUNTS_FILE=$2 ROMP_MERGES_FILE=$3 awk '
         BEGIN {
-            list = ENVIRON["ROMP_REVS_FILE"]; rec = ENVIRON["ROMP_COUNTS_FILE"]; listed = 0
+            list = ENVIRON["ROMP_REVS_FILE"]; rec = ENVIRON["ROMP_COUNTS_FILE"]; mlist = ENVIRON["ROMP_MERGES_FILE"]; listed = 0
             while ((r = (getline l < list)) > 0) { listed++; if (!((l "") in seen)) { seen[l ""] = 1; want[++nwant] = l "" } }
             if (r < 0) bad = "nolist"
-            close(list); done = 0; state = 0; big = 0
+            close(list); done = 0; state = 0; big = 0; nm = 0
         }
         bad != ""  { next }
         state == 0 { if (done >= nwant || ($0 "") != ("commit " want[done + 1])) { bad = "unmarked " (done + 1); next } state = 1; next }
@@ -4927,13 +4881,14 @@ parent_counts() {   # <list file: one commit per line> <record file>: prints "<c
         {
             if (($0 "") != want[done + 1]) { bad = "untailed " (done + 1); next }
             if (np >= 64) { print want[done + 1], np; big++ }
+            if (np >= 2) { printf "%s\n%s %s\n", want[done + 1], want[done + 1], want[done + 1] > mlist; nm++ }
             done++; state = 0
         }
         END {
             if (bad != "")          print bad > rec
             else if (state != 0)    print "untailed " (done + 1) > rec
             else if (done != nwant) print "short " done > rec
-            else                    print done, listed, big > rec
+            else                    print done, listed, big, nm > rec
         }'
 }
 
@@ -6113,97 +6068,98 @@ merge_binary_reads() {   # <count of routed paths the feed recorded>
     fi
 }
 
-# The merges' own last lines (the header; merge_tail_blobs): called with the
-# count of notes the feed recorded, when the feed's record is whole, ahead of
-# merge_binary_reads. One judged read; its record is four counts, whose first
-# must be that count (fewer is a note file read back short), or a word, which
-# refuses naming the read; the two figures it answers replace rbytes and
-# rpbytes, the caller's, the bytes the scanner runs are checked against. A
-# read that fails, or records neither, leaves the figures unknown: rbytes and
-# rpbytes are emptied and failed_creds set.
-merge_tail_reads() {   # <count of notes the feed recorded>
-    local want="$1" trec="" tdone="" tfit="" tb="" tpb="" rest=""
-    : > "$scratch/creds.trecord"
-    if ! judged_read gate="the RESULT BLOBS of the merges' own last lines" 0 "the RESULT BLOBS of the merges' own last lines could not be read for the credential scan (a stage of git cat-file --batch, tr and awk exited {rc})" -- merge_tail_blobs "$scratch/creds.tails" "$scratch/creds.trecord" "$scratch/creds.d" "$rbytes" "$rpbytes"; then
-        failed_creds=1; rbytes=""; rpbytes=""; return 0
-    fi
-    { IFS= read -r trec || :; } < "$scratch/creds.trecord"
-    read -r tdone tfit tb tpb rest <<< "$trec" || :
-    case "$trec" in
-        "short "*|"cut "*)
-            unscanned "the RESULT BLOBS of the merges' own last lines were read short for the credential scan (git cat-file --batch exited 0 and answered ${trec#* } of the $want blobs asked, whole)" ;;
-        "foreign "*|"over "*)
-            unscanned "the RESULT BLOBS of the merges' own last lines could not be read for the credential scan (git cat-file --batch exited 0 and answered blob ${trec#* } of the $want asked as no blob under the name and line asked, or with more bytes than its size)" ;;
-        "piece "*)
-            unscanned "the PIECE holding a merge's own last line no longer holds the bytes the credential feed wrote there (note ${trec#* } of $want), so the line's missing final newline cannot be mirrored" ;;
-        *)
-            case "$tdone:$tfit:$tb:$tpb:${rest:+x}" in
-                *[!0-9:]*|:*|*::*)
-                    unscanned "the RESULT BLOBS of the merges' own last lines could not be read for the credential scan (its awk exited 0 and recorded \"$trec\", not four counts)" ;;
-                *)
-                    if [ "$tdone" -eq "$want" ]; then rbytes=$tb; rpbytes=$tpb; return 0; fi
-                    unscanned "the notes of the merges' own last lines the CREDENTIAL FEED of the push wrote were read back short ($tdone of the $want its awk recorded), so the rest cannot be mirrored" ;;
-            esac ;;
-    esac
-    failed_creds=1; rbytes=""; rpbytes=""
-    return 0
-}
-
 # The merges' first-parent hunks (the header; merge_fp_pieces): called with
-# the count of own lines the feed recorded, when the feed's record is whole
-# and holds one or more, ahead of merge_tail_reads, so a push with no merge
-# that writes a line of its own runs no extra diff-tree. One judged read; its
-# record is five counts, whose second must be that count (fewer is the own
-# lines' note file read back short), or a word, which refuses naming the
-# read; its pieces are numbered after the feed's, so rpieces, rbytes and
-# rpbytes, the caller's, grow by the pieces and bytes it wrote. A read that
-# fails, or records neither, leaves the figures unknown: rbytes and rpbytes
-# are emptied and failed_creds set.
-merge_fp_reads() {   # <count of own lines the feed recorded>
-    local want="$1" frec="" fdone="" fown="" fp="" fb="" fpb="" rest="" n="" fsha=""
+# the count of merges the PARENT COUNTS read listed, when the feed's record
+# is whole and that count is one or more, so a push that holds no merge runs
+# no extra diff-tree. One judged read; its record is five counts, whose
+# second must be that count (fewer is the merges' list read back short), or a
+# word, which refuses naming the read; its pieces are numbered after the
+# feed's, so rpieces, rbytes and rpbytes, the caller's, grow by the pieces and
+# bytes it wrote. A read that fails, or records neither, leaves the figures
+# unknown: rbytes and rpbytes are emptied and failed_creds set.
+merge_fp_reads() {   # <count of merges the PARENT COUNTS read listed>
+    local want="$1" frec="" fdone="" fnw="" fp="" fb="" fpb="" rest="" n="" fsha=""
     : > "$scratch/creds.frecord"
-    if ! judged_read gate="the FIRST-PARENT DIFF of the merges with lines of their own" 0 "the FIRST-PARENT DIFF of the merges with lines of their own could not be read for the credential scan (a stage of git diff-tree, tr and awk exited {rc})" -- merge_fp_pieces "$scratch/creds.merges" "$scratch/creds.own" "$scratch/creds.frecord" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$rpieces" "${feed_opts[@]}"; then
+    if ! judged_read gate="the FIRST-PARENT DIFF of the pushed merges" 0 "the FIRST-PARENT DIFF of the pushed merges could not be read for the credential scan (a stage of git diff-tree, tr and awk exited {rc})" -- merge_fp_pieces "$scratch/creds.merges" "$scratch/creds.frecord" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$rpieces" "${feed_opts[@]}"; then
         failed_creds=1; rbytes=""; rpbytes=""; return 0
     fi
     { IFS= read -r frec || :; } < "$scratch/creds.frecord"
     case "$frec" in
         "unmarked "*)
-            unscanned "the FIRST-PARENT DIFF of the merges with lines of their own was read short for the credential scan (git diff-tree exited 0 and did not open merge ${frec#unmarked } of those it was given with the line naming it, the marker --always asks for ahead of each diff, or printed a line after the last merge's tail marker)" ;;
+            unscanned "the FIRST-PARENT DIFF of the pushed merges was read short for the credential scan (git diff-tree exited 0 and did not open merge ${frec#unmarked } of those it was given with the line naming it, the marker --always asks for ahead of each diff, or printed a line after the last merge's tail marker)" ;;
         "untailed "*)
-            unscanned "the FIRST-PARENT DIFF of the merges with lines of their own was read short for the credential scan (git diff-tree exited 0 and did not close merge ${frec#untailed } of those it was given with the line naming it again, the tail marker its second --stdin line asks for)" ;;
+            unscanned "the FIRST-PARENT DIFF of the pushed merges was read short for the credential scan (git diff-tree exited 0 and did not close merge ${frec#untailed } of those it was given with the line naming it again, the tail marker its second --stdin line asks for)" ;;
         "short "*)
             n=${frec#short }
-            unscanned "the FIRST-PARENT DIFF of the merges with lines of their own was read short for the credential scan (git diff-tree exited 0 and ended after ${n% *} of the ${n#* } merges it was given)" ;;
+            unscanned "the FIRST-PARENT DIFF of the pushed merges was read short for the credential scan (git diff-tree exited 0 and ended after ${n% *} of the ${n#* } merges it was given)" ;;
         "foreign "*)
             n=${frec#foreign }; fsha=${n#* }
-            unscanned "the FIRST-PARENT DIFF of the merges with lines of their own could not be read whole for the credential scan (git diff-tree exited 0 and printed a line inside merge ${n%% *} of those it was given, ${fsha:0:10}, that is none of the shapes a two-way diff prints, so what that line stands for went unread)" ;;
+            unscanned "the FIRST-PARENT DIFF of the pushed merges could not be read whole for the credential scan (git diff-tree exited 0 and printed a line inside merge ${n%% *} of those it was given, ${fsha:0:10}, that is none of the shapes a two-way diff prints, so what that line stands for went unread)" ;;
         *)
-            read -r fdone fown fp fb fpb rest <<< "$frec" || :
-            case "$fdone:$fown:$fp:$fb:$fpb:${rest:+x}" in
+            read -r fdone fnw fp fb fpb rest <<< "$frec" || :
+            case "$fdone:$fnw:$fp:$fb:$fpb:${rest:+x}" in
                 *[!0-9:]*|:*|*::*)
-                    unscanned "the FIRST-PARENT DIFF of the merges with lines of their own could not be read for the credential scan (its awk exited 0 and recorded \"$frec\", not five counts)" ;;
+                    unscanned "the FIRST-PARENT DIFF of the pushed merges could not be read for the credential scan (its awk exited 0 and recorded \"$frec\", not five counts)" ;;
                 *)
                     rpieces=$((rpieces + fp))
-                    if [ "$fown" -eq "$want" ]; then rbytes=$((rbytes + fb)); rpbytes=$((rpbytes + fpb)); return 0; fi
-                    unscanned "the lines the merges wrote of their own, which the CREDENTIAL FEED of the push noted, were read back short ($fown of the $want its awk recorded), so a first-parent hunk holding the rest may go unread" ;;
+                    if [ "$fnw" -eq "$want" ]; then rbytes=$((rbytes + fb)); rpbytes=$((rpbytes + fpb)); return 0; fi
+                    unscanned "the merges the PARENT COUNTS of the pushed commits listed were read back short for their FIRST-PARENT DIFF ($fnw of the $want its awk recorded), so a merge the list lost goes unread" ;;
             esac ;;
     esac
     failed_creds=1; rbytes=""; rpbytes=""
     return 0
 }
 
-# The pushed paths' diff attributes (the header; diff_attrs): called with
-# the count of paths the feed recorded, when the feed's record is whole and
-# the clone gives some driver a textconv or an algorithm (diff_settings), so
-# a clone that gives none runs no check-attr. One judged read; its record is
-# two counts (answers read whole, the tail marker's among them, and lines
-# printed), the first of which must be that count and one, or a word, which
-# refuses naming the read; each line printed refuses the push, naming the
-# key, the driver and the path, with the remedy.
-attr_reads() {   # <count of paths the feed recorded>
+# The name listing of the pushed commits (the header; name_listing): called
+# when the feed's record is whole and the clone gives some driver a textconv
+# (diff_settings), ahead of attr_reads, which reads the paths it lists, so a
+# clone that gives none runs neither. One judged read; its record is two
+# counts (commits read whole, paths listed), the first of which must be the
+# count fed, or a word, which refuses naming the read. Status 0 with the list
+# whole, the count of paths in rlisted, the caller's; status 1 when a refusal
+# was made (failed_creds set).
+name_reads() {   # sets rlisted, the caller's
+    local nrec="" ndone="" npaths="" rest="" n="" fsha=""
+    rlisted=""
+    : > "$scratch/creds.nrecord"
+    if ! judged_read gate="the NAME LISTING of the pushed commits" 0 "the NAME LISTING of the pushed commits could not be read for the credential scan (a stage of git diff-tree and awk exited {rc}), so which paths git log diffs, and so which a driver's textconv renders, is unknown" -- name_listing "$scratch/creds.list" "$scratch/creds.nrecord" "$scratch/creds.paths" "${feed_opts[@]}"; then
+        failed_creds=1; return 1
+    fi
+    { IFS= read -r nrec || :; } < "$scratch/creds.nrecord"
+    case "$nrec" in
+        "unmarked "*)
+            unscanned "the NAME LISTING of the pushed commits was read short for the credential scan (git diff-tree exited 0 and did not open commit ${nrec#unmarked } of the $nfed it was given with the line naming it, the marker --always asks for ahead of each listing, or printed a line after the last commit's tail marker)" ;;
+        "untailed "*)
+            unscanned "the NAME LISTING of the pushed commits was read short for the credential scan (git diff-tree exited 0 and did not close commit ${nrec#untailed } of the $nfed it was given with the line naming it again, the tail marker its second --stdin line asks for)" ;;
+        "short "*)
+            unscanned "the NAME LISTING of the pushed commits was read short for the credential scan (git diff-tree exited 0 and ended after ${nrec#short } of the $nfed commits it was given)" ;;
+        "foreign "*)
+            n=${nrec#foreign }; fsha=${n#* }
+            unscanned "the NAME LISTING of the pushed commits could not be read whole for the credential scan (git diff-tree exited 0 and printed a line inside commit ${n%% *} of those it was given, ${fsha:0:10}, that is no status line of --name-status, so a path that line stands for went unlisted)" ;;
+        *)
+            read -r ndone npaths rest <<< "$nrec" || :
+            case "$ndone:$npaths:${rest:+x}" in
+                *[!0-9:]*|:*|*::*)
+                    unscanned "the NAME LISTING of the pushed commits could not be read for the credential scan (its awk exited 0 and recorded \"$nrec\", not two counts)" ;;
+                *)
+                    if [ "$ndone" -eq "$nfed" ]; then rlisted=$npaths; return 0; fi
+                    unscanned "the NAME LISTING of the pushed commits was read short for the credential scan (its awk recorded $ndone commits read whole of the $nfed it was given)" ;;
+            esac ;;
+    esac
+    failed_creds=1
+    return 1
+}
+
+# The listed paths' diff attributes (the header; diff_attrs): called with
+# the count of paths the NAME LISTING read recorded, when that read was
+# whole. One judged read; its record is two counts (answers read whole, the
+# tail marker's among them, and lines printed), the first of which must be
+# that count and one, or a word, which refuses naming the read; each line
+# printed refuses the push, naming the driver and the path, with the remedy.
+attr_reads() {   # <count of paths the NAME LISTING read recorded>
     local want="$1" arec="" adone="" aprinted="" rest="" akind adrv apath np=0
     : > "$scratch/creds.arecord"
-    if ! judged_read gate="the DIFF ATTRIBUTES of the pushed paths" 0 "the DIFF ATTRIBUTES of the pushed paths could not be read for the credential scan (a stage of git check-attr and awk exited {rc}), so whether a pushed path's diff attribute names a driver this clone gives a textconv or an algorithm is unknown" -- diff_attrs "$scratch/creds.paths" "$scratch/creds.arecord"; then
+    if ! judged_read gate="the DIFF ATTRIBUTES of the pushed paths" 0 "the DIFF ATTRIBUTES of the pushed paths could not be read for the credential scan (a stage of git check-attr and awk exited {rc}), so whether a pushed path's diff attribute names a driver this clone gives a textconv is unknown" -- diff_attrs "$scratch/creds.paths" "$scratch/creds.arecord"; then
         failed_creds=1; return 0
     fi
     { IFS= read -r arec || :; } < "$scratch/creds.arecord"
@@ -6223,13 +6179,10 @@ attr_reads() {   # <count of paths the feed recorded>
                             textconv)
                                 np=$((np + 1))
                                 unscanned "this clone sets diff.$adrv.textconv, a textconv driver for $apath, whose diff attribute names $adrv: git log, which gitleaks' git mode runs, reads that path through the driver's rendering, while the credential feed reads the bytes the push carries, so a credential only the rendering shows goes unread; review $apath by hand, then set ROMP_NO_GITLEAKS=1 for that push" ;;
-                            algorithm)
-                                np=$((np + 1))
-                                unscanned "this clone sets diff.$adrv.algorithm, a diff algorithm for $apath, whose diff attribute names $adrv: git log applies it to that path and keeps it for the paths it diffs after, in the order it walks one ref's commits, so the credential feed, which reads the whole push in one pass, cannot frame the pushed lines' hunks as gitleaks' git mode would; review the pushed changes by hand, then set ROMP_NO_GITLEAKS=1 for that push" ;;
                         esac
                     done <<< "$read_out"
                     if [ "$adone" -ne $((want + 1)) ]; then
-                        unscanned "the pushed paths the CREDENTIAL FEED of the push listed were read back short for their DIFF ATTRIBUTES ($adone of the $((want + 1)) lines its awk wrote, the tail marker's among them), so a path the list lost may go unrefused"
+                        unscanned "the pushed paths the NAME LISTING of the pushed commits listed were read back short for their DIFF ATTRIBUTES ($adone of the $((want + 1)) lines its awk wrote, the tail marker's among them), so a path the list lost may go unrefused"
                     elif [ "$np" -ne "$aprinted" ]; then
                         unscanned "the DIFF ATTRIBUTES of the pushed paths were read short for the credential scan (its awk printed $np of the $aprinted refusals it recorded)"
                     else
@@ -6281,14 +6234,14 @@ piece_dirs() {   # <directory>...: makes each; prints nothing
 # the feed's list and once to the parent counts' list, one redirect each for
 # the whole loop; then the parent counts (parent_counts, judged as the PARENT
 # COUNTS read: its status, then its record, the list's lines read against the
-# count fed, each commit of 64 or more parents refused by name); then ONE
-# feed over the push (credential_feed, judged as the CREDENTIAL FEED read:
-# its status, then its record, the commits read whole against the count fed,
-# a foreign line refused naming its commit); then, when the feed's record is
-# whole, the first-parent hunks of each merge that writes a line of its own
-# (merge_fp_reads), the pushed paths' diff attributes when the clone gives a
-# driver a textconv or an algorithm (attr_reads), the merges' own last lines
-# (merge_tail_reads), and each merge's binary path it routed, read whole
+# count fed, each commit of 64 or more parents refused by name, each merge
+# listed); then ONE feed over the push (credential_feed, judged as the
+# CREDENTIAL FEED read: its status, then its record, the commits read whole
+# against the count fed, a foreign line refused naming its commit); then,
+# when the feed's record is whole, the first-parent hunks of every pushed
+# merge (merge_fp_reads), the paths git log diffs for the push and their
+# diff attributes when the clone gives a driver a textconv (name_reads,
+# attr_reads), and each merge's binary path the feed routed, read whole
 # (merge_binary_reads);
 # then, when the config carries a per-rule or targeted path allowlist, the
 # skip canary's run over pieces of its own (skip_canary); then the scan of
@@ -6310,7 +6263,7 @@ piece_dirs() {   # <directory>...: makes each; prints nothing
 scan_credentials() {
     local gl local_ref local_sha _remote_ref remote_sha revs rev peeled peeled_read nfed record n what
     # shellcheck disable=SC2034  # cfg_name: set by gitleaks_config, for the lines that name the config the runs read
-    local rdone rpieces rbytes rpbytes rbin rtail rown rpath rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning dmade=0 dmiss dfirst d cfg_name="" cfg_forms="" gl_version="" drv_tc="" drv_alg=""
+    local rdone rpieces rbytes rpbytes rbin rmerge="" rlisted="" fwhole=0 rest piece fsha fpath fterm data pdone plisted pbig pmerge nbig pcount scanning dmade=0 dmiss dfirst d cfg_name="" cfg_forms="" gl_version="" drv_tc=""
     local sname prule qtext qbytes qn qwant qv qp_pkcs qp_nuget qp_k8s qp_tf qp_php kind qa qb qc qd qnamed qmiss qfound qother qend qseen seen_lines="" run_rc=0
     local -a cfg=() ix_sha ix_path pdirs feed_opts=()
     if ! credential_scan_armed; then
@@ -6348,14 +6301,14 @@ scan_credentials() {
             done >> "$scratch/creds.list" 4>> "$scratch/creds.revs"
         done 5<<< "$refs"
         mkdir "$scratch/creds.d" "$scratch/creds.p" "$scratch/creds.q"
-        : > "$scratch/creds.index"; : > "$scratch/creds.pindex"; : > "$scratch/creds.record"; : > "$scratch/creds.binary"; : > "$scratch/creds.tails"; : > "$scratch/creds.parents"; : > "$scratch/creds.own"; : > "$scratch/creds.merges"; : > "$scratch/creds.paths"
+        : > "$scratch/creds.index"; : > "$scratch/creds.pindex"; : > "$scratch/creds.record"; : > "$scratch/creds.binary"; : > "$scratch/creds.parents"; : > "$scratch/creds.merges"; : > "$scratch/creds.paths"
         # The parent counts (parent_counts): a commit of 64 or more parents
         # refuses the push by name, since git's combined diff cannot show the
         # lines such a merge adds (the header); the lines of the list read are
         # compared with the count fed, and the commits printed with the count
-        # the awk recorded.
+        # the awk recorded; the merges it lists are the first-parent read's.
         if [ "$nfed" -gt 0 ]; then
-            if judged_read gate="the PARENT COUNTS of the pushed commits" 0 "the PARENT COUNTS of the pushed commits could not be read for the credential scan (a stage of git rev-list and awk exited {rc})" -- parent_counts "$scratch/creds.revs" "$scratch/creds.parents"; then
+            if judged_read gate="the PARENT COUNTS of the pushed commits" 0 "the PARENT COUNTS of the pushed commits could not be read for the credential scan (a stage of git rev-list and awk exited {rc})" -- parent_counts "$scratch/creds.revs" "$scratch/creds.parents" "$scratch/creds.merges"; then
                 record=""
                 { IFS= read -r record || :; } < "$scratch/creds.parents"
                 case "$record" in
@@ -6369,14 +6322,14 @@ scan_credentials() {
                         unscanned "the PARENT COUNTS of the pushed commits were read short for the credential scan (git rev-list exited 0 and ended after ${record#short } of the commits it was given)"
                         failed_creds=1 ;;
                     *)
-                        pdone=""; plisted=""; pbig=""; rest=""
-                        read -r pdone plisted pbig rest <<< "$record" || :
-                        case "$pdone:$plisted:$pbig:${rest:+x}" in
+                        pdone=""; plisted=""; pbig=""; pmerge=""; rest=""
+                        read -r pdone plisted pbig pmerge rest <<< "$record" || :
+                        case "$pdone:$plisted:$pbig:$pmerge:${rest:+x}" in
                             *[!0-9:]*|:*|*::*)
-                                unscanned "the PARENT COUNTS of the pushed commits could not be read for the credential scan (its awk exited 0 and recorded \"$record\", not three counts)"
+                                unscanned "the PARENT COUNTS of the pushed commits could not be read for the credential scan (its awk exited 0 and recorded \"$record\", not four counts)"
                                 failed_creds=1 ;;
                             *)
-                                nbig=0
+                                rmerge=$pmerge; nbig=0
                                 while read -r fsha pcount; do
                                     [ -n "$fsha" ] || continue
                                     nbig=$((nbig + 1))
@@ -6400,12 +6353,12 @@ scan_credentials() {
         # and handed to its diff-tree, so its hunks are the ones git log
         # frames for main's hook; a setting unread, or one the hook does not
         # pass, refuses by name, and the feed is not read.
-        rbytes=""; rpbytes=""; rbin=""; rtail=""; rown=""; rpath=""
+        rbytes=""; rpbytes=""; rbin=""
         if [ "$nfed" -eq 0 ]; then
             rbytes=0; rpbytes=0
         elif ! diff_settings; then
             failed_creds=1
-        elif judged_read gate="the CREDENTIAL FEED of the push" 0 "the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk exited {rc})" -- credential_feed "$scratch/creds.list" "$scratch/creds.record" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$scratch/creds.binary" "$scratch/creds.tails" "$scratch/creds.own" "$scratch/creds.merges" "$scratch/creds.paths" "${feed_opts[@]}"; then
+        elif judged_read gate="the CREDENTIAL FEED of the push" 0 "the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk exited {rc})" -- credential_feed "$scratch/creds.list" "$scratch/creds.record" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$scratch/creds.binary" "${feed_opts[@]}"; then
             record=""
             { IFS= read -r record || :; } < "$scratch/creds.record"
             case "$record" in
@@ -6429,41 +6382,38 @@ scan_credentials() {
                     unscanned "the CREDENTIAL FEED of the push was read short (git diff-tree exited 0 and ended after ${record#short } of the $nfed commits it was given)"
                     failed_creds=1 ;;
                 *)
-                    rdone=""; rpieces=""; rbytes=""; rpbytes=""; rbin=""; rtail=""; rown=""; rpath=""; rest=""
-                    read -r rdone rpieces rbytes rpbytes rbin rtail rown rpath rest <<< "$record" || :
-                    case "$rdone:$rpieces:$rbytes:$rpbytes:$rbin:$rtail:$rown:$rpath:${rest:+x}" in
+                    rdone=""; rpieces=""; rbytes=""; rpbytes=""; rbin=""; rest=""
+                    read -r rdone rpieces rbytes rpbytes rbin rest <<< "$record" || :
+                    case "$rdone:$rpieces:$rbytes:$rpbytes:$rbin:${rest:+x}" in
                         *[!0-9:]*|:*|*::*)
-                            unscanned "the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"$record\", not eight counts)"
-                            failed_creds=1; rbytes=""; rpbytes=""; rown=""; rpath="" ;;
+                            unscanned "the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"$record\", not five counts)"
+                            failed_creds=1; rbytes=""; rpbytes="" ;;
                         *)
                             if [ "$rdone" -ne "$nfed" ]; then
                                 unscanned "the CREDENTIAL FEED of the push was read short (its awk recorded $rdone commits read whole of the $nfed it was given)"
-                                failed_creds=1; rbytes=""; rpbytes=""; rown=""; rpath=""
+                                failed_creds=1; rbytes=""; rpbytes=""
+                            else
+                                fwhole=1
                             fi ;;
                     esac ;;
             esac
         else
             failed_creds=1
         fi
-        # The first-parent hunks of each merge that writes a line of its own
-        # (merge_fp_reads), when the feed's record is whole and noted such a
-        # line: the hunks holding one are pieced as main's hook frames them,
-        # and the figures follow; no merge line of its own, no read.
-        if [ -n "$rbytes" ] && [ -n "$rown" ] && [ "$rown" -gt 0 ]; then
-            merge_fp_reads "$rown"
+        # The first-parent hunks of every pushed merge (merge_fp_reads), when
+        # the feed's record is whole and the PARENT COUNTS read listed a
+        # merge: each merge's first-parent hunks are pieced as main's hook
+        # frames them, and the figures follow; a push holding no merge, no
+        # read.
+        if [ -n "$rbytes" ] && [ -n "$rmerge" ] && [ "$rmerge" -gt 0 ]; then
+            merge_fp_reads "$rmerge"
         fi
-        # The pushed paths' diff attributes (attr_reads), when the feed's
-        # record is whole and the clone gives some driver a textconv or an
-        # algorithm: a pushed path whose attribute names such a driver
-        # refuses by name.
-        if [ -n "$rpath" ] && [ -n "$drv_tc$drv_alg" ]; then
-            attr_reads "$rpath"
-        fi
-        # The merges' own last lines the feed noted (merge_tail_reads), when
-        # its record is whole: a piece whose last line ends a file with no
-        # final newline is written again without it, and the figures follow.
-        if [ -n "$rbytes" ] && [ -n "$rtail" ] && [ "$rtail" -gt 0 ]; then
-            merge_tail_reads "$rtail"
+        # The paths git log diffs for the push, when the feed's record is
+        # whole and the clone gives some driver a textconv: the NAME LISTING
+        # read (name_reads) lists them, and the DIFF ATTRIBUTES read
+        # (attr_reads) refuses each whose diff attribute names such a driver.
+        if [ "$fwhole" -eq 1 ] && [ -n "$drv_tc" ] && name_reads; then
+            attr_reads "$rlisted"
         fi
         # Each merge's binary path the feed routed, read whole
         # (merge_binary_reads), when the feed's record is whole: its pieces

@@ -801,10 +801,14 @@ feed_lines() {   # <line>: how many lines of what the stub was handed equal it e
 @test "pre-push hook: a line typed into a merge's resolution is in what the scanner reads" {
     # A merge is read by its combined diff, the lines in none of its parents:
     # a line typed into a conflict resolution is in no parent, so it is handed
-    # to the scanner, while a line the merge brings in from a parent is not
-    # handed over a second time. Wiring only; the scanner finding a real
-    # credential in a merge is pinned against real gitleaks in
-    # tests/pre-push-hook.bats.
+    # to the scanner. Since round 12f every pushed merge is also read by its
+    # first-parent diff, as main's hook reads it (romp-manager's ruling on
+    # round 12e's audit, 2026-09-27 03:31Z, its (1)), so the typed line is
+    # handed over twice, in the combined piece and the first-parent piece, and
+    # so is the side commit's line, in its own commit's piece and the merge's
+    # first-parent piece; main's line, the first parent's own, once. Wiring
+    # only; the scanner finding a real credential in a merge is pinned against
+    # real gitleaks in tests/pre-push-hook.bats.
     setup_hook_repo
     setup_gitleaks_stub 0
     echo "base" > "$WORK/base.txt"
@@ -821,9 +825,9 @@ feed_lines() {   # <line>: how many lines of what the stub was handed equal it e
     git -C "$WORK" add -A && git -C "$WORK" commit -qm merge
     run git -C "$WORK" push origin HEAD:main
     [ "$status" -eq 0 ]
-    [ "$(feed_lines "typed in the resolution")" -eq 1 ]
-    # From the side commit alone: a first-parent read of the merge would hand it over twice.
-    [ "$(feed_lines "side line")" -eq 1 ]
+    [ "$(feed_lines "typed in the resolution")" -eq 2 ]
+    # From the side commit and from the merge's first-parent diff, which holds it.
+    [ "$(feed_lines "side line")" -eq 2 ]
     [ "$(feed_lines "main line")" -eq 1 ]
 }
 
