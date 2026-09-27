@@ -3,7 +3,7 @@ title: tests/test_feed_focus_latency_served.py: a tab change made in the chat mo
 status: candidate
 where: tests/test_feed_focus_latency_served.py (DRIVER: the init script's message listener with the handoff:activeChat stamp and the two holds, setHoldRelay, setHoldFrame, waitFeedHop, roads d3_strip_click_kernel_frame_first and d4_strip_click_relay_first; FeedFocusLatencyServed._chat_side; FeedFocusLatencyServed.test_3c_whichever_signal_reaches_the_feed_first_moves_the_section, new); upstream/2026-09-27-feed-focus-first-signal.md (this entry)
 added: 2026-09-27
-pr:
+pr: 927
 tier: docs
 offered:
 closed:
