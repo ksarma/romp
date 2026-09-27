@@ -2884,13 +2884,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // mousedown, each then another document's tap; no browser cell drives either order).
   // The chain rule's pins: browser cells in the dashboard's shape, the viewer's frame beside another pane's frame over a bar of
   // the top page (file-figure-open-taps.ts chainCells), for Firefox's lone click, Chromium's click under another touch's
-  // pointerId and WebKit's touch whose pointerup this window never heard, each red at 142ade155, and on the Files pane under a
-  // gate without the rule that closes it, and node guards in the outline suite over the same orders; the autoscroll's order,
-  // WebKit's touch ending in a touchcancel and a pen in the touch order have node guards alone, since no cell in the tree drives
-  // them: no browser here drives a pen in the touch order, no cell a touchcancel, and the autoscroll's order needs Firefox's
-  // autoscroll preference set at the browser's launch, which the legs' shared launcher (real-viewer-leg.ts inBrowser) does not set;
-  // a probe kept out of the tree that set it read that order opening the tab with the sign covered at 142ade155 and refused here,
-  // the next click opening.
+  // pointerId and WebKit's touch whose pointerup this window never heard, each red at 142ade155, and on the chat and the Files
+  // pane under a gate without the rule that closes it, and node guards in the outline suite over the same orders; the
+  // autoscroll's order, WebKit's touch ending in a touchcancel and a pen in the touch order have node guards alone, since no cell
+  // in the tree drives them: no browser here drives a pen in the touch order, no cell a touchcancel, and the autoscroll's order
+  // needs Firefox's autoscroll preference set at the browser's launch, which the legs' shared launcher (real-viewer-leg.ts
+  // inBrowser) does not set; a probe kept out of the tree that set it read that order opening the tab with the sign covered at
+  // 142ade155 and refused here, the next click opening.
   // The residual, which no event this window hears tells from the viewer's own tap: an element of another same-origin document
   // shown over the picture during the viewer's own tap takes that tap's compatibility events and click, and then a tap on that
   // element over the control, which goes away during the press, reaches this window as a mousedown, a mouseup of detail 1 and a
