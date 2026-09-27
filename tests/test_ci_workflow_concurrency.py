@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
 """When CI runs, and which of its runs cancel which (.github/workflows/ci.yml, 2026-09-08 and 2026-09-27).
 
-Triggers (2026-09-27): the workflow runs on a push to main or to a batch branch (`batch/**`), by hand
+Triggers (2026-09-27): the workflow runs on a push to a batch branch (`batch/**`), by hand
 (workflow_dispatch) and on its weekly schedule, and on nothing else. A member PR runs no CI of its own:
 the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate (scripts/batch.py
-verify and land read it), GitHub's full matrix runs once on the batch branch, whose PR shows that push
-run's checks on its head, and once on the merge to main. The gate is the workflow's `on:` block and not
-a job-level `if:`: `pull_request`'s branch filter selects the base branch, so singling out batch PRs
-there would need an `if:` on every job, and a skipped job reports success (a required check reads it
-as passing). CiTriggers reads the `on:` block; NoJobLevelGate refuses an `if:` or `continue-on-error:`
-on any of the four jobs.
+verify and land read it), and GitHub's full matrix runs once on the batch branch, whose PR shows that
+push run's checks on its head. A merge to main runs none: batch.py land refuses a batch whose head does
+not contain main (tests/test_batch_tool.py, VerifyBehind), so the merge commit's tree is the batch
+head's, which the batch push already tested. The gate is the workflow's `on:` block and not a job-level
+`if:`: `pull_request`'s branch filter selects the base branch, so singling out batch PRs there would
+need an `if:` on every job, and a skipped job reports success (a required check reads it as passing).
+CiTriggers reads the `on:` block; NoJobLevelGate refuses an `if:` or `continue-on-error:` on any of the
+four jobs.
 
 Concurrency (2026-09-08, extended 2026-09-27): the group was `ci-<event>-<ref>` with cancel-in-progress
 for every event, so two merges to main in quick succession cancelled the first merge's run, and a red
 main went unseen until a later run happened to fail. Pushes to main are keyed on the commit sha, one
 group per merge commit, so every merge gets its own completed run (a queue would not do: a group holds
-at most one pending run, so a third merge would replace the second's). A push to a batch branch is
+at most one pending run, so a third merge would replace the second's); main is no longer a push trigger,
+and the keying stays so that adding it back cannot bring the failure back. A push to a batch branch is
 keyed on the branch and cancels the older run there: a rebuild's new head supersedes the old one. A
 dispatch queues rather than cancels, and the event name stays in the key so a dispatch (the macOS gate)
 is never cancelled by a push to the same ref (2026-07-27). CiConcurrency evaluates the stanza's two
@@ -137,7 +140,7 @@ def job_keys(src=None):
 
 
 class CiTriggers(unittest.TestCase):
-    """The workflow runs on pushes to main and to batch branches, by hand, and on the schedule; never on a PR event."""
+    """The workflow runs on pushes to batch branches, by hand, and on the schedule; never on a PR event or a push to main."""
 
     def setUp(self):
         self.events = triggers()
@@ -154,15 +157,19 @@ class CiTriggers(unittest.TestCase):
                          "push: carries %s; a paths, paths-ignore, branches-ignore or tags filter changes which pushes run CI"
                          % sorted(self.filters))
 
-    def test_push_runs_on_main_and_on_batch_branches_and_nothing_else(self):
+    def test_push_runs_on_batch_branches_and_nothing_else(self):
         patterns = (self.filters or {}).get("branches") or []
 
         def match(ref):
             return any(glob_matches(p, ref) for p in patterns)
-        for ref in ("main", "batch/2026-09-28a", "batch/2026-10-01b"):
+        for ref in ("batch/2026-09-28a", "batch/2026-10-01b"):
             self.assertTrue(match(ref), "a push to %s must run CI (branches: %r)" % (ref, patterns))
         for ref in ("ci-sdk-install", "quickfix-x", "stack/a", "mainline", "batch", "xbatch/2026-09-28a", "feature/batch/x"):
             self.assertFalse(match(ref), "a push to the member branch %s must not run CI (branches: %r)" % (ref, patterns))
+        # A merge to main re-tests the tree the batch push tested (land refuses a batch behind main), so
+        # a full run there spends a private repository's minutes on a repeat (2026-09-27).
+        self.assertFalse(match("main"), "a push to main runs CI again (branches: %r); the batch push already tested "
+                                        "the tree a batch merge lands" % (patterns,))
 
     def test_the_manual_dispatch_stays(self):
         self.assertIn("workflow_dispatch", self.events, "the manual on-switch (the macOS gate) is gone")
@@ -353,6 +360,8 @@ class CiConcurrency(unittest.TestCase):
         return _truthy(render(self.cancel_t, run(*a)))
 
     def test_pushes_to_main_get_a_group_per_commit_and_never_cancel(self):
+        # main is not a push trigger (CiTriggers); the keying is held anyway, so adding main back cannot
+        # make one merge's run cancel or replace another's (2026-09-08)
         a, b = self.group("push", MAIN, SHA_A), self.group("push", MAIN, SHA_B)
         self.assertNotEqual(a, b, "two merges to main share the group %r: the second would cancel or replace the first" % a)
         self.assertFalse(self.cancels("push", MAIN, SHA_A), "a push to main cancels an in-flight run: main's CI must never cancel itself")

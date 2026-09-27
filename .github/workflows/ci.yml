@@ -4,10 +4,12 @@ name: CI
 # postal/), the shell surfaces (hooks / postal / manager), and the VS Code
 # extension build; and scan the whole history for credentials (the secrets job).
 #
-# LINUX runs on every push to main and to a batch branch (batch/**), and by hand; it is free on a
-# public repo, with no minute cap. Member PRs run none: the local sweep (scripts/sweep.py) at the
-# batch head gates them (docs/batching.md), so a private repository would spend its minutes once
-# per batch head and once per merge.
+# LINUX runs on every push to a batch branch (batch/**) and by hand; it is free on a public repo,
+# with no minute cap. Member PRs and merges to main run none (2026-09-27): the local sweep
+# (scripts/sweep.py) recorded at the batch head is the landing gate, and scripts/batch.py land
+# refuses a batch whose head does not contain main, so the merge commit's tree is the batch head's
+# tree, the one this workflow tested on the batch push (docs/batching.md). A private repository
+# then spends its minutes once per batch head.
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
 # an earlier note here said it was billed), but the macOS cells are slow (the bats
 # suite alone is about 16 minutes) and the runners are scarcer, so they do NOT run
@@ -27,12 +29,14 @@ name: CI
 
 on:
   push:
-    # Pushes to main and to a batch branch, nothing else (2026-09-27): a member PR runs no CI of its
-    # own. The local sweep (scripts/sweep.py) at the batch head is the landing gate; this workflow runs
-    # once on the batch branch, whose PR shows that run's checks on its head, and once on the merge to
-    # main. pull_request is not a trigger: its branch filter selects the BASE branch, so picking out
-    # batch PRs there would take a job-level `if:`, and a skipped job reports success.
-    branches: [main, 'batch/**']
+    # Pushes to a batch branch, nothing else (2026-09-27). A member PR runs no CI of its own: the
+    # local sweep (scripts/sweep.py) at the batch head is the landing gate, and this workflow runs
+    # once on the batch branch, whose PR shows that run's checks on its head. A merge to main runs
+    # none either: scripts/batch.py land refuses a batch whose head does not contain main, so the
+    # merge commit's tree is the tree this workflow already tested on the batch push. pull_request
+    # is not a trigger: its branch filter selects the BASE branch, so picking out batch PRs there
+    # would take a job-level `if:`, and a skipped job reports success.
+    branches: ['batch/**']
   workflow_dispatch:   # the manual on-switch for the macOS cells (see above)
   schedule:
     # The macOS cells also run ONCE A WEEK on their own (2026-09-16): with the manual switch alone the
@@ -47,14 +51,15 @@ on:
 # dispatch (the macOS gate, on main or on a batch branch) is keyed apart from
 # that ref's pushes, so a push never cancels it; a bare ref key let an
 # auto-merged PR cancel the in-flight release run mid-watch (2026-07-27).
-# Pushes to main are keyed on the commit sha and never cancelled: main's CI
-# must never cancel itself. With one group per ref, two merges in quick
-# succession cancelled the first merge's run, and a red main (2e9d4492,
-# 2026-09-08) went unseen until a later run happened to fail; a queue would
-# not do either, since a group holds at most one pending run and a third merge
-# would replace the second's. One group per merge commit, so every merge gets
-# its own completed run. A dispatch queues rather than cancels for the same
-# reason: a release gate mid-watch is not superseded by a second dispatch.
+# main is not a push trigger (see `on:`), but the group still keys a push to
+# main on the commit sha and never cancels it, so adding main back cannot bring
+# back what that rule fixed: main's CI must never cancel itself. With one group
+# per ref, two merges in quick succession cancelled the first merge's run, and
+# a red main (2026-09-08) went unseen until a later run happened to fail; a
+# queue would not do either, since a group holds at most one pending run and a
+# third merge would replace the second's. A dispatch queues rather than cancels
+# for the same reason: a release gate mid-watch is not superseded by a second
+# dispatch.
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/batch/') }}
@@ -90,7 +95,7 @@ jobs:
       fail-fast: false
       matrix:
         # macOS is in the matrix ONLY on a manual run (workflow_dispatch) or the weekly
-        # schedule; a batch or main push gets Linux alone. See the billing note in the header.
+        # schedule; a batch push gets Linux alone. See the billing note in the header.
         os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
         python-version: ['3.10', '3.13']
         include:
