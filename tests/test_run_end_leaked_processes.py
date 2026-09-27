@@ -15,8 +15,8 @@ witness is the pid and the command line. Keyed on that property, never on a bina
 real postal bus started from the peer-notify guard test's revive road with the environment of the test process,
 detached, so the test's end never reached it; it kept writing into a shared state root every 30 s and turned another
 module's snapshot test red in one CI cell; at the same commit the run ended green. The classes the check does not read,
-and the one process it passes over while the premise of the pass-over holds, are listed, each with its reason, in the
-comment above LEAK_EXIT_BOUND_S in tests/conftest.py.
+and the one process it passes over while it reads the premise of the pass-over as holding, are listed, each with its
+reason, in the comment above LEAK_EXIT_BOUND_S in tests/conftest.py.
 
 Pinned by execution, each half where it lives. Scanner, over a stand-in root handed to the scan alone: a child holding
 the root through TMPDIR, through another name, through one component of a ':'-joined value, through its cwd, through an
@@ -47,10 +47,11 @@ process a non-daemon thread starts after its test returned is named, and a daemo
 idle pool a test left is waited the whole bound and reported as still running (the join's named cost, timed up to the
 check's first read of /proc); without procfs the check says so once and leaves the exit status alone, and Scanner's
 roots test, which reads no /proc, runs there; a test that leaves nothing ends the run green with no holder line. The
-controller's own multiprocessing resource tracker is passed over while nothing but the controller and the tracker holds
-its pipe (it held the root while the test ran; the run ends green and the tracker is gone once the run's process has
-exited). The premise, each in a child run whose test starts the tracker: a forked child that keeps the pipe past the
-run's end gets it named, with the child's pid on its line, and both are gone once the run's process has exited; one that
+controller's own multiprocessing resource tracker is passed over while no descriptor table the check can read, other
+than the controller's and the tracker's, holds its pipe (it held the root while the test ran; the run ends green and
+the tracker is gone once the run's process has exited). The premise, each in a child run whose test starts the
+tracker: a forked child that keeps the pipe past the run's end gets it named, with the child's pid on its line, and
+both are gone once the run's process has exited; one that
 exits three seconds after the fork leaves it passed over at the default bound and named under a zero bound; under a stub
 that refuses the reads of /proc/<pid>/fd, for every process or for every process but the controller, it is named with
 the pipe unread; under one that refuses the reads of the tracker's environment, cwd and descriptors together, as a
@@ -1140,8 +1141,9 @@ class RunEnd(unittest.TestCase):
         line = self._line(out, tracker)
         self.assertIn("from multiprocessing.resource_tracker import main;main(", line)
         self.assertRegex(line, r"holds the root through [^|]*\bTMPDIR\b", "the tracker holds the root as before")
-        self.assertTrue(line.endswith(" | " + KEPT + "pid %d also holds the pipe it reads from, so it does not exit with the "
-                                      "controller" % keeper), line)
+        self.assertTrue(line.endswith(" | " + KEPT + "pid %d also holds the pipe it reads from, so the tracker exits "
+                                      "with the controller only if no other holder of that pipe is left when the "
+                                      "controller exits" % keeper), line)
         self.assertEqual([x for x in out.splitlines() if x.startswith("[tests]   pid %d " % keeper)], [],
                          "the child holds no path under a root, so the tracker's line alone names it:\n" + out)
         self.assertEqual(gone, [True, True], "the child was reaped at the child run's exit, and the tracker exited then")
@@ -1321,7 +1323,8 @@ def _fork_keeping_the_trackers_pipe(seconds, non_dumpable=False):
     exits. The tracker's pid goes under "tracker" in the marker dir and the child's pid and start time under "keeper",
     both kept out of the `pid-` records, whose cleanup sends SIGKILL to a pid that may be reused by then. The child holds
     a descriptor on the pipe's write end from the fork: a second one, dup'd here before the fork and closed here after
-    it, since 3.13.14 and 3.14.6 close a raw fork's copy of the record's own (gh-146313), which 3.12 and earlier keep too.
+    it, since 3.13.14 and 3.14.5 close a raw fork's copy of the record's own (gh-146313; 3.14.4 still keeps it, and so
+    do 3.12 and earlier).
     Asked `non_dumpable`, the child makes itself non-dumpable (PR_SET_DUMPABLE 0) and says so in a ready file before
     this returns. The child only sleeps and leaves through os._exit, so it runs nothing of the pytest process it was
     forked from; this process kills and reaps it at its exit (atexit, which runs after the run-end check has read /proc),

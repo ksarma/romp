@@ -400,11 +400,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   root and lists itself nowhere, and is read all the same, since its root is a
   path under a run root. It waits for the one event it can observe, each
   holder's exit, up to `LEAK_EXIT_BOUND_S` (5 s: a signalled child exits well
-  inside it). The wait starts only when a holder is seen or a process is listed
-  as not judged (below): a run with neither pays nothing for it, and a run that
-  leaves only a listed process waits for its exit, up to the whole bound, and
-  stays green. The controller's own resource tracker is never waited for, listed
-  or not: it cannot exit while the controller holds its pipe (below). If any
+  inside it). The wait starts when a holder is seen, when a process is listed as
+  not judged (below), or when a process other than the controller and the
+  tracker is found holding the tracker's pipe (below): a run with none of the
+  three pays nothing for it, and a run that leaves only a listed process waits
+  for its exit, up to the whole bound, and stays green. The controller's own
+  resource tracker is never waited for, listed or not: it does not exit on its
+  own while the controller holds its pipe (it ignores SIGINT and SIGTERM). If any
   still hold a root the run is RED and each is named: pid, parent, command line,
   what it holds the root through (the environment names, `cwd`, `fd`, `argv`),
   and the test phase current at its spawn (`PYTEST_CURRENT_TEST` in the
@@ -415,21 +417,27 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   property, never on a binary's name: a postal bus, a kernel, a session host and a
   mock ssh's orphaned `sleep` are the same leak (the tunnels module's mocks `exec`
   their trailing sleep since the check found the orphans). One process is passed
-  over, by identity and never by its name, and only while the premise of the
-  pass-over holds: the controller's own `multiprocessing` resource tracker (the
-  pid its `multiprocessing.resource_tracker` records for its tracker, while that
-  pid is the controller's child). The stdlib starts it on demand (a spawn-context
-  `ProcessPoolExecutor` starts it, as `tests/test_session_env.py`'s census pool
-  class does), and it ignores SIGINT and SIGTERM and exits when the last write end
-  of its pipe closes. The premise is that it exits with the controller, which
-  holds while no live process other than the controller and the tracker holds that
-  pipe. The check reads the pipe from `/proc` (the one the controller's record
-  writes to, when the tracker holds a descriptor on it too) and reads every live
-  process's descriptors for it. A process holding it (a test's forked child
-  inherits a write end, a spawn-context worker is handed one) leaves the tracker
-  judged like any process, so named when it holds a root, as it does in a serial
-  run, with that process's pid on its line; so does a pipe the check cannot read,
-  or a tracker holding no descriptor on it, with the reason on its line. The
+  over, by identity and never by its name, and only while the check reads the
+  premise of the pass-over as holding: the controller's own `multiprocessing`
+  resource tracker (the pid its `multiprocessing.resource_tracker` records for
+  its tracker, while that pid is the controller's child). The stdlib starts it
+  on demand (a spawn-context `ProcessPoolExecutor` starts it, as
+  `tests/test_session_env.py`'s census pool class does), and it ignores SIGINT
+  and SIGTERM and exits when the last write end of its pipe closes. The premise
+  is that it exits with the controller, which the check reads as: no descriptor
+  table it can read, other than the controller's and the tracker's, holds that
+  pipe (a process whose descriptors cannot be read, and a descriptor in flight,
+  are not read for it: below). The check reads the pipe from `/proc` (the one
+  the controller's record writes to, when the tracker holds a descriptor on it
+  too) and reads the descriptor table of every other live process it can read
+  for it. A process holding it (a child forked through `multiprocessing`'s fork
+  context keeps the controller's write end and a spawn-context worker is handed
+  one, on every version; a raw `os.fork` child keeps it on 3.12 and earlier, and
+  on 3.13 and 3.14 before the gh-146313 releases, which close a raw fork's copy
+  in the child) leaves the tracker judged like any process, so named when it
+  holds a root, as it does in a serial run, with that process's pid on its line;
+  so does a pipe the check cannot read, or a tracker holding no descriptor on
+  it, with the reason on its line. The
   premise is read before the wait, which then waits for the exit of each process
   holding the pipe too, and again after it, where it decides. Where the premise
   cannot be read the check's own scope decides: without procfs the check runs
@@ -472,9 +480,14 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
     run's in the same cgroup (a sibling test's child run under pytest-xdist, a
     second run started from the same shell), which is listed too; other users'
     processes, and this user's started before the run or in another cgroup, are a
-    count of unreadable processes printed with any report. The controller's own
-    resource tracker is the exception to that count: outside the condition it is
-    neither listed nor counted (above);
+    count of unreadable processes printed with any report of a holder or a listed
+    process. The controller's own resource tracker is the exception to that
+    count: outside the condition it is neither listed nor counted (above);
+  - a descriptor on the tracker's pipe in flight: the pipe is read from
+    descriptor tables only, so a write end queued in a unix socket and not yet
+    received, which is in no process's table once its sender has closed its own
+    copy, keeps the tracker running after the controller has gone, unseen, and
+    the tracker is passed over;
   - a process started after the scan: by a non-daemon thread still running when
     the join's bound ran out, by a daemon thread, or by any process outside this
     one. The threads of the first two kinds are reported by count and name, with
