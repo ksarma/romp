@@ -215,7 +215,7 @@ test("a frame beside this one or inside it, sharing its top and listed in its fr
   shell.parent = shell;
   shell.top = shell;
   const pane: Win = { name: "a pane framed in the shell", parent: shell, top: shell, location: { origin: ORIGIN } };
-  const sibling: Win = { name: "a sandboxed frame beside the pane", parent: shell, top: shell };
+  const sibling: Win = { name: "a frame beside the pane", parent: shell, top: shell };
   const child: Win = { name: "a sandboxed frame inside the pane", parent: pane, top: shell };
   const ownChild: Win = { name: "a frame inside the pane on its origin", parent: pane, top: shell };
   holdFrames(pane, [child, ownChild]);
