@@ -8650,7 +8650,9 @@ click came right after such a mouseup, the lone click below alone excepted, and 
 detail 0), the slot's press only when a click typed as the slot's pointerup was carries that pointerup's pointerId, and a
 touch-order pen's slot (a primary pen whose own mousedown had not come by its pointerup: iPadOS's Pencil and Android's and
 ChromeOS's styluses, read and not run) only after that pen's compatibility mousedown and by a click typed pen under the pen's
-pointerId or by one with no pointerId; the slot is emptied by any pointerdown, pointercancel or keydown, by the mousedown below
+pointerId or by one with no pointerId, the wait for that mousedown defensive, since a mouseup whose mousedown went to another
+element came to the viewer's window with detail 0 in every order measured, so the tail refuses such a click, and pinned by a row
+of the pen's node guard, red under a gate without the wait; the slot is emptied by any pointerdown, pointercancel or keydown, by the mousedown below
 and by the click that takes it, and never by time; a key's or a script's click reads neither and is read at the click; and a
 primary press ends every earlier record whatever its pointer type, a record ends at its own pointerup, which hands it to the slot,
 and at its own pointercancel, every record ends at a dragstart and at a mousedown with no pointerdown of a mouse or a pen before
@@ -8666,7 +8668,7 @@ iPhone tap's click the touch's own pointerId, read and not run on a device; the 
 the slot refilled at every pointerup, read by no key's or script's click, and a click whose press the viewer's window did not hear
 refused by that mousedown's clear, the tail or the slot's pointerId test, the residual below aside; that mousedown's clear of the
 slot is pinned: before it, a tap on another document's element over the picture that went away during the press, whose
-compatibility mousedown and click alone reach the viewer's window, took the slot a right click, a middle click or a two-finger
+compatibility mousedown, mouseup and click reach the viewer's window with no pointerdown or pointerup, took the slot a right click, a middle click or a two-finger
 touch had filled and opened the tab with the sign covered or out of view at the tap's start, measured in the three engines in the
 dashboard's shape, the viewer's page in a same-origin frame; the tail, the slot's pointerId test and the touch records' refusal
 are pinned too, each by browser cells red at 142ade155 in the engine whose road it closes, in the dashboard's shape beside another
@@ -8680,17 +8682,21 @@ no event the viewer hears tells from the viewer's own tap: an element of another
 during the viewer's tap takes that tap's compatibility events and click, and a tap on that element, which goes away during the
 press, then reaches the viewer as a mousedown, a mouseup of detail 1 and a click and takes the slot the viewer's tap filled,
 measured by the closing check at 142ade155 in the dashboard's shape in Firefox 16 of 16 and in WebKit 7 of 7, and 0 of 36 in
-Chromium, whose foreign click carries its own touch's pointerId, and in it by reading a second finger resting on another document
+Chromium under a candidate of this gate with the slot's pointerId test, whose foreign click carries its own touch's pointerId, and in it by reading a second finger resting on another document
 during the viewer's tap and a tap whose click the engine withholds, in Firefox and WebKit, and a foreign tap by the same pen under
-the same pointerId, while today the only element of the dashboard's top page that cancels a pointerdown is the update banner's
-drag handle, which stays put during a press, and whether to accept it is the owner's decision; the chain rule's costs, each a
-refusal that reveals the control: in WebKit, measured, a tap whose pointerup another document's element takes opens nothing and
-the next tap opens, and, unmeasured, on a Firefox touchscreen whose tap's click came typed touch under a pointerId other than its
-pointerup's every tap would be refused, the tab opening only from the mouse or the keyboard, a pen in the touch order whose click
-comes typed mouse, as WebKitGTK would type it by analogy with a touch's, would have every tap refused, a tap during which another
-finger that touched the viewer lifts, in an engine that clicks after such a tap, is refused, and so is a pointer's click with no
-primary mouseup of detail above 0 before it, an assistive technology's with a pointerId and no mouseup or an eraser's whose
-mouseup does not carry the primary button, while Enter or Space still opens; the primary press's clear's cost on a device with a
+the same pointerId; reaching it needs an element that appears over the picture during a tap, while the fact that today the only
+element of the dashboard's top page that cancels a pointerdown is the update banner's drag handle, which stays put during a press,
+bears on Firefox's lone click, which the tail closes; whether to accept the residual is the owner's decision; the gate's cost measured in WebKit,
+the same at 142ade155: a tap whose pointerup another document's element takes opens nothing and reveals the control and the next
+tap opens, its click carrying pointerId 1 and finding its press only in the slot, which no pointerup of that tap filled; the chain
+rule's costs, none measured, each a refusal that reveals the control: on a Firefox touchscreen whose tap's click came typed touch
+under a pointerId other than its pointerup's every tap would be refused, the tab opening only from the mouse or the keyboard, a pen
+in the touch order whose click comes typed mouse, as WebKitGTK would type it by analogy with a touch's, would have every tap
+refused, the tab still opening from a finger, the mouse or the keyboard, a tap during which another finger that touched the viewer
+lifts, in an engine that clicks after such a tap, is refused, since a touchend marks every touch record refused, and so is a
+pointer's click with no primary mouseup of detail above 0 before it, an assistive technology's with a pointerId and no mouseup or
+an eraser's whose mouseup does not carry the primary button, while Enter or Space still opens, and an engine whose touchend came
+before its pointerup would refuse every tap (none of the three measured); the primary press's clear's cost on a device with a
 mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type lands elsewhere loses its
 record, so its click opens nothing and reveals; the cost of ending the records, measured in WebKit: after a drag anywhere in the
 page, another pane's included, the mouse's next click on a web picture opens nothing and reveals its sign, whatever covers or
