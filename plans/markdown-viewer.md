@@ -8650,15 +8650,23 @@ click came right after such a mouseup, the lone click below alone excepted, and 
 detail 0), the slot's press only when a click typed as the slot's pointerup was carries that pointerup's pointerId, and a
 touch-order pen's slot (a primary pen whose own mousedown had not come by its pointerup: iPadOS's Pencil and Android's and
 ChromeOS's styluses, read and not run) only after that pen's compatibility mousedown and by a click typed pen under the pen's
-pointerId or by one with no pointerId, the wait for that mousedown defensive, since a mouseup whose mousedown went to another
-element came to the viewer's window with detail 0 in every order measured, so the tail refuses such a click, and pinned by a row
-of the pen's node guard, red under a gate without the wait; the slot is emptied by any pointerdown, pointercancel or keydown, by the mousedown below,
-by a mouseup other than a primary one of detail above 0, which clears the tap's flag too, since such a mouseup is the last event of
-a gesture whose click the viewer's window will not hear, and by the click that takes it, and never by time; a key's or a script's
+pointerId or by one with no pointerId, the wait for that mousedown defensive in every gesture a browser here drives, since none
+drives a pen in that order, and pinned by a row of the pen's node guard, red under a gate without the wait, the tail not refusing
+every such click, since a mouseup whose mousedown went to another element came to the viewer's window with detail 0 in the order
+the closing check at 142ade155 measured, the viewer's own tap whose compatibility mousedown the top page took, and with detail 1
+and a click after it where that window had heard a mouse's press begin and not end (the first of the two orders below); the slot
+is emptied by any pointerdown, pointercancel or keydown, by the mousedown below,
+by a mouseup other than a primary one of detail above 0, which clears the tap's flag too, since such a mouseup ends a press whose
+click the viewer's window will not hear (a chorded button's mouseup, which comes before its gesture's own pointerup and click,
+finds the records and the slot already emptied by that button's mousedown), and by the click that takes it, and never by time; a
+key's or a script's
 click reads neither and is read at the click; and a
 primary press ends every earlier record whatever its pointer type, a record ends at its own pointerup, which hands it to the slot,
 and at its own pointercancel, every record ends at a dragstart and at a mousedown with no pointerdown of a mouse or a pen before
-it, which takes no verdict, since WebKit's drag of a picture ends with no pointerup and no pointercancel, and WebKit sends the
+it, which takes no verdict, since WebKit's drag of a picture ends with no pointerup and no pointercancel, and in Firefox a tap on
+another document's element over the control with the mouse held on the picture starts a drag of it, whose dragstart ends the
+mouse's record before that tap's click reads it (its node guard red under a gate whose dragstart ends no record; the closing check
+at 142ade155 after the fixes for the file review's round 18), and WebKit sends the
 mouse's next press after a press whose pointerup never came, a drag in another pane among them, as a mousedown with no
 pointerdown, and that mousedown empties the slot too unless it is the compatibility mousedown of the one-finger tap, or of the
 touch-order pen, whose pointerup filled the slot, and a touchend or a touchcancel marks every touch record refused, the record
@@ -8669,7 +8677,8 @@ carries pointerId 1 of type mouse where its press carried the touch's, a type ot
 iPhone tap's click the touch's own pointerId, read and not run on a device; the slot's clears but that mousedown's and the
 mouseup's are defensive, the slot refilled at every pointerup, read by no key's or script's click, and a click whose press the
 viewer's window did not hear refused by that mousedown's clear, the mouseup's, the tail or the slot's pointerId test, the residual
-below aside, the mouseup's clear of the tap's flag defensive too, since that mouseup empties the slot and only a pointerup fills it
+and the two orders below aside, the mouseup's clear of the tap's flag defensive too, since that mouseup empties the slot and only
+a pointerup fills it
 and sets the flag again; that mousedown's clear of the
 slot is pinned: before it, a tap on another document's element over the picture that went away during the press, whose
 compatibility mousedown, mouseup and click reach the viewer's window with no pointerdown or pointerup, took the slot a right click, a middle click or a two-finger
@@ -8693,7 +8702,14 @@ press, then reaches the viewer as a mousedown, a mouseup of detail 1 and a click
 measured by the closing check at 142ade155 in the dashboard's shape in Firefox 16 of 16 and in WebKit 7 of 7, and 0 of 36 in
 Chromium under a candidate of this gate with the slot's pointerId test, whose foreign click carries its own touch's pointerId,
 under this gate the same probe reading Firefox 16 of 16, WebKit 7 of 7 and Chromium 0 of 51 and every other order of the class it
-drives opening nothing, and in it by reading a second finger resting on another document
+drives opening nothing, a check of these fixes finding two more orders of the class outside the residual that open, at 142ade155
+and at 1a6470e72 too, for the owner with it, no cell driving either: in WebKit the mouse held on the control or on the picture, or
+in Firefox the mouse pressed on the control and released over another pane, then a tap on another document's element over the
+control that hides at that tap's compatibility mousedown, heard as a mouseup of detail 1 and a click alone, whose click reads the
+mouse's record, WebKit 22 of 22 and Firefox 7 of 7, a mouseup with no pointerup since that record's pointerdown telling it from
+the mouse's own click, and in Firefox, after that release, a mouse click on such an element, whose pointerup hands the mouse's
+record to the slot, 10 of 10, which no event the viewer hears tells from its own press dragged out of the frame and back, Chromium
+opening neither, and in it by reading a second finger resting on another document
 during the viewer's tap and a tap whose click the engine withholds, in Firefox and WebKit, and a foreign tap by the same pen under
 the same pointerId; reaching it needs an element that appears over the picture during a tap, while the fact that today the only
 element of the dashboard's top page that cancels a pointerdown is the update banner's drag handle, which stays put during a press,
@@ -8710,8 +8726,10 @@ an eraser's whose mouseup does not carry the primary button, while Enter or Spac
 whose pointerup a mouseup other than a primary one of detail above 0 came, an order none of the three engines measured sends before
 a click, and an engine whose touchend came before its pointerup would refuse every tap (none of the three measured); the primary
 press's clear's cost on a device with a
-mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type lands elsewhere loses its
-record, so its click opens nothing and reveals; the cost of ending the records, measured in WebKit: after a drag anywhere in the
+mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type lands elsewhere in the
+viewer's window loses its record, so its click opens nothing and reveals, while one that lands on another document's element
+leaves the record standing unless a mousedown with no pointerdown or a dragstart ends it, and in WebKit that press's click reads
+it (the first of the two orders above); the cost of ending the records, measured in WebKit: after a drag anywhere in the
 page, another pane's included, the mouse's next click on a web picture opens nothing and reveals its sign, whatever covers or
 shows it, a right click before that drag included, and the click after it opens, and where a press's pointerup never comes the
 mouse's next click is refused the same way, while Chromium and Firefox end such a drag with a pointercancel and carry no cost; the
