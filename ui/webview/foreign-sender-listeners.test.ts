@@ -22,9 +22,11 @@
 // the strip, the file viewer's way back), so each is lifted out of its file by the TypeScript parser, from its function to
 // its closing brace, transpiled and run over stubs: every free identifier it reads is an inert stub except the effect it
 // is tested for, which counts, windowSender, which is the real helper, and window, which is the stand-in the helper reads.
-// A representative arm per listener reaches its effect once from every heard sender and never from a foreign one (the
-// way back has a leg per arm: hostUp, and the probe); the head check sits before every arm, which the census below pins
-// at source for every listener in ui/.
+// A representative arm per listener reaches its effect once from every heard sender and never from a foreign one; the
+// head check sits before every arm, which the census below pins at source for every listener in ui/. A listener declared
+// in ARMS (the way back) has a leg per declared arm (hostUp, and the probe), which the executed-leg census holds to exactly
+// one each; each of those legs counts its own arm's effect once and the other arm's twice, so a heard sender that reaches
+// the wrong arm fails as well as a foreign one that reaches either.
 //
 // The census reads the population instead of a list: every addEventListener("message", …) call in a ui/ source file
 // (tests excluded), the method named or a computed member, and every onmessage handler assigned to the window (by window,
@@ -282,24 +284,31 @@ const stub: any = new Proxy(function () { /* inert */ }, {
 const chain: any = { then: () => chain, catch: () => chain };   // a fetch's promise chain that never settles
 
 type Lifted = { file: string; marker: string; what: string; data: unknown;
-                named: (hit: () => void, w: Receiver) => Record<string, unknown>;   // the effect's binding, counting through hit
+                // the effect's binding, counting through hit; arm is the leg's own arm, for a scope with more than one effect
+                named: (hit: () => void, w: Receiver, arm: string | undefined) => Record<string, unknown>;
                 writes?: string;   // or: the effect is a write to this free name
-                arm?: string };    // a listener with more than one arm the check must hold has a leg per arm, each naming its arm
-/** The file viewer's way back (openFileView's onKernelMessage) over a pane that waits, with the probes' budget full. Both of
- *  its effects count: the way back (wayBackEvent, which runs the fetch again) and a probe of the picture's address
- *  (probeServed, which sends one), so each of its two legs reads that a foreign sender reaches neither, and that a heard
- *  sender reaches its own arm's effect and not the other's. */
-const wayBackScope = (hit: () => void): Record<string, unknown> => ({
-  wayBackEvent: hit, probeServed: () => { hit(); return true; }, paneWaits: () => true,
-  wayBackProbing: false, wayBackProbes: 3, wayBackSeq: 0, objUrl: "/file?path=docs%2Ffigure.svg&sid=" + SID + "&v=1",
-});
+                arm?: string };    // a leg of a listener declared in ARMS names the declared arm it runs
+/** The file viewer's way back (openFileView's onKernelMessage) over a pane that waits, with the probes' budget full, for the
+ *  leg that runs `arm`. Both of its effects count: the way back (wayBackEvent, which runs the fetch again), the hostUp arm's,
+ *  and a probe of the picture's address (probeServed, which sends one), the probe arm's. The leg's own arm's effect counts
+ *  once and the other arm's twice, so a foreign sender that reaches either arm counts, and a heard sender counts exactly
+ *  once only when it reaches its own arm's effect and not the other's. An arm the way back does not have is refused. */
+const wayBackScope = (hit: () => void, arm: string | undefined): Record<string, unknown> => {
+  if (arm !== "hostUp" && arm !== "probe") throw new Error("the way back has no arm " + JSON.stringify(arm) + ": its arms are hostUp and probe");
+  const other = (): void => { hit(); hit(); };
+  const [wayBack, probe] = arm === "hostUp" ? [hit, other] : [other, hit];
+  return {
+    wayBackEvent: wayBack, probeServed: () => { probe(); return true; }, paneWaits: () => true,
+    wayBackProbing: false, wayBackProbes: 3, wayBackSeq: 0, objUrl: "/file?path=docs%2Ffigure.svg&sid=" + SID + "&v=1",
+  };
+};
 const LIFTED: Lifted[] = [
   { file: "webview/file-view.ts", marker: '"hostUp"', arm: "hostUp",
     what: "the viewer's way back from a failed svg picture on hostUp (federation.js's own dispatch), which runs the fetch again",
-    data: { type: "hostUp", hosts: ["TESTHOST"] }, named: (hit) => wayBackScope(hit) },
+    data: { type: "hostUp", hosts: ["TESTHOST"] }, named: (hit, _w, arm) => wayBackScope(hit, arm) },
   { file: "webview/file-view.ts", marker: "probeServed(", arm: "probe",
     what: "the viewer's way back from a failed svg picture on any other kernel message, which sends a probe of the picture's address",
-    data: { type: "sessions", sessions: [] }, named: (hit) => wayBackScope(hit) },
+    data: { type: "sessions", sessions: [] }, named: (hit, _w, arm) => wayBackScope(hit, arm) },
   { file: "webview/waiting.ts", marker: 'm.romp !== "panes"', what: "the shell's panes word replacing the Waiting pane's pane-routing cache",
     data: { romp: "panes", on: { files: true }, avail: { files: true } }, named: () => ({}), writes: "panesAvail" },
   { file: "webview/file-comments.ts", marker: '"fileCommentsResult"', what: "a fileCommentsResult settling the live panel's request",
@@ -323,6 +332,11 @@ const LIFTED: Lifted[] = [
   { file: "webview/strip.ts", marker: '"stripShow"', what: "the VS Code strip's usage push, which repaints the bars",
     data: { type: "usage", usage: { fiveHour: { pct: 10 } } }, named: (hit) => ({ render: hit }) },
 ];
+/** The listeners owed a leg per arm, by file, the marker that picks the listener (siteOf) and its arms: the executed-leg
+ *  census holds each to exactly one leg per declared arm, each naming it, and each leg's scope counts its own arm's effect
+ *  once and every other arm's twice (wayBackScope), which the crossed-message test below holds. Every other listener has
+ *  one leg, which names no arm: a representative arm, since the head census pins the check ahead of every arm. */
+const ARMS: Array<[string, string, string[]]> = [["webview/file-view.ts", "probeServed(", ["hostUp", "probe"]]];
 
 const compiled = new Map<string, (scope: unknown) => Listener>();
 /** The lifted listener as a function of its scope (compiled once per site): sloppy-mode code, which `with` needs
@@ -348,7 +362,7 @@ function runLifted(leg: Lifted, row: Row): number {
     windowSender: (e: { source?: unknown; origin?: unknown }) => windowSender(e, w),
     window: w,
     location: w.location,
-    ...leg.named(hit, w),
+    ...leg.named(hit, w, leg.arm),
   };
   const scope = new Proxy(named, {
     has: (t, k) => typeof k === "string" && (k in t || !(k in globalThis)),   // named first; other real globals (JSON, Object, Event) stay real
@@ -370,6 +384,21 @@ for (const leg of LIFTED) {
     assert.deepEqual(missed, [], label + ": a heard sender did not reach the effect once: " + missed.join("; "));
   });
 }
+
+test("the legs of a listener declared in ARMS tell its arms apart: in each leg's scope, a heard sender's message for another leg's arm counts that arm's effect twice", () => {
+  for (const [file, marker, arms] of ARMS) {
+    const site = siteOf(file, marker);
+    const legs = LIFTED.filter((l) => siteOf(l.file, l.marker) === site);
+    assert.deepEqual(legs.map((l) => l.arm).sort(), arms.slice().sort(), file + ": a lifted leg per declared arm");
+    for (const leg of legs) {
+      for (const other of legs.filter((l) => l !== leg)) {
+        const crossed: Lifted = { ...leg, data: other.data };
+        const off = HEARD.map((row) => [row.who, runLifted(crossed, row)] as const).filter(([, n]) => n !== 2).map(([who, n]) => who + " (" + n + ")");
+        assert.deepEqual(off, [], file + ": the " + leg.arm + " leg's scope, on the " + other.arm + " leg's message, did not count the other arm twice: " + off.join("; "));
+      }
+    }
+  }
+});
 
 // ── the census: every window message listener in ui/ ──
 
@@ -1287,29 +1316,92 @@ test("the road census reads what it claims: every road around the spelled regist
   for (const [src, file] of accepted) assert.deepEqual(roads(src, file), [], "accepted: " + src);
 });
 
-test("census: every gated site has an executed leg in this file (installed, or lifted by its marker)", () => {
-  const legs = new Set<string>();
-  const runs: string[] = [];                      // each leg's listener, with its arm when it names one
-  const arms = new Map<string, boolean[]>();      // per listener: whether each of its legs names its arm
-  const add = (s: Site, arm: string | undefined): void => {
-    const k = s.file + ":" + s.line;
-    legs.add(k);
-    runs.push(arm ? k + " (" + arm + ")" : k);
-    arms.set(k, [...(arms.get(k) || []), !!arm]);
-  };
+type Leg = { site: string; arm?: string };   // a leg's listener (file:line) and the arm it names, if any
+/** Why the legs do not cover the listeners, one line per refusal, or none when they do. `sites` are the listeners, `arms` the
+ *  declared arms (ARMS) by listener. Every listener has a leg. A listener with declared arms (two or more, distinct, declared
+ *  once) has exactly one leg per declared arm, each naming it, and no other leg: none that names no arm, two that run one
+ *  arm, or one that runs an arm not declared. Any other listener has exactly one leg, which names no arm. A leg or a
+ *  declaration on no listener is refused too. */
+function legRefusals(sites: string[], legs: Leg[], arms: Array<[string, string[]]>): string[] {
+  const out: string[] = [];
+  const declared = new Map<string, string[]>();
+  for (const [s, a] of arms) {
+    if (declared.has(s)) out.push(s + ": arms declared twice");
+    if (!sites.includes(s)) out.push(s + ": arms declared for no window message listener");
+    if (a.length < 2 || new Set(a).size !== a.length) out.push(s + ": the declared arms are not two or more distinct names: " + JSON.stringify(a));
+    declared.set(s, a);
+  }
+  const by = new Map<string, Array<string | undefined>>();
+  for (const l of legs) {
+    if (!sites.includes(l.site)) { out.push(l.site + ": a leg on no window message listener"); continue; }
+    by.set(l.site, [...(by.get(l.site) || []), l.arm]);
+  }
+  for (const s of sites) {
+    const named = by.get(s) || [];
+    if (!named.length) { out.push(s + ": a window message listener with no executed leg here"); continue; }
+    const want = declared.get(s);
+    if (!want) {
+      if (named.length > 1) out.push(s + ": " + named.length + " legs on a listener with no declared arms (declare its arms in ARMS)");
+      for (const a of named) if (a !== undefined) out.push(s + ": a leg names the arm " + JSON.stringify(a) + " of a listener with no declared arms");
+      continue;
+    }
+    if (named.some((a) => a === undefined)) out.push(s + ": a leg of a listener with declared arms names no arm");
+    for (const a of new Set(named)) if (a !== undefined && named.filter((b) => b === a).length > 1) out.push(s + ": two legs run the " + JSON.stringify(a) + " arm");
+    for (const a of want) if (!named.includes(a)) out.push(s + ": no leg runs the declared arm " + JSON.stringify(a));
+    for (const a of new Set(named)) if (a !== undefined && !want.includes(a)) out.push(s + ": a leg runs the arm " + JSON.stringify(a) + ", which is not declared");
+  }
+  return out;
+}
+
+test("census: every gated site has an executed leg in this file (installed, or lifted by its marker), and a listener declared in ARMS one per declared arm", () => {
+  const key = (s: Site) => s.file + ":" + s.line;
+  const legs: Leg[] = [];
   for (const leg of INSTALLED) {
-    if (leg.marker) { add(siteOf(leg.site, leg.marker), undefined); continue; }
+    if (leg.marker) { legs.push({ site: key(siteOf(leg.site, leg.marker)) }); continue; }
     const ss = messageSites(leg.site);
     assert.equal(ss.length, 1, leg.site + " has one window message listener, or its installed leg names a marker");
-    add(ss[0], undefined);
+    legs.push({ site: key(ss[0]) });
   }
-  for (const leg of LIFTED) add(siteOf(leg.file, leg.marker), leg.arm);
-  const sites = uiSources().flatMap(messageSites).map((s) => s.file + ":" + s.line);
-  assert.deepEqual(sites.filter((s) => !legs.has(s)), [], "a window message listener with no executed leg here");
-  assert.equal(runs.length, INSTALLED.length + LIFTED.length);
-  assert.equal(new Set(runs).size, runs.length, "no two legs run the same arm of one listener: " + runs.join(", "));
-  const unnamed = [...arms].filter(([, named]) => named.length > 1 && named.some((x) => !x)).map(([k]) => k);
-  assert.deepEqual(unnamed, [], "a listener with more than one leg names each leg's arm");
+  for (const leg of LIFTED) legs.push({ site: key(siteOf(leg.file, leg.marker)), arm: leg.arm });
+  const arms = ARMS.map(([f, marker, a]) => [key(siteOf(f, marker)), a] as [string, string[]]);
+  const refused = legRefusals(uiSources().flatMap(messageSites).map(key), legs, arms);
+  assert.deepEqual(refused, [], "the executed legs do not cover the window message listeners:\n" + refused.join("\n"));
+});
+
+test("the leg census reads what it claims: a listener with no leg, a second leg or an arm on an undeclared listener, a declared arm with no leg, twice or undeclared, a leg naming no arm on a declared listener, and a bad declaration are each refused", () => {
+  const A = "webview/a.ts:1", B = "webview/b.ts:2", C = "webview/c.ts:3";
+  const sites = [A, B];
+  const ok: Leg[] = [{ site: A }, { site: B, arm: "hostUp" }, { site: B, arm: "probe" }];
+  const way: Array<[string, string[]]> = [[B, ["hostUp", "probe"]]];
+  assert.deepEqual(legRefusals(sites, ok, way), [], "one leg on A, a leg per declared arm on B");
+  const cases: Array<[string, Leg[], Array<[string, string[]]>, RegExp[]]> = [
+    ["a listener with no leg", [ok[1], ok[2]], way, [/^webview\/a\.ts:1: a window message listener with no executed leg here$/]],
+    ["a declared listener with no leg", [ok[0]], way, [/^webview\/b\.ts:2: a window message listener with no executed leg here$/]],
+    ["a second leg on an undeclared listener", [...ok, { site: A }], way, [/^webview\/a\.ts:1: 2 legs on a listener with no declared arms/]],
+    ["an arm named on an undeclared listener", [{ site: A, arm: "probe" }, ok[1], ok[2]], way, [/^webview\/a\.ts:1: a leg names the arm "probe" of a listener with no declared arms$/]],
+    ["the hostUp leg dropped", [ok[0], ok[2]], way, [/^webview\/b\.ts:2: no leg runs the declared arm "hostUp"$/]],
+    ["the probe leg dropped", [ok[0], ok[1]], way, [/^webview\/b\.ts:2: no leg runs the declared arm "probe"$/]],
+    ["the probe leg names no arm", [ok[0], ok[1], { site: B }], way,
+      [/^webview\/b\.ts:2: a leg of a listener with declared arms names no arm$/, /^webview\/b\.ts:2: no leg runs the declared arm "probe"$/]],
+    ["both legs run hostUp", [ok[0], ok[1], ok[1]], way,
+      [/^webview\/b\.ts:2: two legs run the "hostUp" arm$/, /^webview\/b\.ts:2: no leg runs the declared arm "probe"$/]],
+    ["a leg runs an arm not declared", [...ok, { site: B, arm: "relay" }], way, [/^webview\/b\.ts:2: a leg runs the arm "relay", which is not declared$/]],
+    ["the declaration removed", ok, [],
+      [/^webview\/b\.ts:2: 2 legs on a listener with no declared arms/, /^webview\/b\.ts:2: a leg names the arm "hostUp"/, /^webview\/b\.ts:2: a leg names the arm "probe"/]],
+    ["a declaration on no listener", ok, [...way, [C, ["x", "y"]]], [/^webview\/c\.ts:3: arms declared for no window message listener$/]],
+    ["a listener declared twice", ok, [...way, [B, ["hostUp", "probe"]]], [/^webview\/b\.ts:2: arms declared twice$/]],
+    ["one declared arm", [ok[0], ok[1]], [[B, ["hostUp"]]], [/^webview\/b\.ts:2: the declared arms are not two or more distinct names/]],
+    ["a declared arm repeated", ok, [[B, ["hostUp", "probe", "probe"]]], [/^webview\/b\.ts:2: the declared arms are not two or more distinct names/]],
+    ["a leg on no listener", [...ok, { site: C }], way, [/^webview\/c\.ts:3: a leg on no window message listener$/]],
+  ];
+  for (const [what, legs, arms, want] of cases) {
+    const got = legRefusals(sites, legs, arms);
+    assert.equal(got.length, want.length, what + ": " + JSON.stringify(got));
+    want.forEach((re, i) => assert.match(got[i], re, what));
+  }
+  // the way back's scope runs only the arms the way back has
+  assert.throws(() => wayBackScope(() => { /* no count */ }, undefined), /the way back has no arm undefined/);
+  assert.throws(() => wayBackScope(() => { /* no count */ }, "relay"), /the way back has no arm "relay"/);
 });
 
 test("the census rule reads what it claims: a listener that acts before the check, or has none, is refused; the check after reads of the message is accepted", () => {
