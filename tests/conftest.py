@@ -126,18 +126,21 @@ atexit.register(_remove_run_dirs)
 # each process holding the pipe as it waits for a holder's, and read again after the wait, where it decides, so a child
 # that exits at session end does not get the tracker named. Where the premise cannot be read, the check's own scope
 # decides. Without procfs the check runs nothing (below), so nothing is passed over and nothing is named. With procfs
-# and the pipe unreadable, the tracker is named: within its scope the check names every readable process that holds a
-# root, the pass-over is an exception to that, and an exception applies only where its premise is shown (a red there is
-# a visible false refusal; a pass-over on a premise nobody read would be the silent miss the premise exists to prevent).
+# and the pipe unreadable, the tracker is judged like any process, so named when it holds a root: within its scope the
+# check names every readable process that holds a root, the pass-over is an exception to that, and an exception applies
+# only where its premise is shown (a red there is a visible false refusal; a pass-over on a premise nobody read would be
+# the silent miss the premise exists to prevent). A tracker whose own /proc entries refuse reads (a non-dumpable
+# process's environment, cwd and descriptors refuse them together, so its pipe is unread too) is judged like any such
+# process: listed by pid as not judged, with the reason on its line, and leaving the exit status alone.
 # A process whose descriptors cannot be read (another user's, or one of this user's that made itself non-dumpable) is
 # not read for the pipe, as it is not read for a root, and it never makes the run red: a non-dumpable child that keeps
 # the pipe leaves the tracker passed over, and is itself listed as not judged when it is this user's, started during the
 # run, in its cgroup (below). A process holding a write end is judged for a root in its own right, and so is a second
 # tracker a test starts itself. tests/test_run_end_leaked_processes.py pins the pass-over; the premise (a forked child
-# that keeps the pipe past the run's end, one that exits during the wait, a pipe the check cannot read, a record naming
-# a child of the controller that holds no descriptor on the pipe); the unread class's witness (a non-dumpable forked
-# child that keeps the pipe); a run without procfs that started the tracker; the second tracker; and a record naming a
-# process that is not the controller's child.
+# that keeps the pipe past the run's end, one that exits during the wait, a pipe the check cannot read, a tracker whose
+# environment, cwd and descriptors cannot be read, a record naming a child of the controller that holds no descriptor on
+# the pipe); the unread class's witness (a non-dumpable forked child that keeps the pipe); a run without procfs that
+# started the tracker; the second tracker; and a record naming a process that is not the controller's child.
 # The roots are the controller's and every root listed in its `romp-tests-children`: since 2026-09-24 a nested process
 # (an xdist worker, a nested pytest, any child of the run that imports the tests package handed a root as its TMPDIR
 # together with the run's ROMP_TESTS_SYSTEM_TMPDIR, as a child given a copy of its parent's environment is) lists itself
@@ -506,9 +509,11 @@ def _run_end_holders(roots, bound_s):
     """_leaked_run_processes over `roots` for the run end, the controller's own resource tracker (_own_resource_tracker)
     passed over only while the premise of the pass-over holds (_tracker_kept). The premise is read twice: before the wait,
     for the processes other than the controller and the tracker that hold its pipe, whose exits the wait then waits for
-    as it waits for a holder's; and after the wait, where it decides. A tracker whose premise does not hold is named,
-    when it holds a root (a scan of it alone), with the reason on its line. The tracker is never waited for: it cannot
-    exit while the controller holds its pipe."""
+    as it waits for a holder's; and after the wait, where it decides. A tracker whose premise does not hold is judged
+    like any process by a scan of it alone, and both halves of that scan are kept, each with the reason on its line: it
+    is named when it holds a root, and listed by pid as not judged when its environment cannot be read (its own /proc
+    entries refusing reads, as a non-dumpable process's environment, cwd and descriptors do together, which leaves its
+    pipe unread too). The tracker is never waited for: it cannot exit while the controller holds its pipe."""
     tracker = _own_resource_tracker()
     if tracker is None:
         return _leaked_run_processes(roots, bound_s)
@@ -516,7 +521,9 @@ def _run_end_holders(roots, bound_s):
     leaked, unjudged, ok = _leaked_run_processes(roots, bound_s, skip_pids=(tracker[0],), wait_for=others)
     why = _tracker_kept(tracker)[0] if ok else ""
     if why:
-        leaked = leaked + [dict(h, kept=why) for h in _processes_holding(roots, pids=[tracker[0]])[0]]
+        held, alone, _ok = _processes_holding(roots, pids=[tracker[0]])
+        leaked = leaked + [dict(h, kept=why) for h in held]
+        unjudged = dict(unjudged, listed=unjudged["listed"] + [dict(u, kept=why) for u in alone["listed"]])
     return leaked, unjudged, ok
 
 
@@ -577,8 +584,9 @@ def _report_leaked_run_processes(session):
     """The controller's run-end check (the comment above LEAK_EXIT_BOUND_S): join the live non-daemon threads, then name
     every process of the run that still holds one of its roots, the controller's own resource tracker passed over only
     while the premise of the pass-over holds and named with the reason when it does not (_run_end_holders), and make the
-    run red; list this user's unreadable processes of the run as not judged, count the other unreadable ones, and name
-    the threads still running."""
+    run red; list this user's unreadable processes of the run as not judged (the tracker among them, with the reason,
+    when its premise is unshown and its environment cannot be read), count the other unreadable ones, and name the
+    threads still running."""
     bound = _leak_exit_bound()
     left = _join_live_threads(bound)
     leaked, unjudged, ok = _run_end_holders(_run_roots(), bound)
@@ -599,7 +607,9 @@ def _report_leaked_run_processes(session):
                      "not judged: their environment, cwd and open files are unreadable (a process that made itself "
                      "non-dumpable, or one running a setuid program); they do not change the exit status." % len(unjudged["listed"]))
         for u in unjudged["listed"]:
-            lines.append("[tests]   pid %d (parent %d): %s | not judged" % (u["pid"], u["ppid"], u["cmd"][:240] or "(no command line)"))
+            lines.append("[tests]   pid %d (parent %d): %s | not judged%s" % (
+                u["pid"], u["ppid"], u["cmd"][:240] or "(no command line)",
+                " | " + TRACKER_KEPT_LABEL + u["kept"] if u.get("kept") else ""))
     if lines:
         lines.append("[tests] %d other process(es) could not be read and were not judged: another user's, or this user's "
                      "started before this run or in another cgroup." % unjudged["other"])

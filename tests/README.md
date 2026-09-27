@@ -433,8 +433,12 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   holding the pipe too, and again after it, where it decides. Where the premise
   cannot be read the check's own scope decides: without procfs the check runs
   nothing (below), so nothing is passed over or named; with procfs and the pipe
-  unreadable the tracker is named, since the pass-over is an exception to naming a
-  readable holder and applies only where its premise is shown. A process whose
+  unreadable the tracker is judged like any process, so named when it holds a
+  root, since the pass-over is an exception to naming a readable holder and
+  applies only where its premise is shown. A tracker whose own `/proc` entries
+  refuse reads (a non-dumpable process's environment, cwd and descriptors refuse
+  them together, so its pipe is unread too) is listed by pid as not judged, with
+  the reason on its line, and leaves the exit status alone. A process whose
   descriptors cannot be read is not read for the pipe, as it is not read for a
   root, and never makes the run red: a non-dumpable child that keeps the pipe
   leaves the tracker passed over, and is listed as not judged (below). A process

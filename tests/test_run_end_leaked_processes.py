@@ -53,18 +53,20 @@ exited). The premise, each in a child run whose test starts the tracker: a forke
 run's end gets it named, with the child's pid on its line, and both are gone once the run's process has exited; one that
 exits three seconds after the fork leaves it passed over at the default bound and named under a zero bound; under a stub
 that refuses the reads of /proc/<pid>/fd, for every process or for every process but the controller, it is named with
-the pipe unread; and a record pointed at a child of the controller that holds the root and no descriptor on the pipe,
-the tracker killed, gets that child named. A non-dumpable forked child that keeps the pipe leaves the tracker passed
-over and is listed as not judged (the unread class's witness); without procfs a run that started the tracker says so
-once and ends green; a second tracker the test starts itself is named, and so is a sleeper, no child of the controller,
-that the test points the controller's tracker record at. The child runs set ROMP_TESTS_LEAK_EXIT_BOUND_S so a holder
-that never exits costs a fraction of a second rather than the whole bound; two keep the default, in which a holder that
-exits inside it, and a forked child that keeps the tracker's pipe and exits inside it, each end their run green. Guard
-holds the pytest guard: Scanner skips under `python -m unittest` after tests.conftest was imported, and runs under
-pytest. Synthetic throughout: the leaked processes are `sleep`s, Python sleepers, resource trackers and forked children
-of a child run that this module starts; it stops each sleeper by the pid it recorded, a forked child is killed and
-reaped by its child run's process at that process's exit (stopped here by its pid and start time only while it still
-runs), and a tracker ends with its run's process (stopped here by its pid only while it still runs)."""
+the pipe unread; under one that refuses the reads of the tracker's environment, cwd and descriptors together, as a
+non-dumpable process refuses them, it is listed by pid as not judged with the pipe unread and the run ends green; and a
+record pointed at a child of the controller that holds the root and no descriptor on the pipe, the tracker killed, gets
+that child named. A non-dumpable forked child that keeps the pipe leaves the tracker passed over and is listed as not
+judged (the unread class's witness); without procfs a run that started the tracker says so once and ends green; a second
+tracker the test starts itself is named, and so is a sleeper, no child of the controller, that the test points the
+controller's tracker record at. The child runs set ROMP_TESTS_LEAK_EXIT_BOUND_S so a holder that never exits costs a
+fraction of a second rather than the whole bound; two keep the default, in which a holder that exits inside it, and a
+forked child that keeps the tracker's pipe and exits inside it, each end their run green. Guard holds the pytest guard:
+Scanner skips under `python -m unittest` after tests.conftest was imported, and runs under pytest. Synthetic throughout:
+the leaked processes are `sleep`s, Python sleepers, resource trackers and forked children of a child run that this
+module starts; it stops each sleeper by the pid it recorded, a forked child is killed and reaped by its child run's
+process at that process's exit (stopped here by its pid and start time only while it still runs), and a tracker ends
+with its run's process (stopped here by its pid only while it still runs)."""
 import atexit
 import importlib.util
 import json
@@ -730,6 +732,44 @@ def _refusing(real):
 os.listdir, os.readlink = _refusing(os.listdir), _refusing(os.readlink)
 '''
 
+# The controller's own resource tracker made unreadable, simulated for one child run as a non-dumpable process is:
+# os.listdir, os.readlink and open of its /proc/<pid>/environ, cwd and fd entries raise PermissionError, the three
+# together, as a real non-dumpable process refuses them together; its stat, cgroup and cmdline and the /proc/<pid>
+# inode stand. The tracker is the pid the controller's multiprocessing.resource_tracker records, read at each call.
+# Written as that run's sitecustomize at run time.
+UNREADABLE_TRACKER_SITECUSTOMIZE = '''\
+import builtins, errno, functools, io, os, re, sys
+
+_P = re.compile(r"^/proc/([0-9]+)/(environ|cwd|fd)(?:/|$)")
+
+
+def _tracker_pid():
+    rt = sys.modules.get("multiprocessing.resource_tracker")
+    return getattr(getattr(rt, "_resource_tracker", None), "_pid", None)
+
+
+def _refused(p):
+    try:
+        p = os.fsdecode(p)
+    except TypeError:
+        return False
+    m = _P.match(p)
+    return m is not None and int(m.group(1)) == _tracker_pid()
+
+
+def _refusing(real):
+    # a partial, not a function, as NO_PROCFS_SITECUSTOMIZE says
+    def call(*a, **k):
+        if a and not isinstance(a[0], int) and _refused(a[0]):
+            raise PermissionError(errno.EACCES, "Permission denied", a[0])
+        return real(*a, **k)
+    return functools.partial(call)
+
+
+os.listdir, os.readlink = _refusing(os.listdir), _refusing(os.readlink)
+builtins.open = io.open = _refusing(builtins.open)
+'''
+
 
 class Guard(unittest.TestCase):
     """fresh-3's pin, unguarded so that it runs under both runners: Scanner skips under `python -m unittest` although
@@ -1154,6 +1194,37 @@ class RunEnd(unittest.TestCase):
             self.assertTrue(gone, "the tracker exited with the child run's process")
 
     @procfs
+    def test_a_tracker_whose_environment_cwd_and_descriptors_cannot_be_read_is_listed_by_pid_as_not_judged(self):
+        """The premise unshown because the tracker's own /proc entries cannot be read (the reviewer's focused re-check
+        of round 2 of fork PR #894's review): the check keeps both halves of its scan of the tracker alone. A real
+        non-dumpable process refuses reads of its environment, cwd and descriptors together, so its pipe is unread and
+        so is its environment. The child run runs under a sitecustomize that refuses those three for the controller's
+        tracker (UNREADABLE_TRACKER_SITECUSTOMIZE); its test starts the tracker, and a scan of the tracker alone during
+        the test finds no hold and lists it. The run ends 0 (a listed process leaves the exit status alone) with no
+        holder line, and the tracker is listed by pid as not judged with the reason on its line. Red with only the
+        holders half kept: the run ended 0 and no line named the tracker."""
+        stub = tempfile.mkdtemp()
+        Path(stub, "sitecustomize.py").write_text(UNREADABLE_TRACKER_SITECUSTOMIZE)
+        pythonpath = os.pathsep.join([stub] + [p for p in [os.environ.get("PYTHONPATH")] if p])
+        r, _pids, scratch = self._child_run("test_starts_the_resource_tracker", env_over={"PYTHONPATH": pythonpath})
+        out = r.stdout + r.stderr
+        tracker = self._marker_pid(scratch, "tracker")
+        gone = _tracker_gone(tracker)
+        self.assertEqual((json.loads(Path(scratch, "tracker-via").read_text()),
+                          json.loads(Path(scratch, "tracker-listed").read_text())), ([], [tracker]),
+                         "the stub refused the tracker's reads while the test ran, so a scan of it alone found no hold "
+                         "and listed it:\n" + out)
+        self.assertEqual(r.returncode, 0, out)
+        self.assertIn("1 passed", out)
+        line = self._line(out, tracker)
+        self.assertIn("from multiprocessing.resource_tracker import main;main(", line)
+        self.assertTrue(line.endswith("| not judged | " + KEPT + "the pipe it reads from could not be read"), line)
+        self.assertNotIn("hold its temp root", out, "no holder line")
+        self.assertIn("process(es) of this user started during this run, in its cgroup, could not be read and were not "
+                      "judged", out)
+        self.assertTrue(gone, "the tracker exited with the child run's process")
+
+    @procfs
     def test_a_tracker_record_naming_a_child_that_holds_no_descriptor_on_its_pipe_passes_nothing_over(self):
         """The identity half of the premise: the pipe the tracker reads from is the one whose write end the controller's
         record holds, found among the tracker's own descriptors. The child run's test starts the tracker, kills and reaps
@@ -1378,8 +1449,9 @@ class Leaker(unittest.TestCase):
         pid = resource_tracker._resource_tracker._pid
         Path(os.environ[MARKER_ENV], "tracker").write_text(str(pid))
         conftest = sys.modules["tests.conftest"]
-        held = conftest._processes_holding(conftest._run_roots(), pids=[pid])[0]
+        held, unjudged, _ok = conftest._processes_holding(conftest._run_roots(), pids=[pid])
         Path(os.environ[MARKER_ENV], "tracker-via").write_text(json.dumps([via for h in held for via in h["via"]]))
+        Path(os.environ[MARKER_ENV], "tracker-listed").write_text(json.dumps([u["pid"] for u in unjudged["listed"]]))
 
     @child_mode
     def test_starts_the_resource_tracker_and_a_second_one(self):
