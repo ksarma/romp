@@ -87,11 +87,12 @@ Per batch, in order:
    in the entry file.
 5. To drop a member, comment `pull #N`. The batch is rebuilt without it (and without anything that
    depends on it); wait for the new green.
-6. Merge: say "merge batch #B" to the batcher, who runs `scripts/batch.py land`: it reads main on
-   origin again right before the merge and refuses if the batch no longer contains it. The button
-   and `gh pr merge <B> --merge --match-head-commit <sha>` do not check main. No CI runs on the
-   merge to main, so use either only while main is still at the SHA the first block names as
-   contained; if main has moved, ask the batcher to merge it in, sweep and verify again. Member PRs
+6. Merge: say "merge batch #B" to the batcher, who runs `scripts/batch.py land`: it requires the
+   batch branch's CI run green at the batch head, reads main on origin again right before the merge
+   and refuses if the batch no longer contains it. The button and `gh pr merge <B> --merge
+   --match-head-commit <sha>` check neither. No CI runs on the merge to main, so use either only
+   while the batch PR's checks on its head are green and main is still at the SHA the first block
+   names as contained; if main has moved, ask the batcher to merge it in, sweep and verify again. Member PRs
    read merged on their own and their branches are deleted. If you merge by hand, tell the batcher
    to run `finish`.
 7. Nothing else. To revert a member later, `git revert -m 1 <its merge commit>` on a branch, as a PR.
@@ -199,10 +200,15 @@ subject; `verify` refuses the branch otherwise.
    merge), and the body lists the merge under "Read these first" and in the conflict resolutions
    block. Then repeat steps 3 to 5.
 8. On the maintainer's word: `scripts/batch.py land <name>`. It verifies again (the sweep result at
-   the verified head, main contained), reads main on origin once more right before the merge call
-   and refuses if it moved, merges with a merge commit, and runs `finish`. GitHub's merge pins the
+   the verified head, main contained), then asks GitHub for the batch head's CI run: the newest run
+   of `ci.yml` from a push to `batch/<name>` at exactly the verified head, read at that moment. It
+   refuses when that run is missing, pending or red (any conclusion but success, cancelled
+   included), or when the read fails; a run of another commit, a manual run and a run on another
+   branch do not count. Then it reads main on origin once more right before the merge call and
+   refuses if it moved, merges with a merge commit, and runs `finish`. GitHub's merge pins the
    head, not the base, so a merge to main between that last read and the merge call is not caught.
-   `land --auto` arms auto-merge instead: it needs the repository's "Allow auto-merge" setting and a
+   `land --auto` arms auto-merge instead, after the same CI read (it does not wait for a pending
+   run): it needs the repository's "Allow auto-merge" setting and a
    rule on main that gates a merge (the maintainer section above names the types), reads both before
    it retargets anything, and refuses naming what is missing or the rules it found instead; run
    `finish` once the PR lands. Auto-merge merges later, when the rule is met, and land cannot check

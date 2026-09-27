@@ -264,6 +264,19 @@ class Fixture:
     def push_batch(self, name):
         self.dev_git("push", "-q", "-u", "origin", "batch/" + name)
 
+    def ci(self, name, conclusion="success", status="completed", sha=None, event="push", branch=None, workflow="ci.yml"):
+        """A GitHub Actions run the fake gh lists: by default the batch head's run, ci.yml from a push to batch/<name>
+        at its current head, completed green. Each new run is newer than the last (databaseId and createdAt)."""
+        self.gh_state = self.gh()
+        runs = self.gh_state.setdefault("runs", [])
+        n = len(runs) + 1
+        runs.append({"databaseId": n, "workflow": workflow, "workflowName": {"ci.yml": "CI"}.get(workflow, "PR tier"), "event": event,
+                     "headBranch": branch or "batch/" + name, "headSha": sha or self.dev_git("rev-parse", "batch/" + name),
+                     "status": status, "conclusion": conclusion, "createdAt": "2026-01-01T00:%02d:00Z" % n,
+                     "url": "https://example.invalid/actions/runs/%d" % n})
+        self._save_gh()
+        return runs[-1]["url"]
+
     def sweep(self, name, sha=None, webview=None, **over):
         """A sweep result for batch/<name>'s current head (or `sha`), written through scripts/sweep.py's own
         writer where the runner writes it: every leg rc 0 but deps, not owed, and the webview legs, owed and rc 0
@@ -1678,6 +1691,7 @@ class VerifyBehind(_Base):
         if summarize:
             fx.push_batch("b1")
             fx.ok("summarize", "b1")
+            fx.ci("b1")
 
     def test_verify_refuses_a_batch_behind_main_until_main_is_merged_in(self):
         fx = self.fx
@@ -1798,6 +1812,7 @@ class LandReadsTheSweep(_Base):
         fx.sweep("b1")
         fx.ok("verify", "b1")
         fx.ok("summarize", "b1")
+        fx.ci("b1")
 
     def test_a_red_result_at_the_head_stops_land_before_the_merge(self):
         fx = self.fx
@@ -1818,6 +1833,136 @@ class LandReadsTheSweep(_Base):
         self.assertEqual(len(fx.calls("pr", "merge")), 1)
         self.assertIn("ok   sweep at", p.stdout)
         self.assertEqual(fx.gh()["prs"]["101"]["state"], "MERGED")
+
+
+class LandReadsTheCI(_Base):
+    """land requires the batch head's one GitHub run green, as well as the local sweep (pre-round ruling Q3): the
+    newest run of ci.yml from a push to the batch branch at exactly the verified head, read from GitHub when land
+    runs, before it retargets or merges anything. Missing, pending and red are refused by name, and so is a read
+    that fails; a run at another sha, from another event or on another branch is not that run."""
+
+    def ready(self):
+        fx = self.fx
+        self.head = None
+        fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n"})
+        fx.branch("b", {"b.txt": "b\n"}, base="a")
+        fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+        fx.pr(102, "b", base="a", title="b on a", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        fx.push_batch("b1")
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
+        fx.ok("summarize", "b1")
+        self.head = fx.dev_git("rev-parse", "batch/b1")
+
+    def refused(self, *needles, args=("land", "b1"), gh_fail=None):
+        fx = self.fx
+        p = fx.run(*args, gh_fail=gh_fail)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        for needle in needles:
+            self.assertIn(needle, p.stderr)
+        self.assertIn("nothing merged", p.stderr)
+        self.assertEqual(fx.calls("pr", "merge"), [], "nothing merged")
+        self.assertEqual(fx.calls("pr", "edit"), [], "nothing retargeted: the run is read before anything changes")
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "OPEN")
+        return p
+
+    def test_a_missing_run_is_refused_and_the_read_is_made_at_land_time(self):
+        fx = self.fx
+        self.ready()
+        before = len(fx.calls("run", "list"))
+        self.refused("the batch head's CI run is missing: GitHub lists no run of ci.yml from a push to batch/b1 at %s" % self.head)
+        self.assertEqual(fx.calls("run", "list")[before:],
+                         [["run", "list", "--workflow", "ci.yml", "--branch", "batch/b1", "--event", "push", "--commit", self.head,
+                           "--limit", "20", "--json", "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt"]],
+                         "land itself asked GitHub for the run of the verified head")
+
+    def test_a_pending_run_is_refused_with_or_without_auto(self):
+        fx = self.fx
+        self.ready()
+        url = fx.ci("b1", status="in_progress", conclusion="")
+        self.refused("the batch head's CI run is pending (status in_progress): %s" % url)
+        fx.set_repo(allowAutoMerge=True)
+        fx.set_gh(rulesets=[{"type": "required_status_checks"}])
+        self.refused("the batch head's CI run is pending (status in_progress)", args=("land", "b1", "--auto"))
+
+    def test_a_red_or_cancelled_run_is_refused(self):
+        fx = self.fx
+        self.ready()
+        url = fx.ci("b1", conclusion="failure")
+        self.refused("the batch head's CI run is red (conclusion failure): %s" % url, "scripts/batch.py bisect b1")
+        fx.ci("b1", conclusion="cancelled")
+        self.refused("the batch head's CI run is red (conclusion cancelled)")
+
+    def test_a_run_at_another_sha_from_another_event_or_on_another_branch_is_not_the_run(self):
+        fx = self.fx
+        self.ready()
+        fx.ci("b1", sha=fx.bare_rev("a"))                    # a green run, but of another commit
+        fx.ci("b1", event="workflow_dispatch")               # the head, but a manual run
+        fx.ci("b1", branch="batch/b0")                       # the head, but pushed to another branch
+        fx.ci("b1", workflow="pr-tier.yml")                  # the head and the push, but another workflow
+        self.refused("the batch head's CI run is missing")
+
+    def test_a_fake_that_ignores_the_filters_still_cannot_stand_in(self):
+        """gh's filters are asked for and then checked on every row: a gh that answered with runs of other commits,
+        events or branches (an older gh that ignored --commit, say) still reads as missing."""
+        fx = self.fx
+        self.ready()
+        wrapper = os.path.join(fx.tmp, "gh-ignores-filters")
+        with open(wrapper, "w") as f:
+            f.write(IGNORES_FILTERS_GH % {"python": sys.executable})
+        os.chmod(wrapper, 0o755)
+        fx.env["ROMP_GH"] = wrapper
+        fx.env["IGNORES_FILTERS_FAKE_GH"] = os.path.join(fx.bin, "gh")
+        fx.env["IGNORES_FILTERS_HEAD"] = self.head
+        self.refused("the batch head's CI run is missing")
+
+    def test_the_newest_run_at_the_head_decides(self):
+        fx = self.fx
+        self.ready()
+        fx.ci("b1")
+        fx.ci("b1", conclusion="failure")
+        self.refused("the batch head's CI run is red (conclusion failure)")
+        url = fx.ci("b1")
+        p = fx.ok("land", "b1")
+        self.assertIn("ok   CI: the run of the push to batch/b1 at %s is green: %s" % (self.head[:10], url), p.stdout)
+        self.assertEqual(len(fx.calls("pr", "merge")), 1)
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "MERGED")
+
+    def test_the_workflow_name_land_matches_is_ci_yml_s(self):
+        with open(ROOT / ".github" / "workflows" / batch.CI_WORKFLOW) as f:
+            first = f.readline().strip()
+        self.assertEqual(first, "name: %s" % batch.CI_WORKFLOW_NAME, "land matches a run's workflowName against ci.yml's name")
+
+    def test_a_failed_read_is_refused_not_read_as_missing(self):
+        fx = self.fx
+        self.ready()
+        fx.ci("b1")
+        p = self.refused("could not read the batch head's CI run (gh run list)", "HTTP 502", gh_fail="run list")
+        self.assertNotIn("is missing", p.stderr)
+
+
+# A gh for one test: `run list` answers with every recorded run whatever the filters, the way a gh that ignored them
+# would, plus four green runs that each miss one filter (another commit, a manual run, another branch, another
+# workflow); every other call goes to the fake gh.
+IGNORES_FILTERS_GH = r"""#!%(python)s
+import json, os, subprocess, sys
+fake = os.environ["IGNORES_FILTERS_FAKE_GH"]
+if sys.argv[1:3] == ["run", "list"]:
+    out = subprocess.run([sys.executable, fake, "run", "list", "--limit", "100", "--json",
+                          "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt"], text=True, stdout=subprocess.PIPE).stdout
+    rows = json.loads(out or "[]")
+    head = os.environ["IGNORES_FILTERS_HEAD"]
+    for n, sha, branch, event, name in ((90, "0" * 40, "batch/b1", "push", "CI"), (91, head, "batch/b1", "workflow_dispatch", "CI"),
+                                        (92, head, "batch/b9", "push", "CI"), (93, head, "batch/b1", "push", "Docs")):
+        rows.append({"databaseId": n, "status": "completed", "conclusion": "success", "headSha": sha, "headBranch": branch,
+                     "event": event, "workflowName": name, "url": "https://example.invalid/actions/runs/%%d" %% n,
+                     "createdAt": "2026-02-01T00:00:%%02dZ" %% n})
+    print(json.dumps(rows))
+    sys.exit(0)
+os.execv(sys.executable, [sys.executable, fake, *sys.argv[1:]])
+"""
 
 
 FAKE_TOOL = r"""#!%(python)s
@@ -1917,6 +2062,7 @@ class LandAndFinish(_Base):
         fx.sweep("b1")
         fx.ok("verify", "b1")
         fx.ok("summarize", "b1")
+        fx.ci("b1")
 
     def test_land_merges_with_a_merge_commit_and_finish_cleans_up(self):
         fx = self.fx
@@ -1946,8 +2092,8 @@ class LandAndFinish(_Base):
         self.assertEqual(fx.dev_git("rev-parse", "--verify", "--quiet", "batch/b1", check=False), "")
         self.assertIn("batch #900 landed, 2 member(s) marked merged; no CI runs on the merge to main; "
                       "the batch head's CI run: https://example.invalid/actions/runs/1", p.stdout)
-        self.assertEqual(fx.calls("run", "list"), [["run", "list", "--workflow", "ci.yml", "--commit", tip, "--limit", "1", "--json", "url"]],
-                         "the CI run of the batch head, not the newest run of any workflow on main")
+        self.assertEqual(fx.calls("run", "list")[-1], ["run", "list", "--workflow", "ci.yml", "--commit", tip, "--limit", "1", "--json", "url"],
+                         "finish names the CI run of the batch head, not the newest run of any workflow on main")
         self.assertIn("retargeted to main: #112", p.stdout)
         self.assertIn("pr-orphans.sh: clean", p.stdout)
         rep = fx.state("b1")["finished"]["report"]

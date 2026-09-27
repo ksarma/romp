@@ -208,7 +208,8 @@ broad `git add` will sweep up your work). Conventions:
   bullet), which runs when the PR opens and when its labels change. GitHub's CI runs once
   per batch, on the push to `batch/<name>`, and not on the merge to `main`. The landing
   gate is the local sweep, `scripts/sweep.py`, whose result for the batch head's full
-  sha `scripts/batch.py verify` and `land` read; `land` also refuses a batch whose head
+  sha `scripts/batch.py verify` and `land` read. `land` also requires that batch push's CI
+  run green at the batch head, read from GitHub when it runs, and refuses a batch whose head
   does not contain `main`, so the tree that lands is the tree the sweep and CI tested. The
   button and `gh pr merge` make no such check, so a batch merged by hand needs `main` unmoved
   since verify (docs/batching.md, maintainer step 6).

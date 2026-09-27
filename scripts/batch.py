@@ -19,7 +19,8 @@ Subcommands, in the order a batch goes through them:
                                       the sweep result at the batch head's full sha
   summarize  <name>                   create or update the batch PR body; comment on each member
   pull       <name> N [--reason ..]   rebuild without N (and N's dependents), push, re-summarize
-  land       <name> [--auto]          verify again, then merge the batch PR with a merge commit
+  land       <name> [--auto]          verify again, read the batch head's CI run (green or refused),
+                                      then merge the batch PR with a merge commit
   finish     <name>                   confirm members read MERGED, retarget, delete branches, orphans
   bisect     <name> -- <cmd...>       first-parent bisect of the batch chain; names the member
 
@@ -47,6 +48,10 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     (CI does not run on the merge to main, so the tree that lands must be the tree the sweep and the
     batch branch's CI ran on), and a result that marks a webview leg not owed while the diff from main
     to the head owes it; land re-runs verify and refuses the same;
+  - land requires the batch head's CI run green, read from GitHub at land time before anything changes:
+    the newest run of ci.yml from a push to the batch branch at exactly the verified head; a missing,
+    pending or red run, or a failed read, is refused by name, and a run at another sha, from another
+    event or on another branch does not count;
   - pull N drops N's dependents, unless N already merged into main;
   - the body stays under GitHub's 65,536-character cap, the members table never cut and the
     details fitted to the budget (entries table, then resolutions, then the log).
@@ -67,6 +72,8 @@ import time
 BODY_CAP = 65_536          # GitHub's PR body limit, in characters
 RESOLUTION_LINES = 300     # per conflicted merge, in the "Conflict resolutions" details block
 PR_LIST_LIMIT = 200
+CI_WORKFLOW = "ci.yml"     # the workflow whose run of the push to the batch branch land requires green,
+CI_WORKFLOW_NAME = "CI"    # and its `name:`, which gh reports as a run's workflowName
 MAIN = "main"
 REMOTE = "origin"
 LABEL_MAJOR = "major-feature"
@@ -2096,6 +2103,33 @@ def main_protection(root):
     return None, ", and ".join(found)
 
 
+def batch_ci_run(root, name, head):
+    """The batch head's one GitHub run, read from GitHub now: the newest run of ci.yml that a push to
+    batch/<name> started at exactly `head`. Returns (case, run): case is green (completed, success), pending
+    (not completed), red (completed with any other conclusion) or missing (no such run; run None). gh's
+    filters are asked for and then checked on every row (the workflow by its name), so a run of another
+    sha, event, branch or workflow never stands in for it. A read that fails raises Fail with gh's error: a failed read is not a missing run."""
+    br = branch_of(name)
+    proc = gh("run", "list", "--workflow", CI_WORKFLOW, "--branch", br, "--event", "push", "--commit", head, "--limit", "20",
+              "--json", "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt", cwd=root, check=False)
+    if proc.returncode != 0:
+        raise Fail("could not read the batch head's CI run (gh run list): %s; nothing merged" % (proc.stderr + proc.stdout).strip())
+    try:
+        rows = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError as e:
+        raise Fail("gh run list returned something that is not JSON (%s); nothing merged" % e)
+    runs = [r for r in (rows if isinstance(rows, list) else []) if isinstance(r, dict) and r.get("headSha") == head
+            and r.get("event") == "push" and r.get("headBranch") == br and r.get("workflowName") == CI_WORKFLOW_NAME]
+    if not runs:
+        return "missing", None
+    run = max(runs, key=lambda r: (str(r.get("createdAt") or ""), r.get("databaseId") if isinstance(r.get("databaseId"), int) else 0))
+    if run.get("status") != "completed":
+        return "pending", run
+    if run.get("conclusion") != "success":
+        return "red", run
+    return "green", run
+
+
 def retarget_stacked_members(root, state):
     """A member based on another member's branch is retargeted to main right before the merge.
 
@@ -2130,9 +2164,24 @@ def cmd_land(args):
         if settings.get(k):
             print("warning: %s is on; a squash or rebase of a batch leaves every member open" % k)
     head = state["verified"]["head"]
-    remote_head = remote_ref_sha(root, "refs/heads/" + branch_of(args.name))
+    br = branch_of(args.name)
+    remote_head = remote_ref_sha(root, "refs/heads/" + br)
     if remote_head != head:
-        raise Fail("%s on %s is at %s, verified %s; push the batch first" % (branch_of(args.name), REMOTE, short(remote_head) if remote_head else "nothing", short(head)))
+        raise Fail("%s on %s is at %s, verified %s; push the batch first" % (br, REMOTE, short(remote_head) if remote_head else "nothing", short(head)))
+    # The one GitHub run per batch, required green as well as the local sweep: ci.yml's run of the push to the batch
+    # branch at the verified head, read from GitHub here and now, before anything is changed (--auto does not wait
+    # for it either: auto-merge waits only for what a rule on main requires).
+    case, run = batch_ci_run(root, args.name, head)
+    if case == "missing":
+        raise Fail("the batch head's CI run is missing: GitHub lists no run of %s from a push to %s at %s; push the batch "
+                   "and wait for its run, then land again; nothing merged" % (CI_WORKFLOW, br, head))
+    if case == "pending":
+        raise Fail("the batch head's CI run is pending (status %s): %s; wait for it to finish, then land again; nothing merged"
+                   % (run.get("status"), run.get("url")))
+    if case == "red":
+        raise Fail("the batch head's CI run is red (conclusion %s): %s; `scripts/batch.py bisect %s -- <failing test>` names "
+                   "the member to pull; nothing merged" % (run.get("conclusion"), run.get("url"), args.name))
+    print("ok   CI: the run of the push to %s at %s is green: %s" % (br, short(head), run.get("url")))
     cmd = ["pr", "merge", str(b), "--merge", "--match-head-commit", head]
     if args.auto:
         # Both preconditions are read, never assumed (scripts/land.sh applies the same two), and
@@ -2458,7 +2507,9 @@ def main(argv=None):
 
     p = sub.add_parser("land", help="verify, merge the batch PR with a merge commit, finish",
                        description="On the maintainer's word for this batch: run verify again (pinned heads, main contained, "
-                                   "the sweep result at the verified head), retarget stacked members to %s, read %s on %s "
+                                   "the sweep result at the verified head), read the batch head's CI run from GitHub (the "
+                                   "newest run of ci.yml from a push to the batch branch at the verified head; missing, "
+                                   "pending or red is refused, --auto or not), retarget stacked members to %s, read %s on %s "
                                    "once more and refuse if it moved since verify, then `gh pr merge --merge "
                                    "--match-head-commit <verified sha>` and finish. The merge pins the head, not the base, so "
                                    "a merge to %s between that last read and the merge call is not caught; with --auto the "

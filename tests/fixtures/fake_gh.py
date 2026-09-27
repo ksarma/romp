@@ -28,6 +28,8 @@ named so the fake does not pass as evidence):
     (`branches/main/protection`: the `protection` object, or the 404 GitHub returns when there is
     none), and `-X DELETE .../git/refs/heads/<ref>` (deletes the branch and retargets its
     dependents to main, as GitHub does).
+  - `run list` serves the state's `runs`, filtered by --workflow, --branch, --event and --commit the way gh
+    filters them, newest first; there are none unless a test records one (tests/test_batch_tool.py, Fixture.ci).
   - FAKE_GH_FAIL (`|`-separated argv prefixes) makes the matching calls fail with an HTTP 502, so
     a test can see what the tool does when a call does not land. `fail` in the state maps an
     endpoint (`rules`, `protection`) to a gh error line the fake prints and exits 1 with, the way a
@@ -395,7 +397,23 @@ def maybe_fail(argv):
 
 
 def run_list(state, argv):
-    print(json.dumps([{"url": "https://example.invalid/actions/runs/1", "status": "completed", "conclusion": "success"}]))
+    """`run list` over the state's `runs` (none by default: a test that needs a CI run records it): the runs matching
+    --workflow (a run's `workflow`, default ci.yml), --branch, --event and --commit, newest first as gh lists them,
+    cut to --limit, each projected onto the --json fields."""
+    o = opts(argv, {"--workflow", "-w", "--branch", "-b", "--event", "-e", "--commit", "-c", "--limit", "-L", "--json", "--jq"})
+    rows = []
+    for r in state.get("runs", []):
+        for flags, key, default in ((("--workflow", "-w"), "workflow", "ci.yml"), (("--branch", "-b"), "headBranch", None),
+                                    (("--event", "-e"), "event", None), (("--commit", "-c"), "headSha", None)):
+            want = next((o[f][0] for f in flags if o.get(f)), None)
+            if want is not None and r.get(key, default) != want:
+                break
+        else:
+            rows.append(r)
+    rows.sort(key=lambda r: (r.get("createdAt") or "", r.get("databaseId") or 0), reverse=True)
+    rows = rows[:int((o.get("--limit") or o.get("-L") or ["20"])[0])]
+    fields = (o.get("--json") or ["databaseId,status,conclusion,url"])[0].split(",")
+    print(json.dumps([{f: r.get(f) for f in fields} for r in rows]))
 
 
 def main(argv):
