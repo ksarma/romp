@@ -1,14 +1,20 @@
 # Landing PRs in a batch
 
 PRs on this fork land in batches. One session, the batcher, merges the heads of every ready PR into
-a branch `batch/<date><letter>`, runs the full test sweep once at that head, and opens one PR to
-main with a generated body. The maintainer reads that one page, drops anything he does not want
-with a comment, and merges once with a merge commit. GitHub then marks every member PR merged on
-its own, because a PR counts as merged when its head becomes reachable from its base branch through
-another merge. No PR is merged into another PR's branch, and no batch is squashed or rebased.
+a branch `batch/<date><letter>`, runs the local test sweep (`scripts/sweep.py`) once at that head,
+and opens one PR to main with a generated body. The maintainer reads that one page, drops anything
+he does not want with a comment, and merges once with a merge commit. GitHub then marks every
+member PR merged on its own, because a PR counts as merged when its head becomes reachable from its
+base branch through another merge. No PR is merged into another PR's branch, and no batch is
+squashed or rebased.
+
+GitHub's CI runs once per batch, on the push of the batch branch. Member PRs run no CI of their
+own, and neither does the merge to main: a batch lands only when its head contains main, so the
+merged tree is the tree the sweep and CI tested.
 
 The tooling is `scripts/batch.py` (subcommands `plan`, `assemble`, `verify`, `summarize`, `pull`,
-`land`, `finish`, `bisect`; `--help` on each), `scripts/land.sh` for one or two PRs that cannot
+`land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps a worktree's head
+and records the result, `check` reads it back), `scripts/land.sh` for one or two PRs that cannot
 wait, and `scripts/pr-orphans.sh`, which reports a merged PR whose content never reached main (it
 also runs on every push to main).
 
@@ -39,12 +45,18 @@ also runs on every push to main).
    re-pins your head and rebuilds. A push after the cut leaves your PR open after the batch merges,
    and `finish` reports that rather than hiding it.
 7. When the batch merges, remove your worktree and local branch. `finish` deletes the remote one.
+8. Expect no CI on your PR. Its one check is the tier label, which runs when the PR opens or
+   reopens and when its labels change, not on a push. The tests run in the batch's sweep at the
+   batch head and in the one CI run on the batch branch.
 
 ## If you are the maintainer
 
 Once, already done on this fork: delete branches on merge, squash and rebase merges off, so
 "Create a merge commit" is the only button. A ruleset on main (required checks by name, strict mode
-off, admin bypass) is optional and comes after the first batch has shown the check names.
+off, admin bypass) is optional and comes after the first batch has shown the check names. On a batch
+PR a required CI check is met by the run of the push to its branch, which attaches to the batch head;
+a member PR has no CI checks, so a rule requiring them would also hold every PR merged alone with
+`scripts/land.sh`.
 
 Auto-merge (`gh pr merge --auto`) needs two things: the repository's "Allow auto-merge" setting
 (`gh api repos/{owner}/{repo} --jq .allow_auto_merge`; off on this fork today, and turning it on is
@@ -60,8 +72,9 @@ they found instead. A rules read that fails, or a protection read that fails wit
 
 Per batch, in order:
 
-1. Open the batch PR and read the first block: what was verified, at which SHA, provenance clean.
-   If it is missing or says anything but green, stop and tell the batcher.
+1. Open the batch PR and read the first block: what was verified, at which SHA (the sweep's legs
+   and their exit status, provenance clean, main contained). If it is missing or says anything but
+   green, stop and tell the batcher.
 2. Read "Read these first". For a conflict resolution, expand the diff from the clean merge: that
    is the only code no one else has reviewed. When one side was taken outright, the line says
    whose version. For a kernel-touching or unlabeled member, open the member PR only if its row
@@ -84,7 +97,9 @@ afterward. It refuses: squash and rebase; a PR that is not open, or a draft; a c
 one whose mergeability GitHub has not computed yet; failing checks (with or without `--auto`);
 pending checks or a PR blocked by a rule on main (without `--auto`); a PR behind main; and any base
 but main (a merged PR's branch, a branch with no PR, an open PR's branch). A PR with no checks at
-all is noted, not refused.
+all is noted, not refused. Since member PRs run no CI, the only check it can read is the tier
+label, so it reads no test result: a PR merged this way is first tested by the next batch's sweep
+and CI run.
 
 A chain of two PRs lands in one call with no flag: the lower PR merges first whichever order you
 typed, its branch is deleted, GitHub retargets the upper PR to main, and it merges there. Each PR is
@@ -103,8 +118,8 @@ sits on that branch until the lower PR merges, and the orphan check reports it u
 It never passes `--delete-branch`: gh's flag also deletes the local branch, which is checked out in
 a session's worktree here; the remote branch is deleted by the repository setting, or through the
 API when that setting is off. The web button is equally safe now that branches delete on merge. If
-an urgent fix lands while a batch is open, the batcher merges main into the batch and re-verifies
-(batcher step 7).
+an urgent fix lands while a batch is open, `verify` refuses the batch as behind until the batcher
+merges main into it, sweeps again and re-verifies (batcher step 7).
 
 ## If you are the batcher
 
@@ -126,36 +141,56 @@ subject; `verify` refuses the branch otherwise.
    commit after the merge instead. A member whose head is already in the batch (reachable through
    an earlier member's head) gets no merge commit of its own; it is recorded as contained, lands
    with the batch, and the body lists it as such under "Read these first" and in its table row.
-3. Run the full sweep at the batch head (pytest, bats, `npm test`, `npm run typecheck`); re-run the
-   known-flake modules alone before calling anything red.
-4. `scripts/batch.py verify <name> --sweep '<the counts>'`. If an earlier `assemble` died part-way,
-   `verify` fails with "assembly incomplete"; run `assemble` again first.
+3. Run the local sweep at the batch head: `scripts/sweep.py run --tree ../romp-batch-<name>`.
+   `--python` names the interpreter for pytest (it needs pytest, pytest-xdist and pytest-timeout);
+   `--wrap LEG=PREFIX` runs a leg under this machine's slot or scope wrapper. It runs pytest, bats,
+   the manager and tooling node tests and the ledger check, plus `npm run typecheck`, `npm test` and
+   `npm run build` when `kernel/kernel.py`, `ui/` or `vscode-extension/` changed since the merge
+   base with origin/main (the webview rule in CLAUDE.md), and writes every leg's exit status to
+   `<state dir>/sweeps/<full sha>.json`. The state dir is `$ROMP_STATE_DIR`, else
+   `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and `batch.py` with the
+   same environment. It refuses a dirty tree and records the run invalid if HEAD or the tree changes
+   while it runs. When one leg fails on a known flake,
+   `scripts/sweep.py run --tree ../romp-batch-<name> --leg <leg>` re-runs that leg alone at the same
+   head and keeps the failed attempt in the result's history. `scripts/sweep.py check --tree
+   ../romp-batch-<name>` prints what `verify` will read.
+4. `scripts/batch.py verify <name>`. It reads the sweep result for the batch head's full sha and
+   fails by name when it is missing, stale (recorded at another commit), unfinished, red, invalid,
+   incomplete or unreadable. It also fails as "behind" when the batch head does not contain main as
+   origin has it now: CI does not run on the merge to main, so a batch lands only when the tree that
+   lands is the tree the sweep and the batch's CI ran on; run step 7, then steps 3 and 4 again. If
+   an earlier `assemble` died part-way, `verify` fails with "assembly incomplete"; run `assemble`
+   again first.
 5. `git push -u origin batch/<name>` (after a rebuild, `git push --force-with-lease origin
    batch/<name>`; `pull` pushes that way itself). If the pre-push hook refuses the push: it scans
    each pushed commit's tree, so a batch tip that inherits a pre-scrub string trips it although the
    new commits are merges; read what tripped and fix the member or ask. Never bypass the hook. Then
-   `scripts/batch.py summarize <name>` and watch the one CI run. The batch PR carries the `batch`
-   label and no tier; the fork's copy of the `PR tier` check counts `batch` as its one label, so
-   that check is green on it. If CI is red:
+   `scripts/batch.py summarize <name>` and watch the one CI run: the push to `batch/<name>` starts
+   it, the batch PR shows its checks on its head, and a newer push to the branch cancels the older
+   run. The batch PR carries the `batch` label and no tier; the fork's copy of the `PR tier` check
+   counts `batch` as its one label, so that check is green on it. If CI is red:
    `scripts/batch.py bisect <name> -- <failing test>` names the member;
    `scripts/batch.py pull <name> N` rebuilds without it and says so on the PR.
 6. When a member's owner pushes a fix after the cut (they tell you by postal), run
    `scripts/batch.py assemble <name> --repin N` (re-reads that head and rebuilds the branch;
    `--repin all` re-reads every member), then repeat steps 3 to 5. Without the re-pin, `verify`
    fails on the moved head.
-7. When main moves and the batch PR reads behind or conflicting, run
-   `scripts/batch.py assemble <name> --merge-main`: it merges origin/main into the assembled batch
+7. When main moves, `verify` refuses the batch as behind (and the batch PR may read conflicting);
+   run `scripts/batch.py assemble <name> --merge-main`: it merges origin/main into the assembled batch
    in its worktree (`../romp-batch-<name>`) instead of rebuilding. A clean merge is recorded. A
    conflict stops with exit 3, as `--resolve` does: resolve per hunk, `git add` the files, then
    `assemble <name> --continue --reviewed '<who, verdict>'` records it (or `--abort` drops the
    merge), and the body lists the merge under "Read these first" and in the conflict resolutions
    block. Then repeat steps 3 to 5.
-8. On the maintainer's word: `scripts/batch.py land <name>`. It verifies again, merges with a merge
-   commit, and runs `finish`. `land --auto` arms auto-merge instead: it needs the repository's
-   "Allow auto-merge" setting and a rule on main that gates a merge (the maintainer section above
-   names the types), reads both before it retargets anything, and refuses naming what is missing or
-   the rules it found instead; run `finish` once the PR lands. If the maintainer clicked the button,
-   run `scripts/batch.py finish <name>` alone.
+8. On the maintainer's word: `scripts/batch.py land <name>`. It verifies again (the sweep result at
+   the verified head, main contained), reads main on origin once more right before the merge call
+   and refuses if it moved, merges with a merge commit, and runs `finish`. GitHub's merge pins the
+   head, not the base, so a merge to main between that last read and the merge call is not caught.
+   `land --auto` arms auto-merge instead: it needs the repository's "Allow auto-merge" setting and a
+   rule on main that gates a merge (the maintainer section above names the types), reads both before
+   it retargets anything, and refuses naming what is missing or the rules it found instead; run
+   `finish` once the PR lands. Auto-merge merges later, when the rule is met, and land cannot check
+   main again then. If the maintainer clicked the button, run `scripts/batch.py finish <name>` alone.
 
 ## Checked on the first batch
 
@@ -171,3 +206,10 @@ settles them:
 - whether a stacked member retargeted to main after the merge is marked merged (`land` retargets
   before the merge so the documented rule applies; `finish` records the outcome when it had to
   retarget afterward).
+
+Two more, about CI running on the batch branch only (2026-09-27), are for the batcher to look at on
+the first batch that lands under it; no tool records them:
+
+- whether the batch PR shows the checks of the push run on its head (the Checks tab, and
+  `gh pr view <B> --json statusCheckRollup`);
+- whether a newer push to the batch branch cancels the run of the older one (the Actions tab).

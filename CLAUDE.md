@@ -104,9 +104,12 @@ so there is no list to write. **gitleaks** covers them, in two places:
   carries `--text`. This is the same hook as the identifier scan and both report
   before it refuses, so one push tells you about both.
 - **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
-  tag the checkout brings, on every PR and every push to `main`, from a
-  pinned, checksummed binary. It needs `fetch-depth: 0`: a default checkout
-  scans one commit and reports clean.
+  tag the checkout brings, on every push to a batch branch (`batch/**`), on
+  the weekly schedule and on a manual run, from a pinned, checksummed binary.
+  It needs `fetch-depth: 0`: a default checkout scans one commit and reports
+  clean. Since 2026-09-27 CI scans neither a PR push nor a merge to `main`
+  (see the publish step below): between batches the pre-push hook is the only
+  scan, and a machine without gitleaks pushes unscanned until the next batch.
 
 Three things follow for anyone touching this:
 - **A hit means rotate, not amend.** A credential that reached a commit is
@@ -197,6 +200,12 @@ broad `git add` will sweep up your work). Conventions:
      (`scripts/batch.py`; see `docs/batching.md`): do not click merge. A change that
      must land alone is merged on the user's word. Opening a PR against the upstream
      project is a separate decision only the user makes.
+  A fork PR runs no CI of its own (2026-09-27): its one check is the tier label (next
+  bullet), which runs when the PR opens and when its labels change. GitHub's CI runs once
+  per batch, on the push to `batch/<name>`, and not on the merge to `main`. The landing
+  gate is the local sweep, `scripts/sweep.py`, whose result for the batch head's full
+  sha `scripts/batch.py verify` and `land` read; `land` also refuses a batch whose head
+  does not contain `main`, so the tree that lands is the tree the sweep and CI tested.
   Anything in the code that reads the canonical repo (the release script's post-merge
   fast-forward and tag push, the kernel's update and drift probes) resolves the remote
   as `upstream` when the clone has one, else `origin` (`_release_remote` in
@@ -225,10 +234,13 @@ broad `git add` will sweep up your work). Conventions:
   copy of the second check (`.github/workflows/tier-policy.yml`) is gated to the
   upstream repository by its job-level `if:` (the header comment there says why), so on
   the fork it evaluates nothing and posts no Tier policy verdict; a fork PR is judged by
-  the label check alone. The author picks the tier at filing time; upstream's tier workflow
-  also reads a `Tier: <tier>` line in the PR body (`Tier: fix`, say) from a contributor who
-  cannot label and applies the label (a label already present wins; maintainers re-tier by
-  relabeling):
+  the label check alone, and runs no CI workflow (the publish step above says what gates
+  it). The fork's label check also runs on fewer events than upstream's: when a PR opens
+  or reopens and when its labels change, not on a push or an edit, so a push leaves the
+  new head without it until the next label event (the second divergence in its header).
+  The author picks the tier at filing time; upstream's tier workflow also reads a
+  `Tier: <tier>` line in the PR body (`Tier: fix`, say) from a contributor who cannot label
+  and applies the label (a label already present wins; maintainers re-tier by relabeling):
   - `docs` (tier 0; upstream renamed it from `tests-only` on 2026-09-08, and both checks
     still accept the old spelling): documentation. On the fork that is tests, docs and
     repo plumbing, landing through a batch like every PR. Upstream, to the check it is
@@ -289,10 +301,11 @@ switch's 409 literal appears at least twice, once per request route), so a pure-
 refactor that touches no `ui/` file and no JavaScript line can still turn it red. Precedent:
 our PR 994 to the project (2026-09-20) lifted the route bodies into functions and turned the
 project's `vscode-extension` CI job red on that one test of 5224. The leg may be skipped only
-when `kernel/kernel.py`, `ui/` and `vscode-extension/` are ALL untouched. Corollary for the
-pins themselves: a pin keyed on WHERE code lives says in its message what it guards (the
-route still reaches the function) and points to the executed test that proves the behaviour,
-so a reader never mistakes the weaker guarantee for the stronger one.
+when `kernel/kernel.py`, `ui/` and `vscode-extension/` are ALL untouched; `scripts/sweep.py`
+applies this rule when it decides which legs a batch head owes, and records the decision in its
+result. Corollary for the pins themselves: a pin keyed on WHERE code lives says in its message
+what it guards (the route still reaches the function) and points to the executed test that
+proves the behaviour, so a reader never mistakes the weaker guarantee for the stronger one.
 
 ### A test that mints its own state root pins `session-hosts` off (2026-09-11)
 Per-session hosts are ON by default (T348): a backend over a state directory with no
