@@ -30,6 +30,7 @@ SID = "11111111-2222-3333-4444-555555555555"        # the session's stable romp 
 EPISODE_FSID = "22222222-3333-4444-5555-666666666666"   # an earlier /clear episode of the same session
 FORK_FSID = "33333333-4444-5555-6666-777777777777"      # a resume-fork transcript of the same session
 THREAD = "99999999-8888-7777-6666-555555555555"
+LOOP_THREAD = "move-test-loop"                          # the name _wire gives each fixture loop's thread
 
 
 def _ok(cwd, changed=True):
@@ -67,11 +68,8 @@ class MoveBase(unittest.TestCase):
         self.old = os.path.realpath(tempfile.mkdtemp())
         self.new = os.path.realpath(tempfile.mkdtemp())
         self.be.spawn("web", self.old, bg="#123456", fg="#ffffff", sid=SID)
-        self.loops = []
 
     def tearDown(self):
-        for loop in self.loops:
-            loop.call_soon_threadsafe(loop.stop)
         os.environ.pop("CLAUDE_CONFIG_DIR", None)
         for d in (self.td, self.claude, self.old, self.new):
             shutil.rmtree(d, ignore_errors=True)
@@ -89,14 +87,26 @@ class MoveBase(unittest.TestCase):
         the scripted fake, its thread reporting alive so _ensure hands it back instead of spawning."""
         s = sb.SdkSession(self.be, dict(sb.read_reg(self.be.state_dir, SID) or {}, sid=SID))
         loop = asyncio.new_event_loop()
-        threading.Thread(target=loop.run_forever, daemon=True).start()
-        self.loops.append(loop)
+        thread = threading.Thread(target=loop.run_forever, name=LOOP_THREAD, daemon=True)
+        self.addCleanup(self._end_loop, loop, thread)
+        thread.start()
         s.loop = loop
         s.client = _Client(_Query(arms))
         s._connected.set()
         s.thread = types.SimpleNamespace(is_alive=lambda: True)
         self.be.sessions[SID] = s
         return s
+
+    def _end_loop(self, loop, thread):
+        """Stop, join, shut the default executor down, close. A loop only stopped stays open, and an open
+        loop keeps its default executor, so a worker a test started (run_in_executor) idled on until a
+        garbage collection happened to free the loop; the session-end thread guard found one in CI.
+        LoopsEndWithTheirTest pins this."""
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(10)
+        self.assertFalse(thread.is_alive(), "the loop thread did not stop within 10 s")
+        loop.run_until_complete(loop.shutdown_default_executor())
+        loop.close()
 
     def _place(self, cwd, fsid, sidecar=False, text="x"):
         p = Path(sb.transcript_path(cwd, fsid))
@@ -205,12 +215,14 @@ class MoveOk(MoveBase):
         out = {}
         ta = threading.Thread(target=lambda: out.__setitem__("a", self.be.move(SID, self.new)))
         ta.start()
-        for _ in range(500):                         # until the first call has claimed the flag
-            if self._reg().get("cwdPending"):
-                break
-            time.sleep(0.01)
-        out["b"] = self.be.move(SID, self.new)       # the second asker, while the first is in flight
-        gate.set()
+        try:
+            for _ in range(500):                     # until the first call has claimed the flag
+                if self._reg().get("cwdPending"):
+                    break
+                time.sleep(0.01)
+            out["b"] = self.be.move(SID, self.new)   # the second asker, while the first is in flight
+        finally:
+            gate.set()        # even on a failure above: tearDown's executor shutdown waits for this worker
         ta.join(10)
         self.assertEqual(out.get("a"), "")
         self.assertIn("already pending", out["b"])
@@ -445,6 +457,36 @@ class Helpers(MoveBase):
         self._place(self.old, SID)
         self.assertEqual(sb.relocate_transcripts(self.old, self.old + "/", {SID}), [], "same slug → nothing to do")
         self.assertTrue(os.path.exists(sb.transcript_path(self.old, SID)))
+
+
+class LoopsEndWithTheirTest(unittest.TestCase):
+    """Every thread a fixture loop starts has ended when its test does: the loop's thread (_wire names it
+    LOOP_THREAD) and every worker of the loop's default executor. Each MoveBase test is run here through
+    unittest (setUp, body, tearDown, cleanups) and the threads it left are read right after. Before
+    _end_loop joined and closed each loop, the concurrent-moves test left its run_in_executor worker
+    idle on an open loop; the session-end thread guard (tests/conftest.py) reported it in CI whenever
+    no garbage collection had freed the loop first, and a run of that test alone reported it every time."""
+
+    def test_every_move_test_ends_the_threads_its_loops_started(self):
+        import concurrent.futures.thread as cft
+        prior = os.environ.get("CLAUDE_CONFIG_DIR")     # each MoveBase tearDown pops it
+        self.addCleanup(lambda: os.environ.__setitem__("CLAUDE_CONFIG_DIR", prior) if prior is not None
+                        else os.environ.pop("CLAUDE_CONFIG_DIR", None))
+        kinds = [k for k in globals().values()
+                 if isinstance(k, type) and issubclass(k, MoveBase) and k is not MoveBase]
+        cases = [c for k in kinds for c in unittest.defaultTestLoader.loadTestsFromTestCase(k)]
+        # the population includes the test that uses the loop's executor (its own assertions, checked
+        # below, prove its request went out through run_in_executor)
+        self.assertIn("test_two_concurrent_moves_send_one_request", [c._testMethodName for c in cases])
+        for case in cases:
+            before = set(threading.enumerate())
+            result = unittest.TestResult()
+            case.run(result)
+            self.assertEqual((result.errors, result.failures), ([], []), case.id())
+            workers = set(cft._threads_queues)
+            left = [t.name for t in threading.enumerate()
+                    if t not in before and (t.name == LOOP_THREAD or t in workers)]
+            self.assertEqual(left, [], "%s left these threads running after its tearDown" % case.id())
 
 
 class FakeResultMessage:
