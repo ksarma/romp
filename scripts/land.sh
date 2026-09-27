@@ -6,7 +6,10 @@
 # Every PR lands through scripts/batch.py, a single PR as a one-member batch (`plan --only N`), and
 # `scripts/batch.py land` is how a batch PR normally merges. This script merges only a batch PR: one
 # carrying the `batch` label whose head branch is batch/<name>, both read from GitHub in the first
-# read of each PR, so a member PR is refused before anything merges. Per PR it runs
+# read of each PR, so a member PR is refused before anything merges. It requires what `batch.py land`
+# requires of GitHub (pre-round ruling Q3): the batch head's one CI run, the newest run of ci.yml
+# from a push to the PR's head branch at exactly its head, green, read from GitHub before each
+# merge; a batch PR with no checks at all is refused. Per PR it runs
 #   gh pr merge N --merge --match-head-commit <head> [--auto]
 # and afterward scripts/pr-orphans.sh, so a merge that strands a dependent is reported at once.
 #
@@ -46,6 +49,8 @@ cd "$(cd "$(dirname "$0")/.." && pwd)"
 GH="${ROMP_GH:-gh}"
 MAIN="${ROMP_MAIN_BRANCH:-main}"
 LABEL_BATCH=batch   # the label scripts/batch.py puts on a batch PR (LABEL_BATCH there)
+CI_WORKFLOW=ci.yml  # the workflow whose run of the push to the batch branch must be green (batch.py's CI_WORKFLOW)
+CI_WORKFLOW_NAME=CI # and its `name:`, which gh reports as a run's workflowName (batch.py's CI_WORKFLOW_NAME)
 
 help() {
     cat <<EOF
@@ -57,10 +62,11 @@ Merges a batch PR (a number) by hand, with a merge commit:
 then runs scripts/pr-orphans.sh, which reports a merged PR whose content is not on $MAIN. Every PR
 lands through scripts/batch.py, a single PR as a one-member batch (scripts/batch.py plan --only N),
 so this merges only a batch PR: one with the '$LABEL_BATCH' label whose head branch is
-batch/<name>. scripts/batch.py land is how a batch PR normally merges: it also reads the sweep
-result at the batch head, the batch push's CI run and main. This script reads none of those, only
-the checks GitHub reports at the head, so use it only as the button would be used (docs/batching.md,
-maintainer step 6): with the batch PR's checks green and main unmoved since verify.
+batch/<name>. scripts/batch.py land is how a batch PR normally merges. Like it, this script requires
+the batch head's CI run green: the newest run of $CI_WORKFLOW from a push to the PR's head branch at
+exactly its head, read from GitHub before each merge. Unlike it, this script reads neither the sweep
+result at the batch head nor main, so use it only with main unmoved since verify (docs/batching.md,
+maintainer step 6).
 
 Refusals (exit 2). Every PR is read and checked before any is merged, so a refusal never follows a
 merge; the second PR of a pair is checked before the first one lands.
@@ -81,8 +87,15 @@ merge; the second PR of a pair is checked before the first one lands.
                                  retargets the upper one.
   checks failing                 A check run or commit status at the head that is not SUCCESS,
                                  NEUTRAL or SKIPPED, with or without --auto.
-  checks pending                 Without --auto. Wait for them, or pass --auto to land when they
-                                 pass. No checks at all is noted, not refused.
+  no checks                      No check run or commit status at the head at all: a batch PR
+                                 carries its batch push's CI run.
+  batch CI run missing, pending  The newest run of $CI_WORKFLOW ($CI_WORKFLOW_NAME) from a push to
+  or red                         the PR's head branch at exactly its head, read from GitHub (gh run
+                                 list) before each merge: none, not completed, or completed with any
+                                 conclusion but success (cancelled included), with or without
+                                 --auto; a read that fails is refused too, not taken as missing.
+  checks pending                 Other checks, without --auto. Wait for them, or pass --auto to land
+                                 when they pass.
   blocked                        mergeStateStatus: BLOCKED, a rule on $MAIN is not met. Without
                                  --auto; with it the merge is armed and lands when the rule is met.
   behind                         mergeStateStatus: BEHIND, $MAIN moved and the rule wants the branch
@@ -281,6 +294,30 @@ load_pr() {
     pr_batch_label="${batch_labels[$1]}"
 }
 
+# read_ci_run <n>: the batch head's one CI run, read from GitHub now, as batch.py's batch_ci_run reads
+# it: gh's filters (workflow, branch, event, commit) are asked for, and then every row is checked
+# against the head sha, the push event, the head branch and ci.yml's name, so a run of anything else
+# never stands in for it; of the rows left, the newest (createdAt, then id) decides. Sets ci_case
+# (green, pending, red or missing) and ci_status, ci_conclusion, ci_url. A read that fails refuses:
+# a failed read is not a missing run. Called from check_pr, so pass 2 reads it again before a merge.
+read_ci_run() {
+    local rows sha ev br wf st co url
+    ci_case=missing; ci_status=""; ci_conclusion=""; ci_url=""
+    if ! rows="$("$GH" run list --workflow "$CI_WORKFLOW" --branch "$pr_head_ref" --event push --commit "$pr_head_sha" \
+            --limit 20 --json databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt \
+            --jq 'sort_by(.createdAt, .databaseId) | .[] | [.headSha, .event, .headBranch, .workflowName, .status, .conclusion, .url] | map(if . == null then "" else tostring end) | join("\u001f")')"; then
+        fail "$verb" "could not read #$1's batch CI run (gh run list failed; its error is above)"
+    fi
+    while IFS="$US" read -r sha ev br wf st co url; do
+        [ "$sha" = "$pr_head_sha" ] && [ "$ev" = push ] && [ "$br" = "$pr_head_ref" ] && [ "$wf" = "$CI_WORKFLOW_NAME" ] || continue
+        ci_status="$st"; ci_conclusion="$co"; ci_url="$url"
+    done <<< "$rows"
+    if [ -z "$ci_status$ci_conclusion$ci_url" ]; then ci_case=missing
+    elif [ "$ci_status" != completed ]; then ci_case=pending
+    elif [ "$ci_conclusion" != success ]; then ci_case=red
+    else ci_case=green; fi
+}
+
 # classify_checks <rollup rows>: checks_failing and checks_pending as ", "-joined names, checks_n.
 # A run that is not COMPLETED is pending; SUCCESS, NEUTRAL and SKIPPED are green; the rest is red.
 classify_checks() {
@@ -318,7 +355,8 @@ note() { if [ "$notes" = 1 ]; then echo "land: $*"; fi; }  # printed in the firs
 
 # check_pr <i> <verb>: the rules, against the pr_* variables loaded for prs[i]. <verb> is "refused"
 # before any merge and "stopped" after one. Order: state, draft, batch PR, base, mergeability,
-# checks, then the merge state, so the message names the first thing the maintainer can act on.
+# checks (the rollup, then the batch CI run), then the merge state, so the message names the first
+# thing the maintainer can act on.
 check_pr() {
     local i="$1" verb="$2" n="${prs[$1]}" j other open_base merged_base missing
     if [ "$pr_state" != "OPEN" ]; then
@@ -394,6 +432,18 @@ check_pr() {
     if [ -n "$checks_failing" ]; then
         fail "$verb" "#$n's checks are failing: $checks_failing"
     fi
+    if [ "$checks_n" = 0 ]; then
+        fail "$verb" "#$n has no checks reported at its head; a batch PR carries its batch push's CI run ($CI_WORKFLOW), so there is nothing green to merge on. Push the batch and wait for its run"
+    fi
+    # The batch head's one GitHub run (pre-round ruling Q3), as scripts/batch.py land requires it: a pending run is
+    # refused with --auto too, since auto-merge waits only for what a rule on main requires.
+    read_ci_run "$n"
+    case "$ci_case" in
+        missing) fail "$verb" "#$n's batch CI run is missing: GitHub lists no run of $CI_WORKFLOW from a push to $pr_head_ref at $pr_head_sha; push the batch and wait for its run, then land again" ;;
+        pending) fail "$verb" "#$n's batch CI run is pending (status $ci_status): $ci_url; wait for it to finish, then land again (--auto does not wait for it)" ;;
+        red) fail "$verb" "#$n's batch CI run is red (conclusion $ci_conclusion): $ci_url; scripts/batch.py bisect ${pr_head_ref#batch/} -- <failing test> names the member to pull" ;;
+    esac
+    note "#$n's batch CI run is green: $ci_url"
     case "$pr_mss" in
         BLOCKED)
             if [ "$auto" != 1 ]; then
@@ -408,8 +458,6 @@ check_pr() {
         else
             fail "$verb" "#$n's checks are pending: $checks_pending. Wait for them, or pass --auto to land when they pass"
         fi
-    elif [ "$checks_n" = 0 ]; then
-        note "note: #$n has no checks reported at its head"
     fi
 }
 

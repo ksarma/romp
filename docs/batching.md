@@ -111,12 +111,15 @@ or waits for it to land.
 
 `scripts/land.sh B` merges a batch PR by hand (`--help` prints the refusal table). It refuses any PR
 that is not a batch PR, one without the `batch` label or whose head branch is not `batch/<name>`,
-and names the one-member batch route, so it never merges a member PR. For a batch PR it reads the
-checks GitHub reports at the head (failing refused; pending, or blocked by a rule on main, refused
-without `--auto`), the mergeability and the merge state, merges with a merge commit pinned to the
-head it checked, and runs the orphan check afterward. It reads neither the sweep result nor main,
-so treat it as the button (step 6): only while the batch PR's checks are green and main is still at
-the SHA the first block names. It still takes two numbers and keeps its rules for a stacked pair
+and names the one-member batch route, so it never merges a member PR. For a batch PR it requires
+what `scripts/batch.py land` requires of GitHub: the batch head's CI run, the newest run of `ci.yml`
+from a push to the batch branch at exactly the head, green, read before each merge (missing,
+pending with or without `--auto`, red, and a failed read are refused by name). It reads the checks
+GitHub reports at the head too (failing, or none at all, refused; pending, or blocked by a rule on
+main, refused without `--auto`), the mergeability and the merge state, merges with a merge commit
+pinned to the head it checked, and runs the orphan check afterward. It reads neither the sweep
+result nor main, so use it only while main is still at the SHA the first block names (step 6).
+It still takes two numbers and keeps its rules for a stacked pair
 (the lower PR first, each read again right before its merge, a stop when a head moved) from when it
 merged member PRs; with one batch open at a time, one number is the case.
 

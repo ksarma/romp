@@ -37,13 +37,22 @@ biting; each is named here so the fake is not mistaken for evidence about GitHub
     unless `protection` is set (True serves required status checks; a dict is served as is);
     `-X DELETE .../git/refs/heads/<b>` deletes the remote ref. `--jq` covers the expressions the
     scripts use.
-  - Failure injection: `fail` maps an endpoint (`rules`, `protection`) to a gh error line, which the
+  - `run list` serves GitHub Actions runs, filtered by --workflow, --branch, --event and --commit the way gh
+    filters them, newest first, cut to --limit: one derived run per PR record, ci.yml ("CI") from a push to its
+    head branch at its live head, whose outcome is the record's `ci` (success, pending, failure, cancelled, or
+    none for no run), defaulting from `checks` (success or a list: success; pending: pending; failure: failure;
+    none: no run, since a batch branch's checks are its push's run); then the state's `runs`, rows a test
+    records as they are (a run of another sha, event, branch or workflow), each newer than the derived ones.
+    With `ignore_run_filters` on the state it serves every run whatever the filters, the way a gh that ignored
+    them would, so a test can show land.sh checking each row itself.
+  - Failure injection: `fail` maps an endpoint (`rules`, `protection`, `runs`) to a gh error line, which the
     fake prints and exits 1 with, the way a 5xx or an auth failure would; `fail.merge` maps a PR
     number to the error its merge fails with, after the head check, the way GitHub refuses a merge
     whose base moved under it. `after_merge` maps a PR
     number to branches that get one more commit right after that PR merges, standing in for an
     author who pushes between land.sh's check and its merge; `after_merge_unlabel` maps a PR number
-    to PRs whose labels are removed right after it merges.
+    to PRs whose labels are removed right after it merges; `after_merge_ci` maps a PR number to
+    {PR number: outcome}, the `ci` those PRs' runs read right after it merges.
 
 Synthetic data only: PR numbers, titles and branches are the tests' inventions.
 """
@@ -197,6 +206,13 @@ _LABEL_COUNT = re.compile(r'^\[\.labels\[\]\.name \| select\(\. == "([^"]+)"\)\]
 _ROW = re.compile(r'^\[((?:\.\w+(?:, )?)+)\] \| map\(if \. == null then "" else tostring end\) \| join\("\\u001f"\)$')
 
 
+# land.sh's reduction of `gh run list`: oldest first (so the last matching row is the newest), one US-joined row per
+# run. gojq's sort_by over two keys sorts on the pair, as the sort here does.
+RUN_ROW_KEYS = ("headSha", "event", "headBranch", "workflowName", "status", "conclusion", "url")
+RUN_ROWS_JQ = ('sort_by(.createdAt, .databaseId) | .[] | [.headSha, .event, .headBranch, .workflowName, .status, .conclusion, .url] '
+               '| map(if . == null then "" else tostring end) | join("\\u001f")')
+
+
 def jq_word(v):
     """One value as jq -r prints it: strings raw, booleans and numbers as JSON words, null as null."""
     return v if isinstance(v, str) else json.dumps(v)
@@ -223,9 +239,56 @@ def apply_jq(rows, expr):
         return "\n".join("\x1f".join([c.get("__typename") or "", c.get("name") or c.get("context") or "",
                                       c.get("status") or "", c.get("conclusion") or "", c.get("state") or ""])
                          for c in rows.get("statusCheckRollup") or [])
+    if expr == RUN_ROWS_JQ:
+        return "\n".join("\x1f".join("" if r.get(k) is None else jq_word(r.get(k)) for k in RUN_ROW_KEYS)
+                         for r in sorted(rows, key=lambda r: (r.get("createdAt") or "", r.get("databaseId") or 0)))
     if expr.startswith(".") and "." not in expr[1:] and isinstance(rows, dict):
         return jq_word(rows.get(expr[1:]))
     die("unsupported --jq expression %r" % expr)
+
+
+CI_OUTCOMES = {"success": ("completed", "success"), "pending": ("in_progress", ""), "failure": ("completed", "failure"),
+               "cancelled": ("completed", "cancelled")}
+
+
+def runs_of(state):
+    """Every run the fake's GitHub has: one derived run per PR record (see the module docstring), then the state's
+    `runs` as recorded, the recorded ones newer."""
+    rows = []
+    for pr in sorted(state["prs"].values(), key=lambda p: p["number"]):
+        checks = pr.get("checks", "success")
+        outcome = pr.get("ci") or ({"pending": "pending", "failure": "failure", "none": "none"}.get(checks, "success")
+                                   if isinstance(checks, str) else "success")
+        if outcome == "none":
+            continue
+        status, conclusion = CI_OUTCOMES[outcome]
+        rid = 1000 + pr["number"]
+        rows.append({"databaseId": rid, "workflow": "ci.yml", "workflowName": "CI", "event": "push",
+                     "headBranch": pr["headRefName"], "headSha": live_head(state, pr), "status": status,
+                     "conclusion": conclusion, "createdAt": "2026-01-01T00:00:00Z",
+                     "url": "https://example.invalid/actions/runs/%d" % rid})
+    return rows + list(state.get("runs", []))
+
+
+def run_list(state, argv):
+    o = opts(argv, {"--workflow", "-w", "--branch", "-b", "--event", "-e", "--commit", "-c", "--limit", "-L", "--json", "--jq"})
+    fail = state.get("fail") or {}
+    if fail.get("runs"):
+        die(fail["runs"], code=1)
+    rows = []
+    for r in runs_of(state):
+        for flags, key, default in ((("--workflow", "-w"), "workflow", "ci.yml"), (("--branch", "-b"), "headBranch", None),
+                                    (("--event", "-e"), "event", None), (("--commit", "-c"), "headSha", None)):
+            want = next((o[f][0] for f in flags if o.get(f)), None)
+            if want is not None and r.get(key, default) != want and not state.get("ignore_run_filters"):
+                break
+        else:
+            rows.append(r)
+    rows.sort(key=lambda r: (r.get("createdAt") or "", r.get("databaseId") or 0), reverse=True)
+    rows = rows[:int((o.get("--limit") or o.get("-L") or ["20"])[0])]
+    fields = (o.get("--json") or ["databaseId,status,conclusion,url"])[0].split(",")
+    out = [{f: r.get(f) for f in fields} for r in rows]
+    print(apply_jq(out, o["--jq"][0]) if o.get("--jq") else json.dumps(out))
 
 
 def get_pr(state, n):
@@ -362,6 +425,8 @@ def pr_merge(state, argv):
         push_empty_commit(state, branch, env)
     for other in (state.get("after_merge_unlabel") or {}).get(str(pr["number"]), []):
         state["prs"][str(other)]["labels"] = []
+    for other, outcome in ((state.get("after_merge_ci") or {}).get(str(pr["number"])) or {}).items():
+        state["prs"][str(other)]["ci"] = outcome
     save(state)
     print("Merged pull request #%d" % pr["number"])
     if o.get("--delete-branch") or o.get("-d"):
@@ -423,6 +488,8 @@ def main(argv):
         pr_view(state, argv[2:])
     elif argv[:2] == ["pr", "merge"]:
         pr_merge(state, argv[2:])
+    elif argv[:2] == ["run", "list"]:
+        run_list(state, argv[2:])
     elif argv[:2] == ["repo", "view"]:
         repo_view(state, argv[2:])
     elif argv[:1] == ["api"]:

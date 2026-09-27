@@ -18,7 +18,11 @@ What land.sh is held to:
     a branch with no PR; an open PR is checked before merged ones, since branch names are reused;
   - it reads mergeability and the check rollup before merging anything: a conflicting, blocked,
     red or (without --auto) pending PR is refused by name, the second of a pair before the first
-    merges; no checks at all is noted, not refused;
+    merges, and so is a PR with no checks at all;
+  - it requires the batch head's one CI run green, as `scripts/batch.py land` does (pre-round ruling Q3):
+    the newest run of ci.yml from a push to the PR's head branch at exactly its head, read from GitHub
+    before each merge and checked row by row; missing, pending (with --auto too), red and a failed read
+    are refused by name;
   - a pair whose one member is based on the other's branch merges the lower PR first, whichever
     order was given, and the upper one lands on main once GitHub retargets it; each PR is read
     again right before its own merge, and a head that moved stops the run (the orphan check still
@@ -145,7 +149,9 @@ class Fixture:
     def pr(self, n, head, base="main", draft=False, state="OPEN", merge_commit=None, checks="success", labels=("batch",), **overrides):
         """`checks` is success, pending, failure, none, or a statusCheckRollup list; `labels` the PR's label names (a
         batch PR's `batch` by default: land.sh merges nothing else, and the tests name their branches batch/<x> for
-        the same reason); `overrides` pins a served field (mergeable="UNKNOWN", mergeStateStatus="BLOCKED")."""
+        the same reason); `overrides` pins a served field (mergeable="UNKNOWN", mergeStateStatus="BLOCKED") or sets
+        `ci`, the outcome of the batch push's CI run the fake derives for the PR (success, pending, failure,
+        cancelled or none; by default it follows `checks`, see tests/fixtures/land_fake_gh.py)."""
         self.gh_state = self.gh()
         self.gh_state["prs"][str(n)] = dict({
             "number": n, "title": "PR %d on %s" % (n, head), "baseRefName": base, "headRefName": head,
@@ -156,6 +162,19 @@ class Fixture:
     def on_main(self, sha):
         return subprocess.run(["git", "-C", self.bare, "merge-base", "--is-ancestor", sha, "refs/heads/main"],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+    def ci(self, head, conclusion="success", status="completed", sha=None, event="push", workflow="ci.yml"):
+        """A GitHub Actions run recorded as is, newer than every derived run and every run recorded before it: by
+        default ci.yml from a push to `head` at its current head, completed green. Returns its url."""
+        self.gh_state = self.gh()
+        runs = self.gh_state.setdefault("runs", [])
+        n = len(runs) + 1
+        runs.append({"databaseId": n, "workflow": workflow, "workflowName": {"ci.yml": "CI"}.get(workflow, "PR tier"),
+                     "event": event, "headBranch": head, "headSha": sha or self.bare_rev(head), "status": status,
+                     "conclusion": conclusion, "createdAt": "2026-01-01T00:%02d:00Z" % n,
+                     "url": "https://example.invalid/actions/runs/%d" % n})
+        self._save_gh()
+        return runs[-1]["url"]
 
     def set_gh(self, **kw):
         self.gh_state = self.gh()
@@ -444,12 +463,14 @@ class Bases(_Base):
 
 
 class Auto(_Base):
-    """--auto is explicit, and needs allow_auto_merge plus required rules on main."""
+    """--auto is explicit, and needs allow_auto_merge plus required rules on main. The PR's batch CI run is green and
+    another check is pending, the state --auto can still wait for; a pending batch CI run is refused with --auto too
+    (BatchCIRun)."""
 
     def setUp(self):
         super().setUp()
         self.fx.branch("batch/a", {"a.txt": "a\n"})
-        self.fx.pr(101, "batch/a", checks="pending")
+        self.fx.pr(101, "batch/a", checks="pending", ci="success")
 
     def test_refuses_auto_when_the_repository_disallows_auto_merge(self):
         fx = self.fx
@@ -581,7 +602,7 @@ class Readiness(_Base):
 
     def test_refuses_pending_checks_without_auto(self):
         fx = self.fx
-        fx.pr(101, "batch/a", checks="pending")
+        fx.pr(101, "batch/a", checks="pending", ci="success")
         self.assertRefused(fx.land("101"), "#101's checks are pending: ci", "pass --auto")
 
     def test_a_status_context_counts_like_a_check_run_and_skipped_is_green(self):
@@ -616,12 +637,19 @@ class Readiness(_Base):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("#101's checks are pending (build | linux); --auto lands it when they pass", p.stdout)
 
-    def test_no_checks_at_all_is_noted_not_refused(self):
+    def test_no_checks_at_all_is_refused(self):
+        """A batch PR carries its batch push's CI run, so a head with no checks at all has nothing green to merge on
+        (it was a note before the pre-round build, and the PR merged). Refused with --auto too, and with a green run
+        listed: the rollup and the run are two reads of one fact, and they disagree."""
         fx = self.fx
         fx.pr(101, "batch/a", checks="none")
-        p = fx.land("101")
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertIn("#101 has no checks reported at its head", p.stdout)
+        self.assertRefused(fx.land("101"), "#101 has no checks reported at its head; a batch PR carries its batch push's CI run "
+                           "(ci.yml), so there is nothing green to merge on")
+        fx.pr(101, "batch/a", checks="none", ci="success")
+        self.assertRefused(fx.land("101"), "#101 has no checks reported at its head")
+        fx.set_gh(repo={"allow_auto_merge": True}, rules=[{"type": "required_status_checks"}])
+        self.assertRefused(fx.land("--auto", "101"), "#101 has no checks reported at its head")
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "OPEN")
 
     def test_refuses_a_conflicting_pr(self):
         fx = self.fx
@@ -646,7 +674,7 @@ class Readiness(_Base):
         the state --auto exists for."""
         fx = self.fx
         fx.set_gh(repo={"allow_auto_merge": True}, rules=[{"type": "required_status_checks"}])
-        fx.pr(101, "batch/a", checks="pending")
+        fx.pr(101, "batch/a", checks="pending", ci="success")
         self.assertEqual(fx.fake_gh("pr", "view", "101", "--json", "mergeStateStatus").stdout.strip(),
                          '{"mergeStateStatus": "BLOCKED"}')
         p = fx.land("--auto", "101")
@@ -794,9 +822,111 @@ class Pairs(_Base):
         self.assertIn("pr-orphans: clean (2 merged PR(s)", p.stdout)
 
 
+class BatchCIRun(_Base):
+    """land.sh requires what `scripts/batch.py land` requires of GitHub (pre-round ruling Q3): the batch head's one CI
+    run, the newest run of ci.yml from a push to the PR's head branch at exactly its head, green. It is read from
+    GitHub before anything merges and again right before each merge, and every row is checked against the head, the
+    push event, the branch and ci.yml's name. Missing, pending (with --auto too), red and a failed read are refused
+    by name. Each PR here has a green check in its rollup, so only the run decides."""
+
+    def setUp(self):
+        super().setUp()
+        self.fx.branch("batch/a", {"a.txt": "a\n"})
+        self.head = self.fx.bare_rev("batch/a")
+
+    def test_a_missing_run_is_refused_and_the_run_is_asked_for_by_its_head(self):
+        fx = self.fx
+        fx.pr(101, "batch/a", ci="none")
+        self.assertRefused(fx.land("101"), "land: refused: #101's batch CI run is missing: GitHub lists no run of ci.yml from a push "
+                           "to batch/a at %s; push the batch and wait for its run" % self.head)
+        self.assertEqual(fx.calls("run", "list")[0][:12],
+                         ["run", "list", "--workflow", "ci.yml", "--branch", "batch/a", "--event", "push", "--commit", self.head,
+                          "--limit", "20"], "the run of the PR's own head, from a push to its own branch")
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "OPEN")
+
+    def test_a_pending_run_is_refused_with_or_without_auto(self):
+        fx = self.fx
+        fx.pr(101, "batch/a", ci="pending")
+        self.assertRefused(fx.land("101"), "#101's batch CI run is pending (status in_progress): https://example.invalid/actions/runs/1101",
+                           "--auto does not wait for it")
+        fx.set_gh(repo={"allow_auto_merge": True}, rules=[{"type": "required_status_checks"}])
+        self.assertRefused(fx.land("--auto", "101"), "#101's batch CI run is pending (status in_progress)")
+        self.assertFalse(fx.gh()["prs"]["101"].get("autoMerge"), "not armed")
+
+    def test_a_red_or_cancelled_run_is_refused(self):
+        fx = self.fx
+        fx.pr(101, "batch/a", ci="failure")
+        self.assertRefused(fx.land("101"), "#101's batch CI run is red (conclusion failure): https://example.invalid/actions/runs/1101",
+                           "scripts/batch.py bisect a -- <failing test>")
+        fx.pr(101, "batch/a", ci="cancelled")
+        self.assertRefused(fx.land("101"), "#101's batch CI run is red (conclusion cancelled)")
+
+    def test_a_run_at_another_sha_from_another_event_or_workflow_is_not_the_run(self):
+        """Each green run misses one filter; the fake filters them out the way gh does, and then serves them all the
+        way a gh that ignored the filters would: land.sh checks every row itself, so neither reads as the run."""
+        fx = self.fx
+        fx.pr(101, "batch/a", ci="none")
+        fx.branch("batch/z", {"z.txt": "z\n"})
+        fx.ci("batch/a", sha=fx.bare_rev("main"))     # another commit
+        fx.ci("batch/a", event="workflow_dispatch")  # the head, a manual run
+        fx.ci("batch/z", sha=self.head)              # the head's sha, pushed to another branch
+        fx.ci("batch/a", workflow="pr-tier.yml")     # the head and the push, another workflow
+        self.assertRefused(fx.land("101"), "#101's batch CI run is missing")
+        fx.set_gh(ignore_run_filters=True)
+        self.assertEqual(len(json.loads(fx.fake_gh("run", "list", "--commit", self.head, "--json", "url").stdout)), 4,
+                         "the fake now serves every recorded run whatever the filters")
+        self.assertRefused(fx.land("101"), "#101's batch CI run is missing")
+
+    def test_the_newest_run_at_the_head_decides(self):
+        fx = self.fx
+        fx.pr(101, "batch/a")                        # the derived run: green, oldest
+        fx.ci("batch/a", conclusion="failure")      # a re-run that went red
+        self.assertRefused(fx.land("101"), "#101's batch CI run is red (conclusion failure): https://example.invalid/actions/runs/1")
+        fx.ci("batch/a")                             # and a newer one that passed
+        p = fx.land("101")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("#101's batch CI run is green: https://example.invalid/actions/runs/2", p.stdout)
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "MERGED")
+
+    def test_a_failed_read_is_refused_not_read_as_missing(self):
+        fx = self.fx
+        fx.pr(101, "batch/a")
+        fx.set_gh(fail={"runs": "HTTP 502: Bad Gateway (HTTP 502)"})
+        p = fx.land("101")
+        self.assertRefused(p, "could not read #101's batch CI run (gh run list failed", "HTTP 502")
+        self.assertNotIn("is missing", p.stderr)
+
+    def test_the_run_is_read_again_right_before_each_merge(self):
+        """Pass 2 reads the run again before the second merge: a run that went red after the first check stops the run
+        there, the first PR merged, the second not."""
+        fx = self.fx
+        fx.branch("batch/b", {"b.txt": "b\n"})
+        fx.pr(101, "batch/a")
+        fx.pr(102, "batch/b")
+        fx.set_gh(after_merge_ci={"101": {"102": "failure"}})
+        p = fx.land("101", "102")
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("land: stopped: #102's batch CI run is red (conclusion failure)", p.stderr)
+        self.assertEqual([c[2] for c in fx.merges()], ["101"])
+        self.assertEqual(fx.gh()["prs"]["102"]["state"], "OPEN")
+        self.assertEqual(len([c for c in fx.calls("run", "list") if "batch/b" in c]), 2, "read in both passes")
+
+    def test_the_workflow_it_reads_is_ci_yml_by_the_name_batch_py_uses(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("batch_for_land_pin", SCRIPTS / "batch.py")
+        batch = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(batch)
+        src = (SCRIPTS / "land.sh").read_text()
+        self.assertIn("\nCI_WORKFLOW=%s " % batch.CI_WORKFLOW, src)
+        self.assertIn("\nCI_WORKFLOW_NAME=%s " % batch.CI_WORKFLOW_NAME, src)
+        with open(ROOT / ".github" / "workflows" / batch.CI_WORKFLOW) as f:
+            self.assertEqual(f.readline().strip(), "name: %s" % batch.CI_WORKFLOW_NAME)
+
+
 class AutoPairs(_Base):
     """--auto on a pair whose one member is based on the other's branch: the lower PR merging at once
-    lands the chain; the lower PR only arming stops the run before the upper PR."""
+    lands the chain; the lower PR only arming stops the run before the upper PR. A PR here whose checks
+    are pending has a green batch CI run and another check pending (a pending run is refused)."""
 
     def setUp(self):
         super().setUp()
@@ -812,7 +942,7 @@ class AutoPairs(_Base):
         the open branch, against the printed note and without --into-open-pr. It stops instead: nothing
         else merges, and the upper PR is landed by a second call once the lower one is in."""
         fx = self.fx
-        fx.pr(201, "batch/a", checks="pending")
+        fx.pr(201, "batch/a", checks="pending", ci="success")
         fx.pr(203, "batch/b", base="batch/a", checks="success")
         head_a, head_b = fx.bare_rev("batch/a"), fx.bare_rev("batch/b")
         for order in (("201", "203"), ("203", "201")):
@@ -834,7 +964,7 @@ class AutoPairs(_Base):
     def test_a_lower_pr_that_merges_at_once_lands_the_chain_and_arms_the_upper_pr_on_main(self):
         fx = self.fx
         fx.pr(201, "batch/a", checks="success")
-        fx.pr(203, "batch/b", base="batch/a", checks="pending")
+        fx.pr(203, "batch/b", base="batch/a", checks="pending", ci="success")
         head_a, head_b = fx.bare_rev("batch/a"), fx.bare_rev("batch/b")
         p = fx.land("--auto", "203", "201")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
