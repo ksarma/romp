@@ -6,7 +6,8 @@
 // document; found, the target is revealed (a closed <details> above it opened) and scrolled into view and the
 // default action cancelled, so the page's hash stays as it was; not found, the click is left to the browser.
 // The first test states the delegate's contract over the markup the sanitizer produces; the second runs the
-// chat's own pipeline (marked + sanitizeMd, as md() runs them) on a message with a `#` link and clicks it; the
+// chat's own pipeline (the chat instance's parse, chat-md.ts chatMdHtml, then sanitizeMd, as md() runs them) on a
+// message with a `#` link and clicks it; the
 // third posts a session frame so render.ts's own md() renders the reply, and clicks there. Skips with a stated
 // reason when no playwright browser is installed (CI installs none; tests/test_spend_modal_headless_served.py is the
 // precedent, skipping without a playwright install). Synthetic values only.
@@ -29,14 +30,15 @@ function bundle(entry: string): string {
   const r = requireCjs("esbuild").buildSync({ ...BUILD, entryPoints: [path.join(UI, entry)] });
   return r.outputFiles[0].text;
 }
-// md() as render.ts runs it, minus the PR-reference walk: marked with the chat's options and grammar, then sanitizeMd
+// md() as render.ts runs it, minus the PR-reference walk: the chat's own marked instance (chat-md.ts chatMdHtml, the one
+// render.ts's md() parses through since the chat's path-aware emphasis of 2026-09-19; the probe stood the singleton in
+// before, a grammar the chat no longer renders on), then sanitizeMd. Importing chat-md.ts brings md-config.ts with it,
+// which registers the math fill as sanitizeMd's post-pass at load; nothing here configures the singleton.
 function probeBundle(): string {
   const contents = [
-    'import { marked } from "marked";',
+    'import { chatMdHtml } from "./chat-md";',
     'import { sanitizeMd } from "./md-sanitize";',
-    'import { applyMdConfig } from "./md-config";',
-    "applyMdConfig();",   // the one grammar on the singleton with the chat's options, as every bundle arms it (Slice 4 of plans/markdown-viewer.md)
-    "(window as any).__mdProbe = (s: string) => sanitizeMd(marked.parse(s) as string).innerHTML;",
+    "(window as any).__mdProbe = (s: string) => sanitizeMd(chatMdHtml(s)).innerHTML;",
   ].join("\n");
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, sourcefile: "md-probe.ts", loader: "ts" } });
   return r.outputFiles[0].text;
@@ -184,6 +186,10 @@ test("the delegate lands a message's `#` link on its prefixed target, revealing 
 
 test("through the chat's own pipeline: a reply's `<p id>` is prefixed and its `[link](#id)` still lands on it, in the reply's body before an older message's", { timeout: 60000 }, async (t) => {
   await inChat(t, true, async (page, errors) => {
+    // the probe's aim: the chat's instance, not the singleton, so a path's underscores stay literal (md-config.ts
+    // pathAwareEmphasis; the singleton would pair them as emphasis)
+    const aim = await page.evaluate(() => (window as any).__mdProbe("see /a-_b/c_/d.md today") as string);
+    assert.doesNotMatch(aim, /<em>/, "the probe renders the chat instance's grammar (chat-md.ts chatMdHtml), on which a path's underscores are literal: " + aim);
     // an OLDER message carrying the same id: the click in the newer one must land in its own body, not there
     const html = await page.evaluate(([older, newer]: [string, string]) => {
       document.querySelectorAll(".fx-turn").forEach((n) => n.remove());

@@ -116,7 +116,7 @@ test("math: the placeholders KaTeX fills after the sanitize are the singleton's 
   assert.equal(html("a ~~b~~ ~c~"), "<p>a <del>b</del> ~c~</p>\n", "the ~~-only del rule rides in the same list");
 });
 
-test("the fixture renders every construct's element, once each, in order; the user-text instance renders each single-line snippet identically", () => {
+test("the fixture renders every construct's element, once each, in order; the user-text instance renders each single-line snippet identically to the singleton (a parity control with the viewer's grammar on rows with no linkable token; the two chat instances' own contract is md-emphasis-paths.test.ts's)", () => {
   const out = html(FIXTURE);
   const order = ['<details class="md-frontmatter">', "<h1>Heading One</h1>", '<sup class="md-fnref">', "<mark class=\"md-mark\">marked text</mark>", "<del>struck</del>", "~single~",
     '<div class="md-footnote" id="fn-1">', "<p>Para after footnote def.</p>", '<div class="md-footnote" id="fn-2">', '<blockquote class="md-callout md-callout-note"><p class="md-callout-title">Title</p>',
@@ -521,7 +521,7 @@ test("source: who applies the one configuration, and what it holds", () => {
   assert.equal(mdExtensions.length, 2);
   assert.match(config, /registerMdPostPass\(renderMathPlaceholders\);/, "the fill travels with the grammar");
   for (const f of ["render.ts", "file-view.ts", "anchor-map.ts"]) assert.match(UI(f), /^applyMdConfig\(\);/m, f + " applies it at load");
-  assert.match(UI("chat-md.ts"), /new Marked\(\{ gfm: true, breaks: true \}, \.\.\.mdExtensions\)/, "the user-text instance is built from the same list");
+  assert.match(UI("chat-md.ts"), /new Marked\(\{ gfm: true, breaks: true \}, \.\.\.mdExtensions, pathAwareEmphasis\)/, "the user-text instance is built from the same list (plus the chat's path-aware emphasis, which the singleton does not take: md-emphasis-paths.test.ts)");
   assert.match(UI("file-view-links.ts"), /export function viewerWalkTokens\(token: \{ type: string; href\?: string \| null \}\): void \{\n\s*if \(token\.type === "link" && typeof token\.href === "string"\) token\.href = viewerLinkTarget\(token\.href\);\n\s*resolveWikilink\(token\);/,
     "the file kind's walkTokens stamps a wikilink resolved, beside the link-target rewrite");
   assert.doesNotMatch(config, /from "\.\/render"|from "\.\/file-view"|from "\.\/chat-md"/, "the configuration imports no bundle-specific module");

@@ -1,7 +1,9 @@
-// The chat's markdown pipeline in headless Chromium over the real modules: marked with the one grammar (md-config.ts,
-// math.ts), then sanitizeMd (md-sanitize.ts), which runs renderMathPlaceholders as the post-pass md-config.ts registers
-// at load; userMd the same over the breaks:true instance. This is md() and userMd() as render.ts composes them,
-// minus the PR-reference walk (render-math.test.ts and chat-md.test.ts pin render.ts to that order).
+// The chat's markdown pipeline in headless Chromium over the real modules: the chat's own marked instance (chat-md.ts
+// chatMdHtml: the one grammar of md-config.ts and math.ts plus the chat's pathAwareEmphasis), then sanitizeMd
+// (md-sanitize.ts), which runs renderMathPlaceholders as the post-pass md-config.ts registers at load; userMd the same
+// over the breaks:true instance (userMdHtml). This is md() and userMd() as render.ts composes them, minus the
+// PR-reference walk (render-math.test.ts and chat-md.test.ts pin render.ts to that order). Until 2026-09-21 the reply
+// half stood the singleton in, a grammar the chat stopped rendering on with the path-aware emphasis of 2026-09-19.
 // What a source pin cannot see, and this leg measures:
 //   • Math keeps its layout. KaTeX positions everything with inline style (a strut's height, a vlist row's top, a
 //     radical's padding), and sanitizeMd keeps only colour in a `style` attribute, so KaTeX markup emitted by marked
@@ -36,16 +38,15 @@ const KATEX_DIST = path.join(EXT, "node_modules", "katex", "dist");
 const KATEX_CSS = fs.readFileSync(path.join(KATEX_DIST, "katex.min.css"), "utf8");
 
 const ENTRY = `
-import { marked } from "marked";
 import katex from "katex";
-import { userMdHtml } from "./chat-md";
-import { applyMdConfig } from "./md-config";
+import { chatMdHtml, userMdHtml } from "./chat-md";
 import { sanitizeMd, registerMdPostPass } from "./md-sanitize";
 import { renderMathPlaceholders } from "./math";
-applyMdConfig();   // the one grammar on the singleton, as every bundle arms it (Slice 4 of plans/markdown-viewer.md); importing md-config.ts registers the math fill as sanitizeMd's post-pass
-function md(src: string): string { return sanitizeMd(marked.parse(src) as string).innerHTML; }
+// every helper renders on the chat's own instances (chat-md.ts); importing chat-md.ts brings md-config.ts with it, which
+// registers the math fill as sanitizeMd's post-pass at load, and the singleton is neither configured nor rendered on here
+function md(src: string): string { return sanitizeMd(chatMdHtml(src)).innerHTML; }
 function userMd(src: string): string { return sanitizeMd(userMdHtml(src)).innerHTML; }
-function markedOnly(src: string): string { return marked.parse(src) as string; }
+function markedOnly(src: string): string { return chatMdHtml(src); }   // marked's own output for a reply, before the sanitizer
 // KaTeX's own output for the same TeX by the same DOM path (katex.render into a fresh element, the browser serializing),
 // under the fill's output and trust options (its size and expansion caps and its error ink change nothing for a formula that
 // parses and stays within them; md-sanitize-katex-browser.test.ts compares under the capped call)
@@ -53,7 +54,7 @@ function direct(tex: string, display: boolean): string {
   const el = document.createElement("div"); katex.render(tex, el, { displayMode: display, throwOnError: false, output: "html", trust: false }); return el.innerHTML;
 }
 function twice(src: string): { once: string; again: string } {
-  const clean = sanitizeMd(marked.parse(src) as string); const once = clean.innerHTML;
+  const clean = sanitizeMd(chatMdHtml(src)); const once = clean.innerHTML;
   renderMathPlaceholders(clean); return { once, again: clean.innerHTML };
 }
 // the registry: a pass registered twice runs once per sanitize; a second pass runs too, after the fill
@@ -62,7 +63,7 @@ function registry(): { runs: number; other: number; sawKatex: boolean } {
   const counting = (root: ParentNode) => { runs++; sawKatex = sawKatex || root.querySelectorAll(".katex").length > 0; };
   const second = () => { other++; };
   registerMdPostPass(counting); registerMdPostPass(counting); registerMdPostPass(second);
-  sanitizeMd(marked.parse("one $x$ formula") as string);
+  sanitizeMd(chatMdHtml("one $x$ formula"));
   return { runs, other, sawKatex };
 }
 (window as any).__pipe = { md, userMd, markedOnly, direct, twice, registry };
@@ -127,6 +128,10 @@ test("math keeps its KaTeX layout when rendered after the sanitizer, and is KaTe
       'A <span class="fx-red" style="color: rgb(200, 0, 0); position: fixed; top: 0; font-size: 80px">red</span> word.',
       "",
     ].join("\n");
+    // 0. the helpers' aim: the chat's instance, not the singleton, so a path's underscores stay literal (md-config.ts
+    //    pathAwareEmphasis; the singleton would pair them as emphasis)
+    const aim = await page.evaluate(() => (window as any).__pipe.md("see /a-_b/c_/d.md today") as string);
+    assert.doesNotMatch(aim, /<em>/, "md() here renders the chat instance's grammar (chat-md.ts chatMdHtml), on which a path's underscores are literal: " + aim);
     // 1. what reaches the sanitizer is the placeholder, not KaTeX: no style attribute for the colour rule to strip
     const before = await page.evaluate((src: string) => {
       const marked = (window as any).__pipe.markedOnly(src) as string;

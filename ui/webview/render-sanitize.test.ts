@@ -7,7 +7,9 @@
 // harness for the chat renderer, so — like the other webview tests — pin it at
 // the source level (assert the sanitizer is wired into md()). The DOMPurify call
 // lives in md-sanitize.ts (sanitizeMd), one sanitizer shared with the file viewer's
-// mdBlock; md() and userMd() call it. What the sanitizer does is executed in
+// mdBlock; md() and userMd() call it. Since the chat's path-aware emphasis (2026-09-19)
+// md() parses on the chat's own marked instance (chat-md.ts chatMdHtml), which is marked's
+// raw output still, so the sanitizer stays md()'s to call. What the sanitizer does is executed in
 // headless Chromium (md-sanitize-browser.test.ts, md-sanitize-postpass-browser.test.ts).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -17,6 +19,7 @@ import * as path from "node:path";
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const VIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8");
 const SANITIZE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "md-sanitize.ts"), "utf8");
+const CHAT = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "chat-md.ts"), "utf8");
 
 test("md() sanitizes marked output with DOMPurify before returning HTML", () => {
   assert.match(RENDER, /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);
@@ -29,11 +32,13 @@ test("md() sanitizes marked output with DOMPurify before returning HTML", () => 
   // (the signature grew an optional repo parameter for PR links — pr-links.ts — so match it loosely)
   const mdFn = RENDER.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdFn, "md() function not found");
-  // marked is still used to parse, but its output must pass through sanitizeMd (the DOMPurify call)
-  assert.match(mdFn, /marked\.parse\(/);
+  // marked still parses, on the chat's instance (chat-md.ts chatMdHtml: marked's parse on chatMarked and nothing else, so the
+  // HTML md() holds is marked's raw output), and that output must pass through sanitizeMd (the DOMPurify call)
+  assert.match(mdFn, /const dirty = chatMdHtml\(src\);/);
+  assert.match(CHAT, /^export function chatMdHtml\(src: string\): string \{\n {2}return chatMarked\.parse\(src\) as string;\n\}/m, "chatMdHtml is marked's parse and no sanitizer: the DOMPurify call is md()'s");
   assert.match(mdFn, /const clean = sanitizeMd\(dirty\);/);
-  // the old, unsanitized `return marked.parse(src) as string;` must be gone
-  assert.doesNotMatch(mdFn, /return\s+marked\.parse\(src\)\s+as\s+string;/);
+  // the old, unsanitized `return marked.parse(src) as string;` must be gone, in either spelling of the parse
+  assert.doesNotMatch(mdFn, /return\s+(marked\.parse\(src\)\s+as\s+string|chatMdHtml\(src\));/);
 });
 
 test("the file viewer's mdBlock adopts the same sanitizer's output, and spells no profile of its own", () => {

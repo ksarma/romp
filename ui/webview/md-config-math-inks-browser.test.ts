@@ -15,8 +15,9 @@
 //     read at 1.67:1 on it in the dark theme and 1.28:1 in the light theme, close to invisible, where the same formula in a
 //     reply reads at 5.97:1 and 5.51:1. In the bubble the token is `currentColor`, the bubble's own ink (#ffffff: 4.67:1 dark,
 //     5.13:1 light), the white family the bubble's code spans and bold wear; the span's title still carries KaTeX's message.
-//     Read here through the chat's two renderers (the singleton under applyMdConfig for a reply, userMdHtml for the bubble,
-//     each through sanitizeMd, as render.ts's md() and userMd() do), in both themes.
+//     Read here through the chat's two renderers (chat-md.ts chatMdHtml for a reply, userMdHtml for the bubble, each
+//     through sanitizeMd, as render.ts's md() and userMd() do; until 2026-09-21 the reply half stood the singleton in, a
+//     grammar the chat stopped rendering on with the path-aware emphasis of 2026-09-19), in both themes.
 // Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic text only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -116,15 +117,14 @@ test("under print media an unsupported command's text prints black, as the synta
 
 const KATEX_CSS = fs.readFileSync(path.join(EXT, "node_modules", "katex", "dist", "katex.min.css"), "utf8");
 const STYLES = read("styles.css").replace('@import "katex/dist/katex.min.css";', KATEX_CSS);
-/** The chat's two renderers, minus the PR-reference walk (md-config-chat-styles-browser.test.ts's bundle). */
+/** The chat's two renderers, minus the PR-reference walk: chat-md.ts's chatMdHtml and userMdHtml, each through sanitizeMd
+ *  (the print leg above reads the real viewer bundle through openViewer and uses neither). Importing chat-md.ts brings
+ *  md-config.ts with it, which registers the math fill as sanitizeMd's post-pass at load; the singleton is not configured here. */
 function chatBundle(): string {
   const contents = [
-    'import { marked } from "marked";',
-    'import { applyMdConfig } from "./md-config";',
     'import { sanitizeMd } from "./md-sanitize";',
-    'import { userMdHtml } from "./chat-md";',
-    "applyMdConfig();",
-    "(window as any).__md = (s: string) => sanitizeMd(marked.parse(s) as string).innerHTML;",
+    'import { chatMdHtml, userMdHtml } from "./chat-md";',
+    "(window as any).__md = (s: string) => sanitizeMd(chatMdHtml(s)).innerHTML;",
     "(window as any).__userMd = (s: string) => sanitizeMd(userMdHtml(s)).innerHTML;",
   ].join("\n");
   const r = requireCjs("esbuild").buildSync({ bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -166,6 +166,10 @@ test("in the person's own bubble KaTeX's flagged text wears the bubble's ink and
     await page.setContent(CHAT_PAGE(), { waitUntil: "load" });
     assert.deepEqual(errors, [], "the probe bundle ran clean");
     assert.deepEqual(await page.evaluate("window.__pageErrors"), [], "no script error on the page");
+    // the reply helper's aim: the chat's instance, not the singleton, so a path's underscores stay literal (md-config.ts
+    // pathAwareEmphasis; the singleton would pair them as emphasis)
+    const aim = await page.evaluate('window.__md("see /a-_b/c_/d.md today")') as string;
+    assert.doesNotMatch(aim, /<em>/, "__md renders the chat instance's grammar (chat-md.ts chatMdHtml), on which a path's underscores are literal: " + aim);
     for (const theme of ["dark", "light"]) {
       if (theme === "light") await page.evaluate("document.body.classList.add('theme-light')");
       const u = await page.evaluate(READ_INKS + '("u")') as Inks;

@@ -6,7 +6,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { Marked } from "marked";
 import { mdWikiExtensions, wikilinkText, calloutBlockquote } from "./md-wiki";
-import { mdExtensions } from "./md-config";   // the chat's grammar on this fork: md-config.ts is the one configuration (Slice 4); chat-md.ts owns none
+import { mdExtensions } from "./md-config";   // the shared list on this fork: md-config.ts is the one configuration (Slice 4); chat-md.ts builds the chat's two instances from it and adds pathAwareEmphasis
+import { chatMdHtml } from "./chat-md";      // a reply's rendering, as render.ts's md() parses it
 
 const m = new Marked({ gfm: true, breaks: false }, ...mdWikiExtensions);
 const render = (src: string) => (m.parse(src) as string).trim();
@@ -41,8 +42,7 @@ test("the chat grammar carries both, so the chat's messages and the viewer read 
   const names = mdExtensions.flatMap((e) => (e.extensions || []).map((x) => x.name));
   assert.equal(names.filter((n) => n === "wikilink").length, 1, "one wikilink extension in the shared grammar");
   assert.equal(names.filter((n) => n === "callout").length, 1, "one callout extension in the shared grammar");
-  const chat = new Marked({ gfm: true, breaks: false }, ...mdExtensions);
-  const out = (chat.parse("[[A|b]] ~~gone~~") as string).trim();
+  const out = chatMdHtml("[[A|b]] ~~gone~~").trim();   // the chat's own instance (until 2026-09-21 a local copy of the list stood in)
   assert.match(out, /^<p><span class="fv-wikilink fv-dead"[^>]*>\[\[A\|b\]\]<\/span> <del>gone<\/del><\/p>$/,
     "a wikilink in a reply is the styled span (no directory to resolve against), beside the chat's own strikethrough rule");
 });

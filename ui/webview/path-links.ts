@@ -161,8 +161,8 @@ export const TRAILING_PUNCT_RE = new RegExp("[" + TRAILING_PUNCT.replace(/[\\\]^
 // of the token and backs off one character at a time when the end is not there, which is quadratic on a long
 // token made of punctuation: a token of 40K dots and a slash (the path arm matches it whole) costs over a
 // second in the trim alone. Shaped like the regex's match, [the run] or null, because that is how the walk
-// reads it.
-function trailingPunct(tok: string): [string] | null {
+// reads it. Exported for md-config.ts's pathAwareEmphasis, which trims a token the walk's way before it gates it.
+export function trailingPunct(tok: string): [string] | null {
   let i = tok.length;
   while (i > 0 && TRAILING_PUNCT.includes(tok[i - 1])) i--;
   return i < tok.length ? [tok.slice(i)] : null;
