@@ -2858,50 +2858,85 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // nothing, since the first click's reveal put the sign on the screen between the two; in Firefox and WebKit each tap's click
   // carries detail 1, so a second tap is read at its own start and opens once the first tap's reveal has shown the sign; a held
   // key's repeats and Space's release are the key gate's.
-  type FigurePress = { img: Element; ok: boolean };
-  const presses = new Map<number, FigurePress>();        // the press records, by pointerId, each until its pointerup or its pointercancel, a primary press, a dragstart or a mousedown no mouse's or pen's pointerdown came before
-  let slot: FigurePress | null = null;                   // the one-click slot: the record of the last pointerup, until a pointerdown, a pointercancel, a keydown, a mousedown no mouse's or pen's pointerdown came before (but a one-finger tap's own) or the click that takes it
+  type FigurePress = { img: Element; ok: boolean; type: string };
+  const presses = new Map<number, FigurePress>();        // the press records, by pointerId, each until its pointerup or its pointercancel, a primary press, a dragstart or a mousedown no mouse's or pen's pointerdown came before; a touchend or a touchcancel marks every touch record refused, and the record stands
+  let slot: FigurePress | null = null;                   // the one-click slot: the record of the last pointerup, until a pointerdown, a pointercancel, a keydown, a mousedown no mouse's or pen's pointerdown came before (but a one-finger tap's own, or a touch-order pen's) or the click that takes it
   let slotted: FigurePress | null = null;                // what the current click took from the slot at the window, read by webGestureShown
   let mouseDownDue = false;                               // a mouse's or a pen's pointerdown came and its own mousedown has not, until that mousedown, its pointerup or its pointercancel
-  let tapDue = false;                                     // the slot was filled at a one-finger tap's pointerup and that tap's compatibility mousedown has not come, until that mousedown or the next pointerdown or pointercancel
+  let tapDue = false;                                     // the slot was filled at a one-finger tap's pointerup, or at a primary pen's that came before its own mousedown, and that tap's compatibility mousedown has not come, until that mousedown or the next pointerdown or pointercancel
   let touchDowns = 0;                                     // the touch contacts since the last primary touch's pointerdown, that one counted
   let refusedRun = false;                                 // the last click on a web figure in the current run of clicks was refused
+  let slotNeedsMd = false;                                // the pen of slotPen has not sent its compatibility mousedown since its pointerup
+  let slotPen = false;                                    // the slot was filled at a primary pen's pointerup that came before its own mousedown: a pen in the touch order
+  let slotPid: number | null = null;                      // the pointerId of the pointerup that filled the slot
+  let slotType: string | null = null;                     // and its pointerType
+  let tail = false;                                       // set by a mouseup of the primary button with a detail above 0, the last link of a pointer's click; cleared by any other mouseup and by a pointerdown, a mousedown, a pointerup, a pointercancel, a keydown and a click
+  let clickTail = false;                                  // the current click came right after such a mouseup, read by webGestureShown
   const onFigurePress = (ev: PointerEvent): void => {
     slot = null;
     tapDue = false;
-    mouseDownDue = ev.pointerType !== "touch";            // a mouse's and a pen's press send their own mousedown before their pointerup; a tap's comes after its pointerup
+    tail = false;
+    mouseDownDue = ev.pointerType !== "touch";            // a mouse's press and a desktop-order pen's send their own mousedown before their pointerup; a tap's, and a touch-order pen's, come after its pointerup
     if (ev.pointerType === "touch") touchDowns = ev.isPrimary ? 1 : touchDowns + 1;
     if (ev.isPrimary) presses.clear();                    // a primary press: every earlier contact has ended, whatever its pointer type
     const t = ev.target as Element | null;
     const control = figureControlOf(t, body);
     const img = control ? figureOfControl(control) : bareFigureOf(t, body);
     const sign = img ? figureSign(img) : null;
-    if (img && sign) presses.set(ev.pointerId, { img, ok: signShown(sign) });
+    if (img && sign) presses.set(ev.pointerId, { img, ok: signShown(sign), type: ev.pointerType });
   };
-  const onFigureMouseDown = (): void => {                 // ends records and empties the slot, but for a one-finger tap's own: it takes no verdict
+  const onFigureMouseDown = (): void => {                 // ends records and empties the slot, but for a one-finger tap's own and a touch-order pen's: it takes no verdict
+    tail = false;
     if (mouseDownDue) { mouseDownDue = false; return; }   // the mousedown of the mouse's or the pen's press just recorded
     presses.clear();                                      // a mousedown no mouse's or pen's pointerdown came before: every record ends
-    if (!tapDue) slot = null;                             // and the slot too, unless this is the compatibility mousedown of the one-finger tap whose pointerup filled it
+    if (!tapDue) slot = null;                             // and the slot too, unless this is the compatibility mousedown of the one-finger tap or the touch-order pen whose pointerup filled it
+    else slotNeedsMd = false;
     tapDue = false;
   };
-  const onFigureUp = (ev: PointerEvent): void => { slot = presses.get(ev.pointerId) ?? null; presses.delete(ev.pointerId); mouseDownDue = false; tapDue = ev.pointerType === "touch" && ev.isPrimary && touchDowns === 1; };   // the record ends at its own pointerup, handed to the slot
-  const onFigureCancel = (ev: PointerEvent): void => { presses.delete(ev.pointerId); slot = null; mouseDownDue = false; tapDue = false; };
-  const onFigureKey = (): void => { slot = null; };
+  const onFigureUp = (ev: PointerEvent): void => {        // the record ends at its own pointerup, handed to the slot with that pointerup's pointerId and pointerType
+    tail = false;
+    const penTap = ev.pointerType === "pen" && ev.isPrimary && mouseDownDue;   // a primary pen whose own mousedown has not come: a pen in the touch order
+    slot = presses.get(ev.pointerId) ?? null;
+    presses.delete(ev.pointerId);
+    mouseDownDue = false;
+    tapDue = (ev.pointerType === "touch" && ev.isPrimary && touchDowns === 1) || penTap;
+    slotNeedsMd = penTap;
+    slotPen = penTap;
+    slotPid = ev.pointerId;
+    slotType = ev.pointerType;
+  };
+  const onFigureCancel = (ev: PointerEvent): void => { presses.delete(ev.pointerId); slot = null; mouseDownDue = false; tapDue = false; tail = false; };
+  const onFigureKey = (): void => { slot = null; tail = false; };
   const onFigureDragStart = (): void => { presses.clear(); };   // a drag ends every record: WebKit's drag of the picture sends no pointerup and no pointercancel, and no click follows a drag
-  const onClickRun = (ev: MouseEvent): void => { slotted = slot; slot = null; if (ev.detail === 1) refusedRun = false; };   // the click takes the slot, and a click of detail 1 begins a new run
-  const gateListeners: Array<[string, (ev: any) => void]> = [["pointerdown", onFigurePress], ["mousedown", onFigureMouseDown], ["pointerup", onFigureUp], ["pointercancel", onFigureCancel], ["keydown", onFigureKey], ["dragstart", onFigureDragStart], ["click", onClickRun]];
+  const onFigureMouseUp = (ev: MouseEvent): void => { tail = ev.button === 0 && ev.detail > 0; };   // a pointer's click comes right after its primary mouseup, whose detail is the click count; a mouseup with no click after it carries detail 0
+  const onFigureTouchEnd = (): void => { for (const [id, r] of [...presses]) if (r.type === "touch") presses.set(id, { img: r.img, ok: false, type: r.type }); };   // a touch has ended: its record stands, refused, so a click under its pointerId reads that refusal and never falls through to the slot
+  const onClickRun = (ev: MouseEvent): void => {          // the click takes the slot, and a click of detail 1 begins a new run
+    const cpid = (ev as PointerEvent).pointerId, ctype = (ev as PointerEvent).pointerType;
+    clickTail = tail;
+    tail = false;
+    let take = slot;
+    if (!clickTail) take = null;                          // a click with no primary mouseup of detail above 0 right before it takes no press
+    if (slotPen && (slotNeedsMd || (typeof cpid === "number" && !(ctype === "pen" && cpid === slotPid)))) take = null;   // a touch-order pen's slot: after its compatibility mousedown, and by a click that names that pen (a click with no pointerId keeps the arm below)
+    if (take && typeof cpid === "number" && ctype === slotType && cpid !== slotPid) take = null;   // a click of the slot's pointer type carries the slot's pointerId
+    slotted = take;
+    slot = null;
+    if (ev.detail === 1) refusedRun = false;
+  };
+  const gateListeners: Array<[string, (ev: any) => void]> = [["pointerdown", onFigurePress], ["mousedown", onFigureMouseDown], ["mouseup", onFigureMouseUp], ["pointerup", onFigureUp], ["pointercancel", onFigureCancel], ["keydown", onFigureKey], ["dragstart", onFigureDragStart], ["touchend", onFigureTouchEnd], ["touchcancel", onFigureTouchEnd], ["click", onClickRun]];
   for (const [type, cb] of gateListeners) window.addEventListener(type, cb, true);
   closeHooks.push(() => { for (const [type, cb] of gateListeners) window.removeEventListener(type, cb, true); });   // every window listener of the gate goes with the viewer, the capture flag its add carried
   /** The gate's verdict at a click that would open a web picture's tab, the refusal's reveal made here: a click by a pointer takes
-   *  the press the recorder above matched to it (the record under its own pointerId while it stands, until that pointer's pointerup,
-   *  else the slot's), a click by no pointer is read at the click by signShown, and a later click of a refused run opens nothing. */
+   *  the press the recorder above matched to it (the record under its own pointerId while it stands, else the slot's), and only
+   *  right after a primary mouseup of detail above 0; a click by no pointer is read at the click by signShown, and a later click of a
+   *  refused run opens nothing. */
   const webGestureShown = (img: Element, ev: MouseEvent): boolean => {
     const sign = figureSign(img);
     const pid = (ev as PointerEvent).pointerId;
     const byPointer = ev.isTrusted && (typeof pid === "number" ? pid !== -1 : ev.detail > 0);
-    const own = typeof pid === "number" ? presses.get(pid) : undefined;
+    const own = typeof pid === "number" && clickTail ? presses.get(pid) : undefined;
     const press = byPointer ? own ?? slotted ?? undefined : undefined;   // a pointer's click: its own record, else the press the slot handed it; a key's or a script's click reads neither
     slotted = null;
+    clickTail = false;
     if (typeof pid === "number") presses.delete(pid);
     if (ev.detail === 1) refusedRun = false;              // a new run (onClickRun hears it first on the window; read here too, whatever ran before)
     if (ev.detail > 1 && refusedRun) return false;       // a later click of a refused run: the same gesture, which opens nothing and reveals nothing more
