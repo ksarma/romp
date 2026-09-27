@@ -1,7 +1,7 @@
 ---
 title: release.sh's uv fallback no longer calls pytest and cryptography CI's dependency set
 status: candidate
-where: scripts/release.sh (the uv fallback's comment and its say line; the text offered); tests/release-sh.bats (the resolver comment, and the case that reads the say line against the uvx argv and ci.yml's Python-job install set; the text offered); .github/workflows/ci.yml (the Run pytest step's comment on the session-end thread guard; fork-only); tests/conftest.py (the session-end thread guard; fork-only); tests/test_session_end_thread_guard.py (the guard's pins; fork-only); tests/test_bats_bare_negation.py (the docstring's list of the Python cells' installs, now with pytest-xdist; fork-only); upstream/2026-09-27-release-uv-fallback-not-cis-set.md (this entry)
+where: scripts/release.sh (the uv fallback's comment and its say line; the text offered); tests/release-sh.bats (the resolver comment, and the case that reads the say line against the uvx argv and ci.yml's Python-job install set; the text offered); .github/workflows/ci.yml (the Run pytest step's comment on the session-end thread guard; fork-only); tests/conftest.py (the session-end thread guard; fork-only); tests/test_session_end_thread_guard.py (the guard's pins; fork-only); tests/test_bats_bare_negation.py (the docstring's list of the Python cells' installs, now with pytest-xdist; fork-only); tests/test_session_move.py (the fixture loops closed by a bounded cleanup, so no executor worker outlives its test, which the guard found in CI; the loop pin; fork-only); upstream/2026-09-27-release-uv-fallback-not-cis-set.md (this entry)
 added: 2026-09-27
 pr: 922
 tier: docs
