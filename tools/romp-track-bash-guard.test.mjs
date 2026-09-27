@@ -343,10 +343,12 @@ const SHELL_OWN = new Set(['!', '{', '}', '[[', ']]', '((', '))', 'if', 'then', 
 // command line it runs, `query` an option under which it runs nothing, `sub` a subcommand word first, `own` a shell's own word (no program
 // looked up), which the walk reads as a program where it is spelled as a path and, for `time` alone, at the places below. The walk reads
 // `time` spelled as a name as a shell's own word only where three things hold: nothing but reserved words (`!`, `{`, `if`, `then`, `do`
-// and the like) and redirections (which the lexer holds apart from the words, except a named descriptor's `{name}`, as in
-// `{fd}>/dev/null`, which it holds as a word, so the walk reads that word as the program there and never reaches a `time` after it)
-// stands before it in its segment, so no assignment and no wrapper; no pipe feeds the segment; and the text under way is one only bash or
-// zsh reads (`dashReads` false, at programsInvoked).
+// and the like) and redirections (which the lexer holds apart from the words, except the `{name}` of a named descriptor whose name is a
+// plain identifier, as in `{fd}>/dev/null`, which it holds as a word, so the walk reads that word as the program there and never reaches a
+// `time` after it; the `{name}` of one whose name is an array element, as in `{a[0]}>/dev/null`, it holds as a word it does not hold as
+// literal, so the walk stops at that word under THE NON-LITERAL WORDS and never reaches a `time` after it either) stands before it in its
+// segment, so no assignment and no wrapper; no pipe feeds the segment; and the text under way is one only bash or zsh reads (`dashReads`
+// false, at programsInvoked).
 // Wherever else the walk reaches it, a name the text binds or rebinds aside, it reads the program /usr/bin/time (the name `time`, which the
 // gate looks up on the PATH): in the row's own text, in a text a shell other than bash or zsh runs or env -S, flock -c, su, runuser or
 // script runs, after an assignment, a wrapper or a pipe, and in a find -exec (THE TIME WORD, at readSegment; the sixty-second commit, on the
@@ -354,7 +356,9 @@ const SHELL_OWN = new Set(['!', '{', '}', '[[', ']]', '((', '))', 'if', 'then', 
 // shell's own word; the sixty-fifth commit, on the reviewer's call after its re-verifiers, states the rule alone, and where a shell's choice
 // differs from it the walk follows the rule, a stated limit in the header; the seventieth commit, on the reviewer's closing check, names the
 // redirections, since the walk applies the rule to the lexer's words, and pins the texts flock -c, runuser and script run in THE TIME
-// WORD's shapes; the seventy-first commit, on the reviewer's re-check, says the lexer holds a named descriptor's `{name}` as a word).
+// WORD's shapes; the seventy-first commit, on the reviewer's re-check, says the lexer holds a named descriptor's `{name}` as a word; the
+// seventy-second, on the reviewer's re-check of it, narrows that to a name that is a plain identifier and says an array element's stops the
+// walk as a word the lexer does not hold as literal).
 // numactl joined with the sixty-second commit, so this table holds every wrapper of the hook's PREFIXES but builtin (a shell's own word
 // here, SHELL_OWN)
 const WRAPPERS = {
@@ -698,9 +702,10 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
   // the text a shell other than bash or zsh runs; the text env -S, flock -c, su, runuser or script run, through a program or the account's
   // shell; and a text eval, trap, alias, emulate -c or mapfile -C runs, as the text around it. readSegment reads `time` as the program
   // there, and after an assignment, a wrapper or a pipe, and in a find -exec, and as a shell's own word only where nothing but reserved
-  // words and redirections stands before it (the lexer holds a redirection apart from the words, except a named descriptor's `{name}`,
-  // which it holds as a word and the walk reads as the program there: WRAPPERS' comment) in a segment no pipe feeds, in a text only bash
-  // or zsh reads
+  // words and redirections stands before it (the lexer holds a redirection apart from the words, except the `{name}` of a named descriptor
+  // whose name is a plain identifier, `{fd}`, which it holds as a word and the walk reads as the program there, and an array element's,
+  // `{a[0]}`, a word it does not hold as literal, where the walk stops under THE NON-LITERAL WORDS: WRAPPERS' comment) in a segment no pipe
+  // feeds, in a text only bash or zsh reads
   let dashReads = true;
   const TIME_WORD_SHELL = /^(?:r?bash|r?zsh\d*)$/;   // the shells whose texts the walk reads with `time` as a shell's own word (WRAPPERS' comment)
   const readAs = (reads, fn) => { const outer = dashReads; dashReads = reads; try { fn(); } finally { dashReads = outer; } };
@@ -788,7 +793,7 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
   const readSegment = (seg, feeder, depth, cond = false) => {
     const words = seg.words;
     let i = 0;
-    let head = !seg.exec;   // THE TIME WORD: nothing but reserved words and redirections (a redirection is none of the lexer's words, except a named descriptor's `{name}`, which the lexer holds as a word and the walk reads as the program there: WRAPPERS' comment) before the word under way, so no assignment or wrapper (a find -exec's words run as a program)
+    let head = !seg.exec;   // THE TIME WORD: nothing but reserved words and redirections (a redirection is none of the lexer's words, except the `{name}` of a named descriptor whose name is a plain identifier, `{fd}`, which the lexer holds as a word and the walk reads as the program there, and an array element's, `{a[0]}`, a word the lexer does not hold as literal, where the walk stops under THE NON-LITERAL WORDS: WRAPPERS' comment) before the word under way, so no assignment or wrapper (a find -exec's words run as a program)
     for (let steps = 0; i < words.length && steps < 32; steps++) {
       const w = words[i];
       const word = w.text;
