@@ -2819,17 +2819,20 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   shown slot, an order the closing check's search of the closed direction composed and, by reading, no engine measured
   //   reaches (the node guard of a touch record a touchend ended, red under a gate that deletes it). The dragstart's clear and
   //   the pointerup's end of its own record are defensive once the mousedown's clear stands: the mouse's next press after a lost
-  //   pointerup reaches this window as a mousedown with no pointerdown, or with a pointerdown, and either ends the record, so
-  //   dropping either alone changes no gesture a test drives, while dropping the mousedown's clear alone lets a press whose
-  //   pointerup never came hand its record to the next click's pointerup, which its node guard reds. The cost, measured in WebKit
-  //   (Playwright's, on Linux: a mouse drag of a web picture, and a drag in a same-origin frame standing in for another pane):
-  //   after a drag anywhere in the page, another pane's included, the mouse's next click on a web picture opens nothing and
-  //   reveals its sign, whatever covers or shows it, a right click before that drag included, and the click after it opens; where
-  //   a press's pointerup never comes, the mouse's next click is refused the same way; a first press elsewhere costs nothing.
-  //   Chromium and Firefox end such a drag with a pointercancel and send the next press's pointerdown, so they carry no cost. The
-  //   cost of the primary clear, on a device with a mouse and a touchscreen: a contact held on a picture while a primary press of
-  //   the other pointer type lands elsewhere loses its record, a mouse held while a finger presses or a finger held while the
-  //   mouse presses, so its click opens nothing and reveals;
+  //   pointerup reaches this window as a mousedown with no pointerdown, or with a pointerdown, and either ends the record, and a
+  //   tap's or a touch-order pen's compatibility mousedown after its pointerup ends it too, so dropping either alone changes no
+  //   order an engine measured sends: dropping the dragstart's clear alone reds no test, and dropping the pointerup's end alone
+  //   reds only the pen guard's row of a pointerup, then a mouseup of detail 1 and the pen's click with no mousedown before them,
+  //   an order no engine measured sends, whose click then reads the pen's own record; while dropping the mousedown's clear alone
+  //   lets a press whose pointerup never came hand its record to the next click's pointerup, which its node guard reds. The cost,
+  //   measured in WebKit (Playwright's, on Linux: a mouse drag of a web picture, and a drag in a same-origin frame standing in
+  //   for another pane): after a drag anywhere in the page, another pane's included, the mouse's next click on a web picture
+  //   opens nothing and reveals its sign, whatever covers or shows it, a right click before that drag included, and the click
+  //   after it opens; where a press's pointerup never comes, the mouse's next click is refused the same way; a first press
+  //   elsewhere costs nothing. Chromium and Firefox end such a drag with a pointercancel and send the next press's pointerdown,
+  //   so they carry no cost. The cost of the primary clear, on a device with a mouse and a touchscreen: a contact held on a
+  //   picture while a primary press of the other pointer type lands elsewhere loses its record, a mouse held while a finger
+  //   presses or a finger held while the mouse presses, so its click opens nothing and reveals;
   // - a pointerup fills the one-click slot with the record under its own pointerId, or with nothing when that pointer recorded
   //   none, and notes that pointerup's pointerId and pointer type; any pointerdown, pointercancel or keydown empties the slot,
   //   and so does a mousedown with no pointerdown of a mouse or a pen before it, unless the pointerup that filled the slot was a
