@@ -44,6 +44,9 @@ SCHEMA = 1
 LEGS = ("deps", "pytest", "bats", "manager", "tools", "ledger", "typecheck", "npm-test", "build")
 WEBVIEW_LEGS = ("typecheck", "npm-test", "build")
 TEST_LEGS = ("pytest", "bats", "manager", "tools", "npm-test")
+# The legs the runner owes at every head; the others (deps, ledger, the webview legs) it marks not owed only
+# with a reason (`why`).
+ALWAYS_OWED = ("pytest", "bats", "manager", "tools")
 VERDICTS = ("pass", "red", "running", "invalid")
 EXIT_PASS, EXIT_RED, EXIT_REFUSED, EXIT_INVALID = 0, 1, 2, 3
 
@@ -137,9 +140,23 @@ def webview_owed(paths):
     return [p for p in paths if p in WEBVIEW_FILES or p.startswith(WEBVIEW_DIRS)]
 
 
-def is_owed(leg):
-    """A leg counts as not owed only when its record says so in as many words; anything else is owed."""
-    return not (isinstance(leg, dict) and leg.get("owed") is False)
+def excuse_fault(name, leg):
+    """Why a leg's not-owed mark is one the runner never writes, or None: a leg of ALWAYS_OWED marked not
+    owed, or another leg marked not owed with no reason."""
+    if not (isinstance(leg, dict) and leg.get("owed") is False):
+        return None
+    if name in ALWAYS_OWED:
+        return "%s marked not owed" % name
+    why = leg.get("why")
+    if not (isinstance(why, str) and why.strip()):
+        return "%s marked not owed with no reason" % name
+    return None
+
+
+def is_owed(name, leg):
+    """A leg counts as not owed only when its record says so in as many words, with a reason, and it is not one
+    of ALWAYS_OWED; anything else is owed."""
+    return not (isinstance(leg, dict) and leg.get("owed") is False) or excuse_fault(name, leg) is not None
 
 
 def _count(value):
@@ -168,14 +185,14 @@ def verdict_of(result):
     if result.get("invalid"):
         return "invalid"
     legs = result.get("legs") or {}
-    if any(is_owed(legs.get(name)) and not passed(name, legs.get(name)) for name in LEGS):
+    if any(is_owed(name, legs.get(name)) and not passed(name, legs.get(name)) for name in LEGS):
         return "red"
     return "pass"
 
 
 def red_legs(result):
     legs = result.get("legs") or {}
-    return [name for name in LEGS if is_owed(legs.get(name)) and not passed(name, legs.get(name))]
+    return [name for name in LEGS if is_owed(name, legs.get(name)) and not passed(name, legs.get(name))]
 
 
 def _rc_text(name, leg):
@@ -248,7 +265,7 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
         data = _load(path)
     except (OSError, ValueError) as e:
         return done("unreadable", "sweep unreadable: %s: %s; sweep again" % (path, e))
-    if data.get("schema") != SCHEMA:
+    if type(data.get("schema")) is not int or data.get("schema") != SCHEMA:
         return done("unreadable", "sweep unreadable: %s: schema %r, and this reader reads schema %d; sweep again with this "
                                   "checkout's scripts/sweep.py" % (path, data.get("schema"), SCHEMA), data)
     if data.get("sha") != sha:
@@ -259,6 +276,15 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
     if absent:
         return done("incomplete", "sweep incomplete at %s: no %s leg in %s; sweep again with this checkout's scripts/sweep.py"
                     % (short(sha), ", ".join(absent), path), data)
+    faults = [f for f in (excuse_fault(name, legs[name]) for name in LEGS) if f]
+    always = [name for name in ALWAYS_OWED if legs[name].get("owed") is False]
+    if faults:
+        text = [f for f in faults if not f.endswith(" marked not owed")]
+        if always:
+            text.insert(0, "%s marked not owed" % ", ".join(always))
+        return done("invalid", "sweep invalid at %s: %s, which the runner never records (%s always run; the other legs are "
+                               "marked not owed only with a reason); sweep again with this checkout's scripts/sweep.py"
+                    % (short(sha), "; ".join(text), ", ".join(ALWAYS_OWED)), data)
     recomputed = verdict_of(data)
     if recomputed == "running":
         ran = [name for name in LEGS if legs[name].get("finished")]
@@ -273,8 +299,8 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
         return done("red", "sweep red at %s: %s; logs under %s" % (
             short(sha), ", ".join("%s (%s)" % (n, _rc_text(n, legs[n])) for n in red_legs(data)),
             os.path.join(sweeps_dir(env), "logs", sha)), data)
-    ran = ["%s %s" % (n, legs[n]["rc"]) for n in LEGS if is_owed(legs[n])]
-    skipped = [n for n in LEGS if not is_owed(legs[n])]
+    ran = ["%s %s" % (n, legs[n]["rc"]) for n in LEGS if is_owed(n, legs[n])]
+    skipped = [n for n in LEGS if not is_owed(n, legs[n])]
     return done("pass", "sweep at %s: pass, finished %s (%s%s); %s" % (
         short(sha), data.get("finished"), ", ".join(ran), ("; not owed: " + ", ".join(skipped)) if skipped else "", path), data)
 
@@ -589,7 +615,7 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path):
         if result.get("invalid"):
             raise Refused("the result at %s is invalid (%s); run the full sweep" % (short(sha), result["invalid"]))
         for name in only:
-            if not is_owed(result["legs"][name]):
+            if not is_owed(name, result["legs"][name]):
                 raise Refused("%s is not owed at %s (%s); nothing to re-run" % (name, short(sha), result["legs"][name].get("why")))
         workers = args.workers or (result.get("runner") or {}).get("workers") or default_workers()
         for name in only:
@@ -623,7 +649,7 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path):
             if only and name not in only:
                 continue
             rec = result["legs"][name]
-            if not is_owed(rec):
+            if not is_owed(name, rec):
                 continue
             print("sweep %s: %s ..." % (short(sha), name), flush=True)
             run_leg(tree, name, rec, wraps, tmpdir, logdir)

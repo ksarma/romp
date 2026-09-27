@@ -583,12 +583,46 @@ class Reader(unittest.TestCase):
         self.assertIn("schema 0", cases[5][1][1])
 
 
+    def test_a_not_owed_mark_the_runner_never_writes_is_invalid(self):
+        """The runner always owes pytest, bats, manager and tools, and marks deps, ledger and the webview legs not
+        owed only with a reason. A record that says otherwise did not come from the runner (or came from a runner
+        with another roster), and a leg it marks not owed ran nothing, so the reader refuses it by name."""
+        cases = []
+        legs = self.result()["legs"]
+        for n in sweep.LEGS:
+            legs[n] = {"owed": False}
+        cases.append(("every leg not owed", legs, "pytest, bats, manager, tools marked not owed"))
+        legs = self.result()["legs"]
+        legs["pytest"] = {"owed": False, "rc": None, "why": "skipped by hand"}
+        cases.append(("pytest alone", legs, "pytest marked not owed"))
+        legs = self.result()["legs"]
+        legs["deps"] = {"owed": False, "rc": None}
+        cases.append(("deps with no reason", legs, "deps marked not owed with no reason"))
+        legs = self.result()["legs"]
+        legs["build"] = {"owed": False, "rc": None, "why": "  "}
+        cases.append(("a blank reason", legs, "build marked not owed with no reason"))
+        for label, legs, named in cases:
+            with self.subTest(label):
+                self.write(self.result(legs=legs))
+                case, line = self.case()
+                self.assertEqual(case, "invalid", line)
+                self.assertIn(named, line)
+                self.assertEqual(sweep.verdict_of(self.result(legs=legs)), "red", "the verdict rule owes such a leg too")
+
+    def test_the_schema_must_be_the_integer(self):
+        self.write(self.result(schema=True))
+        case, line = self.case()
+        self.assertEqual(case, "unreadable", "True equals 1 in Python and must not read as schema 1: %s" % line)
+
+
 class Rules(unittest.TestCase):
     def test_the_verdict_rule(self):
         v = sweep.verdict_of
 
         def result(finished="2026-01-01T00:00:00Z", invalid=None, **legs):
-            base = {n: {"owed": False, "rc": None} for n in sweep.LEGS}
+            base = {n: {"owed": False, "rc": None, "why": "not owed here"} for n in sweep.LEGS}
+            for n in sweep.ALWAYS_OWED:
+                base[n] = {"owed": True, "rc": 0, "tests": 1}
             base.update(legs)
             return {"finished": finished, "invalid": invalid, "legs": base}
         self.assertEqual(v(result(finished=None)), "running")
@@ -604,6 +638,9 @@ class Rules(unittest.TestCase):
         self.assertEqual(v(result(bats={"owed": True, "rc": 0, "tests": True})), "red", "a count must be an int")
         self.assertEqual(v(result(bats={"owed": True, "rc": 0, "tests": 3, "failed": 1})), "red", "a failed test is red at rc 0")
         self.assertEqual(v(result(ledger={"owed": True, "rc": 0})), "pass", "the ledger check is not a test leg")
+        self.assertEqual(v(result()), "pass")
+        self.assertEqual(v(result(pytest={"owed": False, "rc": None, "why": "skipped"})), "red", "pytest is always owed")
+        self.assertEqual(v(result(deps={"owed": False, "rc": None})), "red", "not owed takes a reason")
         missing = result(pytest={"owed": True, "rc": 0, "tests": 1})
         del missing["legs"]["bats"]
         self.assertEqual(v(missing), "red", "a leg absent from the record is owed")

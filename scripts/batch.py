@@ -1551,8 +1551,8 @@ def cmd_verify(args, quiet=False):
     if a["case"] == "pass":
         legs = a["result"]["legs"]
         state["sweep"] = {"head": head, "path": a["path"], "verdict": "pass", "finished": a["result"].get("finished"),
-                          "legs": [[n, legs[n].get("rc") if sweep.is_owed(legs[n]) else "not owed"] for n in sweep.LEGS],
-                          "summary": {n: legs[n]["summary"] for n in sweep.LEGS if sweep.is_owed(legs[n]) and legs[n].get("summary")}}
+                          "legs": [[n, legs[n].get("rc") if sweep.is_owed(n, legs[n]) else "not owed"] for n in sweep.LEGS],
+                          "summary": {n: legs[n]["summary"] for n in sweep.LEGS if sweep.is_owed(n, legs[n]) and legs[n].get("summary")}}
         lines.append("ok   " + a["line"])
     else:
         ok = False
