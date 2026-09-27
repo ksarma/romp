@@ -15325,15 +15325,15 @@ r12f_keyset() {   # <hook>: the remote's main and its tracking ref set back to B
         chmod 755 "$TEST_DIR/key-m$k"
         [ "$(diff "$hook" "$TEST_DIR/key-m$k" | grep -c '^>')" -eq 1 ]                                        # each mutant landed, once
     done
-    ! r12f_keyset "$TEST_DIR/key-m1"
+    if r12f_keyset "$TEST_DIR/key-m1"; then false; fi
     [ "$(cat "$TEST_DIR/keydiff")" = "< s/side.txt" ]
-    ! r12f_keyset "$TEST_DIR/key-m2"
+    if r12f_keyset "$TEST_DIR/key-m2"; then false; fi
     [ "$(cat "$TEST_DIR/keydiff")" = "< r/ren.txt" ]
-    ! r12f_keyset "$TEST_DIR/key-m3"
+    if r12f_keyset "$TEST_DIR/key-m3"; then false; fi
     [ "$(cat "$TEST_DIR/keydiff")" = "$(printf '%s\n' '< "q/na\303\257ve.txt"' '< d/del.txt' '< n/add.txt' '< z/eadd.txt' '< z/edel.txt' | LC_ALL=C sort)" ]
-    ! r12f_keyset "$TEST_DIR/key-m4"
+    if r12f_keyset "$TEST_DIR/key-m4"; then false; fi
     [ "$(cat "$TEST_DIR/keydiff")" = "$(printf '%s\n' '< e/edit.txt' '< m/mode.txt' '< s/side.txt' | LC_ALL=C sort)" ]
-    ! r12f_keyset "$TEST_DIR/key-m5"
+    if r12f_keyset "$TEST_DIR/key-m5"; then false; fi
     [ "$(cat "$TEST_DIR/keydiff")" = "no key set was read" ]
     [[ "$output" == *"romp pre-push: the NAME LISTING of the pushed commits was read short for the credential scan"* ]]
 }
