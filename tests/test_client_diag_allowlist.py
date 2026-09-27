@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """The clientDiag handler admits each surface's known top-level data keys and bounds the row (2026-09-18, the beacon
 extension). The file used to take whatever a page posted, of any shape and size. Now: a key outside the surface's
-allowlist (CLIENT_DIAG_KEYS) is dropped and said once on stderr per surface and key; a data that is not an object is
+allowlist (CLIENT_DIAG_KEYS) is dropped and said once on stderr per surface and key; an admitted key whose value is outside the
+closed set CLIENT_DIAG_VALUES states for it (chat's `view`, one fixed word) is dropped the same way, the line naming the key and the
+reason and never the value; a data that is not an object is
 stored as null; every string value is cut at CLIENT_DIAG_STR_MAX characters at any depth; a row whose JSON runs past
 CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and carries {"capped": true, "bytes": N, "app": ...} as its
 data, except a perf minute row, which sheds its per-minute figures (CLIENT_DIAG_MINUTE_SHED, in order) until it fits and
@@ -96,6 +98,14 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertTrue(set(km.CLIENT_DIAG_MINUTE_SHED) <= km.CLIENT_DIAG_KEYS["perf"])
         self.assertEqual(km.CLIENT_DIAG_SAID_MAX, 512)
         self.assertEqual(km.CLIENT_DIAG_ROW_SAY_MAX, 8, "the foreign keys of one row said by name; the rest are counted in one line")
+        # the value bound (the maintainer's round 5 ruling, tests-1): every entry names an admitted key of its surface and holds a closed set
+        # of words; the one entry is chat's `view`, a set of exactly one word (the owner's bound: one fixed word, no host name)
+        for (surface, key), values in km.CLIENT_DIAG_VALUES.items():
+            self.assertIn(key, km.CLIENT_DIAG_KEYS[surface], "a value set bounds an admitted key (%s, %s)" % (surface, key))
+            self.assertIsInstance(values, frozenset, (surface, key))
+            self.assertTrue(values and all(isinstance(w, str) and w for w in values), (surface, key))
+        self.assertEqual(sorted(km.CLIENT_DIAG_VALUES), [("chat", "view")], "one bounded key today: the spacer row's marker")
+        self.assertEqual(len(km.CLIENT_DIAG_VALUES[("chat", "view")]), 1, "one fixed word (the owner 2026-09-21, who approved the field)")
 
     def test_todays_rows_pass_whole_and_quietly(self):
         err = self.post("perf", "minute", MINUTE)
@@ -153,9 +163,70 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         for surface in ("shell", "federation", "chat", "perf", "reload-core"):
             self.assertNotIn("parked", km.CLIENT_DIAG_KEYS[surface], "the key is the pane-shim surface's alone")
 
+    def test_the_inactive_spacer_rows_marker_passes_whole_on_the_owners_approval(self):
+        # PR E's author's pass 1b (applying the maintainer's round 1 addendum) marked a spacer row whose view was switched away before its
+        # frame `view: "inactive"` (sh and ch null: no geometry, and the row says so; ui/webview/scroll-write.ts spacerRow), and the author's
+        # pass 3 (applying the maintainer's round 2 ruling) admitted the key to the chat allowlist, after the kernel had dropped it with a
+        # stderr line and the stored row was byte-identical to an active view's row read with #content missing. A new field a page posts to
+        # the kernel is the owner's to approve, field by field, and that ruling was not his word: the field was taken out of the tree
+        # restorably on 2026-09-21 and restored the same day on his approval (the owner 2026-09-21, who approved the field), which stands on
+        # his word and not on the maintainer's round 2 ruling. This cell pins the PRESENCE at the dispatch level: the marked row through the
+        # real handler, stored whole with nothing said; the key in the chat entry and in no other surface's (one fixed word, no host name);
+        # and the second spacer fixture row in the census below carries the marker, so the census executes the marker's shape too (drop the
+        # key from the table and the census reds with this cell). Red under the reverse plants: the key out of the chat entry (the kernel
+        # drops the posted key with its stderr line, so the stored row is not the posted one); the marker out of the page's post, and the
+        # builder's argument out with the bundle rebuilt, red the node pins (ui/webview/spacer-measure.test.ts, scroll-movers.test.ts).
+        word, = km.CLIENT_DIAG_VALUES[("chat", "view")]   # the one word, stated once in the kernel and read here, spelled nowhere in this cell
+        row = {"sid": WID, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": None, "ch": None, "view": word}
+        err = self.post("chat", "spacer", row)
+        self.assertEqual(err, "", "the marked row is admitted whole, nothing said (the owner 2026-09-21, who approved the field): %s" % err)
+        stored = self.rows()[-1]["data"]
+        self.assertEqual(stored, row, "the inactive spacer row survives the allowlist whole, marker included")
+        self.assertEqual(stored["view"], word, "the marker stored as posted (a restatement of the whole-row equality above; the table admits the key and CLIENT_DIAG_VALUES bounds the value to the word, the page's builder's, ui/webview/scroll-write.ts spacerRow: the cell below drives the bound)")
+        self.assertIn("view", km.CLIENT_DIAG_KEYS["chat"], "the chat entry names the key on the owner's approval of 2026-09-21")
+        for surface in km.CLIENT_DIAG_KEYS:
+            if surface != "chat":
+                self.assertNotIn("view", km.CLIENT_DIAG_KEYS[surface], "the key is the chat surface's alone (%s)" % surface)
+
+    def test_the_spacer_rows_marker_is_bounded_to_the_one_word_and_every_other_value_is_refused(self):
+        # The value bound (the maintainer's round 5 ruling, tests-1): the owner approved the `view` key carrying ONE FIXED WORD and no host
+        # name, and a key-only allowlist admitted any text under it (each value below was stored as posted at the head that round ruled on,
+        # nothing said). The set is stated once, in the kernel (CLIENT_DIAG_VALUES), and read here: the word is not spelled in this cell, the
+        # foreign values are derived from it (a case variant, a second word one character longer, a long string) or are of another type (a
+        # number, null, an object), so the cell cannot drift from the set it drives and no case can pass for the wrong reason (a literal second
+        # word would be admitted, not refused, by a kernel that adopted it: the maintainer's round 6 ruling, extra7-1). A refusal takes the
+        # unknown key's shape: the row is stored without the key, and one stderr line names the key and the reason, never the value (the
+        # latch is per surface and key, so it is cleared between the values here: each is its own kernel for the line's purpose). The long
+        # string is a value outside the set, refused whole or cut: the kernel compares the value as posted, before the scrub, but under the
+        # current scrub (strings cut at CLIENT_DIAG_STR_MAX, longer than the word) no value's scrubbed form equals the word unless the value
+        # did, so no cell distinguishes that ordering and this one does not claim to (the closing lens over the author's fixer pass over the
+        # pass after the maintainer's round 5, CL-3: the sentence here had said the long string exercised it).
+        word, = km.CLIENT_DIAG_VALUES[("chat", "view")]
+        base = {"sid": WID, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": None, "ch": None}
+        self.assertEqual(self.post("chat", "spacer", dict(base, view=word)), "", "the word passes whole, nothing said")
+        self.assertEqual(self.rows()[-1]["data"], dict(base, view=word), "the marked row stored whole, the word as posted")
+        variant = word[:1].upper() + word[1:]
+        self.assertNotEqual(variant, word, "a case variant of the word, derived from it")
+        other = word + "x"
+        self.assertNotEqual(other, word, "a second word, derived from the word (one character longer; well under CLIENT_DIAG_STR_MAX, so distinct from the long string below)")
+        self.assertLessEqual(len(other), km.CLIENT_DIAG_STR_MAX, "the second word is not a string the scrub would cut")
+        long = word + "x" * (4 * km.CLIENT_DIAG_STR_MAX)
+        self.assertGreater(len(long), km.CLIENT_DIAG_STR_MAX, "a string the scrub would cut")
+        line = "[client-diag] dropping a key whose value is outside the set the kernel admits for it: surface 'chat', key 'view'"
+        for label, value in (("a case variant", variant), ("another word", other), ("a number", 7), ("null", None),
+                             ("an object", {"host": "TESTHOST"}), ("a long string", long)):
+            km._client_diag_said.clear()
+            err = self.post("chat", "spacer", dict(base, view=value))
+            self.assertEqual(err.splitlines(), [line], "%s: refused with the kernel's line naming the key and the reason, never the value" % label)
+            self.assertEqual(self.rows()[-1]["data"], base, "%s: the row is stored without the key, the other keys whole" % label)
+        # said once per kernel, as an unknown key is: the same refusal again, nothing said
+        self.assertEqual(self.post("chat", "spacer", dict(base, view=other)), "", "the same refusal again, nothing said (the derived word, so a kernel that adopted a literal could not pass this for the wrong reason)")
+
     def test_every_surface_in_the_table_admits_every_key_it_names(self):
         for surface, keys in sorted(km.CLIENT_DIAG_KEYS.items()):
-            data = {k: i for i, k in enumerate(sorted(keys))}
+            # an integer per key, except a key whose value is bounded (CLIENT_DIAG_VALUES), which carries an admitted word: the integer would
+            # be refused there (the cell above drives the refusals)
+            data = {k: (sorted(km.CLIENT_DIAG_VALUES[(surface, k)])[0] if (surface, k) in km.CLIENT_DIAG_VALUES else i) for i, k in enumerate(sorted(keys))}
             if surface == "kernel":
                 # the kernel's own surface: the handler refuses a page's row under it (the test below), so the entry is
                 # checked at the admit step alone; it names the keys the kernel's own writers use
@@ -496,6 +567,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("unitchange", {"sid": sid, "dh": 4, "cls": "turn", "fromTail": True, "stick": False, "atBottom": True, "sh": 5000, "ch": 800}),
                 ("tailmut", {"sid": sid, "where": "tail", "removed": 1, "added": 2, "reAdded": 0, "shBefore": 5000, "shAfter": 5010, "st": 4200, "ch": 800}),
                 ("spacer", {"sid": sid, "top": 40, "bot": 0, "dTop": 8, "dBot": 0, "sh": 5000, "ch": 800}),
+                ("spacer", {"sid": sid, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": None, "ch": None, "view": "inactive"}),   # the same poster's other road: a view switched away before its frame carries no geometry and the marker (PR E, the maintainer's round 1 addendum; the key in the chat entry on the owner's approval: the owner 2026-09-21, who approved the field); the word here is the PAGE's spelling, as the builder mints it (ui/webview/scroll-write.ts spacerRow), so this census ties the kernel's value set (CLIENT_DIAG_VALUES) to what the poster sends, and a kernel word drifted from the page's reds here
+                ("spacer-dropped", {"sid": sid, "n": 2, "kind": "spacer", "why": "hidden"}),   # the spacer rows whose frame never came, dropped on a visibilitychange edge and counted in one row (render.ts dropSpacerRowsOnVisibility; the maintainer's round 5 ruling, kernel-1): the allowlist's keys, no new key
                 ("scrollgesture", {"sid": sid, "top": 4100, "gesture": True, "sh": 5000, "ch": 800}),
                 ("regionask", {"sid": sid, "lo": 10, "hi": 20, "edge": "top", "why": "scroll", "notice": False}),
                 ("regionask", {"sid": sid, "why": "land", "nav": "reload", "kind": "older", "keep": 2, "reland": False, "trail": 1, "notice": True, "atBottom": False}),

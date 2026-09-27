@@ -23,7 +23,14 @@ export interface TabColor { bg: string; fg: string }
 // `emoji` (2026-09-06) is the tab's one-glyph label before the name: the kernel stores it beside the
 // name and color (the names registry's fifth field) and ships it in the same per-tab meta, "" when
 // none; a kernel too old to know the field sends no key, and the strip leaves what it has alone.
-export interface TabSessionMeta { name: string; color: TabColor | null; emoji?: string }
+// `userTodos` (2026-09-22) is the session's open user todos, on the roster so a tab whose session payload this page has
+// not been served (a skeleton after a redial or a later column's dial, a placeholder still opening) wears its flag: on a
+// tabOrder row it is the kernel's COUNT of open todos (a light frame every chat client receives for every listed tab;
+// the rows' text stays session content), and on a session it is the payload's rows. A kernel too old to know the field
+// sends no key. The push syncs name, colour and emoji onto a loaded session below; the todo rows stay the payload's own.
+// The field is typed as either shape because applyMetaToSession takes a loaded Session (rows) through this interface: a
+// bare `number` here does not compile (tsc: Session is not assignable to TabSessionMeta).
+export interface TabSessionMeta { name: string; color: TabColor | null; emoji?: string; userTodos?: number | ReadonlyArray<unknown> | null }
 export interface PendingTabMeta { name?: string; colorBg?: string; emoji?: string; age: number }
 
 export const PENDING_META_MAX_AGE = 3;

@@ -135,8 +135,9 @@ class WaitingOnYouHiddenTodos(unittest.TestCase):
         self.assertIn("**Show in feed**", self.section)
 
     def test_the_glyph_matches_the_tab_mark(self):
-        # The designed mute asymmetry: the tab glyph reads build_session's userTodos, which mute
-        # does not touch, so a hidden session's tab still shows the mark the guide names.
+        # The designed mute asymmetry: the tab glyph reads build_session's userTodos on a loaded tab and
+        # the tabOrder row's count on a skeleton or placeholder tab (2026-09-22), and mute touches
+        # neither, so a hidden session's tab still shows the mark the guide names.
         self.assertRegex(self.render, r'el\("span", "tab-usertodo"\);\s*\n\s*ut\.textContent = "⚑";')
         self.assertIn("its tab still shows the ⚑ mark", self.section)
 
