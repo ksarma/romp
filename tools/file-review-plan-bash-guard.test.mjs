@@ -1368,11 +1368,11 @@ test("round 6, thirteenth commit: decision 47 and the hook header record the emp
 // Round 7 of fork PR #780 review, thirty-fifth commit (the reviewer's tests-3, as its refuter corrected it): the ledger entry's `where:` line is
 // the output of the notes' ledger-where.sh, derived from the PR's whole diff against its merge base with main, and no test held it (round 6's
 // fifteenth commit said a plan pin did; none did, and a seventh matrix fixture added with the line untouched left this module green). The file
-// list below is `git diff --name-only 01434a45b..HEAD` at the head, recorded verbatim in git's order, the shape of
+// list below is `git diff --name-only <the merge base with main>..HEAD` at the head, recorded verbatim in git's order, the shape of
 // tools/upstream-ledger-figure-gate-before-adoption.test.mjs: this module reads no git (a pin that shelled out would have to skip where git or the
 // base is absent, and report green having checked nothing), so a file the PR adds later is caught by re-running the command, or ledger-where.sh,
 // which prints this same block beside the line, and re-recording both in the same commit; a file re-recorded here and not named in the line reds
-// by name, and the self-check holds the block to the command's shape, which a hand edit tends to break. 01434a45b is the merge base with main.
+// by name, and the self-check holds the block to the command's shape, which a hand edit tends to break.
 const DIFF_OUTPUT = `
 docs/batching.md
 docs/guide.md
