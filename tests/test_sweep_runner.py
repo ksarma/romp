@@ -83,6 +83,11 @@ elif act == "copy-result":
 elif act == "leak":
     with open(os.path.join(ctl["tree"], "leaked.txt"), "w") as f:
         f.write("a test that wrote into the tree\n")
+# What each test leg's real tool prints at the end of a run (pytest -q's summary, bats' TAP, node's TAP summary):
+# the runner counts the tests a leg ran from its log, and a test leg with rc 0 and no test counted is red.
+out = {"pytest": "3 passed in 0.01s\n", "bats": "1..1\nok 1 a\n", "manager": "# pass 1\n# fail 0\n",
+       "tools": "# pass 2\n# fail 0\n", "npm-test": "# pass 4\n# fail 0\n"}
+sys.stdout.write(ctl.get("out", {}).get(leg, out.get(leg, "")))
 sys.exit(ctl.get("rc", {}).get(leg, 0))
 '''
 
@@ -385,6 +390,50 @@ class Runner(_Base):
                          "* applies to a leg with no prefix of its own")
         self.assertNotIn("bats", w2.legs_called(), "the leg's own prefix replaced *")
 
+    def test_a_wrap_that_runs_nothing_is_red_not_a_pass(self):
+        """A wrapper that exits 0 without running its command (`true`; `systemd-run --user` without --wait, which
+        returns once the unit has started) gives every leg rc 0. A test leg with rc 0 and no test counted in its
+        log is red, named, so such a run can never be recorded as a pass."""
+        w = self.w
+        p = w.run("--wrap", "*=true", check=1)
+        r = w.result()
+        self.assertEqual(r["verdict"], "red", p.stdout + p.stderr)
+        self.assertEqual(r["red"], [PYTEST_LEG, "bats", "manager", "tools"])
+        for name in r["red"]:
+            self.assertEqual(r["legs"][name]["rc"], 0, name)
+            self.assertIn(r["legs"][name].get("tests"), (None, 0), name)
+        self.assertIn("pytest (rc 0 but no test ran), bats (rc 0 but no test ran)", p.stdout)
+        self.assertEqual(w.calls(), [], "nothing ran: the wrapper swallowed every command")
+        a = sweep.assess(w.head(), env=w.env)
+        self.assertEqual(a["case"], "red", a["line"])
+
+    def test_the_tests_a_leg_ran_are_counted_from_its_log(self):
+        w = self.w
+        w.run(check=0)
+        r = w.result()
+        self.assertEqual({n: r["legs"][n].get("tests") for n in (PYTEST_LEG, "bats", "manager", "tools")},
+                         {PYTEST_LEG: 3, "bats": 1, "manager": 1, "tools": 2})
+        self.assertNotIn("tests", r["legs"]["ledger"], "the ledger check is not a test leg")
+        cases = (
+            ("bats", "1..2\nok 1 a\nnot ok 2 b\n", "bats (rc 0 but its log shows 1 failed)"),
+            ("manager", "# pass 0\n# fail 0\n", "manager (rc 0 but no test ran)"),
+            (PYTEST_LEG, "5 skipped in 0.01s\n", "pytest (rc 0 but no test ran)"),
+            (PYTEST_LEG, "no summary line at all\n", "pytest (rc 0 but no test ran)"),
+        )
+        for leg, out, named in cases:
+            with self.subTest(leg=leg, out=out):
+                w2 = World()
+                self.addCleanup(w2.close)
+                w2.ctl({"out": {leg: out}})
+                p = w2.run(check=1)
+                self.assertEqual(w2.result()["red"], [leg])
+                self.assertIn(named, p.stdout)
+        w3 = World()
+        self.addCleanup(w3.close)
+        w3.ctl({"out": {"tools": "\u2139 tests 6\n\u2139 pass 6\n\u2139 fail 0\n"}})    # node's spec reporter
+        w3.run(check=0)
+        self.assertEqual(w3.result()["legs"]["tools"]["tests"], 6)
+
     def test_a_leg_rerun_keeps_history_and_rereads_the_verdict(self):
         w = self.w
         w.ctl({"rc": {"pytest": 1}})
@@ -461,6 +510,8 @@ class Reader(unittest.TestCase):
     def result(self, sha=None, **over):
         sha = sha or self.SHA
         legs = {n: {"owed": True, "rc": 0, "started": "2026-01-01T00:00:01Z", "finished": "2026-01-01T00:00:02Z"} for n in sweep.LEGS}
+        for n in sweep.TEST_LEGS:
+            legs[n].update(tests=1, failed=0)
         for n in sweep.WEBVIEW_LEGS + ("deps",):
             legs[n] = {"owed": False, "rc": None, "why": "not owed here"}
         data = {"schema": sweep.SCHEMA, "sha": sha, "branch": "batch/b1", "started": "2026-01-01T00:00:00Z",
@@ -545,10 +596,15 @@ class Rules(unittest.TestCase):
         self.assertEqual(v(result(bats={"owed": True, "rc": 1})), "red")
         self.assertEqual(v(result(bats={"owed": True, "rc": None})), "red", "an owed leg with no rc is red")
         self.assertEqual(v(result(bats={"owed": True, "rc": False})), "red", "rc must be the integer 0")
-        self.assertEqual(v(result(bats={"rc": 0})), "pass", "a leg that does not say it is not owed is owed")
+        self.assertEqual(v(result(bats={"rc": 0, "tests": 1})), "pass", "a leg that does not say it is not owed is owed")
         self.assertEqual(v(result(bats={"owed": "no", "rc": None})), "red", "only owed: false excuses a leg")
-        self.assertEqual(v(result(pytest={"owed": True, "rc": 0})), "pass", "a not-owed leg's empty rc is fine")
-        missing = result(pytest={"owed": True, "rc": 0})
+        self.assertEqual(v(result(pytest={"owed": True, "rc": 0, "tests": 1})), "pass", "a not-owed leg's empty rc is fine")
+        self.assertEqual(v(result(bats={"owed": True, "rc": 0})), "red", "a test leg with rc 0 and no count ran nothing")
+        self.assertEqual(v(result(bats={"owed": True, "rc": 0, "tests": 0})), "red", "a count of 0 is no test run")
+        self.assertEqual(v(result(bats={"owed": True, "rc": 0, "tests": True})), "red", "a count must be an int")
+        self.assertEqual(v(result(bats={"owed": True, "rc": 0, "tests": 3, "failed": 1})), "red", "a failed test is red at rc 0")
+        self.assertEqual(v(result(ledger={"owed": True, "rc": 0})), "pass", "the ledger check is not a test leg")
+        missing = result(pytest={"owed": True, "rc": 0, "tests": 1})
         del missing["legs"]["bats"]
         self.assertEqual(v(missing), "red", "a leg absent from the record is owed")
 

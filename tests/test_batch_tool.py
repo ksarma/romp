@@ -271,6 +271,8 @@ class Fixture:
         sha = sha or self.dev_git("rev-parse", "batch/" + name)
         stamp = sweep.now()
         legs = {n: {"owed": True, "rc": 0, "cmd": ["true"], "started": stamp, "finished": stamp} for n in sweep.LEGS}
+        for n in sweep.TEST_LEGS:
+            legs[n].update(tests=1, failed=0)
         for n in ("deps",) + sweep.WEBVIEW_LEGS:
             legs[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
         data = {"schema": sweep.SCHEMA, "sha": sha, "branch": "batch/" + name, "tree": self.wt(name), "started": stamp,
@@ -1601,6 +1603,8 @@ class VerifyReadsTheSweep(_Base):
 
     def legs(self, **rcs):
         out = {n: {"owed": True, "rc": rcs.get(n, 0), "started": sweep.now(), "finished": sweep.now()} for n in sweep.LEGS}
+        for n in sweep.TEST_LEGS:
+            out[n].update(tests=1, failed=0)
         for n in ("deps",) + sweep.WEBVIEW_LEGS:
             out[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
         return out
@@ -1722,7 +1726,7 @@ class LandReadsTheSweep(_Base):
     def test_a_red_result_at_the_head_stops_land_before_the_merge(self):
         fx = self.fx
         self.ready()
-        legs = {n: {"owed": True, "rc": 0} for n in sweep.LEGS}
+        legs = {n: {"owed": True, "rc": 0, "tests": 1, "failed": 0} for n in sweep.LEGS}
         legs["pytest"]["rc"] = 1
         fx.sweep("b1", legs=legs)
         p = fx.run("land", "b1")
@@ -1742,10 +1746,14 @@ class LandReadsTheSweep(_Base):
 
 FAKE_TOOL = r"""#!%(python)s
 import sys
-# a stand-in for npm, bats, node and the pytest interpreter: the module probe answers, every leg passes
+import os
+# a stand-in for npm, bats, node and the pytest interpreter: the module probe answers, every leg passes and
+# prints the closing counts its real tool prints, which the runner reads to know that tests ran
 if sys.argv[1:2] == ["-c"]:
     print("3.99.0")
     print("")
+    sys.exit(0)
+print({"fakepython": "1 passed in 0.01s", "bats": "1..1\nok 1 a", "node": "# pass 1\n# fail 0"}.get(os.path.basename(sys.argv[0]), ""))
 sys.exit(0)
 """
 

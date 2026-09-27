@@ -142,34 +142,52 @@ def is_owed(leg):
     return not (isinstance(leg, dict) and leg.get("owed") is False)
 
 
-def passed(leg):
+def _count(value):
+    """A recorded count as an int, or None (a bool is not a count)."""
+    return value if type(value) is int else None
+
+
+def passed(name, leg):
+    """rc is the integer 0, and for a test leg (TEST_LEGS) its log showed at least one test passing and none
+    failing: an rc of 0 alone is also what a wrapper that never ran its command returns."""
     rc = leg.get("rc") if isinstance(leg, dict) else None
-    return type(rc) is int and rc == 0
+    if not (type(rc) is int and rc == 0):
+        return False
+    if name in TEST_LEGS:
+        tests, failed = _count(leg.get("tests")), _count(leg.get("failed"))
+        return tests is not None and tests > 0 and not (failed or 0) > 0
+    return True
 
 
 def verdict_of(result):
     """The one verdict rule, for the writer and the reader alike: running until finished, invalid when the run
-    says so, red when an owed leg of LEGS has an rc other than 0 or none, pass otherwise."""
+    says so, red when an owed leg of LEGS has an rc other than 0 or none, or is a test leg whose log counted no
+    passing test or a failing one; pass otherwise."""
     if not result.get("finished"):
         return "running"
     if result.get("invalid"):
         return "invalid"
     legs = result.get("legs") or {}
-    if any(is_owed(legs.get(name)) and not passed(legs.get(name)) for name in LEGS):
+    if any(is_owed(legs.get(name)) and not passed(name, legs.get(name)) for name in LEGS):
         return "red"
     return "pass"
 
 
 def red_legs(result):
     legs = result.get("legs") or {}
-    return [name for name in LEGS if is_owed(legs.get(name)) and not passed(legs.get(name))]
+    return [name for name in LEGS if is_owed(legs.get(name)) and not passed(name, legs.get(name))]
 
 
-def _rc_text(leg):
+def _rc_text(name, leg):
     rc = leg.get("rc") if isinstance(leg, dict) else None
     if rc is None:
         err = leg.get("error") if isinstance(leg, dict) else None
         return "no rc" + (": %s" % err if err else "")
+    if type(rc) is int and rc == 0 and name in TEST_LEGS and not passed(name, leg):
+        failed = _count(leg.get("failed"))
+        if failed:
+            return "rc 0 but its log shows %d failed" % failed
+        return "rc 0 but no test ran"
     return "rc %s" % rc
 
 
@@ -253,7 +271,7 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
                     % (short(sha), data.get("verdict"), recomputed), data)
     if recomputed == "red":
         return done("red", "sweep red at %s: %s; logs under %s" % (
-            short(sha), ", ".join("%s (%s)" % (n, _rc_text(legs[n])) for n in red_legs(data)),
+            short(sha), ", ".join("%s (%s)" % (n, _rc_text(n, legs[n])) for n in red_legs(data)),
             os.path.join(sweeps_dir(env), "logs", sha)), data)
     ran = ["%s %s" % (n, legs[n]["rc"]) for n in LEGS if is_owed(legs[n])]
     skipped = [n for n in LEGS if not is_owed(legs[n])]
@@ -405,25 +423,58 @@ def plan_legs(tree, python, workers, webview):
 
 # What a leg's record holds from its plan (plan_legs); the rest is the attempt, which a --leg re-run replaces.
 PLAN_KEYS = ("owed", "why", "cmd", "cwd", "ignored", "globs", "empty_glob")
-ATTEMPT_KEYS = ("rc", "error", "started", "finished", "log", "summary", "wrap", "env_dropped", "env_set")
+ATTEMPT_KEYS = ("rc", "error", "started", "finished", "log", "summary", "tests", "failed", "wrap", "env_dropped", "env_set")
+
+PYTEST_SUMMARY = re.compile(r"^=*\s*(\d+ (?:failed|passed|skipped|errors?|deselected|xfailed|xpassed)\b[^\n]* in [0-9.]+s\b[^\n]*?)\s*=*$", re.M)
+# node --test's closing counts: `# pass N` from the TAP reporter (the default when stdout is not a terminal on
+# node 22), `\u2139 pass N` from the spec reporter (the default on later releases).
+NODE_COUNT = re.compile(r"^(?:#|\u2139) (pass|fail) (\d+)\s*$", re.M)
+
+
+def _read_log(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
+def count_tests(name, path):
+    """(passed, failed) for a test leg, counted from its log: pytest's last summary line, bats' `ok` and
+    `not ok` lines, node's last `pass` and `fail` counts. (None, None) when the log holds no count, which the
+    verdict reads as no test ran."""
+    data = _read_log(path)
+    if data is None:
+        return None, None
+    if name == "pytest":
+        hits = PYTEST_SUMMARY.findall(data)
+        if not hits:
+            return None, None
+        words = dict((w, int(n)) for n, w in re.findall(r"(\d+) (failed|passed|errors?)\b", hits[-1]))
+        return words.get("passed", 0), words.get("failed", 0) + words.get("error", 0) + words.get("errors", 0)
+    if name == "bats":
+        return len(re.findall(r"^ok ", data, re.M)), len(re.findall(r"^not ok ", data, re.M))
+    counts = {}
+    for word, n in NODE_COUNT.findall(data):
+        counts[word] = int(n)
+    if "pass" not in counts:
+        return None, None
+    return counts["pass"], counts.get("fail", 0)
 
 
 def summarize_log(name, path):
     """A display-only summary: pytest's last result line, bats' ok and not-ok counts, node's pass and fail counts."""
-    try:
-        with open(path, "rb") as f:
-            data = f.read().decode("utf-8", "replace")
-    except OSError:
+    data = _read_log(path)
+    if data is None:
         return None
     if name == "pytest":
-        hits = re.findall(r"^=*\s*(\d+ (?:failed|passed|skipped|errors?|deselected|xfailed|xpassed)\b[^\n]* in [0-9.]+s\b[^\n]*?)\s*=*$",
-                          data, re.M)
+        hits = PYTEST_SUMMARY.findall(data)
         return hits[-1].strip() if hits else None
     if name == "bats":
         ok = len(re.findall(r"^ok ", data, re.M))
         bad = len(re.findall(r"^not ok ", data, re.M))
         return "%d ok, %d not ok" % (ok, bad)
-    counts = dict(re.findall(r"^# (pass|fail) (\d+)$", data, re.M))
+    counts = dict(NODE_COUNT.findall(data))
     if counts:
         return "pass %s, fail %s" % (counts.get("pass", "?"), counts.get("fail", "?"))
     return None
@@ -457,6 +508,8 @@ def run_leg(tree, name, rec, wraps, tmpdir, logdir):
         except OSError as e:
             rec["error"] = "could not start: %s" % e
         rec["summary"] = summarize_log(name, log)
+        if name in TEST_LEGS:
+            rec["tests"], rec["failed"] = count_tests(name, log)
     rec["finished"] = now()
 
 
@@ -574,7 +627,7 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path):
                 continue
             print("sweep %s: %s ..." % (short(sha), name), flush=True)
             run_leg(tree, name, rec, wraps, tmpdir, logdir)
-            print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
+            print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
             write_result(path, result)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
