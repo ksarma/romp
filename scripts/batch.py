@@ -45,7 +45,8 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
   - verify refuses a missing, stale, unfinished, red, invalid, incomplete or unreadable sweep result
     for the batch head's full sha, and a batch head that does not contain main as origin has it now
     (CI does not run on the merge to main, so the tree that lands must be the tree the sweep and the
-    batch branch's CI ran on); land re-runs verify and refuses the same;
+    batch branch's CI ran on), and a result that marks a webview leg not owed while the diff from main
+    to the head owes it; land re-runs verify and refuses the same;
   - pull N drops N's dependents, unless N already merged into main;
   - the body stays under GitHub's 65,536-character cap, the members table never cut and the
     details fitted to the budget (entries table, then resolutions, then the log).
@@ -1677,6 +1678,12 @@ def sweep_phrase(sw):
     return sw.get("text") or "sweep not recorded"
 
 
+def land_line(name):
+    """The body's first words: how this batch lands. `land` checks main again right before the merge; the
+    button and `gh pr merge` do not."""
+    return "Land with `scripts/batch.py land %s`, which merges only while the batch head contains main." % name
+
+
 def gather_body_inputs(root, state):
     """Everything the body needs that comes from git: resolution diffs and the ledger entry table.
     A resolution's diff runs from the merge-tree of the parents to the merge and covers EVERY path
@@ -1778,11 +1785,16 @@ def render_body(state, inputs, cap=BODY_CAP):
     title = "# Batch %s: %d PR%s%s" % (name, len(landing), "" if len(landing) == 1 else "s", (" (%s)" % ", ".join(extra)) if extra else "")
     if v.get("ok") and v.get("head") == head:
         ledger = {"clean": "ledger check clean", "pre-migration": "ledger: pre-migration, not checked", "failed": "ledger check FAILED"}.get(state.get("ledger"), "ledger: not checked")
-        verified = ("Merge with \"Create a merge commit\". Verified at %s: %s; provenance clean; main contained; %s. CI on this PR: see checks."
-                    % (short(head), sweep_phrase(sw), ledger))
+        # The main verify saw, named: "contained" is true at verify time only, and a merge by the button or
+        # `gh pr merge` after main moved lands a tree no sweep or CI run tested (none runs on main).
+        seen = short(v["main"]) if v.get("main") else "its head then"
+        verified = ("%s Verified at %s: %s; provenance clean; main at %s contained at verify time; %s. CI on this PR: the run "
+                    "of the push to %s, on its head. No CI runs on the merge to main, so if main has moved past %s, do not "
+                    "merge with the button or `gh pr merge`: the batch needs main merged in, a new sweep and verify first."
+                    % (land_line(name), short(head), sweep_phrase(sw), seen, ledger, branch_of(name), seen))
     else:
-        verified = "Merge with \"Create a merge commit\". NOT VERIFIED at %s: run `scripts/batch.py verify %s` (verification is %s)." % (
-            short(head), name, "stale" if v else "missing")
+        verified = "%s NOT VERIFIED at %s: run `scripts/batch.py verify %s` (verification is %s)." % (
+            land_line(name), short(head), name, "stale" if v else "missing")
 
     read_first = []
     for e in landing:
@@ -2282,8 +2294,11 @@ def cmd_finish(args):
         git("branch", "-D", branch_of(args.name), cwd=root)
     orphans = _run([os.path.join(root, "scripts", "pr-orphans.sh")], cwd=root, check=False)
     report["orphans"] = {"exit": orphans.returncode, "out": (orphans.stdout + orphans.stderr).strip()}
-    run_url = "none yet"
-    runs = gh("run", "list", "--branch", MAIN, "--limit", "1", "--json", "url", cwd=root, check=False)
+    # CI does not run on the merge to main: the run that tested the merged tree is ci.yml's run of the push
+    # to the batch branch, at the head that landed (the merge commit's tree is that head's).
+    run_url = "none found"
+    landed_head = (state.get("verified") or {}).get("head") or state["assembly"].get("head")
+    runs = gh("run", "list", "--workflow", "ci.yml", "--commit", landed_head, "--limit", "1", "--json", "url", cwd=root, check=False)
     if runs.returncode == 0:
         try:
             rows = json.loads(runs.stdout or "[]")
@@ -2293,7 +2308,8 @@ def cmd_finish(args):
             pass
     state["finished"] = {"at": now(), "report": report}
     save_state(root, state)
-    print("batch #%d landed, %d member(s) marked merged, %s CI run: %s" % (b, len(report["merged"]), MAIN, run_url))
+    print("batch #%d landed, %d member(s) marked merged; no CI runs on the merge to %s; the batch head's CI run: %s"
+          % (b, len(report["merged"]), MAIN, run_url))
     if report["open"]:
         print("STILL OPEN (told on the PR): %s" % ", ".join("#%d" % n for n in report["open"]))
     if report["retargeted"]:
@@ -2436,10 +2452,13 @@ def main(argv=None):
     p.set_defaults(func=cmd_pull)
 
     p = sub.add_parser("land", help="verify, merge the batch PR with a merge commit, finish",
-                       description="On the maintainer's word for this batch: run verify again (the last drift check: pinned "
-                                   "heads, main contained, the sweep result at the verified head), retarget "
-                                   "stacked members to %s, `gh pr merge --merge --match-head-commit <verified sha>`, then run "
-                                   "finish. Never squash or rebase: that would leave every member open." % MAIN)
+                       description="On the maintainer's word for this batch: run verify again (pinned heads, main contained, "
+                                   "the sweep result at the verified head), retarget stacked members to %s, read %s on %s "
+                                   "once more and refuse if it moved since verify, then `gh pr merge --merge "
+                                   "--match-head-commit <verified sha>` and finish. The merge pins the head, not the base, so "
+                                   "a merge to %s between that last read and the merge call is not caught; with --auto the "
+                                   "merge happens later, when a rule on %s is met, and main is not read again then. Never "
+                                   "squash or rebase: that would leave every member open." % (MAIN, MAIN, REMOTE, MAIN, MAIN))
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--auto", action="store_true",
                    help="arm auto-merge instead (lands when the required checks pass; needs the repository's \"Allow auto-merge\" "
@@ -2450,10 +2469,12 @@ def main(argv=None):
     p.set_defaults(func=cmd_land)
 
     p = sub.add_parser("finish", help="after the merge: member states, retargets, branch deletion, orphans",
-                       description="After the batch PR merged (by land or by hand): confirm each member reads MERGED and comment "
+                       description="After the batch PR merged (by land, or by hand once main was confirmed unmoved since "
+                                   "verify: no CI runs on the merge to %s, so a batch merged behind main lands a tree nothing "
+                                   "tested, and finish cannot undo that): confirm each member reads MERGED and comment "
                                    "on any that does not, retarget still-open dependents to %s, delete the member branches and "
                                    "`batch/<name>`, remove the worktree, run scripts/pr-orphans.sh, report one line. Safe to "
-                                   "re-run: what it observed the first time is kept." % MAIN)
+                                   "re-run: what it observed the first time is kept." % (MAIN, MAIN))
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--no-notify", action="store_true", help=HELP_NO_NOTIFY + " (members that did not read merged)")
     p.add_argument("--keep-worktree", action="store_true", help="leave ../romp-batch-<name> and the local batch branch in place")

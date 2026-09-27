@@ -1457,7 +1457,8 @@ class Verify(_Base):
         self.assertEqual(fx.state("b1")["assembly"]["declared"][0]["subject"], "batch: hotfix for the integrated tree")
         body = fx.ok("summarize", "b1", "--print-only").stdout
         self.assertIn("- `batch:` commit %s by the batcher: batch: hotfix for the integrated tree; 1 file changed, 1 insertion(+); touches hotfix.py." % sha[:10], body)
-        self.assertTrue(body.splitlines()[1].startswith('Merge with "Create a merge commit". Verified at'))
+        self.assertTrue(body.splitlines()[1].startswith("Land with `scripts/batch.py land b1`, which merges only while the batch "
+                                                         "head contains main. Verified at"), body.splitlines()[1])
 
     def test_a_verify_that_dies_half_way_leaves_no_green_verification(self):
         fx = self.fx
@@ -1921,7 +1922,10 @@ class LandAndFinish(_Base):
         self.assertNotEqual(fx.bare_rev("m"), "", "the dependent's branch stays")
         self.assertFalse(os.path.exists(fx.wt("b1")))
         self.assertEqual(fx.dev_git("rev-parse", "--verify", "--quiet", "batch/b1", check=False), "")
-        self.assertIn("batch #900 landed, 2 member(s) marked merged", p.stdout)
+        self.assertIn("batch #900 landed, 2 member(s) marked merged; no CI runs on the merge to main; "
+                      "the batch head's CI run: https://example.invalid/actions/runs/1", p.stdout)
+        self.assertEqual(fx.calls("run", "list"), [["run", "list", "--workflow", "ci.yml", "--commit", tip, "--limit", "1", "--json", "url"]],
+                         "the CI run of the batch head, not the newest run of any workflow on main")
         self.assertIn("retargeted to main: #112", p.stdout)
         self.assertIn("pr-orphans.sh: clean", p.stdout)
         rep = fx.state("b1")["finished"]["report"]
@@ -2175,7 +2179,7 @@ class Body(unittest.TestCase):
                 "sweep": {"head": "f" * 40, "verdict": "pass", "finished": "2026-01-01T00:00:00Z",
                           "legs": [[n, "not owed" if n in ("deps",) + sweep.WEBVIEW_LEGS else 0] for n in sweep.LEGS],
                           "summary": {"pytest": "1 passed in 0.1s", "bats": "1 ok, 0 not ok"}}, "ledger": "clean",
-                "verified": {"ok": True, "head": "f" * 40, "lines": []}, "pr": None, "commented": {}}
+                "verified": {"ok": True, "head": "f" * 40, "lines": [], "main": "e" * 40}, "pr": None, "commented": {}}
 
     def test_stays_under_the_cap_with_details_truncated_first(self):
         members = [self.member(n, title="member %d" % n) for n in range(1, 26)]
@@ -2212,9 +2216,13 @@ class Body(unittest.TestCase):
         self.assertIn("line 4", body)
         self.assertIn("(none)", body)
         self.assertIn("## To pull a member\nComment `pull #N`.", body)
-        self.assertIn('Merge with "Create a merge commit". Verified at ffffffffff: sweep pass: pytest rc 0 (1 passed in 0.1s), '
-                      'bats rc 0 (1 ok, 0 not ok), manager rc 0, tools rc 0, ledger rc 0; not owed: deps, typecheck, npm-test, build; '
-                      'provenance clean; main contained; ledger check clean.', body)
+        self.assertIn("Land with `scripts/batch.py land %s`, which merges only while the batch head contains main. "
+                      "Verified at ffffffffff: sweep pass: pytest rc 0 (1 passed in 0.1s), "
+                      "bats rc 0 (1 ok, 0 not ok), manager rc 0, tools rc 0, ledger rc 0; not owed: deps, typecheck, npm-test, build; "
+                      "provenance clean; main at %s contained at verify time; ledger check clean. " % (st["name"], "e" * 10), body)
+        self.assertIn("No CI runs on the merge to main, so if main has moved past %s, do not merge with the button or "
+                      "`gh pr merge`: the batch needs main merged in, a new sweep and verify first." % ("e" * 10), body)
+        self.assertNotIn('Merge with "Create a merge commit"', body, "the body does not send the reader to the button")
         self.assertNotIn("sweep not recorded", body)
         self.assertIn("- none: every member is labeled, carries a trailer, touches no sensitive path and merged clean; "
                       "the batch adds no commit of its own.", body)
