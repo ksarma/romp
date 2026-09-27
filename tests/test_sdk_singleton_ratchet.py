@@ -813,14 +813,16 @@ def derive_deselect_targets(nodes=None):
 
 def derive_command(nodes=None):
     """The argv derive runs in the worktree: this module under the interpreter running it, `-B -m pytest -p
-    no:cacheprovider -q -rf` (-rf prints the FAILED lines derive_red_lines reads), one --deselect per node id of
+    no:cacheprovider -p no:anyio -q -rf` (-rf prints the FAILED lines derive_red_lines reads; -p no:anyio keeps
+    anyio's pytest plugin, which CI's SDK install brings, from auto-loading in the child, as on every pytest the
+    suite starts: tests/test_ci_sdk_pin.py's ChildPytestLaunchers), one --deselect per node id of
     DERIVE_DESELECT (or `nodes`) in the tuple's order, and MODULE_PATH last. The node ids are resolved first
     (derive_deselect_targets), so no command is built over a node id that names no test of this module.
     TheDerivationIsRunnable holds the shape, and holds through derive over a faked subprocess.run that derive runs
     exactly this argv."""
     nodes = DERIVE_DESELECT if nodes is None else tuple(nodes)
     derive_deselect_targets(nodes)
-    cmd = [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf"]
+    cmd = [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:anyio", "-q", "-rf"]
     for node in nodes:
         cmd += ["--deselect", node]
     cmd.append(MODULE_PATH)
@@ -2243,7 +2245,7 @@ def nested_run(text, follower=None, sdk_stub=False, conftest=None):
     for var in NESTED_RUN_POPS:                        # the one copy; derive's environment is built from the same name
         env.pop(var, None)
     r = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
-                        "-vv", "-rA", "--tb=short", "--color=no", case],
+                        "-p", "no:anyio", "-vv", "-rA", "--tb=short", "--color=no", case],
                        cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
     return r.returncode, r.stdout + r.stderr
 
@@ -4170,14 +4172,14 @@ class TheDerivationIsRunnable(unittest.TestCase):
         cmd = derive_command()
         self.assertEqual(cmd[0], sys.executable,
                          "the command does not open on this interpreter (derive_command's first element)")
-        self.assertEqual(cmd[1:8], ["-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf"],
-                         "the command's pytest arguments before the --deselect pairs differ (derive_command's elements 1 to 7)")
-        self.assertEqual(cmd[8:-1], [arg for node in DERIVE_DESELECT for arg in ("--deselect", node)],
+        self.assertEqual(cmd[1:10], ["-B", "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:anyio", "-q", "-rf"],
+                         "the command's pytest arguments before the --deselect pairs differ (derive_command's elements 1 to 9)")
+        self.assertEqual(cmd[10:-1], [arg for node in DERIVE_DESELECT for arg in ("--deselect", node)],
                          "the command does not pair every node id of DERIVE_DESELECT with its own --deselect, in the "
                          "tuple's order: %r" % (cmd,))
         self.assertEqual(cmd[-1], MODULE_PATH,
                          "the command does not end in this module's path (derive_command's last element, MODULE_PATH)")
-        self.assertEqual(derive_command(DERIVE_DESELECT[:1])[8:], ["--deselect", DERIVE_DESELECT[0], MODULE_PATH],
+        self.assertEqual(derive_command(DERIVE_DESELECT[:1])[10:], ["--deselect", DERIVE_DESELECT[0], MODULE_PATH],
                          "a one-node tuple does not give one --deselect pair and then MODULE_PATH (derive_command over "
                          "DERIVE_DESELECT[:1])")
         with self.assertRaisesRegex(SystemExit, "names no test of this module: " + re.escape(MODULE_PATH + "::NoSuchClass")):
