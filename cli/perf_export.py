@@ -19,7 +19,7 @@ the `-dirty` suffix stripped. The public form is PASTE-SAFE, not unlinkable (the
 round, 2026-09-18): it removes identifiers, paths, free text, machine strings and every absolute clock stamp
 (every `t`, the wall clock at a cycle's close; the snapshot's `now` and `since`), rounds the kernel's uptime
 down to whole minutes and the ten memory-fraction bounds up to a power of two (each a fixed fraction of the
-machine's MemTotal, one of them half of it); durations stay, and per-process and per-machine MEASUREMENTS stay
+machine's MemTotal); durations stay, and per-process and per-machine MEASUREMENTS stay
 by design (the boot's stage split under pusher.firstCycle and jobs.firstPass, whole; the lifetime maxima; every
 counter), because they are the data a reader wants, so two exports from one kernel life, or from one machine,
 remain linkable through them. No hostname, path, pid, session id, username or clock stamp is written; the finished document

@@ -214,7 +214,8 @@ class SpawnSecrets(unittest.TestCase):
     def test_every_credential_shaped_name_leaves_the_spec_env_not_only_the_three(self):
         """The box admin's hazard review of the pull-in (2026-09-16): the first cut moved AUTH_ENV_NAMES alone, so a
         credential-shaped variable of any OTHER name in the overlay was written to spawn.json. Every name
-        env_credential_names would flag over the overlay itself leaves it now (spawn_env_secret_names): the two
+        credentials.credential_env_names would flag over the overlay itself leaves it now (spawn_env_secret_names, the
+        rule with no exclusion; the boot notice's wrapper env_credential_names leaves the control token unnamed): the two
         suffixes and 1Password's names. Synthetic names, values built at run time (never a real key's shape)."""
         val = "synthetic-notes-token-" + uuid.uuid4().hex
         key = "synthetic-notes-key-" + uuid.uuid4().hex
@@ -373,7 +374,9 @@ class SpawnSecrets(unittest.TestCase):
     def test_a_lowercase_credential_shaped_name_leaves_the_spec_env_too(self):
         """Review round 1 (2026-09-18): the shape rule was an exact, case-sensitive suffix, so notes_api_token was never
         moved and would have been written to spawn.json with its value. The suffixes are compared on the upper-cased
-        name now (in env_credential_names, so the boot notice folds case too); an empty value still stays whatever
+        name now (in credentials.is_credential_env_name, the predicate credentials.credential_env_names applies for the
+        writer and the boot notice's wrapper env_credential_names inherits, so the boot notice folds case too); an empty
+        value still stays whatever
         its case, and a name whose suffix only begins with the shape stays."""
         val = "synthetic-notes-token-" + uuid.uuid4().hex
         key = "synthetic-notes-key-" + uuid.uuid4().hex

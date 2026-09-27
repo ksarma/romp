@@ -144,8 +144,8 @@ THE PARSER'S SHARED NODES (2026-09-22, read back by CI's diagnostic run 35740276
 every node of its own trees with `_fn` (the scope that owns it) and `_parent` (its parent node). The parser hands out ONE
 instance of each expression context (Load, Store, Del) and of each operator (the operator, boolop, unaryop and cmpop
 subclasses) per process, shared by every tree it parses, so a mark written on one of them rode on every tree any later
-module in the same process parsed: in CI's serial cell this module runs before the thread-stop census, whose
-copy.deepcopy of a two-node hand (a Name and its Load) followed the shared Load's `_parent` into this census's whole
+module in the same process parsed: in CI's serial Linux cells (until 2026-09-25) this module ran before the thread-stop census,
+whose copy.deepcopy of a two-node hand (a Name and its Load) followed the shared Load's `_parent` into this census's whole
 graph, a RecursionError inside copy.py on 3.10 and 3.11 and on 3.12 a completed copy of the graph costing minutes. The
 three marks (the third, `_lfn`, names a Lambda's scope on the Lambda node, which the parser never shares, and is guarded
 all the same) skip the shared nodes (SHARED_NODE_TYPES), and a pin holds that the census added nothing to the parser's
@@ -153,8 +153,9 @@ shared nodes (read from parses and held to one instance across two of them; a co
 unshared): setUpClass snapshots vars() of each instance BEFORE the census runs and the pin asserts the delta empty, an
 attribute the snapshot did not hold or one whose value is no longer the snapshot's object, so what it names is this
 module's own write and never an earlier module's, which the thread-stop census's singleton pin (tests/parse_cache.py)
-names in the serial cell; the pin then shows each of the three old writes red in turn on the parsed instances, the
-restore registered before the first write. No verdict moves: no rule reads a context or operator node by its mark.
+names in a serial run or on the same xdist worker; the pin then shows each of the three old writes red in turn on the
+parsed instances, the restore registered before the first write. No verdict moves: no rule reads a context or operator
+node by its mark.
 """
 import ast
 import glob
@@ -2124,12 +2125,13 @@ class HostsPathCensus(unittest.TestCase):
         three marks, `_fn` (_index), `_lfn` (_register_nested) and `_parent` (run), skip those nodes: written there they
         rode on every tree any later module in the process parsed, and a reader that copied a node with copy.deepcopy
         followed `_parent` into this census's whole graph, which CI's diagnostic run 35740276523 read back on the
-        thread-stop census, the module after this one in the serial cell (a RecursionError inside copy.py on 3.10 and
+        thread-stop census, then the module after this one in CI's serial cell (a RecursionError inside copy.py on 3.10 and
         3.11, a copy of the graph costing minutes on 3.12). THE PIN IS A DELTA (round 4 of PR 891's review, 2026-09-22):
         setUpClass snapshots vars() of the parser's Load, Store and Del and one operator of each family BEFORE the census
         runs, and after it (the wide census and the plants walk by the same code) the instances carry nothing the snapshot
         did not hold, and nothing it held as another object. So what a red names is a write of THIS module's, and the pin
-        reads the same alone and in CI's serial cell (one process, every test module in collection order): a module that
+        reads the same alone, in a serial run (one process, every test module in collection order; CI's cells until
+        2026-09-25, its macOS cells since) and in any xdist worker: a module that
         wrote on a shared node before this one runs leaves its attribute in the snapshot and is not this pin's red (the
         thread-stop census's singleton pin, tests/parse_cache.py, names such a writer), while a write this census makes
         on an attribute an earlier module also wrote is a changed object and is red. Before round 4 the pin asserted the
