@@ -78,13 +78,15 @@
 // pen's record whose pointer left the viewer's window with a button down, Firefox sending the viewer a pointerout with no
 // relatedTarget as the press left its frame (0 of 10 under this gate): its cells in Firefox, on the hybrid page, the element hiding
 // at that click's mousedown or its pointerdown, open nothing and the next click opens once, red at 343ee2eb5 and at 09f58bec6;
-// Chromium opened neither. That refusal's cost, measured in Firefox: the viewer's own press on the control dragged out of its frame
-// and back, released on the control, opens nothing and reveals the control, and the next click opens once (its cost cell, where
-// 343ee2eb5's gate opened that click; 8 of 8 in a probe of these fixes), while Chromium and WebKit, which keep a held left press in
-// the frame it began in, opened it; and its cost in Chromium, found by a later check and with no cell: a press on the control or the
-// picture held while the top page hides the viewer's frame and shows it again, then released there, opens nothing and reveals the
-// control, and the next click opens once (11 of 11, where 343ee2eb5's gate opened all 11), Chromium sending that pointerout as the
-// frame hides, while WebKit sends none there and opens it. The later check found a third order of the class outside the residual, in
+// Chromium opened neither. That refusal costs one class of press: a press whose pointer left the viewer's window with a button
+// down, by the events the viewer heard, is refused once, its click opening nothing and revealing the control, and the next click
+// opens once. Its first cost, measured in Firefox: the viewer's own press on the control dragged out of its frame and back,
+// released on the control (its cost cell, where 343ee2eb5's gate opened that click; 8 of 8 in a probe of these fixes), while
+// Chromium and WebKit, which keep a held left press in the frame it began in, opened it. Its second cost, measured in Chromium,
+// found by a later check and with no cell: a press on the control or the picture held while the top page hides the viewer's frame
+// and shows it again, then released there (11 of 11, where 343ee2eb5's gate opened all 11), Chromium sending that pointerout as
+// the frame hides, while WebKit sends none there and opens it. The later check found a third order of the class outside the
+// residual, in
 // WebKit alone, open at this head and at 142ade155, 09f58bec6 and 343ee2eb5, with no cell, for the owner (file-view.ts's gate
 // comment states it): the mouse held on the control while the top page hides the viewer's frame and shows it again, then another
 // document's mouse click on an element over the control that hides at that click's mousedown or its pointerdown, whose pointerup

@@ -101,12 +101,14 @@
 //   that release, a mouse click on such an element, whose pointerup handed the mouse's record to the slot and opened (10 of 10,
 //   again at 343ee2eb5), is closed by the gate's refusal of a mouse's or a pen's record whose pointer left the viewer's window
 //   with a button down (0 of 10 under this gate), its cells in Firefox, on the hybrid page, the element hiding at that click's
-//   mousedown or its pointerdown, red at 343ee2eb5 and at 09f58bec6, with its cost cell, the viewer's own press on the control
-//   dragged out of its frame and back, which opens nothing and reveals the control, measured in Firefox (8 of 8 in a probe of these
-//   fixes, where 343ee2eb5's gate opened all 8; Chromium and WebKit keep a held left press in the frame it began in and opened it),
-//   and, with no cell, that refusal's other measured cost, found by a later check, in Chromium, a press on the control or the
-//   picture held while the top page hides the viewer's frame and shows it again, then released there, which opens nothing and
-//   reveals the control (11 of 11, where 343ee2eb5's gate opened all 11); Chromium opened neither order. The later check found a
+//   mousedown or its pointerdown, red at 343ee2eb5 and at 09f58bec6, with its cost cell; Chromium opened neither order. That
+//   refusal costs one class of press: a press whose pointer left the viewer's window with a button down, by the events the viewer
+//   heard, is refused once, its click opening nothing and revealing the control, and the next click opens. Its first cost, the
+//   cost cell's, measured in Firefox: the viewer's own press on the control dragged out of its frame and back (8 of 8 in a probe of
+//   these fixes, where 343ee2eb5's gate opened all 8; Chromium and WebKit keep a held left press in the frame it began in and
+//   opened it). Its second, measured in Chromium, found by a later check and with no cell: a press on the control or the picture
+//   held while the top page hides the viewer's frame and shows it again, then released there (11 of 11, where 343ee2eb5's gate
+//   opened all 11). The later check found a
 //   third order of the class outside the residual, in WebKit alone, open at this head and at 142ade155, at 09f58bec6 and at
 //   343ee2eb5, with no cell and for the owner (file-view.ts's gate comment states it): the mouse held on the control while the top
 //   page hides the viewer's frame and shows it again, then another document's mouse click on an element over the control that hides

@@ -3098,7 +3098,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // there, the later pointerup hands the slot a refusal, and the click opens nothing and reveals the control: 0 of 10 under this
   // gate (the Files pane 8, the chat 2), the next click opening each time (Firefox's cells and the node guard, red at 343ee2eb5
   // and at 09f58bec6). The viewer's own press dragged out of the frame, brought back and released on the control sends this
-  // window the same events, so it pays, a cost below. WebKit, which sends that release to this window, opened the second order
+  // window the same events, so it pays, the first of that refusal's two costs below. WebKit, which sends that release to this
+  // window, opened the second order
   // in no repetition, and Chromium opened neither order (Chromium 0 of 8 over both orders' shapes), and the next click opened in
   // every repetition. A third order of the class outside the residual, found by a later check of these fixes (the closing check
   // at 142ade155 after the fixes for the file review's round 18), still opens the tab with the sign covered, in WebKit alone, and
@@ -3149,19 +3150,20 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // popover closed by the right press's mousedown before the left press began), where 09f58bec6's gate opened all 12 on the left
   // press's own verdict; Firefox and Chromium open on that chord at neither head, 0 of 10 each, and on a device the right press's
   // native context menu, which Playwright's headless WebKit does not show, presumably takes the left click, not measured. And the
-  // refusal of a mouse's or a pen's record whose pointer left this window with a button down costs, measured in Firefox and in
-  // Chromium (Playwright's, on Linux): in Firefox, a press on the control dragged out of the viewer's frame, into the other pane
-  // or onto the top page's bar, then brought back and released on the control, opens nothing and reveals the control, and the
-  // next click opens, 8 of 8 (the Files pane 4, the chat 4), where 343ee2eb5's gate opened all 8; Chromium and WebKit keep a held
-  // left press's pointer in the frame it began in, send no such pointerout for it and opened all 8, and no other gesture of that
-  // probe changed in any of the three engines, a click, a double click, a press held, a press moved inside the picture or the
-  // control or out to a paragraph and back, a selection, a right or a middle click, Enter, Space, a tap, a finger held and a
-  // pen's press among them, nor a press held while an element of the top page covered its point and went away, whose pointerout
-  // Firefox sent to this window's root element; and in Chromium, found by a later check of these fixes, a press on the control or
-  // on the picture with the control shown, held while the top page hides the viewer's frame and shows it again, then released
-  // there, opens nothing and reveals the control, and the next click opens, 11 of 11 (the Files pane 9, the chat 2), where
-  // 343ee2eb5's gate opened all 11, since Chromium sends that pointerout as the frame hides; WebKit sends none there and opened
-  // all 11, and Firefox sends that release's mouseup with detail 0 and no click at either head. No cell drives that press.
+  // refusal of a mouse's or a pen's record whose pointer left this window with a button down costs one class of press: a press
+  // whose pointer left this window with a button down, by the events this window heard, is refused once, its click opening
+  // nothing and revealing the control, and the next click opens. Two costs of that class are measured (Playwright's engines, on
+  // Linux). The first, in Firefox: a press on the control dragged out of the viewer's frame, into the other pane or onto the top
+  // page's bar, then brought back and released on the control, 8 of 8 (the Files pane 4, the chat 4), where 343ee2eb5's gate
+  // opened all 8; Chromium and WebKit keep a held left press's pointer in the frame it began in, send no such pointerout for it
+  // and opened all 8, and no other gesture of that probe changed in any of the three engines, a click, a double click, a press
+  // held, a press moved inside the picture or the control or out to a paragraph and back, a selection, a right or a middle click,
+  // Enter, Space, a tap, a finger held and a pen's press among them, nor a press held while an element of the top page covered
+  // its point and went away, whose pointerout Firefox sent to this window's root element. The second, in Chromium, found by a
+  // later check of these fixes: a press on the control or on the picture with the control shown, held while the top page hides
+  // the viewer's frame and shows it again, then released there, 11 of 11 (the Files pane 9, the chat 2), where 343ee2eb5's gate
+  // opened all 11, since Chromium sends that pointerout as the frame hides; WebKit sends none there and opened all 11, and
+  // Firefox sends that release's mouseup with detail 0 and no click at either head. No cell drives that press.
   // The slot's four other clears (a pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive: the slot
   // is refilled at every pointerup, the click of a press this window heard follows that press's own pointerup, the mousedown's
   // clear, the mouseup's, the tail, the slot's pointerId test, the refusal of a record still standing at a click and the refusal

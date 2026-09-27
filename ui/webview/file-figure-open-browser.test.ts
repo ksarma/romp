@@ -3430,11 +3430,13 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // by a check of these fixes, opened in Firefox and WebKit and not in Chromium, at 142ade155, at 1a6470e72 and at 09f58bec6: the
 // first, a mouse's press whose pointerup the viewer never heard and then another document's tap, is closed by the gate's refusal of
 // a record still standing at a click (the engines leg's cells of it), and the second, in Firefox alone, by the gate's refusal of a
-// mouse's or a pen's record whose pointer left the viewer's window with a button down (the engines leg's cells of it, with its cost
-// cell, a press dragged out of the frame and back, refused in Firefox; the gate comment and the engines leg state them). That
-// refusal costs in Chromium too, found by a later check and with no cell: a press on the control or the picture held while the top
-// page hides the viewer's frame and shows it again, then released there, opens nothing and reveals the control, and the next click
-// opens once, 11 of 11 where 343ee2eb5's gate opened all 11, Chromium sending that pointerout as the frame hides. The later check
+// mouse's or a pen's record whose pointer left the viewer's window with a button down (the engines leg's cells of it; the gate
+// comment and the engines leg state them). That refusal costs one class of press: a press whose pointer left the viewer's window
+// with a button down, by the events the viewer heard, is refused once, its click opening nothing and revealing the control, and
+// the next click opens once. Its first cost, measured in Firefox, is a press dragged out of the frame and back (the engines leg's
+// cost cell), and its second, measured in Chromium, found by a later check and with no cell, a press on the control or the
+// picture held while the top page hides the viewer's frame and shows it again, then released there, 11 of 11 where 343ee2eb5's
+// gate opened all 11, Chromium sending that pointerout as the frame hides. The later check
 // found a third order of the class outside the residual, in WebKit alone and not in Chromium, which sends that pointerout: the mouse
 // held on the control while the top page hides the viewer's frame and shows it again, then another document's mouse click on an
 // element over the control that hides at that click's press, open at this head, for the owner (the gate comment states it). The

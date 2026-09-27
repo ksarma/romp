@@ -8753,16 +8753,16 @@ click that finds a record still standing under its own pointerId is refused, whi
 drive leaves (no cell of either leg changed with the refusal), while in WebKit a left click chorded into a held right press, whose
 pointerup WebKit holds until the last button's release, is refused whatever covers or shows the control, a cost measured in the road
 probe, 12 of 12, where 09f58bec6's gate opened all 12, Firefox and Chromium opening on that chord at neither head, and the
-refusal of a mouse's or a pen's record whose pointer left the viewer's window with a button down costs, measured in Firefox and in
-Chromium:
+refusal of a mouse's or a pen's record whose pointer left the viewer's window with a button down costs one class of press, a
+press whose pointer left the viewer's window with a button down, by the events the viewer heard, refused once and revealing the
+control, the next click opening, with two costs measured, in Firefox and in Chromium: its first cost, in Firefox,
 the viewer's own press on the control dragged out of its frame, into another pane or onto the top page, and brought back and
-released on the control is refused and reveals the control, the next click opening, 8 of 8 in a probe of these fixes, where
+released on the control, 8 of 8 in a probe of these fixes, where
 343ee2eb5's gate opened all 8 (its cost cell), while Chromium and WebKit, which keep a held left press in the frame it began in,
 open it, no other gesture of that probe that never leaves the frame changing in any of the three engines, a press held while an
-element of the top page covered its point and went away among them, and in Chromium, found by a later check and with no cell, a
-press on the control or the picture held while the top page hides the viewer's frame and shows it again, then released there, is
-refused and reveals the control, the next click opening, 11 of 11, where 343ee2eb5's gate opened all 11, Chromium sending that
-pointerout as the frame hides; the primary
+element of the top page covered its point and went away among them, and its second cost, in Chromium, found by a later check and
+with no cell, a press on the control or the picture held while the top page hides the viewer's frame and shows it again, then
+released there, 11 of 11, where 343ee2eb5's gate opened all 11, Chromium sending that pointerout as the frame hides; the primary
 press's clear's cost on a device with a
 mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type lands elsewhere in the
 viewer's window loses its record, so its click opens nothing and reveals, while one that lands on another document's element
@@ -9127,7 +9127,10 @@ hybrid page, WebKit's touch whose pointerup the viewer never heard and its cost 
 another document's tap after the viewer's tap whose mouseup of detail 0 ended its chain, and another document's tap after a mouse's
 press whose pointerup the viewer never heard, each in Firefox on the hybrid page and in WebKit on a phone's pages and the hybrid
 page, and another document's mouse click after a mouse's press whose pointer left the viewer's frame with the button down, with the
-cost cell of the viewer's own press dragged out of its frame and back, in Firefox on the hybrid page
+cost cell of the viewer's own press dragged out of its frame and back, in Firefox on the hybrid page, the first cost of the refusal
+of a record whose pointer left the viewer's window with a button down, which refuses such a press once and reveals the control,
+the next click opening, that refusal's second cost, a press held in Chromium while the top page hides the viewer's frame and shows
+it again, then released there, having no cell
 (the Chromium leg runs the same module's cells of another document's tap whose click carries another touch's pointerId),
 each engine launched through real-viewer-leg.ts's inBrowser with the engine named; the cells are ui/webview/file-figure-open-taps.ts's,
 a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and two cases of WebKit's alone that read window errors, the Files
