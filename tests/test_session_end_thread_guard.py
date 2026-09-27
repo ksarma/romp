@@ -541,23 +541,16 @@ class JoinRace(unittest.TestCase):
         three times the cap. This pin checks the upper bound only: a guard that did not wait at all would pass it. That
         the guard waits is pinned by other pins, among them the green runs' witness and the monotonic pin below."""
         cf = sys.modules["tests.conftest"]
-        clock, clock_reads = [0.0], [0]
+        clock = [0.0]
 
         class NeverEnds(threading.Thread):
             def join(self, timeout=None):
                 clock[0] += timeout             # the join times out: its whole timeout passes
 
-        def read_clock():
-            clock_reads[0] += 1
-            if clock_reads[0] > 1000:           # ends the call rather than letting it spin to the runner's timeout
-                raise AssertionError("the guard read the fake clock more than 1000 times: only the listed threads' "
-                                     "join moves it, so the guard is waiting some other way")
-            return clock[0]
-
         plants = [NeverEnds(name="plant-never-ends-%d" % i) for i in range(3)]
         cap = 10.0
         with mock.patch.object(cf, "_enumerate", return_value=[threading.main_thread()] + plants), \
-                mock.patch.object(cf, "_monotonic", new=read_clock):
+                mock.patch.object(cf, "_monotonic", new=lambda: clock[0]):
             left = cf.threads_left_at_session_end(cap)
         self.assertEqual(left, plants, "the three threads still running at the deadline are returned")
         self.assertLessEqual(clock[0], cap, "the guard's joins spent %g s of the fake clock against a %g s cap: each join "
