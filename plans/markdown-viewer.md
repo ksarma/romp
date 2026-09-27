@@ -8656,7 +8656,7 @@ pointerId or by one with no pointerId, the wait for that mousedown defensive in 
 drives a pen in that order, and pinned by a row of the pen's node guard, red under a gate without the wait, the tail not refusing
 every such click, since a mouseup whose mousedown went to another element came to the viewer's window with detail 0 in the order
 the closing check at 142ade155 measured, the viewer's own tap whose compatibility mousedown the top page took, and with detail 1
-and a click after it where that window had heard a mouse's press begin and not end (the first of the two orders below, which the
+and a click after it where that window had heard a mouse's press begin and not end (the first of the orders below, which the
 refusal of a standing record closes for the mouse's own pointerId); the slot
 is emptied by any pointerdown, pointercancel or keydown, by the mousedown below,
 by a mouseup other than a primary one of detail above 0, which clears the tap's flag too, since such a mouseup ends a press whose
@@ -8687,7 +8687,7 @@ iPhone tap's click the touch's own pointerId, read and not run on a device; the 
 mouseup's are defensive, the slot refilled at every pointerup, read by no key's or script's click, and a click whose press the
 viewer's window did not hear refused by that mousedown's clear, the mouseup's, the tail, the slot's pointerId test or the refusal of
 a record still standing at the click or the refusal of a record whose pointer left the viewer's window with a button down, the
-residual aside, the mouseup's clear of the tap's
+residual and the third order below aside, the mouseup's clear of the tap's
 flag defensive too, since that mouseup empties the slot and only
 a pointerup fills it
 and sets the flag again; that mousedown's clear of the
@@ -8727,7 +8727,12 @@ Firefox, after that release, a mouse click on such an element, whose pointerup h
 10 of 10 and 10 of 10 again at 343ee2eb5, closed by the refusal of a mouse's or a pen's record whose pointer left the viewer's
 window with a button down, Firefox sending the viewer's window a pointerout with no relatedTarget as the press left its frame
 (under this gate 0 of 10, the next click opening; its browser cells in Firefox and a node guard, red at 343ee2eb5 and at
-09f58bec6), Chromium opening neither; and in the residual by reading a second finger resting on another
+09f58bec6), Chromium opening neither, and a later check finding a third, in WebKit alone, open here and at 142ade155, at 09f58bec6
+and at 343ee2eb5, for the owner: the mouse pressed on the control, any button, and held while the top page hides the viewer's
+frame and shows it again, then a mouse click on another document's element over the control that hides at that click's mousedown
+or its pointerdown, whose pointerup under pointerId 1 hands the held press's record to the slot and whose click takes it, 60 of 60
+in that check's probe, Firefox 0 of 40 and Chromium 0 of 42, no event the gate hears between that press and that click telling it
+from the viewer's own; and in the residual by reading a second finger resting on another
 document
 during the viewer's tap and a tap whose click the engine withholds, in Firefox and WebKit, and a foreign tap by the same pen under
 the same pointerId; reaching it needs an element that appears over the picture during a tap, while the fact that today the only
@@ -8748,17 +8753,21 @@ click that finds a record still standing under its own pointerId is refused, whi
 drive leaves (no cell of either leg changed with the refusal), while in WebKit a left click chorded into a held right press, whose
 pointerup WebKit holds until the last button's release, is refused whatever covers or shows the control, a cost measured in the road
 probe, 12 of 12, where 09f58bec6's gate opened all 12, Firefox and Chromium opening on that chord at neither head, and the
-refusal of a mouse's or a pen's record whose pointer left the viewer's window with a button down costs, measured in Firefox alone:
+refusal of a mouse's or a pen's record whose pointer left the viewer's window with a button down costs, measured in Firefox and in
+Chromium:
 the viewer's own press on the control dragged out of its frame, into another pane or onto the top page, and brought back and
 released on the control is refused and reveals the control, the next click opening, 8 of 8 in a probe of these fixes, where
 343ee2eb5's gate opened all 8 (its cost cell), while Chromium and WebKit, which keep a held left press in the frame it began in,
-open it, and no other gesture of that probe that never leaves the frame changed in any of the three engines, a press held while
-an element of the top page covered its point and went away among them; the primary
+open it, no other gesture of that probe that never leaves the frame changing in any of the three engines, a press held while an
+element of the top page covered its point and went away among them, and in Chromium, found by a later check and with no cell, a
+press on the control or the picture held while the top page hides the viewer's frame and shows it again, then released there, is
+refused and reveals the control, the next click opening, 11 of 11, where 343ee2eb5's gate opened all 11, Chromium sending that
+pointerout as the frame hides; the primary
 press's clear's cost on a device with a
 mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type lands elsewhere in the
 viewer's window loses its record, so its click opens nothing and reveals, while one that lands on another document's element
 leaves the record standing unless a mousedown with no pointerdown or a dragstart ends it, and in WebKit that press's click finds it
-standing and is refused (the first of the two orders above); the cost of ending the records, measured in WebKit: after a drag
+standing and is refused (the first of the orders above); the cost of ending the records, measured in WebKit: after a drag
 anywhere in the
 page, another pane's included, the mouse's next click on a web picture opens nothing and reveals its sign, whatever covers or
 shows it, a right click before that drag included, and the click after it opens, and where a press's pointerup never comes the
