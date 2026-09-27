@@ -4656,13 +4656,15 @@ def _origin_holds(row, host, relays, bus, *prevs):
     to a dial this bus built after the mark releases them). The same process's omission never ends the hold (the
     relay carries no bus id of the origin, and _via_held's release needs one), and this bus's restart ends nothing:
     the via row is carried with its bit False until the hub's word about the origin, heard in the new process,
-    replaces it (held or released by its own order), or the origin's own row, filed here under the name the hold
-    carries, answers a dial of the new process and the carry drops it, when the row names no other bus of the origin
-    (_direct_row_speaks; the reviewer's round-6 decision 1: that answer lists the origin's live sessions), where the
-    hold ends. The hold carries no bus id, so the carry finds the origin's row by that name alone: a row this bus
-    files under another name for the host (its kernel's name for it other than the hub's) does not end it, and the
-    hold then lasts until the hub's word (cost (r1)). In this bus process the hold never folds into the origin's own
-    row, since the mail did not ride that row's exchange. Runs under
+    replaces it (held or released by its own order), or the origin's own row answers a dial of the new process and
+    the carry drops it (_direct_row_speaks; the reviewer's round-6 decision 1: that answer lists the origin's live
+    sessions), where the hold ends. The hold carries no bus id, so the carry finds the origin's row by the name the
+    hold carries, when the row names no other bus of the origin, or by the bus id of a word of the origin that the
+    carried via row also carries (its viaBus, from a word written beside the hold, such as the old process's word that
+    a restarted hub's merging dial keeps and the hold marks unanswered). A row this bus files under another name for
+    the host (its kernel's name for it other than the hub's) ends the hold only by that bus id; otherwise the hold
+    lasts until the hub's word (cost (r1)). In this bus process the hold never folds into the origin's own row, since
+    the mail did not ride that row's exchange. Runs under
     _PEER_STATE_LOCK, held by the recorder from its read of `prevs` through its store, after _via_held; the costs are
     the writer's (_remote_sids_document, THE ORIGIN HOLD)."""
     held = [pa for pa in row.get("viaHeld") or [] if isinstance(pa, dict) and not pa.get("originHold")]
@@ -5102,12 +5104,14 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     never folds one into the origin's own row, since in this bus process the mail did not ride that row's exchange.
     So it writes via:<hub>/<origin>, heard, its bit False, no sids. After this bus restarts the via row is carried with its bit
     False until the hub's word about the origin, heard in the new process, replaces it (held or released by its own
-    order, (3c) above), or the origin's own row, filed here under the name the hold carries, answers a dial of the new
-    process and the carry drops it, when the row names no other bus of the origin (_direct_row_speaks, the carry's
-    fold; the reviewer's round-6 decision 1: that answer lists the origin's live sessions): the origin hold ends there.
-    The hold carries no bus id, so the carry finds the origin's row by that name alone: a row this bus files under
-    another name for the host (its kernel's name for it other than the hub's) does not end it, and the hold then lasts
-    until the hub's word, cost (r1) below. The key is a relay, not the restart (its
+    order, (3c) above), or the origin's own row answers a dial of the new process and the carry drops it
+    (_direct_row_speaks, the carry's fold; the reviewer's round-6 decision 1: that answer lists the origin's live
+    sessions): the origin hold ends there. The hold carries no bus id, so the carry finds the origin's row by the name
+    the hold carries, when the row names no other bus of the origin, or by the bus id of a word of the origin that the
+    carried via row also carries (its viaBus, from a word written beside the hold, such as the old process's word that
+    a restarted hub's merging dial keeps and the hold marks unanswered). A row this bus files under another name for
+    the host (its kernel's name for it other than the hub's) ends the hold only by that bus id; otherwise the hold
+    lasts until the hub's word, cost (r1) below. The key is a relay, not the restart (its
     decision 2): a restarted hub that relays nothing leaves a far host's words to their own order. The witnesses,
     tests/test_dead_session_staleness.py ReaderFollowsTheWriter
     test_origin_hold_a_relay_through_a_restarted_hub_holds_its_origin_until_the_hubs_current_process_names_it (the ten
@@ -5115,19 +5119,19 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     test_origin_hold_controls_the_release_where_the_hub_names_the_origin_and_the_roads_with_no_restarted_hubs_relay,
     and the end after this bus's restart,
     test_decision_1_after_our_restart_the_carry_drops_the_origin_hold_once_the_origins_own_row_answers_our_dial, with
-    the name's limit in
-    test_decision_1_under_nickname_drift_the_origins_row_under_another_name_does_not_end_the_carried_hold. Its
-    costs, on the restricted side, each with its witness there:
+    the end through the origin's row under another name in
+    test_decision_1_under_nickname_drift_the_origins_row_under_another_name_ends_the_carried_hold_only_by_a_bus_id_the_via_row_carries.
+    Its costs, on the restricted side, each with its witness there:
       (r1) an origin the relaying hub's current process never names (its host never reaches that process, or reaches
            it only with no session, since a hub gossips a far host only through its session rows, residual (3a)'s
            first face among them; or that process names it only under another name than the record's, (r3)) keeps the
            hold whatever _relay_in ruled on the relay, and every sid nothing names here is cannot-determine for the
            file's life, this bus's restart included, where an origin's own row here under another name than the
-           hold's ends nothing (decision 1's end above)
+           hold's ends it only by a bus id the carried via row carries (decision 1's end above)
            (test_cost_r1_an_origin_the_restarted_hub_never_names_holds_every_sid_across_our_restart; the first face,
            test_residual_3a_a_far_host_whose_cached_roster_is_empty_behind_a_heard_hub_still_answers_rule_5; the
            other name,
-           test_decision_1_under_nickname_drift_the_origins_row_under_another_name_does_not_end_the_carried_hold);
+           test_decision_1_under_nickname_drift_the_origins_row_under_another_name_ends_the_carried_hold_only_by_a_bus_id_the_via_row_carries);
       (r2) a hub process that heard the origin but never named it here (its link here down for the whole life of the
            origin's only session, which then ended) relays that session's mail: held until the hub names the origin
            again. Naming counts per process of this bus too (the record of it, viaNamedBy, starts empty at each start
@@ -5142,11 +5146,12 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
            (test_cost_r3_an_origin_the_restarted_hub_names_under_another_name_stays_held_until_it_names_it_under_the_records_name).
            Or the record carries the declared name, which a hub on this build reaches with or without a restart: the
            host's first dial after its own bus restarts, or after the hub's, declares its hostname, no row at the hub
-           carries its new bus id, so the hub files that dial, and the mail it carries, under that name, and its own
-           dial to the alias folds the name into the alias before its next exchange here, which names the host under
-           the alias alone from then on. The hold on the declared name then lasts until the hub gossips that name here
-           again, in practice for the file's life, this bus's restart included, and every sid nothing names here is
-           cannot-determine meanwhile, the sender too once it ends
+           carries its bus id, so the hub files that dial, and the mail it carries, under that name, and its own dial
+           to the alias folds the name into the alias before its next exchange here. The hub names the host under the
+           alias alone from that exchange until the host's first dial after a later restart is filed under that name
+           while the hub exchanges here. The hold on the declared name lasts until the hub gossips that name here
+           again, across this bus's restart too, and every sid nothing names here is cannot-determine meanwhile, the
+           sender too once it ends
            (test_cost_r3_the_other_direction_a_record_under_the_declared_name_holds_until_the_hub_gossips_that_name_again);
       (r4) an origin this bus also hears directly stays held through its own answered row in this bus process, so a
            sid nothing names stays cannot-determine after this bus's dial reaches the host and its row answers

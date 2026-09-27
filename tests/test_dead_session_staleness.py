@@ -4550,9 +4550,9 @@ step(road, "releasedUnderTheAlias", us, new=S["new"], nobody=S["nobody"])
 # V7renamedSameProcess2): the parked record carries the hostname F DECLARES. The hub never restarts and runs this build.
 # F's bus restarts; its first dial declares F_DECL, and no row at the hub carries F's new bus id, so the hub files that dial
 # under F_DECL and parks the mail it carries with origin F_DECL; the hub's dial to the alias then folds F_DECL into F before
-# the hub's next exchange here, and from then on the hub names F under the alias alone. The hold on F_DECL stands until the
-# hub gossips F_DECL here again: here F's bus restarts once more, its first dial filed under F_DECL while the hub exchanges
-# here
+# the hub's next exchange here, and the hub names F under the alias alone from that exchange until F's first dial after a
+# later restart is filed under F_DECL while the hub exchanges here. The hold on F_DECL stands until the hub gossips F_DECL
+# here again: here F's bus restarts once more, its first dial filed under F_DECL while the hub exchanges here
 road = "originHoldUnderTheDeclaredNameSameHubProcess"
 us, f, hub, c = origin_world(road)
 origin_exch(hub, HUB, f, F); origin_exch(f, F_DECL, hub, HUB)   # F filed under the alias; its own dial joins it by bus id
@@ -4650,8 +4650,9 @@ step(road, "afterHubNamesFAgain", us, new=S["new"], nobody=S["nobody"])
 # DECISION 1 UNDER NICKNAME DRIFT (round 7 of fork PR #897, the reviewer's verifier at the eighty-first commit, its roads
 # V7directD2AliasOurRestart and V7directD2AliasOurRestartHubNames): D2 where this bus's kernel dials F by F_HERE, a name
 # other than the hub's. The carried origin hold has no bus id, so the carry's fold looks for F's row by the name the hold
-# carries, F, and F's row here under F_HERE, answering our dial in the new process, does not end it; the hub's word
-# naming F's new bus does
+# carries, F, or by a bus id of F that the carried via row carries, and here it carries none (the old process's word of F
+# left the union on our answer): F's row here under F_HERE, answering our dial in the new process, does not end it; the
+# hub's word naming F's new bus does
 F_HERE = F + "-here"                               # this bus's kernel's name for F, not the hub's
 road = "originHoldD2UnderOurOwnNameForF"
 us, f2, hub, c = origin_direct_road(road, "answer", ours=F_HERE)
@@ -4668,6 +4669,47 @@ origin_exch(f2, F, hub, HUB); origin_exch(hub, HUB, f2, F)     # F reaches the r
 origin_exch(hub, HUB, us, US)                      # the hub's dial names F's new bus, which folds into F's row here
 out["roads"][road]["viaRowsAfterHubWord"] = carried_via(us)
 step(road, "hubNamesFNewBus", us, new=S["new"], nobody=S["nobody"])
+# ...AND WHERE THE CARRIED VIA ROW CARRIES F'S CURRENT BUS ID (round 7 of fork PR #897, the reviewer's verifier at the
+# eighty-second commit, its road X1driftNewBusNamedRestartFirst): the hub's old process heard F's new bus process and
+# named it here before the park, so the restarted hub's merging dial keeps that word, its viaBus F's new bus, and the
+# origin hold marks it unanswered. The via row about F carries F's new bus id across our restart, and F's row under
+# F_HERE, answering our dial in the new process under that bus id, ends the carried hold: the carry finds it by the bus id
+def via_bus_named(bus, key, buses):                # which bus a via row's viaBus is, by label ("" when it carries none)
+    try:
+        at = json.loads((bus.STATE / "remote-sids").read_text())["hosts"][key].get("viaBus") or ""
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        return type(e).__name__
+    return buses.get(at, "another bus") if at else ""
+road = "originHoldD2UnderOurOwnNameForFNamedNewBus"
+us, f, hub, c = origin_world(road)
+origin_trust(us, F_HERE, 50003)
+origin_exch(f, F, hub, HUB); origin_exch(hub, HUB, f, F)
+origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
+origin_exch(us, US, f, F_HERE)                     # our dial to F: F's own row here, under F_HERE, F's first bus
+f2 = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts: a new bus id
+origin_trust(f2, HUB, 50002)
+buses = {f.BUS_ID: "F's first bus", f2.BUS_ID: "F's new bus"}
+LISTINGS["f"] = [S["other"], S["new"]]             # S starts on F
+origin_exch(f2, F, hub, HUB); origin_exch(hub, HUB, f2, F)   # the hub's old process hears F's new process, naming S
+origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)   # ...and names F's new bus here
+origin_exch(f2, F, hub, HUB)                       # F learns our session through the hub
+out["roads"][road]["park"] = park(f2, S["new"], "px-" + road)
+out["roads"][road]["atHub"] = origin_exch(f2, F, hub, HUB)["atDst"]   # parked for us
+hub = origin_restart(road)
+out["roads"][road]["landing"] = origin_exch(hub, HUB, us, US)["atDst"]   # the restarted hub's merging dial relays it
+out["roads"][road]["heldAtLanding"] = held_words(us, HUB)
+out["roads"][road]["viaBusAtLanding"] = via_bus_named(us, "via:" + HUB + "/" + F, buses)
+step(road, "atLanding", us, new=S["new"], nobody=S["nobody"])
+us = load_bus("us")                                # our bus restarts over the same root, before our dial reaches F's new process
+origin_trust(us, HUB, 50002); notify(us, C, True); origin_trust(us, F_HERE, 50003)
+origin_exch(c, C, us, US); origin_exch(us, US, c, C)
+out["roads"][road]["viaBusAfterOurRestart"] = via_bus_named(us, "via:" + HUB + "/" + F, buses)
+step(road, "ourBusRestarted", us, new=S["new"], nobody=S["nobody"])
+origin_exch(us, US, f2, F_HERE)                    # F's answer to our dial in the new process, under our name for it
+out["roads"][road]["viaRowsAfterFarAnswers"] = carried_via(us)
+step(road, "farAnswersOurDialAfterOurRestart", us, new=S["new"], nobody=S["nobody"])
+origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)   # a pair with the restarted hub, which has not heard F
+step(road, "hubPairSilentOnF", us, new=S["new"], nobody=S["nobody"])
 # RESIDUAL (3a) WITH ITS MAIL RELAYED (round 7 of fork PR #897, the reviewer's verifier at the eighty-first commit, its roads
 # V7emptyCacheNamedBefore and V7emptyCacheNeverNamed): F's cached roster is EMPTY (its kernel has not answered since its
 # bus started: no twin), and a session started there mails ours through the hub, one process throughout. Where that hub
@@ -8742,8 +8784,9 @@ print(json.dumps(out))
         carries the hostname F declares, and the hub names F under the alias its kernel dials. The hub runs this build and
         never restarts. F's bus restarts, and its first dial declares F_DECL; no row at the hub carries F's new bus id, so
         the hub files that dial under F_DECL and parks the mail it carries with origin F_DECL. The hub's dial to the alias
-        then folds F_DECL into F before the hub's next exchange here, and from then on the hub names F under the alias
-        alone, so no roster of that hub process names F_DECL: the origin hold on F_DECL stands, and a sid nothing names is
+        then folds F_DECL into F before the hub's next exchange here, and the hub names F under the alias alone from that
+        exchange until F's first dial after a later restart is filed under F_DECL while the hub exchanges here, so no
+        roster of that hub process names F_DECL before then: the origin hold on F_DECL stands, and a sid nothing names is
         cannot-determine by the hub's via row about F_DECL at the landing, after our placed answer and after three more
         rounds (S rule 4, by the hub's word under the alias); after S ends, S too; and across our restart, the via row
         carried with its bit False, after a pair with the hub and one with C and after three more rounds. At the
@@ -8856,20 +8899,30 @@ print(json.dumps(out))
                                   d1["viaRowsAfterHubWord"]), (RULE_5, [via_f_of_hub]),
                                  "D1: the hub's word naming F's new bus folds into F's row, and the carried row leaves")
 
-    def test_decision_1_under_nickname_drift_the_origins_row_under_another_name_does_not_end_the_carried_hold(self):
-        """DECISION 1'S END REACHES ONLY THE ORIGIN'S ROW UNDER THE NAME THE HOLD CARRIES (round 7 of fork PR #897, the
-        reviewer's verifier at the eighty-first commit, its roads V7directD2AliasOurRestart and
-        V7directD2AliasOurRestartHubNames). A carried origin hold has no bus id of the origin, so the carry's fold
-        (_direct_row_speaks) finds the origin's row only by the name the hold carries, the hub's name for F. D2's world
-        where this bus's kernel dials F by F_HERE, a name other than the hub's (nickname drift), then OUR bus restarts:
-        F's row under F_HERE answers our dial in the new process naming S, so S is rule 4, but the carried via row about F
-        stays and a sid nothing names is cannot-determine by it, and still after a pair with the restarted hub, which has
-        not heard F: the hold lasts until the hub's word, cost (r1). Once F reaches the restarted hub and the hub's dial
-        names F's new bus, that word folds into F's row by its bus id, the carried row leaves, and a sid nothing names is
-        rule 5. At the eightieth commit no via row was carried and a sid nothing names read rule 5 at each held step. The
-        control is D2 without the drift, where F's answer to our dial ends the carried hold
+    def test_decision_1_under_nickname_drift_the_origins_row_under_another_name_ends_the_carried_hold_only_by_a_bus_id_the_via_row_carries(self):
+        """DECISION 1'S END THROUGH THE ORIGIN'S ROW UNDER ANOTHER NAME COMES ONLY BY A BUS ID THE CARRIED VIA ROW CARRIES
+        (round 7 of fork PR #897, the reviewer's verifier at the eighty-first commit, its roads V7directD2AliasOurRestart and
+        V7directD2AliasOurRestartHubNames, and at the eighty-second, its road X1driftNewBusNamedRestartFirst). A carried
+        origin hold has no bus id of the origin, so the carry's fold (_direct_row_speaks) finds the origin's row by the
+        name the hold carries, the hub's name for F, or by the bus id of a word of F that the carried via row also carries
+        (its viaBus). D2's world where this bus's kernel dials F by F_HERE, a name other than the hub's (nickname drift),
+        then OUR bus restarts. First case, the via row carrying no bus id of F: F's row under F_HERE answers our dial in
+        the new process naming S, so S is rule 4, but the carried via row about F stays and a sid nothing names is
+        cannot-determine by it, and still after a pair with the restarted hub, which has not heard F: the hold lasts until
+        the hub's word, cost (r1). Once F reaches the restarted hub and the hub's dial names F's new bus, that word folds
+        into F's row by its bus id, the carried row leaves, and a sid nothing names is rule 5. At the eightieth commit no
+        via row was carried and a sid nothing names read rule 5 at each held step. Second case, the via row carrying F's
+        new bus id: the hub's old process heard F's new bus process and named it here before the park, so the restarted
+        hub's merging dial keeps that word, its viaBus F's new bus, and the origin hold marks it unanswered. A sid nothing
+        names is cannot-determine at the landing and across our restart; F's row under F_HERE, answering our dial in the
+        new process under that bus id, ends the carried hold: the carried row leaves, a sid nothing names is rule 5 and S
+        rule 4, and so after a pair with the restarted hub, which has not heard F. At the eightieth commit a sid nothing
+        names read rule 5 at the landing. The control is D2 without the drift, where F's answer to our dial ends the
+        carried hold by the name
         (test_decision_1_after_our_restart_the_carry_drops_the_origin_hold_once_the_origins_own_row_answers_our_dial)."""
+        S = ROAD_SIDS
         road = "originHoldD2UnderOurOwnNameForF"
+        held = UNANSWERED(R_VIA_F + " (listing unanswered)")
         carried = UNANSWERED(R_VIA_F + " (not heard, listing unanswered)")
         via_f_of_hub = "via:" + R_F + "-here/" + R_HUB   # F's word about the hub, under F_HERE (the second roads child's)
         for shape, got in self.roads.items():
@@ -8879,7 +8932,7 @@ print(json.dumps(out))
                                   ("farAnswersOurDialAfterOurRestart", "hubPairSilentOnF") for key in ("new", "nobody")],
                                  [RULE_4, carried] * 2,
                                  "F's row under our own name for it answers our dial in the new process, and the carried "
-                                 "origin hold, which the carry looks up by the hub's name, stays ([true, 5, "
+                                 "origin hold, whose via row carries no bus id of F, stays ([true, 5, "
                                  "no-reachable-host-names-it] at the eightieth commit for the sid nothing names)")
                 self.assertEqual(r["viaRowsAfterFarAnswers"], sorted([via_f_of_hub, R_VIA_F]),
                                  "the via row about F is carried beside F's own row")
@@ -8887,7 +8940,25 @@ print(json.dumps(out))
                                  (RULE_5, [via_f_of_hub]),
                                  "the hub's word naming F's new bus folds into F's row by its bus id, and the carried row "
                                  "leaves")
-
+            with self.subTest(shape=shape, via_row_carries_the_bus_id=True):
+                named = "originHoldD2UnderOurOwnNameForFNamedNewBus"
+                r = got["roads"][named]
+                self.assertEqual([self._road(got, named, step, "nobody") for step in ("atLanding", "ourBusRestarted")],
+                                 [held, carried], "a sid nothing names is held at the landing and across our restart "
+                                 "([true, 5, no-reachable-host-names-it] at the landing at the eightieth commit)")
+                self.assertEqual((r["atHub"], r["landing"], r["heldAtLanding"]),
+                                 ([[S["new"], None, "hold"]], [[S["new"], R_F, "ack"]], [[R_F, ""]]),
+                                 "the old hub parked S's mail, the restarted hub's dial relayed it, and the hub's row "
+                                 "carries the origin hold for F")
+                self.assertEqual((r["viaBusAtLanding"], r["viaBusAfterOurRestart"]), ("F's new bus", "F's new bus"),
+                                 "the via row about F carries F's new bus id, from the old process's word the merging "
+                                 "dial kept, and is carried with it")
+                self.assertEqual((r["viaRowsAfterFarAnswers"],
+                                  [self._road(got, named, step, key) for step in
+                                   ("farAnswersOurDialAfterOurRestart", "hubPairSilentOnF") for key in ("new", "nobody")]),
+                                 ([via_f_of_hub], [RULE_4, RULE_5] * 2),
+                                 "F's row under F_HERE answers our dial in the new process under that bus id: the carry "
+                                 "finds it by the bus id and the carried origin hold ends")
 
 class PlantDedupe(unittest.TestCase):
     def test_byte_identical_open_twins_reuse_the_node(self):
