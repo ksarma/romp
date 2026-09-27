@@ -483,7 +483,8 @@ class InstallStep(unittest.TestCase):
     def test_the_step_runs_on_every_cell_including_3_14t(self):
         # the Verify 3.14t stage (2026-09-20): install, import with the GIL off, gated and host modules green under a
         # free-threaded 3.14.6, so the step has no `if:` and the comment says the cell installs it too. A future release
-        # that breaks there shows as a red cell; excluding the cell would turn that into 50 silent skips.
+        # that breaks there shows as a red cell; excluding the cell would turn that into the gated and host tests
+        # silently skipping.
         self.assertFalse(re.search(r"^        if:", self.step, re.M), "the step is gated by an if: clause; the 3.14t decision was INCLUDE")
         self.assertIn("3.14t cell installs it too", self.comment, "the comment no longer states the 3.14t decision")
 
