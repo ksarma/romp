@@ -64,12 +64,12 @@ class TimelineBootDispatch(unittest.TestCase):
 # window message listener it registers. ROMP_TEST_OWN is the page's location.origin ("-" for a page with no location);
 # ROMP_TEST_PERF=1 publishes a performance collector on window.__rompPerf first, as federation.js does on the kernel's
 # page, in the shape of perf-telemetry.ts's wrapFrameHandler, counting every message it is handed.
-# The shell's own parent, GRAND, is a window on another origin (its sender posts OTHER). That layout is the harness's,
-# not one a browser gives the kernel's /timeline: the kernel serves its pages with frame-ancestors 'self' and
-# X-Frame-Options SAMEORIGIN, so no page on another origin frames the shell. The rows use GRAND as the shared top of
-# the frames in this tab. Synthetic pages in Chromium, Firefox and WebKit (2026-09-27) gave every sender the same class
-# with the shell at the top of its tab as under a page on another origin, so no expectation here depends on GRAND's
-# origin.
+# The shell's own parent, GRAND, is a window on another origin (its sender posts OTHER; topOpaque has it post the opaque
+# origin "null", as a sandboxed page would). That layout is the harness's, not one a browser gives the kernel's
+# /timeline: the kernel serves its pages with frame-ancestors 'self' and X-Frame-Options SAMEORIGIN, so no page on
+# another origin frames the shell. The rows use GRAND as the shared top of the frames in this tab. Synthetic pages in
+# Chromium, Firefox and WebKit (2026-09-27) gave every sender the same class with the shell at the top of its tab as
+# under a page on another origin, so no expectation here depends on GRAND's origin.
 _BOOT_HARNESS = r"""
 'use strict';
 const ORIGIN = 'http://127.0.0.1:7777', OTHER = 'https://elsewhere.example';
@@ -113,9 +113,11 @@ const SENDERS = {
   peer: [{}, ORIGIN],             // another window on this origin
   ownOriginChild: [OWN_ORIGIN_CHILD, ORIGIN],      // a frame inside this one on this origin, in its frames: a peer
   opener: [OPENER, OTHER],        // the page on another origin that opened /timeline: this window's opener
+  openerOpaque: [OPENER, 'null'], // the page that opened /timeline, posting the opaque origin (a sandboxed page)
   popup: [POPUP, OTHER],          // a page on another origin that /timeline opened: its opener is this window
   sandboxedPopup: [SANDBOXED_POPUP, 'null'],       // a sandboxed page that /timeline opened: its opener is this window
   top: [GRAND, OTHER],            // the top window, the shell's own parent on another origin: not this frame's parent
+  topOpaque: [GRAND, 'null'],     // the top window, the shell's own parent, posting the opaque origin (a sandboxed page)
   stranger: [{}, OTHER],          // a window on another origin this one does not know
   sandboxed: [{}, 'null'],        // a sandboxed frame
   sandboxedSibling: [{ parent: SHELL }, 'null'],   // a sandboxed frame beside this one in the shell
@@ -179,7 +181,8 @@ class TimelineBootSenders(unittest.TestCase):
         self.assertEqual(got["updates"], _HEARD,
                          "drawn once from each heard sender (a frame inside this one on its origin included), never "
                          "from a page on another origin (the one that opened this page, or one this page opened, "
-                         "included), a sandboxed page this page opened, the top window above the shell, a sandboxed "
+                         "included), a sandboxed page this page opened, the top window above the shell, the top window "
+                         "or the page that opened this one posting the opaque origin, a sandboxed "
                          "frame (beside or inside this one, sharing its top or not, listed in its frames or not, or gone "
                          "after it posted), an origin that overlaps this one's text or differs only in its port, or a "
                          "sourceless post that names another origin")
@@ -197,7 +200,10 @@ class TimelineBootSenders(unittest.TestCase):
         # opaque URL (about:srcdoc, data:), and so is a sandboxed frame's post: the same text is no shared origin. (A
         # sandboxed page served over http keeps its URL's origin in location.origin, though its document's origin is
         # opaque; that page is the loopback row above, not this one.) A frame inside such a page can be on the kernel's
-        # origin (ownOriginChild posts ORIGIN), which matches nothing here either
+        # origin (ownOriginChild posts ORIGIN), which matches nothing here either. Its top (the shell's own parent) and
+        # the page that opened it post "null" too (topOpaque, openerOpaque), the text this page's location.origin holds:
+        # neither is drawn, so a check that took the top, the parent's parent or the opener on location.origin, with no
+        # guard for the opaque text, is caught here
         for perf in (False, True):
             with self.subTest(perf=perf):
                 got = _run_boot("null", perf=perf)

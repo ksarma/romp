@@ -1550,14 +1550,14 @@ class ShellWordsFromTheShellOnly(unittest.TestCase):
     # and the pane's own window.opener as the source, which in a frame is null (the harness's window has opener null, as a
     # browser's frame does), on this origin and on the opaque one: a check that admitted e.source===window.opener would
     # admit a sourceless post there. Then the windows in the pane's tab and the ones it opened, over the edges a browser
-    # gives them (the prelude's first two lines): the pane's top is the shell, its parent, and the shell is its own top;
-    # window.frames is the window itself, whose length and indexes list the frames inside it. A frame inside the pane,
-    # sandboxed and on its origin (its parent the pane, its top the shell, listed in its frames); a frame beside it in the
-    # shell, sandboxed and on its origin (its parent and its top the shell); a window this page opened (window.open), on
-    # another origin and on this one (its opener is this window). A check that took any of those edges for the shell's
-    # would hear one of them
+    # gives them (the prelude's first two lines): the pane's top is the shell, its parent, and the shell is its own
+    # parent and top; window.frames is the window itself, whose length and indexes list the frames inside it. A frame
+    # inside the pane, sandboxed and on its origin (its parent the pane, its top the shell, listed in its frames); a
+    # frame beside it in the shell, sandboxed and on its origin (its parent and its top the shell); a window this page
+    # opened (window.open), on another origin and on this one (its opener is this window). A check that took any of
+    # those edges for the shell's would hear one of them
     FOREIGN = r"""
-window.top=window.parent;window.parent.top=window.parent;window.frames=window;
+window.top=window.parent;window.parent.top=window.parent;window.parent.parent=window.parent;window.frames=window;
 var KID={parent:window,top:window.parent},OWN_KID={parent:window,top:window.parent};window.length=2;window[0]=KID;window[1]=OWN_KID;
 var OTHER="https://elsewhere.example",FOREIGN={opener:[{},OTHER],sandboxed:[{},"null"],sameOriginStranger:[{},location.origin],
 itself:[window,location.origin],dispatch:[null,""],parentOtherOrigin:[window.parent,OTHER],
@@ -1574,16 +1574,18 @@ function fromEach(t,data){Object.keys(FOREIGN).forEach(function(k){fireFrom(FORE
         # window in this page's frames, one sharing its top, one whose parent is this page or one it opened for the shell,
         # or that heard its top without the origin check, hears one of the senders above. (Its top is its parent here, as
         # for every pane the shell tells: a check that took the top for the parent and kept the origin check would hear
-        # the same senders, so no row here tells the two apart)
+        # the same senders, so no row here tells the two apart.) The shell is the top of its tab, its own parent and top,
+        # so a check that heard its parent's parent without the origin check hears the parent posting from another origin
+        # (parentOtherOrigin: a harness row, since the kernel's frame-ancestors 'self' rules that post out in a browser)
         r = _run(self.FOREIGN + r"""
 var inF=function(x){return Array.prototype.indexOf.call(window.frames,x)>=0;};
-out({topIsTheShell:window.top===window.parent&&window.parent.top===window.parent,
+out({topIsTheShell:window.top===window.parent,shellIsItsOwnParentAndTop:window.parent.parent===window.parent&&window.parent.top===window.parent,
 framesListTheTwo:window.length===2&&inF(FOREIGN.frameInsideSandboxed[0])&&inF(FOREIGN.frameInsideSameOrigin[0]),
 framesInsideShareTheTop:[FOREIGN.frameInsideSandboxed[0],FOREIGN.frameInsideSameOrigin[0]].every(function(x){return x.parent===window&&x.top===window.top;}),
 siblingsShareTheTop:[FOREIGN.siblingSandboxed[0],FOREIGN.siblingSameOrigin[0]].every(function(x){return x.parent===window.parent&&x.top===window.top&&!inF(x);}),
 popupsItOpened:FOREIGN.popupOtherOrigin[0].opener===window&&FOREIGN.popupSameOrigin[0].opener===window});""")
-        self.assertEqual(r, {"topIsTheShell": True, "framesListTheTwo": True, "framesInsideShareTheTop": True,
-                             "siblingsShareTheTop": True, "popupsItOpened": True})
+        self.assertEqual(r, {"topIsTheShell": True, "shellIsItsOwnParentAndTop": True, "framesListTheTwo": True,
+                             "framesInsideShareTheTop": True, "siblingsShareTheTop": True, "popupsItOpened": True})
 
     def test_a_link_word_from_anyone_but_the_shell_neither_ends_the_wait_nor_dials(self):
         for word in ('{romp:"link",link:"up"}', '{romp:"panes",on:{},avail:{files:false},link:"up"}'):
@@ -1624,6 +1626,34 @@ window.parent=window;window.top=window;
 fireFrom(window,location.origin,"message",{romp:"panes",on:{test:true},avail:{files:false},link:"up"});
 out({onScreen:onScreen===undefined?"unset":onScreen});""")
         self.assertEqual(r["onScreen"], "unset", "no shell, so no panes word is heard")
+
+    def test_a_pane_page_open_on_its_own_hears_neither_word_from_the_window_that_opened_it(self):
+        # a pane page another page opened in a tab of its own (window.open): its parent and its top are itself, and
+        # window.opener is the page that opened it, the top of its own tab. On a plain-http address a browser applies no
+        # Cross-Origin-Opener-Policy (Handler._send says so), so a page on another origin keeps that handle, and a page
+        # on this origin keeps it under the policy as well. That window is not the shell whatever origin its post names
+        # (another origin, this page's own, the opaque "null"), so neither word is heard from it: the on-screen flag
+        # stays unset, the next return's row carries no parked field (a standalone row's shape) and nothing dials. The
+        # flag and the row are what a check that heard the opener would change: in a standalone page no shell publishes
+        # a link, so a return never awaits one and the link word dials nothing either way
+        for origin in ('"https://elsewhere.example"', "location.origin", '"null"'):
+            with self.subTest(origin=origin):
+                r = _run(r"""
+window.parent=window;window.top=window;
+var OPENER={};OPENER.parent=OPENER;OPENER.top=OPENER;window.opener=OPENER;
+open();recv({type:"ka"});
+fireFrom(OPENER,ORIGIN,"message",{romp:"panes",on:{test:true},avail:{files:false},link:"up"});
+fireFrom(OPENER,ORIGIN,"message",{romp:"link",link:"up"});
+hide();NOW+=1000;show();
+out({edges:{ownParentAndTop:window.parent===window&&window.top===window,openedByAnotherTab:window.opener===OPENER&&OPENER.top===OPENER&&OPENER!==window},
+onScreen:onScreen===undefined?"unset":onScreen,sockets:sockets.length,awaiting:awaitLink,
+returns:rows(sockets[0],"return").map(function(m){return {decision:m.data.decision,parkedField:"parked" in m.data};})});""".replace("ORIGIN", origin))
+                self.assertEqual(r["edges"], {"ownParentAndTop": True, "openedByAnotherTab": True})
+                self.assertEqual(r["onScreen"], "unset",
+                                 "the window that opened this page is not the shell: no panes word is heard")
+                self.assertEqual(r["returns"], [{"decision": "keep", "parkedField": False}],
+                                 "a standalone row: no word was heard, so the return's row says nothing of parking")
+                self.assertEqual((r["sockets"], r["awaiting"]), (1, False), "nothing dialed and nothing awaits a link")
 
     # Ways later code in the shim could try to put a laxer check in fromShell's place, each spelled so that no text pin
     # reads the name (a string an eval builds at run time): an assignment, at the check's own scope, from a function inside

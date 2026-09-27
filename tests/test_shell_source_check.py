@@ -23,12 +23,12 @@ run goes through every callback they leave for later (timers, animation frames, 
 listeners) and an exercise: every other listener and handler they register (on the window, the document, a frame or an
 element), handed a stand-in event; every callback they hand to a stand-in (an observer's, a fetch's then); and every word
 a message listener's arms compare against, from each pane. Then it forges a message from each sender the shell must
-refuse (a page that opened it, a sandboxed frame, a window it does not hold, a frame nested in a pane, sandboxed or on its
-origin, a same-origin window that replaced its window.parent with the shell, a window it opened, on another origin or on
-its own, itself, its own dispatch, a sourceless post with the opaque origin) and from a pane, over windows that carry the
-edges a browser gives them (parent, top, opener, and the shell's frames), and reads which function the check is when
-each message is delivered. The other pages' scripts run through the same exercise for their census
-(ServedPagesExecuted). Synthetic only: no session data, a loopback origin.
+refuse (a page that opened it, on another origin or on its own, a sandboxed frame, a window it does not hold, a frame
+nested in a pane, sandboxed or on its origin, a same-origin window that replaced its window.parent with the shell, a
+window it opened, on another origin or on its own, itself, its own dispatch, a sourceless post with the opaque origin)
+and from a pane, over windows that carry the edges a browser gives them (parent, top, opener, and the shell's frames),
+and reads which function the check is when each message is delivered. The other pages' scripts run through the same
+exercise for their census (ServedPagesExecuted). Synthetic only: no session data, a loopback origin.
 
 The line after the adopted three is the fork's LOCK (2026-09-26): it makes the check's property read-only and
 non-configurable once defined, so a later write of it, under any name and on any road (a road the stand-in does not
@@ -522,11 +522,13 @@ function stubbed(o) {
                         set(t, k, v) { onWrite(k, v); t[k] = v; return true; } });
 }
 // windows: a pane of the shell (the chat), the Files pane, a sandboxed frame of the shell, a frame of the shell on
-// another origin, a same-origin window the shell does not hold and that has no edge to it, a page on another origin that
-// opened the shell; and, for the frames in the shell's tab and the windows it opened (their edges are set once the
-// shell's window exists, below): a frame nested in the chat pane, sandboxed and on the shell's origin; a same-origin
-// window nested in a pane that replaced its own window.parent with the shell (no iframe of the shell holds it); a window
-// the shell opened, on another origin and on the shell's
+// another origin, a same-origin window the shell does not hold and that has no edge to it, the page that opened the
+// shell, which posts from another origin and from the shell's own (the shell's Cross-Origin-Opener-Policy, same-origin,
+// keeps an opener on its own origin, and on a plain-http address a browser applies none, Handler._send); and, for the
+// frames in the shell's tab and the windows it opened (their edges are set once the shell's window exists, below): a
+// frame nested in the chat pane, sandboxed and on the shell's origin; a same-origin window nested in a pane that
+// replaced its own window.parent with the shell (no iframe of the shell holds it); a window the shell opened, on
+// another origin and on the shell's
 const POSTED = [];
 function win(name) { return stubbed({ name, postMessage(m) { POSTED.push([name, m]); }, focus() {} }); }
 const CHAT = win('chat'), FILES = win('files'), SANDBOXED = win('sandboxed'), XFRAME = win('xframe'),
@@ -673,6 +675,7 @@ await drain();
 // the senders: [name, source, origin]
 const SENDERS = {
   opener: [OPENER, ELSEWHERE],             // a page on another origin that opened the dashboard
+  openerSameOrigin: [OPENER, ORIGIN],     // a page on the shell's origin that opened the dashboard
   sandboxedFrame: [SANDBOXED, 'null'],    // a sandboxed iframe of the shell (opaque origin)
   otherOriginFrame: [XFRAME, ELSEWHERE],  // an iframe of the shell showing another origin
   strayWindow: [STRAY, ORIGIN],           // same origin, but not a frame of this document, with no edge to it
@@ -937,9 +940,9 @@ class ShellListenersExecuted(unittest.TestCase):
     caught only when its text names addEventListener (KernelListenerCensus); under a computed name, no test catches it. A
     write of the check there is refused by the lock (CheckLocked)."""
 
-    REFUSED = ("opener", "sandboxedFrame", "otherOriginFrame", "strayWindow", "nestedSandboxed", "nestedSameOrigin",
-               "nestedParentReplaced", "popup", "popupSameOrigin", "shellItself", "dispatch", "sourcelessElsewhere",
-               "sourcelessOpaque")
+    REFUSED = ("opener", "openerSameOrigin", "sandboxedFrame", "otherOriginFrame", "strayWindow", "nestedSandboxed",
+               "nestedSameOrigin", "nestedParentReplaced", "popup", "popupSameOrigin", "shellItself", "dispatch",
+               "sourcelessElsewhere", "sourcelessOpaque")
 
     @classmethod
     def setUpClass(cls):
@@ -1244,6 +1247,7 @@ const rows = {
   popup: ok({ source: popup, origin: ELSEWHERE }),
   popupSameOrigin: ok({ source: popup, origin: ORIGIN }),
   opener: ok({ source: opener, origin: ELSEWHERE }),
+  openerSameOrigin: ok({ source: opener, origin: ORIGIN }),
   strayWindow: ok({ source: stray, origin: ORIGIN }),
   itself: ok({ source: window, origin: ORIGIN }),
   noSource: ok({ source: null, origin: ORIGIN }),
@@ -1267,7 +1271,8 @@ class AdoptedCheckExecuted(unittest.TestCase):
     """The adopted lines, run: true only for a same-origin iframe of this document that is not marked
     data-protocol=none; false for every other sender (a sandboxed iframe of the shell, listed in its frames; a frame
     nested in a pane, which shares the shell's top; a window whose parent reads as the shell but that no iframe holds; a
-    window the shell opened; the page that opened it) and when the frame walk throws."""
+    window the shell opened; the page that opened it, on another origin or on the shell's own) and when the frame walk
+    throws."""
 
     def test_the_truth_table(self):
         node = shutil.which("node")
@@ -1293,8 +1298,9 @@ class AdoptedCheckExecuted(unittest.TestCase):
         self.assertEqual(rows, {
             "pane": True, "paneOtherOrigin": False, "paneOpaqueOrigin": False, "urlPaneMarkedNone": False,
             "sandboxedFrame": False, "nestedFrame": False, "nestedFrameOpaqueOrigin": False, "parentReplaced": False,
-            "popup": False, "popupSameOrigin": False, "opener": False, "strayWindow": False, "itself": False,
-            "noSource": False, "noSourceNoOrigin": False, "noSourceOpaqueOrigin": False, "noEvent": False, "throws": False,
+            "popup": False, "popupSameOrigin": False, "opener": False, "openerSameOrigin": False, "strayWindow": False,
+            "itself": False, "noSource": False, "noSourceNoOrigin": False, "noSourceOpaqueOrigin": False,
+            "noEvent": False, "throws": False,
         })
 
 
