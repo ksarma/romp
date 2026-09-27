@@ -1556,6 +1556,9 @@ class VerifyReadsTheSweep(_Base):
     def test_a_red_leg_is_named_and_a_recorded_pass_over_it_is_invalid(self):
         fx = self.fx
         head = self.assembled()
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
+        self.assertEqual(fx.state("b1")["sweep"]["verdict"], "pass")
         legs = self.legs(bats=1)
         fx.sweep("b1", legs=legs)
         self.refused("FAIL sweep red at %s: bats (rc 1); logs under " % head[:10])
