@@ -335,7 +335,12 @@ const LIFTED: Lifted[] = [
 /** The listeners owed a leg per arm, by file, the marker that picks the listener (siteOf) and its arms: the executed-leg
  *  census holds each to exactly one leg per declared arm, each naming it, and each leg's scope counts its own arm's effect
  *  once and every other arm's twice (wayBackScope), which the crossed-message test below holds. Every other listener has
- *  one leg, which names no arm: a representative arm, since the head census pins the check ahead of every arm. */
+ *  one leg, which names no arm: a representative arm, since the head census pins the check ahead of every arm.
+ *  Residual (low, disclosed): this table is hand-written, not derived from the way back's source, so a coordinated test-side
+ *  edit that empties it, drops the probe leg and unarms the hostUp leg would leave one unarmed leg and still pass here. The
+ *  product stays guarded regardless: the head census refuses onKernelMessage acting before its check, and file-view-seam.ts
+ *  reds a foreign hostUp or probe. Deriving the arms from source is listener-specific (the probe arm is a fallthrough, named
+ *  by no literal) and not worth the fragility for this; recorded rather than fixed. */
 const ARMS: Array<[string, string, string[]]> = [["webview/file-view.ts", "probeServed(", ["hostUp", "probe"]]];
 
 const compiled = new Map<string, (scope: unknown) => Listener>();
@@ -418,8 +423,12 @@ function uiSources(): string[] {
 /** Where the listener's `if (windowSender(<its event>) === "foreign") return;` is among its body's statements, or why it
  *  does not count: the listener takes one parameter, the event, a plain name with no default (a parameter's default runs
  *  before the body, so a default on it or on a second parameter would run ahead of the check), and every statement before
- *  the check must be a read of the message (a declaration initialised to <event>.data) or an early return on a condition
- *  that calls, constructs and assigns nothing, so no arm runs before the check. */
+ *  the check must be a read of the message (a declaration initialised to <event>.data) or an early return whose condition
+ *  runs no code (inert): no call, construct, tagged or substituted template, delete, await, yield, ++/--, assignment, or a
+ *  binary operator that coerces an operand (==, !=, <, >, <=, >=, in, instanceof — the strict === and !== do not coerce and
+ *  stay), and every property or element access reads off the event or a name a message read bound to <event>.data, whose
+ *  value is a structured clone with no accessors, so a getter cannot run. A getter read or a coercion off any other object
+ *  would run an arm for a foreign sender before the check, so it is not inert. So no arm runs before the check. */
 function headCheck(site: Site): string | null {
   const fn = site.fn;
   if (ts.isIdentifier(fn)) return "the listener is a name no const holding a function written in place binds (sitesIn): " + fn.text;
@@ -435,22 +444,45 @@ function headCheck(site: Site): string | null {
     && ts.isCallExpression(s.expression.left) && ts.isIdentifier(s.expression.left.expression) && s.expression.left.expression.text === "windowSender"
     && s.expression.left.arguments.length === 1 && ts.isIdentifier(s.expression.left.arguments[0]) && s.expression.left.arguments[0].text === ev
     && ts.isStringLiteralLike(s.expression.right) && s.expression.right.text === "foreign";
-  const inert = (n: any): boolean => {
-    if (ts.isCallExpression(n) || ts.isNewExpression(n) || ts.isTaggedTemplateExpression(n) || ts.isDeleteExpression(n) || ts.isAwaitExpression(n) || ts.isYieldExpression(n)
+  // the binary operators that coerce no operand: the logical connectives, strict equality and the comma. Every other binary
+  // operator runs valueOf/toString/Symbol.toPrimitive (==, !=, the relational operators, +, and the rest) or Symbol.hasInstance
+  // (instanceof) or a Proxy trap (in) on an operand, so it can run an arm; assignments run an arm too. All are not inert.
+  const NON_COERCING = new Set<number>([ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken,
+    ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
+    ts.SyntaxKind.CommaToken]);
+  /** The leftmost node of a property or element access chain, casts and parentheses removed. */
+  const accessRoot = (n: any): any => { n = unwrap(n); while (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) n = unwrap(n.expression); return n; };
+  /** Whether `n` runs no code. `allowed` is the names a property or element access may read off (a getter cannot run on a
+   *  MessageEvent's structured-clone data): the event and every name a message read has bound to <event>.data so far. */
+  const inert = (n: any, allowed: Set<string>): boolean => {
+    if (ts.isCallExpression(n) || ts.isNewExpression(n) || ts.isTaggedTemplateExpression(n) || ts.isTemplateExpression(n)
+        || ts.isDeleteExpression(n) || ts.isAwaitExpression(n) || ts.isYieldExpression(n)
         || ts.isPrefixUnaryExpression(n) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)
-        || ts.isPostfixUnaryExpression(n) || ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment) return false;
+        || ts.isPostfixUnaryExpression(n) || ts.isBinaryExpression(n) && !NON_COERCING.has(n.operatorToken.kind)) return false;
+    if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) {
+      for (let c: any = n; ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c); c = unwrap(c.expression)) {
+        if (ts.isElementAccessExpression(c) && c.argumentExpression && !inert(c.argumentExpression, allowed)) return false;
+      }
+      const root = accessRoot(n);
+      return ts.isIdentifier(root) && allowed.has(root.text);
+    }
     let ok = true;
-    ts.forEachChild(n, (c: any) => { if (ok && !inert(c)) ok = false; });
+    ts.forEachChild(n, (c: any) => { if (ok && !inert(c, allowed)) ok = false; });
     return ok;
   };
   const readsMessage = (s: any) => ts.isVariableStatement(s) && s.declarationList.declarations.every((d: any) =>
     d.initializer && ts.isPropertyAccessExpression(d.initializer) && ts.isIdentifier(d.initializer.expression)
     && d.initializer.expression.text === ev && d.initializer.name.text === "data");
-  const earlyReturn = (s: any) => ts.isIfStatement(s) && !s.elseStatement && isReturn(s.thenStatement) && inert(s.expression);
+  const earlyReturn = (s: any, allowed: Set<string>) => ts.isIfStatement(s) && !s.elseStatement && isReturn(s.thenStatement) && inert(s.expression, allowed);
   const body = fn.body.statements;
+  const allowed = new Set<string>([ev]);   // the event, plus each name a message read binds to <event>.data, in body order
   for (let i = 0; i < body.length; i++) {
     if (isGate(body[i])) return null;
-    if (!readsMessage(body[i]) && !earlyReturn(body[i])) return "statement " + (i + 1) + " runs before the foreign-sender check: " + body[i].getText().slice(0, 80);
+    if (readsMessage(body[i])) {
+      for (const d of (body[i] as any).declarationList.declarations) if (ts.isIdentifier(d.name)) allowed.add(d.name.text);
+      continue;
+    }
+    if (!earlyReturn(body[i], allowed)) return "statement " + (i + 1) + " runs before the foreign-sender check: " + body[i].getText().slice(0, 80);
   }
   return "no `if (windowSender(" + ev + ") === \"foreign\") return;` in the listener's body";
 }
@@ -1416,6 +1448,21 @@ test("the census rule reads what it claims: a listener that acts before the chec
   assert.match(String(probe('(e) => { const m = e.data; go(m); if (windowSender(e) === "foreign") return; }')), /runs before the foreign-sender check/);
   assert.match(String(probe('(e) => { if (!e.data || note(e.data)) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a call in an early return's condition is an arm");
   assert.match(String(probe('(e) => { const m = e.data; if (m) seen = m; if (windowSender(e) === "foreign") return; }')), /runs before/);
+  // a getter read, or a value coerced by a loose or relational operator, in an early return's condition runs an arm before
+  // the check: a property or element access reads off nothing but the event or a message read (a MessageEvent's data is a
+  // structured clone with no accessors), and ==, !=, <, >, <=, >=, in, instanceof and a substituted template are refused
+  // (the strict === and !== stay). Every listener's real pre-check still passes.
+  assert.match(String(probe('(e) => { const m = e.data; if (m && m.type === "hostUp" && !kick.go) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a getter read off a free object");
+  assert.match(String(probe('(e) => { if (kick.go) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a getter read off a free object, no message read");
+  assert.match(String(probe('(e) => { const m = e.data; if (m[go()]) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a call in an element-access index of a message read");
+  assert.match(String(probe('(e) => { const m = e.data; if (m.type == kick) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "== coerces its operand");
+  assert.match(String(probe('(e) => { const m = e.data; if (m.type > kick) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a relational operator coerces its operand");
+  assert.match(String(probe('(e) => { const m = e.data; if (m.type instanceof Kick) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "instanceof runs Symbol.hasInstance");
+  assert.match(String(probe('(e) => { const m = e.data; if (`${kick}`) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a substituted template coerces its expression");
+  assert.equal(probe('(e) => { const m = e.data; if (!m) return; if (windowSender(e) === "foreign") return; }'), null, "the file browser's pre-check");
+  assert.equal(probe('(e) => { const m = e.data; if (!m || !live) return; if (windowSender(e) === "foreign") return; }'), null, "the comments panel's pre-check reads a bare closure name");
+  assert.equal(probe('(e) => { const m = e.data; if (!m || m.type !== "settingsSync" || !m.settings) return; if (windowSender(e) === "foreign") return; }'), null, "the settings sync's pre-check reads only the message");
+  assert.equal(probe('(e) => { const m = e.data; if (!m || typeof m.type !== "string") return; if (windowSender(e) === "foreign") return; }'), null, "the way back's own pre-check on the data var");
   assert.match(String(probe('(e) => { if (windowSender(e) !== "foreign") go(e.data); }')), /runs before|no `if/);
   assert.match(String(probe('(e) => { if (windowSender(other) === "foreign") return; go(e.data); }')), /runs before|no `if/, "the check reads this listener's event");
   assert.match(String(probe("(e) => go(e.data)")), /not a function with a body/);
