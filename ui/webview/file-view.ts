@@ -3171,7 +3171,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // hidden, since only such a redraw brings that pointerout with the button down, and opened otherwise: 168 of 168 such presses
   // refused and none of the 232 others in a later probe of these fixes that stamped that redraw (the Files pane), and all 11
   // presses of that check's own probe refused (the Files pane 9, the chat 2), where 343ee2eb5's gate opened all 11; WebKit sends
-  // no such pointerout there and opens it, and Firefox sends that release's mouseup with detail 0 and no click at either head.
+  // no such pointerout there and opens it, and Firefox sends that release's mouseup with detail 0 and no click when a redraw
+  // falls inside the hide, a hide made during a redraw counting as one, and a click that opens otherwise (in the same probe no
+  // click in 237 of 237 such presses, and a click that opened in every other row).
   // No cell drives that press.
   // The slot's four other clears (a pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive: the slot
   // is refilled at every pointerup, the click of a press this window heard follows that press's own pointerup, the mousedown's
