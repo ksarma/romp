@@ -3329,31 +3329,37 @@ def _peer_state_lock_census(source):
         copy is never paired with a link state from after it. Refused, each prefixed "one copy:": no hold, a second
         hold, a hold under a loop or reached other than by one call, a read of the table outside the one hold, and a
         read of the link state outside it.
-      ONE HOLD: a read-modify-write sits in one hold. In every function, a name bound from a READ OF THE TABLE (an
-        expression that loads PEER_STATE, reads a name the rules above bind to a row or to a container of rows, or
-        calls a function that reads the table, one whose body loads PEER_STATE or calls such a function, by name to a
-        fixpoint) or from a name so bound (to a fixpoint, flow-insensitively, through these binding forms: an
-        assignment, an augmented one, a loop target, a with target, a walrus, a match statement's captures, bound from
-        its subject, and a def or a class nested in the function, whose name is bound from the whole statement, its
-        defaults, decorators and body, as an assignment of a lambda is (so a nested helper whose body reads the
-        table, bound outside every hold and called in one, is refused, the refusing side); a comprehension's own
-        targets are that comprehension's, as Python 3 scopes them), inside one `with _PEER_STATE_LOCK` or outside
-        every hold, is read
-        inside another hold of that function only after that hold has rebound it (a binding in the hold that ends before the read starts); and a name so bound inside a hold
-        is handed outside it, in any argument of a call, to no function that takes the lock and writes the table
-        (a function holding a writer node, or calling one, by name to a fixpoint). A read inside a def or a lambda
-        nested in the name's own function, outside every hold of the nested one, is read where that def or lambda
-        stands (its defaults and decorators are evaluated there, and its body reads the name whenever it is called,
-        so a closure defined in another hold and called only after that hold is refused as well, the refusing
-        side), and a default of a def or a lambda, or a def's decorator, resolves its names, and binds a walrus's, in
-        the scope around that def or lambda and in the hold where it stands. Not followed, limits of this rule: an
-        except target, bound from whatever the try raised; a name declared nonlocal or global, whose binding is taken
-        as the declaring function's own, so a value bound there reaches the enclosing function or another function
-        unseen; a value stored into a container or an attribute and read back, a store binding no name; a type
-        statement (3.12 syntax, which a 3.10 parser refuses). Refused: "split hold in <function>: <name> ...",
-        naming the hold or holds it was bound in and the hold that reads it. Read outside every hold (a name chosen
-        under the lock and used after it, a log line's decision) it is not refused: the rule is about a value read
-        at one moment of the table and written back at another.
+      ONE HOLD: a read-modify-write sits in one hold, for a value carried by the forms listed here (this paragraph
+        claims no other). In every function, a name bound from a READ OF THE TABLE (an expression that loads PEER_STATE,
+        reads a name the rules above bind to a row or to a container of rows, or calls a function that reads the table,
+        one whose body loads PEER_STATE or calls such a function, by name to a fixpoint) or from a name so bound (to a
+        fixpoint, flow-insensitively, through these binding forms: an assignment, an annotated one and an augmented one,
+        a loop target, a with target, a walrus, a match statement's captures, bound from its subject, and a def or a
+        class nested in the function, whose name is bound from the whole statement, its defaults, decorators and body,
+        as an assignment of a lambda is, so a nested helper whose body reads the table, bound outside every hold and
+        called in one, is refused, the refusing side), inside one `with _PEER_STATE_LOCK` or outside every hold, is read
+        inside another hold of that function only after that hold has rebound it (a binding in the hold that ends before
+        the read starts); and a name so bound inside a hold is handed outside it, in any argument of a call, to no
+        function that takes the lock and writes the table (a function holding a writer node, or calling one, by name to
+        a fixpoint). A read inside a def or a lambda nested in the name's own function, outside every hold of the nested
+        one, is read where that def or lambda stands (its defaults and decorators are evaluated there, and its body
+        reads the name whenever it is called, so a closure defined in another hold and called only after that hold is
+        refused as well, the refusing side), and a default of a def or a lambda, or a def's decorator, resolves its
+        names, and binds a walrus's, in the scope around that def or lambda and in the hold where it stands. Some forms
+        it does not follow are stated as limits of this rule, each with a witness asserted accepted in PeerStateLock: an
+        except target, bound from whatever the try raised; a name declared nonlocal or global, whose binding is taken as
+        the declaring function's own, so a value bound there reaches the enclosing function or another function unseen;
+        a value stored into a container or an attribute and read back, a store binding no name; a type statement (3.12
+        syntax, which a 3.10 parser refuses); the first iterable of a comprehension or a generator expression, where a
+        read of a name a generator target of that comprehension binds is taken as the comprehension's, though Python
+        evaluates the first iterable in the scope around it; a name a class body binds, which is taken as the enclosing
+        function's, so a class standing in a hold before a read there that binds the name counts as that hold's
+        rebinding, though Python binds it in the class; and a parameter annotation or a return annotation, which is
+        resolved in the def's own scope, so a parameter of the same name hides a read there, though Python evaluates it
+        in the scope around the def. Each of the last three stands beside a control the census refuses. Refused:
+        "split hold in <function>: <name> ...", naming the hold or holds it was bound in and the hold that reads it.
+        Read outside every hold (a name chosen under the lock and used after it, a log line's decision) it is not
+        refused: the rule is about a value read at one moment of the table and written back at another.
       THE ANSWERED SET: every reference of the name _ANSWERED_BUSES, the far bus ids heard answering in this process,
         outside the module scope (its declaration, exempt by its scope) is PROTECTED as above, and is a membership
         test (`x in _ANSWERED_BUSES`) or the receiver of an `.add(...)` call. So the set is written and read under the
@@ -3717,10 +3723,11 @@ def _peer_state_lock_census(source):
                            "(line %d: %s; reached from %s)" % (line(n)[0], n.lineno, line(n)[2], reached_from[sc]))
 
     # ONE HOLD (round 6 of fork PR #897, the verifier's finding at the fifty-first commit): a read-modify-write sits in ONE
-    # hold. A name bound from a read of the table, in one hold or outside every hold, is read in another hold only after
-    # that hold rebinds it, and a name bound inside a hold is handed outside it to no function that takes the lock and
-    # writes the table. A match's captures and a nested def or class carry the value too, and a read in a nested def or
-    # lambda counts where it stands (the verifier's finding at the fifty-second commit)
+    # hold, for a value the binding forms the paragraph lists carry. A name bound from a read of the table, in one hold
+    # or outside every hold, is read in another hold only after that hold rebinds it, and a name bound inside a hold is
+    # handed outside it to no function that takes the lock and writes the table. A match's captures and a nested def
+    # or class carry the value too, and a read in a nested def or lambda counts where it stands (the verifier's finding
+    # at the fifty-second commit); the forms the paragraph states as limits are not followed
     def hold_of(node):                                # the innermost `with` on the lock whose BODY holds `node`, in its function
         child, p = node, parent.get(node)
         while p is not None and not isinstance(p, _FUNCS):
@@ -3729,8 +3736,10 @@ def _peer_state_lock_census(source):
             child, p = p, parent.get(p)
         return None
 
-    def site(n):                                      # where `n` is evaluated: a default or a decorator of a def or lambda
-        child, p = n, parent.get(n)                   # where that def stands, in the scope around it; anything else where it is
+    def site(n):                                      # where `n` is read as evaluated: a default or a decorator of a
+        child, p = n, parent.get(n)                   # def or lambda where that def stands, in the scope around it;
+                                                      # anything else, an annotation among them (a stated limit), where
+                                                      # it is
         while p is not None:
             if isinstance(p, ast.arguments) and isinstance(parent.get(p), _FUNCS) and any(
                     child is d for d in p.defaults + p.kw_defaults):
@@ -3808,8 +3817,10 @@ def _peer_state_lock_census(source):
             bindings.append((sc, name, value, hold_of(site(node)), (end.end_lineno, end.end_col_offset)))
             bound.add((sc, name))
 
-    def comp_local(n):                                # a name a comprehension around `n` binds: Python 3 scopes it to that
-        p = parent.get(n)                             # comprehension, so it is none of the function's names
+    def comp_local(n):                                # a name a generator target of a comprehension around `n`
+        p = parent.get(n)                             # binds, taken as that comprehension's, not the function's: in
+                                                      # its first iterable too, which Python evaluates in the scope
+                                                      # around it (a stated limit)
         while p is not None and not isinstance(p, _FUNCS):
             if isinstance(p, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)) and any(
                     isinstance(x, ast.Name) and x.id == n.id for g in p.generators for x in ast.walk(g.target)):
@@ -3976,6 +3987,12 @@ class PeerStateLock(unittest.TestCase):
     interleavings through the real recorders are tests/test_dead_session_staleness.py ReaderFollowsTheWriter's
     test_the_recorders_race_* witnesses (executed, the reader's answer). Each census rule has a plant here that it refuses by
     name, and the census over the bus's own source must find non-empty populations, so a census that reads nothing fails.
+    The two kinds of test catch two defects (the reviewer's ruling on group A's fix-up): the census over the real bus,
+    test_every_read_modify_write_and_iteration_of_peer_state_holds_its_one_lock, catches a defect in the bus, and is red
+    at the forty-ninth commit, where the recorders held no lock; a plant tests the census, not the bus, so it passes at
+    any bus head and catches a census that loses the rule it plants. The three plant tests right after the census over
+    the bus, and test_the_census_follows_a_split_hold_through_a_match_capture_and_a_nested_def_by_name, each name the
+    mutant of the census whose red they owe.
     Two rules joined at round 6 of fork PR #897, on the verifier's findings at the fiftieth commit: a function that writes
     the table reads it only under the lock (the fold's previous-row read hoisted before its hold passed every other pin
     and lost a far host's word under stress), and one mirror write reads the table only through its one copy (its link
@@ -3988,12 +4005,14 @@ class PeerStateLock(unittest.TestCase):
     lock, passed every pin; two of them lost a far host's word under a deterministic interleaving). On the verifier's
     finding at the fifty-second commit, ONE HOLD follows a value through a match statement's captures and a nested def
     or class as well, and counts a read in a nested def or lambda where that def or lambda stands (a split carried by a
-    capture, or by a def's default called in the second hold, was accepted); the forms it does not follow are stated
-    as limits, each with a witness. On the reviewer's round-5 ruling B (the fifty-fourth commit), the far bus ids heard
-    answering (_ANSWERED_BUSES) are written and read under the lock alone, each reference a membership test or an add
-    (THE ANSWERED SET). On its ruling C, the recording sequence each recorder mints and each dial's build reads
-    (_PEER_SEQ) is read and written under the lock alone, each reference its one cell (THE RECORDING SEQUENCE); the rows'
-    marks live in PEER_STATE, under the rules above."""
+    capture, or by a def's default called in the second hold, was accepted). The paragraph claims only the forms it
+    lists, and some forms the census does not follow are stated as limits, each with a witness (at the seventy-first
+    commit, on the reviewer's ruling on group A's fix-up: the verifier found at the fifty-third three shapes the census
+    accepted that no limit named, and each is now stated). On the reviewer's round-5 ruling B (the fifty-fourth commit),
+    the far bus ids heard answering (_ANSWERED_BUSES) are written and read under the lock alone, each reference a
+    membership test or an add (THE ANSWERED SET). On its ruling C, the recording sequence each recorder mints and each
+    dial's build reads (_PEER_SEQ) is read and written under the lock alone, each reference its one cell (THE RECORDING
+    SEQUENCE); the rows' marks live in PEER_STATE, under the rules above."""
 
     SOURCE = Path(os.path.realpath(os.path.join(BIN, "romp-postal-service"))).read_text()
     BASE = None                                       # the bus's own refusals, read once (the plants add to them)
@@ -4046,6 +4065,14 @@ class PeerStateLock(unittest.TestCase):
             self.assertIsNot(pm._PEER_STATE_LOCK, getattr(pm, other), "one lock per subject: not %s" % other)
 
     def test_the_census_refuses_a_planted_writer_outside_the_lock_by_name(self):
+        """WRITERS, one of the census's own reds in the reviewer's round-5 ruling A: a subscript store on a row from
+        PEER_STATE.get, outside the lock, is refused by name, and the same writer under the lock is accepted. The pairing
+        (the reviewer's ruling on group A's fix-up): the census over the real bus,
+        test_every_read_modify_write_and_iteration_of_peer_state_holds_its_one_lock, catches the defect in the bus, red
+        at the forty-ninth commit, where the recorders wrote the table with no lock; this plant catches a census that
+        loses the rule, and passes at any bus head. Its red is the census mutant WRITERS UNREFUSED, whose refusal loop
+        reads the iterations alone, so that no writer is refused: it accepts the plant, and the census over the real
+        bus passes under it."""
         got = self._plant("def _planted_writer(host):\n    st = PEER_STATE.get(host)\n    st[\"planted\"] = True\n")
         self.assertTrue(any("writer outside the lock in _planted_writer" in r for r in got["refused"]), got["refused"])
         got = self._plant("def _planted_writer(host):\n    with _PEER_STATE_LOCK:\n        st = PEER_STATE.get(host)\n"
@@ -4053,6 +4080,16 @@ class PeerStateLock(unittest.TestCase):
         self.assertEqual(got["refused"], [], "the control: the same writer under the lock is accepted")
 
     def test_the_census_refuses_a_planted_helper_with_one_call_site_outside_the_lock_by_name(self):
+        """PROTECTED through call sites, the other of the census's own reds in the reviewer's round-5 ruling A: a helper
+        that writes the table is protected when every reference to it is a call under the lock, and one call site
+        outside the lock, or a reference other than a call, leaves its writer refused by name, naming that site. The
+        pairing (the reviewer's ruling on group A's fix-up): the census over the real bus,
+        test_every_read_modify_write_and_iteration_of_peer_state_holds_its_one_lock, catches the defect in the bus, red
+        at the forty-ninth commit, where the recorders wrote the table with no lock; this plant catches a census that
+        loses the rule, and passes at any bus head. Its red is the census mutant ANY CALL SITE PROTECTS, whose
+        protection fixpoint protects a function when any one reference to it is a call under the lock (all() read as
+        any()): it accepts the helper with a call site outside the lock, and the census over the real bus passes under
+        it."""
         helper = ("def _planted_helper(host):\n    PEER_STATE[host][\"planted\"] = True\n"
                   "def _planted_locked_caller(host):\n    with _PEER_STATE_LOCK:\n        _planted_helper(host)\n")
         got = self._plant(helper)
@@ -4066,6 +4103,14 @@ class PeerStateLock(unittest.TestCase):
                         "a reference other than a call protects nothing: %r" % got["refused"])
 
     def test_the_census_refuses_a_planted_iteration_outside_the_lock_by_name(self):
+        """ITERATIONS, decision 6 of the reviewer's decisions on round 5: a comprehension over PEER_STATE.items() and
+        sorted(PEER_STATE), each outside the lock, are refused by name, and the copy taken under the lock and iterated
+        after it is accepted. The pairing (the reviewer's ruling on group A's fix-up): the census over the real bus,
+        test_every_read_modify_write_and_iteration_of_peer_state_holds_its_one_lock, catches the defect in the bus, red
+        at the forty-ninth commit, where the live iterations took no copy under a lock; this plant catches a census that
+        loses the rule, and passes at any bus head. Its red is the census mutant ITERATIONS UNREFUSED, whose refusal loop
+        reads the writers alone, so that no iteration is refused: it accepts both plants, and the census over the real
+        bus passes under it."""
         got = self._plant("def _planted_iteration():\n    return [h for h, st in PEER_STATE.items()]\n")
         self.assertTrue(any("iteration outside the lock in _planted_iteration" in r for r in got["refused"]), got["refused"])
         got = self._plant("def _planted_iteration():\n    return sorted(PEER_STATE)\n")
@@ -4308,8 +4353,9 @@ class PeerStateLock(unittest.TestCase):
 
     def test_the_census_refuses_a_read_modify_write_split_across_two_holds_by_name(self):
         """A read-modify-write sits in ONE hold (ONE HOLD in _peer_state_lock_census): a name bound from a read of the
-        table in one hold, or outside every hold, is read in another hold only after that hold rebinds it, and a name
-        bound in a hold is handed outside it to no function that takes the lock and writes the table. The reviewer's
+        table in one hold, or outside every hold, by the binding forms that paragraph lists, is read in another hold
+        only after that hold rebinds it, and a name bound in a hold is handed outside it to no function that takes the
+        lock and writes the table. The reviewer's
         verifier found at the fifty-first commit that every read and write sitting under SOME hold passed the census:
         the fold's row built in one hold and stored in a second (M13), the same in the handler (M14), the fold's
         previous-row read in a hold of its own (M15), and the down notify's membership test in one hold and its mark in
@@ -4317,9 +4363,15 @@ class PeerStateLock(unittest.TestCase):
         deterministic interleaving. Refused by name here: those four, put into the bus's own source; the shapes planted,
         with a value derived between the holds, a read taken by a helper that holds the lock itself before the hold,
         a value handed after its hold to a function that takes the lock and writes, and a name read in a second hold
-        before that hold rebinds it; accepted: each shape in one hold, a name each hold rebinds before reading (the
-        dialer's two notes), a name chosen under the lock and used after it by a function that writes no table (the
-        handler's host), and a value bound outside every hold from no read of the table (the recorders' bus_id)."""
+        before that hold rebinds it; since the seventy-first commit, a plant for each of these clauses of the paragraph,
+        which no plant pinned (before it, a census that dropped any one of them passed every PeerStateLock test): a
+        value read from a parameter the rules above bind to a row, a value handed to a function that takes the lock and
+        calls a writer, one handed by keyword and one handed inside another argument, and a name read in the value of
+        the second hold's own rebinding, before that binding ends; and a value handed to a function that writes the
+        table and takes no lock is refused as that function's unprotected writer, not as a split hold; accepted: each
+        shape in one hold, a name each hold rebinds before reading (the dialer's two notes), a name chosen under the
+        lock and used after it by a function that writes no table (the handler's host), and a value bound outside every
+        hold from no read of the table (the recorders' bus_id)."""
         got = _peer_state_lock_census(self.SOURCE)
         self.assertEqual([r for r in got["refused"] if r.startswith("split hold")], [],
                          "the bus's own read-modify-writes each sit in one hold")
@@ -4409,6 +4461,51 @@ class PeerStateLock(unittest.TestCase):
                                         "the table" in r for r in got["refused"]), got["refused"])
                 if one is not None:
                     self.assertEqual(self._plant(one)["refused"], [], "the control: %s in one hold" % name)
+        clauses = {   # since the seventy-first commit, a plant for each of these clauses, which no plant pinned before,
+            # each censused alone (the rule is per function, and a census over the bus's source costs seconds a plant in
+            # a serial cell): the plant, its refusal's start, and the function a value is handed to, or None
+            "a read of a parameter the rules bind to a row": (
+                "def _planted_split(host, st):\n    with _PEER_STATE_LOCK:\n        held = st.get(\"viaHeld\")\n"
+                "    with _PEER_STATE_LOCK:\n        PEER_STATE[host] = {\"viaHeld\": held}\n"
+                "def _planted_split_caller(host):\n    _planted_split(host, PEER_STATE.get(host))\n",
+                "split hold in _planted_split: held, bound from a read of the table in the hold at line", None),
+            "handed to a function that takes the lock and calls a writer": (
+                "def _planted_store_row(host, row):\n    PEER_STATE[host] = row\n"
+                "def _planted_store_via(host, row):\n    with _PEER_STATE_LOCK:\n        _planted_store_row(host, row)\n"
+                "def _planted_split(host, resp):\n    with _PEER_STATE_LOCK:\n        row = %s\n"
+                "    _planted_store_via(host, row)\n" % (build % "PEER_STATE.get(host)"),
+                "split hold in _planted_split: row, bound from a read of the table in the hold at line",
+                "_planted_store_via"),
+            "handed by keyword": (
+                "def _planted_store_locked(host, row):\n    with _PEER_STATE_LOCK:\n        PEER_STATE[host] = row\n"
+                "def _planted_split(host, resp):\n    with _PEER_STATE_LOCK:\n        row = %s\n"
+                "    _planted_store_locked(host, row=row)\n" % (build % "PEER_STATE.get(host)"),
+                "split hold in _planted_split: row, bound from a read of the table in the hold at line",
+                "_planted_store_locked"),
+            "handed inside another argument": (
+                "def _planted_store_locked(host, row):\n    with _PEER_STATE_LOCK:\n        PEER_STATE[host] = row\n"
+                "def _planted_split(host, resp):\n    with _PEER_STATE_LOCK:\n        row = %s\n"
+                "    _planted_store_locked(host, dict(row))\n" % (build % "PEER_STATE.get(host)"),
+                "split hold in _planted_split: row, bound from a read of the table in the hold at line",
+                "_planted_store_locked"),
+            "read in the value of the second hold's rebinding": (
+                "def _planted_split(host, resp):\n    with _PEER_STATE_LOCK:\n        prev = PEER_STATE.get(host)\n"
+                "    with _PEER_STATE_LOCK:\n        prev = (prev or {}).get(\"viaHeld\")\n"
+                "        PEER_STATE[host] = {\"presence\": resp, \"viaHeld\": prev}\n",
+                "split hold in _planted_split: prev, bound from a read of the table in the hold at line", None),
+        }
+        for name, (split, want, callee) in clauses.items():
+            with self.subTest(plant=name):
+                got = _peer_state_lock_census(split)["refused"]
+                self.assertTrue(any(r.startswith(want) and (callee is None or "is handed outside it to %s, which takes the "
+                                                            "lock and writes the table" % callee in r) for r in got), got)
+        with self.subTest(plant="handed to a function that writes the table and takes no lock"):
+            got = _peer_state_lock_census("def _planted_store_bare(host, row):\n    PEER_STATE[host] = row\n"
+                                          "def _planted_split(host, resp):\n    with _PEER_STATE_LOCK:\n        row = %s\n"
+                                          "    _planted_store_bare(host, row)\n" % (build % "PEER_STATE.get(host)"))["refused"]
+            self.assertTrue(any(r.startswith("writer outside the lock in _planted_store_bare") for r in got), got)
+            self.assertFalse(any(r.startswith("split hold") for r in got),
+                             ("refused as that function's unprotected writer, not as a split hold", got))
         controls = {
             "each hold rebinds before reading (the dialer's two notes)":
                 "def _planted_notes(host):\n    with _PEER_STATE_LOCK:\n        st = PEER_STATE.setdefault(host, {})\n"
@@ -4436,21 +4533,37 @@ class PeerStateLock(unittest.TestCase):
         its one-hold control, and the rest of their class, a value a function or a class carries into the second hold
         (a match's star and mapping rest, a nested def's default shadowing the name, its closure and its decorator, a
         walrus in a def's default, which binds in the scope around the def, a def in the second hold whose default
-        shadows the name, a lambda's default and its closure in the second hold, a nested class's body). Kept:
-        a nested function's own hold reading the enclosing hold's name is refused, and a closure called outside every
-        hold is not. The paragraph's two over-approximations are witnessed, each asserted refused: a closure defined in
-        another hold and called only after it, and a nested helper that reads the table, bound outside every hold and
-        called in one. The limits the paragraph states are witnessed here, each asserted accepted, so a census that
-        comes to follow one of them turns this red until the paragraph says so: an except target, a nonlocal and a
-        global declaration, a value carried in a container and in an attribute, and a type statement where the parser
-        reads one (below 3.12 it refuses the syntax, so a bus holding one cannot pass the census there)."""
+        shadows the name, a lambda's default and its closure in the second hold, a nested class's body). Since the
+        seventy-first commit, each binding form the paragraph lists that had no plant of its own has one (an annotated
+        assignment, an augmented one, a loop target and a with target), and so has its decorator clause, by a decorator
+        reading a name the decorated def's parameter shadows (before it, a census that dropped any one of them passed
+        every PeerStateLock test). Kept: a nested function's own hold reading the enclosing hold's name is refused, and a
+        closure called outside every hold is not. The paragraph's two over-approximations are witnessed, each asserted
+        refused: a closure defined in another hold and called only after it, and a nested helper that reads the table,
+        bound outside every hold and called in one. The limits the paragraph states are witnessed here, each asserted
+        accepted, so a census that comes to follow one of them turns this red until the paragraph says so: an except
+        target, a nonlocal and a global declaration, a value carried in a container and in an attribute, and a type
+        statement where the parser reads one (below 3.12 it refuses the syntax, so a bus holding one cannot pass the
+        census there); and, since the seventy-first commit, the three shapes the verifier found at the fifty-third
+        commit, each beside a control the census refuses, the same plant with the shadowing or rebinding name renamed:
+        the first iterable of a list, a set and a dict comprehension and of a generator expression, reading the name a
+        generator target of it binds; a class body binding the name, by an assignment and by a walrus, in the hold that
+        reads it before the read; and a parameter annotation and a return annotation reading the name a parameter
+        shadows. The pairing (the class docstring): a census self-test, this passes at any bus head, and its red is a
+        census that loses a form it follows. As recorded at the fifty-third commit, that is the fifty-second commit's
+        census, which followed neither the capture nor the default; each plant the seventy-first commit adds is red
+        under the census that drops its form or clause, and each of the three limits' witnesses under a census that
+        follows its shape."""
         first = (self.SOURCE + "\n\n").count("\n") + 1   # the line a plant starts on, after the bus's last line
         head = "def _planted_split(host, resp):\n"
         read = "    with _PEER_STATE_LOCK:\n        prev = PEER_STATE.get(host)\n"
         store = "    with _PEER_STATE_LOCK:\n        PEER_STATE[host] = {\"presence\": resp, \"viaHeld\": %s}\n"
 
-        def holds(text):                              # the lines of a plant's holds of the lock, in order
-            return [first + i for i, ln in enumerate(text.split("\n")) if ln.strip() == "with _PEER_STATE_LOCK:"]
+        def holds(text, start=first):                 # the lines of a plant's holds of the lock, in order
+            return [start + i for i, ln in enumerate(text.split("\n")) if ln.strip() == "with _PEER_STATE_LOCK:"]
+
+        def alone(text):                              # the census over the plant alone, not over the bus's source (the
+            return _peer_state_lock_census(text)["refused"]   # rule is per function; see the forms below)
 
         split = {   # the plant, and the names its refusals name
             "match capture": (head + read + "    match prev:\n        case {\"viaHeld\": held}:\n            pass\n"
@@ -4487,6 +4600,31 @@ class PeerStateLock(unittest.TestCase):
                     self.assertTrue(any(r.startswith("split hold in _planted_split: %s, bound from a read of the table in "
                                                      "the hold at line %d" % (each, h[0]))
                                         and ("is read in the hold at line %d (" % h[1]) in r for r in got), (each, got))
+        forms = {   # since the seventy-first commit, the binding forms and the decorator clause no plant pinned before,
+            # each censused alone (a census over the bus's source costs seconds a plant in a serial cell): the plant, and
+            # the name its refusal names
+            "an annotated assignment": (head + "    with _PEER_STATE_LOCK:\n        held: dict = PEER_STATE.get(host)\n"
+                                        + store % "held", "held"),
+            "an augmented assignment": (head + "    held = []\n    with _PEER_STATE_LOCK:\n"
+                                        "        held += (PEER_STATE.get(host) or {}).get(\"viaHeld\", [])\n" + store % "held",
+                                        "held"),
+            "a loop target": (head + "    with _PEER_STATE_LOCK:\n        for held in [PEER_STATE.get(host)]:\n"
+                              "            pass\n" + store % "held", "held"),
+            "a with target": (head + "    with _PEER_STATE_LOCK:\n        with contextlib.nullcontext(PEER_STATE.get(host)) as held:\n"
+                              "            pass\n" + store % "held", "held"),
+            "a decorator reading a name the decorated def's parameter shadows": (
+                head + "    with _PEER_STATE_LOCK:\n        prev = (PEER_STATE.get(host) or {}).get(\"viaHeld\")\n"
+                "    @functools.partial(_wrap, prev)\n    def held(prev=None):\n        return prev\n" + store % "held()",
+                "held"),
+        }
+        for name, (text, bound) in forms.items():
+            with self.subTest(plant=name):
+                h = holds(text, 1)
+                self.assertEqual(len(h), 2, "the plant has two holds: %r" % h)
+                got = alone(text)
+                self.assertTrue(any(r.startswith("split hold in _planted_split: %s, bound from a read of the table in the "
+                                                 "hold at line %d" % (bound, h[0]))
+                                    and ("is read in the hold at line %d (" % h[1]) in r for r in got), (bound, got))
         one = {   # the one-hold controls of the two forms the verifier found
             "match capture": (head + "    with _PEER_STATE_LOCK:\n        match PEER_STATE.get(host):\n"
                               "            case {\"viaHeld\": held}:\n                pass\n            case _:\n"
@@ -4549,6 +4687,48 @@ class PeerStateLock(unittest.TestCase):
             else:
                 with self.assertRaises(SyntaxError, msg="below 3.12 the parser refuses a type statement"):
                     self._plant(typed)
+        hold = "    with _PEER_STATE_LOCK:\n"
+        use = "        PEER_STATE[host] = {\"presence\": resp, \"viaHeld\": %s}\n"
+        shapes = {   # the three limits the verifier found at the fifty-third commit: (the witness, its control)
+            "a list comprehension's first iterable": (
+                head + read + store % "[(prev or {}).get(\"viaHeld\") for prev in [prev]][0]",
+                head + read + store % "[(p or {}).get(\"viaHeld\") for p in [prev]][0]"),
+            "a set comprehension's first iterable": (
+                head + read + store % "{str(prev) for prev in [prev]}", head + read + store % "{str(p) for p in [prev]}"),
+            "a dict comprehension's first iterable": (
+                head + read + store % "{1: (prev or {}).get(\"viaHeld\") for prev in [prev]}[1]",
+                head + read + store % "{1: (p or {}).get(\"viaHeld\") for p in [prev]}[1]"),
+            "a generator expression's first iterable": (
+                head + read + store % "next((prev or {}).get(\"viaHeld\") for prev in (prev,))",
+                head + read + store % "next((p or {}).get(\"viaHeld\") for p in (prev,))"),
+            "a class body's assignment": (
+                head + read + hold + "        class _Scratch:\n            prev = None\n" + use % "(prev or {}).get(\"viaHeld\")",
+                head + read + hold + "        class _Scratch:\n            other = None\n" + use % "(prev or {}).get(\"viaHeld\")"),
+            "a class body's walrus": (
+                head + read + hold + "        class _Scratch:\n            mark = (prev := None)\n"
+                + use % "(prev or {}).get(\"viaHeld\")",
+                head + read + hold + "        class _Scratch:\n            mark = (other := None)\n"
+                + use % "(prev or {}).get(\"viaHeld\")"),
+            "a parameter annotation": (
+                head + read + hold + "        def held(prev: prev = None):\n            return None\n"
+                + use % "(held.__annotations__[\"prev\"] or {}).get(\"viaHeld\")",
+                head + read + hold + "        def held(p: prev = None):\n            return None\n"
+                + use % "(held.__annotations__[\"p\"] or {}).get(\"viaHeld\")"),
+            "a return annotation": (
+                head + read + hold + "        def held(prev=None) -> prev:\n            return None\n"
+                + use % "(held.__annotations__[\"return\"] or {}).get(\"viaHeld\")",
+                head + read + hold + "        def held(p=None) -> prev:\n            return None\n"
+                + use % "(held.__annotations__[\"return\"] or {}).get(\"viaHeld\")"),
+        }
+        for name, (text, control) in shapes.items():      # censused alone, as the forms above are
+            with self.subTest(limit=name):
+                self.assertEqual(alone(text), [], "a stated limit, not followed: %s" % name)
+                h = holds(control, 1)
+                self.assertEqual((len(h), holds(text, 1)), (2, h), "the witness and its control have the same two holds")
+                got = alone(control)
+                self.assertTrue(any(r.startswith("split hold in _planted_split: prev, bound from a read of the table in the "
+                                                 "hold at line %d, is read in the hold at line %d (" % tuple(h))
+                                    for r in got), ("the control, refused", got))
 
 
 # The records' two scans (round 6 of fork PR #897, the reviewer's round-5 ruling D on rules-1 and regression-2, over

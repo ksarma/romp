@@ -5835,9 +5835,9 @@ _PEER_STATE_LOCK = threading.Lock()        # PEER_STATE's one lock (round 6 of f
 #                                            table in a function that writes it, or in what that function reaches outside the lock,
 #                                            sits under the lock; one mirror write holds the lock once and reads the table and the
 #                                            link state only inside that hold; and, in every function, a name bound from a read of
-#                                            the table in one hold, or outside every hold, is read in no other hold before that hold
-#                                            rebinds it, and a name bound in a hold is not handed outside it to a function that takes
-#                                            the lock and writes the table
+#                                            the table in one hold, or outside every hold, by the binding forms the census lists, is
+#                                            read in no other hold before that hold rebinds it, and a name bound in a hold is not
+#                                            handed outside it to a function that takes the lock and writes the table
 _ANSWERED_BUSES = set()                    # the far bus ids heard ANSWERING in this bus process (round 6 of fork PR #897, the
 #                                            reviewer's round-5 ruling B): a bus id whose own exchange here carried presenceAnswered
 #                                            True, or that a hub's gossip row carried as viaBus with viaAnswered True, as each
