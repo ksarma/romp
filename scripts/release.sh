@@ -246,8 +246,8 @@ else
     # (cryptography is the Web Push soft dependency, without it the webpush tests silently skip).
     # That is not CI's whole set: .github/workflows/ci.yml's Python job also installs pytest-timeout,
     # for a per-test timeout this run does not ask for, and pytest-xdist, without which the few
-    # tests that run a child pytest under -n skip. Neither → die LOUDLY naming both remedies BEFORE
-    # any release state is at stake.
+    # tests that run a child pytest under -n skip. With neither an ambient pytest nor uv, die LOUDLY
+    # naming both remedies BEFORE any release state is at stake.
     if [ -z "$PYTEST" ]; then
         if python3 -m pytest --version >/dev/null 2>&1; then
             PYTEST="python3 -m pytest"
