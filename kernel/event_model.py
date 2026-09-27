@@ -26,7 +26,7 @@ Auxiliary inputs the file adapter may read (same category as the transcript):
                                transcript lost to an API-errored try; judge parse only)
   timeline/messages.jsonl   -> peer rompUuid for a postal atom (join on the msg id)
 """
-import array, bisect, collections, copy, gzip, json, os, re, sys, time, hashlib, threading, weakref
+import array, bisect, collections, copy, gzip, json, os, re, sys, time, hashlib, threading, traceback, weakref
 from datetime import datetime
 from pathlib import Path
 
@@ -643,31 +643,61 @@ _JSONL_CACHE_MAX = 1024           # bounds MEMORY only (384 → 1024 on 2026-09-
                                   # the assembly cache's identity gate to a full parse.
 # A BYTE budget beside the count (the kernel memory work, 2026-09-11): the count bounded slots, never memory, and the
 # working set is files of every size (a 177 MB leaf and a 2 KB states log take one slot each), so the kernel climbed to
-# 5 to 8 GB between restarts holding every live and subagent transcript's records (about 1.7 bytes resident per file
-# byte). Each entry weighs the bytes it holds (the file size less a tail entry's offset); past the budget the least
-# recently used entries go first, one at a time, under the same LRU order the count uses, so a hot leaf survives a
-# cold flood of subagent files exactly as before. A single entry larger than the whole budget still inserts: a leaf is
-# never refused, the budget then holds that one entry. Counters under /perf recordCache.
-# The default is HALF of the machine's memory (the user's direction, 2026-09-11: use the memory we have), never under 4 GiB (2026-09-11, the day the budget shipped at 1 GiB):
+# 5 to 8 GB between restarts holding every live and subagent transcript's records (RECORD_CACHE_RESIDENT_PER_FILE_BYTE
+# below: the resident bytes a held file byte takes). Each entry weighs the bytes it holds (the file size less a tail
+# entry's offset); past the budget the least recently used entries go first, one at a time, under the same LRU order
+# the count uses, so a hot leaf survives a cold flood of subagent files exactly as before. A single entry larger than
+# the whole budget still inserts: a leaf is never refused, the budget then holds that one entry. Counters under /perf
+# recordCache.
+# The default is HALF of the machine's memory (the user's direction, 2026-09-11: use the memory we have), counted in
+# RESIDENT bytes (2026-09-24): an entry weighs FILE bytes, and its parsed records take RECORD_CACHE_RESIDENT_PER_FILE_BYTE
+# resident bytes per file byte, so half of MemTotal is divided by that factor to give the budget in the unit entries weigh.
+# Until then the half was compared with file bytes directly, and at the measured factor it named 1.6 times the machine,
+# a bound that could not bind before memory ran out. Never under 4 GiB of file bytes (2026-09-11, the day the budget shipped at 1 GiB):
 # the working set of a devbox running 50 sessions is their live leaves, read by every build in every pusher cycle, and
 # a budget below it does not save memory, it thrashes: 18 entries filled the 1 GiB, every build re-read whole
 # transcripts (14.9 GB read in the first 3.5 minutes, 724 evictions, one pusher cycle of 132 s, chat builds of 3 s
 # each), and glibc's arenas kept the churn, 14 GB resident over a 1 GiB cache. What is not needed until looked at
-# (subagent transcripts) leaves through drop_after="quiescent" folds instead; the budget is the backstop, not the
-# mechanism. ROMP_RECORD_CACHE_BUDGET_MB still sets it outright.
+# (subagent transcripts) leaves by events instead: release_entry at the agent's end (2026-09-24; an end that finds nothing
+# held for the file is remembered, and the file released at the first pusher cycle after a read holds it), and
+# drop_after="quiescent" folds for a file whose end the kernel never saw, when a fold that steps records comes after the
+# file has gone quiet (a file folded while its writer ran is a hit at every later fold, and a hit never pops); the budget
+# is the backstop, not the mechanism. Among the roads left to the backstop: an agent whose end no structure of its session
+# names (SdkBackend.note_agent_live), a release given up (releaseLost), an end remembered while nothing was held and then
+# forgotten past that memory's bound, and a whole re-read of a file after its release was taken (the agent viewer's), which
+# holds it whole until the count cap, the byte budget or a quiescent drop at a stepping fold reaches it (releasedReread
+# counts the first whole read after a release when no other pop of the path came between and the path's mark was not
+# dropped past the marks' bound; a hold that starts after an eviction, of a restored tail or of the counted hold, is not
+# counted), since releasing it after every whole read would make a reader that reads it whole at each render read it
+# whole at each render. That hold starts only after the agent's later ends: an end of the same
+# agent acted on after that release was taken (its task's end or its workflow slot's done state after its stop, in a later
+# cycle, or in the cycle whose owed pay took a deferred release) releases a re-read that holds the file at that end, and
+# when nothing is held it is remembered like any other end, so the first whole re-read after it is released at the next
+# cycle. ROMP_RECORD_CACHE_BUDGET_MB still sets it outright.
 RECORD_CACHE_BUDGET_FLOOR_BYTES = 4 * 1024 ** 3
 RECORD_CACHE_BUDGET_FRACTION = 0.5
+RECORD_CACHE_RESIDENT_PER_FILE_BYTE = 3.2   # resident bytes per held file byte: the largest measured figure, rounded up
+#                                   (2026-09-24). Sources: 3.18 from one kernel's 73-hour life: RSS fitted against the running
+#                                   maximum of held bytes and the LRU's slot count (0.41 MiB per 1000 slots) over its 73 hourly
+#                                   /perf rows, R^2 0.995, the two regressors collinear; 3.13, the highest of nine main
+#                                   transcripts of 10 MB or more measured one by one through this reader (RssAnon per file byte;
+#                                   2.54 to 3.13, 2.81 over the nine); 2.61 for a full cache of real files. Every record carries
+#                                   its own copies of its key strings, and a string holding one character outside Latin-1 takes 2
+#                                   or 4 bytes per character, which is why the factor is far above 1. The larger the factor, the
+#                                   smaller the budget in file bytes: this errs toward less memory.
 
 
 def _record_cache_default_budget_bytes(meminfo_text=None):
-    """Half of MemTotal (from /proc/meminfo, or the text given), floored at 4 GiB; the floor alone when the file
-    is unreadable (macOS, a container without procfs)."""
+    """Half of MemTotal (from /proc/meminfo, or the text given) in resident bytes, converted to the file bytes entries
+    weigh (divided by RECORD_CACHE_RESIDENT_PER_FILE_BYTE), floored at 4 GiB; the floor alone when the file is unreadable
+    (macOS, a container without procfs)."""
     try:
         text = meminfo_text if meminfo_text is not None else open("/proc/meminfo", encoding="utf-8").read()
         for line in text.splitlines():
             if line.startswith("MemTotal:"):
                 kb = int(line.split()[1])
-                return max(RECORD_CACHE_BUDGET_FLOOR_BYTES, int(kb * 1024 * RECORD_CACHE_BUDGET_FRACTION))
+                return max(RECORD_CACHE_BUDGET_FLOOR_BYTES,
+                           int(kb * 1024 * RECORD_CACHE_BUDGET_FRACTION / RECORD_CACHE_RESIDENT_PER_FILE_BYTE))
     except Exception:
         pass
     return RECORD_CACHE_BUDGET_FLOOR_BYTES
@@ -676,12 +706,52 @@ def _record_cache_default_budget_bytes(meminfo_text=None):
 _JSONL_CACHE_BUDGET_BYTES = (int(float(os.environ["ROMP_RECORD_CACHE_BUDGET_MB"]) * 1024 * 1024)
                              if os.environ.get("ROMP_RECORD_CACHE_BUDGET_MB") else _record_cache_default_budget_bytes())
 _JSONL_CACHE_BYTES = [0]          # the sum of every held entry's weight, kept in step with _JSONL_CACHE under its lock
+_JSONL_CACHE_BYTES_MAX = [0]      # the most bytes the cache has held at once this life: raised at the one site the counter
+#                                   rises (_cache_insert_locked, under the lock), never lowered, so a new-maximum hour reads from two
+#                                   /perf reads (the growth analysis of 2026-09-20: the kernel's RSS stepped in the hours this maximum
+#                                   rose and did not come back once the entries went). It is the maximum of the ledger above and counts
+#                                   only that: the process holds more records than this while reads are in flight (a whole re-read keeps
+#                                   both copies of its file alive for the read; every read holds its records before its insert, and
+#                                   reads of different files run at once under separate stripe locks) and while a caller still holds a
+#                                   popped entry's records.
 _RECORD_CACHE_STATS = {"inserts": 0, "evictions": 0, "evictedBytes": 0, "budgetEvictions": 0, "dropped": 0, "droppedBytes": 0,
                        "wholeReads": {}}   # "kind<-caller" -> {"count", "bytes"}: every read that pulled a file WHOLE (from zero, or a
 #                                          tail entry upgraded to the whole file), named by the reader's kind and the first frame
 #                                          outside this module (T384: the way hydratedBy named the planner; the 0.8 GB of whole
 #                                          reads of restored leaves the per-path bytes could not attribute). A restore's tail read
 #                                          and an append are not whole reads and are not counted here.
+_RECORD_CACHE_STATS.update({   # the release at an agent's end (release_entry, 2026-09-24):
+    "released": {},            #  reason -> {"count", "bytes"}: entries a release popped (the reason today: agentEnded)
+    "releaseDeferred": 0,      #  deferrals of a release to the next pusher cycle, counted once per path per cycle
+    #                             (_RELEASE_COUNTED: an agent's second end, or another attempt at the path in the same cycle, adds
+    #                             nothing), so a release refused on N cycles counts N and the figure is not the number owed now:
+    #                             its checkpoint budget refused the document write, or a read replaced the entry before the pop or
+    #                             was still pulling the file's bytes when the pop came (paid by checkpoint_pay_owed_releases)
+    "releaseLost": 0,          #  releases given up, the entry left to the cache's own eviction (the count cap or the byte budget,
+    #                             or a later quiescent drop), counted once per path per cycle where the release names a path (an
+    #                             end given up past the bound of the ends the backend keeps, or one whose file never resolved
+    #                             before its resolution raised, counts one each): no document could be written (the drop writes
+    #                             off, no checkpoint directory, a write that was due and failed, or the check whether a write was
+    #                             due raised), an owed release was dropped past the owed table's bound, an agent's end was dropped
+    #                             past the queue's bound and then past the bound of the list the backend keeps those ends in
+    #                             (SdkBackend.note_agent_live; one kept in that list is released at the drain like any other end),
+    #                             or resolving or paying one raised. With the drop writes off, an agent whose two ends (its stop
+    #                             and its task's end) reach two cycles counts two
+    "falseEnds": 0,            #  agents whose release at their end was taken (the entry popped) that entered their session's live
+    #                             set again (a resumed agent, or an end reported early): note_false_end, counted by the kernel at
+    #                             the cycle that drains the start while it still holds the end in its table of released ends, so
+    #                             a start queued after the drain of the cycle that took the release counts at the next cycle, and
+    #                             a start dropped past the queue's bound, or drained after the end left that table, counts none; a
+    #                             release only owed, then cancelled, forgotten, given up or paid without being taken, counts none
+    "releasedReread": {"count": 0, "bytes": 0}})   # the first whole read of a path after a release popped it, when no other pop
+#                                                    of the path came in between: what releasing cost. At most _JSONL_CACHE_MAX
+#                                                    marks are outstanding, the oldest dropped first; a mark leaves when it is
+#                                                    taken or cleared, which frees its slot, so the bound is on outstanding
+#                                                    marks, not on the most recent releases. Re-releasing a marked path
+#                                                    refreshes its mark
+_RELEASED_MARKS = {}              # path -> True for the paths a release popped, under _JSONL_CACHE_LOCK: taken by the path's next whole
+#                                   read (releasedReread), cleared by any other pop of it, kept by a same-path replace (a restored tail
+#                                   growing), moved to the newest by the path's next release; at most _JSONL_CACHE_MAX, oldest first
 _DROP_AFTER_QUIESCENT_S = float(os.environ.get("ROMP_RECORD_CACHE_DROP_QUIESCENT_S", "120"))   # a file this long unchanged
 #                                   is one whose writer has finished (a subagent that returned): its records are not kept
 
@@ -710,8 +780,12 @@ def _entry_weight(ent) -> int:
         return 0
 
 
-def _cache_pop_locked(path):
-    """Under _JSONL_CACHE_LOCK: drop `path`'s entry and its weight; returns the weight (0 when absent)."""
+def _cache_pop_locked(path, keep_mark=False):
+    """Under _JSONL_CACHE_LOCK: drop `path`'s entry and its weight; returns the weight (0 when absent). A pop other than the
+    insert's own replace and the release's own pop (`keep_mark`; the release moves the mark to the newest itself) clears the
+    path's release mark: a whole read after an eviction is the eviction's."""
+    if not keep_mark and _RELEASED_MARKS:
+        _RELEASED_MARKS.pop(path, None)
     ent = _JSONL_CACHE.pop(path, None)
     if ent is None:
         return 0
@@ -723,7 +797,7 @@ def _cache_pop_locked(path):
 def _cache_insert_locked(path, ent):
     """Under _JSONL_CACHE_LOCK: insert `ent` at the LRU tail, evicting the least recently used entries past the count cap
     and past the byte budget (the new entry's own weight counted; an entry larger than the budget alone still inserts)."""
-    _cache_pop_locked(path)
+    _cache_pop_locked(path, keep_mark=True)
     w = _entry_weight(ent)
     while len(_JSONL_CACHE) >= _JSONL_CACHE_MAX:
         _RECORD_CACHE_STATS["evictions"] += 1
@@ -733,20 +807,107 @@ def _cache_insert_locked(path, ent):
         _RECORD_CACHE_STATS["evictedBytes"] += _cache_pop_locked(next(iter(_JSONL_CACHE)))
     _JSONL_CACHE[path] = ent
     _JSONL_CACHE_BYTES[0] += w
+    if _JSONL_CACHE_BYTES[0] > _JSONL_CACHE_BYTES_MAX[0]:
+        _JSONL_CACHE_BYTES_MAX[0] = _JSONL_CACHE_BYTES[0]      # the life maximum (recordCache.bytesMax): the pop never lowers it
     _RECORD_CACHE_STATS["inserts"] += 1
 
 
 def record_cache_stats() -> dict:
-    """The record cache for /perf: entries, held bytes, the budget, and the counters (inserts, evictions by count and by
-    budget, evicted bytes, drop-after-fold drops)."""
+    """The record cache for /perf: entries, held bytes, the life maximum of held bytes (bytesMax, a gauge like bytes: the
+    judge child lists it in _SERVE_GAUGES so it rides current, never differenced), the budget, and the counters (inserts,
+    evictions by count and by budget, evicted bytes, drop-after-fold drops, whole reads, and the release at an agent's end:
+    released, releaseDeferred, releaseLost, falseEnds, releasedReread)."""
     with _JSONL_CACHE_LOCK:
-        out = {"entries": len(_JSONL_CACHE), "bytes": _JSONL_CACHE_BYTES[0], "budgetBytes": _JSONL_CACHE_BUDGET_BYTES,
-               "countCap": _JSONL_CACHE_MAX, **_RECORD_CACHE_STATS}
+        out = {"entries": len(_JSONL_CACHE), "bytes": _JSONL_CACHE_BYTES[0], "bytesMax": _JSONL_CACHE_BYTES_MAX[0],
+               "budgetBytes": _JSONL_CACHE_BUDGET_BYTES, "countCap": _JSONL_CACHE_MAX, **_RECORD_CACHE_STATS}
         table = _RECORD_CACHE_STATS.get("wholeReads")
         out["wholeReads"] = {k: dict(v) for k, v in table.items()} if isinstance(table, dict) else {}
         bys = _RECORD_CACHE_STATS.get("wholeReadsByStage")             # T401: the same reads per (stage, caller)
         out["wholeReadsByStage"] = {k: dict(v) for k, v in bys.items()} if isinstance(bys, dict) else {}
+        rel = _RECORD_CACHE_STATS.get("released")
+        # agentEnded is reported at zero until the first release (2026-09-25), so an export from a new kernel carries every
+        # key of the block from its first read and a vocabulary regenerated over it admits the key a later release fills in.
+        # The row is added to this copy, not to the table, so a harness that zeroes the counters still reads it
+        out["released"] = {"agentEnded": {"count": 0, "bytes": 0},
+                           **({k: dict(v) for k, v in rel.items()} if isinstance(rel, dict) else {})}
+        rr = _RECORD_CACHE_STATS.get("releasedReread")
+        out["releasedReread"] = dict(rr) if isinstance(rr, dict) else {"count": 0, "bytes": 0}
         return out
+
+
+def _stat_table_locked(key, empty=dict):
+    """Under _JSONL_CACHE_LOCK: the dict counter `key` of _RECORD_CACHE_STATS (a harness that zeroes every counter zeroes a
+    table too: a table again)."""
+    t = _RECORD_CACHE_STATS.get(key)
+    if not isinstance(t, dict):
+        t = _RECORD_CACHE_STATS[key] = empty()
+    return t
+
+
+def note_false_end():
+    """The kernel drained the start of an agent whose release at its end was taken, while its table of released ends still
+    held that end (recordCache.falseEnds). A start dropped past the queue's bound, or drained after the end left that table,
+    is never counted."""
+    with _JSONL_CACHE_LOCK:
+        _RECORD_CACHE_STATS["falseEnds"] = int(_RECORD_CACHE_STATS.get("falseEnds") or 0) + 1
+
+
+_RELEASE_LOST_SAID = set()        # the causes of a lost release already said on stderr: once per process each
+
+
+def say_release_raised(what, tb=None):
+    """A release that raised, written to stderr at every raise with the traceback (`tb`, or the exception being handled), the
+    way the pusher's other stage failures are; `what` names the session and agent, or the path. note_release_lost's summary
+    line for the cause is said once beside it. The events bound the rate: at most one line per end, owed release or
+    remembered end per cycle, and each one that raises is given up, not retried."""
+    try:
+        sys.stderr.write("record cache: %s raised; the release is given up (recordCache.releaseLost):\n%s"
+                         % (what, tb if tb is not None else traceback.format_exc()))
+    except Exception:
+        pass
+
+
+_RELEASE_COUNTED = {"releaseDeferred": set(), "releaseLost": set()}   # the paths each counter has counted in the pusher cycle in
+#                                   progress, under _JSONL_CACHE_LOCK: a path counts once per cycle in each (an agent reports two
+#                                   ends, its stop and its task's end, and a cycle's owed pay and its batch can each try the same
+#                                   path). Cleared at each cycle's start (checkpoint_cycle_begin); only the pusher's cycle releases
+
+
+def _count_release_locked(counter, key, n=1):
+    """Under _JSONL_CACHE_LOCK: add `n` to the release counter `counter` unless `key` (a path) was counted in it this cycle; a
+    key of None always counts. True when it counted."""
+    if key is not None:
+        seen = _RELEASE_COUNTED.setdefault(counter, set())
+        if key in seen:
+            return False
+        seen.add(key)
+    _RECORD_CACHE_STATS[counter] = int(_RECORD_CACHE_STATS.get(counter) or 0) + int(n)
+    return True
+
+
+def note_release_lost(n=1, cause="overflow", key=None):
+    """`n` releases given up (recordCache.releaseLost), their entries left to the cache's own eviction (the count cap or the byte
+    budget) or a later quiescent drop; `key`, the path when there is one, counts once per cycle (_RELEASE_COUNTED), and nothing
+    is said for a path already counted. Each cause is said once on stderr, in a summary line; a release that raised has already
+    written its own line, with the traceback, at the road that caught it."""
+    with _JSONL_CACHE_LOCK:
+        if not _count_release_locked("releaseLost", None if key is None else str(key), n):
+            return
+        if cause in _RELEASE_LOST_SAID:
+            return
+        _RELEASE_LOST_SAID.add(cause)
+    why = {"writesOff": "the checkpoint drop writes are off (ROMP_CKPT_CONVERGE_MS or ROMP_CKPT_CONVERGE_MB is 0, or there is no "
+                        "checkpoint directory), and a release without its document would read the file whole at its next fold",
+           "noDocument": "the file's checkpoint document could not be written, and a release without it would read the file "
+                         "whole at its next fold",
+           "overflow": "the list of agent ends the SDK backend keeps past its event queue's bound, or the table of owed "
+                       "releases, passed its bound"}.get(cause, cause)
+    try:
+        sys.stderr.write("record cache: a finished agent's records stay in memory until the cache evicts them (the count cap or "
+                         "the byte budget) or a quiescent fold drops them: %s (counted as recordCache.releaseLost; said once)\n"
+                         % why)
+    except Exception:
+        pass
 
 
 _JSONL_TAIL_GUARD = 64            # bytes of pre-offset content re-verified before an incremental read
@@ -945,6 +1106,13 @@ _CKPT_CYCLE = {"cap": _ckpt_cycle_default_cap(), "spent": 0}   # the cycle in pr
 _DROP_OWED = {}                   # path -> when its quiescence drop was deferred for the cycle's budget (T362): paid at the next
 #                                   cycle's start with the room it has, oldest first, or by the next fold over the file
 _DROP_OWED_MAX = 4096             # over it the OLDEST owed entry is popped unwritten (its memory released), never the table cleared
+_RELEASE_OWED = {}                # path -> reason: a release at an agent's end deferred to the next cycle (release_entry: the cycle's
+#                                   budget refused its write, or a read replaced the entry before the pop); paid at the next cycle's
+#                                   start (checkpoint_pay_owed_releases) unless that cycle drains the agent's start first while
+#                                   the kernel still holds the agent's end in its table of released ends (cancel_owed_release); a
+#                                   start queued after that drain, dropped past the queue's bound, or drained after the end left
+#                                   that table does not cancel it, and a release taken then pops the running agent's entry. At most
+#                                   _DROP_OWED_MAX: over it the oldest is given up (releaseLost)
 _DROP_HOLD = threading.local()    # the converge pass holds this thread's quiescence drops while it heals and primes a leaf, then pays
 #                                   them once (T362 follow-up review, low 2): {path: pop} of the drops held, or absent
 _CKPT_LOCK = threading.Lock()
@@ -1025,6 +1193,7 @@ def set_checkpoint_dir(fn):
         _ASM_DOC_MEMO.clear(); _ASM_DOC_MEMO_BYTES[0] = 0   # nor does the seeded walk's memoized document (round two)
     with _CKPT_LOCK:
         _CKPT_PENDING.clear(); _CKPT_SEQ.clear(); _FOLD_DIRTY.clear(); _CKPT_DOC_FOLDS.clear(); _DROP_OWED.clear()
+        _RELEASE_OWED.clear()                             # an owed release was owed a document in the directory being left
         _RETIRED_FOLDS.clear()                            # a retirement never outlives a state rebind (round two, low 2)
         _DOC_MEMO.clear(); _DOC_MEMO_BYTES[0] = 0         # nor does a memoized document (the harnesses' fresh process is this setter)
         _CKPT_CYCLE["cap"] = _ckpt_cycle_default_cap(); _CKPT_CYCLE["spent"] = 0
@@ -1307,6 +1476,9 @@ def checkpoint_cycle_begin(cap):
     byte knob) turns the drop write off: the drop pops as before, holding nothing."""
     with _CKPT_LOCK:
         _CKPT_CYCLE["cap"] = int(cap); _CKPT_CYCLE["spent"] = 0
+    with _JSONL_CACHE_LOCK:
+        for seen in _RELEASE_COUNTED.values():
+            seen.clear()                                  # the release counters count each path once per cycle
 
 
 def checkpoint_cycle_take(n):
@@ -1388,6 +1560,43 @@ def checkpoint_pay_owed_drops():
     return paid
 
 
+def checkpoint_pay_owed_releases():
+    """The releases at an agent's end owed from an earlier cycle (_RELEASE_OWED), paid with this cycle's room: no age gate,
+    since the agent's end is the event; over the budget again they re-defer. The kernel pays them after it has drained the
+    cycle's live-set events and cancelled the owed release of every agent whose start is in that batch
+    (cancel_owed_release), so an agent whose start is in the drained batch keeps its entry. A start that does not cancel the
+    owed release lets it pop a running agent's entry: one queued after the drain (when the release is taken, counted in
+    falseEnds at the cycle that drains the start), one dropped past the queue's bound, or one whose end has left the
+    kernel's table of released ends past its bound (neither of those two counted). One release that raises is given up and
+    counted (releaseLost), its path and traceback written to stderr at every raise; the rest are still paid. Returns
+    {path: outcome} for every release it paid: release_entry's result, or "raised"."""
+    with _CKPT_LOCK:
+        owed = list(_RELEASE_OWED.items())
+        _RELEASE_OWED.clear()
+    out = {}
+    for key, reason in owed:
+        try:
+            out[key] = release_entry(key, reason)
+        except Exception as e:                            # one owed release that raises must not lose the rest, nor the cycle's
+            say_release_raised("the owed release of %s" % key)     #  drain that the kernel runs after this
+            note_release_lost(1, "a release raised %s" % type(e).__name__, key=key)
+            out[key] = "raised"
+    return out
+
+
+def cancel_owed_release(path):
+    """Forget `path`'s owed release (the kernel drained the agent's start before the release was paid): True when one was
+    owed."""
+    with _CKPT_LOCK:
+        return _RELEASE_OWED.pop(str(path), None) is not None
+
+
+def owed_release_paths():
+    """The paths whose release at an agent's end is owed now (a copy)."""
+    with _CKPT_LOCK:
+        return set(_RELEASE_OWED)
+
+
 def checkpoint_cycle_charge(n):
     """Charge `n` bytes to the cycle's budget (the pass's reads and writes, known only after the fact; a true-up may be
     negative); True while the cycle stays within it."""
@@ -1441,17 +1650,26 @@ def _carry_forward_states(key, folds, base, count, size, mtime):
     return out
 
 
-def checkpoint_write(path, force=False):
+def checkpoint_write(path, force=False, why=None):
     """Write `path`'s checkpoint from the reader's entry and every registered fold whose cursor stands at the entry's
-    record count. False when there is nothing to write (no entry, or no fold at the witness and not `force`)."""
+    record count. False when there is nothing to write (no entry, or no fold at the witness and not `force`) or the write
+    could not be made; the cause is appended to the list `why` when one is given: "noDirectory", "noEntry",
+    "nothingRecordable" (no fold's cursor to record), "cutGuard" (the lagging folds' cut could not be moved, the file no
+    longer matching the entry or no record boundary at the cut, and no fold stands at the entry's end) or "writeFailed"
+    (writing the document raised). The last two are a write that was due and failed; _drop_write tells them from the
+    rest."""
+    def no(cause):
+        if why is not None:
+            why.append(cause)
+        return False
     key = str(path)
     cp = _ckpt_file(key)
     if cp is None:
-        return False
+        return no("noDirectory")
     with _JSONL_CACHE_LOCK:
         ent = _JSONL_CACHE.get(key)
     if ent is None:
-        return False
+        return no("noEntry")
     mtime, size, offset, tail, records, base, gen = ent[:7]
     count = base + len(records)
     folds = {}
@@ -1485,7 +1703,7 @@ def checkpoint_write(path, force=False):
             with _CKPT_LOCK:
                 _CKPT_STATS["skippedFolds"] += 1
     if not folds and not force:
-        return False
+        return no("nothingRecordable")
     folds.update(_carry_forward_states(key, folds, base, count, size, mtime))   # the disk document's states for folds this process never ran
     with _CKPT_LOCK:
         retired = set(_RETIRED_FOLDS.get(key, ()))        # taken AFTER the cursor snapshot and the carry: a forget that raced the
@@ -1494,7 +1712,8 @@ def checkpoint_write(path, force=False):
     omitted = retired
     cut = min([f["count"] for f in folds.values()] or [count])   # the document's cut: the LOWEST written cursor (T359), so the
     moved = None                                          #  next process's tail read holds every record a lagging fold has
-    if cut < count and len(ent) >= 8 and ent[7]:          #  yet to step (its append), bounded by the records this entry holds
+    cut_failed = False                                    #  yet to step (its append), bounded by the records this entry holds
+    if cut < count and len(ent) >= 8 and ent[7]:
         off_cut = int(ent[7][(cut - base) * 2])           # the cut record's byte offset; the 64 bytes before it are the guard.
         try:                                              # The entry holds records, not bytes, so the guard is read from the file, in
             with open(key, "rb") as fh:                   #  the same open that first verifies the entry's OWN witness guard (its bytes
@@ -1506,6 +1725,7 @@ def checkpoint_write(path, force=False):
                 raise OSError("no record boundary at the cut")
         except OSError:
             guard_cut = None
+            cut_failed = True
         if guard_cut is not None:
             moved = (off_cut, guard_cut, records[cut - base - 1] if cut > base else None, cut)
     left_out = False
@@ -1516,7 +1736,7 @@ def checkpoint_write(path, force=False):
             folds = {n: f for n, f in folds.items() if f["count"] == count}   #  out, and the path stays DIRTY below so the next
             left_out = True                               #  write (a settle, the exit drain) tries them again (review, low 3)
             if not folds and not force:
-                return False
+                return no("cutGuard" if cut_failed else "nothingRecordable")
         last = records[-1] if records else None
     with _CKPT_LOCK:
         seq = _CKPT_SEQ.get(key, 0) + 1
@@ -1529,7 +1749,7 @@ def checkpoint_write(path, force=False):
         tmp.write_text(json.dumps(doc, separators=(",", ":")))
         os.replace(tmp, cp)
     except OSError:
-        return False
+        return no("writeFailed")
     with _CKPT_LOCK:
         _CKPT_SEQ[key] = seq
         _CKPT_STATS["writes"] += 1
@@ -2055,6 +2275,9 @@ def _read_jsonl_entry_unlocked(path, on_fail=None, tail_ok=False, tail_from=None
                         bys = _RECORD_CACHE_STATS["wholeReadsByStage"] = {}
                     ws = bys.setdefault("%s:%s<-%s" % (stg, kind, who), {"count": 0, "bytes": 0})
                     ws["count"] += 1; ws["bytes"] += nread
+                    if _RELEASED_MARKS and _RELEASED_MARKS.pop(path, None) is not None:   # a path a release popped, read whole
+                        rr = _stat_table_locked("releasedReread", lambda: {"count": 0, "bytes": 0})   #  again: what the release cost
+                        rr["count"] = rr.get("count", 0) + 1; rr["bytes"] = rr.get("bytes", 0) + nread
             if _READER_TRACE:
                 fr, inner = sys._getframe(1), []          # the caller outside this module, and the path through it
                 while fr is not None and fr.f_code.co_filename == __file__:
@@ -2241,7 +2464,8 @@ def _drop_quiescent_entry(key, ent, pop=True):
     """drop_after="quiescent" (the kernel memory work, 2026-09-11): a file unchanged for _DROP_AFTER_QUIESCENT_S is one
     whose writer has finished (a subagent that returned), and its records are not kept in the shared reader's cache
     once a fold has stepped them: the fold's cursor (and its checkpoint) stands, the file's bytes leave memory. Only the
-    very entry this fold read is dropped (another thread's newer entry is left alone); a file still changing keeps its
+    very entry this fold read is dropped (another thread's newer entry is left alone, including one a read in flight is
+    about to insert: the pop takes the path's stripe lock first); a file still changing keeps its
     records, since its next append would otherwise re-read it whole. Without `pop` (a fold that stepped nothing: a hit or
     a restore at the witness) only the T362 write below runs and the entry stays, as it always has on that path. Returns
     True when the document was written here."""
@@ -2264,48 +2488,169 @@ def _drop_quiescent_entry(key, ent, pop=True):
     # _CKPT_LOCK and _JSONL_CACHE_LOCK itself); it charges the pusher cycle's byte budget shared with the pass, and over the
     # budget the write AND the drop are deferred by one cycle (the entry stays; the read is not lost), counted under
     # checkpoints.converge.dropDeferred.
-    try:
-        needs = checkpoint_drop_writes_on() and _path_needs_write(key, ent, at_drop=True)   # off (a cap of 0): the pop alone
-    except Exception:
-        needs = False
-    wrote = False
-    if needs:
-        cp = _ckpt_file(key)
-        try:
-            est = cp.stat().st_size if cp is not None and cp.exists() else 0
-        except OSError:
-            est = 0
-        if est <= 0:                                      # no previous document (a first write, or one the fallback removed): an
-            est = max(4096, int(ent[1]) // 8)             #  estimate from the file, never a free pass against the budget
-        if not checkpoint_cycle_take(2 * est):           # the previous document read for the carry, and about as much written:
-            oldest = None                                 #  taken in one step, or deferred (the drop owed) when it does not fit
-            with _CKPT_LOCK:
-                _CKPT_STATS["converge"]["dropDeferred"] += 1
-                if pop:
-                    _DROP_OWED[key] = time.time()
-                    if len(_DROP_OWED) > _DROP_OWED_MAX:  # over the bound the OLDEST owed drop is paid by its pop alone (round
-                        oldest = next(iter(_DROP_OWED))   #  two, low 1: a cleared mark left its entry neither paid nor popped)
-                        _DROP_OWED.pop(oldest, None)
-            if oldest is not None:
-                _pop_owed_entry(oldest)                   # outside _CKPT_LOCK: the reader's lock alone
-            return False
-        if checkpoint_write(key):
-            try:
-                written = cp.stat().st_size if cp is not None else 0
-            except OSError:
-                written = 0
-            checkpoint_cycle_charge(written - est)       # the true-up: what was written against the estimate taken above
-            wrote = True
-            with _CKPT_LOCK:
-                _CKPT_STATS["converge"]["dropWrites"] += 1
+    res = _drop_write(key, ent)                           # off (a cap of 0), or a write or check that failed: the pop alone
+    if res == "refused":                                  # over the budget: deferred (the drop owed) when it does not fit
+        oldest = None
+        with _CKPT_LOCK:
+            _CKPT_STATS["converge"]["dropDeferred"] += 1
+            if pop:
+                _DROP_OWED[key] = time.time()
+                if len(_DROP_OWED) > _DROP_OWED_MAX:      # over the bound the OLDEST owed drop is paid by its pop alone (round
+                    oldest = next(iter(_DROP_OWED))       #  two, low 1: a cleared mark left its entry neither paid nor popped)
+                    _DROP_OWED.pop(oldest, None)
+        if oldest is not None:
+            _pop_owed_entry(oldest)                       # outside _CKPT_LOCK: the reader's lock alone
+        return False
+    wrote = res == "wrote"
+    if wrote:
+        with _CKPT_LOCK:
+            _CKPT_STATS["converge"]["dropWrites"] += 1
     if not pop:
         return wrote
-    with _JSONL_CACHE_LOCK:
+    # the path's stripe, then the reader's lock (the reader's own order; this thread holds neither here): a read already
+    # pulling the file's bytes finishes its insert first, and its newer entry is left alone below (2026-09-24)
+    with _read_stripe(key), _JSONL_CACHE_LOCK:
         if _JSONL_CACHE.get(key) is ent:
             w = _cache_pop_locked(key)
             _RECORD_CACHE_STATS["dropped"] += 1
             _RECORD_CACHE_STATS["droppedBytes"] += w
     return wrote
+
+
+def _drop_write(key, ent, why=None):
+    """A drop's document write (T362), shared by the quiescent drop and the release at an agent's end: when the file's
+    document lacks something this process holds (_path_needs_write at the drop), it is written now from the entry in hand,
+    with neither lock held, charged to the pusher cycle's checkpoint budget. Returns:
+    - "clean": nothing to write, the drop writes off, or a dirty path none of whose folds holds a cursor at this entry (every
+      one stands at an older read of the file: a write would record nothing, and nothing held here could improve the
+      document), or the write found nothing to record;
+    - "wrote";
+    - "failed": a write was due and failed (checkpoint_write's "cutGuard" or "writeFailed", no checkpoint directory, or a
+      False that names no cause), or the check whether one was due raised (the name of its exception, then its traceback,
+      are appended to the list `why` when one is given);
+    - "absent": the write wrote nothing and the entry is gone after it (a concurrent pop took it: nothing is held);
+    - "raced": the write wrote nothing and a read has replaced the entry since (the caller owes its release);
+    - "refused": the budget had no room for the previous document's read and about as much written, taken in one step:
+      nothing charged, the caller defers.
+    The quiescent drop pops on "failed" as on "clean" (its earlier inline check read a raise as nothing to write), and its
+    pop, which checks the entry is the one it read, pops nothing after "absent" or "raced"; the release keeps its entry on
+    "failed"."""
+    try:
+        if not checkpoint_drop_writes_on():
+            return "clean"
+        needs = _path_needs_write(key, ent, at_drop=True)
+        if needs:
+            base, gen = ent[5], ent[6]
+            total = base + len(ent[4])
+            needs = any(_cursor_recordable(c.get(key), gen, base, total) for c in list(_FOLD_REG.values()))
+    except Exception as e:
+        if why is not None:
+            why.append(type(e).__name__); why.append(traceback.format_exc())   # the name for the cause, the traceback for its line
+        return "failed"
+    if not needs:
+        return "clean"
+    cp = _ckpt_file(key)
+    try:
+        est = cp.stat().st_size if cp is not None and cp.exists() else 0
+    except OSError:
+        est = 0
+    if est <= 0:                                          # no previous document (a first write, or one the fallback removed): an
+        est = max(4096, int(ent[1]) // 8)                 #  estimate from the file, never a free pass against the budget
+    if not checkpoint_cycle_take(2 * est):
+        return "refused"
+    causes = []
+    if not checkpoint_write(key, why=causes):
+        with _JSONL_CACHE_LOCK:
+            now = _JSONL_CACHE.get(key)
+        if now is None:
+            return "absent"
+        if now is not ent:
+            return "raced"
+        return "clean" if causes[:1] == ["nothingRecordable"] else "failed"
+    try:
+        written = cp.stat().st_size if cp is not None else 0
+    except OSError:
+        written = 0
+    checkpoint_cycle_charge(written - est)                # the true-up: what was written against the estimate taken above
+    return "wrote"
+
+
+def release_entry(path, reason):
+    """Release `path`'s parsed records from the reader's cache because the event that ends their use arrived (`reason`; today
+    "agentEnded": the kernel's pusher, at a cycle's start, for each agent that left its session's live set; 2026-09-24). The
+    quiescent drop's body without its age gate: the 120 s mtime age stands in for "the writer finished", and it never fired for
+    an agent the kernel folded while it ran (every fold lands seconds after an append; after the end every fold is a hit, which
+    never pops), so those entries stayed whole until the count cap reached them. Here the end is the event itself.
+    - An absent entry, or one weighing nothing (a restored tail), is left alone: "absent".
+    - The file gone: nothing to write, everything to release.
+    - The checkpoint document is written first when it lacks something the cache holds (_drop_write), and the entry popped
+      after, so a later fold whose cursor the document records restores a tail from it and reads nothing whole. A file no
+      fold holds a recordable cursor for (none, or every one at an older read of the file, even with the path dirty) has
+      nothing to write and is popped without a document; its next fold reads it whole. With the drop writes off (a cycle
+      cap of 0, or no checkpoint directory), a write that was due and failed, or a check whether a write is due that
+      raised, the entry stays and the release is given up, counted once per path per cycle and said once per cause in a
+      summary line, and a check that raised also writes its own line with the path and the traceback at every raise: a
+      release without its document would read the file whole at every fold that follows ("lost").
+    - The cycle's budget refusing the write defers the release to the next cycle's start ("deferred").
+    - A concurrent pop that took the entry before the write or the pop leaves nothing to release: "absent", nothing counted
+      and nothing owed; so does an entry weighing nothing (a restored tail) standing in its place at the pop.
+    - A read that replaced the entry, before the write or the pop, with one that holds records defers the release, never
+      drops it ("raced"); so does a read still pulling the file's bytes when the pop comes, since the pop takes the path's
+      stripe lock first, as the reader does, and so waits for that read's insert. The cost is that wait: the pusher waits
+      out a read in flight on a path that shares the stripe.
+    Returns "released", "absent", "lost", "deferred" or "raced". Runs on the pusher thread with neither lock held."""
+    key = str(path)
+    with _JSONL_CACHE_LOCK:
+        ent = _JSONL_CACHE.get(key)
+    if ent is None or _entry_weight(ent) == 0:
+        return "absent"
+    if os.path.exists(key):
+        if _ckpt_dir() is None or not checkpoint_drop_writes_on():
+            note_release_lost(1, "writesOff", key=key)
+            return "lost"
+        why = []
+        res = _drop_write(key, ent, why)
+        if res == "refused":
+            _owe_release(key, reason)
+            return "deferred"
+        if res == "absent":
+            return "absent"
+        if res == "failed":
+            if len(why) > 1:
+                say_release_raised("the document check of %s, on its release," % key, why[1])
+            note_release_lost(1, ("the document check raised %s" % why[0]) if why else "noDocument", key=key)
+            return "lost"
+    # the path's stripe, then the reader's lock, as in the quiescent drop: a read in flight inserts first, and the check fails;
+    # so does a read that replaced the entry before the write ("raced" from _drop_write), which is owed below the same way
+    with _read_stripe(key), _JSONL_CACHE_LOCK:
+        if _JSONL_CACHE.get(key) is ent:
+            w = _cache_pop_locked(key, keep_mark=True)
+            rel = _stat_table_locked("released").setdefault(reason, {"count": 0, "bytes": 0})
+            rel["count"] += 1; rel["bytes"] += w
+            _RELEASED_MARKS.pop(key, None); _RELEASED_MARKS[key] = True   # the mark, newest: re-releasing a marked path refreshes it
+            while len(_RELEASED_MARKS) > _JSONL_CACHE_MAX:
+                _RELEASED_MARKS.pop(next(iter(_RELEASED_MARKS)), None)
+            return "released"
+        now = _JSONL_CACHE.get(key)
+        if now is None or _entry_weight(now) == 0:
+            return "absent"                               # a concurrent pop took it after the write read it: nothing is held
+    _owe_release(key, reason)
+    return "raced"
+
+
+def _owe_release(key, reason):
+    """Defer `key`'s release to the next cycle's start (releaseDeferred, once per path per cycle); over the owed table's bound
+    the oldest is given up."""
+    lost = None
+    with _CKPT_LOCK:
+        _RELEASE_OWED.pop(key, None); _RELEASE_OWED[key] = reason
+        if len(_RELEASE_OWED) > _DROP_OWED_MAX:
+            lost = next(iter(_RELEASE_OWED))
+            _RELEASE_OWED.pop(lost, None)
+    with _JSONL_CACHE_LOCK:
+        _count_release_locked("releaseDeferred", key)
+    if lost is not None:
+        note_release_lost(1, "overflow", key=lost)
 
 
 _UNPINNED = object()
@@ -5055,23 +5400,89 @@ _ASM_CKPT_V = 7                       # 2: atom rows carry [offset, len], nt for
 #                                       7: the cut is the boundary before the last SETTLED turn, not only a compaction's (stage one b, 2026-09-15):
 #                                          every v6 document is refused once (`version`) at the deploy boot and rewritten at the next settle
 _MAT_CAP = _env_or("ROMP_ASM_INDEX_CAP", max(500_000, _machine_memory_bytes() // (32 * 1024)))
-_MAT_LRU = collections.OrderedDict()  # (id(LazyAtoms), row) → (weakref.ref(LazyAtoms), row): eviction drops the memo, never a field
+_MAT_LRU = collections.OrderedDict()  # (id(LazyAtoms), row) → (the list's _ListRef, row): eviction drops the memo, never a field
 #                                       in place. The list is held WEAKLY (measured 2026-09-15): a strong reference here kept every
 #                                       superseded generation's atoms, and through them its LazyIndex, rows and document, resident until
 #                                       they aged past the cap (every restore mints a new index; 262 restores over 22 sessions sat the LRU
 #                                       at its cap of 1,026,886 entries with 275,385 evictions: about 1.2 to 2.0 GiB of mostly dead
 #                                       generations, the resident count times the 1.3 to 2.1 KB an atom measured by tracemalloc over real
 #                                       indexes, and up to 275,385 live atoms evicted by stale ones, each a rebuild on its next read). Now a
-#                                       dropped tree's entries die with it and expire at the old end (_mat_trim), and a dropped assembly
-#                                       entry releases its index's at once (LazyIndex.release). No weakref callback: one fires at any
-#                                       decref, under this lock included, and the lock is not reentrant; dead entries expire lazily.
+#                                       dropped assembly entry releases its index's entries at once (LazyIndex.release), and a freed list
+#                                       takes the rest with it, but for the residual named in _ListRef (the collection event, 2026-09-24):
+#                                       a tree that outlived its entry could read
+#                                       a released slot again and register it against an index nothing releases again, and when that tree
+#                                       went its entries stood dead until the cap or a new list registering the same row under their id, and
+#                                       on a nine-session machine the cap (MemTotal / 32 KiB) had not come after 73 hours (6.15 million
+#                                       entries against a 7.73 million cap, at least 83 percent of them for freed lists, by the live bound
+#                                       below: 1 - 1,005,102 / 6.15 million). A list's _ListRef queues itself when the list is freed holding
+#                                       an entry, since its entries keep the reference reachable from _MAT_LRU (a list with no entry, freed
+#                                       in a cycle with its index, may go unqueued and has nothing to remove), except in the residual named
+#                                       in _ListRef: on CPython 3.13 from 3.13.13 and on 3.14.4 and later, entries a finalizer registers
+#                                       during the collection that frees their list hold a reference that is never queued, and wait for the
+#                                       cap or a new list registering the same row under their id. The callback takes no lock, since it can
+#                                       fire at any decref, under this lock included, and the lock is not reentrant; the next registration
+#                                       or release drains the queue under the lock (_mat_drain). The cap is the backstop, counted in
+#                                       `evictions` for a live entry (a dead entry it drops counts `expired`): on that machine the live
+#                                       entries are at most 1,005,102 (27 live indexes at the peak, times the largest document's 37,226
+#                                       rows), so the cap sits about 7.7 times above them; a cap under the live entries rebuilds on every
+#                                       pass (above).
 _MAT_LOCK = threading.Lock()
+_MAT_COLLECTED = collections.deque()  # the _ListRef of every LazyAtoms freed since the last drain (or brought back by a finalizer: see
+#                                       _ListRef) whose callback ran, which it does for a reference still reachable when the list died, as
+#                                       the reference of every list holding an LRU entry is (its entries hold it in _MAT_LRU), except in the
+#                                       residual named in _ListRef: on CPython 3.13 from 3.13.13 and on 3.14.4 and later, a reference minted
+#                                       for a registration a finalizer ran during the collection that frees the list is cleared without its
+#                                       callback and never queued. A list with no entry, freed in a cycle with its index, may go unqueued
+#                                       and has nothing to remove. Queued by _mat_collected and drained under _MAT_LOCK before each
+#                                       registration and at each release (_mat_drain)
+
+
+class _ListRef(weakref.ref):
+    """A LazyAtoms list's own weak reference, carrying the list's id and row count (`lid`, `n`): the list is unhashable,
+    and the reference reads None by the time the callback runs. Every LRU entry of the list holds THIS reference, so it
+    stays reachable from _MAT_LRU for as long as the list has an entry, and the callback runs whether the list dies at
+    its last decref or inside a reference cycle only the collector frees, the residual below aside: the collector runs no
+    callback for a weak reference that is itself garbage, so a reference kept only on the index would be garbage with a
+    list and index collected together, and the list's entries would stay. `n` covers every slot because a list's length
+    is fixed at mint: LazyAtoms refuses every in-place list method (append, extend, insert, pop, remove, clear, reverse,
+    sort, item assignment and deletion, += and *=).
+    A list a finalizer resurrects in a collection comes back holding a reference the collector cleared (it clears weak
+    references, and runs their callbacks, before it runs finalizers). The entries that held it leave as dead ones (at the
+    drain, or at the trim when the collection falls between a registration's drain and its trim), and _mat_register mints
+    the list a fresh reference at its next registration. The slots those entries described keep their atoms with no entry
+    until a read registers them again or, once a read has minted the fresh reference, a release of the index resets them
+    (every built slot of the list, read again or not; before that read, release() cannot reach the list, since the index
+    holds no live reference to it); a slot neither read again nor released stays built with no entry, which `resident`
+    does not count and the cap cannot reach, as before the collection event, when the trim stripped such a slot and no
+    release could reach the list. No kernel path resurrects a list.
+    The residual, on CPython 3.13 from 3.13.13 and on 3.14.4 and later (tests/test_asm_mat_lru_release.py,
+    FinalizerRead): a registration run from inside a finalizer (a __del__, or a generator's or coroutine's close) during
+    the collection that frees the list, a build or a re-registration of a built slot, finds the reference the collector
+    cleared before the finalizer ran, so _mat_register mints the list a fresh one, as for a resurrected list; the
+    interpreter then clears that fresh reference without running its callback, and the list dies holding entries whose
+    reference is never queued. No drain or release removes them: they leave, counted `expired` and not `collected`, at
+    the cap's trim or when a new list registers the same row under their id, as every freed list's entries did before the
+    collection event. 3.10 to 3.12, 3.13 before 3.13.13 and 3.14 before 3.14.4 run the callback, and the next drain
+    removes them. Kernel code defines no __del__ and no weakref.finalize."""
+    __slots__ = ("lid", "n")
+
+
+def _mat_collected(ref, _queue=_MAT_COLLECTED):
+    """The _ListRef callback: it runs at the list's last decref or in a collection, on any thread, possibly one holding
+    _MAT_LOCK, so it takes no lock and only queues the reference (deque.append is thread-safe). The queue is bound as a
+    default argument, so a callback that runs while the interpreter tears the module down still reaches it."""
+    _queue.append(ref)
+
+
 _ASM_INDEX_STATS = {"materialized": 0, "materializedBy": {}, "materializedByStage": {}, "resident": 0, "evictions": 0,
-                    "restoredTurns": 0, "rowDecodes": 0, "released": 0, "expired": 0}
+                    "restoredTurns": 0, "rowDecodes": 0, "released": 0, "expired": 0, "collected": 0}
 #                                                              materializedByStage: the same builds under "<stage>:<caller>" (T401 (5a):
 #                                                              a build from an unmarked thread reads "none:<caller>", the read boot's face)
 #                                                              released: entries LazyIndex.release popped for a dropped assembly entry;
-#                                                              expired: entries of a collected list dropped, at the cap or when a live list registers under the id the dead one held; no slot touched
+#                                                              expired: entries of a collected list dropped, at the drain after its collection, at the cap,
+#                                                              or at a registration under the id the dead one held (the drain runs first, so only an entry
+#                                                              whose list's callback never queued it); no slot touched
+#                                                              collected: the entries the drain removed (_mat_drain), the collection event's part of expired
 _PRE_TURN_KEYS = ("pre", "uuids", "lastT", "maxT", "lastModel", "tools", "segs", "pcs", "hT")   # a pre-turn's fields beyond a plain turn's
 
 
@@ -5112,25 +5523,38 @@ def _materialize_caller():
 
 
 def _mat_register(la, i):
-    """Under _MAT_LOCK: la's slot i joins the LRU at its young end under la's OWN weak reference. An entry already under the
-    key that is not la's (a collected list whose id this one reuses: ids recycle the moment a list is freed) is popped first
-    and counted `expired`, and popped rather than assigned over, since an assignment to a standing key keeps the key's old
-    position and the fresh entry would sit at the old end, first to go."""
+    """Under _MAT_LOCK: la's slot i joins the LRU at its young end under la's OWN weak reference (its _ListRef). A list a
+    finalizer resurrected holds a reference the collector cleared (see _ListRef): it gets a fresh one here, stored on the
+    list and appended to its index's _minted, so the entry is live, the cap evicts it and release() reaches it. An entry
+    already under the key that is not la's (since the drain runs first, only an entry the queue never held: a missed
+    callback, or a planted test entry) is popped first and counted `expired`, and popped rather than assigned over, since
+    an assignment to a standing key keeps the key's old position and the fresh entry would sit at the old end, first to go."""
     key = (id(la), i)
+    ref = la._ref
+    if ref() is not la:
+        ref = _ListRef(la, _mat_collected)
+        ref.lid, ref.n = id(la), len(la._rows)
+        la._ref = ref
+        minted = getattr(la._index, "_minted", None)      # as in LazyAtoms.__init__: a stand-in index may carry no list
+        if minted is not None:
+            minted.append(ref)
     old = _MAT_LRU.pop(key, None)
     if old is not None and old[0]() is not la:
         _ASM_INDEX_STATS["expired"] += 1
-    _MAT_LRU[key] = (weakref.ref(la), i)
+    _MAT_LRU[key] = (ref, i)
 
 
 def _mat_trim():
     """Under _MAT_LOCK: the LRU back within _MAT_CAP from its old end. A live entry is evicted as ever (its slot back to the
     placeholder, counted `evictions`); an entry whose list has been collected is dropped and counted `expired`, and no slot is
-    touched for it (the list is gone, and its id may by now be another live list's, whose slot this entry never described).
-    The cap bounds len(_MAT_LRU) with the dead entries included. A dropped list's entries are dead where they sit: a list
-    dropped recently leaves dead entries YOUNGER than older live ones, so a live entry ahead of them is evicted first and the
-    dead ones clear only as they reach the old end; release() is what makes a dropped index's entries leave at once, and the
-    `expired` count says how many dead ones the trim met instead."""
+    touched for it (the list is gone, and its id may by now be another live list's, whose slot this entry never described; or
+    a finalizer resurrected it and the entry holds the reference the collector cleared: see _ListRef). A freed list's entries
+    leave at the drain that runs before every registration (_mat_drain) once its callback has queued its reference, so the
+    dead entries this branch meets belong to lists freed, or brought back by a finalizer, since this registration's drain
+    (the reference cleared and the callback queued or about to be: at a last decref on another thread, or in a collection
+    on any thread, this one included), belong to the residual named in _ListRef (on CPython 3.13 from 3.13.13 and on 3.14.4
+    and later, entries a finalizer registered during the collection that freed their list, under a reference cleared without
+    its callback), or are planted with another reference; they count `expired` without `collected`."""
     while len(_MAT_LRU) > _MAT_CAP:
         _, (ref, j) = _MAT_LRU.popitem(last=False)
         lz = ref()
@@ -5141,21 +5565,54 @@ def _mat_trim():
             _ASM_INDEX_STATS["evictions"] += 1
 
 
+def _mat_drain():
+    """Under _MAT_LOCK: every entry holding a reference its callback queued since the last drain leaves the LRU, counted
+    `expired` (entries of a collected list dropped) and `collected`. The reference of a list freed holding an entry, or
+    brought back by a finalizer, is queued, except in the residual named in _ListRef: on CPython 3.13 from 3.13.13 and on
+    3.14.4 and later, entries a finalizer registers during the collection that frees their list hold a reference that is
+    never queued, so no drain removes them, and they wait for the cap or a new list registering the same row under their
+    id. An entry is removed only when it holds the freed list's own reference, never by id alone (a guard: a list's
+    callback, when it runs, queues it before its id can be reused, and every registration drains first, so no live list's
+    entry sits under a queued list's key; a dead entry the queue never held is left for the trim); no slot is touched
+    (the list is gone, or a finalizer resurrected it: see _ListRef). The cost is one dict lookup per row of each freed
+    list, the walk release() pays for a live index. It runs before each registration and at each release, never in the
+    /perf read (asm_index_stats changes nothing)."""
+    q = _MAT_COLLECTED
+    n = 0
+    while q:
+        r = q.popleft()
+        lid = r.lid
+        for i in range(r.n):
+            k = (lid, i)
+            e = _MAT_LRU.get(k)
+            if e is not None and e[0] is r:
+                del _MAT_LRU[k]
+                n += 1
+    if n:
+        _ASM_INDEX_STATS["expired"] += n
+        _ASM_INDEX_STATS["collected"] += n
+
+
 class LazyIndex:
     """One restored session's pre-cut rows (T323 stage 4c): the document's atom rows kept as BYTES, decoded one at a time
     when a consumer reaches for an atom, through a process-wide LRU (_MAT_CAP). The record rows (identity, time, file,
     parent) stay decoded: they are small and every materialization reads one. The LRU holds the index's atom lists weakly
     and the index knows the lists it minted (_minted), so a dropped assembly entry can give the memo back at once
-    (release) and a tree nobody holds takes nothing to the LRU but entries that expire (measured 2026-09-15, see _MAT_LRU)."""
+    (release) and a tree nobody holds takes its entries with it at the next registration or release (measured 2026-09-15,
+    the collection event 2026-09-24, see _MAT_LRU), except in the residual named in _ListRef: on CPython 3.13 from 3.13.13
+    and on 3.14.4 and later, entries a finalizer registers during the collection that frees their list hold a reference
+    that is never queued, and wait for the cap or a new list registering the same row under their id."""
 
     def __init__(self, doc, rompuuid, leaf_path, cache_key=None):
         self.rompuuid = str(rompuuid)
         self.leaf = str(leaf_path)
         self._cache_key = cache_key                        # the assembly entry this index serves: dropped when a row fails to build
         self._rows_noted = False                          # the document noted `rows` once, at the first row that fails to build
-        self._minted = []                                 # weakref.ref to every LazyAtoms minted over this index (LazyAtoms.__init__ adds
-        #                                                   under _MAT_LOCK; release() walks and prunes them): plain refs, no WeakSet, since
-        #                                                   a LazyAtoms is unhashable and a ref callback may fire under the lock
+        self._minted = []                                 # the _ListRef of every LazyAtoms minted over this index (LazyAtoms.__init__ adds
+        #                                                   under _MAT_LOCK, and _mat_register adds, under the same lock, the fresh one of
+        #                                                   a list a finalizer resurrected, whose cleared one stays until a release prunes
+        #                                                   it; release() walks and prunes them): a list of refs, no WeakSet, since a
+        #                                                   LazyAtoms is unhashable
         self.rowb = [r.encode("utf-8") for r in doc["atoms"]]   # v6: the document's rows are JSON strings already (T401 (4))
         self.records = doc["records"]
         self.fsids = list(doc.get("fsids") or [])
@@ -5213,22 +5670,31 @@ class LazyIndex:
         rather than at the cap, a million entries later. The per-slot atom a consumer already holds is a value and is never
         mutated. A tree that outlives its entry (a parse cache slot, a build in flight) reads a released slot as it reads an
         evicted one: rebuilt through this index, and registered again; that is allowed and needs no retired flag, since under
-        weak ownership the LRU then holds nothing beyond that tree's own lifetime, and its entries expire when it goes. The
-        walk is over this index's own lists' slots, never the LRU (measured 2026-09-15, a lab process: 20,000 rows with 200
-        built, 1.3 ms; 200,000 rows with 2,000 built, 9.8 ms; 200,000 rows with 20,000 built, 26.5 ms), so a release costs
-        the dropped index its row count in list reads, once, where the cap paid a million-entry residency."""
+        weak ownership the LRU then holds nothing beyond that tree's own lifetime but the residual named in _ListRef: its
+        entries leave at the next registration or release after it goes (_mat_drain; before 2026-09-24 they waited for the
+        cap or for a new list registering the same row under their id), except, on CPython 3.13 from 3.13.13 and on 3.14.4
+        and later, entries a finalizer registers during the collection that frees their list, which hold a reference that is
+        never queued and wait for the cap or a new list registering the same row under their id. The walk is over this index's
+        own lists' slots, never the LRU (measured 2026-09-15, a lab process: 20,000 rows with 200 built, 1.3 ms; 200,000 rows
+        with 2,000 built, 9.8 ms; 200,000 rows with 20,000 built, 26.5 ms), so a release costs the dropped index its row count
+        in list reads, once, where the cap paid a million-entry residency."""
         with _MAT_LOCK:
+            _mat_drain()                                  # the queued freed lists' entries first, then this index's own
             n, live = 0, []
             for ref in self._minted:
                 la = ref()
                 if la is None:
-                    continue                              # a collected list: its entries, if any stand, expire at the old end
+                    continue                              # a collected list: the drain above took the entries its queued reference
+                    #                                       held (or the next one will, if its callback has yet to queue it); a
+                    #                                       reference cleared without its callback (the residual named in _ListRef) is
+                    #                                       never queued, and its entries wait for the cap or a new list registering
+                    #                                       the same row under their id
                 live.append(ref)
                 for i, a in enumerate(list.__iter__(la)):
                     if a is _UNMAT:
                         continue
-                    if _MAT_LRU.pop((id(la), i), None) is not None:   # a built slot's entry is its own (a stale key under a reused
-                        n += 1                                        #  id was popped at the build), so the count is this list's
+                    if _MAT_LRU.pop((id(la), i), None) is not None:   # a built slot's entry is its own (its registration popped any
+                        n += 1                                        #  other entry under the key), so the count is this list's
                     list.__setitem__(la, i, _UNMAT)
             self._minted[:] = live                        # in place: a constructor holding this list appends to the one list
             _ASM_INDEX_STATS["released"] += n
@@ -5303,16 +5769,22 @@ class LazyAtoms(list):
     list's storage directly (json's encoder, refused at __iter__ while a slot is unbuilt), and those raise. Materialized atoms live in a process-wide LRU
     (_MAT_CAP): eviction puts the placeholder back in the slot, the consumer's own reference stays whole. The LRU holds
     this list by a weak reference (see _MAT_LRU), so the list, its index and the document behind it live exactly as long
-    as their consumers do; the index's release() empties the list's entries early when its assembly entry is dropped."""
+    as their consumers do; the index's release() empties the list's entries early when its assembly entry is dropped, and
+    the list's collection takes whatever entries it still has (see _ListRef), except in the residual named there. The
+    list's length is fixed at mint: every in-place list method is refused, since the collection event visits rows 0 to
+    n - 1 with n taken here."""
 
     def __init__(self, index, rows):
         list.__init__(self, [_UNMAT] * len(rows))
         self._index = index
         self._rows = list(rows)
+        r = _ListRef(self, _mat_collected)                # the list's one weak reference: its LRU entries hold it (see _ListRef)
+        r.lid, r.n = id(self), len(self._rows)
+        self._ref = r
         with _MAT_LOCK:                                   # release() walks and prunes the list under this lock, in place:
             minted = getattr(index, "_minted", None)      #  the read and the append sit under it too, so a list minted while
             if minted is not None:                        #  a release runs is never appended to a list the release replaced
-                minted.append(weakref.ref(self))          #  (a stand-in index in tests may carry no list of its own)
+                minted.append(r)                          #  (a stand-in index in tests may carry no list of its own)
 
     # ── the build ──
     def _at(self, i):
@@ -5324,8 +5796,10 @@ class LazyAtoms(list):
                 if ent is not None and ent[0]() is self:  # this list's own entry: the LRU touch
                     _MAT_LRU.move_to_end(key)
                 elif list.__getitem__(self, i) is not _UNMAT:   # built and not registered (a dead entry under a reused id, or none):
-                    _mat_register(self, i)                      #  registered now; an eviction or release between the read above and
-                    _mat_trim()                                 #  this lock left the slot unbuilt, and then `a` is the caller's value
+                    _mat_drain()                                #  registered now, after the queued freed lists' entries leave (a
+                    _mat_register(self, i)                      #  residual entry under this key, see _ListRef, is popped by the
+                    _mat_trim()                                 #  registration); an eviction or release between the read above and
+                    #                                              this lock left the slot unbuilt, and then `a` is the caller's value
             return a
         a = self._index.build(self._rows[i])
         by = _materialize_caller()
@@ -5334,7 +5808,9 @@ class LazyAtoms(list):
             if cur is not _UNMAT:                         # another thread built it first
                 return cur
             list.__setitem__(self, i, a)
-            _mat_register(self, i)
+            _mat_drain()                                  # the queued freed lists' entries leave before this registration (see
+            _mat_register(self, i)                        #  _ListRef for the residual, whose entries this registration pops if it
+            #                                                takes their key)
             _ASM_INDEX_STATS["materialized"] += 1
             _ASM_INDEX_STATS["materializedBy"][by] = _ASM_INDEX_STATS["materializedBy"].get(by, 0) + 1
             bs = "%s:%s" % (_read_stage() or "none", by)      # the calling thread's stage mark beside the caller (T401 (5a))
@@ -5463,6 +5939,18 @@ class LazyAtoms(list):
     def __delitem__(self, *a):
         raise TypeError("a pre-cut turn's atoms are read-only")
 
+    def clear(self, *a):                                  # these four too: the length is fixed at mint (see _ListRef)
+        raise TypeError("a pre-cut turn's atoms are read-only")
+
+    def reverse(self, *a):
+        raise TypeError("a pre-cut turn's atoms are read-only")
+
+    def __iadd__(self, *a):
+        raise TypeError("a pre-cut turn's atoms are read-only")
+
+    def __imul__(self, *a):
+        raise TypeError("a pre-cut turn's atoms are read-only")
+
 
 class _LazyView(LazyAtoms):
     """A contiguous slice of a LazyAtoms (a segment's atoms, T358) that builds nothing until read: a first read of a slot
@@ -5556,11 +6044,20 @@ def asm_index_stats():
                 "materializedByStage": dict(_ASM_INDEX_STATS["materializedByStage"]),
                 "resident": len(_MAT_LRU), "evictions": _ASM_INDEX_STATS["evictions"], "cap": _MAT_CAP,
                 "released": _ASM_INDEX_STATS["released"], "expired": _ASM_INDEX_STATS["expired"],
+                "collected": _ASM_INDEX_STATS["collected"],
                 "restoredTurns": _ASM_INDEX_STATS["restoredTurns"], "rowDecodes": _ASM_INDEX_STATS["rowDecodes"],
                 "userFacts": sum(len(ix._user_facts) for ix in list(_LIVE_INDEXES))}   # a GAUGE: the light facts resident across the
 #                                                                                       live indexes (a dropped index takes its cache with it)
-#   resident is len(_MAT_LRU) with the entries of collected lists included until they expire at the cap (_mat_trim) or are released;
-#   released and expired are the counters those two roads bump (the LRU's weak ownership, measured 2026-09-15)
+#   resident is len(_MAT_LRU): the live entries plus those of lists freed, or brought back by a finalizer, since the last
+#   registration or release, and those of the residual named in _ListRef (this read drains nothing, so a snapshot changes no
+#   state). A list a finalizer resurrected can hold built slots whose entries left as dead ones and that nothing has read since,
+#   and resident does not count them, as it did not before the collection event (see _ListRef).
+#   released, expired and collected are the counters the removal roads bump (the LRU's weak ownership, measured 2026-09-15; the
+#   collection event, 2026-09-24): collected counts what the drain removed. While resident has stayed under the cap, expired minus
+#   collected counts only _mat_register's pops, entries whose list's callback never queued them; once the cap binds, the trim's dead
+#   branch also counts entries of lists freed, or brought back by a finalizer, since the last drain, and those of the residual
+#   named in _ListRef.
+#   A resident count that keeps rising while evictions stays flat is the leak signal.
 _ASM_CKPT_CAP = 16 * 1024 * 1024   # a document past this is not written (counted): that session parses whole as today
 _ASM_CKPT_STATS = {"written": 0, "restored": 0, "fallbacks": {}, "skipped": {}, "hydratedBytes": 0, "hydratedAtoms": 0,
                    "restoreMs": {"load": 0.0, "verify": 0.0, "index": 0.0, "seed": 0.0, "total": 0.0},   # the restore's parts since boot, ms

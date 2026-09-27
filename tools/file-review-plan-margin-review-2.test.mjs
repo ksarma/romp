@@ -122,7 +122,7 @@ test('the save\'s scroll is stated as the second review built it, and what remai
   assert.ok(built.includes('before that the composer closed and no card appeared, and the save read as having done nothing'), 'what stood before');
   assert.ok(/function savedCommentId\(had: Set<string>, r: Status, note: string\): string \| null \{/.test(panel));
   assert.ok(/private landSaved\(c: Composer, had: Set<string>, r: Status, note: string\): boolean \{/.test(panel), 'scrollToSaved became landSaved with decision 43: the focus and the line, no scroll');
-  assert.ok(/const lined = r !== null && this\.landSaved\(c, had, r, note\);[^\n]*\n\s*if \(r\) this\.closeComposer\(\);/.test(panel), 'the landing runs before the composer closes, as the scroll did');
+  assert.ok(/const lined = r !== null && this\.landSaved\(c, had, r, note\);[^\n]*\n\s*if \(r && this\.composer === c\) this\.closeComposer\(\);/.test(panel), 'the landing runs before the composer closes, as the scroll did (a pin on where the lines stand; the close\'s condition, the saving composer only, is executed by ui/webview/file-comments-save-held-composer.test.ts "a reply started while a comment saves opens empty…", "a new comment started while a comment saves opens empty…", "while a comment saves, a new comment\'s Save waits…" and "with no save out the box still carries its words…", each red when a landing closes whatever composer is open)');
   assert.ok(/private showLoose\(key: string\): boolean \{/.test(panel));
   assert.ok(/private scrollBoth\(want: number\): void \{/.test(panel));
   assert.ok(/if \(this\.margin && this\.focusOn\(id\) && \(this\.centerOn\(id\) \|\| this\.showLoose\(id\)\)\) return;/.test(panel), 'scrollCard tries the mark first, then the loose group');
