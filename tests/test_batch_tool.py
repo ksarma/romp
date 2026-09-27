@@ -1714,6 +1714,32 @@ class VerifyBehind(_Base):
         self.assertIn("main moved on origin to %s after verify read %s; nothing merged" % (moved[:10], before[:10]), p.stderr)
         self.assertEqual(fx.calls("pr", "merge"), [], "nothing merged")
 
+    def test_main_is_read_by_its_exact_ref_name(self):
+        """`git ls-remote origin refs/heads/main` matches the pattern against the tail of every ref name, so a
+        branch named aaa/refs/heads/main answers it too, and sorts first. A decoy there at the old main (which
+        the batch contains) must not stand in for main after main moves."""
+        fx = self.fx
+        self.ready()
+        old = fx.bare_rev("main")
+        fx._git("update-ref", "refs/heads/aaa/refs/heads/main", old, cwd=fx.bare)
+        moved = fx.commit_main({"README.md": "# notes-api\n\nmoved\n"}, "main moved")
+        p = fx.run("verify", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL behind: origin/main is at %s" % moved[:10], p.stdout)
+
+    def test_land_reads_the_batch_branch_by_its_exact_ref_name(self):
+        """The same tail match on land's read of the batch branch: with the branch gone from origin and a decoy
+        aaa/refs/heads/batch/b1 at the verified head, land must say the batch is not pushed, not merge."""
+        fx = self.fx
+        self.ready(summarize=True)
+        head = fx.dev_git("rev-parse", "batch/b1")
+        fx._git("update-ref", "refs/heads/aaa/refs/heads/batch/b1", head, cwd=fx.bare)
+        fx._git("update-ref", "-d", "refs/heads/batch/b1", cwd=fx.bare)
+        p = fx.run("land", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("batch/b1 on origin is at nothing, verified %s; push the batch first" % head[:10], p.stderr)
+        self.assertEqual(fx.calls("pr", "merge"), [], "nothing merged")
+
 
 # A gh for one test: on the repository-settings read (which land makes after its verify) it pushes one
 # commit to main from the author clone, once, then hands every call to the fake gh.

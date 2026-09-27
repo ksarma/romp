@@ -1451,11 +1451,21 @@ def sweep_reader():
     return mod
 
 
+def remote_ref_sha(root, ref):
+    """The sha of exactly `ref` on origin now, or None. `git ls-remote <remote> <pattern>` matches the
+    pattern against the tail of every ref name, so a branch named aaa/refs/heads/main answers
+    refs/heads/main too (and sorts first); only the line naming `ref` itself counts."""
+    for line in git("ls-remote", REMOTE, ref, cwd=root).splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == ref:
+            return parts[0]
+    return None
+
+
 def main_on_origin(root):
     """main's head on origin now, read with ls-remote (never the tracking ref, which --no-fetch or a
     stale fetch leaves behind); None when origin has no main."""
-    out = git("ls-remote", REMOTE, "refs/heads/" + MAIN, cwd=root).split()
-    return out[0] if out else None
+    return remote_ref_sha(root, "refs/heads/" + MAIN)
 
 
 def check_contains_main(root, name, head, lines):
@@ -2103,9 +2113,9 @@ def cmd_land(args):
         if settings.get(k):
             print("warning: %s is on; a squash or rebase of a batch leaves every member open" % k)
     head = state["verified"]["head"]
-    remote_head = git("ls-remote", REMOTE, "refs/heads/" + branch_of(args.name), cwd=root).split()
-    if not remote_head or remote_head[0] != head:
-        raise Fail("%s on %s is at %s, verified %s; push the batch first" % (branch_of(args.name), REMOTE, short(remote_head[0]) if remote_head else "nothing", short(head)))
+    remote_head = remote_ref_sha(root, "refs/heads/" + branch_of(args.name))
+    if remote_head != head:
+        raise Fail("%s on %s is at %s, verified %s; push the batch first" % (branch_of(args.name), REMOTE, short(remote_head) if remote_head else "nothing", short(head)))
     cmd = ["pr", "merge", str(b), "--merge", "--match-head-commit", head]
     if args.auto:
         # Both preconditions are read, never assumed (scripts/land.sh applies the same two), and
