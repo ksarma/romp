@@ -493,6 +493,12 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
     pipe in either leaves the tracker passed over, and a process whose leading
     thread has exited reads as a zombie and is skipped, neither judged nor
     listed nor counted;
+  - a thread's cwd that `/proc/<pid>/cwd` does not show: the check reads a
+    process's cwd at `/proc/<pid>/cwd`, its leading thread's, so when a thread
+    other than the leading one calls `unshare(CLONE_FS)` and then changes
+    directory to a path under a root, its cwd, readable at
+    `/proc/<pid>/task/<tid>/cwd`, is not read: a process that holds a root
+    through that cwd alone is not named;
   - a descriptor on the tracker's pipe in flight: the pipe is read from
     `/proc/<pid>/fd` tables only, so a write end queued in a unix socket and not
     yet received, which is in no process's table once its sender has closed its

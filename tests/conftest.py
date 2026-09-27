@@ -119,7 +119,7 @@ atexit.register(_remove_run_dirs)
 # multiprocessing's fork context keeps the controller's write end and a spawn-context worker is handed one, on every
 # version; a raw os.fork child keeps it on 3.12 and earlier, and on 3.13 and 3.14 before the gh-146313 releases, which
 # close a raw fork's copy in the child. Any of them keeps the tracker from exiting on its own while it holds the pipe,
-# and a raw fork's child that outlives the controller on 3.12 and earlier keeps the tracker running after the
+# and a raw fork's child that still holds the pipe when the controller exits keeps the tracker running after the
 # controller has gone. With the pass-over by identity alone, a serial run whose test left a raw fork's child holding
 # the pipe ended green and silent, since such a child need hold no path under a root (its environment is the block the
 # controller started with, before the run minted its roots). The pipe is read from /proc: the one whose write end the
@@ -210,6 +210,10 @@ atexit.register(_remove_run_dirs)
 #     readable at /proc/<pid>/task/<tid>/fd, are not read: a child that keeps the tracker's pipe in either leaves the
 #     tracker passed over, and a process whose leading thread has exited reads as a zombie and is skipped, neither
 #     judged nor listed nor counted;
+#   * a thread's cwd that /proc/<pid>/cwd does not show: the check reads a process's cwd at /proc/<pid>/cwd, its
+#     leading thread's, so when a thread other than the leading one calls unshare(CLONE_FS) and then changes
+#     directory to a path under a root, its cwd, readable at /proc/<pid>/task/<tid>/cwd, is not read: a process that
+#     holds a root through that cwd alone is not named;
 #   * a descriptor on the tracker's pipe in flight: the pipe is read from /proc/<pid>/fd tables only, so a write end
 #     queued in a unix socket and not yet received, which is in no process's table once its sender has closed its own
 #     copy, keeps the tracker from exiting on its own while it is queued, unseen, and the tracker is passed over;
