@@ -152,16 +152,20 @@ jobs:
         # which xdist's transport (execnet) points at /dev/null, so the log names the test but
         # carries no stacks; run the named test alone (without -n) and the dump prints, its bottom
         # frame the blocked primitive.
-        # A test that leaves a non-daemon thread running keeps its process from exiting: serially
-        # the cell hung until the job cap cancelled it, and under the Linux cells' workers xdist
-        # kills a worker that lingers after its session, so the run would pass. tests/conftest.py's
-        # session-end thread guard restores that signal on the Linux cells: at each process's last
-        # test it gives every non-daemon thread but the main thread and pytest-timeout's timer up to
-        # 10 s to end, then fails that test's teardown naming each thread still running, with its
-        # stack, and the controller prints that error like any test report
-        # (tests/test_session_end_thread_guard.py). A serial cell prints the same error and then
-        # still hangs at exit until the cap, unless every thread named is an idle concurrent.futures
-        # worker, which the interpreter wakes at exit and the guard fails on all the same.
+        # A non-daemon thread still running when the interpreter exits keeps its process from
+        # exiting: serially the cell hangs until the thread ends or the job cap cancels it, and
+        # under the Linux cells' workers the controller kills a worker still alive when the run
+        # ends, so the run would pass. tests/conftest.py's session-end thread guard restores that
+        # signal on the Linux cells: at each process's last test it gives each non-daemon thread up
+        # to 10 s to end (it leaves out the main thread, and any thread whose name, target's module
+        # or Timer function's module starts with pytest_timeout, which covers the plugin's timer),
+        # then fails that test's teardown naming each thread still running, with its stack, and
+        # the controller prints that error like any test report
+        # (tests/test_session_end_thread_guard.py). A serial cell prints the same error, so one
+        # that then hangs at exit names the thread in its log. Two kinds of named thread let the
+        # process exit and fail the guard all the same: an idle concurrent.futures worker, which the
+        # interpreter wakes at exit, and a thread stopped only after the check (a config cleanup,
+        # pytest_sessionfinish or pytest_unconfigure).
         run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }} --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
