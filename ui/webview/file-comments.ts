@@ -202,7 +202,6 @@ export const DECISION_IN_FLIGHT = "A change in this file is being accepted or re
  *  the last content paint (notInView; Panel.#cardState's doc). Each control needs the text that paint showed. */
 export const NOT_IN_VIEW_LINK = "This change is not in view right now. Its link works once it is.";
 export const NOT_IN_VIEW_COMMENT = "This change is not in view right now. Comment on this change works once it is.";
-const NOT_IN_VIEW_TEXTS = new Set([NOT_IN_VIEW_LINK, NOT_IN_VIEW_COMMENT]);
 /** The decide-in-editor words for this device, read at each use rather than once: the primary pointer can change (a tablet
  *  docks to a keyboard and trackpad), and a row set under one is retired by text under the other (DECIDE_TEXTS). */
 function decideInEditor(): string { return isCoarsePointer() ? DECIDE_IN_EDITOR_TOUCH : DECIDE_IN_EDITOR; }
@@ -242,7 +241,7 @@ function warningOf(r: unknown): string {
 // the sidecar the records came from and the retry stands down when the records changed, and the editor cannot take the
 // new list (its handle is read-only), so the row names what is left — copy, Cancel, Edit again. One row per edit
 // (changesMovedUnderEdit latches it, so a dismissed row does not return with every later status); retired when the edit
-// ends (paintAll).
+// ends (paintPass).
 export const CHANGES_MOVED_UNDER_EDIT = "Pending changes in this file were accepted or rejected after you opened the editor, which still shows them as pending. "
   + "Save will refuse; copy anything you typed, then Cancel and Edit again.";
 // The head's row when a status shows pending changes the editor does not carry and the file did not move: Edit was clicked
@@ -252,7 +251,7 @@ export const CHANGES_MOVED_UNDER_EDIT = "Pending changes in this file were accep
 // drop every change with no decision logged, and the trace would call it a plain edit. So Save refuses on the same condition
 // (saveThroughComments), whether or not the panel is open, and the row says what is left, as CHANGES_MOVED_UNDER_EDIT does:
 // copy, Cancel, Edit again — the second Edit carries the changes in. One row per edit (changesUnreadUnderEdit); retired
-// when the edit ends (paintAll). Edit is not refused while the status is out: the ask has no bound a plain file should
+// when the edit ends (paintPass). Edit is not refused while the status is out: the ask has no bound a plain file should
 // wait on (STATUS_DEADLINE_MS on a kernel from before this feature), and a plain file's Edit works as it always did.
 export const CHANGES_UNREAD_UNDER_EDIT = "This file has pending changes that were read only after you opened the editor, so it does not show them. "
   + "Save will refuse; copy anything you typed, then Cancel and Edit again.";
@@ -589,6 +588,12 @@ function el(tag: string, cls?: string, text?: string): HTMLElement {
   if (text !== undefined) e.textContent = text;
   return e;
 }
+/** The panel's live region (the Panel's `live`): one polite status element, visually hidden by .fc-live. */
+function liveRegion(): HTMLElement {
+  const r = el("div", "fc-live");
+  r.setAttribute("role", "status"); r.setAttribute("aria-live", "polite");
+  return r;
+}
 function btn(label: string, act: string, cls = "fileview-btn"): HTMLButtonElement {
   const b = el("button", cls, label) as HTMLButtonElement;
   b.type = "button";
@@ -743,7 +748,7 @@ const EMBED_ELSEWHERE = "The file changed where you drew this region, and the li
 /** Save's refusal rows for an `elsewhere` pair: the note stays, and the person selects or draws again. */
 const PASSAGE_ELSEWHERE_SAVE = "Nothing saved: the file changed where you selected this passage, and its text now occurs only elsewhere in the file. Select the passage again.";
 const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew this region, and the line embedding this figure now occurs only elsewhere in the file. Draw the region again.";
-/** One anchor's identity for the pass's sequential hint (paintAll, nextCopyHint): the quote with its prefix and suffix, the
+/** One anchor's identity for the pass's sequential hint (paintPass, nextCopyHint): the quote with its prefix and suffix, the
  *  three the host compares when it asks whether two comments share a passage; two anchors alike in all three tie at the same
  *  copies, whatever the copies' positions. */
 type PassageAnchor = NonNullable<Card["anchor"]>;
@@ -751,15 +756,15 @@ const anchorKey = (a: PassageAnchor): string => JSON.stringify([a.quote, a.prefi
 /** A card as the panel holds it (cards): the model's Card and, for a passage comment the host's tie-break CONFIRMED a copy
  *  for, that copy's offset in the view's coordinates (`confirmedAt`, placedAt's answer for the status showing; absent
  *  without a confirmed verdict). It rides on the card because the paint takes it as the hint over the stored position
- *  (paintAll) and the words for a guessed copy, handed the card alone, must say which hint the pick was nearest to
+ *  (paintPass) and the words for a guessed copy, handed the card alone, must say which hint the pick was nearest to
  *  (copyUnsureWords, unsureMarkTitle): before it they described the copy nearest the stored position while the paint had
  *  taken the copy nearest the confirmed place, a different copy when the view's text had moved past the status (the
  *  review, 2026-09-11). `hintedCopy` is the paint's third hint, the sequential one: the card had no confirmed copy and no
  *  stored position, and its anchor an earlier card of the pass shared, so the copy painted is the one after that card's
- *  (paintAll, nextCopyHint; Panel.hintedCopies) and the same words name that copy rather than the first (the Slice 5
+ *  (paintPass, nextCopyHint; Panel.hintedCopies) and the same words name that copy rather than the first (the Slice 5
  *  review, round 1: a hinted card's words named the first copy while its highlight sat on the second). It is a fact of
  *  the paint pass, not of the status, so cards(), a pure function of the status, never stamps it: renderCard stamps it
- *  on the card it hands the words, beside `shown`, and paintAll on the card it titles the mark for. */
+ *  on the card it hands the words, beside `shown`, and paintPass on the card it titles the mark for. */
 type PanelCard = Card & { confirmedAt?: number; hintedCopy?: boolean };
 /** What the render a card's words are for shows of it, stamped by renderCard on the card it hands copyUnsureWords
  *  (WordedCard): whether the editor holds the body, for a region whether this view shows its picture (regionImageFor),
@@ -810,7 +815,7 @@ const PASSAGE_CONFIRM_AFTER_EDIT = "To confirm the copy, leave edit mode, then r
  *  the read view's four states (copyUnsureWords) each name the place the painted copy is the nearest to, or the copy it is. */
 const UNSURE_IN_EDITOR = "This passage occurs in the file more than once with the same surroundings, and as the file is now the copy this comment is on can only be guessed. ";
 /** The card's words for a highlight on a copy the panel cannot vouch for (copyUnsure): the tag's title, and a line on the
- *  open card, since a tag's title never reaches touch. Four states, by the hint the paint took (paintAll): the host's
+ *  open card, since a tag's title never reaches touch. Four states, by the hint the paint took (paintPass): the host's
  *  confirmed place, when the view's text has moved past it (`confirmedAt`: the poll's reload paints before the fresh
  *  status lands, and a refused refresh keeps the old one), the copy nearest THAT place; else no stored position and the
  *  sequential hint (`hintedCopy`: an earlier card of the pass shares the anchor, plans/markdown-viewer.md Slice 5, item 7),
@@ -1322,7 +1327,7 @@ class Panel {
    *  paints again in the line boxes the target enters and leaves). */
   passMarks: Element[] = [];
   /** The pass's change marks by change id (paintChanges under the deferred trim), read once the pass has trimmed: a change whose
-   *  every mark the trim removed is filed as not shown (paintAll), as the unbatched paint would have filed it. */
+   *  every mark the trim removed is filed as not shown (paintPass), as the unbatched paint would have filed it. */
   passChanges: Array<{ id: string; marks: Element[] }> = [];
   open = false;
   pending = new Map<number, Pending>();
@@ -1355,7 +1360,7 @@ class Panel {
    *  subject's rect now against it; cleared with the float (hideFloat), so no element of a swapped-out render is held. */
   floatAt: { top: number; right: number; img: HTMLElement | null } | null = null;
   /** The selection the float answers to: the one it was last offered beside (onSelection), as the panel's own writes over the
-   *  body's text have since left it (afterPaint: the end of paintAll and repaintPresel); its text and its two ends. The document's
+   *  body's text have since left it (afterPaint: the end of paintPass and repaintPresel); its text and its two ends. The document's
    *  selectionchange re-offers for a DIFFERENT selection only (onSelectionChange), so the seam's re-seat of the same selection after
    *  a reflow makes no second offer, an offer a scroll hid stays hidden until the selection changes, and the paint's own move of the
    *  selection is no offer either: unwrapping a mark collapses a selection end inside its text to the mark's place, so a selection
@@ -1382,8 +1387,8 @@ class Panel {
    *  (the constructor): a change before that had its event before the panel heard, and one whose event is still to come at the install
    *  is heard. Cleared at dispose. */
   lastDelivered: EndsNote = null;
-  /** The selection as the last pass left it, by its ends (EndsNote): afterPaint's read after the writes, at the end of paintAll, at
-   *  repaintPresel and at the editor's stand-down (paintAll's first line). paintAll's no-content-root return (a media body: the overlay is
+  /** The selection as the last pass left it, by its ends (EndsNote): afterPaint's read after the writes, at the end of paintPass, at
+   *  repaintPresel and at the editor's stand-down (paintPass's first line). paintPass's no-content-root return (a media body: the overlay is
    *  its only paint) reads the head and reaches no afterPaint, so the note stands from the last pass that wrote one, and that holds
    *  because its writes cannot move the selection there: the panel's marks live under the content root, so with none there is nothing
    *  for unpaintChanges and unpaint to unwrap, and the standing note is still the last move a pass made. A change to that road that
@@ -1401,7 +1406,7 @@ class Panel {
   passLeft: EndsNote = null;
   /** A selectionchange of the person's is on its way: the selection changed since the document's last selectionchange was delivered,
    *  by other hands than the last pass's, and the browser has posted the event and not yet delivered it (offeredFor's note on the gap).
-   *  A latch: raised at a pass's head (noteSelectionAtHead, before the writes of paintAll and repaintPreselPass) when the live selection
+   *  A latch: raised at a pass's head (noteSelectionAtHead, before the writes of paintPass and repaintPreselPass) when the live selection
    *  is at neither note the events write, the last delivered event's (lastDelivered) nor the last pass's own (passLeft); read by
    *  afterPaint at the pass's end, which then drops the record instead of reading it from a selection that holds their change and
    *  leaves the float to that event; and lowered by the event itself (onSelectionChange's first lines), never by a pass and not by the
@@ -1417,7 +1422,7 @@ class Panel {
    *  assistive-technology selection recorded it as its own and the person's event offered nothing. The notes are read from the live
    *  selection at the deciding moments and never from the record, so none of the three holds: onSelectionChange notes the selection
    *  every delivered event finds (lastDelivered, seeded at the listener's install from the selection standing then), and afterPaint
-   *  notes what the pass leaves at the end of paintAll, at repaintPresel and at the editor's stand-down (passLeft, which names the one
+   *  notes what the pass leaves at the end of paintPass, at repaintPresel and at the editor's stand-down (passLeft, which names the one
    *  return that notes nothing and why), so a live selection at neither is one some other hand moved since the listener last heard,
    *  whose event is posted and not delivered; a pass's own move is at passLeft, its event pending or, for the lone-child
    *  collapse, never coming, a note the delivered event retires (passLeft: kept past it, the note read a return of the person's to
@@ -1442,7 +1447,7 @@ class Panel {
    *  own event or the person's re-assert by no sign, the ends unchanged and the assistive road posting no key; bringing the record up
    *  to the selection at the press's end would make both roads refuse and reds case 9, and a raise over a note delivered but not acted
    *  on would let a quiet pass drop the record and its own event offer with no gesture, the first version's road. So the pass decides
-   *  there, as it did before this latch. A pass the editor's stand-down ends (paintAll's first line) reads none of it: the editor's
+   *  there, as it did before this latch. A pass the editor's stand-down ends (paintPass's first line) reads none of it: the editor's
    *  selections are edits, as the listener has them. */
   pendingChange = false;
   /** Read the selection at the head of a pass, before its writes, into pendingChange: raised when the live selection is at neither
@@ -1666,15 +1671,16 @@ class Panel {
    *  tied copies, so the copy painted is the engine's guess. Rebuilt with `located` each paint. */
   unsureCopies = new Set<string>();
   /** The comments among them whose copy is the sequential hint's, the one after the previous comment's on the same passage
-   *  (paintAll, nextCopyHint), so the card's and the mark's words name that copy and not the first (copyUnsureWords,
-   *  unsureMarkTitle, by PanelCard.hintedCopy: renderCard stamps it from this set, paintAll from the pass's own flag). */
+   *  (paintPass, nextCopyHint), so the card's and the mark's words name that copy and not the first (copyUnsureWords,
+   *  unsureMarkTitle, by PanelCard.hintedCopy: renderCard stamps it from this set, paintPass from the pass's own flag). */
   hintedCopies = new Set<string>();
   base: PollBaseline | null = null;
   // editing over pending changes (Slice 5): what the editor's records came from — the status at Edit, or the last landed
   // save's reply once the editor stayed up past it — as the records and the sidecar/config fence the save fences on (a
   // change a session records mid-edit moves the sidecar, and a fence from the poll's later status would let the save write
   // over it); null when nothing rode in (EditSeed). `lastSaveNs` is the fileMtimeNs of a save reply this panel applied as
-  // its status itself, so onSaved skips the re-read it does for saveFile.
+  // its status itself, so onSaved skips the re-read it does for saveFile; that onSaved clears it, and while an editor is up it
+  // is an event of the card-state rule (#cardState's doc, event 1).
   editSeed: EditSeed | null = null;
   lastSaveNs: string | null = null;
   // Which editor: begin() counts one per Edit, and saveThroughComments captures the count at the send, so a reply that finds
@@ -1684,14 +1690,14 @@ class Panel {
   // decisions this panel sent whose reply has not landed (holdEdit): while any is out, the viewer refuses Edit
   decisionsOut = 0;
   // the file's bytes moved under an edit (noteMovedUnderEdit) and the view has not re-read them yet: the first paint after
-  // the edit ends re-reads (paintAll). A latch of its own, not the head row's presence: the row's ✕ dismisses the words,
+  // the edit ends re-reads (paintPass). A latch of its own, not the head row's presence: the row's ✕ dismisses the words,
   // and the re-read must still happen, or Cancel would leave the pre-rewrite bytes showing for good (the poll's baseline
   // already moved on to the new mtime when the status landed, so no later tick would notice). The same latch keeps the row
   // to once per edit: every later status reads later than the editor's frozen mtime, and a dismissed row must not return
   // with each of them (the shape the two latches below have)
   movedUnderEdit = false;
   // the sidecar's pending changes stopped being the editor's (noteChangesMovedUnderEdit): the row was set once for this
-  // edit; a later status re-sets nothing, and the edit's end clears both (paintAll)
+  // edit; a later status re-sets nothing, and the edit's end clears both (paintPass)
   changesMovedUnderEdit = false;
   // the sidecar shows pending changes the editor never carried (noteChangesUnreadUnderEdit): the same latch shape
   changesUnreadUnderEdit = false;
@@ -1700,21 +1706,15 @@ class Panel {
   // it nothing. text() answers the BUFFER then, which typing moves under the offsets: grouping the cards over it retitled
   // them with every keystroke's render (indexedText). Read only while the editor is up; a pass over the read view nulls it.
   editText: string | null = null;
-  // the fileMtimeNs of the last save through this panel whose content editText took, for the editor that sent it
-  // (saveThroughComments, `mine`). The viewer runs that save's onSaved right after the reply resolves, and one mtime names one
-  // save, so the ack of a save finds its own mtime here only when editText took its content; with the editor up, those are
-  // the bytes the cards read, and onSaved takes them as a content paint (#cardState's doc, event 1).
-  editTextSave: string | null = null;
   decideRows = new Set<string>();           // the slots whose row says to decide in the editor (refuseDecision): retired when the edit ends
-  viewRows = new Set<string>();             // the slots whose row says the change is not in view (notInView): shown only under the card, retired at the next content paint (#latchCardState) or at a status that drops or detaches the change (retireViewRows)
   stopped = new Set<string>();              // poll targets a 413/415 retired
   timer: ReturnType<typeof setInterval> | null = null;
   polling = false;
   tickSkipped = false;
   // the reload the panel asked for (syncBytes: a status whose file mtime is not the view's) is out: the body shows
   // the bytes from before, with no marks over them, until the fetch lands. The wait wears the loader at the head of
-  // the cards (the "bytes" busy slot, ui/CLAUDE.md), ending on the paint that shows the status's text (paintAll →
-  // bytesLanded) or on the paint that shows a failure pane in place of the file (the seam's error(), read at the head
+  // the cards (the "bytes" busy slot, ui/CLAUDE.md), ending on the paint that shows the status's text (#latchCardState →
+  // paintPass → bytesLanded) or on the paint that shows a failure pane in place of the file (the seam's error(), read at the head
   // of the pass, paintAll → bytesFailed: the fetch refused or failed, and the row carries the seam's words with Reload).
   // Since Slice 7 of plans/markdown-viewer.md the viewer fires onRendered for that pane too; before, it fired nothing
   // for a failed fetch and the loader stood until the deadline. The deadline stays for a kernel from before this
@@ -1729,7 +1729,7 @@ class Panel {
   failedRow: { words: string; mtimeNs: string } | null = null;
   // a re-fetch of the panel's asking is out (reloadView: the row's Reload, syncBytes's askReload, the re-read after an edit over
   // moved bytes) and the viewer has not painted since: its answer, the landing or the failure pane, is the paint that ends it (the
-  // onRendered hook, `why` other than "reflow"). Read at the head of paintAll: a failure pane STANDING while such a fetch is out is
+  // onRendered hook, `why` other than "reflow"). Read at the head of paintPass: a failure pane STANDING while such a fetch is out is
   // the failure before the ask, not the fetch's answer, so the wait keeps its loader and its deadline and the fetch's own paint
   // settles it (the review of Slice 7, round 4: the row's Reload over a standing pane re-filed the row off that pane as soon as
   // the status ask landed, the fetch still out, and cleared the deadline with it)
@@ -1741,15 +1741,17 @@ class Panel {
    *  only at three events and held between them:
    *  1. a content paint: the seam's onRendered with error() null; at the mount, a view already showing the file, whose
    *     content paint came before the panel could hear it (the viewer mounts its actions before its first fetch, so only a
-   *     stand-in seam reaches this); and the seam's onSaved when the saved bytes are the text the cards read: the editor is
-   *     up, the save went through this panel, which gave editText that save's content for the editor that sent it
-   *     (editTextSave names the save), and mtimeNs() answers the saved bytes' mtime, where the viewer moves it for that
-   *     editor, which holds those bytes from then as the file it loaded, with no paint while it stays up (rows
-   *     text-save-typed, text-save-decided and text-save-undone). Any other onSaved is no event: a save through saveFile
-   *     gives editText nothing, so the cards read what they read before it (row text-savefile-typed); and a save whose
-   *     editor is gone by its ack, or was followed by another editor's begin(), leaves the cards to the read view or to that
-   *     editor (file-view-seam.test.ts runs the saveFile road and a late ack over a pane over the real viewer; the seam's
-   *     onSaved doc in file-view.ts says what each route's ack does). For a picture the
+   *     stand-in seam reaches this); and the seam's onSaved at the ack of a save through this panel while an editor is up
+   *     (lastSaveNs holds the save's mtime until that ack). For the editor that sent the save, that is a content paint of the
+   *     saved bytes: the panel gave editText that save's content, and the viewer moves mtimeNs() to the saved bytes' mtime and
+   *     that editor holds them from then as the file it loaded, with no paint while it stays up (rows text-save-typed,
+   *     text-save-decided and text-save-undone). Under a later editor (the one that sent the save gone by its ack, and Edit
+   *     taken again) it changes nothing a card reads: the cards read that editor's text (indexedText), and the exit's repaint
+   *     takes the state again (file-view-seam.test.ts runs that ack over the old bytes and over the saved bytes over the real
+   *     viewer). Any other onSaved is no event: a save through saveFile gives editText nothing, so the cards read what they
+   *     read before it (row text-savefile-typed); and a save through this panel whose ack finds no editor up leaves the cards
+   *     to the read view (file-view-seam.test.ts runs the saveFile road and a late ack over a pane over the real viewer; the
+   *     seam's onSaved doc in file-view.ts says what each route's ack does). For a picture the
    *     content paint is its load, the only paint that shows its bytes; for the Source view, its decode's paint. A failure
    *     pane is no content paint. At a content paint the status is read against that paint's mtime: `current` when the
    *     status's file mtime is that paint's (textCurrent, where an empty mtime on either side reads as the same). The body
@@ -1788,8 +1790,12 @@ class Panel {
    *  last content paint, a card keeps the link and a spanned change's Comment on this change as the rule's last event left
    *  them, until the next event (a status that differs takes them away then, as in the row text-status-over-pane), and a
    *  click on either answers that the change is not in view (notInView).
-   *  #latchCardState is the one writer, and the functions of the events above are its only callers;
-   *  file-comments-changes-review2.test.ts pins both by parsing this file, and runs the roads below row by row. Each row names a
+   *  #latchCardState is the one writer, and the functions of the events above are its only callers; a refile through paintAll
+   *  or repaintPresel writes the cards' filing (event 1), so the callers of those two are named as well: every call whose callee
+   *  is either name or a property access ending in it is counted, and every other mention of either name in the code (a bound
+   *  reference, an alias, a string literal spelled as the name) is listed and held empty; a name computed at run time (this[k])
+   *  is not read.
+   *  file-comments-changes-review2.test.ts pins all three by parsing this file, and runs the roads below row by row. Each row names a
    *  road, the steps at which the change cards moved with the code before this rule (fe43d2c2a) and with it (head), why each
    *  move the code before made that the rule drops carried no new information (Dropped), and the event that brings each move
    *  the rule adds (Added). A road's seam events are the viewer's as it is now (the press gate, the Source view's decode and
@@ -1860,6 +1866,11 @@ class Panel {
    *     ack's mtime read while the cards read the text the editor loaded, which the status's offsets index. At the saved status
    *     both move: fe43d2c2a gave it back, reading that status against the moved mtime while the cards still read the loaded
    *     text, from which its composer cut the saved bytes' offsets; the head takes it off there (event 2).
+   *  text-late-ack-over-pane (the editor taken up, a save through the panel, Cancel while it was out, a reload landing the saved
+   *     bytes, a second reload failing to a pane, then the save's reply, the viewer's re-read of the saved bytes failing to a pane
+   *     again, then a render): fe43d2c2a edit, cancel, land, ack; head edit, cancel, land. Dropped: at the ack, a not shown tag,
+   *     Comment on this change and a Reveal naming a line on every card, read off the saved bytes' mtime while the pane shows
+   *     none of those bytes; the ack's status differs and arrives over a pane, so it reads as not current (event 2).
    *  svg-landing-then-paint (an svg's picture, a status for newer bytes, their landing, then the picture's load): fe43d2c2a
    *     status, paint; head status, paint.
    *  svg-first-open (an svg's first open, its status in first: the landing, then the picture's load): fe43d2c2a none; head
@@ -2098,6 +2109,11 @@ class Panel {
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
   // loses focus, so a poll-triggered re-render would drop the input's focus mid-word
   sections = { head: el("div", "fc-sec-head"), cards: el("div", "fc-sec-cards"), send: el("div", "fc-sec-send"), log: el("div", "fc-sec-log") };
+  // the panel's one live region, which notInView speaks through (the row under the card is rebuilt at every render and carries
+  // no role, so nothing announces it): role status, polite, visually hidden (.fc-live, the settings sheet's .rs-live rule), since
+  // the row already shows the words. Made here once and put in the root with the sections (render), never rebuilt.
+  live = liveRegion();
+  liveFrame: number | null = null;          // the frame that writes the words (speak), until it runs, or the next click's speak or a retired row drops it (hush)
   // persistent composer parts, for the same reason
   composerBox = el("div", "fc-composer");   // in the panel's slot, or inside the card a reply answers (placeComposer)
   composerRef = el("div", "fc-composer-ref");
@@ -2268,10 +2284,9 @@ class Panel {
     if (ctx.onLanded) ctx.onLanded(() => { if (this.status && this.textCurrent(this.status)) { this.bytesLanded(); this.render(); } });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
-      // ...and the saved bytes are the text the cards read: this panel's own save, whose content editText took for the editor
-      // still up (editTextSave), with mtimeNs() moved to them (the seam's onSaved doc), the card-state rule's event 1
-      // (#cardState's doc)
-      if (ctx.editing() && this.editTextSave === info.mtimeNs && ctx.mtimeNs() === info.mtimeNs) this.#latchCardState("paint");
+      // ...and the ack of a save through this panel while an editor is up: the card-state rule's event 1 (#cardState's doc says
+      // what it is to the cards)
+      if (ctx.editing() && this.lastSaveNs === info.mtimeNs) this.#latchCardState("paint");
       if (this.lastSaveNs === info.mtimeNs) { this.lastSaveNs = null; return; }   // a save through this panel: its reply IS the status (Slice 5)
       if (this.status) void this.refresh();            // the Log gained the edit entry before the reply
     });
@@ -2355,9 +2370,10 @@ class Panel {
         fclog: () => { this.logOpen = !this.logOpen; this.render(); },
         fclogrow: (x) => { const k = x.dataset.key!; if (this.openLog.has(k)) this.openLog.delete(k); else this.openLog.add(k); this.render(); },
         // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh); the fetch is the panel's
-        // own (reloadView), so a status landing first over a standing pane leaves the wait to the fetch's paint (paintAll's head)
+        // own (reloadView), so a status landing first over a standing pane leaves the wait to the fetch's paint (the head of its
+        // pass, paintPass)
         fcreload: (x) => { const slot = x.dataset.slot || "head"; if (slot === "composer") this.ownRefusal = null; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.reloadView(); },
-        fcerrx: (x) => { const slot = x.dataset.slot || ""; if (slot === "composer") this.ownRefusal = null; this.errors.delete(slot); this.render(); },   // the composer's row may be a restored comment's own (ownRefusal)
+        fcerrx: (x) => { const slot = x.dataset.slot || ""; if (slot === "composer") this.ownRefusal = null; if (slot.startsWith("view:")) this.hush(); this.errors.delete(slot); this.render(); },   // the composer's row may be a restored comment's own (ownRefusal); a not-in-view row's words leave the live region with it (notInView)
         fchiddenx: () => { this.hiddenSaved = null; this.render(); },   // the line for a comment saved under Changes (hiddenSavedRow): read, dismissed
         fcheldback: (x) => this.bringBack(Number(x.dataset.held)),   // a refused comment's note under the open composer (heldRows): its composer, words and row back
         fcheldx: (x) => this.dropHeld(Number(x.dataset.held)),       // …or the note dismissed, the words with it
@@ -2613,15 +2629,13 @@ class Panel {
   }
   /** The rows notInView put up whose change can no longer have a link or Comment on this change after the status just applied:
    *  one the status no longer lists (decided in another client, say) or lists detached (its card offers neither, now or
-   *  later). Each goes at that status, so no row stays saying a change is not in view when its words cannot come true. A card
-   *  the filter or the fold hides keeps its row, hidden with it (strayRows). */
+   *  later). Each goes at that status, so no row stays saying a change is not in view when its words cannot come true, and the
+   *  live region is emptied with it (hush). A card the filter or the fold hides keeps its row, hidden with it (notInView). */
   private retireViewRows(): void {
-    const held = new Set(this.changeView().cards.filter((x) => !x.detached).map((x) => "change:" + x.id));
-    for (const slot of this.viewRows) {
-      if (held.has(slot)) continue;
-      if (NOT_IN_VIEW_TEXTS.has(this.errors.get(slot)?.text ?? "")) this.errors.delete(slot);
-      this.viewRows.delete(slot);
-    }
+    const held = new Set(this.changeView().cards.filter((x) => !x.detached).map((x) => "view:" + x.id));
+    let gone = false;
+    for (const slot of [...this.errors.keys()]) if (slot.startsWith("view:") && !held.has(slot)) { this.errors.delete(slot); gone = true; }
+    if (gone) this.hush();
   }
   /** The composer's about ids against the status just applied (About's comment): an id the status holds no pending or
    *  detached change for — the two the host accepts (`no-change` otherwise) — leaves the list. The ids were fixed as the
@@ -2665,7 +2679,7 @@ class Panel {
    *  never sees a move a status already reported. A view with no text yet (its first fetch out) is left alone, and so
    *  is a view whose body the editor holds (Slice 5): its buffer is the text and the viewer's reload() stands down, so
    *  a fetch asked here would never start and the loader it armed could only run out; the head says the bytes moved
-   *  instead (noteMovedUnderEdit, at each status's call site), and the edit's end re-reads them (paintAll). */
+   *  instead (noteMovedUnderEdit, at each status's call site), and the edit's end re-reads them (paintPass). */
   private syncBytes(s: Status): void {
     if (this.ctx.editing()) return;
     const vm = this.ctx.mtimeNs();
@@ -2681,7 +2695,7 @@ class Panel {
     this.reloadView();
   }
   /** Every re-fetch this panel asks of the viewer goes through here (askReload; the row's Reload, fcreload; the re-read after an
-   *  edit over moved bytes, paintAll): `reloadOut` records that a fetch of the panel's asking is out, set BEFORE the ask (a stand-in's
+   *  edit over moved bytes, paintPass): `reloadOut` records that a fetch of the panel's asking is out, set BEFORE the ask (a stand-in's
    *  reload lands synchronously, and its paint clears the record inside the call), and the viewer's next paint clears it (the
    *  onRendered hook, `why` other than "reflow"), whichever fetch's answer that paint is: a newer fetch overtakes an older one, which
    *  then never paints (file-view.ts fetchFile, `my !== fetchSeq`); a Raw or Rendered click's repaint of the earlier text clears it
@@ -2739,10 +2753,11 @@ class Panel {
   openPanel(): void {
     if (this.open) return;
     this.open = true;
-    // the open runs a pass of its own (refresh, then applyStatus's paintAll), which records the selection standing as any pass does
-    // (afterPaint), so a selection made while the panel was closed, which the listener refused then (onSelection), is recorded by that
-    // pass and its own event is no offer; the record and the pending latch need no fresh start here (pendingChange: the latch is the
-    // events' alone, raised at a pass's head and lowered by the delivered selectionchange)
+    // the open runs a pass of its own (refresh, then applyStatus's pass: paintAll for the status showing, #latchCardState for one
+    // that differs), which records the selection standing as any pass does (afterPaint), so a selection made while the panel was
+    // closed, which the listener refused then (onSelection), is recorded by that pass and its own event is no offer; the record
+    // and the pending latch need no fresh start here (pendingChange: the latch is the events' alone, raised at a pass's head and
+    // lowered by the delivered selectionchange)
     if (!this.root) {
       this.root = el("div", "fc-panel");
       // the list layout's scroll (the viewer makes this root the aside, .fileview-aside, whose box scrolls the cards): the
@@ -2967,7 +2982,7 @@ class Panel {
         // A figure that moved re-fetches the view too, so the new picture shows — unconditionally: the file's own mtime
         // is unchanged, so no status will ask for it (syncBytes keys on the file's mtime alone). Never over an editor's
         // buffer (Slice 5): the viewer's reload() stands down then, so nothing is asked and `reloadFor` is left as it was;
-        // the head says the bytes moved instead (noteMovedUnderEdit, below), and the edit's end re-reads them (paintAll)
+        // the head says the bytes moved instead (noteMovedUnderEdit, below), and the edit's end re-reads them (paintPass)
         if (!this.ctx.editing()) {
           if (fileNow !== null) this.askReload(fileNow);
           else if (figureMoved) this.askReload(null);
@@ -3103,16 +3118,36 @@ class Panel {
   /** A click on a change card's link, or on a spanned change's Comment on this change, while the body does not show the last
    *  content paint (#cardState's doc): the row under the card says the change is not in view (NOT_IN_VIEW_LINK,
    *  NOT_IN_VIEW_COMMENT), as refuseDecision answers a decision, and nothing else happens (no scroll, no switch of view, no
-   *  composer, no request). The delegate's flash has acknowledged the click. The row shows only under its card, never as a
-   *  stray row (strayRows skips it): while the filter or the fold hides the card the row is hidden with it, and it comes back
-   *  with the card unless something has retired it. The next content paint retires it (#latchCardState); so does a status
-   *  after which the change can no longer have a link or Comment on this change, one that drops it or detaches it
-   *  (retireViewRows); and the row's ✕ clears it before either. */
+   *  composer, no request). The delegate's flash has acknowledged the click, and the words go to the live region (speak): it is
+   *  emptied at the click and given the words on the next animation frame, the technique used so screen readers announce
+   *  repeated text; the announcement itself was not measured with a screen reader. The row has its own slot, "view:" and the
+   *  change's id, beside the slot a decision's row uses ("change:"), so it never replaces a refusal standing under the card,
+   *  and both show (renderChangeCard). It shows only under its card, never as a stray row (strayRows lists the decision slots
+   *  only): while the filter or the fold hides the card the row is hidden with it, and it comes back with the card unless
+   *  something has retired it. The next content paint retires it (#latchCardState); so does a status after which the change
+   *  can no longer have a link or Comment on this change, one that drops it or detaches it (retireViewRows); and the row's ✕
+   *  clears it before either. Each of the three empties the live region too (hush). */
   private notInView(c: ChangeCard, what: "link" | "comment"): void {
-    const slot = "change:" + c.id;
-    this.errors.set(slot, { text: what === "link" ? NOT_IN_VIEW_LINK : NOT_IN_VIEW_COMMENT, reload: false });
-    this.viewRows.add(slot);
+    const words = what === "link" ? NOT_IN_VIEW_LINK : NOT_IN_VIEW_COMMENT;
+    this.errors.set("view:" + c.id, { text: words, reload: false });
+    this.speak(words);
     this.render();
+  }
+  /** notInView's words into the live region: the region emptied at once, and the words written on the next animation frame (an
+   *  event, not a timer), so a second press with the same words still gives the region new text. That is the technique used so
+   *  screen readers announce repeated text; the sequence is what is pinned, and the announcement itself was not measured with a
+   *  screen reader. With no frame to wait for (no requestAnimationFrame), the words are written at once. */
+  private speak(words: string): void {
+    this.hush();
+    if (typeof requestAnimationFrame !== "function") { this.live.textContent = words; return; }
+    this.liveFrame = requestAnimationFrame(() => { this.liveFrame = null; this.live.textContent = words; });
+  }
+  /** The live region emptied, and words still waiting for their frame dropped: speak's first step, and a not-in-view row retired
+   *  (the content paint, retireViewRows, the row's ✕). */
+  private hush(): void {
+    if (this.liveFrame !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this.liveFrame);
+    this.liveFrame = null;
+    this.live.textContent = "";
   }
   /** A card's link (fcgoto): goTo, except that a change card's link while the body does not show the last content paint
    *  (#cardState's doc) does nothing but say so (notInView). */
@@ -3143,7 +3178,7 @@ class Panel {
         // begin() runs at the click, before the viewer flips into edit mode (editing() still answers false here), so this
         // render leaves the cards in read mode; the viewer fires the seam's onRendered once as the editor takes the body
         // (enterEdit), and that paint gives the cards their edit-mode state: decisions answered in place, no Reveal or link
-        // into a read view that is gone (paintAll's editing branch renders the cards and paints nothing).
+        // into a read view that is gone (paintPass's editing branch paints nothing, and its caller renders the cards).
         // A new edit, new latches (the records are the sidecar's own again, or none rode in); the Reject-all confirm is
         // a question the person walked away from by clicking Edit — left set, it came back re-counted when the editor
         // closed, one click from rewriting the file with no gesture behind it; and the cards group over the text the
@@ -3223,20 +3258,19 @@ class Panel {
         // Reload, and its exit re-reads the saved bytes (SAVE_LANDED_UNDER_NEW_EDITOR) — so the panel raises no row of its
         // own here, and does not latch a second exit re-read (the moved-file latch would: one message, one read). No editor
         // at all (the edit ended, no new Edit) counts as the same editor: the first paint after the edit clears the fields
-        // (paintAll).
+        // (paintPass).
         const mine = gen === this.editGen;
         if (mine) {
           // the reply's sidecar is the one the editor's records now came from (the host wrote them back and read them again):
           // the next Save, should the editor stay up, is fenced on it, and noteChangesMovedUnderEdit compares against it —
-          // nothing pending, no seed, as at begin(); the first paint after the edit ends clears it either way (paintAll)
+          // nothing pending, no seed, as at begin(); the first paint after the edit ends clears it either way (paintPass)
           this.editSeed = seedOf(r);
           this.changesMovedUnderEdit = false;          // a new seed, a new latch (a latched row would have refused this save)
           this.changesUnreadUnderEdit = false;
           this.editText = content;                     // the reply's offsets index the text this save wrote (indexedText)
-          this.editTextSave = r.fileMtimeNs;           // ...and it is this save's, which onSaved's latch keys on (#cardState's doc, event 1)
           this.retargetComposer();                     // a passage composer follows its passage into that text, as after a reload
         }
-        this.lastSaveNs = r.fileMtimeNs;
+        this.lastSaveNs = r.fileMtimeNs;              // this save's ack, which onSaved knows by it (the field's comment; #cardState's doc, event 1)
         // the bytes the reply describes are the viewer's business at a save's ack: an editor still up holds them as its
         // buffer, and a viewer whose editor is gone re-reads them itself (SAVE_LANDED_UNDER_NEW_EDITOR, the exit's re-read)
         // — so the reply's mtime is the one already asked for, and syncBytes asks no second fetch (askReload's rule)
@@ -3286,13 +3320,13 @@ class Panel {
   }
   /** The file's bytes moved under an edit (the poll saw it; a verb's reply read a later file): the viewer's reload() stands
    *  down in edit mode, so the head says so. Save will refuse on its file fence; the first paint after the edit ends
-   *  re-reads the bytes (paintAll, on the movedUnderEdit latch — the row's ✕ removes the words, not the re-read). Keyed
+   *  re-reads the bytes (paintPass, on the movedUnderEdit latch: the row's ✕ removes the words, not the re-read). Keyed
    *  on the clocks: the status read a later file than the one the editor loaded. Once per edit, as the sibling rows are
    *  (noteChangesMovedUnderEdit, noteChangesUnreadUnderEdit): the editor's mtime is frozen while it is up, so every later
    *  status keeps reading later than it — a comment's or a resolve's reply, a poll that saw only the sidecar move — and
    *  each would otherwise re-raise the row the person dismissed with its ✕ on nothing new about the file. A second
    *  rewrite changes none of the words either (Save refuses, Cancel shows the file as it is now), so the latch, not the
-   *  clock's value, decides; the edit's end resets it (paintAll). */
+   *  clock's value, decides; the edit's end resets it (paintPass). */
   private noteMovedUnderEdit(): void {
     if (this.movedUnderEdit) return;                   // said once per edit: the row is up or was dismissed, and the re-read is owed either way
     const s = this.status;
@@ -3302,10 +3336,11 @@ class Panel {
     this.render();
   }
   /** The sidecar's pending changes are no longer the ones that rode into the editor (a decision landed since Edit) and the
-   *  file did not move: the head says so (CHANGES_MOVED_UNDER_EDIT), once per edit, in the render the status gets
-   *  (applyStatus calls this before paintAll). Keyed on the records, not the sidecar's clock: a comment or reply moves the
-   *  clock and leaves the records, and Save's own retry covers that. A file that moved as well has MOVED_UNDER_EDIT for its
-   *  row (noteMovedUnderEdit), which says the same about Save and adds what Cancel shows; this one yields to it. */
+   *  file did not move: the head says so (CHANGES_MOVED_UNDER_EDIT), once per edit, in the render the status gets (applyStatus
+   *  calls this before its pass: #latchCardState, or paintAll for a status that does not differ). Keyed on the records, not the
+   *  sidecar's clock: a comment or reply moves the clock and leaves the records, and Save's own retry covers that. A file that
+   *  moved as well has MOVED_UNDER_EDIT for its row (noteMovedUnderEdit), which says the same about Save and adds what Cancel
+   *  shows; this one yields to it. */
   private noteChangesMovedUnderEdit(): void {
     const seed = this.editSeed; const s = this.status;
     if (!seed || !s || !this.ctx.editing() || this.changesMovedUnderEdit) return;
@@ -3354,7 +3389,8 @@ class Panel {
     this.bytesWait = setTimeout(() => this.bytesLate(), STATUS_DEADLINE_MS);
     this.render();
   }
-  /** The paint that shows the status's text (paintAll, from the seam's onRendered): the bytes are here, so a wait for them is
+  /** The paint that shows the status's text (paintPass at a content paint, which the seam's onRendered runs through
+   *  #latchCardState; and the seam's onLanded, when the status's mtime is the view's): the bytes are here, so a wait for them is
    *  over, and so is a "bytes" row that said they had not arrived (bytesLate) or could not be read (bytesFailed): the row was
    *  about a reload that had not landed, and this landing is the event that answers it. The order that first needed this (the
    *  Slice 7 consolidation pass's browser scene, file-view-failures-browser.test.ts): the row's own Reload sends the status ask
@@ -3362,7 +3398,8 @@ class Panel {
    *  pane (the head's clause, which since the review's round 4 stands down while the panel's fetch is out, reloadOut); then the
    *  fetch landed, and before this line the row stood over the new text until dismissed or the next wait. The clearing still
    *  answers a row filed with no fetch of the panel's out (a later status over the standing pane; the deadline's) when a landing
-   *  the panel did not ask (the disk bar's Reload) shows the status's text. No render of its own: paintAll renders at its end. */
+   *  the panel did not ask (the disk bar's Reload) shows the status's text. No render of its own: its callers render (the pass's
+   *  caller; onLanded's hook). */
   private bytesLanded(): void {
     if (this.bytesWait) { clearTimeout(this.bytesWait); this.bytesWait = null; this.busy.delete("bytes"); }
     this.errors.delete("bytes");
@@ -3400,7 +3437,7 @@ class Panel {
     this.failedRow = { words, mtimeNs: this.ctx.mtimeNs() };   // what the row was filed over: read against every later paint (syncFailedRow)
     this.render();
   }
-  /** The failure row (bytesFailed) against the paint that just ran: paintAll calls this on every pass, the editor's included,
+  /** The failure row (bytesFailed) against the paint that just ran: paintPass calls this on every pass, the editor's included,
    *  with the seam's error() at the paint. The row claims the reload failed and says what the body shows, and each clause is
    *  read off the seam at the paint, never carried over from the paint that filed it (the review of Slice 7, rounds 1 and 2):
    *  - no failure row stands (its ✕, a wait that took the slot, the deadline row in its place): the record goes with it;
@@ -4102,7 +4139,7 @@ class Panel {
     return "Your comment on this file";
   }
   /** After a comment is saved (not a reply): while the filter shows the changes alone, the fresh card and its mark are
-   *  hidden (renderCards, paintAll), and a save that shows nothing reads as a save that failed — the person may write the
+   *  hidden (renderCards, paintPass), and a save that shows nothing reads as a save that failed, and the person may write the
    *  comment again. The saved comment's id is kept (hiddenSaved) and the list says so where the card would be
    *  (hiddenSavedRow); the kept choice is not changed for it, as it is not for a reply's box (replyAway). The fresh
    *  comment is the one the list did not hold before the save — with several landed at once (another client's, a
@@ -4126,7 +4163,7 @@ class Panel {
    *  cards with the composer's box above the track, and the pass that follows the close (the track's observer) re-places
    *  them with the header as it is then, at the same places on screen — the focus set now is the one that pass lays on.
    *  `had`: the comment ids before the write (savedCommentId names the new one off the reply). A comment saved while the
-   *  filter shows the changes alone has no card in the list and no mark in the text (renderCards, paintAll): no focus and
+   *  filter shows the changes alone has no card in the list and no mark in the text (renderCards, paintPass): no focus and
    *  no line here — the line noteHiddenSave raises (hiddenSavedRow) says where the card is. The side is read once here and
    *  again at the end of every pass and at every scroll while the line stands (reflectLines), where the geometry is
    *  settled: the composer's close re-lays the cards — a reply's box leaves its card, which the pass measured with the box
@@ -4390,7 +4427,7 @@ class Panel {
     if (line && line.parentNode && this.sections.send.contains(line)) line.parentNode.insertBefore(el("div", "fc-note fc-sent", this.sentNote), line);
   }
   /** The marks in the body of every card the render marks new (newKeys) wear the attribute too: after each paint pass the
-   *  marks are fresh (paintAll unwraps and repaints them), and render runs after every pass. */
+   *  marks are fresh (paintPass unwraps and repaints them), and render runs after every pass. */
   private markNew(): void {
     for (const key of this.newKeys) {
       const [act, id] = key.startsWith("chg:") ? ["fcchange", key.slice(4)] : ["fcopen", key];
@@ -4473,7 +4510,7 @@ class Panel {
   }
   /** The cards of the OTHER comments whose highlights cover the mark `x` a click or Enter landed on, opened with it (plans/
    *  markdown-viewer.md Slice 5, item 6). Two comments over one passage nest their marks: the later paint wraps the text where it
-   *  stands, inside the earlier comment's mark (anchor-map.ts wrapNode; paintAll paints in cards() order and repaintPresel keeps
+   *  stands, inside the earlier comment's mark (anchor-map.ts wrapNode; paintPass paints in cards() order and repaintPresel keeps
    *  that order), and the Raw view nests the same way (paintRaw wraps the row's text in place). So the mark under the overlap is
    *  the innermost, the delegate resolves the control to it (actions.ts, closest("[data-act]")), and the outer comment's card
    *  could not be reached from that text. Every fcopen mark of ours above the clicked one (owns) is a covering comment: its card
@@ -4509,14 +4546,15 @@ class Panel {
   /** THE writer of the card-state rule (#cardState's doc states the rule, its events and its callers): the one assignment of
    *  #cardState, each call naming its event. The pass runs under the state it takes, the change marks the pass files are kept
    *  with that state, and the panel renders; `pass` false: the caller has painted and renders itself (the mount over a painted
-   *  view; a pass that filed the marks again, "refile"). A content paint also retires the rows notInView put up. */
+   *  view; a pass that filed the marks again, "refile"). A content paint also retires the rows notInView put up, their "view:"
+   *  slots, and empties the live region (hush). */
   #latchCardState(at: "paint" | "status" | "gesture" | "refile", pass = true): void {
     const was = this.#cardState, s = this.status;
     const over = this.#showsLastPaint();
     let next: Omit<CardState, "painted">;
     if (at === "paint") {
-      for (const slot of this.viewRows) if (NOT_IN_VIEW_TEXTS.has(this.errors.get(slot)?.text ?? "")) this.errors.delete(slot);
-      this.viewRows.clear();
+      for (const slot of [...this.errors.keys()]) if (slot.startsWith("view:")) this.errors.delete(slot);
+      this.hush();
       const mtime = this.ctx.mtimeNs(), mode = this.ctx.mode();
       next = { mtime, body: this.#replaced, text: this.ctx.text(), shows: this.indexedText() !== null && mode !== "media", marks: this.marksOn(), current: !!s && this.textCurrent(s, mtime) };
     } else if (at === "status") {
@@ -4707,7 +4745,7 @@ class Panel {
     if (held) this.refocusMark(held);
     this.afterPaint();
   }
-  /** After the panel's own writes over the body's text (the end of paintAll, of repaintPresel, and paintAll's stand-down while the
+  /** After the panel's own writes over the body's text (the end of paintPass, of repaintPresel, and paintPass's stand-down while the
    *  editor holds the body), for a selection the float has answered (pendingChange false: the person's own change, its event still to
    *  come, leaves the record dropped and the float to that event instead, the first clause and the docblock's tail): the selection the float answers to is the
    *  selection as the writes left it (offeredFor, read by
@@ -4841,7 +4879,7 @@ class Panel {
   // The marks in the BODY are controls too (KEY_ACTS: a highlight, a change mark, a rectangle), and every paint pass
   // rebuilds them — so a status landing while the keyboard was on one left it on the body, the way Enter on a card's
   // head once did in the aside (render's refocus mends the aside alone). The focused mark is re-found by what it IS —
-  // the action, the id of its subject, and its place among the subject's marks — never by its node. paintAll and
+  // the action, the id of its subject, and its place among the subject's marks, never by its node. paintPass and
   // paintRegions each mend the marks they rebuild (heldMark before the pass, refocusMark after it).
   /** A card's stored position (`anchorAt`, the host's offset into the text IT read) in the view's coordinates. The host
    *  reads the file with its BOM kept and the fetch hands the viewer the text with it stripped, so on a BOM-prefixed
@@ -4863,7 +4901,7 @@ class Panel {
    *  since moved past (the poll's reload paints before the fresh status lands; a refused refresh keeps the old status) is
    *  painted as a guess, the copy nearest that place in the dashed cue with words that name the place (copyUnsureWords,
    *  by the card's `confirmedAt`), never plainly on the wrong copy. Both readers of the status's verdict go through it:
-   *  cards() stamps its answer on the card, and the paint takes it as the hint (paintAll). */
+   *  cards() stamps its answer on the card, and the paint takes it as the hint (paintPass). */
   private placedAt(card: Card): number | undefined {
     const p = this.status && this.status.placed && typeof this.status.placed === "object" ? this.status.placed[card.id] : undefined;
     if (!p || typeof p !== "object" || p.confirmed !== true || typeof p.at !== "number" || !Number.isFinite(p.at)) return undefined;
@@ -4885,7 +4923,7 @@ class Panel {
     const last = locateComment(src, card.anchor, src.length);
     return last.state === "located" && !!last.range && last.range.start !== first.range.start;
   }
-  /** The hint for a card with no stored position whose anchor a card painted before it in this pass shares (paintAll): a
+  /** The hint for a card with no stored position whose anchor a card painted before it in this pass shares (paintPass): a
    *  position whose nearest tied copy is the first copy AFTER that card's (`prev`, its located range), so same-text comments
    *  without a position take the copies in turn; undefined when no copy follows, and the engine's own earliest pick stands, as
    *  it did before the hint (plans/markdown-viewer.md Slice 5, item 7; the design's narrow case: only a card with no position,
@@ -4986,7 +5024,7 @@ class Panel {
       marks = Array.from(root.querySelectorAll('[data-act="fcchange"]')).filter((m) => !before.has(m));
       this.passMarks.push(...marks);
       // under the deferred trim the painted ids are provisional: the pass confirms each against the marks that stay once it has
-      // trimmed (paintAll reads passChanges), since paintChangesRendered reports a change painted by its untrimmed marks
+      // trimmed (paintPass reads passChanges), since paintChangesRendered reports a change painted by its untrimmed marks
       if (deferTrim) for (const id of r.painted) this.passChanges.push({ id, marks: marks.filter((m) => (m as HTMLElement).dataset.id === id) });
     } else {
       marks = paintChangesRaw(root, src, changes, stylesFor);
@@ -4995,7 +5033,7 @@ class Panel {
     for (const m of marks) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open this change"; this.mark(m); }
   }
   /** The composer's pending target, painted with the trim deferred (`trim: false`) like every mark of a pass and added to the pass's
-   *  standing marks: the caller trims once after it (paintAll's pass and repaintPresel, trimBlanks), so the target's own collapsed
+   *  standing marks: the caller trims once after it (paintPass and repaintPresel, trimBlanks), so the target's own collapsed
    *  blanks and a standing highlight's blanks that its padding moved to a wrap point are measured in one layout. Returns the
    *  Rendered marks it added (none in the Raw view, for a composer of another kind, or for a target the text no longer matches):
    *  repaintPresel reads their line boxes. Until the Slice 4 review's round 14 the repaint alone trimmed the target's own marks and
@@ -5093,7 +5131,7 @@ class Panel {
    *  passes and one) and about 1.3 s for main's untrimmed paint, the recorded shape (plan item 2, the paint's cost) and not
    *  optimised; the passes are the fixpoint's, so no reordering makes them fewer. A composer that paints no target costs the
    *  render alone (a reply on that paragraph 20 to 28 ms, a comment on the file 1.5; 38 to 42 and 18 to 22 with round 14's trim of
-   *  4,260 measurements). What the repaint painted again it re-files as the pass does (paintAll's two filings): a highlight whose
+   *  4,260 measurements). What the repaint painted again it re-files as the pass does (paintPass's two filings): a highlight whose
    *  every mark the trim removed is filed as not painted, a change whose every mark it removed as not shown, and a change whose
    *  mark stands again as shown; and when a filing moved the cards are rendered HERE, since the callers render the composer alone
    *  after a passage's Comment and after Cancel (renderFrom) and every card reads what it shows at render time, the change cards
@@ -5108,7 +5146,7 @@ class Panel {
    *  nothing: the caller's render stands, and no card moves on no new information. */
   private repaintPresel(): void { this.repaintPreselPass(); this.afterPaint(); }   // the selection as the repaint left it is the one the float answers to (afterPaint)
   private repaintPreselPass(): void {
-    this.noteSelectionAtHead();                        // as paintAll reads it before its writes: the person's pending change is no record of this pass's (afterPaint)
+    this.noteSelectionAtHead();                        // as paintPass reads it before its writes: the person's pending change is no record of this pass's (afterPaint)
     const src = this.ctx.text(); const root = this.contentRoot();
     if (src === null || !root || this.ctx.mode() !== "rendered") {   // a media body, or the Raw view (a row mark, no layout-time trim)
       this.unpaint(".fc-presel, .fc-presel-block");
@@ -5164,7 +5202,7 @@ class Panel {
       this.paintPresel(root, src, true);
     }
     this.trimBlanks();
-    // the re-filing, the pass's (paintAll): a highlight or a change whose every mark the trim removed is filed as not painted or not
+    // the re-filing, the pass's (paintPass): a highlight or a change whose every mark the trim removed is filed as not painted or not
     // shown, a change whose mark stands again as shown; `refiled` when a card's filing moved, so the cards are rendered below (the
     // docblock says why; #cardState's doc, event 1)
     let refiled = false;
@@ -5657,7 +5695,7 @@ class Panel {
     if (this.margin && this.laidOn === key) this.centerOn(key);
   }
   /** A Reveal's switch to Raw, with the card made the focus FIRST when the margin layout is up (the merge audit,
-   *  2026-09-09). setMode re-renders the body synchronously and its onRendered pass lays the margin (paintAll, render,
+   *  2026-09-09). setMode re-renders the body synchronously and its onRendered pass lays the margin (#latchCardState's pass, render,
    *  placeCards), so a focus written before the call has that pass lay the revealed card level with its Raw mark, and
    *  scrollToOffset then centers a row whose card is already beside it. Before, reveal() set no focus: the pass laid the
    *  margin on the focus it had — the tall change card the person had unfolded — and the card whose Reveal was clicked
@@ -5681,8 +5719,8 @@ class Panel {
    *  the SAME row the viewer's scrollToOffset centred, by the same count of line ends before the offset, clamped to the
    *  last row, so the cue and the scroll never disagree — wears the cue when the Raw body shows no mark of ours for the
    *  subject (`act` + `id`: the change's marks, or the comment's highlight). setMode re-renders the body synchronously
-   *  and its onRendered pass has painted by now (paintAll), so what the body shows is what the person sees. One landing
-   *  at a time: the last cue is cleared first, whether or not a new one is painted. */
+   *  and its onRendered pass has painted by now (#latchCardState: a content paint), so what the body shows is what the person
+   *  sees. One landing at a time: the last cue is cleared first, whether or not a new one is painted. */
   private landOn(offset: number, act: string, id: string): void {
     this.clearLanding();
     if (this.ownMarks(act, id).length) return;         // the view marks the subject itself: that mark is the cue
@@ -6428,7 +6466,7 @@ class Panel {
     if (!this.root || !this.open) return;
     const s = this.status;
     const { head, cards, send, log } = this.sections;
-    if (!this.root.contains(head)) this.root.replaceChildren(head, this.composerBox, cards, send, log);   // built once per open; a reply's box leaves the slot for its card (placeComposer)
+    if (!this.root.contains(head)) this.root.replaceChildren(head, this.composerBox, cards, send, log, this.live);   // built once per open; a reply's box leaves the slot for its card (placeComposer); the live region rides along, never rebuilt (notInView)
     const keep = this.focusKey();                      // the control holding focus, by identity: the rebuild detaches it
     // a control an earlier render rebuilt disabled is wanted back only while the keyboard is still where that render put it
     const want = this.wanted && document.activeElement === this.wanted.at ? this.wanted.key : null;
@@ -6673,13 +6711,14 @@ class Panel {
    *  decided, is refused `no-change`), the foot's after a refresh left nothing pending, a comment card inside a closed
    *  fold. Rendered where the section was, so a clicked decision is never silent (CLAUDE.md, fail loudly; the plan:
    *  a second refusal is surfaced verbatim) and the row's ✕ can clear it. `list` is the section built so far. A row saying
-   *  the change is not in view is no stray: it belongs under its card and is hidden with it (notInView). */
+   *  the change is not in view is no stray: its "view:" slot is none of the prefixes callers pass, and it belongs under its
+   *  card, hidden with it (notInView). */
   private strayRows(list: HTMLElement, prefixes: string[]): HTMLElement[] {
     const shown = new Set(Array.from(list.querySelectorAll("[data-slot]")).map((n) => (n as HTMLElement).dataset.slot));
     const stray = (slot: string) => prefixes.some((p) => slot === p || slot.startsWith(p)) && !shown.has(slot);
     const out: HTMLElement[] = [];
     for (const slot of this.busy) if (stray(slot)) { const w = this.loader(slot); if (w) { out.push(w); shown.add(slot); } }
-    for (const slot of this.errors.keys()) if (stray(slot) && !NOT_IN_VIEW_TEXTS.has(this.errors.get(slot)?.text ?? "")) { const r = this.errRow(slot); if (r) { out.push(r); shown.add(slot); } }
+    for (const slot of this.errors.keys()) if (stray(slot)) { const r = this.errRow(slot); if (r) { out.push(r); shown.add(slot); } }
     return out;
   }
   private chip(author: string, authorId: string | null): HTMLElement {
@@ -6741,7 +6780,7 @@ class Panel {
       // group: the option carries the action-row label's own detached clause ("Changes 0 · 1 detached"), so the count and
       // the list it opens agree and a file holding detached changes alone does not read as one with nothing to show
       const d = s && s.store ? detachedChanges(s.store).length : 0;
-      // the marks half of each title is the read view's (paintAll): the editor (Slice 5) draws every change itself, from the
+      // the marks half of each title is the read view's (paintPass): the editor (Slice 5) draws every change itself, from the
       // records it took at Edit, and no comment highlight, so while it is up the titles say what the list does and that the
       // editor's marks stay — the row is offered there all the same, since finding a comment among the change cards is
       // what the filter is for (Show changes inline, which governs marks alone, is not)
@@ -7484,7 +7523,7 @@ class Panel {
       }
       card.appendChild(acts);
     }
-    for (const n of [this.loader(slot), this.errRow(slot)]) if (n) card.appendChild(n);
+    for (const n of [this.loader(slot), this.errRow(slot), this.errRow("view:" + c.id)]) if (n) card.appendChild(n);   // the decision's row, then the not-in-view row's own (notInView)
     return card;
   }
   /** Accept all · Reject all, while any change is pending. Reject all rewrites the file, so it asks once,

@@ -135,7 +135,8 @@ export type CardSite = { fn: string; line: number; text: string; at?: string };
  *  It COUNTS: the declarations of #cardState (decls); every assignment to #cardState (writes) and to #replaced, the count of the
  *  body's changes the rule reads (counts), an assignment being any assignment operator's, a destructuring target's, a for-in or
  *  for-of head's, or an increment's or a decrement's whose target is the private field; every call of #latchCardState, with the
- *  event its first argument names (calls); and every call of `callees` (callers).
+ *  event its first argument names (calls); and every call of `callees` (callers), a call whose callee is the name itself or a
+ *  property access ending in it (`name(...)`, `this.name(...)`, `x?.name(...)`).
  *  It LISTS, for the test to hold empty (fail closed): a mention of #latchCardState that is not a call of it (refs), and every
  *  identifier spelled eval, however it is written (a unicode escape reads as the name) and wherever it stands, a call's callee or
  *  not (evals). A direct eval inside the class runs its string as the class's own code, so it can write a private field where
@@ -143,8 +144,14 @@ export type CardSite = { fn: string; line: number; text: string; at?: string };
  *  Object.assign, Reflect or defineProperty, and `delete` of it does not parse), code outside its class cannot name it, and an
  *  indirect eval, a Function body or a timer's string runs as global code, where the name does not parse. A write through the
  *  state meets an object frozen at its one assignment, which throws. A private name's element-access spelling (a string key
- *  "#cardState") reaches a different, public property and is none of these. */
-export function cardStateCensus(src: string, callees: string[] = [], file = "file-comments.ts"): { decls: number; writes: CardSite[]; calls: CardSite[]; refs: CardSite[]; counts: CardSite[]; evals: CardSite[]; callers: Record<string, string[]> } {
+ *  "#cardState") reaches a different, public property and is none of these.
+ *  It also LISTS every other mention of a name in `callees` (calleeRefs, by name), for a test that needs that name's callers exact
+ *  to hold empty: the name as an identifier anywhere but a counted call's callee and the name a class member, a function or a
+ *  signature is declared by (a reference bound or handed on, `this.name.bind(this)`; an alias, `const f = this.name`; a
+ *  destructured name; a call through parentheses or `.call`), and every string literal whose text is the name (an element
+ *  access's key, `this["name"]()`, or Reflect's argument). A name computed at run time (`this[k]`, a concatenation) is in neither
+ *  callers nor calleeRefs. */
+export function cardStateCensus(src: string, callees: string[] = [], file = "file-comments.ts"): { decls: number; writes: CardSite[]; calls: CardSite[]; refs: CardSite[]; counts: CardSite[]; evals: CardSite[]; callers: Record<string, string[]>; calleeRefs: Record<string, CardSite[]> } {
   const sf = ts.createSourceFile(file, src, 99, true);   // 99: the compiler's newest language level (its enum's Latest), so every construct of the file parses; the kind follows the name's .ts
   const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   const shown = (n: ts.Node): string => n.getText(sf).replace(/\s+/g, " ").slice(0, 120);
@@ -177,7 +184,21 @@ export function cardStateCensus(src: string, callees: string[] = [], file = "fil
     walk(e);
     return hit;
   };
-  const out = { decls: 0, writes: [] as CardSite[], calls: [] as CardSite[], refs: [] as CardSite[], counts: [] as CardSite[], evals: [] as CardSite[], callers: Object.fromEntries(callees.map((c) => [c, [] as string[]])) as Record<string, string[]> };
+  const out = { decls: 0, writes: [] as CardSite[], calls: [] as CardSite[], refs: [] as CardSite[], counts: [] as CardSite[], evals: [] as CardSite[], callers: Object.fromEntries(callees.map((c) => [c, [] as string[]])) as Record<string, string[]>,
+    calleeRefs: Object.fromEntries(callees.map((c) => [c, [] as CardSite[]])) as Record<string, CardSite[]> };
+  const named = (name: string): boolean => Object.prototype.hasOwnProperty.call(out.callers, name);
+  /** Whether the identifier is the callee a call of `callees` is counted by: the call's expression, or the name of the property
+   *  access that is. */
+  const countedCallee = (n: ts.Identifier): boolean =>
+    (ts.isCallExpression(n.parent) && n.parent.expression === n)
+    || (ts.isPropertyAccessExpression(n.parent) && n.parent.name === n && ts.isCallExpression(n.parent.parent) && n.parent.parent.expression === n.parent);
+  /** Whether the identifier is the name a class member, a function or a signature is declared by. */
+  const declaredName = (n: ts.Identifier): boolean => {
+    const p = n.parent;
+    return (ts.isMethodDeclaration(p) || ts.isFunctionDeclaration(p) || ts.isPropertyDeclaration(p) || ts.isGetAccessor(p) || ts.isSetAccessor(p) || ts.isMethodSignature(p) || ts.isPropertySignature(p)) && p.name === n;
+  };
+  /** A callee's mention, shown with what holds it (for a property's name, what holds the property access). */
+  const mention = (n: ts.Node): CardSite => { const at = ts.isPropertyAccessExpression(n.parent) && n.parent.name === n ? n.parent : n; return { fn: fnName(n), line: lineOf(n), text: shown(at.parent) }; };
   /** An assignment: the binary expression's operator, its middle child, is one of the assignment operators. */
   const assigns = (n: ts.BinaryExpression): boolean => { const k = n.getChildAt(1, sf).kind; return k >= ts.SyntaxKind.FirstAssignment && k <= ts.SyntaxKind.LastAssignment; };
   /** An increment or a decrement: ++ or -- before the operand or after it. */
@@ -196,8 +217,10 @@ export function cardStateCensus(src: string, callees: string[] = [], file = "fil
     if (ts.isCallExpression(n)) {
       const c = n.expression;
       const name = ts.isPropertyAccessExpression(c) ? c.name.text : ts.isIdentifier(c) ? c.text : null;
-      if (name !== null && Object.prototype.hasOwnProperty.call(out.callers, name)) out.callers[name].push(fnName(n));
+      if (name !== null && named(name)) out.callers[name].push(fnName(n));
     }
+    if (ts.isIdentifier(n) && named(n.text) && !countedCallee(n) && !declaredName(n)) out.calleeRefs[n.text].push(mention(n));
+    if (ts.isStringLiteralLike(n) && named(n.text)) out.calleeRefs[n.text].push(mention(n));
     if (ts.isPropertyAccessExpression(n) && ts.isPrivateIdentifier(n.name) && n.name.text === "#latchCardState") {
       const call = ts.isCallExpression(n.parent) && n.parent.expression === n ? n.parent : null;
       if (call) { const a = call.arguments[0]; out.calls.push({ fn: fnName(n), line: lineOf(n), text: shown(call), at: a && ts.isStringLiteralLike(a) ? a.text : "(not a literal)" }); }

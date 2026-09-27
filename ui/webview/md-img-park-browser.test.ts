@@ -15,7 +15,7 @@
 // picture it shows from the fetched bytes listen to nothing, and the heal parks neither. That the viewer's own picture stays
 // the viewer's is file-view-svg-reask-browser.test.ts's claim (the chat modal's probes per kernel message) and
 // md-img-park.test.ts's. Waits are for the figures' own error and load events, never a timer. Skips LOUDLY without a
-// playwright browser (CI installs none). Synthetic values only: /repo/notes-api paths, the placeholder sid.
+// playwright browser (CI's Test step runs before its Chromium install, so it skips there). Synthetic values only: /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as path from "node:path";

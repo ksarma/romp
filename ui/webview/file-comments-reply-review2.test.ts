@@ -329,8 +329,8 @@ const HOLD = "The card stays open while its reply is written; Save or Cancel the
 
 // ── the harness: a mounted panel inside the viewer's body row ──────────────────────────────────────
 type Posted = Record<string, any>;
-const SLOT = ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log"];   // the panel's sections with the box in its slot
-const NO_SLOT = ["fc-sec-head", "fc-sec-cards", "fc-sec-send", "fc-sec-log"];              // …and with the box away in a card
+const SLOT = ["fc-sec-head", "fc-composer", "fc-sec-cards", "fc-sec-send", "fc-sec-log", "fc-live"];   // the panel's sections with the box in its slot, and its live region
+const NO_SLOT = ["fc-sec-head", "fc-sec-cards", "fc-sec-send", "fc-sec-log", "fc-live"];              // …and with the box away in a card
 async function harness(over: Partial<FileViewActionCtx> = {}) {
   const fc = await import("./file-comments");
   const main = doc.createElement("div"); main.className = "fileview-main";

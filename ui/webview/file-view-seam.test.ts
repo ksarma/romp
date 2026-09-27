@@ -1645,6 +1645,43 @@ test("a press from the picture back to the Source view while a reload that lande
   }
 });
 
+test("a reload's decode under the Source view paints nothing once a press has gone to the picture and back while it was out, the press decoding the landed bytes itself: that decode released alone leaves the picture up and runs no hook, and the press's decode then paints the Source view once (file-view.ts, the reload decode's srcDecode check; road (i) above passes without that check, since the one paint it counts can come from either decode)", async (t) => {
+  const realText = Blob.prototype.text;
+  const pending: Array<() => void> = [];
+  let holding = false;
+  Blob.prototype.text = function (this: Blob): Promise<string> {
+    if (!holding) return realText.call(this);
+    return new Promise<string>((res, rej) => { pending.push(() => { realText.call(this).then(res, rej); }); });
+  };
+  t.after(() => { Blob.prototype.text = realText; });
+  const MT7 = "1757145600000000007";
+  const SVG2 = SVG.replace("p95", "p99");
+  const { ctx, body, wrap } = await open(FIG, t);
+  sourceBtn(wrap).click();
+  await settle();
+  assert.equal(ctx.text(), SVG, "the premise: the Source view up over the open's bytes");
+  const rendered: string[] = [];
+  ctx.onRendered(() => { rendered.push(ctx.mtimeNs() + " " + ctx.mode() + " " + (body.querySelector("code.hljs") ? "source" : body.querySelector("img.fileview-img") ? "picture" : "other")); });
+  holding = true;
+  disk[FIG] = { bytes: SVG2, type: "image/svg+xml", mtimeNs: MT7 };
+  ctx.reload();
+  await settle();
+  assert.equal(ctx.mtimeNs(), MT7, "the premise: the reload landed under the Source view, its decode held");
+  sourceBtn(wrap).click();                                      // to the picture
+  const pic = body.querySelector("img.fileview-img")!;
+  assert.ok(pic, "the premise: the press put the landed bytes' picture up");
+  sourceBtn(wrap).click();                                      // back to the Source view: the press decodes the landed bytes
+  assert.equal(pending.length, 2, "the premise: two decodes held, the reload's and then the press's");
+  holding = false;
+  const [reloadDecode, pressDecode] = pending.splice(0);
+  reloadDecode(); await settle();
+  assert.equal(body.querySelector("img.fileview-img"), pic, "the reload's decode released alone: the picture is still up");
+  assert.deepEqual(rendered, [], "and no hook ran: that decode paints nothing while the press's is out");
+  pressDecode(); await settle();
+  assert.deepEqual(rendered, [MT7 + " raw source"], "the press's decode paints the Source view once, over the landed bytes");
+  assert.equal(ctx.text(), SVG2, "with their XML");
+});
+
 test("the seam's onLanded runs at an svg picture's landing, with mtimeNs() the landed mtime and before the picture's load, once per landing; a png's landing runs none", async (t) => {
   const { ctx, body } = await open(FIG, t);
   assert.equal(typeof ctx.onLanded, "function", "the seam carries onLanded");
@@ -1731,9 +1768,14 @@ test("the seam's onReplaced (its doc in file-view.ts) runs as the viewer swaps i
   assert.ok(body.querySelector("code.hljs"), "the Source view painted at the decode");
   assert.deepEqual(seen, ["rendered paint"], "the Source view's paint fires onRendered alone");
   seen.length = 0;
-  sourceBtn(wrap).click();                                 // back to the picture
-  assert.equal(seen[0], "replaced picture", "a press back to the picture: the picture goes up, onReplaced told first");
-  assert.ok(seen.slice(1).every((x) => x === "rendered paint"), "and the picture's own paint after it (at once when the page holds it): " + JSON.stringify(seen));
+  // back to the picture, which the page holds this time (complete once its src is set, as at the case on an img the browser
+  // already holds below): imgs made from here on are complete, the reload and re-ask steps above having kept the shim's own
+  const realCreate = doc.createElement;
+  doc.createElement = (tag: string) => { const e = realCreate(tag); if (tag === "img") (e as unknown as { complete: boolean }).complete = true; return e; };
+  t.after(() => { doc.createElement = realCreate; });
+  sourceBtn(wrap).click();
+  doc.createElement = realCreate;
+  assert.deepEqual(seen, ["replaced picture", "rendered paint"], "a press back to a picture the page holds: onReplaced told first, then the picture's paint in the same call (onReplaced's doc)");
   const text = await open(REPORT, t);
   const tseen: string[] = [];
   text.ctx.onReplaced!(() => { tseen.push("replaced"); });
@@ -1822,6 +1864,19 @@ test("a PDF body: mediaElement() is the frame, onRendered fires at once (the fra
   assert.equal(b.edit.hidden, true);
 });
 
+test("the viewer's picture box carries the chat page heal's data mark, for an svg's picture and for a raster picture (file-view.ts imgBlock builds both and sets VIEWER_PICTURE_MARK on the box; preview.ts installMdImgHeal skips a picture inside the mark)", async (t) => {
+  const { VIEWER_PICTURE_MARK } = await import("./preview");
+  for (const p of [FIG, PLOT]) {
+    const { body } = await open(p, t);
+    const box = body.querySelector(".fileview-imgbox");
+    assert.ok(box, p + ": the picture's box is up");
+    const src = body.querySelector("img.fileview-img")!.src;
+    if (p === FIG) assert.equal(src, "/file?path=" + encodeURIComponent(FIG) + "&sid=" + SID + "&v=" + MT, "the svg picture's src is its /file address, never an object or data URL");
+    else assert.ok(src.startsWith("blob:"), "the raster picture keeps its object URL: " + src);
+    assert.ok(box!.hasAttribute(VIEWER_PICTURE_MARK), p + ": the box carries the viewer's picture mark, which the heal keys on to leave the viewer's own picture alone. The composition, the heal leaving this picture to the viewer on a real page, is file-view-svg-reask-browser.test.ts's (its probes per message in the chat modal), in Chromium, whose cases CI's Test step skips, since that step runs before the job installs Chromium");
+  }
+});
+
 // ── Slice 4: the PDF's pages while the Comments panel is open (plans/file-review.md Slice 4; contract F3) ──
 
 test("a PDF with the panel open: the loader over the kept frame, then the chunk's pages in its place — mediaElement() the pages root, pdfPages() the shells, onRendered after page 1 and per page; the panel closing brings the frame back and disposes", async (t) => {
@@ -1829,9 +1884,12 @@ test("a PDF with the panel open: the loader over the kept frame, then the chunk'
   assert.equal(paints, 1, "the frame showed first: the panel is closed at open");
   assert.equal(pdf.renders, 0, "the chunk is not asked for a PDF nobody is commenting on");
   const shown = body.querySelector("iframe.fileview-frame")!;
+  let replaced = 0;
+  ctx.onReplaced!(() => { replaced++; });
   const aside = new El("div");
   ctx.aside(aside as unknown as HTMLElement);                                      // the panel opens: the seam's aside() IS the event
   assert.ok(body.querySelector(".fileview-load"), "the romp loader first (the loading-state rule)");
+  assert.equal(replaced, 1, "onReplaced told once, as the pages' loader goes up over the kept frame (onReplaced's doc)");
   const host = body.querySelector(".fileview-pdfhost")!;
   assert.ok(host && host.isConnected, "the chunk's host is in the body before render(): the pages fit its width");
   // The frame is NOT dropped for the loader: it stays through the attempt, in place, so the document is not
@@ -1858,6 +1916,7 @@ test("a PDF with the panel open: the loader over the kept frame, then the chunk'
   assert.equal(pages.length, 2, "one shell per page");
   assert.deepEqual(pages.map((pg) => (pg as unknown as El).dataset.page), ["1", "2"], "in page order, data-page 1-based");
   assert.equal(paints, 2, "onRendered once page 1 is drawn (the first onPage fired before the resolve, and counted nothing)");
+  assert.equal(replaced, 1, "and onReplaced not again at page 1's draw, which is onRendered's");
   pdf.opts!.onPage!({ index: 2, canvas: pages[1], width: 800, height: 1035 });
   assert.equal(paints, 3, "…and again for every page the chunk draws after that");
   assert.equal(fetches.filter((f) => f.includes("deck.pdf")).length, 1, "one fetch of the file, ever");
@@ -2265,14 +2324,14 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /renderedImages: \(\) => \(ctx\.mode\(\) === "rendered" \? Array\.from\(body\.querySelectorAll\("\.fileview-md img"\)\) as HTMLImageElement\[\] : \[\]\),/);
   // the media arm: build, mount, THEN wait for the picture — so the element is in the DOM when the hook runs
   const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
-  assert.match(mediaBranch, /const shown = isPdf \? pdfBlock\(objUrl, path\) : imgBlock\(objUrl, path, imgFailed\);\n\s*body\.replaceChildren\(shown\);\n\s*fireReplaced\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*whenShown\(shown, \(\) => \{ if \(picView === viewSeq\) fireRendered\(\); \}\);/, "the media arm tells onReplaced after the mount and before whenShown (a source pin; executed in this file's case on onReplaced), then arms whenShown, its hooks gated on no press of the Source toggle since the picture's paint: a source pin; executed in this file's case on a picture still loading when the Source toggle is pressed");
+  assert.match(mediaBranch, /const shown = isPdf \? pdfBlock\(objUrl, path\) : imgBlock\(objUrl, path, imgFailed\);\n\s*body\.replaceChildren\(shown\);\n\s*fireReplaced\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*whenShown\(shown, \(\) => \{ if \(picView === viewSeq\) fireRendered\(\); \}\);/, "the media arm tells onReplaced after the mount and before whenShown (a source pin; the exact order is executed in this file's case on the seam's onReplaced, whose press back to a picture the page holds records onReplaced and then onRendered in the same call), then arms whenShown, its hooks gated on no press of the Source toggle since the picture's paint: a source pin; executed in this file's case on a picture still loading when the Source toggle is pressed");
   const when = VIEW.split("function whenShown(")[1].split("\n}\n")[0];
   assert.match(when, /const img = shown\.querySelector\("img\.fileview-img"\) as HTMLImageElement \| null;/);
   assert.match(when, /if \(!img \|\| img\.complete\) \{ cb\(\); return; \}/, "a frame, or an already-complete img: at once");
   assert.match(when, /img\.addEventListener\("load", \(\) => \{ if \(img\.isConnected\) cb\(\); \}, \{ once: true \}\);/, "else the load event, once, and only for a picture still in the document");
   assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 9, "the nine direct calls of fireRendered, each a paint: the media arm's, inside the callback it hands whenShown and gated on the press count there (executed in this file's case on a picture still loading when the Source toggle is pressed), the SVG Source view, the text views, the decode-failure pane, the fetch chain's catch (Slice 7 of plans/markdown-viewer.md, item 3: a refused or failed fetch's pane is a paint, on a first open too), the PDF pages path three times (page 1 drawn; every later page; a later page pdf.js refuses, so the overlay armed on its canvas is redrawn) and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) (file-comments.test.ts pins the floor); the PDF paths' kept frame, column and fallback hand fireRendered itself to whenShown; the two reflows of a text view with its text unchanged (a text-size step, the body's width changing) go through fireRenderedKeepingSelection, which fires the hooks with why 'reflow' (below) so the panel re-places its cards and leaves its marks standing, and a standing selection outlives any hook that does re-wrap (file-view-text-size.test.ts, file-view-reflow-browser.test.ts)");
   assert.equal((VIEW.match(/fireRendered\("reflow"\);/g) || []).length, 1, "the reflows' one call, inside fireRenderedKeepingSelection");
-  assert.equal((VIEW.match(/fireReplaced\(\);/g) || []).length, 3, "the seam's onReplaced told at three swaps: the media arm's picture or frame, the re-ask's loader and the PDF pages' loader (onReplaced's doc says which of them paint at once; a source pin only; this file's case on onReplaced executes the first two, and the third, the PDF pages' loader, is pinned here alone)");
+  assert.equal((VIEW.match(/fireReplaced\(\);/g) || []).length, 3, "the seam's onReplaced told at three swaps: the media arm's picture or frame, the re-ask's loader and the PDF pages' loader (onReplaced's doc says which of them paint at once; a source pin only; this file's case on onReplaced executes the first two, and the third, the PDF pages' loader, is executed in this file's case on a PDF with the panel open, over the kept frame, and in file-view-pdf-backstop.test.ts's case with no frame kept, in place of the body)");
   assert.equal((VIEW.match(/fireRenderedKeepingSelection\(\);/g) || []).length, 2, "the two reflow triggers, and nothing else, keep the selection");
   // imgFailed takes the error event since the replaced-picture guard (the case "the picture's error paints nothing once the body no
   // longer holds that picture" above is the executed witness of the guard; this split only finds the function's body)
@@ -2854,6 +2913,62 @@ test("a late ack over a pane: a save through the panel, Cancel while it was out,
   assert.deepEqual(changeCard(o, "h1"), pane, "at the ack over the pane: no Reveal and no Comment on this change (#cardState's doc, event 1)");
   o.wrap.querySelector('.fileview-aside .fc-card[data-id="chg:h1"] .fc-card-head')!.click(); await settle();
   assert.deepEqual(changeCard(o, "h1"), pane, "a render moves nothing");
+});
+
+/** What the person sees of the change cards h1 and h2 (buttons, link, Reveal's title, tags), the whole aside's text and the viewer's
+ *  bar. */
+const seen2 = (o: Open): { cards: Array<{ id: string; buttons: string[]; link: boolean; reveal: string | null; tags: string[] }>; aside: string; bar: string | null } => {
+  const aside = o.wrap.querySelector(".fileview-aside")!;
+  const cards = ["h1", "h2"].map((id) => {
+    const c = aside.querySelector('.fc-card[data-id="chg:' + id + '"]')!;
+    const rv = c.querySelectorAll(".fc-actions button").find((x) => x.dataset.act === "fcreveal");
+    return { id, buttons: c.querySelectorAll(".fc-actions button").map((x) => x.textContent), link: c.querySelector(".fc-ref")!.classes.includes("fc-link"), reveal: rv ? rv.title : null, tags: c.querySelectorAll(".fc-card-head .fc-tag").map((x) => x.textContent) };
+  });
+  const bar = errBar(o.body);
+  return { cards, aside: aside.textContent, bar: bar ? bar.textContent : null };
+};
+
+test("a late ack under a later editor: a save through the panel, Cancel while it was out, the editor taken up again over the bytes from before the save or over the saved bytes a reload landed first, then the save's reply (file-comments.ts, #cardState's doc, event 1: under a later editor the latch's run at that ack changes nothing a card reads): at the ack and after that editor's exit the change cards, the aside and the viewer's bar read as they do where the ack runs no latch (before this change the save latch did not run at this ack, and the reads were these); over the old bytes the ack itself still moves the cards and the bar, the reply's status taking Comment on this change away (event 2) and the bar saying the earlier save landed under the reopened editor (SAVE_LANDED_UNDER_NEW_EDITOR)", async (t) => {
+  const fv = await mod();
+  const cards = (buttons: string[], reveal: string | null = null, tags: string[] = []) => ["h1", "h2"].map((id) => ({ id, buttons, link: false, reveal, tags }));
+  const AR = ["Accept", "Reject"], ARC = ["Accept", "Reject", "Comment on this change"];
+  for (const over of ["old", "saved"] as const) {
+    const hs = [overP95("h1"), over40("h2")];
+    const o = await open(REPORT, t, SID, undefined, true);
+    await answerStatus(status(hs));
+    o.wrap.querySelector(".fileview-fc button")!.click();
+    await answerStatus(status(hs));
+    await enterEdit(o);
+    const m = saveTracked(o, SAVED_TEXT);
+    o.b.cancel.click(); await settle();                  // Cancel while the save is out
+    assert.equal(o.ctx.editing(), false, over + ": the premise: the editor that sent the save is gone");
+    if (over === "saved") {
+      disk[REPORT] = { bytes: SAVED_TEXT, type: "text/plain; charset=utf-8", mtimeNs: NS9 };
+      o.ctx.reload(); await settle();
+      await reopenPanel(o, status(hs, { fileMtimeNs: NS9, storeMtimeNs: NS10 }));
+    }
+    await enterEdit(o);                                  // the later editor
+    const before = seen2(o);
+    assert.deepEqual(before.cards, cards(ARC), over + ": the premise: under the later editor each card answers in place and offers Comment on this change");
+    await saveReply(m.reqId, status(hs, { fileMtimeNs: NS9, storeMtimeNs: "1757145600000000012" }));
+    assert.equal(o.ctx.editing(), true, over + ": the premise: the later editor is still up at the ack");
+    const ack = seen2(o);
+    if (over === "old") {
+      assert.deepEqual(ack.cards, cards(AR), "old bytes, at the ack: the reply's status, for the saved bytes, is not the text the later editor loaded, so Comment on this change goes (event 2)");
+      assert.equal(ack.aside, before.aside.split("Comment on this change").join(""), "old bytes, at the ack: the aside moves by that alone");
+      assert.equal(ack.bar, fv.SAVE_LANDED_UNDER_NEW_EDITOR + "Reload file", "old bytes, at the ack: the viewer's bar says the earlier save landed under the reopened editor");
+    } else {
+      assert.deepEqual(ack.cards, cards(ARC), "saved bytes, at the ack: the cards as before it");
+      assert.equal(ack.aside, before.aside, "saved bytes, at the ack: the aside as before it");
+      assert.equal(ack.bar, null, "saved bytes, at the ack: no bar");
+    }
+    o.b.cancel.click(); await settle();                  // the later editor's exit
+    const exit = seen2(o);
+    assert.deepEqual(exit.cards, over === "old" ? cards(AR) : cards([...ARC, "Reveal"], "Show the change in the Raw view (line 4)", ["not shown"]),
+      over + ": after the exit the read view's cards, as its repaint takes them (event 1): " + JSON.stringify(exit.cards));
+    assert.equal(exit.bar, null, over + ": and no bar");
+    assert.ok(exit.aside.includes("Show changes inline"), over + ": the read view's head is back");
+  }
 });
 
 test("a tracked file with nothing pending, or one with only a sidecar, still saves through the panel with no records; an untracked file saves through saveFile, byte for byte", async (t) => {

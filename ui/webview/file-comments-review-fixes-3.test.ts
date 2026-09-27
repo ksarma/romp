@@ -14,6 +14,8 @@
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
 import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
@@ -433,6 +435,24 @@ test("data-act markup the file's author wrote sends nothing, stops no tracking, 
   assert.equal(lastOf(w, "fileComments", "set-tracked"), undefined);
   aside.querySelector('.fc-choice [data-act="fctrackstop"]')!.click(); await flush();
   assert.deepEqual(lastOf(w, "fileComments", "set-tracked").args, { on: false, scope: "folder" }, "the panel's Stop turns the folder off");
+});
+
+test("file-comments.ts's comments state no premise that the sanitizer keeps an author's data-* attributes, in any of the five shapes that premise took before it was corrected, and state the delegate root's corrected sentence (a pin on comment TEXT, not behaviour)", () => {
+  // the file's comments as prose: each comment line's leader (// or *) and every run of whitespace collapsed, so a rewrapped
+  // sentence reads the same
+  const src = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-comments.ts"), "utf8");
+  const prose = src.replace(/\n\s*(?:\/\/|\*)(?!\/)/g, " ").replace(/\s+/g, " ");
+  const FALSE: Array<[string, RegExp]> = [
+    ["pageOf's doc: a rendered figure's data-* kept", /sanitizer keeps a rendered figure's data-\* attributes/],
+    ["PANEL_MARKS' comment: class and data-* kept", /sanitizer keeps `class` and `data-\*`/],
+    ["the delegate root: data-* kept by DOMPurify's default", /sanitizer keeps data-\* attributes \(DOMPurify's ALLOW_DATA_ATTR default\)/],
+    ["owns()'s doc: data-* kept", /whatever data-act it carries .{1,3} the sanitizer keeps data-\* attributes/],
+    ["paintChanges' comment: an author's data-act survives", /the file's author wrote survives the sanitizer/],
+  ];
+  const WITNESS = "a pin on comment text, not behaviour; the executed witnesses are md-sanitize.test.ts's profile case (ALLOW_DATA_ATTR false, run in the node leg) and md-sanitize-browser.test.ts's case in which an author's data-* never rides in (run in a browser; CI's Test step skips it)";
+  for (const [where, re] of FALSE) assert.doesNotMatch(prose, re, where + ": the false premise is gone (" + WITNESS + ")");
+  assert.ok(prose.includes("The sanitizer strips every data-* attribute an author writes (md-sanitize.ts: ALLOW_DATA_ATTR false), so a `<span data-act=\"fcsendgo\">` or a `data-act=\"fctrackstop\"` in prose the session produced reaches the page without its data-act"),
+    "the delegate root's corrected sentence stands (" + WITNESS + ")");
 });
 
 test("a checkbox the file's markup carries flips no send option; the confirm's own does", async (t: TestContext) => {

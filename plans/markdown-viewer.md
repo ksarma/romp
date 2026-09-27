@@ -1356,8 +1356,9 @@ as built departs from the text above, why, and which test holds each rule:
    the pass's pending, after Cancel and after the next pass); and what the repaint painted again it re-files as the
    pass does (a change whose every mark the trim removed as not shown, one whose mark stands again as shown, a
    highlight whose every mark went as not painted) and renders the cards in the same call when a filing moved, since
-   the callers after a passage's Comment and after Cancel render the composer alone and the cards read the filings at
-   render time (round 17: a session's insertion of one soft hyphen, a character the index records and the trim
+   the callers after a passage's Comment and after Cancel render the composer alone, and the change cards take the
+   filing at that refile, in the same call (the card-state rule's event 1: file-comments.ts, #cardState's doc) (round 17:
+   a session's insertion of one soft hyphen, a character the index records and the trim
    measures, rendered as a hyphen at a line break and as nothing elsewhere, so the target's padding moving the
    paragraph's wrap point across it moved the filing at every open and Cancel while the card said the opposite until
    the next render; a plain space never reaches the shape, since the index skips whitespace and never paints it;

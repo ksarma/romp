@@ -817,10 +817,12 @@ export interface FileViewActionCtx {
    *  tells its swap): the answer's paint does (the picture's load, or a pane, SVG_PICTURE_FAILED's among them). A picture still loading when the Source toggle is
    *  pressed fires none at its load either: the body's next paint is the paint (the Source view's at the decode, unless a
    *  failed reload's pane or a landing of another type paints first).
-   *  Also once at Edit, as the editor takes the body (Slice 5), with editing() true: the panel's paint pass stands down
-   *  then, and its cards, which read editing() at render time, take their edit-mode state from this render (the panel's
-   *  own begin() ran before the flip, so its render could not). No other paint while the editor holds the body; the exit's
-   *  repaint hands the read-mode state back.
+   *  Also once at Edit, at the editor's entry (Slice 5), with editing() true, before the chunk's loader goes up and while the
+   *  body still shows the read view: the panel's paint pass stands down then, and its cards, which read editing() at render
+   *  time, take their edit-mode state from this render (the panel's own begin() ran before the flip, so its render could
+   *  not). The editor's swaps after it, the chunk's loader and then the CodeMirror host or the fallback textarea, fire no
+   *  hook (onReplaced's doc); no other paint while the editor holds the body; the exit's repaint hands the read-mode state
+   *  back.
    *  Every call above is a PAINT (`why` "paint", the default a caller passing nothing gets): the body's nodes are new, and a
    *  hook that wraps or measures them starts over.
    *  Also after a text view REFLOWS with its text unchanged (`why` "reflow"): a text-size step (the A− / A+ buttons, the
@@ -838,18 +840,24 @@ export interface FileViewActionCtx {
    *  waits for its decode), that view's paint at their decode. The order between the two may go either way: the decode's paint
    *  comes after, and so does a picture's load that asks the network, but a picture the page still holds (a reload at an
    *  unchanged mtime) is complete once its src is set, and its onRendered runs first. The Comments panel ends its wait for a
-   *  reload's bytes at whichever comes first; its paint pass and its change cards wait for onRendered. Optional, so a stand-in
-   *  seam need not carry it */
+   *  reload's bytes at whichever comes first; when its change cards move is the card-state rule's (file-comments.ts,
+   *  #cardState's doc), and a landing is no event of it. Optional, so a stand-in seam need not carry it */
   onLanded?(cb: () => void): void;
-  /** runs as the viewer swaps into the body something whose paint may not come with it: renderBody's media arm, once its
-   *  picture or its PDF frame is up (a picture's paint is its load, or follows at once, in the same call, when the page still
-   *  holds it; a frame's paint follows at once, in the same call), the romp loader of an svg picture's re-ask, and the PDF
-   *  pages' loader (its paint is page 1's draw, or the fallback's frame). Every other swap of the body is a paint and fires onRendered alone as it
-   *  swaps (a text view's rows, the Source view's, a failure pane, the editor at its entry, and the PDF pages' fallback frame,
-   *  fresh or kept, and a frame kept as the panel closes, whose paint is at once); a press of the Source toggle that waits for
-   *  its decode swaps nothing (the picture stays until the body's next paint: the decode's, unless a failed reload's pane or a
-   *  landing of another type paints first). The Comments panel's
-   *  card-state rule keys on it (file-comments.ts, #cardState's doc). Optional, so a stand-in seam need not carry it */
+  /** runs as the viewer swaps into the body something whose paint may not come with it. Which swaps fire which hook:
+   *  onReplaced, with onRendered at the paint: renderBody's media arm, once its picture or its PDF frame is up (a picture's
+   *  paint is its load, or follows at once, in the same call, when the page still holds it; a frame's paint follows at once,
+   *  in the same call), the romp loader of an svg picture's re-ask (the answer's paint), and the PDF pages' loader (its paint
+   *  is page 1's draw, or the fallback's frame).
+   *  onRendered alone, as it swaps: a text view's rows, the Source view's, a failure pane, and the PDF pages' fallback frame,
+   *  fresh or kept, and a frame kept as the panel closes, whose paint is at once.
+   *  Neither: the editor's swaps. onRendered fires once at the editor's entry, before its chunk's loader goes up and while the
+   *  body still shows the read view (onRendered's doc); the chunk's loader, the CodeMirror host when the chunk resolves and
+   *  the fallback textarea when it rejects fire neither hook, and a rejection with changes pending leaves the editor, whose
+   *  exit repaints. The editor holds the body until that exit's repaint (exitEdit's renderBody), and the Comments panel reads
+   *  editing() for that span. A press of the Source toggle that waits for its decode swaps nothing (the picture stays until
+   *  the body's next paint: the decode's, unless a failed reload's pane or a landing of another type paints first).
+   *  The Comments panel's card-state rule keys on it (file-comments.ts, #cardState's doc). Optional, so a stand-in seam need
+   *  not carry it */
   onReplaced?(cb: () => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body, BEFORE the quote-chip gate, so it works with no chat pane.
    *  A selection made or changed from the keyboard reaches no mouseup and runs no hook here: the comments panel listens to the
@@ -3047,7 +3055,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // editor, Accept and Reject dimmed with those words, no Reveal or link into a read view that is gone: setMode and
     // scrollToOffset are no-ops now), and nothing above rendered them with the flag set: begin() ran before it, as it must
     // (a refused begin() leaves the read view untouched), and renderBody paints nothing in edit mode. So the seam's
-    // onRendered fires here, once, as the editor takes the body: the panel's paint pass stands down on editing() and its
+    // onRendered fires here, once, at the editor's entry and before the chunk's loader goes up (the swaps after it fire
+    // no hook: onReplaced's doc): the panel's paint pass stands down on editing() and its
     // cards take their edit-mode state. Without it a panel open at Edit kept its read-mode cards, live-looking controls
     // that did nothing, until some status happened to land (the review's cards-keep-read-mode finding). The exit's
     // repaint hands the read-mode state back.

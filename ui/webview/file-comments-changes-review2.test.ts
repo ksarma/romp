@@ -1599,17 +1599,17 @@ test("Enter on a focused change mark with the panel closed: the panel opens with
 });
 
 // ── the card-state rule (file-comments.ts, #cardState's doc) ──────────────────────────────────────────────────────────────────
-// Its writer and the functions that call it, read by the compiler's own parser (writer-census.ts cardStateCensus); its roads, each
-// row of the doc's table run over a seam the rows drive and the change cards read after every step; and every ordering of its steps
-// up to three.
+// Its writer and the functions that call it, and the callers of the two passes that refile (paintAll, repaintPresel), read by the
+// compiler's own parser (writer-census.ts cardStateCensus); its roads, each row of the doc's table run over a seam the rows drive and
+// the change cards read after every step; and, from each of five starts, every ordering of three of the steps that act on it.
 
 const PANEL_SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-comments.ts"), "utf8");
 
 /** The writer's callers, each with the event it names (file-comments.ts, #cardState's doc). */
 const RULE_CALLERS = ["onRendered's callback paint", "constructor paint", "onSaved's callback paint", "paintAll refile", "repaintPreselPass refile", "applyStatus status", "toggleInline gesture", "setFilter gesture", "settingsFlipped gesture"];
 
-test("the card-state rule's writer: the one assignment to the private #cardState is #latchCardState's, #latchCardState's calls are the callers #cardState's doc names with their events, and #replaced, the count of what the viewer put up other than a content paint, is written by the seam's onReplaced and a pane's onRendered alone (file-comments.ts read by the compiler's own parser)", () => {
-  const c = cardStateCensus(PANEL_SRC, ["settingsFlipped", "toggleInline", "setFilter", "showAbout", "goToArrival"]);
+test("the card-state rule's writer: the one assignment to the private #cardState is #latchCardState's, #latchCardState's calls are the callers #cardState's doc names with their events, #replaced, the count of what the viewer put up other than a content paint, is written by the seam's onReplaced and a pane's onRendered alone, and the callers of paintAll and repaintPresel, whose refile writes a card's filing, are the ones named here (file-comments.ts read by the compiler's own parser)", () => {
+  const c = cardStateCensus(PANEL_SRC, ["settingsFlipped", "toggleInline", "setFilter", "showAbout", "goToArrival", "paintAll", "repaintPresel"]);
   assert.equal(c.decls, 1, "one #cardState, the Panel's private field whose doc states the rule");
   assert.deepEqual(c.writes.map((x) => x.fn + ": " + x.text), ["#latchCardState: this.#cardState = Object.freeze({ ...next, painted: Object.freeze(Array.from(this.paintedChanges)) })"],
     "the writer's one assignment is the only assignment to #cardState in the file (#cardState's doc)");
@@ -1623,6 +1623,18 @@ test("the card-state rule's writer: the one assignment to the private #cardState
   assert.deepEqual([...new Set(c.callers.toggleInline)], ["fcinline's callback"], "Show changes inline from its button alone");
   assert.deepEqual([...new Set(c.callers.setFilter)].sort(), ["addEventListener's callback", "fcfilter's callback", "goToArrival", "showAbout"], "the filter from its buttons, their arrow keys, and two clicks that bring a hidden card into view");
   assert.deepEqual([c.callers.showAbout, c.callers.goToArrival], [["fcaboutfirst's callback"], ["fcarrivals's callback"]], "those two clicks: a change card's comments tag and the arrivals line");
+  // A refile through either pass writes a card's filing (#cardState's doc, event 1), so a new caller of either is a new writer. The
+  // census counts a call whose callee is the name or a property access ending in it (this.paintAll()): a new one reds the two lists
+  // below until it is added deliberately, with its event named. Every other mention of either name in the code (a bound reference,
+  // an alias, a destructured name, a call through parentheses or .call, a string literal spelled as the name) is listed apart, and
+  // that list is held empty after them. Neither list holds a pass's own declaration, and neither reads a name computed at run time
+  // (this[k]).
+  assert.deepEqual([...c.callers.paintAll].sort(), ["#latchCardState", "applyStatus", "loadColors", "onRendered's callback"],
+    "paintAll's four callers: a pane's onRendered, applyStatus's status that does not differ, the colour fetch's repaint (loadColors) and a gesture over anything else (#latchCardState)");
+  assert.deepEqual([...c.callers.repaintPresel].sort(), ["closeComposer", "onRegionDrawn", "onRegionDrawn", "restoreRefused", "settleAway", "startChangeComment", "startComment", "startFileComment", "startImageComment", "startReplace", "startReply", "switchToRaw", "switchToRaw"],
+    "repaintPresel's thirteen calls, the composer's target painted again: a composer opened (a passage's, a region's, the file's, a reply's, a change's, a replace), closed, restored after a refusal, settled away, and the switch to Raw and a region drawn twice each");
+  assert.deepEqual({ paintAll: c.calleeRefs.paintAll, repaintPresel: c.calleeRefs.repaintPresel }, { paintAll: [], repaintPresel: [] },
+    "no mention of paintAll or repaintPresel in the code but the calls counted above and each pass's declaration (writer-census.ts, cardStateCensus's doc: calleeRefs)");
 });
 
 test("the card-state census counts every assignment to the private #cardState (an assignment operator's, a compound one's, a destructuring target's, a for-of head's, an increment's) and to #replaced, and every call of the private #latchCardState; it lists a mention of the writer that is not a call and every identifier spelled eval, a direct eval's or any other; and it counts nothing a public name reaches, which the language keeps off a private field, as it keeps an indirect eval off one (executed below)", () => {
@@ -1660,6 +1672,27 @@ test("the card-state census counts every assignment to the private #cardState (a
   assert.equal(run("go() { eval('this.#x = 5'); }"), 5, "a direct eval inside the class writes its private field");
   assert.equal(run("go() { \\u0065val('this.#x = 6'); }"), 6, "so does one whose name is spelled with a unicode escape");
   assert.throws(() => run("go() { (0, eval)('this.#x = 7'); }"), (e: unknown) => e !== null && typeof e === "object" && (e as { name?: string }).name === "SyntaxError", "an indirect eval cannot name the private field");
+});
+
+test("the card-state census lists, by name, every mention of a callee that is not a call it counts (a bound reference, an alias, a destructured name, a call through parentheses or .call, a string literal spelled as the name), and not a counted call, the name's own declaration or a name computed at run time; so a caller that reaches paintAll through a bound reference, added to file-comments.ts, leaves the counted callers as they were and reds the hold on the passes' other mentions", () => {
+  const src = "class P {\n  paintAll(): void { /* the pass */ }\n  a(): void { this.paintAll(); }\n  b(): void { const f = this.paintAll.bind(this); f(); }\n"
+    + "  c(): void { const g = this.paintAll; g(); }\n  d(): void { const { paintAll } = this; paintAll(); }\n  e(): void { (this.paintAll)(); this.paintAll.call(this); }\n"
+    + "  f(): void { (this as any)[\"paintAll\"](); Reflect.get(this, \"paintAll\"); }\n  g(k: string): void { (this as any)[k](); }\n}\n";
+  const c = cardStateCensus(src, ["paintAll"]);
+  assert.deepEqual(c.callers.paintAll, ["a", "d"], "the calls counted: this.paintAll() and the destructured name's call");
+  assert.deepEqual(c.calleeRefs.paintAll.map((x) => x.fn + ": " + x.text),
+    ["b: this.paintAll.bind", "c: g = this.paintAll", "d: paintAll", "e: (this.paintAll)", "e: this.paintAll.call", "f: (this as any)[\"paintAll\"]", "f: Reflect.get(this, \"paintAll\")"],
+    "each other mention, shown with what holds it; the declaration and g's computed key are not listed");
+  // the real file with one caller added through a bound reference, in hideFloat under a guard that never runs
+  const at = "  hideFloat(): void { ";
+  assert.equal(PANEL_SRC.split(at).length, 2, "one hideFloat to add the caller to");
+  const real = cardStateCensus(PANEL_SRC, ["paintAll", "repaintPresel"]);
+  const added = cardStateCensus(PANEL_SRC.replace(at, at + "if (false) { const f = this.paintAll.bind(this); f(); } "), ["paintAll", "repaintPresel"]);
+  assert.deepEqual(added.callers, real.callers, "the counted callers do not see it");
+  assert.deepEqual(real.calleeRefs, { paintAll: [], repaintPresel: [] }, "the file as it is: nothing listed");
+  assert.deepEqual(added.calleeRefs.paintAll.map((x) => x.fn + ": " + x.text), ["hideFloat: this.paintAll.bind"], "the bound reference is listed");
+  assert.throws(() => assert.deepEqual({ paintAll: added.calleeRefs.paintAll, repaintPresel: added.calleeRefs.repaintPresel }, { paintAll: [], repaintPresel: [] }), assert.AssertionError,
+    "so the rule's census, which holds that list empty, reds on it");
 });
 
 type RoadKind = "text" | "svg" | "raster";
@@ -1844,6 +1877,27 @@ class RoadSeam {
     if (how === "leaves") { await this.edit(false); return; }
     await flush(); await flush();
   }
+  /** The editor's Save through the panel of SAVED, sent and not answered yet: `lateAck` answers it. */
+  pendingSave: { done: Promise<{ mtimeNs: string; logged: boolean }>; m: any } | null = null;
+  async saveOut(): Promise<void> {
+    this.buffer = SAVED;
+    const done = this.tracked!.save(SAVED, [], { accepted: [], rejected: [] });
+    await flush();
+    const m = lastOf(this.w, "fileComments", "save");
+    assert.ok(m, "the save went out through the panel");
+    this.pendingSave = { done, m };
+  }
+  /** That save's reply, landing once the editor that sent it is gone (Cancel while it was out): the panel applies the reply, the
+   *  viewer runs the seam's onSaved with mtimeNs() where it was and re-reads the saved bytes itself at once (the seam's onSaved doc
+   *  in file-view.ts), and that re-read fails to a pane here, as the pane before it did. */
+  async lateAck(reply: Status): Promise<void> {
+    const { done, m } = this.pendingSave!; this.pendingSave = null;
+    answer(this.w, reply, m, { verb: "save", logged: true });
+    const r = await done;
+    this.s = reply;
+    for (const cb of this.savedHooks) cb({ mtimeNs: r.mtimeNs, logged: r.logged });
+    await this.pane();
+  }
   /** The editor's Save through saveFile of SAVED (file-view.ts doSave when routesSave() is false, as before the panel's first
    *  status): the frame is the viewer's, and nothing reaches the panel until the ack. */
   async saveFile(): Promise<void> { this.buffer = SAVED; await flush(); }
@@ -1936,6 +1990,7 @@ const ROADS: Record<string, Road> = {
   "text-save-typed": { kind: "text", start: "painted", steps: [["edit", (m) => m.edit(true)], ["save", (m) => m.save("typed", SAVED_STATUS())], ["render", (m) => m.render()], ["status", (m) => m.status(SAVED_S23())], ["done", (m) => m.edit(false)]] },
   "text-save-decided": { kind: "text", start: "painted", steps: [["edit", (m) => m.edit(true)], ["save", (m) => m.save("decided", SAVED_STATUS())], ["render", (m) => m.render()], ["status", (m) => m.status(SAVED_S23())], ["done", (m) => m.edit(false)]] },
   "text-save-undone": { kind: "text", start: "painted", steps: [["edit", (m) => m.edit(true)], ["save", (m) => m.save("undone", UNDONE_STATUS())], ["render", (m) => m.render()], ["status", (m) => m.status(UNDONE_S23())], ["done", (m) => m.edit(false)]] },
+  "text-late-ack-over-pane": { kind: "text", start: "painted", steps: [["edit", (m) => m.edit(true)], ["save", (m) => m.saveOut()], ["cancel", (m) => m.edit(false)], ["land", (m) => { m.out = { text: SAVED, mt: F21 }; return m.land(); }], ["pane", (m) => m.pane()], ["ack", (m) => m.lateAck(SAVED_STATUS())], ["render", (m) => m.render()]] },
   "text-savefile-typed": { kind: "text", start: "unanswered", steps: [["edit", (m) => m.edit(true)], ["save", (m) => m.saveFile()], ["status", async (m) => { answer(m.w, m.s); await flush(); await flush(); }], ["open", (m) => m.open()], ["reread", (m) => m.reread()], ["ack", (m) => m.savedFile()], ["saved status", async (m) => { m.s = SAVED_STATUS(); answer(m.w, m.s); await flush(); await flush(); }], ["done", (m) => m.edit(false)]] },
   "svg-landing-then-paint": { kind: "svg", start: "painted", steps: [["status", (m) => m.status(statusF11())], ["land", (m) => m.land()], ["paint", (m) => m.paint()]] },
   "svg-first-open": { kind: "svg", start: "unpainted", steps: [["land", (m) => m.land()], ["paint", (m) => m.paint()]] },
@@ -2005,6 +2060,13 @@ test("the card-state rule's roads: each row of #cardState's table runs over the 
     for (const x of [...r.fe, ...r.head]) assert.ok(labels.includes(x), r.id + ": the table names a step the road has: " + x);
     for (const x of r.fe.filter((y) => !r.head.includes(y))) assert.ok(r.dropped.includes("at the " + x), r.id + ": the move fe43d2c2a made at the " + x + " that the head drops is named with its reason");
     for (const x of r.head.filter((y) => !r.fe.includes(y))) assert.ok(r.added.includes("at the " + x), r.id + ": the move the head adds at the " + x + " is named with its reason");
+    // ...and a clause names only steps of its own column: each "at the <step>" in a Dropped clause is a step where fe43d2c2a moved the
+    // cards, and in an Added clause one where the head does, so a stale clause reds. A row whose columns agree may still carry a
+    // clause, for a partial change at a step where both columns move (text-save-undone's Dropped clause, raster-inline-landing-window's
+    // Added clause); the gap that leaves is a stale clause at such a step, which this check cannot tell from a partial one.
+    const named = (clause: string): string[] => labels.filter((l) => new RegExp("\\bat the " + l + "(?![a-z])").test(clause));
+    for (const x of named(r.dropped)) assert.ok(r.fe.includes(x), r.id + ": the Dropped clause names the " + x + ", a step where fe43d2c2a made no move");
+    for (const x of named(r.added)) assert.ok(r.head.includes(x), r.id + ": the Added clause names the " + x + ", a step where the head makes no move");
   }
 });
 
@@ -2034,11 +2096,11 @@ const ORDER_STARTS: Array<{ name: string; kind: RoadKind; start: RoadStart; step
   { name: "a painted text file", kind: "text", start: "painted", steps: ["paint", "pane", "status", "reopen", "render", "inline", "comments", "all"] },
   { name: "a text file before its first paint", kind: "text", start: "unpainted", steps: ["paint", "pane", "status", "reopen", "render", "inline", "comments", "all"] },
   { name: "an svg's picture", kind: "svg", start: "painted", steps: ["paint", "pane", "land", "loader", "press", "status", "reopen", "render", "inline", "comments"] },
-  { name: "an svg's Source view", kind: "svg", start: "source", steps: ["paint", "pane", "land", "loader", "press", "status", "reopen", "render", "inline", "all"] },
+  { name: "an svg's Source view", kind: "svg", start: "source", steps: ["paint", "pane", "land", "loader", "press", "status", "reopen", "render", "inline", "all", "comments"] },
   { name: "a raster picture", kind: "raster", start: "painted", steps: ["paint", "pane", "land", "status", "render", "inline"] },
 ];
 
-test("the card-state rule over every ordering of three of its steps (a content paint, a pane, a landing, the re-ask's loader, a press of the Source toggle, a status that differs, the panel's re-open, a render, Show changes inline, the filter), from a painted text file, one before its first paint, an svg's picture and its Source view, and a raster picture, each with a change in more paragraphs than the list shows before its fold: a change card moves, and the cards listed change, only at a step the test's own reading of the rule names (file-comments.ts, #cardState's doc)", async (t: TestContext) => {
+test("the card-state rule over every ordering of three of the steps that act on each start, from five starts, each with a change in more paragraphs than the list shows before its fold: a painted text file and one before its first paint (a content paint, a pane, a status that differs, the panel's re-open, a render, Show changes inline, Comments alone and All; 512 orderings each), an svg's picture (a content paint, a pane, a landing, the re-ask's loader, a press of the Source toggle, a status that differs, the re-open, a render, Show changes inline and Comments alone; 1000), its Source view (the same ten and All; 1331; the loader acts there only after a press puts the picture up) and a raster picture (a content paint, a pane, a landing, a status that differs, a render and Show changes inline; 216): a change card moves, and the cards listed change, only at a step the test's own reading of the rule names (file-comments.ts, #cardState's doc)", async (t: TestContext) => {
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
   let runs = 0; let moved = 0; let relisted = 0; const folded = new Set<string>();
   for (const st of ORDER_STARTS) {
@@ -2071,7 +2133,7 @@ test("the card-state rule over every ordering of three of its steps (a content p
     }
   }
   t.diagnostic("orderings run " + runs + ", steps that moved a card " + moved + ", steps that changed the cards listed " + relisted + ", starts whose list folded " + folded.size);
-  assert.ok(runs === 512 * 2 + 1000 * 2 + 216 && moved > 0, "every ordering ran, and some moved a card (the check reads real moves): " + runs + ", " + moved);
+  assert.ok(runs === 512 * 2 + 1000 + 1331 + 216 && moved > 0, "every ordering ran (3571), and some moved a card (the check reads real moves): " + runs + ", " + moved);
   assert.deepEqual([...folded].sort(), ["a painted text file", "a text file before its first paint", "an svg's Source view", "an svg's picture"], "the fixture folds the list over the text on every start that shows text, so the list's check sees a fold (a raster picture shows none)");
 });
 
@@ -2166,6 +2228,11 @@ function sideEffects(m: RoadSeam): { posted: number; scrolled: number; offsets: 
   const aside = m.w.main.querySelector(".fileview-aside")!;
   return { posted: m.w.posted.length, scrolled: scrolledInto.length, offsets: m.w.scrolls.length, modes: m.w.modes.length, composer: !(aside.querySelector(".fc-composer") as El).hidden, focus: doc.activeElement };
 }
+/** Every row under a change card, by its slot and its words. */
+const rowsUnderCard = (m: RoadSeam, id: string): Array<[string, string]> => {
+  const c = card(m.w.main.querySelector(".fileview-aside")!, "chg:" + id);
+  return c ? c.querySelectorAll(".fc-err").map((r) => [r.getAttribute("data-slot")!, r.childNodes[0].textContent!] as [string, string]) : [];
+};
 /** The row under a change card, or null. */
 const rowUnder = (m: RoadSeam, id: string): string | null => {
   const r = card(m.w.main.querySelector(".fileview-aside")!, "chg:" + id)!.querySelector(".fc-err");
@@ -2214,6 +2281,110 @@ test("in a press window, the Source view having marked the changes and a press o
   await clicksSayNotInView(m, "in the press window");
   await m.press(); await m.paint();                        // back to the Source view: its decode's paint
   await clicksAct(m, "after the Source view's paint");
+});
+
+test("a deletion's Comment on this change, over a failure pane after a content paint and in a press window, opens the composer by the change's id, as it does whatever the view shows, and puts no row under the card (file-comments.ts, startChangeComment: a deletion has no span, so the not-in-view answer is a spanned change's alone)", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const opens = async (m: RoadSeam, where: string): Promise<void> => {
+    const aside = m.w.main.querySelector(".fileview-aside")!;
+    const c = act(card(aside, "chg:h3")!, "fcchangecomment", "h3");
+    assert.ok(c, where + ": the premise: the deletion's card offers Comment on this change");
+    const posted = m.w.posted.length;
+    c!.click(); await flush(); await flush();
+    assert.equal((aside.querySelector(".fc-composer") as El).hidden, false, where + ": the click opens the composer");
+    const ref = aside.querySelector(".fc-composer-ref")!.textContent!;
+    assert.ok(ref.startsWith("About the change") && ref.includes("the comment names the change instead of a passage"), where + ": by the change's id, not a passage cut from the text: " + JSON.stringify(ref));
+    assert.deepEqual(rowsUnderCard(m, "h3"), [], where + ": no row under the deletion's card");
+    assert.equal(m.w.posted.length, posted, where + ": and no request");
+    assert.deepEqual(m.w.hookErrors, []);
+  };
+  const p = await roadStart(t, "text", "painted");
+  await p.pane();
+  await opens(p, "over the pane");
+  p.w.close();
+  const q = await roadStart(t, "svg", "source");
+  await q.press();
+  assert.equal(q.w.ctx.text(), null, "the premise: the press took the Source view's text away");
+  await opens(q, "in the press window");
+});
+
+test("a comment card's link in a press window or behind the re-ask's loader goes to the passage as goTo does, with no mark of the panel's in the body there: a switch to Raw and a scroll to the passage's offset, and no row anywhere (file-comments.ts, followLink: only a change card's link answers that the change is not in view)", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const { NOT_IN_VIEW_LINK, NOT_IN_VIEW_COMMENT } = await import("./file-comments");
+  const goes = async (m: RoadSeam, where: string): Promise<void> => {
+    const aside = m.w.main.querySelector(".fileview-aside")!;
+    const ref = card(aside, passage.id)!.querySelector(".fc-ref")!;
+    assert.ok(ref.classes.includes("fc-link"), where + ": the premise: the comment card offers its link, from the Source view's paint");
+    const modes = m.w.modes.length, scrolls = m.w.scrolls.length;
+    ref.click(); await flush(); await flush();
+    assert.deepEqual(m.w.modes.slice(modes), ["raw"], where + ": the link switches to Raw (goTo, then reveal: no mark of the panel's in the body)");
+    assert.deepEqual(m.w.scrolls.slice(scrolls), [at("shipping the cache in v1.2")], where + ": and scrolls to the passage's offset");
+    const said = Array.from(aside.querySelectorAll(".fc-err")).map((r) => r.childNodes[0].textContent).filter((x) => x === NOT_IN_VIEW_LINK || x === NOT_IN_VIEW_COMMENT);
+    assert.deepEqual(said, [], where + ": no row says a change is not in view");
+    assert.equal(card(aside, passage.id)!.querySelector(".fc-err"), null, where + ": and none under the comment's card");
+    assert.deepEqual(m.w.hookErrors, []);
+  };
+  const p = await roadStart(t, "svg", "source");
+  await p.press();
+  await goes(p, "in the press window");
+  p.w.close();
+  const q = await roadStart(t, "svg", "source");
+  await q.press(); await q.loader();
+  assert.equal(q.show, "loader", "the premise: the re-ask's loader holds the body");
+  await goes(q, "behind the re-ask's loader");
+});
+
+test("Show changes inline and the filter flipped in another viewer (the settings signal: saveSettings, then the romp:settings event) move the change cards at the flip as the same click in this panel does; over a failure pane the flip moves no card and the next content paint takes it (file-comments.ts, settingsFlipped; #cardState's doc, event 3)", async (t: TestContext) => {
+  const { saveSettings } = await import("./settings");
+  const elsewhere = async (patch: { changesInline?: boolean; commentsFilter?: "all" | "comments" | "changes" }): Promise<void> => {
+    saveSettings(patch); win.dispatchEvent(new Event("romp:settings")); await flush(); await flush();
+  };
+  /** The change cards on a road from `start` after `steps`, the world closed after the read. */
+  const read = async (st: TestContext, start: RoadStart, steps: (m: RoadSeam) => Promise<void>): Promise<Record<string, CardRead> | null> => {
+    const m = await roadStart(st, "text", start);
+    await steps(m);
+    const cards = changeCards(m.w);
+    assert.deepEqual(m.w.hookErrors, []);
+    m.w.close();
+    return cards;
+  };
+  /** Comments picked before the first paint, then the paint: the list shows no change card, the marks off. */
+  const underComments = async (m: RoadSeam): Promise<void> => { await m.filter("comments"); await m.paint(); assert.equal(card(m.w.main.querySelector(".fileview-aside")!, "chg:h5"), null, "the premise: Comments alone lists no change card"); };
+  await t.test("Show changes inline turned off in another viewer over the painted file, read at the flip (the next paint would take it either way)", async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const shown = await read(st, "painted", async () => { /* the cards as painted */ });
+    const clicked = await read(st, "painted", (m) => m.inline());
+    assert.notDeepEqual(clicked, shown, "the premise: the click here moves the cards (the marks go off)");
+    assert.deepEqual(await read(st, "painted", () => elsewhere({ changesInline: false })), clicked, "at the flip the change cards read as after the same click here");
+  });
+  await t.test("All picked in another viewer under Comments, a move that turns the marks on", async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const clicked = await read(st, "unpainted", async (m) => { await underComments(m); await m.filter("all"); });
+    assert.ok(clicked && clicked["chg:h5"] && clicked["chg:h5"].link, "the premise: All clicked here lists the change cards with the marks on: " + JSON.stringify(clicked));
+    assert.deepEqual(await read(st, "unpainted", async (m) => { await underComments(m); await elsewhere({ commentsFilter: "all" }); }), clicked, "at the flip the change cards read as after the same click here");
+  });
+  await t.test("the same flips over a failure pane (a control): no card moves at the flip, and the next content paint takes it", async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const inlineClicked = await read(st, "painted", (m) => m.inline());
+    const inline = await read(st, "painted", async (m) => {
+      await m.pane();
+      const before = changeCards(m.w);
+      await elsewhere({ changesInline: false });
+      assert.deepEqual(changeCards(m.w), before, "over the pane Show changes inline off from another viewer moves no change card");
+      await m.land();
+    });
+    assert.deepEqual(inline, inlineClicked, "the next content paint takes the flip: the cards read as after the click over the painted file");
+    const allClicked = await read(st, "unpainted", async (m) => { await underComments(m); await m.pane(); await m.filter("all"); await m.land(); });
+    const all = await read(st, "unpainted", async (m) => {
+      await underComments(m); await m.pane();
+      await elsewhere({ commentsFilter: "all" });
+      const now = changeCards(m.w)!;
+      assert.ok(now["chg:h5"] && !now["chg:h5"].link, "over the pane All lists the change cards at once, the list being the filter's own, with the marks still off until the next content paint: " + JSON.stringify(now));
+      await m.land();
+    });
+    assert.deepEqual(all, allClicked, "and the next content paint takes it as it takes the same click here");
+    assert.ok(all && all["chg:h5"] && all["chg:h5"].link, "with the marks on");
+  });
 });
 
 test("the re-ask's loader after a press of the Source toggle, and a landing of another type under the Source view, each putting up something other than the text the Source view marked: a click on the link or on Comment on this change says the change is not in view and does nothing else; the next content paint takes the row (file-comments.ts, #cardState's doc and notInView)", async (t: TestContext) => {
@@ -2324,6 +2495,160 @@ test("a row saying a change is not in view shows only under its card (file-comme
     const d = card(aside, "chg:h5");
     assert.ok(d && d.classes.includes("fc-card-detached") && !isLink(d) && !act(d, "fcchangecomment"), "the premise: the insertion's card is listed detached, with no link and no Comment on this change");
     assert.deepEqual(rowsSaid(m), [], "the status takes the row away: a detached change can have no link or Comment on this change (retireViewRows)");
+    assert.deepEqual(m.w.hookErrors, []);
+    m.w.close();
+  });
+});
+
+/** The insertion's Accept, refused by the host `no-change` (another client decided it first): the refusal's row goes in the slot a
+ *  decision's row uses under the card. Returns the refusal's words; asserts that the refused decision asks no status (no-change is
+ *  none of MOVED's codes). */
+async function refusedAccept(m: RoadSeam): Promise<string> {
+  const words = "no pending change h5 in docs/report.md";
+  const asks = countOf(m.w, "fileComments", "status");
+  act(card(m.w.main.querySelector(".fileview-aside")!, "chg:h5")!, "fcaccept", "h5")!.click(); await flush(); await flush();
+  const sent = lastOf(m.w, "fileComments", "accept");
+  assert.ok(sent, "the premise: the Accept went out");
+  refuse(m.w, sent, "no-change", words); await flush(); await flush();
+  assert.equal(countOf(m.w, "fileComments", "status"), asks, "the refused decision asks no status (no-change is not a moved fence)");
+  return words;
+}
+
+test("a decision refused on a card whose row says the change is not in view, over a failure pane after a content paint: the refusal stands beside that row, the next content paint takes the not-in-view row and leaves the refusal, which stands until the person dismisses it (file-comments.ts, notInView's own slot; the paint's retire in #latchCardState)", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const { NOT_IN_VIEW_LINK } = await import("./file-comments");
+  const m = await roadStart(t, "text", "painted");
+  await m.pane();
+  card(m.w.main.querySelector(".fileview-aside")!, "chg:h5")!.querySelector(".fc-ref")!.click(); await flush(); await flush();
+  assert.deepEqual(rowsUnderCard(m, "h5"), [["view:h5", NOT_IN_VIEW_LINK]], "the premise: the not-in-view row under the insertion's card");
+  const words = await refusedAccept(m);
+  assert.deepEqual(rowsUnderCard(m, "h5"), [["change:h5", words], ["view:h5", NOT_IN_VIEW_LINK]], "the refusal and the not-in-view row both show, each in its own slot");
+  await m.land();                                          // the next content paint
+  assert.deepEqual(rowsUnderCard(m, "h5"), [["change:h5", words]], "the paint takes the not-in-view row and leaves the refusal");
+  await m.render(); await m.status(S5_STATUS());
+  assert.deepEqual(rowsUnderCard(m, "h5"), [["change:h5", words]], "the refusal stands through a render and a status that still lists the change");
+  card(m.w.main.querySelector(".fileview-aside")!, "chg:h5")!.querySelector('.fc-err[data-slot="change:h5"] [data-act="fcerrx"]')!.click(); await flush();
+  assert.deepEqual(rowsUnderCard(m, "h5"), [], "until the person dismisses it");
+  assert.deepEqual(m.w.hookErrors, []);
+});
+
+test("a decision refused on a card whose row says the change is not in view, then a status that no longer lists the change, the pane still up: the not-in-view row goes with the change, and the refusal stands as a stray row where the card was (file-comments.ts, retireViewRows and strayRows)", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const { NOT_IN_VIEW_LINK, NOT_IN_VIEW_COMMENT } = await import("./file-comments");
+  const m = await roadStart(t, "text", "painted");
+  const aside = m.w.main.querySelector(".fileview-aside")!;
+  await m.pane();
+  card(aside, "chg:h5")!.querySelector(".fc-ref")!.click(); await flush(); await flush();
+  const words = await refusedAccept(m);
+  await m.status(statusF1({ storeMtimeNs: S12, hunks: [h1, h3] }));   // the insertion decided in another client: the sidecar moved, the pane still up
+  assert.equal(card(aside, "chg:h5"), null, "the premise: the status takes the insertion's card away");
+  const rows = Array.from(aside.querySelectorAll(".fc-err")).map((r) => [r.getAttribute("data-slot"), r.childNodes[0].textContent]);
+  assert.deepEqual(rows.filter(([, x]) => x === NOT_IN_VIEW_LINK || x === NOT_IN_VIEW_COMMENT), [], "no row says the change is not in view");
+  assert.deepEqual(rows.filter(([slot]) => slot === "change:h5"), [["change:h5", words]], "the refusal stands, a stray row in the list");
+  assert.deepEqual(m.w.hookErrors, []);
+});
+
+test("a refusal standing under a card, then over a failure pane that card's link, or a spanned change's Comment on this change, clicked: both rows show, the refusal's words unchanged, and the next content paint takes the not-in-view row and leaves the refusal (file-comments.ts, notInView's own slot)", async (t: TestContext) => {
+  const { NOT_IN_VIEW_LINK, NOT_IN_VIEW_COMMENT } = await import("./file-comments");
+  for (const [what, said] of [["the link", NOT_IN_VIEW_LINK], ["Comment on this change", NOT_IN_VIEW_COMMENT]] as const) await t.test(what, async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const m = await roadStart(st, "text", "painted");
+    const words = await refusedAccept(m);
+    assert.deepEqual(rowsUnderCard(m, "h5"), [["change:h5", words]], "the premise: the refusal stands under the insertion's card");
+    await m.pane();
+    const c = card(m.w.main.querySelector(".fileview-aside")!, "chg:h5")!;
+    if (what === "the link") c.querySelector(".fc-ref")!.click(); else act(c, "fcchangecomment", "h5")!.click();
+    await flush(); await flush();
+    assert.deepEqual(rowsUnderCard(m, "h5"), [["change:h5", words], ["view:h5", said]], what + " over the pane: both rows show, the refusal's words unchanged");
+    await m.land();                                        // the next content paint
+    assert.deepEqual(rowsUnderCard(m, "h5"), [["change:h5", words]], "the paint takes the not-in-view row and leaves the refusal");
+    assert.deepEqual(m.w.hookErrors, []);
+    m.w.close();
+  });
+});
+
+test("the not-in-view words go into the panel's one live region (file-comments.ts, notInView, speak and hush): made once, role status and polite, visually hidden, the same node through renders and a close and open; at each click on the link or on Comment on this change, over a failure pane and in a press window, it holds nothing at the end of the click's task and the words after the next animation frame, a second identical press included; the content paint, a status that drops the change and the row's dismiss empty it, and words still waiting for their frame are dropped (the sequence is what is pinned: the technique used so screen readers announce repeated text; the announcement itself was not measured with a screen reader)", async (t: TestContext) => {
+  const { NOT_IN_VIEW_LINK, NOT_IN_VIEW_COMMENT } = await import("./file-comments");
+  const frames = new Map<number, () => void>(); let fid = 0;
+  const g = globalThis as { requestAnimationFrame?: unknown; cancelAnimationFrame?: unknown };
+  const had = { raf: g.requestAnimationFrame, caf: g.cancelAnimationFrame };
+  g.requestAnimationFrame = (cb: () => void): number => { frames.set(++fid, cb); return fid; };
+  g.cancelAnimationFrame = (id: number): void => { frames.delete(id); };
+  t.after(() => { g.requestAnimationFrame = had.raf; g.cancelAnimationFrame = had.caf; });
+  const frame = (): void => { const due = [...frames.values()]; frames.clear(); for (const cb of due) cb(); };
+  const region = (m: RoadSeam): El => { const r = m.w.main.querySelectorAll(".fileview-aside .fc-live"); assert.equal(r.length, 1, "one live region in the panel"); return r[0]; };
+  const click = async (m: RoadSeam, what: "link" | "comment"): Promise<void> => {
+    const c = card(m.w.main.querySelector(".fileview-aside")!, "chg:h5")!;
+    if (what === "link") c.querySelector(".fc-ref")!.click(); else act(c, "fcchangecomment", "h5")!.click();
+  };
+  const says = async (m: RoadSeam, what: "link" | "comment", where: string): Promise<void> => {
+    await click(m, what);
+    assert.equal(region(m).textContent, "", where + ", " + what + ": the region holds nothing at the end of the click's task");
+    await flush(); await flush();
+    frame();
+    assert.equal(region(m).textContent, what === "link" ? NOT_IN_VIEW_LINK : NOT_IN_VIEW_COMMENT, where + ", " + what + ": the words after the next animation frame");
+  };
+  await t.test("over a failure pane", async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const m = await roadStart(st, "text", "painted");
+    const live = region(m);
+    assert.deepEqual([live.getAttribute("role"), live.getAttribute("aria-live"), live.classes.includes("fc-live"), live.textContent], ["status", "polite", true, ""], "role status, polite, the visually hidden class, empty");
+    assert.equal(live.closest(".fc-card"), null, "in no card: the panel's own element");
+    await m.pane();
+    await says(m, "link", "over the pane");
+    await says(m, "link", "over the pane, a second identical press");
+    await says(m, "comment", "over the pane");
+    const row = card(m.w.main.querySelector(".fileview-aside")!, "chg:h5")!.querySelector('.fc-err[data-slot="view:h5"]')!;
+    assert.deepEqual([row.getAttribute("role"), row.getAttribute("aria-live")], [null, null], "the row under the card, rebuilt at every render, carries no role");
+    await m.render();
+    assert.equal(region(m), live, "the same node after a render");
+    await m.close(); await m.open(); await m.reread();
+    assert.equal(region(m), live, "and after the panel closes and opens");
+    await m.land();                                          // the next content paint
+    assert.equal(live.textContent, "", "the content paint empties it");
+    await click(m, "link");                                  // over the painted text: the link acts, and says nothing
+    frame();
+    assert.equal(live.textContent, "", "a link that acts says nothing");
+    await m.pane();
+    await click(m, "link");
+    await m.land();                                          // the paint comes before the frame
+    frame();
+    assert.equal(live.textContent, "", "words still waiting for their frame when the content paint comes are dropped");
+    assert.deepEqual(m.w.hookErrors, []);
+    m.w.close();
+  });
+  await t.test("in a press window", async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const m = await roadStart(st, "svg", "source");
+    await m.press();
+    await says(m, "link", "in the press window");
+    await says(m, "comment", "in the press window");
+    await says(m, "comment", "in the press window, a second identical press");
+    await m.press(); await m.paint();                        // back to the Source view: its decode's paint
+    assert.equal(region(m).textContent, "", "the Source view's paint empties it");
+    assert.deepEqual(m.w.hookErrors, []);
+    m.w.close();
+  });
+  await t.test("a status that drops the change", async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const m = await roadStart(st, "text", "painted");
+    await m.pane();
+    await says(m, "link", "over the pane");
+    await m.status(S5_STATUS());
+    assert.equal(region(m).textContent, NOT_IN_VIEW_LINK, "a status that still lists the change leaves the words");
+    await m.status(statusF1({ storeMtimeNs: S12, hunks: [h1, h3] }));   // the insertion decided in another client
+    assert.equal(region(m).textContent, "", "a status that drops the change empties it, with the row (retireViewRows)");
+    assert.deepEqual(m.w.hookErrors, []);
+    m.w.close();
+  });
+  await t.test("the row's dismiss", async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const m = await roadStart(st, "text", "painted");
+    await m.pane();
+    await says(m, "link", "over the pane");
+    card(m.w.main.querySelector(".fileview-aside")!, "chg:h5")!.querySelector('.fc-err[data-slot="view:h5"] [data-act="fcerrx"]')!.click(); await flush();
+    assert.equal(region(m).textContent, "", "the row's dismiss empties it");
+    assert.deepEqual(rowsUnderCard(m, "h5"), [], "and the row is gone");
     assert.deepEqual(m.w.hookErrors, []);
     m.w.close();
   });

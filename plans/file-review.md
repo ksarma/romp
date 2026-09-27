@@ -2062,7 +2062,8 @@ is laid at any point, that the comment names the change instead of a passage (th
 For a spanned change, an insertion or a substitution, the card offers
 Comment on this change only while the view carries the change's text (`spanCarried`: the bytes the view shows are the
 status's, whose offsets place the span; there is a text to cut it from (`indexedText`: the view's, or while the editor is
-up the file as the editor loaded it, never the buffer); and the view shows text at all, not the picture of a media file;
+up the file as the editor loaded it, or as the last save through the panel from that editor wrote it, never the buffer);
+and the view shows text at all, not the picture of a media file;
 each as the Comments panel's card-state rule took it at its last event (`#cardState` in file-comments.ts, whose doc
 states the rule)); in flux, a reject's reply landed and its reload not,
 or the poll's reload landed and its status not, the
