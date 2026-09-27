@@ -8641,32 +8641,64 @@ and md-sanitize.ts's forbidden tags; the file review's round 17, extra9-1, and t
 extra7-2), the outbound
 mark of a picture with no control excepted, which has no stacking level of its own, a stated boundary (its round 17, extra7-1); a same-origin parent's own
 chrome over the frame is not read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
-and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click: a click by a pointer reads the
-record under its own pointerId or, with none, the press a one-click slot took at the last pointerup, the slot emptied by any
-pointerdown, pointercancel or keydown, by the mousedown below and by the click that takes it and never by time, a key's or a
-script's click reads neither and is read at the click, and a primary press ends every earlier record whatever its pointer type, a record ends at its own
-pointerup, which hands it to the slot, and every record ends at a dragstart and at a mousedown with no pointerdown of a mouse or a
-pen before it, which takes no verdict, since WebKit's drag of a picture ends with no pointerup and no pointercancel, and WebKit sends
-the mouse's next press after a press whose pointerup never came, a drag in another pane among them, as a mousedown with no
-pointerdown, and that mousedown empties the slot too unless it is the compatibility mousedown of the one-finger tap whose pointerup
-filled the slot (in the three engines measured a click after its press's pointerup finds that press in the slot,
-whatever pointerId it carries: Chromium's tap click carries the touch's own pointerId and Firefox's its press's, while in WebKit
-under Playwright's touch emulation on Linux, a stand-in for WebKitGTK on a touchscreen, a tap's click carries pointerId 1 of type
-mouse where its press carried the touch's; iOS WebKit's source gives an iPhone tap's click the touch's own pointerId, read and not
-run on a device; the slot's clears but that mousedown's are defensive, the slot refilled at every pointerup, read by no key's or
-script's click and emptied by that mousedown before a click whose press the viewer's window did not hear; that mousedown's clear of
-the slot is pinned: before it, a tap on another document's element over the picture that went away during the press, whose
-compatibility mousedown and click alone reach the viewer's window, took the slot a right click, a middle click or a two-finger touch
-had filled and opened the tab with the sign covered or out of view at the tap's start, measured in the three engines in the
-dashboard's shape, the viewer's page in a same-origin frame, and its residual, a one-finger touch of the viewer's window that ends in
-a pointerup with no click, then such a tap, is reached by no touch measured; the
-primary press's clear's cost on a device with a mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type
-lands elsewhere loses its record, so its click opens nothing and reveals; the cost of ending the records, measured in WebKit: after
-a drag anywhere in the page, another pane's included, the mouse's next click on a web picture opens nothing and reveals its sign,
-whatever covers or shows it, a right click before that drag included, and the click after it opens, and where a press's pointerup
-never comes the mouse's next click is refused the same way, while Chromium and Firefox end such a drag with a pointercancel and
-carry no cost; the file review's round 17, tests-1 with regression-1, and its round 18, extra5-1, extra5-2 and correctness-1, with
-the coordinator's decisions on them and the closing check after those fixes);
+and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click along that gesture's own chain
+of events as the viewer's window hears them, keyed on ten events of that window's capture phase (pointerdown, mousedown, mouseup,
+pointerup, pointercancel, keydown, dragstart, touchend, touchcancel and click) and never on time: a click by a pointer reads the
+record under its own pointerId or, with none, the press a one-click slot took at the last pointerup, either only right after a
+mouseup of the primary button whose detail, the click count, is above 0 (the tail: in the three engines measured every pointer's
+click came right after such a mouseup, the lone click below alone excepted, and every mouseup with no click after it carried
+detail 0), the slot's press only when a click typed as the slot's pointerup was carries that pointerup's pointerId, and a
+touch-order pen's slot (a primary pen whose own mousedown had not come by its pointerup: iPadOS's Pencil and Android's and
+ChromeOS's styluses, read and not run) only after that pen's compatibility mousedown and by a click typed pen under the pen's
+pointerId or by one with no pointerId; the slot is emptied by any pointerdown, pointercancel or keydown, by the mousedown below
+and by the click that takes it, and never by time; a key's or a script's click reads neither and is read at the click; and a
+primary press ends every earlier record whatever its pointer type, a record ends at its own pointerup, which hands it to the slot,
+and at its own pointercancel, every record ends at a dragstart and at a mousedown with no pointerdown of a mouse or a pen before
+it, which takes no verdict, since WebKit's drag of a picture ends with no pointerup and no pointercancel, and WebKit sends the
+mouse's next press after a press whose pointerup never came, a drag in another pane among them, as a mousedown with no
+pointerdown, and that mousedown empties the slot too unless it is the compatibility mousedown of the one-finger tap, or of the
+touch-order pen, whose pointerup filled the slot, and a touchend or a touchcancel marks every touch record refused, the record
+standing, since a deleted record would send its pointer's click to the slot (in the three engines measured a tap's click after its
+press's pointerup finds that press in the slot: Chromium's tap click carries the touch's own pointerId and type and Firefox's its
+press's, while in WebKit under Playwright's touch emulation on Linux, a stand-in for WebKitGTK on a touchscreen, a tap's click
+carries pointerId 1 of type mouse where its press carried the touch's, a type other than the slot's; iOS WebKit's source gives an
+iPhone tap's click the touch's own pointerId, read and not run on a device; the slot's clears but that mousedown's are defensive,
+the slot refilled at every pointerup, read by no key's or script's click, and a click whose press the viewer's window did not hear
+refused by that mousedown's clear, the tail or the slot's pointerId test, the residual below aside; that mousedown's clear of the
+slot is pinned: before it, a tap on another document's element over the picture that went away during the press, whose
+compatibility mousedown and click alone reach the viewer's window, took the slot a right click, a middle click or a two-finger
+touch had filled and opened the tab with the sign covered or out of view at the tap's start, measured in the three engines in the
+dashboard's shape, the viewer's page in a same-origin frame; the tail, the slot's pointerId test and the touch records' refusal
+are pinned too, each by browser cells red at 142ade155 in the engine whose road it closes, in the dashboard's shape beside another
+pane: Firefox, after another document cancels a tap's pointerdown, sends the viewer that tap's click alone, with no mousedown and
+no mouseup, and that click took the slot a right or a middle click, the viewer's own tap whose compatibility events or click went
+elsewhere, or a mouse released on the top page had filled, or read the record of a mouse held on the control or released in
+another pane; in Chromium another document's tap after the viewer's own tap sent a click under its own touch's pointerId, which
+took that tap's slot; and in WebKit, which gives every touch pointerId 2, another document's tap handed the slot the record of the
+viewer's tap whose pointerup that document took; each opened the tab with the sign covered at the tap's start; the residual, which
+no event the viewer hears tells from the viewer's own tap: an element of another same-origin document shown over the picture
+during the viewer's tap takes that tap's compatibility events and click, and a tap on that element, which goes away during the
+press, then reaches the viewer as a mousedown, a mouseup of detail 1 and a click and takes the slot the viewer's tap filled,
+measured by the closing check at 142ade155 in the dashboard's shape in Firefox 16 of 16 and in WebKit 7 of 7, and 0 of 36 in
+Chromium, whose foreign click carries its own touch's pointerId, and in it by reading a second finger resting on another document
+during the viewer's tap and a tap whose click the engine withholds, in Firefox and WebKit, and a foreign tap by the same pen under
+the same pointerId, while today the only element of the dashboard's top page that cancels a pointerdown is the update banner's
+drag handle, which stays put during a press, and whether to accept it is the owner's decision; the chain rule's costs, each a
+refusal that reveals the control: in WebKit, measured, a tap whose pointerup another document's element takes opens nothing and
+the next tap opens, and, unmeasured, on a Firefox touchscreen whose tap's click came typed touch under a pointerId other than its
+pointerup's every tap would be refused, the tab opening only from the mouse or the keyboard, a pen in the touch order whose click
+comes typed mouse, as WebKitGTK would type it by analogy with a touch's, would have every tap refused, a tap during which another
+finger that touched the viewer lifts, in an engine that clicks after such a tap, is refused, and so is a pointer's click with no
+primary mouseup of detail above 0 before it, an assistive technology's with a pointerId and no mouseup or an eraser's whose
+mouseup does not carry the primary button, while Enter or Space still opens; the primary press's clear's cost on a device with a
+mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type lands elsewhere loses its
+record, so its click opens nothing and reveals; the cost of ending the records, measured in WebKit: after a drag anywhere in the
+page, another pane's included, the mouse's next click on a web picture opens nothing and reveals its sign, whatever covers or
+shows it, a right click before that drag included, and the click after it opens, and where a press's pointerup never comes the
+mouse's next click is refused the same way, while Chromium and Firefox end such a drag with a pointercancel and carry no cost; the
+file review's round 17, tests-1 with regression-1, and its round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's
+decisions on them, the closing check after those fixes and the closing check at 142ade155 after the fixes for the file review's
+round 18);
 a refused gesture opens nothing and scrolls the sign into view (`revealSign`, block and inline "nearest", the same-origin frames and
 a pinch zoom's visual viewport included), moving no focus, so the next gesture opens; where the reveal cannot put the sign on the
 screen the gate stays closed, stated limits measured in Chromium: the chat page's modal framed by the dashboard under a pinch zoom of
@@ -9007,7 +9039,10 @@ ui/webview/file-view-place-blocks.test.ts stands in for with a fixture box) and,
 phone's pages and a hybrid page, and in Firefox, on the hybrid page, the clicks of the mouse after a drag of a picture and after a
 drag in another pane, and Firefox's chord, on a plain page too, and, since the closing check after the fixes for the file review's
 round 18, a tap on another document's element over the control in the dashboard's shape, the viewer's page in a same-origin frame
-of a top page, on the hybrid page,
+of a top page, on the hybrid page, and, since the closing check at 142ade155 after the fixes for the file review's round 18, the
+chain rule's cells beside another pane's frame, Firefox's lone click after another document cancelled a tap's pointerdown, on the
+hybrid page, and WebKit's touch whose pointerup the viewer never heard and its cost cell, on a phone's pages and the hybrid page
+(the Chromium leg runs the same module's cells of another document's tap whose click carries another touch's pointerId),
 each engine launched through real-viewer-leg.ts's inBrowser with the engine named; the cells are ui/webview/file-figure-open-taps.ts's,
 a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and two cases of WebKit's alone that read window errors, the Files
 pane's as its Comments aside opens beside a document of top-level tables, and the chat modal's, the Files pane's and the feed
