@@ -4027,6 +4027,57 @@ out["roads"][road]["viaRowsAfterHubDial"] = carried_via(us)
 step(road, "hubDialsAfterFarAnswersIt", us, newOnFar=S["new"], nobody=S["nobody"])
 dial(us, US, hub, HUB)                             # the hub's answer to our dial releases the hub's row
 step(road, "hubAnswersOurDial", us, newOnFar=S["new"], nobody=S["nobody"])
+# ...AND WHEN THE HUB IS HEARD AFTER OUR RESTARTS (round 6 of fork PR #897, the reviewer's verifier at the sixty-first
+# commit, its road rvS1): the same world, F's bus restarted since its cached word, but the hub, the same process, is
+# heard again. It has not heard F's new process, so it keeps relaying F's last cached word, which names F's old bus, at
+# its first dial after our restart, in its answer to our dial, twice more by both roads, and after our second restart:
+# the word holds, a sid nothing names cannot-determine by the heard via row. Then F answers the hub, and the hub's next
+# dial names F's new bus and folds into F's row
+def hub_words_of_f(bus, old):                      # the hub's gossip rows about F here: [F, sid, names F's old bus, its bit]
+    return sorted([pa.get("via"), pa.get("id"), str(pa.get("viaBus") or "") == old, pa.get("viaAnswered")]
+                  for pa in (bus.PEER_STATE.get(HUB) or {}).get("presence") or [] if pa.get("via") == F)
+road = "ourRestartFarBusRestartedHubRelaysItsLastCachedWord"
+us, f, hub, c = far_behind_hub(road, HUB)          # F answered through the hub, released here
+out["roads"][road] = {}
+LISTINGS["f"] = None                               # F's kernel blinks; the new session starts on F and mails ours
+out["roads"][road]["park"] = park(f, S["new"], "px-hubrelays")
+out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)   # F's dial over its cache carries the mail to the hub
+out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)  # the hub's dial: F's cached word and the mail, landed here
+old_bus = str(f.BUS_ID)
+us = load_bus("us2")                               # OUR bus restarts over the same root (the self-update path)
+notify(us, HUB, True); notify(us, C, True); notify(us, F, True)
+dial(c, C, us, US); dial(us, US, c, C)             # C heard in the new process, released by our dial's answer
+step(road, "afterOurRestart", us, newOnFar=S["new"], nobody=S["nobody"])
+f = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts too, over its own root: a new bus id
+with As(f):
+    f.peer_update({"host": US, "port": 50001, "up": True})   # F links us; F no longer exchanges with the hub
+LISTINGS["f"] = [S["other"], S["new"]]             # F's kernel answers, naming the new session
+dial(f, F, us, US); dial(us, US, f, F)             # F's answer to our dial releases F's row, under F's new bus id
+out["roads"][road]["busIds"] = [old_bus != str(f.BUS_ID), via_bus_of(us, "via:%s/%s" % (HUB, F)) == old_bus,
+                                str((us.PEER_STATE.get(F) or {}).get("busId") or "") == str(f.BUS_ID)]
+step(road, "farAnswersOurDial", us, newOnFar=S["new"], nobody=S["nobody"])
+out["roads"][road]["hubDial"] = dial(hub, HUB, us, US)   # the hub names F again in this process: F's last cached word
+out["roads"][road]["hubWordsAtDial"] = hub_words_of_f(us, old_bus)
+out["roads"][road]["viaRowsAfterHubDial"] = [carried_via(us), via_bus_of(us, "via:%s/%s" % (HUB, F)) == old_bus]
+step(road, "hubDialNamesFAgain", us, newOnFar=S["new"], nobody=S["nobody"])
+dial(us, US, hub, HUB)                             # the hub's answer to our dial names F again, the same cached word
+step(road, "hubAnswerNamesFAgain", us, newOnFar=S["new"], nobody=S["nobody"])
+for _ in range(2):                                 # twice more by both roads, F exchanging with us between
+    dial(f, F, us, US); dial(us, US, f, F); dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+step(road, "twiceMoreBothWays", us, newOnFar=S["new"], nobody=S["nobody"])
+us = load_bus("us3")                               # OUR bus restarts again; the hub is heard at once, by both roads
+notify(us, HUB, True); notify(us, C, True); notify(us, F, True)
+dial(c, C, us, US); dial(us, US, c, C); dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+dial(f, F, us, US); dial(us, US, f, F); dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+out["roads"][road]["hubWordsAfterSecondRestart"] = hub_words_of_f(us, old_bus)
+out["roads"][road]["viaRowsAfterSecondRestart"] = [carried_via(us), via_bus_of(us, "via:%s/%s" % (HUB, F)) == old_bus]
+step(road, "afterOurSecondRestartHubHeard", us, newOnFar=S["new"], nobody=S["nobody"])
+with As(f):
+    f.peer_update({"host": HUB, "port": 50002, "up": True})
+hear(f, F, hub, HUB)                               # F answers the hub: the hub hears F's new process
+out["roads"][road]["hubDialAfterFar"] = dial(hub, HUB, us, US)   # the hub's word names F's new bus: it folds into F's row
+out["roads"][road]["viaRowsAfterFarAnswersHub"] = carried_via(us)
+step(road, "hubDialAfterFarAnswersIt", us, newOnFar=S["new"], nobody=S["nobody"])
 # RESIDUAL (3b) WHEN F'S BUS RESTARTED SINCE ITS CACHED WORD (round 6 of fork PR #897, the reviewer's verifier at the
 # sixtieth commit, its road rvA4FarRestartedInProcess), in one process of ours: F's cached exchange with the hub carries a
 # new session's mail here, and F stops exchanging with the hub, which keeps gossiping F's last word; F links us, dials and
@@ -6752,14 +6803,22 @@ print(json.dumps(out))
         via row, and a sid nothing names answers rule 5, with no roster from the hub naming F in this process. At the
         forty-ninth commit the carried row held nothing, and the session answered [true, 5, no-reachable-host-names-it]
         from our restart on, while C vouched.
-        THE CONDITION (the reviewer's verifier at the sixtieth commit, its road rvA1FarRestartedOwnAnswer): F's own answer
-        ends the carried word only while F's bus is the one the word names. When F's bus has restarted since (the
+        THE CONDITION (the reviewer's verifier at the sixtieth commit, its road rvA1FarRestartedOwnAnswer): F's own
+        answer ends the carried word only while F's bus is the one the word names. When F's bus has restarted since (the
         self-update path), F's row here carries the new bus id, and a known different bus id beats the name
-        (_direct_row_speaks), so F's row does not speak for the carried word: through F's answers to our dial, and across
-        our second restart, a sid nothing names stays cannot-determine by the carried row, the hub never heard naming F,
-        for the file's life. It ends when the hub names F again in this process: here the hub, having heard F's new
-        process, dials us, its word names F's new bus and folds into F's row, and the hub's answer to our dial then
-        releases its own first roster, rule 5 for a sid nothing names."""
+        (_direct_row_speaks), so F's row does not speak for the carried word: through F's answers to our dial, and
+        across our second restart, a sid nothing names stays cannot-determine by the carried row, the hub unheard. It
+        ends when F answers the hub again and the hub's next word, naming F's current bus, reaches here: here the hub,
+        having heard F's new process, dials us, its word names F's new bus and folds into F's row, and the hub's answer
+        to our dial then releases its own first roster, rule 5 for a sid nothing names. Until then the hub keeps
+        relaying F's last cached word, which holds as residual (3b) states, for the file's life when F never answers the
+        hub again, whether or not the hub is heard (the reviewer's verifier at the sixty-first commit, its road rvS1).
+        In the leg where the hub is heard after our restarts, the hub's dial, its answer to our dial, two more exchanges
+        by both roads and the exchanges after our second restart each carry F's last cached word, naming F's old bus,
+        unanswered, and a sid nothing names reads listing-unanswered by the heard via row; once F answers the hub, the
+        hub's next dial names F's new bus and folds into F's row, rule 5. Under a writer that ends the carried word when
+        the hub names F again in this process, that leg's via row is answered at the hub's dial and a sid nothing names
+        reads rule 5 from the hub's answer to our dial on."""
         S = ROAD_SIDS
         name = "ourRestartFarHostsOwnAnswerEndsTheCarriedWord"
         carried = UNANSWERED(R_VIA_F + " (not heard, listing unanswered)")
@@ -6808,8 +6867,8 @@ print(json.dumps(out))
                                  "name match that beats a known different bus id, [true, 5, no-reachable-host-names-it])")
                 self.assertEqual((road["viaRowsAfterSecondRestart"],
                                   self._road(got, restarted, "afterOurSecondRestart", "nobody")), ([R_VIA_F], carried),
-                                 "and across our second restart and F's exchanges after it: the hub never heard naming F, the "
-                                 "carried word holds for the file's life")
+                                 "and across our second restart and F's exchanges after it, the hub unheard: the carried word "
+                                 "holds, for the file's life if F never answers the hub again")
                 self.assertEqual((road["hubDial"][0], road["viaRowsAfterHubDial"],
                                   self._road(got, restarted, "hubDialsAfterFarAnswersIt", "nobody"),
                                   self._road(got, restarted, "hubAnswersOurDial", "nobody")),
@@ -6817,6 +6876,45 @@ print(json.dumps(out))
                                  "THE END: F answers the hub, and the hub's word names F's new bus and folds into F's row; the "
                                  "hub's first roster here is held until its answer to our dial, then rule 5 for a sid nothing "
                                  "names")
+        relays = "ourRestartFarBusRestartedHubRelaysItsLastCachedWord"
+        heard_via = UNANSWERED(R_VIA_F + " (listing unanswered)")
+        cached_word = [[R_F, S["other"], True, False]]   # the hub's word about F: F's last cached roster, naming F's old bus
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape, far_bus_restarted=True, hub_heard=True):
+                road = got["roads"][relays]
+                self.assertEqual((road["landingHere"]["acks"], self._road(got, relays, "afterOurRestart", "nobody")),
+                                 (["px-hubrelays"], carried),
+                                 "the session's mail landed through the hub, and our restart carries F's word, its bit False "
+                                 "(at the forty-ninth commit [true, 5, no-reachable-host-names-it])")
+                self.assertEqual((road["busIds"], self._road(got, relays, "farAnswersOurDial", "newOnFar"),
+                                  self._road(got, relays, "farAnswersOurDial", "nobody")),
+                                 ([True, True, True], RULE_4, carried),
+                                 "F's bus restarted since its word: F's row, released by F's answer to our dial, carries the new "
+                                 "bus id and does not speak for the carried word, which holds")
+                self.assertEqual((road["hubDial"][0], road["hubWordsAtDial"], road["viaRowsAfterHubDial"],
+                                  self._road(got, relays, "hubDialNamesFAgain", "nobody")),
+                                 (200, cached_word, [[R_VIA_F], True],
+                                  UNANSWERED(R_HUB + " (listing unanswered)", R_VIA_F + " (listing unanswered)")),
+                                 "THE HUB NAMES F AGAIN in this process, with F's last cached word, naming F's old bus, "
+                                 "unanswered: a sid nothing names is cannot-determine by the heard via row, beside the hub's own "
+                                 "first roster (under a writer that ends the carried word when the hub names F again, the via row "
+                                 "answered, and the hub's row alone named)")
+                self.assertEqual((self._road(got, relays, "hubAnswerNamesFAgain", "nobody"),
+                                  self._road(got, relays, "twiceMoreBothWays", "nobody")), (heard_via, heard_via),
+                                 "the hub's answer to our dial releases the hub's row, and its word about F, the same cached "
+                                 "word, holds by the heard via row, and so after two more exchanges by both roads (under that "
+                                 "writer, [true, 5, no-reachable-host-names-it])")
+                self.assertEqual((road["hubWordsAfterSecondRestart"], road["viaRowsAfterSecondRestart"],
+                                  self._road(got, relays, "afterOurSecondRestartHubHeard", "nobody")),
+                                 (cached_word, [[R_VIA_F], True], heard_via),
+                                 "and after our second restart, the hub heard at once by both roads: F not having answered the "
+                                 "hub, its word holds whether or not the hub is heard")
+                self.assertEqual((road["hubDialAfterFar"][0], road["viaRowsAfterFarAnswersHub"],
+                                  self._road(got, relays, "hubDialAfterFarAnswersIt", "newOnFar"),
+                                  self._road(got, relays, "hubDialAfterFarAnswersIt", "nobody")),
+                                 (200, [], RULE_4, RULE_5),
+                                 "THE END: F answers the hub, and the hub's next dial names F's new bus and folds into F's row: "
+                                 "rule 5 for a sid nothing names")
 
     def test_x4_a_hubs_own_face_3_one_hop_out_holds_through_two_buses_on_this_build(self):
         """X4 (round 6 of fork PR #897, the reviewer's round-5 ruling C): the held state is what a row STORES, so a hub on
