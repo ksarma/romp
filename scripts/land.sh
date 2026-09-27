@@ -53,7 +53,9 @@ Merges one or two PRs (numbers), each with a merge commit:
   gh pr merge N --merge --match-head-commit <head> [--auto]
 then runs scripts/pr-orphans.sh, which reports a merged PR whose content is not on $MAIN. The batch
 (scripts/batch.py) is how PRs normally land; this is for an urgent fix or a one-file PR that
-conflicts with nothing.
+conflicts with nothing. It reads no test result of its own, only the checks GitHub reports at the
+head: where PRs run no CI (docs/batching.md), that is the tier label check alone, and the PR merges
+with no test run behind it.
 
 Refusals (exit 2). Every PR is read and checked before any is merged, so a refusal never follows a
 merge; the second PR of a pair is checked before the first one lands.

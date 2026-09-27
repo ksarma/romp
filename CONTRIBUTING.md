@@ -48,9 +48,11 @@ against the real scanner and skips itself when `gitleaks` is not installed
 not on `PATH`). Installing it also arms the credential half of the `pre-push`
 hook, which is worth having before you push anything.
 
-The Python and shell suites are also the CI gate, across Python 3.10 to 3.13 on
-Linux; the macOS cells run on demand from the Actions tab (they are billed even
-on a public repo, so they are not part of the per-push matrix).
+On this fork the landing gate is the local sweep (`scripts/sweep.py`), run at
+each batch head, and GitHub's CI runs once per batch, on the push of the batch
+branch, across Python 3.10 to 3.13 and free-threaded 3.14t on Linux; member PRs
+and merges to main run none (`docs/batching.md`). The macOS cells run on the
+weekly schedule and on demand from the Actions tab, not on a batch push.
 
 ## Measuring dashboard pane performance
 

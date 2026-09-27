@@ -109,7 +109,11 @@ so there is no list to write. **gitleaks** covers them, in two places:
   It needs `fetch-depth: 0`: a default checkout scans one commit and reports
   clean. Since 2026-09-27 CI scans neither a PR push nor a merge to `main`
   (see the publish step below): between batches the pre-push hook is the only
-  scan, and a machine without gitleaks pushes unscanned until the next batch.
+  scan. Three things go unscanned until the next batch push or the weekly run:
+  a push from a machine without gitleaks, a push from a clone where
+  `install.sh` never linked the hook into git's hooks directory (no hook runs
+  at all), and a commit GitHub makes itself (a web edit or suggestion, the
+  Update branch button).
 
 Three things follow for anyone touching this:
 - **A hit means rotate, not amend.** A credential that reached a commit is
@@ -205,7 +209,9 @@ broad `git add` will sweep up your work). Conventions:
   per batch, on the push to `batch/<name>`, and not on the merge to `main`. The landing
   gate is the local sweep, `scripts/sweep.py`, whose result for the batch head's full
   sha `scripts/batch.py verify` and `land` read; `land` also refuses a batch whose head
-  does not contain `main`, so the tree that lands is the tree the sweep and CI tested.
+  does not contain `main`, so the tree that lands is the tree the sweep and CI tested. The
+  button and `gh pr merge` make no such check, so a batch merged by hand needs `main` unmoved
+  since verify (docs/batching.md, maintainer step 6).
   Anything in the code that reads the canonical repo (the release script's post-merge
   fast-forward and tag push, the kernel's update and drift probes) resolves the remote
   as `upstream` when the clone has one, else `origin` (`_release_remote` in

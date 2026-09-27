@@ -9,7 +9,8 @@ name: CI
 # the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate, and
 # scripts/batch.py land refuses a batch whose head does not contain main, so the merge commit's tree
 # is the batch head's tree, the one this workflow tested on the batch push (docs/batching.md). A
-# private repository then spends its minutes once per batch head.
+# private repository spends its minutes on each batch push, on each manual run and on the weekly
+# schedule, whose macOS cells bill at ten times the Linux rate there: the schedule is the larger cost.
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
 # an earlier note here said it was billed), but the macOS cells are slow (the bats
 # suite alone is about 16 minutes) and the runners are scarcer, so they do NOT run

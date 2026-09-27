@@ -53,10 +53,12 @@ also runs on every push to main).
 
 Once, already done on this fork: delete branches on merge, squash and rebase merges off, so
 "Create a merge commit" is the only button. A ruleset on main (required checks by name, strict mode
-off, admin bypass) is optional and comes after the first batch has shown the check names. On a batch
-PR a required CI check is met by the run of the push to its branch, which attaches to the batch head;
-a member PR has no CI checks, so a rule requiring them would also hold every PR merged alone with
-`scripts/land.sh`.
+on, admin bypass) is optional and comes after the first batch has shown the check names. On a batch
+PR a required CI check is met by the run of the push to its branch, which attaches to the batch head.
+Strict mode ("require branches to be up to date") makes GitHub itself refuse a batch PR that is
+behind main, which is the case the no-CI-on-main rule cannot allow; without it only `scripts/batch.py
+land` checks. A member PR has no CI checks, so a rule requiring them also holds every PR merged alone
+with `scripts/land.sh`.
 
 Auto-merge (`gh pr merge --auto`) needs two things: the repository's "Allow auto-merge" setting
 (`gh api repos/{owner}/{repo} --jq .allow_auto_merge`; off on this fork today, and turning it on is
@@ -85,10 +87,13 @@ Per batch, in order:
    in the entry file.
 5. To drop a member, comment `pull #N`. The batch is rebuilt without it (and without anything that
    depends on it); wait for the new green.
-6. Merge: say "merge batch #B" to the batcher, or click "Create a merge commit", or run
-   `gh pr merge <B> --merge --match-head-commit <sha>` (it refuses if the branch moved after you
-   read it). Member PRs read merged on their own and their branches are deleted. If you click the
-   button yourself, tell the batcher to run `finish`.
+6. Merge: say "merge batch #B" to the batcher, who runs `scripts/batch.py land`: it reads main on
+   origin again right before the merge and refuses if the batch no longer contains it. The button
+   and `gh pr merge <B> --merge --match-head-commit <sha>` do not check main. No CI runs on the
+   merge to main, so use either only while main is still at the SHA the first block names as
+   contained; if main has moved, ask the batcher to merge it in, sweep and verify again. Member PRs
+   read merged on their own and their branches are deleted. If you merge by hand, tell the batcher
+   to run `finish`.
 7. Nothing else. To revert a member later, `git revert -m 1 <its merge commit>` on a branch, as a PR.
 
 For one or two PRs that cannot wait: `scripts/land.sh N [M]` (`--help` prints the refusal table).
@@ -98,8 +103,10 @@ one whose mergeability GitHub has not computed yet; failing checks (with or with
 pending checks or a PR blocked by a rule on main (without `--auto`); a PR behind main; and any base
 but main (a merged PR's branch, a branch with no PR, an open PR's branch). A PR with no checks at
 all is noted, not refused. Since member PRs run no CI, the only check it can read is the tier
-label, so it reads no test result: a PR merged this way is first tested by the next batch's sweep
-and CI run.
+label, so it reads no test result. The next batch's sweep runs its Python, shell and node tests, but
+the sweep owes the webview legs only for what the batch itself changes since main, and main then
+already holds this PR; a `kernel/kernel.py`, `ui/` or `vscode-extension/` change merged this way is
+first webview-tested by the next batch's CI run (its `vscode-extension` job).
 
 A chain of two PRs lands in one call with no flag: the lower PR merges first whichever order you
 typed, its branch is deleted, GitHub retargets the upper PR to main, and it merges there. Each PR is
@@ -168,7 +175,9 @@ subject; `verify` refuses the branch otherwise.
    `scripts/batch.py summarize <name>` and watch the one CI run: the push to `batch/<name>` starts
    it, the batch PR shows its checks on its head, and a newer push to the branch cancels the older
    run. The batch PR carries the `batch` label and no tier; the fork's copy of the `PR tier` check
-   counts `batch` as its one label, so that check is green on it. If CI is red:
+   counts `batch` as its one label, so that check is green when the PR opens. It does not run on a
+   push, so after a rebuild the new head shows no `PR tier` check until a label changes; nothing
+   gates on it. If CI is red:
    `scripts/batch.py bisect <name> -- <failing test>` names the member;
    `scripts/batch.py pull <name> N` rebuilds without it and says so on the PR.
 6. When a member's owner pushes a fix after the cut (they tell you by postal), run
@@ -190,7 +199,11 @@ subject; `verify` refuses the branch otherwise.
    rule on main that gates a merge (the maintainer section above names the types), reads both before
    it retargets anything, and refuses naming what is missing or the rules it found instead; run
    `finish` once the PR lands. Auto-merge merges later, when the rule is met, and land cannot check
-   main again then. If the maintainer clicked the button, run `scripts/batch.py finish <name>` alone.
+   main again then. If the maintainer merged by the button or `gh pr merge`, check that the merge
+   commit's first parent is the main that verify saw (`git rev-parse <merge>^1` against the SHA the
+   body's first block names), then run `scripts/batch.py finish <name>` alone. If it is not, the tree
+   on main was never swept or tested: run `scripts/sweep.py run` on a worktree at the merge commit
+   now and tell the maintainer what it finds.
 
 ## Checked on the first batch
 
