@@ -47,9 +47,9 @@ process a non-daemon thread starts after its test returned is named, and a daemo
 idle pool a test left is waited the whole bound and reported as still running (the join's named cost, timed up to the
 check's first read of /proc); without procfs the check says so once and leaves the exit status alone, and Scanner's
 roots test, which reads no /proc, runs there; a test that leaves nothing ends the run green with no holder line. The
-controller's own multiprocessing resource tracker is passed over while no descriptor table the check can read, other
-than the controller's and the tracker's, holds its pipe (it held the root while the test ran; the run ends green and
-the tracker is gone once the run's process has exited). The premise, each in a child run whose test starts the
+controller's own multiprocessing resource tracker is passed over while no /proc/<pid>/fd table the check can read,
+other than the controller's and the tracker's, holds its pipe (it held the root while the test ran; the run ends green
+and the tracker is gone once the run's process has exited). The premise, each in a child run whose test starts the
 tracker: a forked child that keeps the pipe past the run's end gets it named, with the child's pid on its line, and
 both are gone once the run's process has exited; one that
 exits three seconds after the fork leaves it passed over at the default bound and named under a zero bound; under a stub
@@ -455,10 +455,10 @@ class Scanner(unittest.TestCase):
 
     @procfs
     def test_a_passed_over_pid_is_neither_reported_nor_waited_for(self):
-        """skip_pids, which the run end fills with the controller's own resource tracker (_run_end_holders, which names the
-        tracker after the wait when the premise of the pass-over does not hold): a holder among them is passed over by the
-        scan before the wait, so the wait does not start for it and nothing is reported; the same holder not passed over
-        is reported at the bound."""
+        """skip_pids, which the run end fills with the controller's own resource tracker (_run_end_holders, which judges
+        the tracker alone after the wait when it does not read the premise of the pass-over as holding): a holder among
+        them is passed over by the scan before the wait, so the wait does not start for it and nothing is reported; the
+        same holder not passed over is reported at the bound."""
         p = self._sleeper(TMPDIR=self.root)
         t0 = time.monotonic()
         leaked, unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=10.0, pids=[p.pid], skip_pids={p.pid})

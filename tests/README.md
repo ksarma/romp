@@ -424,13 +424,14 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   on demand (a spawn-context `ProcessPoolExecutor` starts it, as
   `tests/test_session_env.py`'s census pool class does), and it ignores SIGINT
   and SIGTERM and exits when the last write end of its pipe closes. The premise
-  is that it exits with the controller, which the check reads as: no descriptor
-  table it can read, other than the controller's and the tracker's, holds that
-  pipe (a process whose descriptors cannot be read, and a descriptor in flight,
-  are not read for it: below). The check reads the pipe from `/proc` (the one
-  the controller's record writes to, when the tracker holds a descriptor on it
-  too) and reads the descriptor table of every other live process it can read
-  for it. A process holding it (a child forked through `multiprocessing`'s fork
+  is that it exits with the controller, which the check reads as: no
+  `/proc/<pid>/fd` table it can read, other than the controller's and the
+  tracker's, holds that pipe (a process whose descriptors cannot be read, a
+  thread's descriptor table that `/proc/<pid>/fd` does not show, and a
+  descriptor in flight are not read for it: below). The check reads the pipe
+  from `/proc` (the one the controller's record writes to, when the tracker
+  holds a descriptor on it too) and reads every other process's
+  `/proc/<pid>/fd` table it can read for it. A process holding it (a child forked through `multiprocessing`'s fork
   context keeps the controller's write end and a spawn-context worker is handed
   one, on every version; a raw `os.fork` child keeps it on 3.12 and earlier, and
   on 3.13 and 3.14 before the gh-146313 releases, which close a raw fork's copy
@@ -483,11 +484,20 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
     count of unreadable processes printed with any report of a holder or a listed
     process. The controller's own resource tracker is the exception to that
     count: outside the condition it is neither listed nor counted (above);
+  - a thread's descriptor table that `/proc/<pid>/fd` does not show: the check
+    reads a process's descriptors, for the tracker's pipe and for a root, at
+    `/proc/<pid>/fd`, the table of its leading thread, so a table a thread made
+    its own (`unshare(CLONE_FILES)`) and the live threads' table of a process
+    whose leading thread has exited, both readable at
+    `/proc/<pid>/task/<tid>/fd`, are not read: a child that keeps the tracker's
+    pipe in either leaves the tracker passed over, and a process whose leading
+    thread has exited reads as a zombie and is skipped, neither judged nor
+    listed nor counted;
   - a descriptor on the tracker's pipe in flight: the pipe is read from
-    descriptor tables only, so a write end queued in a unix socket and not yet
-    received, which is in no process's table once its sender has closed its own
-    copy, keeps the tracker running after the controller has gone, unseen, and
-    the tracker is passed over;
+    `/proc/<pid>/fd` tables only, so a write end queued in a unix socket and not
+    yet received, which is in no process's table once its sender has closed its
+    own copy, keeps the tracker from exiting on its own while it is queued,
+    unseen, and the tracker is passed over;
   - a process started after the scan: by a non-daemon thread still running when
     the join's bound ran out, by a daemon thread, or by any process outside this
     one. The threads of the first two kinds are reported by count and name, with

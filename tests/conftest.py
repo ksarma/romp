@@ -113,17 +113,18 @@ atexit.register(_remove_run_dirs)
 # setUpClass); the tracker ignores SIGINT and SIGTERM and exits when the last write end of its pipe closes. In a serial
 # run it holds the run's temp root through the environment it inherited (a serial run of that class was red on it before
 # the pass-over); under pytest-xdist it is a worker's and exits with the worker. The premise is that it exits with the
-# controller, which the check reads as: no descriptor table it can read, other than the controller's and the tracker's,
-# holds its pipe (_tracker_kept). A process whose descriptors cannot be read, and a descriptor in flight, are not read
-# for it (below). A child forked through multiprocessing's fork context keeps the controller's write end and a
-# spawn-context worker is handed one, on every version; a raw os.fork child keeps it on 3.12 and earlier, and on 3.13
-# and 3.14 before the gh-146313 releases, which close a raw fork's copy in the child. Any of them keeps the tracker
-# running after the controller has gone; with the pass-over by identity alone, a serial run whose test left such a child
-# ended green and silent, since a raw fork's child need hold no path under a root (its environment is the block the
+# controller, which the check reads as: no /proc/<pid>/fd table the check can read, other than the controller's and the
+# tracker's, holds its pipe (_tracker_kept). A process whose descriptors cannot be read, a thread's descriptor table
+# that /proc/<pid>/fd does not show, and a descriptor in flight are not read for it (below). A child forked through
+# multiprocessing's fork context keeps the controller's write end and a spawn-context worker is handed one, on every
+# version; a raw os.fork child keeps it on 3.12 and earlier, and on 3.13 and 3.14 before the gh-146313 releases, which
+# close a raw fork's copy in the child. Any of them keeps the tracker from exiting on its own while it holds the pipe,
+# and a raw fork's child that outlives the controller on 3.12 and earlier keeps the tracker running after the
+# controller has gone. With the pass-over by identity alone, a serial run whose test left a raw fork's child holding
+# the pipe ended green and silent, since such a child need hold no path under a root (its environment is the block the
 # controller started with, before the run minted its roots). The pipe is read from /proc: the one whose write end the
 # controller's record holds (its descriptor, read at /proc/<pid>/fd), when the tracker holds a descriptor on it too (the
-# end it reads from); then the descriptor table of every other live process that can be read is read for it
-# (_pipe_holders).
+# end it reads from); then every other process's /proc/<pid>/fd table that can be read is read for it (_pipe_holders).
 # A process found holding it leaves the tracker judged like any process, so named when it holds a root, as it does in a
 # serial run, with that process's pid on its line; so does a pipe that cannot be read, or a tracker that holds no
 # descriptor on it, with the reason on its line. The premise is read before the wait, which then waits for the exit of
@@ -203,9 +204,15 @@ atexit.register(_remove_run_dirs)
 #     any report of a holder or a listed process. The controller's own resource tracker is the exception to the wait
 #     and the count: when its premise is unshown it is listed under the same condition but never waited for, and
 #     outside the condition it is neither listed nor counted (above);
-#   * a descriptor on the tracker's pipe in flight: the pipe is read from descriptor tables only, so a write end queued
-#     in a unix socket and not yet received, which is in no process's table once its sender has closed its own copy,
-#     keeps the tracker running after the controller has gone, unseen, and the tracker is passed over;
+#   * a thread's descriptor table that /proc/<pid>/fd does not show: the check reads a process's descriptors, for the
+#     tracker's pipe and for a root, at /proc/<pid>/fd, the table of its leading thread, so a table a thread made its
+#     own (unshare(CLONE_FILES)) and the live threads' table of a process whose leading thread has exited, both
+#     readable at /proc/<pid>/task/<tid>/fd, are not read: a child that keeps the tracker's pipe in either leaves the
+#     tracker passed over, and a process whose leading thread has exited reads as a zombie and is skipped, neither
+#     judged nor listed nor counted;
+#   * a descriptor on the tracker's pipe in flight: the pipe is read from /proc/<pid>/fd tables only, so a write end
+#     queued in a unix socket and not yet received, which is in no process's table once its sender has closed its own
+#     copy, keeps the tracker from exiting on its own while it is queued, unseen, and the tracker is passed over;
 #   * a process started after the scan: by a non-daemon thread still running when the join's bound ran out, by a
 #     daemon thread, or by any process outside this one. The threads of the first two kinds are reported by count and
 #     name, with the statement that a process they start after the scan is not seen.
@@ -403,7 +410,7 @@ def _processes_holding(roots, skip_pids=(), pids=None):
         except (OSError, ValueError, IndexError):
             continue                        # gone between the listing and the read
         if state == "Z":
-            continue                        # exited, not yet reaped: holds nothing
+            continue                        # exited, not yet reaped, or its leading thread exited: not read
         try:
             with open("/proc/%d/environ" % pid, "rb") as fh:
                 raw = fh.read()
@@ -498,14 +505,15 @@ TRACKER_NOT_ON_PIPE = "it holds no descriptor on the pipe the controller's recor
 def _tracker_kept(tracker):
     """(why, others) for the controller's own resource tracker, `tracker` as _own_resource_tracker returns it. `why` is
     "" when the check reads the premise of the pass-over as holding (the tracker exits with the controller): no
-    descriptor table it can read, other than the controller's and the tracker's, holds the pipe the tracker reads from.
-    A process whose descriptors cannot be read, and a descriptor in flight in a unix socket, are not read for it (the
-    comment above LEAK_EXIT_BOUND_S names both). Otherwise `why` is the reason it is not passed over, which its report
-    line carries, and `others` lists the processes found holding that pipe. The pipe is read from /proc: the one the
-    controller's record writes to (its descriptor, read at /proc/<pid>/fd), when the tracker holds a descriptor on it
-    too, the end it reads from; then the descriptor table of every other live process that can be read is read for it
-    (_pipe_holders). A pipe that cannot be read, or a tracker holding no descriptor on it, leaves the premise unshown,
-    and the tracker is judged like any process (the comment above LEAK_EXIT_BOUND_S says why)."""
+    /proc/<pid>/fd table it can read, other than the controller's and the tracker's, holds the pipe the tracker reads
+    from. A process whose descriptors cannot be read, a thread's descriptor table that /proc/<pid>/fd does not show, and
+    a descriptor in flight in a unix socket are not read for it (the comment above LEAK_EXIT_BOUND_S names each).
+    Otherwise `why` is the reason it is not passed over, which its report line carries, and `others` lists the processes
+    found holding that pipe. The pipe is read from /proc: the one the controller's record writes to (its descriptor,
+    read at /proc/<pid>/fd), when the tracker holds a descriptor on it too, the end it reads from; then every other
+    process's /proc/<pid>/fd table that can be read is read for it (_pipe_holders). A pipe that cannot be read, or a
+    tracker holding no descriptor on it, leaves the premise unshown, and the tracker is judged like any process (the
+    comment above LEAK_EXIT_BOUND_S says why)."""
     pid, fd = tracker
     me = os.getpid()
     try:
@@ -527,16 +535,16 @@ def _tracker_kept(tracker):
 def _run_end_holders(roots, bound_s):
     """_leaked_run_processes over `roots` for the run end, the controller's own resource tracker (_own_resource_tracker)
     passed over only while the premise of the pass-over reads as holding (_tracker_kept, which names what is not read
-    for it). The premise is read twice: before the wait,
-    for the processes other than the controller and the tracker that hold its pipe, whose exits the wait then waits for
-    as it waits for a holder's; and after the wait, where it decides. A tracker whose premise does not hold is scanned
-    alone, and both halves of that scan are kept, each with the reason on its line: it is named when it holds a root,
-    and listed by pid as not judged when its environment cannot be read (its own /proc entries refusing reads, as a
-    non-dumpable process's environment, cwd and descriptors do together, which leaves its pipe unread too) and it meets
-    the condition under which _processes_holding lists an unreadable process (this user's, started after the controller,
-    in its cgroup). That scan's count of the unreadable processes outside that condition is not kept, and the main scan
-    passes over the tracker, so a tracker outside that condition is neither listed nor counted. The tracker is never
-    waited for: it does not exit on its own while the controller holds its pipe (it ignores SIGINT and SIGTERM)."""
+    for it). The premise is read twice: before the wait, for the processes other than the controller and the tracker
+    that hold its pipe, whose exits the wait then waits for as it waits for a holder's; and after the wait, where it
+    decides. A tracker whose premise does not read as holding is scanned alone, and both halves of that scan are kept,
+    each with the reason on its line: it is named when it holds a root, and listed by pid as not judged when its
+    environment cannot be read (its own /proc entries refusing reads, as a non-dumpable process's environment, cwd and
+    descriptors do together, which leaves its pipe unread too) and it meets the condition under which
+    _processes_holding lists an unreadable process (this user's, started after the controller, in its cgroup). That
+    scan's count of the unreadable processes outside that condition is not kept, and the main scan passes over the
+    tracker, so a tracker outside that condition is neither listed nor counted. The tracker is never waited for: it
+    does not exit on its own while the controller holds its pipe (it ignores SIGINT and SIGTERM)."""
     tracker = _own_resource_tracker()
     if tracker is None:
         return _leaked_run_processes(roots, bound_s)
@@ -659,8 +667,8 @@ def pytest_sessionfinish(session, exitstatus):
     same at interpreter exit; both are idempotent, and pytest_unconfigure below takes the root itself
     afterwards. Then, in the controller alone (a worker's roots are among the controller's), the run-end
     process check above: a process of the run that still holds one of its roots, the controller's own resource
-    tracker aside while no descriptor table the check can read, other than the controller's and the tracker's, holds
-    the tracker's pipe (the comment above names what is not read for it), makes the run red."""
+    tracker aside while no /proc/<pid>/fd table the check can read, other than the controller's and the tracker's,
+    holds the tracker's pipe (the comment above names what is not read for it), makes the run red."""
     try:
         from tests import remove_made_dirs
     except Exception:
