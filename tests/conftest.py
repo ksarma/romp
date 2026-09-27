@@ -532,16 +532,16 @@ def restore_env(name, prior):
 # round that found the four ran the modules that way.
 # THE ROAD EACH FIGURE WAS TAKEN ON, since the two families came from opposite roads. Every module-alone
 # figure above (the 316-module first sweep, the 364-module sweep repeated after the fixes, and the per-module
-# triage counts behind them) was taken module alone, on the missing road, which is CI's:
+# triage counts behind them) was taken on the missing road, each module alone on a box venv without the SDK:
 # the test venv's interpreter has no claude_agent_sdk, and a module run alone does not import
 # tests/test_host_transport.py; that module is the one exception in the union, since it puts the venv on
 # sys.path itself. Every full-run figure above (the two full -n 4 census runs and their 237-module set, and
 # "the full-suite census saw none of the five") was taken on the SDK-importable road: when claude_agent_sdk
 # is not importable, tests/test_host_transport.py puts the box's SDK venv on sys.path at import, and every
-# xdist worker imports every collected module, so a full run here takes that road; CI never does (its install
-# has no SDK), and a green CI run of the suite is the missing-road full-suite datum. The figures in
-# this fixture's own tests (tests/test_sdk_singleton_ratchet.py) carry no inherited road: each scratch head
-# forces its road.
+# xdist worker imports every collected module, so a full run here takes that road. CI's Python cells take
+# the importable road since #872 installed the SDK in each, so no CI run of the suite is a missing-road
+# datum. The figures in this fixture's own tests (tests/test_sdk_singleton_ratchet.py) carry no inherited
+# road: each scratch head forces its road.
 #
 # THE TRANSITION MODEL. The fixtures below read the singleton at fixed moments and judge what changed
 # between two reads, never the after value on its own: an absolute read of the after value (the first form

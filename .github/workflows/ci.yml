@@ -116,8 +116,8 @@ jobs:
       - name: Install the Claude Agent SDK
         # The SDK behind the hosted-session backend, installed at the version the session host is written
         # against: SDK_TESTED_VERSION in kernel/session_host.py, the repo's ONE declaration of it, read here
-        # with the sed bin/romp-sdk-setup runs over the same line. With it installed, the 48 SDK-gated tests
-        # (43 in tests/test_sdk_backend.py, 5 in tests/test_host_transport.py) and the two SDK-transport host
+        # with the sed bin/romp-sdk-setup runs over the same line. With it installed, the SDK-gated tests
+        # (in tests/test_sdk_backend.py and tests/test_host_transport.py) and the two SDK-transport host
         # tests in tests/test_session_host.py RUN in CI instead of skipping, and every session host a test
         # spawns takes the SDK transport, as it does on a box with the venv bin/romp-sdk-setup builds (one
         # control in tests/test_session_host.py hides the SDK from its host and keeps the pipe transport tested).
@@ -193,10 +193,10 @@ jobs:
         # The step refuses an empty, malformed or duplicated constant rather than installing the unpinned
         # latest, and it carries no continue-on-error: the SDK requires cryptography (through mcp's
         # pyjwt[crypto]), so a cryptography wheel lagging an interpreter fails THIS step, and that must be the
-        # cell's red, not 48 tests silently skipping. Runs after the cryptography step so pip finds it installed.
+        # cell's red, not the gated tests silently skipping. Runs after the cryptography step so pip finds it installed.
         # After pip, the same `python` imports the package: pip and the pytest step below share that name on
         # PATH, so an install that reached another interpreter reds THIS step, with its name on it, instead
-        # of a run with the 48 tests skipping and a warning as the only trace. The pytest step declares the
+        # of a run with the gated tests skipping and a warning as the only trace. The pytest step declares the
         # requirement with ROMP_SDK_REQUIRE=1 (its env below), so the pin test fails on an interpreter that
         # lost the SDK between the two steps.
         # The 3.14t cell installs it too: the wheel is py3-none with Requires-Python >=3.10, its compiled

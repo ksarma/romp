@@ -42,8 +42,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   from `kernel/session_host.py`, the repo's one declaration of the version the
   session host is written against, into every Python cell's interpreter, the
   3.14t cell included (it installed, imported with the GIL off and passed these
-  modules on a free-threaded 3.14.6 before the step landed). So the 48 gated tests
-  (43 here, 5 in `test_host_transport.py`) and the two SDK-transport host tests
+  modules on a free-threaded 3.14.6 before the step landed). So the gated tests
+  (here and in `test_host_transport.py`) and the two SDK-transport host tests
   in `test_session_host.py` RUN in CI, and every session host a test spawns
   there takes the SDK transport, as on a box with the venv `bin/romp-sdk-setup`
   builds. `tests/test_ci_sdk_pin.py` holds the pin and never skips

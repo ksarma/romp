@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """CI installs the Claude Agent SDK at the session host's tested version (.github/workflows/ci.yml, 2026-09-20).
 
-The 48 SDK-gated tests (43 in tests/test_sdk_backend.py, 5 in tests/test_host_transport.py) and the two SDK-transport
-host tests in tests/test_session_host.py skipped in every CI cell, because no cell installed the SDK; the box that runs
-the hosted sessions was the only place they ran. Now the Python job's "Install the Claude Agent SDK" step installs
-`claude-agent-sdk==<pin>`, where the pin is read at run time from kernel/session_host.py's SDK_TESTED_VERSION, the
-repo's one declaration of the version the host's private imports were verified against (bin/romp-sdk-setup reads the
-same line with the same sed). The number appears nowhere in the workflow.
+The SDK-gated tests (48 on 2026-09-20: 43 in tests/test_sdk_backend.py, 5 in tests/test_host_transport.py) and the two
+SDK-transport host tests in tests/test_session_host.py skipped in every CI cell, because no cell installed the SDK;
+the box that runs the hosted sessions was the only place they ran. Now the Python job's "Install the Claude Agent SDK"
+step installs `claude-agent-sdk==<pin>`, where the pin is read at run time from kernel/session_host.py's
+SDK_TESTED_VERSION, the repo's one declaration of the version the host's private imports were verified against
+(bin/romp-sdk-setup reads the same line with the same sed). The number appears nowhere in the workflow.
 
 This module holds five things, and it never skips: a pin that skips reports green having checked nothing.
 1. Source pins on the step (no YAML library in the test deps, as tests/test_ci_bats_bound.py): it sits between
    "Install cryptography" and "Run pytest", carries no continue-on-error (the SDK requires cryptography through mcp's
-   pyjwt[crypto]; a lagging cryptography wheel must red the cell, not skip 48 tests), carries no `if:` (the 3.14t cell
+   pyjwt[crypto]; a lagging cryptography wheel must red the cell, not skip the gated tests), carries no `if:` (the 3.14t cell
    installs it too: install, import with the GIL off and the gated and host test modules ran green on a free-threaded
    3.14.6 before this landed, the Verify 3.14t stage of 2026-09-20), names the constant and its file, and carries no
    literal `claude-agent-sdk==<digits>`, and bounds its download with a step timeout as the file's other fetching
@@ -429,7 +429,7 @@ class InstallStep(unittest.TestCase):
     def setUp(self):
         self.job = python_job()
         self.step = step_block(self.job, STEP)
-        self.assertTrue(self.step, "no step named %r in the python job: the 48 SDK-gated tests skip in every cell again" % STEP)
+        self.assertTrue(self.step, "no step named %r in the python job: the SDK-gated tests skip in every cell again" % STEP)
         self.block = run_block(self.step)      # not self.run: that name is unittest.TestCase.run on the instance
         self.comment = " ".join(l.strip()[1:].strip() for l in self.step.splitlines() if l.strip().startswith("#"))
 
@@ -475,9 +475,10 @@ class InstallStep(unittest.TestCase):
         self.assertLess(names.index(STEP), names.index("Run pytest"), "the SDK step must precede the test run")
 
     def test_the_step_carries_no_continue_on_error(self):
-        # the SDK requires cryptography (mcp's pyjwt[crypto]): a lagging wheel must be the cell's red, not 48 silent skips
+        # the SDK requires cryptography (mcp's pyjwt[crypto]): a lagging wheel must be the cell's red, not the gated
+        # tests silently skipping
         self.assertFalse(re.search(r"^        continue-on-error:", self.step, re.M),
-                         "the step continues on error: a failed install would run the cell with 48 tests silently skipping")
+                         "the step continues on error: a failed install would run the cell with the gated tests silently skipping")
 
     def test_the_step_runs_on_every_cell_including_3_14t(self):
         # the Verify 3.14t stage (2026-09-20): install, import with the GIL off, gated and host modules green under a
@@ -506,7 +507,8 @@ class InstallStep(unittest.TestCase):
 
     def test_the_run_block_checks_the_import_in_the_interpreter_it_installed_into(self):
         # correctness: pip and pytest share `python` on PATH, and the import in that same `python` is the step's own
-        # check that the install reached it; without it an install into another interpreter is 48 skips and a warning
+        # check that the install reached it; without it an install into another interpreter is the gated tests
+        # skipping and a warning
         lines = self.block.splitlines()
         pip = [i for i, l in enumerate(lines) if re.match(r'^python -m pip install "claude-agent-sdk==\$pin"$', l)]
         imp = [i for i, l in enumerate(lines) if l == 'python -c "import claude_agent_sdk"']
