@@ -297,12 +297,12 @@ which are not (the reviewer's ruling of round 1 on fork PR #894). Beside it,
 tests/conftest.py's run-end process check names a process whose environment, cwd, open files or argv hold a path under
 the run's roots and makes the run red; one of this user's that it cannot read (a non-dumpable one) and that started
 after the controller, in its cgroup, it lists by pid and command line as not judged and leaves the exit status alone;
-the classes it does not read are listed in the comment above LEAK_EXIT_BOUND_S and in tests/README.md
-(tests/test_run_end_leaked_processes.py). Every kernel a module loads in-process gets a dead BUS_PORT for each test,
-and every postal service loaded in-process a dead client BASE (conftest's _dead_bus_port: with ROMP_POSTAL_PORT popped,
-each read the machine's fixed bus port at import and its bus calls reached the bus running there, the reviewer's ruling
-of round 1 on fork PR #894), and the pin over BUS_DIALLING_MODULES runs the modules whose calls dialled it together in
-both orders under a connect and spawn spy.
+the classes it does not read, and the one process it passes over, are listed in the comment above LEAK_EXIT_BOUND_S
+and in tests/README.md (tests/test_run_end_leaked_processes.py). Every kernel a module loads in-process gets a dead
+BUS_PORT for each test, and every postal service loaded in-process a dead client BASE (conftest's _dead_bus_port: with
+ROMP_POSTAL_PORT popped, each read the machine's fixed bus port at import and its bus calls reached the bus running
+there, the reviewer's ruling of round 1 on fork PR #894), and the pin over BUS_DIALLING_MODULES runs the modules whose
+calls dialled it together in both orders under a connect and spawn spy.
 The fixup of the same day (the verifier's findings on this PR) made "module level" mean everything that EXECUTES AT
 IMPORT: the class bodies (a write planted in one had left the pin green), the header parts of a def, class or block
 statement (decorators, default argument values, bases, an if test, the with items) and the writes reached through a

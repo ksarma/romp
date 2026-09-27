@@ -14,8 +14,9 @@ pointer and not the culprit's name: a child a background thread spawns may carry
 witness is the pid and the command line. Keyed on that property, never on a binary's name. The case that wrote this: a
 real postal bus started from the peer-notify guard test's revive road with the environment of the test process,
 detached, so the test's end never reached it; it kept writing into a shared state root every 30 s and turned another
-module's snapshot test red in one CI cell; at the same commit the run ended green. The classes the check does not read
-are listed, each with its reason, in the comment above LEAK_EXIT_BOUND_S in tests/conftest.py.
+module's snapshot test red in one CI cell; at the same commit the run ended green. The classes the check does not read,
+and the one process it passes over, are listed, each with its reason, in the comment above LEAK_EXIT_BOUND_S in
+tests/conftest.py.
 
 Pinned by execution, each half where it lives. Scanner, over a stand-in root handed to the scan alone: a child holding
 the root through TMPDIR, through another name, through one component of a ':'-joined value, through its cwd, through an

@@ -527,7 +527,8 @@ def pytest_sessionfinish(session, exitstatus):
     behind, so nothing is swept from under a fixture still closing. The package's atexit hook does the
     same at interpreter exit; both are idempotent, and pytest_unconfigure below takes the root itself
     afterwards. Then, in the controller alone (a worker's roots are among the controller's), the run-end
-    process check above: a process of the run that still holds one of its roots makes the run red."""
+    process check above: a process of the run that still holds one of its roots, the controller's own resource
+    tracker aside, makes the run red."""
     try:
         from tests import remove_made_dirs
     except Exception:
