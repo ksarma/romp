@@ -1275,7 +1275,7 @@ hiding_textconv() {   # a diff driver whose textconv prints nothing: git's patch
     git -C "$REPO" commit -qm "attributes"
 }
 
-@test "a credential in a file under a hiding textconv driver is found: the feed's diff-tree converts nothing" {
+@test "a credential in a file under a hiding textconv driver is found: the feed's diff-tree converts nothing; and since round 12e the path is refused by name too, its diff attribute naming a driver with a textconv (romp-manager's ruling on round 12d2's audit, 2026-09-27 01:25Z; re-aimed from the scan found whole)" {
     real_gitleaks
     hiding_textconv
     commit_file probe.py "token = \"$(probe_token)\"" "a credential"
@@ -1285,7 +1285,8 @@ hiding_textconv() {   # a diff driver whose textconv prints nothing: git's patch
     [ "$status" -eq 1 ]
     [[ "$output" == *"ADDS a credential (github-pat) in: probe.py"* ]]
     [[ "$output" == *"gitleaks found a credential"* ]]
-    [[ "$output" != *"the scan is incomplete"* ]]
+    [[ "$output" == *"romp pre-push: this clone sets diff.hide.textconv, a textconv driver for probe.py, whose diff attribute names hide: "* ]]
+    [ "$(grep -c 'the scan is incomplete' <<< "$output")" -eq 1 ]                               # that line alone
 }
 
 @test "a clean push under that driver passes" {
@@ -4319,7 +4320,7 @@ silent_content_grep() { git_refusing '[ "${1:-}" = grep ] && [ "${3:-}" = -i ]' 
 # successor, the feed's awk recording nothing (an awk silent on the program that
 # names the record file in its environment).
 
-@test "the feed's awk answering NOTHING (exit 0, no record written) is refused as unscanned naming the feed and the empty record: an empty record is not six counts (five until round 12d, which counts the notes of the merges' own last lines; four until round 10a, which counts the binary notices the awk routes; round 9d: this slot held the hook's own commit count answering nothing, a read retired in round 9)" {
+@test "the feed's awk answering NOTHING (exit 0, no record written) is refused as unscanned naming the feed and the empty record: an empty record is not eight counts (six until round 12e, which counts the merges' own lines and the pushed paths; five until round 12d, which counts the notes of the merges' own last lines; four until round 10a, which counts the binary notices the awk routes; round 9d: this slot held the hook's own commit count answering nothing, a read retired in round 9)" {
     r9d_base
     commit_file k.py "k = \"$(probe_token)\"" "a credential"
     awk_silent_on_program 'ENVIRON["ROMP_RECORD_FILE"]'
@@ -4327,7 +4328,7 @@ silent_content_grep() { git_refusing '[ "${1:-}" = grep ] && [ "${3:-}" = -i ]' 
     [ "$output" = "status 0" ]                          # the shim as the feed meets it: nothing printed, exit 0
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
-    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"\", not six counts); the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read (its awk exited 0 and recorded \"\", not eight counts); the scan is incomplete, so the push is refused"* ]]
     [[ "$output" == *"gitleaks could not scan"* ]]
     at_base
 }
@@ -11618,19 +11619,22 @@ r11c_blank_context_push() {   # the push of main under GIT_DIFF_OPTS=--unified=3
     at_base
 }
 
-@test "round 11c (C, extra5-1, decision 7's execution item 5): the key's older spelling, diff.suppress-blank-empty=true in the clone, which git still reads, under GIT_DIFF_OPTS=--unified=3, prints a blank context line empty; the same clean push passes through the hook, and through a copy of the hook whose feed drops env -u GIT_DIFF_OPTS, so the three context lines reach diff-tree and the feed's command-line -c diff.suppressBlankEmpty=false alone, read last, beats the key, while a copy dropping the -c pin too refuses it (refused at 93684a4d1, as under the key's own spelling; re-aimed in round 12a, the round 11 rulings' F, the owner's choice (1): only a copy can isolate the -c pin, since env -u removes every source of context)" {
+@test "round 11c (C, extra5-1, decision 7's execution item 5): the key's older spelling, diff.suppress-blank-empty=true in the clone, which git still reads, under GIT_DIFF_OPTS=--unified=3, prints a blank context line empty; the same clean push passes through the hook, and through a copy of the hook whose feed drops env -u GIT_DIFF_OPTS, so the three context lines reach diff-tree and the feed's command-line -c diff.suppressBlankEmpty=false alone, read last, beats the key, while a copy dropping the -c pin too refuses it (refused at 93684a4d1, as under the key's own spelling; re-aimed in round 12a, the round 11 rulings' F, the owner's choice (1): only a copy can isolate the -c pin, since env -u removes every source of context; since round 12e each copy edits the feed's line alone, the first-parent read's line carrying the same two pins, witnessed by its own round 12e case)" {
     local no_env="$TEST_DIR/pre-push-no-env" neither="$TEST_DIR/pre-push-neither"
     r11c_blank_context_history
     git -C "$REPO" config diff.suppress-blank-empty true
     [ "$(GIT_DIFF_OPTS=--unified=3 git -C "$REPO" diff-tree -p -U0 "$(git -C "$REPO" rev-list --reverse "$BASE..main" | head -n 1)" | grep -c '^$')" -ge 1 ]   # the premise: the older spelling takes effect
     r11c_blank_context_push
     r10a_passes
-    # the copies, made here from the hook under test: each drops one pin from the feed's one diff-tree line
-    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree ' "$HOOK")" -eq 1 ]
-    sed 's/env -u GIT_DIFF_OPTS git -c core.quotePath=true/git -c core.quotePath=true/' "$HOOK" > "$no_env"
-    sed 's/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /' "$no_env" > "$neither"
+    # the copies, made here from the hook under test: each drops one pin from the feed's diff-tree line (the one given
+    # -c --root, a merge's combined diff), the first-parent read's line (round 12e) left whole
+    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree ' "$HOOK")" -eq 2 ]
+    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree .* -c --root ' "$HOOK")" -eq 1 ]
+    sed '/ -c --root /s/env -u GIT_DIFF_OPTS git -c core.quotePath=true/git -c core.quotePath=true/' "$HOOK" > "$no_env"
+    sed '/ -c --root /s/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /' "$no_env" > "$neither"
     chmod 755 "$no_env" "$neither"
-    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true' "$no_env")" -eq 0 ]
+    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true' "$no_env")" -eq 1 ]            # the first-parent read's, left whole
+    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true .* --diff-merges=first-parent ' "$no_env")" -eq 1 ]
     [ "$(grep -c -- '^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin ' "$no_env")" -eq 1 ]
     [ "$(grep -c -- '^    git -c core.quotePath=true diff-tree --stdin ' "$neither")" -eq 1 ]
     [ "$(diff "$HOOK" "$no_env" | grep -c '^>')" -eq 1 ]
@@ -11701,14 +11705,14 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
             *) echo "the git $sub at line $ln is given a format, of no kind the encoding rule reads"; return 1 ;;
         esac
     done <<< "$calls"
-    [ "$feed" -eq 1 ] || { echo "the hook holds $feed feed reads (git diff-tree given --stdin and --text), where it holds one"; return 1; }
+    [ "$feed" -eq 2 ] || { echo "the hook holds $feed feed reads (git diff-tree given --stdin and --text), where it holds two: the feed and, since round 12e, the merges' first-parent read"; return 1; }
     [ "$formats" -ge 1 ] || { echo "no git log or rev-list read given a format was found"; return 1; }
     lines=$(grep -cE '^[^#]*git (-c [^ ]+ )*(log|rev-list) .*--(format|pretty)' "$1" || true)
     [ "$formats" -eq "$lines" ] || { echo "the census found $formats git log or rev-list reads given a format, where $lines lines of the text run one"; return 1; }
     return 0
 }
 
-@test "round 11c (C, the census of the pins): over the hook's git calls, the feed's diff-tree runs under env -u GIT_DIFF_OPTS with -c diff.suppressBlankEmpty=false, and every git log or rev-list read given a format pins its output encoding (--encoding=UTF-8), the list of reads derived from the hook's git calls and equal to the lines that run one, the for-each-ref %(refname) reads the stated exemption; each pin removed in a copy, one at a time, reds the check, and so does a new format read of either kind" {
+@test "round 11c (C, the census of the pins): over the hook's git calls, the feed's diff-tree (and since round 12e the merges' first-parent diff-tree, the other git diff-tree given --stdin and --text) runs under env -u GIT_DIFF_OPTS with -c diff.suppressBlankEmpty=false, and every git log or rev-list read given a format pins its output encoding (--encoding=UTF-8), the list of reads derived from the hook's git calls and equal to the lines that run one, the for-each-ref %(refname) reads the stated exemption; each pin removed in a copy, one at a time, reds the check, and so does a new format read of either kind" {
     run r11c_pins_check "$HOOK"
     [ "$output" = "" ]
     [ "$status" -eq 0 ]
@@ -11717,10 +11721,12 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
         's/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /'
         's/rev-list --no-walk=unsorted --stdin --encoding=UTF-8 /rev-list --no-walk=unsorted --stdin /'
         "/--format='authored/s/ --encoding=UTF-8 / /"
-        "/--format='message/s/ --encoding=UTF-8 / /")
-    local -a said=("runs without env -u GIT_DIFF_OPTS" "carries no -c diff.suppressBlankEmpty=false" "git rev-list at line" "git log at line" "git log at line")
+        "/--format='message/s/ --encoding=UTF-8 / /"
+        '/ --diff-merges=first-parent /s/env -u GIT_DIFF_OPTS git -c core.quotePath=true/git -c core.quotePath=true/'
+        '/ --diff-merges=first-parent /s/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /')
+    local -a said=("runs without env -u GIT_DIFF_OPTS" "carries no -c diff.suppressBlankEmpty=false" "git rev-list at line" "git log at line" "git log at line" "runs without env -u GIT_DIFF_OPTS" "carries no -c diff.suppressBlankEmpty=false")
     local k
-    for k in 0 1 2 3 4; do
+    for k in 0 1 2 3 4 5 6; do
         sed "${drop[k]}" "$HOOK" > "$TEST_DIR/pins-$k.sh"
         run cmp -s "$HOOK" "$TEST_DIR/pins-$k.sh"
         [ "$status" -ne 0 ]                                                    # the removal landed
@@ -13105,11 +13111,12 @@ r12d_sk_merge() {   # the evil merge of item 3: config/deploy.sh at its base (se
     r10a_passes
 }
 
-@test "round 12d (item 3 of the 18:58Z ruling): an evil merge whose own last line is the sidekiq URL, the file's last line with no final newline, its combined diff printing no notice: refused naming the rule, the merge and the file (PUBLISHED at 0b6c76916 and at the round 12b3 head, both scanners; red under the mutant that skips the RESULT BLOBS read)" {
+@test "round 12d (item 3 of the 18:58Z ruling): an evil merge whose own last line is the sidekiq URL, the file's last line with no final newline, its combined diff printing no notice: refused naming the rule, the merge and the file, the figure counting the combined piece written again without its newline (PUBLISHED at 0b6c76916 and at the round 12b3 head, both scanners; red under the mutant that skips the RESULT BLOBS read, since round 12e by that figure alone, 105 bytes: the merge's first-parent piece refuses the URL whatever that read does, the round 12e case titled \"round 12e (item 3 re-checked)\")" {
     r11a_base
     r12d_sk_merge
     push_main_through_hook_with_shim
     r12d_refused_as sidekiq-sensitive-url config/deploy.sh
+    [[ "$output" == *"scanned ~104 bytes"* ]]
 }
 
 @test "round 12d (item 3, the control): the same evil merge with a final newline after the URL passes (the blob ends in a newline, so no piece is written again), and so does a merge whose own line is not the file's last, the file ending with a parent's line and no final newline" {
@@ -13264,7 +13271,7 @@ r12d_sk_merge() {   # the evil merge of item 3: config/deploy.sh at its base (se
     at_base
 }
 
-@test "round 12d (the RESULT BLOBS read, the notes read back): a merge with two files of its own, clean.txt and then config/deploy.sh ending with the sidekiq URL and no final newline, whose note file is cut to its first line after the feed's awk writes it (a wrapper around that awk), through a real push, is refused naming the notes read back against the count its awk recorded, and the remote stays at its base (red by publication under the mutant deleting that arm: the URL's piece keeps its newline)" {
+@test "round 12d (the RESULT BLOBS read, the notes read back): a merge with two files of its own, clean.txt and then config/deploy.sh ending with the sidekiq URL and no final newline, whose note file is cut to its first line after the feed's awk writes it (a wrapper around that awk), through a real push, is refused naming the notes read back against the count its awk recorded, and the remote stays at its base (red under the mutant deleting that arm, its line missing; until round 12e red by publication there, the URL's piece keeping its newline, and since round 12e the merge's first-parent piece refuses the URL under that mutant)" {
     r11a_base
     r12d_base_file config/deploy.sh 'a\nb\n'
     git -C "$REPO" checkout -q -b side
@@ -13778,12 +13785,13 @@ r12d2_setting_refused() {   # <the clause the refusal line carries>: the push ju
     r10a_passes
 }
 
-@test "round 12d2 (ITEM A, a driver's algorithm): diff.zz.algorithm=histogram in the clone, for the paths a diff=zz attribute names, refuses a clean push by name with the remedy, the feed unread: git log applies a driver's algorithm path by path and keeps it for the paths it diffs after, so the feed, one pass over the push, cannot frame hunks as git log does (a disclosed false refusal when no attribute names the driver; red under the mutant that skips that arm)" {
+@test "round 12d2 (ITEM A, a driver's algorithm; re-aimed in round 12e): diff.zz.algorithm=histogram in the clone, and no pushed path whose diff attribute names zz (notes/clean.txt pushed, and .git/info/attributes giving *.drv that driver): the clean push passes, since a driver's algorithm now refuses only for a pushed path its attribute names (romp-manager's ruling on round 12d2's audit, 2026-09-27 01:25Z; until round 12e diff_settings refused any such key by name, a disclosed false refusal here; the attributed path's refusal is the round 12e case titled \"round 12e (ITEM 2, a driver's algorithm)\"; red under the mutant that restores that blanket refusal)" {
     r11a_base
     r12d_commit_file notes/clean.txt 'nothing to see\n'
     git -C "$REPO" config diff.zz.algorithm histogram
+    printf '*.drv diff=zz\n' > "$REPO/.git/info/attributes"
     push_main_through_hook_with_shim
-    r12d2_setting_refused "this clone sets diff.zz.algorithm, a diff algorithm for the paths its diff attribute names, which git log applies path by path and keeps for the paths it diffs after, in the order it walks one ref's commits, so the credential feed, which reads the whole push in one pass, cannot frame the pushed lines' hunks as gitleaks' git mode would; unset it (git config --unset-all diff.zz.algorithm), or set ROMP_NO_GITLEAKS=1 for one push"
+    r10a_passes
 }
 
 # The census of git's diff keys (the ruling's (a)): git lists its configuration keys itself (git help --config: 30 diff
@@ -13798,12 +13806,15 @@ r12d2_setting_refused() {   # <the clause the refusal line carries>: the push ju
 #   pinned   the feed's own option fixes it: the feed's hunks do not move, and every hunk git log frames under the
 #            value is one the feed frames
 #   inert    git log's hunks do not move under it, and the feed's do not
-#   render   the feed's hunks do not move (--no-textconv), while git log reads a driver's rendering of the bytes
-#   refused  the push is refused naming the key (diff_settings)
+#   refused  the push is refused naming the key (diff_settings, or since round 12e, for a driver's textconv and
+#            algorithm, the DIFF ATTRIBUTES read, over a fixture path whose attribute names the driver)
+# (round 12e retired a sixth kind, render, which the textconv row carried while --no-textconv read the pushed bytes
+# unrefused: the feed's hunks did not move while git log read the driver's rendering)
 # The hunks compared are the added lines of each hunk, keyed by commit and path, as gitleaks' git mode takes a hunk
 # (its added lines alone); main's command is gitleaks' own, git log -p -U0 <range> --diff-merges=first-parent, with
 # --format=%H for the commit lines; the feed's is the hook's own, captured by a git on its PATH that copies what the
-# feed's diff-tree prints. The fixture holds no merge: a merge's first-parent anchors are item 2's stated limit.
+# feed's diff-tree prints. The fixture holds no merge: a merge's first-parent hunks that hold a line it wrote are read
+# under the same three options (merge_fp_pieces, round 12e), and what that read leaves is item 2's stated limit.
 r12d2_keys() {   # the census's table: key, value, disposition, why (TAB-separated)
     cat <<'EOF'
 diff.algorithm	histogram	pass	--diff-algorithm (diff_settings)
@@ -13820,8 +13831,8 @@ diff.suppressBlankEmpty	true	pinned	-c diff.suppressBlankEmpty=false; under -U0 
 diff.ignoreSubmodules	all	pinned	--ignore-submodules=none: the feed reads a gitlink change git log drops
 diff.submodule	log	pinned	--submodule=short: a gitlink change read as its Subproject line
 diff.<driver>.binary	true	pinned	--text; a merge reads a binary path whole (merge_binary_reads)
-diff.<driver>.textconv	@W@/upper.sh	render	--no-textconv: the feed reads the pushed bytes, git log a driver's rendering of them
-diff.<driver>.algorithm	histogram	refused	diff_settings refuses it by name
+diff.<driver>.textconv	@W@/upper.sh	refused	the DIFF ATTRIBUTES read refuses a pushed path whose attribute names the driver (round 12e; until then render: --no-textconv read the pushed bytes, git log the rendering)
+diff.<driver>.algorithm	histogram	refused	the DIFF ATTRIBUTES read refuses a pushed path whose attribute names the driver (round 12e; until then diff_settings refused the key alone)
 diff.<driver>.cachetextconv	true	inert	caches a textconv's output; alone it changes no line
 diff.<driver>.command	@W@/ext.sh	inert	git log runs no external driver without --ext-diff
 diff.<driver>.xfuncname	^beta	inert	a hunk header's tail, no added line
@@ -13952,9 +13963,6 @@ r12d2_census() {   # <hook> <table> [<one key>]: prints the first disagreement b
             inert)
                 cmp -s "$W/log" "$W/log.none" || { echo "under $k=$val git log's hunks move, and its row says inert"; return 1; }
                 cmp -s "$W/feed" "$W/feed.none" || { echo "under $k=$val the feed's hunks move, and its row says inert"; return 1; } ;;
-            render)
-                cmp -s "$W/feed" "$W/feed.none" || { echo "under $k=$val the feed's hunks move, and its row says the feed reads the pushed bytes"; return 1; }
-                ! cmp -s "$W/log" "$W/log.none" || { echo "under $k=$val git log's hunks do not move, so its row shows no rendering"; return 1; } ;;
             refused)
                 grep -qF -- "romp pre-push: this clone sets $k, " "$W/out" || { echo "under $k=$val the hook does not refuse naming the key"; return 1; } ;;
             *) echo "the row for $key carries the disposition $disp, no known kind"; return 1 ;;
@@ -14024,28 +14032,31 @@ r12d2_published() {   # the push just made passed: status 0, no romp line, the r
     [[ "$output" != *"$(r12d_zz)"* ]]
 }
 
-@test "round 12d2 (item 2, OUTSIDE the closed class, the stated limit for a merge's first-parent anchors): fpmerge: a repository rule ^zzkey_[0-9a-f]{16}, its key the second added line of a side commit's hunk and the first line of the merge's first-parent hunk, main having made the side's other edit: PUBLISHES at the fix, as at af10f4c4b and at 0b6c76916, where main's hook, which reads a merge by its first-parent diff, refused it (both scanners); the feed reads a merge by the lines in none of its parents and the key by its side commit's hunk, and the hook cannot probe a custom rule's value" {
+@test "round 12d2 (item 2, OUTSIDE the closed class, the stated limit for a merge's first-parent anchors): fpmerge: a repository rule ^zzkey_[0-9a-f]{16}, its key the second added line of a side commit's hunk and the first line of the merge's first-parent hunk, main having made the side's other edit: PUBLISHES at the fix, as at af10f4c4b and at 0b6c76916, where main's hook, which reads a merge by its first-parent diff, refused it (both scanners); the feed reads a merge by the lines in none of its parents and the key by its side commit's hunk, and the hook cannot probe a custom rule's value; since round 12e the limit is what the first-parent read leaves: the merge takes the side's version and writes no line of its own, so that hunk holds no line the merge wrote and is not read (the round 12e case titled \"round 12e (item 2 re-checked\" refuses the same key in a hunk holding one)" {
     r11a_base
     r11a_config "$(r12d_zz_config caret)"
     r12d2_fp_merge zz
+    [ -z "$(git -C "$REPO" diff-tree -c -p --no-commit-id "$merge")" ]                                        # the merge writes no line of its own
     [ "$(git -C "$REPO" diff -U0 "$merge^1" "$merge" | grep -A1 '^@@' | sed -n 2p)" = "+$(r12d_zz)" ]
     push_main_through_hook_with_shim
     r12d2_published
 }
 
-@test "round 12d2 (item 2, OUTSIDE the closed class, the stated limit for a merge's first-parent anchors): fpnuget: nuget-config-password redefined with regex ^<add key=..., so the limit reaches one of the five, the password the second added line of the side commit's hunk and the first of the merge's first-parent hunk: PUBLISHES at the fix, as at af10f4c4b and at 0b6c76916, where main's hook refused it (both scanners)" {
+@test "round 12d2 (item 2, OUTSIDE the closed class, the stated limit for a merge's first-parent anchors): fpnuget: nuget-config-password redefined with regex ^<add key=..., so the limit reaches one of the five, the password the second added line of the side commit's hunk and the first of the merge's first-parent hunk: PUBLISHES at the fix, as at af10f4c4b and at 0b6c76916, where main's hook refused it (both scanners); since round 12e the merge, writing no line of its own, runs no first-parent read" {
     r11a_base
     r11a_config "$(r12d_nuget_config caret)"
     r12d2_fp_merge nuget
+    [ -z "$(git -C "$REPO" diff-tree -c -p --no-commit-id "$merge")" ]
     [ "$(git -C "$REPO" diff -U0 "$merge^1" "$merge" | grep -A1 '^@@' | sed -n 2p)" = "+$(r12d_cred)" ]
     push_main_through_hook_with_shim
     r12d2_published
 }
 
-@test "round 12d2 (item 2, OUTSIDE the closed class, the stated limit for a merge's first-parent anchors): fpm2: nuget-config-password redefined with M2's regex <add key=...\\s*/>\\s*\$, the password the first of two added lines in the side commit's hunk and the only line of the merge's first-parent hunk: PUBLISHES at the fix, as at af10f4c4b and at 0b6c76916, where main's hook refused it (both scanners)" {
+@test "round 12d2 (item 2, OUTSIDE the closed class, the stated limit for a merge's first-parent anchors): fpm2: nuget-config-password redefined with M2's regex <add key=...\\s*/>\\s*\$, the password the first of two added lines in the side commit's hunk and the only line of the merge's first-parent hunk: PUBLISHES at the fix, as at af10f4c4b and at 0b6c76916, where main's hook refused it (both scanners); since round 12e the merge, writing no line of its own, runs no first-parent read" {
     r11a_base
     r11a_config "$(r12d_nuget_config m2)"
     r12d2_fp_merge m2
+    [ -z "$(git -C "$REPO" diff-tree -c -p --no-commit-id "$merge")" ]
     [ "$(git -C "$REPO" diff -U0 "$merge^1" "$merge" | grep -c '^+[^+]')" -eq 1 ]
     push_main_through_hook_with_shim
     r12d2_published
@@ -14156,17 +14167,12 @@ r12c_refused_by_label() {   # <label>: the push just made was refused by the lab
     [ "$(grep -cxF -- "$(r12c_label_line "$sha" "$1")" <<< "$output")" -eq 1 ]
     at_base
 }
-r12c_list_check() {   # <hook>: converts under each label of the hook's ASCII_SAFE_LABELS as git's reencode_string_iconv converts, through the platform's iconv (python3's ctypes, one process for every label); prints each failure (at most 40) and one coverage line, status 1 on a failure
+r12c_list_check() {   # <labels file, whitespace-separated>: converts under each label as git's reencode_string_iconv converts, through the platform's iconv (python3's ctypes, one process for every label); prints each failure (at most 40) and one coverage line, status 1 on a failure (round 12e: the labels are the ones the hook's own comparison passes, r12e_enc_accepted, no longer the list's spelling in the hook)
     python3 - "$1" <<'PY'
 import ctypes, ctypes.util, errno, sys
-text = open(sys.argv[1], encoding="latin-1").read()
-head = "\nASCII_SAFE_LABELS='\n"
-if text.count(head) != 1:
-    print("the hook holds %d ASCII_SAFE_LABELS assignments, not one" % text.count(head)); sys.exit(1)
-start = text.index(head) + len(head)
-labels = text[start:text.index("\n'\n", start)].split()
+labels = open(sys.argv[1], encoding="latin-1").read().split()
 if not labels:
-    print("the hook's ASCII_SAFE_LABELS holds no label"); sys.exit(1)
+    print("no label to convert"); sys.exit(1)
 if len({l.upper() for l in labels}) != len(labels):
     print("a label is listed twice"); sys.exit(1)
 libc = ctypes.CDLL(None, use_errno=True)
@@ -14374,40 +14380,112 @@ PY
     [ "$status" -ne 0 ]
 }
 
-@test "round 12c (D, the list's deriving case): every label of the hook's ASCII_SAFE_LABELS, read from the hook, is converted to UTF-8 by the platform's iconv as git's reencode_string_iconv converts (python3's ctypes, one process: one conversion from the initial state, no flush, any error but E2BIG counting as git reading the raw bytes): every ASCII byte decodes to itself, each high byte that converts decodes to bytes none of them ASCII, and each lead byte followed by every ASCII byte fails to convert; the list's size is the header's two class counts summed; on glibc every label opens, elsewhere the case prints what it covered and the labels that iconv could not open (under which git reads a commit raw); red on a copy of the hook whose list adds SHIFT_JIS, BIG5, CP1258 or CP1255" {
-    local n hdr single multi l
-    n=$(sed -n "/^ASCII_SAFE_LABELS='\$/,/^'\$/p" "$HOOK" | sed '1d;$d' | wc -w)
+# Round 12e (the round 12c audit's F2, the owner's option (b)): the deriving case read the labels from the hook's
+# ASCII_SAFE_LABELS block by its spelling, so a second assignment after the block (ASCII_SAFE_LABELS="... BIG5") left
+# every case green while a BIG5 commit published. The case now derives the list the hook USES by execution: a real push
+# through the hook with an awk on its PATH that saves the label read's program and the ROMP_ENC_LABELS the hook hands it
+# (the list as set at run time, by whatever road), then that program over one synthetic commit per label iconv -l
+# prints; each label it passes is converted as git converts.
+r12e_enc_capture() {   # <hook>: a real push of main through that hook (the remote and its tracking ref first put back at BASE), with an awk on the hook's PATH that saves the label read's program and the ROMP_ENC_LABELS it is handed to $TEST_DIR/enc/prog and $TEST_DIR/enc/labels, then runs the real awk; the push passes, and the awk fired once
+    local real_awk
+    mkdir -p "$TEST_DIR/enc" "$TEST_DIR/shim"
+    real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'case "$*" in *%q*)\n' 'ENVIRON["ROMP_ENC_LABELS"]'
+        printf '    printf "%%s" "${@: -1}" > %q; printf "%%s" "$ROMP_ENC_LABELS" > %q; echo fired >> %q ;;\n' "$TEST_DIR/enc/prog" "$TEST_DIR/enc/labels" "$TEST_DIR/calls.enccap"
+        printf 'esac\n'
+        printf 'exec %q "$@"\n' "$real_awk"
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    : > "$TEST_DIR/calls.enccap"
+    git -C "$TEST_DIR/remote.git" update-ref refs/heads/main "$BASE"
+    git -C "$REPO" update-ref refs/remotes/origin/main "$BASE"
+    HOOK=$1 push_main_through_hook_with_shim
+    rm -f "$TEST_DIR/shim/awk"
+    r10a_passes
+    [ "$(wc -l < "$TEST_DIR/calls.enccap")" -eq 1 ]
+    [ -s "$TEST_DIR/enc/prog" ]
+}
+r12e_enc_accepted() {   # <labels file, one per line>: the captured program, under the captured ROMP_ENC_LABELS, over one synthetic commit per label as git cat-file --batch answers it (its header carrying that label's encoding line); prints each label it passes, one per line; status 1 when its record is not every commit read, or it refuses a commit of no label
+    local E=$TEST_DIR/enc real_awk lab n
+    real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
+    lab=$(< "$E/labels")
+    LC_ALL=C "$real_awk" '{ printf "%040d\n", NR }' "$1" > "$E/list"
+    LC_ALL=C "$real_awk" '{ b = "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nauthor A <a@example.invalid> 0 +0000\ncommitter A <a@example.invalid> 0 +0000\nencoding " $0 "\n\nc\n"; printf "%040d commit %d\n%s\n", NR, length(b), b }' "$1" > "$E/stream"
+    LC_ALL=C ROMP_ENC_FILE="$E/list" ROMP_ENC_RECORD="$E/rec" ROMP_ENC_LABELS="$lab" "$real_awk" "$(< "$E/prog")" < "$E/stream" > "$E/refused" || return 1
+    n=$(wc -l < "$1")
+    [ "$(< "$E/rec")" = "$n $(wc -l < "$E/refused")" ] || { echo "the comparison's record reads \"$(< "$E/rec")\" over $n commits"; return 1; }
+    LC_ALL=C "$real_awk" -F '\t' 'NR == FNR { if ($2 != "label") bad = 1; no[$1 + 0] = 1; next } !(FNR in no) { print } END { exit bad }' "$E/refused" "$1"
+}
+
+@test "round 12c (D, the list's deriving case; re-aimed in round 12e, the round 12c audit's F2, the owner's option (b)): the list the hook USES is derived by execution: a real push through the hook, the identifier scan armed, with an awk on its PATH that saves the label read's program and the ROMP_ENC_LABELS the hook hands it (the list as the hook sets it at run time, by whatever road); that program, run over one synthetic commit per label iconv -l prints, passes some of them, and each label it passes is converted to UTF-8 by the platform's iconv as git's reencode_string_iconv converts (python3's ctypes, one process: one conversion from the initial state, no flush, any error but E2BIG counting as git reading the raw bytes): every ASCII byte decodes to itself, each high byte that converts decodes to bytes none of them ASCII, and each lead byte followed by every ASCII byte fails to convert; on glibc the labels passed number the header's two class counts summed and every one opens, elsewhere the case prints what it covered; red on a copy of the hook whose list adds SHIFT_JIS, BIG5, CP1258 or CP1255 inside its block, on one that assigns the list again after the block adding BIG5 or CP932 (a label no pin names), and on one whose label read is handed the list with GBK added, each where the platform's iconv prints the label and converts it unsafely (where it converts it safely, or does not print it, the case says so on fd 3: the 02:31Z ruling on the round 12c questions, its (1))" {
+    local hdr single multi l n k E=$TEST_DIR/enc q="'"
+    r12c_base
+    iconv -l | sed 's,//$,,; s,/$,,' | LC_ALL=C sort -u > "$TEST_DIR/iconv-labels"
+    [ "$(wc -l < "$TEST_DIR/iconv-labels")" -gt 0 ]
+    r12c_commit - w-derive.txt 'a clean change'
+    r12e_enc_capture "$HOOK"
+    run r12e_enc_accepted "$TEST_DIR/iconv-labels"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "${lines[@]}" > "$TEST_DIR/accepted"
+    n=${#lines[@]}
     [ "$n" -gt 0 ]
     hdr=$(sed -n '2,200p' "$HOOK" | sed 's/^# \{0,1\}//' | tr '\n' ' ')
     [[ "$hdr" =~ It\ holds\ the\ ([0-9]+)\ single-byte\ labels ]]
     single=${BASH_REMATCH[1]}
     [[ "$hdr" =~ and\ the\ ([0-9]+)\ multi-byte\ labels ]]
     multi=${BASH_REMATCH[1]}
-    [ "$n" -eq $((single + multi)) ]
-    run r12c_list_check "$HOOK"
+    run r12c_list_check "$TEST_DIR/accepted"
     [ "$status" -eq 0 ]
     [ "${#lines[@]}" -eq 1 ]
     [[ "${lines[0]}" == "covered "* ]]
     if [[ "${lines[0]}" == *" labels (glibc), "* ]]; then
+        [ "$n" -eq $((single + multi)) ]
         [[ "${lines[0]}" == "covered $n of $n labels (glibc), "*" lead and ASCII pairs converted" ]]
     else
         echo "# the list's deriving case, on an iconv that is not glibc's: ${lines[0]}" >&3
     fi
-    local -A want=([SHIFT_JIS]="SHIFT_JIS: the ASCII byte 5c decodes to c2a5"
-        [BIG5]="BIG5: the lead byte a1 takes the ASCII byte 40 as its trail, decoding to e38080"
-        [CP1258]="CP1258: the ASCII byte 41 decodes to nothing"
-        [CP1255]="CP1255: the high byte d4 decodes to nothing")
-    for l in SHIFT_JIS BIG5 CP1258 CP1255; do
-        sed "/^ASCII_SAFE_LABELS='\$/a\\    $l" "$HOOK" > "$TEST_DIR/list-$l"
-        [ "$(sed -n "/^ASCII_SAFE_LABELS='\$/,/^'\$/p" "$TEST_DIR/list-$l" | sed '1d;$d' | wc -w)" -eq $((n + 1)) ]   # the label landed in the list
-        run r12c_list_check "$TEST_DIR/list-$l"
-        if [[ "${lines[-1]}" == *"not opened by this iconv"*" $l"* ]] && [[ "${lines[-1]}" != *" labels (glibc), "* ]]; then
-            echo "# the list's deriving case: this iconv cannot open $l, so its mutant is not converted here" >&3
+    local -A want=([in-SHIFT_JIS]="SHIFT_JIS: the ASCII byte 5c decodes to c2a5"
+        [in-BIG5]="BIG5: the lead byte a1 takes the ASCII byte 40 as its trail, decoding to e38080"
+        [in-CP1258]="CP1258: the ASCII byte 41 decodes to nothing"
+        [in-CP1255]="CP1255: the high byte d4 decodes to nothing"
+        [after-BIG5]="BIG5: the lead byte a1 takes the ASCII byte 40 as its trail, decoding to e38080"
+        [after-CP932]="CP932: the lead byte 81 takes the ASCII byte 40 as its trail, decoding to e38080"
+        [read-GBK]="GBK: the lead byte 81 takes the ASCII byte 40 as its trail, decoding to e4b882")
+    for k in in-SHIFT_JIS in-BIG5 in-CP1258 in-CP1255 after-BIG5 after-CP932 read-GBK; do
+        l=${k#*-}
+        case "$k" in
+            in-*) sed "/^ASCII_SAFE_LABELS='\$/a\\    $l" "$HOOK" > "$TEST_DIR/list-$k" ;;
+            after-*) awk -v q="$q" -v add="ASCII_SAFE_LABELS=\"\$ASCII_SAFE_LABELS $l\"" '$0 == "ASCII_SAFE_LABELS=" q { inb = 1; print; next } { print } inb && $0 == q { print add; inb = 0 }' "$HOOK" > "$TEST_DIR/list-$k" ;;
+            read-*) sed "s/ ROMP_ENC_LABELS=\$ASCII_SAFE_LABELS awk / ROMP_ENC_LABELS=\"\$ASCII_SAFE_LABELS $l\" awk /" "$HOOK" > "$TEST_DIR/list-$k" ;;
+        esac
+        chmod 755 "$TEST_DIR/list-$k"
+        [ "$(diff "$HOOK" "$TEST_DIR/list-$k" | grep -c '^>')" -eq 1 ]                        # the mutant landed, one line
+        r12e_enc_capture "$TEST_DIR/list-$k"
+        run r12e_enc_accepted "$TEST_DIR/iconv-labels"
+        [ "$status" -eq 0 ]
+        printf '%s\n' "${lines[@]}" | LC_ALL=C sort > "$TEST_DIR/accepted-$k"
+        LC_ALL=C comm -13 <(LC_ALL=C sort "$TEST_DIR/accepted") "$TEST_DIR/accepted-$k" > "$TEST_DIR/extra-$k"
+        if ! grep -qixF -- "$l" "$TEST_DIR/iconv-labels"; then
+            [ ! -s "$TEST_DIR/extra-$k" ]
+            echo "# the list's deriving case: this iconv -l does not print $l, so its mutant ($k) passes no label here" >&3
             continue
+        fi
+        [ "$(cat "$TEST_DIR/extra-$k")" = "$(grep -ixF -- "$l" "$TEST_DIR/iconv-labels")" ]      # the mutant passes that label, and only it
+        run r12c_list_check "$TEST_DIR/extra-$k"
+        if [[ "${lines[-1]}" != *" labels (glibc), "* ]]; then
+            if [[ "${lines[-1]}" == *"not opened by this iconv"* ]]; then
+                echo "# the list's deriving case: this iconv cannot open $l, so git reads a commit under it raw ($k)" >&3
+                continue
+            elif [ "$status" -eq 0 ]; then
+                echo "# the list's deriving case: this iconv converts $l safely, so the list's exclusion of it is a disclosed false refusal here ($k)" >&3
+                continue
+            fi
         fi
         [ "$status" -ne 0 ]
         if [[ "${lines[-1]}" == *" labels (glibc), "* ]]; then
-            [ "${lines[0]}" = "${want[$l]}" ]
+            [ "${lines[0]}" = "${want[$k]}" ]
         else
             [[ "${lines[0]}" == "$l: "* ]]
         fi
@@ -14484,4 +14562,476 @@ PY
         [[ "$output" != *"is made under the encoding"* ]]
         at_base
     done
+}
+
+# ── round 12e: a merge's first-parent hunks that hold a line it wrote, and a driver's textconv and algorithm keyed on the pushed paths (romp-manager's ruling on round 12d2's audit, 2026-09-27 01:25Z) ──
+# Round 12d2's audit found two merge roads through the default rule private-key: git's combined diff, which the feed
+# reads a merge by, ignores --inter-hunk-context, so a merge's own key block beside blank lines under
+# diff.interHunkContext=3 was two combined hunks and one first-parent hunk (evilI); and a block a side commit added
+# without its END line, the merge's own resolution adding it, was whole in one first-parent hunk and in no piece
+# (evilspan). Main's hook reads a merge by its first-parent diff. The ruling's option (a): for each merge with a line of
+# its own, the hook also reads its first-parent diff under the clone's settings (ONE more diff-tree per push that holds
+# such a merge) and pieces only the first-parent hunks that hold a line the merge wrote, framed as main frames them
+# (merge_fp_reads; its table, short and arm cases below). What that leaves stays round 12d2's stated limit, narrowed to
+# first-parent hunks holding no line the merge wrote (the three item 2 cases of round 12d2); the same anchors in a hunk
+# that holds one are refused here. And git log reads a path whose diff attribute names a driver with a textconv through
+# its rendering, and applies a driver's algorithm to such a path and to the paths it diffs after, so a pushed path whose
+# attribute names such a driver refuses by name, from ONE git check-attr over the pushed paths (attr_reads; its table,
+# short and arm cases below), and a driver no pushed path's attribute names refuses nothing (round 12d2's case titled
+# "a driver's algorithm", re-aimed, and its census row for the textconv key). Each pin pushes for real with the
+# identifier scan off and the real scanner armed; every value is assembled at run time.
+
+r12e_evil() {   # <ihc|none> [<a file the merge also adds, one clean line>]: keys/notes.txt at its base on the remote; a side commit and a main commit each adding another file; a merge whose OWN resolution inserts the key block beside the base's blank lines (round 12d2's audit, evilI and its control); with ihc the clone's diff.interHunkContext is 3; sha and merge are the merge
+    r12d_base_file keys/notes.txt '\n# note\n\n\n\n# note\n}\n'
+    [ "$1" != ihc ] || git -C "$REPO" config diff.interHunkContext 3
+    git -C "$REPO" checkout -q -b side
+    printf 'side\n' > "$REPO/side.txt"; git -C "$REPO" add side.txt; git -C "$REPO" commit -qm "side: another file"
+    git -C "$REPO" checkout -q main
+    printf 'main\n' > "$REPO/mainf.txt"; git -C "$REPO" add mainf.txt; git -C "$REPO" commit -qm "main: another file"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    { printf '\n'; r12d2_keyblock; printf '# note\n edited\n\n\n# note\n}\n'; } > "$REPO/keys/notes.txt"
+    git -C "$REPO" add keys/notes.txt
+    if [ -n "${2:-}" ]; then printf 'a clean line of the merge\n' > "$REPO/$2"; git -C "$REPO" add -- "$2"; fi
+    r11b_commit "the merge, a key block of its own"
+    merge=$sha
+    is_merge "$merge"
+}
+r12e_evilspan() {   # keys/notes.txt at its base (two comment lines); a side commit adding the key block without its END line between them; a main commit adding another file; a merge whose own resolution adds the END line (round 12d2's audit, evilspan); sha and merge are the merge
+    r12d_base_file keys/notes.txt '# top\n# bottom\n'
+    git -C "$REPO" checkout -q -b side
+    { printf '# top\n'; r12d2_keyblock | head -n 10; printf '# bottom\n'; } > "$REPO/keys/notes.txt"
+    git -C "$REPO" commit -qam "side: a key block without its end line"
+    git -C "$REPO" checkout -q main
+    printf 'main\n' > "$REPO/mainf.txt"; git -C "$REPO" add mainf.txt; git -C "$REPO" commit -qm "main: another file"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    { printf '# top\n'; r12d2_keyblock; printf '# bottom\n'; } > "$REPO/keys/notes.txt"
+    git -C "$REPO" add keys/notes.txt
+    r11b_commit "the merge, adding the end line"
+    merge=$sha
+    is_merge "$merge"
+}
+r12e_fp_own() {   # <zz|nuget|m2>: round 12d2's first-parent witnesses (r12d2_fp_merge's side and main commits), the merge taking the side's version and writing one line of its own in the same first-parent hunk, after the credential (zz and nuget, so the credential stays the hunk's first line) or before it (m2, so it stays the last); sha and merge are the merge
+    local c
+    case "$1" in
+        zz)
+            r12d_base_file config/app.env 'K1=v\nK2=v\nK3=v\nK4=v\nK5=v\nK6=v\n'
+            git -C "$REPO" checkout -q -b side
+            printf 'K1=v\nK2=v\nK3=v\nK4=side\n%s\nK5=v\nK6=v\n' "$(r12d_zz)" > "$REPO/config/app.env"
+            git -C "$REPO" commit -qam "side: K4 changed, a key added after it"
+            git -C "$REPO" checkout -q main
+            sed -i 's/^K4=v$/K4=side/' "$REPO/config/app.env"
+            git -C "$REPO" commit -qam "main: the same K4 change"
+            git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+            printf 'K1=v\nK2=v\nK3=v\nK4=side\n%s\nK4b=merge\nK5=v\nK6=v\n' "$(r12d_zz)" > "$REPO/config/app.env"
+            git -C "$REPO" add config/app.env ;;
+        nuget|m2)
+            r12d_base_file deploy/prod.nuget.config '<configuration>\n<feed name="a" />\n<feed name="b" />\n</configuration>\n'
+            c=$(r12d_cred)
+            git -C "$REPO" checkout -q -b side
+            if [ "$1" = nuget ]; then
+                printf '<configuration>\n<feed name="a2" />\n%s\n<feed name="b" />\n</configuration>\n' "$c" > "$REPO/deploy/prod.nuget.config"
+            else
+                printf '<configuration>\n%s\n<feed name="a2" />\n<feed name="b" />\n</configuration>\n' "$c" > "$REPO/deploy/prod.nuget.config"
+            fi
+            git -C "$REPO" commit -qam "side: feed a renamed, a password added beside it"
+            git -C "$REPO" checkout -q main
+            sed -i 's|^<feed name="a" />$|<feed name="a2" />|' "$REPO/deploy/prod.nuget.config"
+            git -C "$REPO" commit -qam "main: the same rename"
+            git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+            if [ "$1" = nuget ]; then
+                printf '<configuration>\n<feed name="a2" />\n%s\n<feed name="m" />\n<feed name="b" />\n</configuration>\n' "$c" > "$REPO/deploy/prod.nuget.config"
+            else
+                printf '<configuration>\n<feed name="m" />\n%s\n<feed name="a2" />\n<feed name="b" />\n</configuration>\n' "$c" > "$REPO/deploy/prod.nuget.config"
+            fi
+            git -C "$REPO" add deploy/prod.nuget.config ;;
+    esac
+    r11b_commit "the merge, the side's version and a line of its own"
+    merge=$sha
+    is_merge "$merge"
+    [ "$(git -C "$REPO" diff-tree -c -p "$merge" | grep -c '^++[^+]')" -eq 1 ]                 # one line of the merge's own
+    [ "$(git -C "$REPO" diff -U0 "$merge^1" "$merge" | grep -c '^@@')" -eq 1 ]                  # in the one first-parent hunk
+    [ "$(git -C "$REPO" diff -U0 "$merge^1" "$merge" | grep -c '^+[^+]')" -eq 2 ]               # beside the credential
+}
+r12e_fp_shape='[[ " $* " == *" diff-tree "* ]] && [[ " $* " == *" --diff-merges=first-parent "* ]]'   # the FIRST-PARENT DIFF read's git, and no other
+r12e_fp_refused() {   # <clause>: the push just made was refused by that line of the FIRST-PARENT DIFF read, once, no credential named, the remote at its base
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: $1; the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 12e (ITEM 1, evilI): a merge whose own resolution inserts the key block beside blank lines, under diff.interHunkContext=3, which fuses the first-parent diff's two hunks into one and does not fuse the combined diff's: refused naming private-key, the merge and keys/notes.txt, the first-parent hunk read as main's hook reads it (PUBLISHED at 97312fd98, the round 12d2 head, both scanners; refused at 0b6c76916 and at main; red under the mutant that skips the FIRST-PARENT DIFF read)" {
+    r11a_base
+    r12e_evil ihc
+    [ "$(git -C "$REPO" diff-tree -c -p -U0 --inter-hunk-context=3 "$merge" | grep -c '^@@@')" -eq 2 ]                 # two combined hunks
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= --diff-merges=first-parent "$merge" -- keys/notes.txt | grep -c '^@@')" -eq 1 ]   # one first-parent hunk under the clone's setting
+    push_main_through_hook_with_shim
+    r12d_refused_as private-key keys/notes.txt
+}
+
+@test "round 12e (ITEM 1, evilspan): a side commit adds the key block without its END line, and the merge's own resolution adds the END line, so the block is whole in one first-parent hunk and in no piece of the combined diff: refused naming private-key, the merge and keys/notes.txt (PUBLISHED at 97312fd98 and at 0b6c76916, both scanners; refused at main; red under the mutant that skips the FIRST-PARENT DIFF read)" {
+    r11a_base
+    r12e_evilspan
+    [ "$(git -C "$REPO" diff-tree -c -p "$merge" | grep -c '^++[^+]')" -eq 1 ]                 # the merge writes the END line alone
+    [ "$(git -C "$REPO" diff -U0 "$merge^1" "$merge" -- keys/notes.txt | grep -c '^@@')" -eq 1 ]   # the whole block one first-parent hunk
+    push_main_through_hook_with_shim
+    r12d_refused_as private-key keys/notes.txt
+}
+
+@test "round 12e (ITEM 1, the control): evilI's merge under no diff setting publishes at the fix, as at main: git's myers splits the block at its blank line in the first-parent diff too, so its two first-parent hunks hold it whole in neither (item 6's parity, for a merge)" {
+    r11a_base
+    r12e_evil none
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= --diff-merges=first-parent "$merge" -- keys/notes.txt | grep -c '^@@')" -eq 2 ]
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12e (ITEM 1, the cost): a push whose merge writes no line of its own runs ONE diff-tree --stdin, the feed's, and no first-parent read: a clean merge, and a merge that takes the side's version whole (round 12d2's fpmerge shape, its first-parent hunk the side's lines alone); a push whose merge writes a line of its own runs two, the second the first-parent read (--diff-merges=first-parent), over that merge alone (the git invocations counted through a wrapper)" {
+    r11a_base
+    git_shim "$(printf 'if [[ " $* " == *" diff-tree "* ]] && [[ " $* " == *" --stdin "* ]]; then printf "%%s\\n" "$*" >> %q; fi' "$TEST_DIR/calls.dtree")"
+    r12d_base_file notes/a.txt 'a\nb\nc\n'
+    git -C "$REPO" checkout -q -b side
+    printf 'side\n' > "$REPO/notes/s.txt"; git -C "$REPO" add notes/s.txt; git -C "$REPO" commit -qm "side"
+    git -C "$REPO" checkout -q main
+    printf 'main\n' > "$REPO/notes/m.txt"; git -C "$REPO" add notes/m.txt; git -C "$REPO" commit -qm "main"
+    git -C "$REPO" merge -q --no-ff -m "a clean merge" side > /dev/null 2>&1
+    is_merge "$(git -C "$REPO" rev-parse HEAD)"
+    [ -z "$(git -C "$REPO" diff-tree -c -p --no-commit-id HEAD)" ]                                            # no line of its own
+    : > "$TEST_DIR/calls.dtree"
+    push_main_through_hook_with_shim
+    r10a_passes
+    [ "$(wc -l < "$TEST_DIR/calls.dtree")" -eq 1 ]
+    [ "$(grep -c -- '--diff-merges=first-parent' "$TEST_DIR/calls.dtree")" -eq 0 ]
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b side2
+    printf 'a\nb2\nc\nside line\n' > "$REPO/notes/a.txt"; git -C "$REPO" commit -qam "side 2: b changed, a line added"
+    git -C "$REPO" checkout -q main
+    printf 'a\nb2\nc\n' > "$REPO/notes/a.txt"; git -C "$REPO" commit -qam "main: the same b change"
+    git -C "$REPO" merge -q --no-ff --no-commit side2 > /dev/null 2>&1 || :
+    git -C "$REPO" checkout -q side2 -- .
+    r11b_commit "a merge taking the side's version"
+    is_merge "$sha"
+    [ -z "$(git -C "$REPO" diff-tree -c -p --no-commit-id "$sha")" ]
+    [ "$(git -C "$REPO" diff -U0 "$sha^1" "$sha" | grep -c '^@@')" -eq 1 ]                   # a first-parent hunk, holding no line the merge wrote
+    : > "$TEST_DIR/calls.dtree"
+    push_main_through_hook_with_shim
+    r10a_passes
+    [ "$(wc -l < "$TEST_DIR/calls.dtree")" -eq 1 ]
+    [ "$(grep -c -- '--diff-merges=first-parent' "$TEST_DIR/calls.dtree")" -eq 0 ]
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b side3
+    printf 'side 3\n' > "$REPO/notes/s3.txt"; git -C "$REPO" add notes/s3.txt; git -C "$REPO" commit -qm "side 3"
+    git -C "$REPO" checkout -q main
+    printf 'main 3\n' > "$REPO/notes/m3.txt"; git -C "$REPO" add notes/m3.txt; git -C "$REPO" commit -qm "main 3"
+    git -C "$REPO" merge -q --no-ff --no-commit side3 > /dev/null 2>&1 || :
+    printf 'a\nb2\nc\nside line\nmerge line\n' > "$REPO/notes/a.txt"; git -C "$REPO" add notes/a.txt
+    r11b_commit "a merge writing a clean line of its own"
+    is_merge "$sha"
+    [ "$(git -C "$REPO" diff-tree -c -p "$sha" | grep -c '^++[^+]')" -eq 1 ]
+    : > "$TEST_DIR/calls.dtree"
+    push_main_through_hook_with_shim
+    r10a_passes
+    [ "$(wc -l < "$TEST_DIR/calls.dtree")" -eq 2 ]
+    [ "$(grep -c -- '--diff-merges=first-parent' "$TEST_DIR/calls.dtree")" -eq 1 ]
+}
+
+@test "round 12e (item 2 re-checked, a first-parent hunk holding a line the merge wrote): fpmerge's repository rule ^zzkey_[0-9a-f]{16}, the key the first line of the merge's first-parent hunk, which also holds a line the merge wrote: refused naming zz-key, the merge and config/app.env (PUBLISHED at 97312fd98 and at 0b6c76916, both scanners; refused at main)" {
+    r11a_base
+    r11a_config "$(r12d_zz_config caret)"
+    r12e_fp_own zz
+    push_main_through_hook_with_shim
+    r12d_refused_as zz-key config/app.env
+}
+
+@test "round 12e (item 2 re-checked, a first-parent hunk holding a line the merge wrote): fpnuget's nuget-config-password redefined with ^<add key=..., the password the first line of that hunk: refused naming the rule, the merge and deploy/prod.nuget.config (PUBLISHED at 97312fd98 and at 0b6c76916, both scanners; refused at main)" {
+    r11a_base
+    r11a_config "$(r12d_nuget_config caret)"
+    r12e_fp_own nuget
+    push_main_through_hook_with_shim
+    r12d_refused_as nuget-config-password deploy/prod.nuget.config
+}
+
+@test "round 12e (item 2 re-checked, a first-parent hunk holding a line the merge wrote): fpm2's M2 regex <add key=...\\s*/>\\s*\$, the password the last line of that hunk: refused naming the rule, the merge and deploy/prod.nuget.config (PUBLISHED at 97312fd98 and at 0b6c76916, both scanners; refused at main)" {
+    r11a_base
+    r11a_config "$(r12d_nuget_config m2)"
+    r12e_fp_own m2
+    push_main_through_hook_with_shim
+    r12d_refused_as nuget-config-password deploy/prod.nuget.config
+}
+
+@test "round 12e (item 3 re-checked): the evil merge whose own last line is the sidekiq URL with no final newline is refused through its first-parent piece alone: its first-parent diff prints the no-newline notice after that line, so the piece ends as main's hunk ends, and a copy of the hook that skips the RESULT BLOBS read still refuses it naming the rule, the merge and the file; a copy that also skips the FIRST-PARENT DIFF read publishes it (the round 12d2 head's pieces less the RESULT BLOBS read)" {
+    r11a_base
+    r12d_sk_merge
+    [ "$(git -C "$REPO" diff -U0 "$merge^1" "$merge" -- config/deploy.sh | grep -c 'No newline at end of file')" -eq 1 ]
+    local hook=$HOOK
+    push_main_through_hook_with_shim
+    r12d_refused_as sidekiq-sensitive-url config/deploy.sh
+    [ "$(grep -c '^            merge_tail_reads "\$rtail"$' "$hook")" -eq 1 ]
+    [ "$(grep -c '^            merge_fp_reads "\$rown"$' "$hook")" -eq 1 ]
+    sed 's/^            merge_tail_reads "\$rtail"$/            :/' "$hook" > "$TEST_DIR/hook-notails"
+    sed 's/^            merge_fp_reads "\$rown"$/            :/' "$TEST_DIR/hook-notails" > "$TEST_DIR/hook-neither"
+    chmod 755 "$TEST_DIR/hook-notails" "$TEST_DIR/hook-neither"
+    [ "$(diff "$hook" "$TEST_DIR/hook-notails" | grep -c '^>')" -eq 1 ]
+    [ "$(diff "$TEST_DIR/hook-notails" "$TEST_DIR/hook-neither" | grep -c '^>')" -eq 1 ]
+    HOOK=$TEST_DIR/hook-notails push_main_through_hook_with_shim
+    r12d_refused_as sidekiq-sensitive-url config/deploy.sh
+    HOOK=$TEST_DIR/hook-neither push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12e (ITEM 1, the feed's pins in the first-parent read): the round 11c blank-context history (a merge writing a line of its own among its commits) under GIT_DIFF_OPTS=--unified=3 and diff.suppressBlankEmpty=true passes, and a copy of the hook whose first-parent read drops both pins (env -u GIT_DIFF_OPTS and -c diff.suppressBlankEmpty=false), the feed's kept, refuses it naming that read's foreign line: GIT_DIFF_OPTS gives the merge's two-way diff context, a blank line of it printed empty" {
+    r11c_blank_context_history
+    git -C "$REPO" config diff.suppressBlankEmpty true
+    r11c_blank_context_push
+    r10a_passes
+    [ "$(grep -c -- '--diff-merges=first-parent' "$HOOK")" -ge 1 ]
+    sed '/ --diff-merges=first-parent /s/env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree /git -c core.quotePath=true diff-tree /' "$HOOK" > "$TEST_DIR/hook-fp-nopins"
+    chmod 755 "$TEST_DIR/hook-fp-nopins"
+    [ "$(diff "$HOOK" "$TEST_DIR/hook-fp-nopins" | grep -c '^>')" -eq 1 ]
+    git -C "$TEST_DIR/remote.git" update-ref refs/heads/main "$BASE"
+    git -C "$REPO" update-ref refs/remotes/origin/main "$BASE"
+    HOOK=$TEST_DIR/hook-fp-nopins r11c_blank_context_push
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the FIRST-PARENT DIFF of the merges with lines of their own could not be read whole for the credential scan (git diff-tree exited 0 and printed a line inside merge 1 of those it was given, "* ]]
+    at_base
+}
+
+@test "round 12e table case: the FIRST-PARENT DIFF of the merges with lines of their own: a git silent on the first-parent diff-tree alone (exit 0, nothing printed), through a real push of evilI, is refused naming the merges it read against the merges listed, no credential named, and the remote stays at its base (red by publication under the mutant that takes an answer without its merges as whole)" {
+    r11a_base
+    r12e_evil ihc
+    calls_silent_on git fpdiff "$r12e_fp_shape"
+    push_main_through_hook_with_shim
+    fired fpdiff "--diff-merges=first-parent"
+    r12e_fp_refused "the FIRST-PARENT DIFF of the merges with lines of their own was read short for the credential scan (git diff-tree exited 0 and ended after 0 of the 1 merges it was given)"
+}
+
+@test "round 12e short case: the FIRST-PARENT DIFF of the merges with lines of their own: a git whose first-parent diff-tree answer is cut ahead of the key block's END line (exit 0, the rest of the merge and its tail marker cut), through a real push of evilI, is refused naming the merge not closed by its tail marker, no credential named, and the remote stays at its base (red by publication under the mutant that takes a merge with no tail marker as whole)" {
+    r11a_base
+    r12e_evil ihc
+    calls_short_on git fpdiff "$r12e_fp_shape" before:+-----END:1
+    push_main_through_hook_with_shim
+    fired_short fpdiff "--diff-merges=first-parent"
+    r12e_fp_refused "the FIRST-PARENT DIFF of the merges with lines of their own was read short for the credential scan (git diff-tree exited 0 and did not close merge 1 of those it was given with the line naming it again, the tail marker its second --stdin line asks for)"
+}
+
+@test "round 12e (the FIRST-PARENT DIFF read, its unmarked arm): a git whose first-parent diff-tree prints a line of its own ahead of the real answer, through a real push of evilI, is refused naming the merge not opened by its head marker, no credential named, and the remote stays at its base (red under the mutant deleting that arm)" {
+    r11a_base
+    r12e_evil ihc
+    git_shim "$(printf 'if %s; then echo fired >> %q; printf "zzsynth\\n"; "$real_git" "$@"; exit $?; fi' "$r12e_fp_shape" "$TEST_DIR/calls.fpun")"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.fpun")" -eq 1 ]
+    r12e_fp_refused "the FIRST-PARENT DIFF of the merges with lines of their own was read short for the credential scan (git diff-tree exited 0 and did not open merge 1 of those it was given with the line naming it, the marker --always asks for ahead of each diff, or printed a line after the last merge's tail marker)"
+}
+
+@test "round 12e (the FIRST-PARENT DIFF read, its short arm): a push of two merges that each write a line of their own, and a git whose first-parent diff-tree stops after the first merge's tail marker (exit 0, every line read and the rest not printed), is refused naming the merges read whole against the merges listed, and the remote stays at its base (red under the mutant deleting that arm)" {
+    r11a_base
+    r12e_evil ihc
+    git -C "$REPO" checkout -q -b side2
+    printf 'side 2\n' > "$REPO/side2.txt"; git -C "$REPO" add side2.txt; git -C "$REPO" commit -qm "side 2"
+    git -C "$REPO" checkout -q main
+    printf 'main 2\n' > "$REPO/main2.txt"; git -C "$REPO" add main2.txt; git -C "$REPO" commit -qm "main 2"
+    git -C "$REPO" merge -q --no-ff --no-commit side2 > /dev/null 2>&1 || :
+    printf 'a clean line of the second merge\n' > "$REPO/own2.txt"; git -C "$REPO" add own2.txt
+    r11b_commit "a second merge, a clean line of its own"
+    is_merge "$sha"
+    git_shim "$(printf 'if %s; then echo fired >> %q; "$real_git" "$@" | awk %q; exit "${PIPESTATUS[0]}"; fi' "$r12e_fp_shape" "$TEST_DIR/calls.fpshort" 'c < 2 { print } length($0) == 40 && $0 !~ /[^0-9a-f]/ { c++ }')"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.fpshort")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the FIRST-PARENT DIFF of the merges with lines of their own was read short for the credential scan (git diff-tree exited 0 and ended after 1 of the 2 merges it was given); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+}
+
+@test "round 12e (the FIRST-PARENT DIFF read, its foreign arm): a git whose first-parent diff-tree prints a Binary notice after each diff header (a line --text keeps a real git from printing), through a real push of evilI, is refused naming the merge and that line's read, no credential named, and the remote stays at its base (red under the mutant deleting that arm)" {
+    r11a_base
+    r12e_evil ihc
+    git_shim "$(printf 'if %s; then echo fired >> %q; "$real_git" "$@" | sed "/^diff --git /a Binary files differ"; exit "${PIPESTATUS[0]}"; fi' "$r12e_fp_shape" "$TEST_DIR/calls.fpforeign")"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.fpforeign")" -eq 1 ]
+    r12e_fp_refused "the FIRST-PARENT DIFF of the merges with lines of their own could not be read whole for the credential scan (git diff-tree exited 0 and printed a line inside merge 1 of those it was given, ${merge:0:10}, that is none of the shapes a two-way diff prints, so what that line stands for went unread)"
+}
+
+@test "round 12e (the FIRST-PARENT DIFF read, its record): an awk silent on the read's program (exit 0, no record written), through a real push of evilI, is refused naming the empty record, not five counts, and the remote stays at its base (red under the mutant deleting that arm)" {
+    r11a_base
+    r12e_evil ihc
+    calls_silent_on_text awk fprec 'ENVIRON["ROMP_FP_OWN_FILE"]'
+    push_main_through_hook_with_shim
+    fired fprec "ROMP_FP_OWN_FILE"
+    r12e_fp_refused "the FIRST-PARENT DIFF of the merges with lines of their own could not be read for the credential scan (its awk exited 0 and recorded \"\", not five counts)"
+}
+
+@test "round 12e (the FIRST-PARENT DIFF read, the own lines read back): evilI's merge adding a clean file of its own too, a.txt, whose line the feed notes first, and its own lines' note file cut to that first line after the feed's awk writes it (a wrapper around that awk), through a real push, is refused naming the own lines read back against the count the feed's awk recorded, no credential named, and the remote stays at its base (red by publication under the mutant deleting that arm: keys/notes.txt's first-parent hunk, its lines cut from the note file, goes unread)" {
+    r11a_base
+    r12e_evil ihc a.txt
+    local real_awk real_head real_mv n
+    n=$(git -C "$REPO" diff-tree -c -p "$merge" | grep -c '^++[^+]')
+    [ "$n" -eq 13 ]
+    [ "$(git -C "$REPO" diff-tree -c -p "$merge" | grep -m 1 '^diff --combined ')" = "diff --combined a.txt" ]
+    real_awk="$(command -v awk)"; real_head="$(command -v head)"; real_mv="$(command -v mv)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'case "$*" in *%q*)\n' 'ENVIRON["ROMP_OWN_FILE"]'
+        printf '    %q "$@"; s=$?\n' "$real_awk"
+        printf '    t=$ROMP_OWN_FILE; %q -n 1 "$t" > "$t.cut" && %q "$t.cut" "$t"\n' "$real_head" "$real_mv"
+        printf '    printf "%%s\\n" "awk cut $t" >> %q; exit "$s" ;;\n' "$TEST_DIR/calls.owncut"
+        printf 'esac\n'
+        printf 'exec %q "$@"\n' "$real_awk"
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.owncut")" -eq 1 ]
+    r12e_fp_refused "the lines the merges wrote of their own, which the CREDENTIAL FEED of the push noted, were read back short (1 of the 13 its awk recorded), so a first-parent hunk holding the rest may go unread"
+}
+
+r12e_tc() {   # <attr|none>: the clone gives driver zz the textconv rev (git runs it over a path's blob and reads each line reversed); with attr, .git/info/attributes gives *.drv that driver; then a commit adding keys/k.drv, the key block written reversed, so only the driver's rendering shows it; sha is the commit
+    git -C "$REPO" config diff.zz.textconv rev
+    [ "$1" != attr ] || printf '*.drv diff=zz\n' > "$REPO/.git/info/attributes"
+    mkdir -p "$REPO/keys"
+    r12d2_keyblock | rev > "$REPO/keys/k.drv"
+    git -C "$REPO" add keys/k.drv
+    r11b_commit "a key block written reversed"
+}
+r12e_tc_line() {   # <driver> <path, as git quotes it>: the textconv refusal's line, whole
+    printf "romp pre-push: this clone sets diff.%s.textconv, a textconv driver for %s, whose diff attribute names %s: git log, which gitleaks' git mode runs, reads that path through the driver's rendering, while the credential feed reads the bytes the push carries, so a credential only the rendering shows goes unread; review %s by hand, then set ROMP_NO_GITLEAKS=1 for that push; the scan is incomplete, so the push is refused" "$1" "$2" "$1" "$2"
+}
+r12e_alg_line() {   # <driver> <path, as git quotes it>: the algorithm refusal's line, whole
+    printf "romp pre-push: this clone sets diff.%s.algorithm, a diff algorithm for %s, whose diff attribute names %s: git log applies it to that path and keeps it for the paths it diffs after, in the order it walks one ref's commits, so the credential feed, which reads the whole push in one pass, cannot frame the pushed lines' hunks as gitleaks' git mode would; review the pushed changes by hand, then set ROMP_NO_GITLEAKS=1 for that push; the scan is incomplete, so the push is refused" "$1" "$2" "$1"
+}
+r12e_attr_shape='[ "${3:-}" = check-attr ] && [ "${4:-}" = --stdin ]'   # the DIFF ATTRIBUTES read's git (git -c core.quotePath=true check-attr --stdin diff), not the report's check-attr
+r12e_attr_refused() {   # <clause>: the push just made was refused by that line of the DIFF ATTRIBUTES read, once, no textconv line and no credential named, the remote at its base
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: $1; the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"a textconv driver for "* ]]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 12e (ITEM 2, textconv): the clone gives driver zz the textconv rev, *.drv's diff attribute names zz, and keys/k.drv holds the key block written reversed, which git log, gitleaks' git mode, renders whole: refused by name, naming keys/k.drv and zz, with the remedy, and no credential named (PUBLISHED at 97312fd98 and at 0b6c76916, both scanners, where main's hook refused it naming private-key; red under the mutant that skips the DIFF ATTRIBUTES read)" {
+    r11a_base
+    r12e_tc attr
+    [ "$(git -C "$REPO" log -1 -p --format= "$sha" | grep -c 'PRIVATE KEY-----$')" -eq 2 ]            # the rendering shows the block (a count: no line printed)
+    [ "$(git -C "$REPO" log -1 -p --no-textconv --format= "$sha" | grep -c 'PRIVATE KEY-----$')" -eq 0 ]   # the pushed bytes do not
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "$(r12e_tc_line zz keys/k.drv)" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+}
+
+@test "round 12e (ITEM 2, textconv, the control): the same driver and the same reversed block with no attribute naming the driver passes, as at main, whose git log then reads the pushed bytes: a driver no pushed path's attribute names refuses nothing" {
+    r11a_base
+    r12e_tc none
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12e (ITEM 2, a driver's algorithm): diff.zz.algorithm=histogram with *.drv's diff attribute naming zz, and a clean drv/file.drv pushed: refused by name, naming drv/file.drv and zz, with the remedy (a clean push main's hook passes, disclosed: git log applies the algorithm to that path and keeps it for the paths it diffs after)" {
+    r11a_base
+    git -C "$REPO" config diff.zz.algorithm histogram
+    printf '*.drv diff=zz\n' > "$REPO/.git/info/attributes"
+    r12d_commit_file drv/file.drv 'alpha\nbeta\n'
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "$(r12e_alg_line zz drv/file.drv)" <<< "$output")" -eq 1 ]
+    [ "$(grep '^romp pre-push: ' <<< "$output" | grep -vc '^romp pre-push: BLOCKED\.')" -eq 1 ]      # that line alone
+    at_base
+}
+
+@test "round 12e (ITEM 2, a driver's algorithm, a deleted path): the same driver, a push that deletes drv/old.drv and adds a clean notes/clean.txt: refused naming drv/old.drv, the --- source the feed lists, since git log applies the algorithm to a deleted path too and keeps it for the paths it diffs after (git 2.43.0, executed)" {
+    r11a_base
+    r12d_base_file drv/old.drv 'alpha\nbeta\n'
+    git -C "$REPO" config diff.zz.algorithm histogram
+    printf '*.drv diff=zz\n' > "$REPO/.git/info/attributes"
+    git -C "$REPO" rm -q drv/old.drv
+    printf 'nothing to see\n' > "$REPO/clean.txt"; git -C "$REPO" add clean.txt
+    r11b_commit "drv/old.drv deleted, a clean file added"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "$(r12e_alg_line zz drv/old.drv)" <<< "$output")" -eq 1 ]
+    [ "$(grep '^romp pre-push: ' <<< "$output" | grep -vc '^romp pre-push: BLOCKED\.')" -eq 1 ]      # that line alone
+    at_base
+}
+
+@test "round 12e (ITEM 2, the paths as git quotes them): under the textconv driver, drv/sp ace.drv and drv/na<U+00EF>ve.drv pushed are each refused naming the path as git quotes it (the second in quotes, octal escapes kept), since check-attr unquotes its stdin and quotes its answer as diff-tree does" {
+    r11a_base
+    git -C "$REPO" config diff.zz.textconv rev
+    printf '*.drv diff=zz\n' > "$REPO/.git/info/attributes"
+    mkdir -p "$REPO/drv"
+    printf 'alpha\n' > "$REPO/drv/sp ace.drv"
+    printf 'beta\n' > "$REPO/drv/na$(printf '\303\257')ve.drv"
+    git -C "$REPO" add drv
+    r11b_commit "two driver paths"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "$(r12e_tc_line zz 'drv/sp ace.drv')" <<< "$output")" -eq 1 ]
+    [ "$(grep -cxF -- "$(r12e_tc_line zz '"drv/na\303\257ve.drv"')" <<< "$output")" -eq 1 ]
+    at_base
+}
+
+@test "round 12e table case: the DIFF ATTRIBUTES of the pushed paths: a git silent on check-attr --stdin alone (exit 0, nothing printed), through a real push of the reversed key block under the textconv driver, is refused naming the answers read against the paths asked, no textconv line and no credential named, and the remote stays at its base (red by publication under the mutant that takes an answer without its marker as whole)" {
+    r11a_base
+    r12e_tc attr
+    calls_silent_on git attrs "$r12e_attr_shape"
+    push_main_through_hook_with_shim
+    fired attrs "check-attr --stdin diff"
+    r12e_attr_refused "the DIFF ATTRIBUTES of the pushed paths were read short for the credential scan (git check-attr exited 0 and answered 0 of the 2 paths asked, the last of them the tail marker romp-pre-push.tail), so a path's driver the answer lost may go unrefused"
+}
+
+@test "round 12e short case: the DIFF ATTRIBUTES of the pushed paths: a git whose check-attr --stdin answer loses its last 40 bytes (exit 0, the last value's final byte, its newline and the tail marker's line cut, so keys/k.drv reads diff=z), through a real push of the reversed key block under the textconv driver, is refused naming the answers read against the paths asked, and the remote stays at its base (red by publication under the mutant that takes an answer without its marker as whole)" {
+    r11a_base
+    r12e_tc attr
+    calls_short_on git attrs "$r12e_attr_shape" less:40
+    push_main_through_hook_with_shim
+    fired_short attrs "check-attr --stdin diff"
+    grep -F "check-attr --stdin diff" "$TEST_DIR/calls.attrs" | grep -qF '[whole 59 cut 19]'
+    r12e_attr_refused "the DIFF ATTRIBUTES of the pushed paths were read short for the credential scan (git check-attr exited 0 and answered 1 of the 2 paths asked, the last of them the tail marker romp-pre-push.tail), so a path's driver the answer lost may go unrefused"
+}
+
+@test "round 12e (the DIFF ATTRIBUTES read, its foreign arm): a git whose check-attr answer does not begin with the path asked, through a real push of the reversed key block under the textconv driver, is refused naming the answer out of step, and the remote stays at its base (red under the mutant deleting that arm)" {
+    r11a_base
+    r12e_tc attr
+    git_shim "$(printf 'if %s; then echo fired >> %q; "$real_git" "$@" | sed "1s/^/x/"; exit "${PIPESTATUS[0]}"; fi' "$r12e_attr_shape" "$TEST_DIR/calls.aforeign")"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.aforeign")" -eq 1 ]
+    r12e_attr_refused "the DIFF ATTRIBUTES of the pushed paths could not be read for the credential scan (git check-attr exited 0 and answered line 1 out of step with the paths asked, or past the last of them)"
+}
+
+@test "round 12e (the DIFF ATTRIBUTES read, its record): an awk silent on the read's program (exit 0, no record written), through a real push of the reversed key block under the textconv driver, is refused naming the empty record, not two counts, and the remote stays at its base (red under the mutant deleting that arm)" {
+    r11a_base
+    r12e_tc attr
+    calls_silent_on_text awk arec 'ENVIRON["ROMP_ATTR_RECORD_FILE"]'
+    push_main_through_hook_with_shim
+    fired arec "ROMP_ATTR_RECORD_FILE"
+    r12e_attr_refused "the DIFF ATTRIBUTES of the pushed paths could not be read for the credential scan (its awk exited 0 and recorded \"\", not two counts)"
+}
+
+@test "round 12e (the DIFF ATTRIBUTES read, the paths read back): the reversed key block under the textconv driver, whose pushed paths' list is cut to its first line after the feed's awk writes it (a wrapper around that awk: the tail marker cut, so the one path's answer is read as the marker's), through a real push, is refused naming the lines read back against the count the feed's awk recorded, and the remote stays at its base (red by publication under the mutant deleting that arm)" {
+    r11a_base
+    r12e_tc attr
+    local real_awk real_head real_mv
+    real_awk="$(command -v awk)"; real_head="$(command -v head)"; real_mv="$(command -v mv)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'case "$*" in *%q*)\n' 'ENVIRON["ROMP_PATHS_FILE"]'
+        printf '    %q "$@"; s=$?\n' "$real_awk"
+        printf '    t=$ROMP_PATHS_FILE; %q -n 1 "$t" > "$t.cut" && %q "$t.cut" "$t"\n' "$real_head" "$real_mv"
+        printf '    printf "%%s\\n" "awk cut $t" >> %q; exit "$s" ;;\n' "$TEST_DIR/calls.pathcut"
+        printf 'esac\n'
+        printf 'exec %q "$@"\n' "$real_awk"
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.pathcut")" -eq 1 ]
+    r12e_attr_refused "the pushed paths the CREDENTIAL FEED of the push listed were read back short for their DIFF ATTRIBUTES (1 of the 2 lines its awk wrote, the tail marker's among them), so a path the list lost may go unrefused"
+}
+
+@test "round 12e (the DIFF ATTRIBUTES read, its lines printed): an awk whose printed refusal line is cut (exit 0, its record whole), through a real push of the reversed key block under the textconv driver, is refused naming the lines printed against the refusals recorded, and the remote stays at its base (red by publication under the mutant deleting that arm)" {
+    r11a_base
+    r12e_tc attr
+    calls_short_on_text awk aprint 'ENVIRON["ROMP_TC_DRIVERS"]' less:23
+    push_main_through_hook_with_shim
+    fired_short aprint "ROMP_TC_DRIVERS"
+    r12e_attr_refused "the DIFF ATTRIBUTES of the pushed paths were read short for the credential scan (its awk printed 0 of the 1 refusals it recorded)"
 }
