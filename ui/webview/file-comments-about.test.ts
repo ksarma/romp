@@ -264,9 +264,11 @@ const store = new Map<string, string>();
 // ── the viewer stand-in: the body row with Raw rows, the seam as closures, a file whose mtime the view tracks ──
 type World = {
   ctx: FileViewActionCtx; posted: any[]; main: El; body: El; code: El;
-  hooks: { rendered: Array<() => void>; close: Array<() => void> };
+  hooks: { rendered: Array<() => void>; close: Array<() => void>; landed: Array<() => void> };   // landed: the seam's onLanded (an svg landing, its bytes going to the picture or to the Source view, reported before or after its paint)
   disk: string; diskMtime: string; viewMtime: string; reloads: number; scrolls: number[]; modes: string[];
   mtimes: Record<string, string>;
+  /** The held reload's landing (deferReload): the bytes and mtime now on disk, repainted, onRendered fired. */
+  landReload: (() => void) | null;
   setText(src: string): void; close(): void;
 };
 let cur: World | null = null;
@@ -287,7 +289,7 @@ function rows(code: El, src: string): void {
     return cl;
   }));
 }
-function world(over: { todoId?: string | null; src?: string } = {}): World {
+function world(over: { todoId?: string | null; src?: string; deferReload?: boolean } = {}): World {
   const main = new El("div"); main.className = "fileview-main";
   const body = new El("div"); body.className = "fileview-body";
   const wrap = new El("div"); wrap.className = "fileview-code";
@@ -299,8 +301,9 @@ function world(over: { todoId?: string | null; src?: string } = {}): World {
   let text = over.src ?? DOC;
   const w = {
     posted: [] as any[], main, body, code,
-    hooks: { rendered: [] as Array<() => void>, close: [] as Array<() => void> },
+    hooks: { rendered: [] as Array<() => void>, close: [] as Array<() => void>, landed: [] as Array<() => void> },
     disk: text, diskMtime: "1757145600000000001", viewMtime: "1757145600000000001", reloads: 0, scrolls: [] as number[], modes: [] as string[], mtimes: {} as Record<string, string>,
+    landReload: null as (() => void) | null,
   } as World;
   rows(code, text);
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };
@@ -308,13 +311,13 @@ function world(over: { todoId?: string | null; src?: string } = {}): World {
     path: ABS, sid: SID, todoId: over.todoId ?? null,
     body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
-    onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
+    onRendered: (cb) => { w.hooks.rendered.push(cb); }, onLanded: (cb) => { w.hooks.landed.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
     post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
-    // fetchFile: the bytes and mtime now on disk, repainted, the seam's onRendered fired
-    reload: () => { w.reloads++; w.viewMtime = w.diskMtime; w.setText(w.disk); },
+    // fetchFile: the bytes and mtime now on disk, repainted, the seam's onRendered fired; held until the case lands it (deferReload)
+    reload: () => { w.reloads++; const land = () => { w.landReload = null; w.viewMtime = w.diskMtime; w.setText(w.disk); }; if (over.deferReload) w.landReload = land; else land(); },
   };
   w.close = () => { for (const cb of w.hooks.close) cb(); if (cur === w) cur = null; };
   cur = w;
@@ -596,6 +599,104 @@ test("a selection reaching a deletion's point: across it, the passage comment of
   floatOf().click(); await flush();
   c = composerOf(aside);
   assert.equal(c.quote, "recommend"); assert.equal(c.opt, null, "the point is at the selection's edge, not inside it");
+});
+
+// ── a landing reported ahead of its paint: the marks and a selection's changes read the text the body shows ────────
+
+/** The Raw rows that carry a change mark, each as its text with the marks written in: [DEL:id:] for a deletion's point, [INS:id:text]. */
+const markedRows = (w: World): string[] => {
+  const walk = (n: El | Txt): string => n instanceof Txt ? n.data : (n.getAttribute("data-act") === "fcchange" ? "[" + (n.classes.includes("fc-del") ? "DEL:" : "INS:") + n.getAttribute("data-id") + ":" + n.childNodes.map(walk).join("") + "]" : n.childNodes.map(walk).join(""));
+  return w.code.childNodes.map(walk).filter((r) => r.includes("["));
+};
+/** The text node and offset of the character `k` places into `needle`'s first occurrence in a Raw row's text. */
+function pointIn(w: World, needle: string, k: number): [Txt, number] {
+  const row = w.body.querySelectorAll(".fv-ct").find((ct) => ct.textContent.includes(needle));
+  assert.ok(row, "a row carries " + JSON.stringify(needle));
+  let at = row!.textContent.indexOf(needle) + k;
+  const texts: Txt[] = [];
+  const visit = (n: El | Txt): void => { if (n instanceof Txt) texts.push(n); else n.childNodes.forEach(visit); };
+  visit(row!);
+  for (const x of texts) { if (at <= x.data.length) return [x, at]; at -= x.data.length; }
+  throw new Error("past the row's end");
+}
+
+test("from a landing the seam reports ahead of its paint until that paint, the change marks and a selection's changes read the text the body shows, as the change cards do (paintCurrent): with the status's bytes landed and the older text still showing, a selection there names no change and a repaint marks nothing over the older text; with newer bytes landed and the panel's status still the older text's, a selection names the changes it overlaps or crosses and a repaint keeps the marks; the marks move at the paint", async (t: TestContext) => {
+  t.after(() => { win.getSelection = () => null; });
+  const F11 = "1757145600000000011";
+  const REJECTED = DOC.replace("cut", "reduced");         // h1 rejected: its old text back, four characters longer than "cut"
+  const shift = (h: Hunk, n: number): Hunk => ({ ...h, curFrom: h.curFrom + n, curTo: h.curTo + n });
+  const after = status({ fileMtimeNs: F11, storeMtimeNs: "1757145600000000012", hunks: [shift(h3, 4)],
+    store: { v: 3, path: "docs/report.md", suggestions: [SUGG[2]], comments: [passage] }, unsent: { comments: [passage.id], replies: [], accepted: 0, rejected: 1, watermark: null } });
+  const landed = (w: World): void => { w.viewMtime = F11; for (const cb of w.hooks.landed) cb(); };   // mtimeNs() the landed mtime; the body still shows the text before
+  const option = async (aside: El, sel: Sel) => { win.getSelection = () => sel; floatOf().click(); await flush(); return composerOf(aside); };
+  const toggleInline = async (aside: El) => { act(aside, "fcinline")!.click(); await flush(); act(aside, "fcinline")!.click(); await flush(); };
+  /** A world closed once, at its block's end or at the test's (the Comment float is the document's first; a world left open would
+   *  answer the next block's click). */
+  const opened = (w: World): (() => void) => { let open = true; const done = () => { if (open) { open = false; w.close(); } }; t.after(done); return done; };
+  // the status's bytes first: the reject's reply carries the status at F11 while the view shows F1's text; then the bytes land
+  const statusFirst = async () => {
+    const w = world({ deferReload: true }); const done = opened(w);
+    const { aside } = await openPanel(w);
+    assert.equal(w.hooks.landed.length, 1, "the panel listens at the seam's onLanded");
+    act(card(aside, "chg:h1")!, "fcreject", "h1")!.click(); await flush();
+    w.disk = REJECTED; w.diskMtime = F11;
+    const m = lastOf(w, "fileComments", "reject");
+    assert.ok(m, "the reject verb went");
+    win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: m.reqId, ...after, rejected: ["h1"] } }));
+    w.mtimes[w.ctx.path] = F11; w.mtimes[STORE_PATH] = after.storeMtimeNs!;
+    await flush(); await flush();
+    assert.ok(w.landReload, "the panel asked for the status's bytes, and they are out");
+    landed(w); await flush();
+    assert.equal(w.ctx.text(), DOC, "the premise: the bytes landed, and the body still shows the older text");
+    return { w, aside, done };
+  };
+  {
+    const { w, aside, done } = await statusFirst();
+    const [a, ao] = pointIn(w, "recommend shipping", 0), [f, fo] = pointIn(w, "recommend shipping", "recommend shipping".length);
+    const c = await option(aside, selectFrom(a, ao, f, fo));
+    assert.equal(c.quote, "recommend shipping", "the premise: a passage over the older text");
+    assert.equal(c.opt, null, "the status's bytes landed, the older text still showing: the selection names no change (before: the status's offsets over the older text put the deletion inside \"shipping\" and offered it)");
+    done();
+  }
+  {
+    const { w, aside, done } = await statusFirst();
+    await toggleInline(aside);                            // an unrelated repaint in the window (Show changes inline off and on)
+    assert.deepEqual(markedRows(w), [], "a repaint while the older text shows marks nothing over it (before: the deletion's point inside \"ship|ping\")");
+    w.landReload!(); await flush(); await flush();        // the paint of the landed bytes
+    assert.deepEqual(markedRows(w), ["We recommend [DEL:h3:]shipping the cache in v1.2."], "at the paint the deletion is marked where the new text has it");
+    done();
+  }
+  // newer bytes first: the viewer's own reload lands them while the panel's status still indexes the text the body shows
+  const landingFirst = async () => {
+    const w = world(); const done = opened(w);
+    const { aside } = await openPanel(w);
+    landed(w); await flush();
+    assert.ok(markedRows(w).length > 0, "the premise: the marks painted over the text the status indexes still stand");
+    return { w, aside, done };
+  };
+  {
+    const { w, aside, done } = await landingFirst();
+    const words = w.body.querySelector('.fc-ins[data-act="fcchange"][data-id="h2"]')!.childNodes[0] as Txt;
+    const c = await option(aside, selectFrom(words, 5, words, 12));
+    assert.deepEqual(c.opt, { checked: true, label: "about this change", title: "added and the p99 by 10%" }, "newer bytes landed, the status's text still showing: a selection inside the insertion names it (before: nothing, the status read against the landed mtime)");
+    done();
+  }
+  {
+    const { w, aside, done } = await landingFirst();
+    const del = markOf(w, "h3"), before = del.previousSibling as Txt;
+    const c = await option(aside, selectFrom(before, before.data.length - "recommend ".length, before, before.data.length, [del]));
+    assert.deepEqual(c.opt, { checked: true, label: "about this change", title: "removed quickly" }, "a selection ending at the deletion's point, across its mark, names the deletion (addCrossed; before: nothing)");
+    done();
+  }
+  {
+    const { w, aside, done } = await landingFirst();
+    const painted = markedRows(w);
+    await toggleInline(aside);
+    assert.deepEqual(markedRows(w), painted, "a repaint while the status's text still shows keeps the marks (before: they went at the landing's first repaint, with nothing new shown)");
+    w.setText(REJECTED); await flush();                   // the paint of the landed bytes: the status no longer indexes the text shown
+    assert.deepEqual(markedRows(w), [], "at the paint the marks go, until the status of the new text arrives");
+    done();
+  }
 });
 
 // ── what the stand-in cannot show, pinned at source ──────────────────────────────────────────────

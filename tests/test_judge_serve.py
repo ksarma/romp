@@ -268,7 +268,8 @@ class OnePass(Harness):
                     yield from numbers(v, path + k + ".")
                 elif isinstance(v, (int, float)) and not isinstance(v, bool):
                     yield path + k, v
-        gauges = {"recordCache": ("entries", "bytes", "budgetBytes", "countCap"), "asmCheckpoint": ("asmDocMemo",)}
+        gauges = {"recordCache": ("entries", "bytes", "bytesMax", "budgetBytes", "countCap"), "asmCheckpoint": ("asmDocMemo",)}   # a literal copy of
+        #                            _SERVE_GAUGES on purpose: the child's line is judged against the list the reader expects, not the code's
         for name in ("recordCache", "asmCheckpoint", "parses", "goalIo"):                 # the two blocks the base carried first,
             nonzero = [(k, v) for k, v in numbers(second.get(name) or {}) if v and k.split(".")[0] not in gauges.get(name, ())]
             self.assertEqual(nonzero, [], "%s: an idle pass reports a zero delta for every counter (the base reported the process totals)" % name)
@@ -598,6 +599,15 @@ class Deltas(unittest.TestCase):
                          "asmDocMemo a gauge, current (round four: listed as a gauge, restoreMs read the boot-to-now sum)")
         self.assertNotIn("restoreMs", (gauges or {}).get("asmCheckpoint", ()), "no cumulative counter in the gauge list")
         self.assertEqual(set(jd._SERVE_GAUGES), {"recordCache", "asmCheckpoint", "parses", "goalIo"}, "one gauge list per block")
+
+    def test_the_record_cache_maximum_rides_as_a_gauge(self):
+        # the growth analysis (2026-09-20): recordCache.bytesMax is the life maximum of held bytes, a gauge; unlisted it would
+        # ride under judge.child as a per-pass difference and read 0 on every pass the maximum held
+        self.assertIn("bytesMax", jd._SERVE_GAUGES["recordCache"])
+        prev = {"entries": 5, "bytes": 5000, "bytesMax": 5000, "inserts": 3}
+        cur = {"entries": 2, "bytes": 1800, "bytesMax": 5000, "inserts": 4}
+        got = jd._serve_delta(prev, cur, jd._SERVE_GAUGES["recordCache"])
+        self.assertEqual((got["bytesMax"], got["bytes"], got["inserts"]), (5000, 1800, 1), "the maximum rides current, not as the difference 0")
 
     def test_the_fault_knob_names_the_shape_before_the_tier(self):
         self.assertEqual(jd._serve_fault_parse("garbage")[1][:44], "not raise:<tier>, sleep:<tier>:<seconds> or ")
