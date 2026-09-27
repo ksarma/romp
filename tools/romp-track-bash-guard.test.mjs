@@ -195,9 +195,9 @@ const programsNamed = (cmd, table = NAMED_PROBE) => Object.keys(table).filter((p
 // their command and process substitutions and here-documents), and per segment: the reserved words and the words a shell reads as its own
 // are no program (SHELL_OWN); assignments are stepped past; a wrapper (WRAPPERS: exec, command, env, nice, timeout, xargs and the rest) is
 // stepped past with its options and operands, itself a program where the walk reads it as one (WRAPPERS' comment: the walk reads `time`
-// as a shell's own word only where nothing but reserved words stands before it in a segment no pipe feeds, in a text only bash or zsh
-// reads, and as the program time wherever else the walk reaches it, a name the text binds or rebinds aside); the word after them is the
-// program (an assignment whose
+// as a shell's own word only where nothing but reserved words and redirections stands before it in a segment no pipe feeds, in a text
+// only bash or zsh reads, and as the program time wherever else the walk reaches it, a name the text binds or rebinds aside); the word
+// after them is the program (an assignment whose
 // word the lexer does not hold as literal or holds a blank, and a name, or a wrapper's path, the readings below set aside, stop the walk
 // instead: THE NON-LITERAL WORDS and THE STATED LIMIT, in the class of what the derivation does not read). The texts a shell runs
 // are read the same way, to a depth of eight: a shell's operands that hold a blank or an operator (its -c text, however its options are
@@ -343,15 +343,17 @@ const SHELL_OWN = new Set(['!', '{', '}', '[[', ']]', '((', '))', 'if', 'then', 
 // command line it runs, `query` an option under which it runs nothing, `sub` a subcommand word first, `own` a shell's own word (no program
 // looked up), which the walk reads as a program where it is spelled as a path and, for `time` alone, at the places below. The walk reads
 // `time` spelled as a name as a shell's own word only where three things hold: nothing but reserved words (`!`, `{`, `if`, `then`, `do`
-// and the like) stands before it in its segment, so no assignment and no wrapper; no pipe feeds the segment; and the text under way is one
-// only bash or zsh reads (`dashReads` false, at programsInvoked). Wherever else the walk reaches it, a name the text binds or rebinds
-// aside, it reads the program /usr/bin/time (the name `time`, which the gate looks up on the PATH): in the row's own text, in a text a
-// shell other than bash or zsh runs or env -S, flock -c, su, runuser or script runs, after an assignment, a wrapper or a pipe, and in a
-// find -exec (THE TIME WORD, at readSegment; the sixty-second commit, on the reviewer's execution checker, whose record showed dash running
-// /usr/bin/time in six committed commands while this comment called time a shell's own word; the sixty-fifth commit, on the reviewer's call
-// after its re-verifiers, states the rule alone, and where a shell's choice differs from it the walk follows the rule, a stated limit in the
-// header). numactl joined with the sixty-second commit, so this table holds every wrapper of the hook's PREFIXES but builtin (a shell's own
-// word here, SHELL_OWN)
+// and the like) and redirections (which the lexer holds apart from the words) stands before it in its segment, so no assignment and no
+// wrapper; no pipe feeds the segment; and the text under way is one only bash or zsh reads (`dashReads` false, at programsInvoked).
+// Wherever else the walk reaches it, a name the text binds or rebinds aside, it reads the program /usr/bin/time (the name `time`, which the
+// gate looks up on the PATH): in the row's own text, in a text a shell other than bash or zsh runs or env -S, flock -c, su, runuser or
+// script runs, after an assignment, a wrapper or a pipe, and in a find -exec (THE TIME WORD, at readSegment; the sixty-second commit, on the
+// reviewer's execution checker, whose record showed dash running /usr/bin/time in six committed commands while this comment called time a
+// shell's own word; the sixty-fifth commit, on the reviewer's call after its re-verifiers, states the rule alone, and where a shell's choice
+// differs from it the walk follows the rule, a stated limit in the header; the seventieth commit, on the reviewer's closing check, names the
+// redirections, since the walk applies the rule to the lexer's words, and pins the texts flock -c, runuser and script run in THE TIME
+// WORD's shapes). numactl joined with the sixty-second commit, so this table holds every wrapper of the hook's PREFIXES but builtin (a
+// shell's own word here, SHELL_OWN)
 const WRAPPERS = {
   exec: { own: true, arg: ['-a'] }, command: { own: true, query: /^-[a-zA-Z]*[vV]/ }, time: { own: true, arg: ['-f', '-o', '--format', '--output'] },
   noglob: { own: true }, nocorrect: { own: true }, '-': { own: true }, coproc: { own: true }, repeat: { own: true, operands: 1 },
@@ -692,7 +694,9 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
   // `dashReads` holds whether a shell other than bash or zsh may read the text under way: the row's own text, which every leg's dash runs;
   // the text a shell other than bash or zsh runs; the text env -S, flock -c, su, runuser or script run, through a program or the account's
   // shell; and a text eval, trap, alias, emulate -c or mapfile -C runs, as the text around it. readSegment reads `time` as the program
-  // there, and after an assignment, a wrapper or a pipe, and in a find -exec
+  // there, and after an assignment, a wrapper or a pipe, and in a find -exec, and as a shell's own word only where nothing but reserved
+  // words and redirections stands before it (the lexer holds a redirection apart from the words) in a segment no pipe feeds, in a text
+  // only bash or zsh reads
   let dashReads = true;
   const TIME_WORD_SHELL = /^(?:r?bash|r?zsh\d*)$/;   // the shells whose texts the walk reads with `time` as a shell's own word (WRAPPERS' comment)
   const readAs = (reads, fn) => { const outer = dashReads; dashReads = reads; try { fn(); } finally { dashReads = outer; } };
@@ -780,7 +784,7 @@ const programsInvoked = (cmd, { collect = null, unknown = null } = {}) => {
   const readSegment = (seg, feeder, depth, cond = false) => {
     const words = seg.words;
     let i = 0;
-    let head = !seg.exec;   // THE TIME WORD: no assignment or wrapper before the word under way (a find -exec's words run as a program)
+    let head = !seg.exec;   // THE TIME WORD: nothing but reserved words and redirections (a redirection is none of the lexer's words) before the word under way, so no assignment or wrapper (a find -exec's words run as a program)
     for (let steps = 0; i < words.length && steps < 32; steps++) {
       const w = words[i];
       const word = w.text;
@@ -17245,7 +17249,7 @@ test("round 8 of fork PR #780 review, sixty-second commit, THE SHELLS' PARAMETER
   const got = cases.map(([label, cmd]) => [label, ...gateLines(cmd)]);
   assert.deepEqual(got, cases.map(([label, , ok, lines]) => [label, ok, [...lines].sort()]), 'the witness of the unseen write is measured, and its control is NOT RUN');
 });
-test("round 8 of fork PR #780 review, sixty-second commit, THE TIME WORD and numactl (the reviewer's decisions 8 and 11(1), and since the sixty-fifth commit decisions 4 and 5): WRAPPERS holds every wrapper of the hook's PREFIXES but builtin, numactl among them, so a missing program behind numactl is NOT RUN by name; the walk reads `time` as a program in a text a shell other than bash or zsh may read (the row's own, a text sh runs, what env -S, flock -c, su, runuser or script run), after an assignment, a wrapper or a pipe, and in a find -exec, and as a shell's own word only where nothing but reserved words stands before it in a segment no pipe feeds, in a text only bash or zsh runs; and THE STATED LIMIT's two roads of `time`, where a shell's choice differs from that rule and the walk follows the rule: a leading redirection, or a quoted `\\time` or `\"time\"`, at the head of a bash text, where bash runs /usr/bin/time and the walk reads bash's own word, so those witnesses are measured in a world with no time while their control, an assignment before `time`, is NOT RUN naming time; and a text busybox's sh runs, where busybox runs its own applet and the walk reads the program, so that witness is NOT RUN naming time in a world without it, and measured, its control, in one with it", () => {
+test("round 8 of fork PR #780 review, sixty-second commit, THE TIME WORD and numactl (the reviewer's decisions 8 and 11(1), and since the sixty-fifth commit decisions 4 and 5): WRAPPERS holds every wrapper of the hook's PREFIXES but builtin, numactl among them, so a missing program behind numactl is NOT RUN by name; the walk reads `time` as a program in a text a shell other than bash or zsh may read (the row's own, a text sh runs, what env -S, flock -c, su, runuser or script run), after an assignment, a wrapper or a pipe, and in a find -exec, and as a shell's own word only where nothing but reserved words and redirections stands before it in a segment no pipe feeds, in a text only bash or zsh runs; and THE STATED LIMIT's two roads of `time`, where a shell's choice differs from that rule and the walk follows the rule: a leading redirection, or a quoted `\\time` or `\"time\"`, at the head of a bash text, where bash runs /usr/bin/time and the walk reads bash's own word, so those witnesses are measured in a world with no time while their control, an assignment before `time`, is NOT RUN naming time; and a text busybox's sh runs, where busybox runs its own applet and the walk reads the program, so that witness is NOT RUN naming time in a world without it, and measured, its control, in one with it", () => {
   const RUN = '../base/report.md report.md';
   const M = Q780_MISSING;
   const MISS = `NOT RUN: real ${M} is not on this runner`;
@@ -17280,9 +17284,14 @@ test("round 8 of fork PR #780 review, sixty-second commit, THE TIME WORD and num
     ['after an own wrapper in a text bash runs', `bash -c 'exec time cp ${RUN}'`, true],
     ["in env -S's text inside bash", `bash -c "env -S 'time cp ${RUN}'"`, true],
     ["in su -c's text inside bash", `bash -c "su -c 'time cp ${RUN}'"`, true],
+    // the texts flock -c, runuser and script run, which the title and WRAPPERS' comment name (the seventieth commit, on the reviewer's
+    // closing check: each row reds under a mutant whose flock -c, or runuser and script -c, text keeps the reading of the text around it)
+    ["in flock -c's text inside bash", `bash -c "flock /tmp/x -c 'time cp ${RUN}'"`, true],
+    ["in runuser -c's text inside bash", `bash -c "runuser -c 'time cp ${RUN}' root"`, true],
+    ["in script -c's text inside bash", `bash -c "script -c 'time cp ${RUN}' /dev/null"`, true],
     ["in a find -exec inside bash", `bash -c 'find . -exec time cp ${RUN} +'`, true],
   ];
-  assert.deepEqual(shapes.map(([label, cmd]) => [label, programsInvoked(cmd).includes('time')]), shapes.map(([label, , reads]) => [label, reads]), "the walk reads `time` in each shape as listed: as a program in a text dash may read, after an assignment, a pipe or a wrapper, and in a find -exec, and as a shell's own word at a segment's head, after no pipe, in a text only bash or zsh runs");
+  assert.deepEqual(shapes.map(([label, cmd]) => [label, programsInvoked(cmd).includes('time')]), shapes.map(([label, , reads]) => [label, reads]), "the walk reads `time` in each shape as listed: as a program in a text a shell other than bash or zsh may read (the row's own, a text sh or dash runs, what env -S, flock -c, su, runuser or script run), after an assignment, a pipe or a wrapper, and in a find -exec, and as a shell's own word where nothing but reserved words and redirections stands before it, after no pipe, in a text only bash or zsh runs");
   // THE STATED LIMIT's two roads of `time` (the sixty-fifth commit): each witness gated beside its control in a world whose PATH holds a stub
   // of every program the command names or the walk derives, `time` only where the case asks, so the verdict turns on `time` alone
   const NO_TIME = 'NOT RUN: real time is not on this runner';
