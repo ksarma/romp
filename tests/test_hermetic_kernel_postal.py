@@ -1729,9 +1729,10 @@ def _born(before):
     since `before` was read and still alive, whatever holds them (a tree, a list of its statements, a closure), by
     class. It changes no collector state, so an object only a collection would free is counted while no collection has
     run; the module docstring names the scans whose releases two tests hold with automatic collection off, and those
-    tests; those scans leave no such cycle holding a tree. Its three readers: the tree's read (_read_root's `born`,
-    with `count`), the module end (_still_held, against setUpModule's list) and THE DROP BY LIVE OBJECTS, the census
-    build's `born` (_census_build, for a build that drops a tree)."""
+    tests; those scans leave no such cycle holding a tree. Its readers: the tree's read (_read_root's `born`, with
+    `count`), the module end (_still_held, against setUpModule's list), THE DROP BY LIVE OBJECTS, the census build's
+    `born` (_census_build, for a build that drops a tree), and that read's own test, over the drops it plants
+    (_the_drops_count_body)."""
     seen = {id(o) for o in before}
     return dict(collections.Counter(type(o).__name__ for o in gc.get_objects() if isinstance(o, _HELD_TYPES) and id(o) not in seen))
 
@@ -3025,10 +3026,11 @@ class _Census(dict):
 
 _HELD = []
 #   THE ONE OWNER (the reviewer's rulings of 2026-09-24 on round 2 of fork PR #894): [the _Census] from the first census
-#   read in this module's run until tearDownModule empties it, which frees the _Census, its trees, records and derivations
-#   by reference count (none of them holds a cycle; tearDownModule's weak reference pins the _Census itself). A module
-#   slot rather than a class attribute: the class's tests land on several xdist workers, and a build in setUpClass would
-#   make each worker that runs any of its tests derive the whole tree; the first read builds instead.
+#   read in this module's run until tearDownModule empties it, which frees the _Census by reference count, and with it
+#   whatever of its trees, records and derivations nothing else keeps (none of them holds a cycle; tearDownModule's weak
+#   reference pins the _Census itself, and fork PR #850's count after it counts the nodes of a tree something else
+#   keeps). A module slot rather than a class attribute: the class's tests land on several xdist workers, and a build in
+#   setUpClass would make each worker that runs any of its tests derive the whole tree; the first read builds instead.
 _OWN_PARSES = collections.Counter()
 #   realpath -> the number of times _own_tree parsed the file in this module's run, zeroed by setUpModule: the parse-once
 #   pins read it (red under a second parse of a file in the run)
@@ -7897,14 +7899,15 @@ def setUpModule():
 def tearDownModule():
     """The end of this module's run, and its pins on what the module leaves behind: fork PR #894's (the reviewer's rulings of
     2026-09-24 on round 2 of fork PR #894: clause 3 of the first, fork PR #909's pin (2), which the second applies, and
-    the third's parse-once rule), then fork PR #850's checks (_module_end_checks), read after THE RELEASE so the census's
-    trees are dead when its count of what the module's run left alive reads; the faults of both halves are joined in one
-    error.
-    THE RELEASE: _HELD, the one owner, is emptied, which frees the _Census, and with it the census's own trees, the
-    resolver's records and the derivations, by reference count, no collection running here. THE RELEASE PIN: a weak
-    reference to the _Census, taken just before the release, is dead just after it. Red under the release removed (the
-    trees would stay tracked for the rest of the process, the cost the shape exists to avoid), under a module-scope
-    cache that keeps the _Census, and under a value inside it that refers back to it, a cycle only a collection frees.
+    the third's parse-once rule), then fork PR #850's checks (_module_end_checks), read after THE RELEASE so that a
+    census tree nothing else keeps is dead when its count of what the module's run left alive reads, and the nodes of
+    one something else keeps are counted there; the faults of both halves are joined in one error.
+    THE RELEASE: _HELD, the one owner, is emptied, which frees the _Census by reference count, no collection running
+    here, and with it whatever of the census's own trees, the resolver's records and the derivations nothing else
+    keeps. THE RELEASE PIN: a weak reference to the _Census, taken just before the release, is dead just after it. Red
+    under the release removed (the trees would stay tracked for the rest of the process, the cost the shape exists to
+    avoid), under a module-scope cache that keeps the _Census, and under a value inside it that refers back to it, a
+    cycle only a collection frees.
     It does not see an inner container kept by another name or a cycle among the inner containers that does not pass
     through the _Census (module_level_env_census's docstring gives that half as a measurement), and it is not read
     through gc.get_objects(), which does not list frozen objects. A module run that read no census holds nothing and has
@@ -11550,6 +11553,10 @@ class HermeticKernelPostal(unittest.TestCase):
         with self.assertRaises(AssertionError) as caught:
             module_level_env_census([path, bad])
         self.assertIn("the census could not parse %s (SyntaxError" % os.path.relpath(bad, HERE), str(caught.exception))
+        # the exception's cause, the SyntaxError, keeps its traceback and with it _own_tree's frame, whose `trees` is
+        # the census owner's dict, and those frames refer back to this one: a cycle only a collection frees, and
+        # tearDownModule's count of what the module's run left alive runs none, so `caught` is dropped here
+        caught = None
 
     def test_the_scan_reads_every_write_shape_ignores_a_def_and_is_loud_on_a_key_it_cannot_read(self):
         """The scan the repo-wide pin rests on is known to see a planted write in every shape, bare and in an if body, and
@@ -11995,6 +12002,11 @@ class HermeticKernelPostal(unittest.TestCase):
             with self.assertRaises(UnreadableEnvWrite, msg=body) as loud:
                 _module_level_env_writes(ast.parse("import os\n" + body + "\n"), "planted.py")
             self.assertIn("the environment mapping is passed %s at line 4 of planted.py" % how, str(loud.exception), body)
+        # the last exception's context, the one _reach caught before it raised this one `from None` (which hides the
+        # context from the display and keeps it), keeps its traceback, whose frames hold the planted tree's nodes and
+        # refer back to this one: a cycle only a collection frees, so `loud` is dropped here for tearDownModule's count,
+        # as the census test drops its own
+        loud = None
 
     def test_a_call_chain_longer_than_the_cap_raises_naming_the_chain_and_a_cycle_is_cut(self):
         """The reviewer's ruling of round 1 on fork PR #894 (correctness-4, extra4-2): the resolver cut a chain at six calls,
