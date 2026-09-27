@@ -39,47 +39,57 @@
 // the tap's start, and in Firefox a tap on a hover tooltip of the top page over the control; the cells after a right or a middle
 // click red at 0f998a3b9 in both engines, whose gate left the slot alone at the tap's mousedown, the reads a private witness kept out
 // of the tree.
-// The chain rule's cells (the closing check at 142ade155 after the fixes for the file review's round 18), the gate keyed on ten
+// The chain rule's cells (the closing check at 142ade155 after the fixes for the file review's round 18), the gate keyed on eleven
 // events of the window's capture phase (pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown, dragstart, touchend,
-// touchcancel and click), in the dashboard's shape with the viewer's frame beside another pane's frame over a bar of the top page:
-// in Firefox, on the hybrid page, the lone click Firefox sends after another document cancels a tap's pointerdown, with no
-// mousedown and no mouseup before it, after a right or a middle click on the picture, after the viewer's own tap whose
-// compatibility events or click went to another document, and after the mouse held on the control or pressed there and released on
-// the top page's bar or in the other pane, opens nothing and the next click opens once, red at 142ade155 and, on the chat and the
-// Files pane, under a gate without the tail (the gate takes a press for a pointer's click only right after a primary mouseup of
-// detail above 0) and without the mouseup's clear (a mouseup other than a primary one of detail above 0 empties the slot and clears
-// the tap's flag), but for the mouse held on the control and the mouse released in the other pane, which the refusal of a record
-// still standing at a click closes as well, and under a gate without the tail alone the four cells a surface of the viewer's tap
-// whose compatibility events or click went elsewhere, the mouseup's clear closing the eight after a mouseup of another button or
-// of detail 0 as well; in WebKit, on the hybrid page and on a phone's pages, another document's tap after the viewer's own tap
-// whose pointerup that document took, so the viewer heard the touch's touchend and no pointerup, opens nothing and the next tap
-// opens once, red at 142ade155 and, on the chat and the Files pane, under a gate whose touchend marks no touch record refused;
-// and in Firefox, on the hybrid page, and in WebKit, on the hybrid page and on a phone's pages, another document's tap that
-// cancels nothing, after the viewer's own tap whose compatibility mousedown an element of the top page took, so the viewer heard
-// that tap's mouseup of detail 0 and no click, opens nothing and the next click opens once, red at 142ade155 and, on the chat and
-// the Files pane, at 1a6470e72, whose gate had no mouseup's clear; and in Firefox, on the hybrid page, and in WebKit, on the
-// hybrid page and on a phone's pages, another document's tap on an element over the control that hides at that tap's
-// compatibility mousedown, after a mouse's press whose pointerup the viewer never heard (in WebKit the mouse held on the control
-// or on the picture, in Firefox the mouse pressed on the control and released in the other pane), so the viewer hears that tap's
-// mouseup of detail 1 and its click alone, opens nothing and the next click opens once, the gate refusing a pointer's click that
-// finds a record still standing under its own pointerId, red at 142ade155, at 1a6470e72 and at 09f58bec6, whose click read the
-// mouse's record; the reads of these reds a private witness kept out of the tree. The residual, an element of another same-origin
-// document shown over the picture during the viewer's own tap and then a tap on that element, which opens in both engines (the
-// closing check at 142ade155 measured Firefox 16 of 16 and WebKit 7 of 7), has no cell: no event the viewer hears tells that tap
-// from the viewer's own, and whether to accept it is the owner's decision; under this gate the same check's probe read Firefox 16
-// of 16, WebKit 7 of 7 and Chromium 0 of 51, and every other order of the class it drives opened nothing; a check of these fixes
-// drove orders that probe does not and found two more of the class outside the residual, open at 142ade155, at 1a6470e72 and at
-// 09f58bec6 (file-view.ts's gate comment states them): the first, the cells of a mouse's press whose pointerup the viewer never
-// heard above, whose click read the mouse's record (WebKit 22 of 22, Firefox 7 of 7), is closed by the gate's refusal of a record
-// still standing at a click; the second, in Firefox, after that release, a mouse click on such an element, whose pointerup
-// handed the mouse's record to the slot and opened (10 of 10, again at 343ee2eb5), is closed by the gate's refusal of a mouse's
-// or a pen's record whose pointer left the viewer's window with a button down, Firefox sending the viewer a pointerout with no
-// relatedTarget as the press left its frame (0 of 10 under this gate): its cells in Firefox, on the hybrid page, the element
-// hiding at that click's mousedown or its pointerdown, open nothing and the next click opens once, red at 343ee2eb5 and at
-// 09f58bec6; Chromium opened neither. That refusal's cost, measured in Firefox alone: the viewer's own press on the control
-// dragged out of its frame and back, released on the control, opens nothing and reveals the control, and the next click opens
-// once (its cost cell, where 343ee2eb5's gate opened that click; 8 of 8 in a probe of these fixes), while Chromium and WebKit, which
-// keep a held left press in the frame it began in, opened it. The gate's cost measured in WebKit, the same at 142ade155: WebKit's
+// touchcancel, pointerout and click), in the dashboard's shape with the viewer's frame beside another pane's frame over a bar of the
+// top page: in Firefox, on the hybrid page, the lone click Firefox sends after another document cancels a tap's pointerdown, with no
+// mousedown and no mouseup before it, after a right or a middle click on the picture, after the viewer's own tap whose compatibility
+// events or click went to another document, and after the mouse held on the control or pressed there and released on the top page's
+// bar or in the other pane, opens nothing and the next click opens once, red at 142ade155 and, on the chat and the Files pane, under
+// a gate without the tail (the gate takes a press for a pointer's click only right after a primary mouseup of detail above 0) and
+// without the mouseup's clear (a mouseup other than a primary one of detail above 0 empties the slot and clears the tap's flag), but
+// for the mouse held on the control, which the refusal of a record still standing at a click closes as well, the mouse released on
+// the top page's bar, which the refusal of a record whose pointer left the viewer's window with a button down closes as well, and
+// the mouse released in the other pane, which both refusals close as well (22 of the 28 lone-click cells red under that gate, 24
+// with the refusal of a standing record dropped too and all 28 with both refusals dropped), and under a gate without the tail alone
+// the four cells a surface of the viewer's tap whose compatibility events or click went elsewhere, the mouseup's clear closing the
+// eight after a mouseup of another button or of detail 0 as well; in WebKit, on the hybrid page and on a phone's pages, another
+// document's tap after the viewer's own tap whose pointerup that document took, so the viewer heard the touch's touchend and no
+// pointerup, opens nothing and the next tap opens once, red at 142ade155 and, on the chat and the Files pane, under a gate whose
+// touchend marks no touch record refused; and in Firefox, on the hybrid page, and in WebKit, on the hybrid page and on a phone's
+// pages, another document's tap that cancels nothing, after the viewer's own tap whose compatibility mousedown an element of the top
+// page took, so the viewer heard that tap's mouseup of detail 0 and no click, opens nothing and the next click opens once, red at
+// 142ade155 and, on the chat and the Files pane, at 1a6470e72, whose gate had no mouseup's clear; and in Firefox, on the hybrid
+// page, and in WebKit, on the hybrid page and on a phone's pages, another document's tap on an element over the control that hides
+// at that tap's compatibility mousedown, after a mouse's press whose pointerup the viewer never heard (in WebKit the mouse held on
+// the control or on the picture, in Firefox the mouse pressed on the control and released in the other pane), so the viewer hears
+// that tap's mouseup of detail 1 and its click alone, opens nothing and the next click opens once, the gate refusing a pointer's
+// click that finds a record still standing under its own pointerId, red at 142ade155, at 1a6470e72 and at 09f58bec6, whose click
+// read the mouse's record; the reads of these reds a private witness kept out of the tree. The residual, an element of another
+// same-origin document shown over the picture during the viewer's own tap and then a tap on that element, which opens in both
+// engines (the closing check at 142ade155 measured Firefox 16 of 16 and WebKit 7 of 7), has no cell: no event the viewer hears tells
+// that tap from the viewer's own, and whether to accept it is the owner's decision; under this gate the same check's probe read
+// Firefox 16 of 16, WebKit 7 of 7 and Chromium 0 of 51, and every other order of the class it drives opened nothing; a check of
+// these fixes drove orders that probe does not and found two more of the class outside the residual, open at 142ade155, at 1a6470e72
+// and at 09f58bec6 (file-view.ts's gate comment states them): the first, the cells of a mouse's press whose pointerup the viewer
+// never heard above, whose click read the mouse's record (WebKit 22 of 22, Firefox 7 of 7), is closed by the gate's refusal of a
+// record still standing at a click; the second, in Firefox, after that release, a mouse click on such an element, whose pointerup
+// handed the mouse's record to the slot and opened (10 of 10, again at 343ee2eb5), is closed by the gate's refusal of a mouse's or a
+// pen's record whose pointer left the viewer's window with a button down, Firefox sending the viewer a pointerout with no
+// relatedTarget as the press left its frame (0 of 10 under this gate): its cells in Firefox, on the hybrid page, the element hiding
+// at that click's mousedown or its pointerdown, open nothing and the next click opens once, red at 343ee2eb5 and at 09f58bec6;
+// Chromium opened neither. That refusal's cost, measured in Firefox: the viewer's own press on the control dragged out of its frame
+// and back, released on the control, opens nothing and reveals the control, and the next click opens once (its cost cell, where
+// 343ee2eb5's gate opened that click; 8 of 8 in a probe of these fixes), while Chromium and WebKit, which keep a held left press in
+// the frame it began in, opened it; and its cost in Chromium, found by a later check and with no cell: a press on the control or the
+// picture held while the top page hides the viewer's frame and shows it again, then released there, opens nothing and reveals the
+// control, and the next click opens once (11 of 11, where 343ee2eb5's gate opened all 11), Chromium sending that pointerout as the
+// frame hides, while WebKit sends none there and opens it. The later check found a third order of the class outside the residual, in
+// WebKit alone, open at this head and at 142ade155, 09f58bec6 and 343ee2eb5, with no cell, for the owner (file-view.ts's gate
+// comment states it): the mouse held on the control while the top page hides the viewer's frame and shows it again, then another
+// document's mouse click on an element over the control that hides at that click's mousedown or its pointerdown, whose pointerup
+// hands the held press's record to the slot (60 of 60 in that check's probe; Firefox 0 of 40 and Chromium 0 of 42). The gate's cost
+// measured in WebKit, the same at 142ade155: WebKit's
 // cost cell, the viewer's own tap whose pointerup an
 // element of the top page takes, shown at the tap's pointerdown and hidden at its pointerup, opens nothing and reveals the
 // control, and the next tap opens once, the tap's click carrying pointerId 1 and finding its press only in the slot, which no
@@ -125,7 +135,7 @@ for (const [engine, devices] of [["webkit", ["phone", "hybrid"]], ["firefox", ["
     : "in the dashboard's shape beside another pane, the lone click Firefox sends after another document cancels a tap's pointerdown opens nothing and the next click opens once, after a right or a middle click on the picture, after the viewer's own tap whose compatibility events or click went to another document, and after the mouse held on the control or pressed there and released on the top page's bar or in the other pane, and another document's tap that cancels nothing after the viewer's own tap whose compatibility mousedown an element of the top page took, the viewer hearing that tap's mouseup of detail 0 and no click, opens nothing and the next click opens once, and so does another document's tap on an element over the control that hides at that tap's compatibility mousedown after the mouse pressed on the control and released in the other pane, the viewer hearing that tap's mouseup of detail 1 and its click alone, and so does another document's mouse click on an element over the control that hides at that click's mousedown or its pointerdown after that press, whose pointer left the viewer's frame with the button down, the viewer hearing that click's pointerup, its mouseup of detail 1 and its click; the viewer's own press on the control dragged out of its frame and back, released on the control, opens nothing and reveals the control and the next click opens once, a stated cost; ";
   const chainRed = !chained ? "" : engine === "webkit"
     ? "; the chain rule's cell of the lost pointerup red at 142ade155 and under a gate whose touchend marks no touch record refused, its cell of the mouseup that ended the chain red at 142ade155 and at 1a6470e72, whose gate had no mouseup's clear, its cells of the held mouse red at 142ade155, at 1a6470e72 and at 09f58bec6, whose click read the mouse's record, the cost cell reading the same at 142ade155 by design"
-    : "; the chain rule's cells red at 142ade155, the lone click's under a gate without the tail and the mouseup's clear but after the mouse held on the control or released in the other pane, which the refusal of a record still standing at a click closes too, four of them under a gate without the tail alone, its cell of the mouseup that ended the chain at 1a6470e72, whose gate had no mouseup's clear, and its cell of the mouse released in the other pane before another document's tap at 1a6470e72 and at 09f58bec6, whose click read the mouse's record, its cells of that release before another document's mouse click red at 343ee2eb5 and at 09f58bec6, whose pointerup handed the slot the mouse's shown record, and its cost cell reading an open there, recording the cost";
+    : "; the chain rule's cells red at 142ade155, the lone click's under a gate without the tail and the mouseup's clear but after the mouse held on the control, which the refusal of a record still standing at a click closes too, after the mouse released on the top page's bar, which the refusal of a record whose pointer left the viewer's window with a button down closes too, and after the mouse released in the other pane, which both refusals close too, four of them under a gate without the tail alone, its cell of the mouseup that ended the chain at 1a6470e72, whose gate had no mouseup's clear, and its cell of the mouse released in the other pane before another document's tap at 1a6470e72 and at 09f58bec6, whose click read the mouse's record, and under a gate without both refusals, its cells of that release before another document's mouse click red at 343ee2eb5 and at 09f58bec6, whose pointerup handed the slot the mouse's shown record, and its cost cell reading an open there and at 142ade155, recording the cost";
   test("in " + named + " on " + ON[device] + ", the " + (surface === "chat" ? "chat modal" : "Files pane") + ": the one gate's tap cells (the file review's round 17, tests-1 with regression-1; its round 18, " + (engine === "webkit" ? "correctness-1" : "extra5-1") + ", with the coordinator's decisions" + (chained ? "; the closing check at 142ade155 after the fixes for the file review's round 18" : "") + "): a tap on a loaded remote picture with its control in view opens once, on its control once, on a remote picture that wears the mark once; with the control out of view the first tap opens nothing and reveals it and the next opens once; a double tap there opens once, " + (engine === "webkit" ? "WebKit's" : "Firefox's") + " two clicks each of detail 1; under the text-size flyout or the Outline popover a tap opens nothing and closes it and the next opens once; " + (device === "hybrid" ? "after a right press of the mouse, or a mouse drag of the picture, with the control shown, then the flyout over the control, a tap opens nothing and the next opens once; on this page and on a plain page with no touchscreen, after a mouse drag of the picture with the control shown, then the flyout or the Outline popover over the control, a click of the mouse on the picture opens nothing and the next opens once; " + afterDrag + "in the dashboard's shape, a tap on another document's element over the control, gone at its pointerup, opens nothing and the next click opens once, after nothing, after a right or a middle click on the picture with the control shown, and with the control above the top page's window at the tap's start" + (engine === "firefox" ? ", and so does a tap on a hover tooltip of the top page over the control" : "") + "; " : "") + chain + "Enter on the control opens once, after a refused tap too; a press with no click (a script's pointerdown and pointerup, standing in) begun out of view then Enter in view opens once, and one begun shown then the flyout over the control then a script's click opens nothing (" + red + chainRed + "; the Enter cells red under a gate that reads a key's click as a pointer's, the press cells under one that lets a key's or a script's click read the slot with the keydown's clear dropped)", { timeout: 900000 }, async (t) => {
     let cells: Array<[string, unknown, unknown]> = [];
     let ran = false;

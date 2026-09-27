@@ -3413,27 +3413,34 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // two-finger touch on the picture with the control shown, and with the control above the top page's window at the tap's start; red at
 // 0f998a3b9 after the right click, the middle click and the two-finger touch, whose gate left the slot alone at the tap's mousedown,
 // so its click took the slot that pointerup had filled, the reads a private witness kept out of the tree.
-// The chain rule's cells (the closing check at 142ade155 after the fixes for the file review's round 18), the gate keyed on ten
+// The chain rule's cells (the closing check at 142ade155 after the fixes for the file review's round 18), the gate keyed on eleven
 // events of the window's capture phase (pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown, dragstart, touchend,
-// touchcancel and click), on the hybrid page in the dashboard's shape with the viewer's frame beside another pane's frame over a
-// bar of the top page: Chromium gives each touch a pointerId of its own, and after the viewer's own tap on the picture filled the
-// slot and sent no click to the viewer, with a second finger resting on the top page's bar or in the other pane (CDP touch;
-// Chromium sends no click after a two-finger touch), with an element of the top page appearing over the picture at the tap's
+// touchcancel, pointerout and click), on the hybrid page in the dashboard's shape with the viewer's frame beside another pane's
+// frame over a bar of the top page: Chromium gives each touch a pointerId of its own, and after the viewer's own tap on the picture
+// filled the slot and sent no click to the viewer, with a second finger resting on the top page's bar or in the other pane (CDP
+// touch; Chromium sends no click after a two-finger touch), with an element of the top page appearing over the picture at the tap's
 // pointerdown or pointerup, or taking its compatibility mousedown, another document's tap sends the viewer its compatibility
 // mousedown, mouseup and click under its own touch's pointerId: it opens nothing and the next click opens once, red at 142ade155
 // and, on the chat and the Files pane, under a gate without the slot's pointerId test (a click typed as the slot's pointerup was
 // must carry that pointerup's pointerId), the reads a private witness kept out of the tree. In Firefox and WebKit, whose clicks
 // carry the fields of the viewer's own tap's, the element's shapes are the residual, measured by the closing check at 142ade155
 // opening in Firefox 16 of 16 times and in WebKit 7 of 7, and the second finger's by reading, while in Chromium it opened 0 of 36
-// times in that check's measurements under a candidate of this gate with the slot's pointerId test, and 0 of 51 under this gate
-// in the same probe; whether to accept the residual is the owner's decision. Two more orders of the class outside the residual,
-// found by a check of these fixes, opened in Firefox and WebKit and not in Chromium, at 142ade155, at 1a6470e72 and at 09f58bec6:
-// the first, a mouse's press whose pointerup the viewer never heard and then another document's tap, is closed by the gate's
-// refusal of a record still standing at a click (the engines leg's cells of it), and the second, in Firefox alone, by the gate's
-// refusal of a mouse's or a pen's record whose pointer left the viewer's window with a button down (the engines leg's cells of
-// it, with its cost cell, a press dragged out of the frame and back, refused in Firefox alone; the gate comment and the engines
-// leg state them). The shape whose compatibility mousedown alone the
-// element takes is not in it: there Firefox and WebKit send the viewer that tap's mouseup of detail 0, and a mouseup other than a
+// times in that check's measurements under a candidate of this gate with the slot's pointerId test, and 0 of 51 under this gate in
+// the same probe; whether to accept the residual is the owner's decision. Two more orders of the class outside the residual, found
+// by a check of these fixes, opened in Firefox and WebKit and not in Chromium, at 142ade155, at 1a6470e72 and at 09f58bec6: the
+// first, a mouse's press whose pointerup the viewer never heard and then another document's tap, is closed by the gate's refusal of
+// a record still standing at a click (the engines leg's cells of it), and the second, in Firefox alone, by the gate's refusal of a
+// mouse's or a pen's record whose pointer left the viewer's window with a button down (the engines leg's cells of it, with its cost
+// cell, a press dragged out of the frame and back, refused in Firefox; the gate comment and the engines leg state them). That
+// refusal costs in Chromium too, found by a later check and with no cell: a press on the control or the picture held while the top
+// page hides the viewer's frame and shows it again, then released there, opens nothing and reveals the control, and the next click
+// opens once, 11 of 11 where 343ee2eb5's gate opened all 11, Chromium sending that pointerout as the frame hides. The later check
+// found a third order of the class outside the residual, in WebKit alone and not in Chromium, which sends that pointerout: the mouse
+// held on the control while the top page hides the viewer's frame and shows it again, then another document's mouse click on an
+// element over the control that hides at that click's press, open at this head, for the owner (the gate comment states it). The
+// shape whose compatibility mousedown alone the
+// element takes is not in the residual: there Firefox and WebKit send the viewer that tap's mouseup of detail 0, and a mouseup other
+// than a
 // primary one of detail above 0 empties the slot and clears the tap's flag (the engines leg's cells of it), while Chromium sends
 // the viewer no mouseup and its cell above is the slot's pointerId test's. The gate's cost measured in WebKit, the same at
 // 142ade155: WebKit's tap whose pointerup another document's element takes, refused and revealing the control with the next tap
