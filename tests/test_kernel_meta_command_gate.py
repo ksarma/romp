@@ -16,6 +16,7 @@ import json
 import os
 import tempfile
 import unittest
+import uuid
 from contextlib import redirect_stderr
 from romp_load import load_source
 from unittest import mock
@@ -35,14 +36,16 @@ SID = "11111111-2222-4333-8444-0a0a0a0a0a0a"      # private to this module: park
 
 
 class _Backend:
-    """A backend that takes every setter; records what fired. Only the three setters' calls: neither the
+    """A backend that takes every setter; records what fired. Only the setters' calls: neither the
     route nor a setter reaches any other method on the paths driven here. `effort_ok` is set_effort's
     verdict, the SessionBackend contract's bool: False is a level the Codex model's catalog does not
-    offer (CodexBackend.set_effort answers it for an unknown model or an unreadable catalog too)."""
-    def __init__(self): self.calls = []; self.effort_ok = True
+    offer (CodexBackend.set_effort answers it for an unknown model or an unreadable catalog too).
+    `env_ok` is set_env's (False: a pick the door refuses, a credential-shaped name since 2026-09-18)."""
+    def __init__(self): self.calls = []; self.effort_ok = True; self.env_ok = True
     def set_model(self, sid, v): self.calls.append(("model", v))
     def set_effort(self, sid, v): self.calls.append(("effort", v)); return self.effort_ok
     def set_fast(self, sid, v): self.calls.append(("fast", v)); return True
+    def set_env(self, sid, v): self.calls.append(("env", v)); return self.env_ok
 
 
 def _forget_queue():
@@ -144,6 +147,22 @@ class MetaCommandGateCost(unittest.TestCase):
         self.assertEqual(km._set_effort_or_park(self.be, SID, "ultra"), (True, True), "parked: taken, queued")
         self.assertEqual(self.be.calls, [("effort", "ultra"), ("effort", "ultra")], "the parked pick waits its turn")
         self.assertEqual(km._pending_ops[SID], [("effort", "ultra")])
+
+    def test_the_env_setter_returns_took_and_parked_like_the_effort_setter(self):
+        """tests-4 (review round 3 of the env-pick door, 2026-09-19): _set_env_or_park's (took, parked) return, the
+        shape the /new echo reads since round 2, was pinned by no executed test, so a park answering (False, True) or
+        a verdict branch dropping the pairing shipped green. Each road, by execution: refused (not taken, not queued),
+        taken now, and parked under a busy gate. A plain synthetic pick: the stub backend never consults the door, so
+        no credential-shaped name has any business here."""
+        pick = {"NOTES_ENDPOINT": "http://notes.test"}
+        self.be.env_ok = False
+        self.assertEqual(km._set_env_or_park(self.be, SID, pick), (False, False), "refused: not taken, not queued")
+        self.be.env_ok = True
+        self.assertEqual(km._set_env_or_park(self.be, SID, pick), (True, False), "landed now")
+        self.verdict = True
+        self.assertEqual(km._set_env_or_park(self.be, SID, pick), (True, True), "parked: taken, queued")
+        self.assertEqual(self.be.calls, [("env", pick), ("env", pick)], "the parked pick waits its turn")
+        self.assertEqual(km._pending_ops[SID], [("env", pick)])
 
     def test_a_new_effort_on_an_unowned_session_is_refused_not_sent(self):
         state = {}
@@ -298,6 +317,126 @@ class RefusalReachesTheClient(unittest.TestCase):
         self.assertEqual(self.be.calls, [("effort", "ultra")])
         self.assertEqual(self.frames, [], "nothing to say: the level landed")
         self.assertEqual(err, "", "the refusal line is for refusals")
+
+    def _park_env_then_drain(self, pick):
+        """Park an env pick under a busy gate (the /new door's road, _set_env_or_park), then drain with the gate quiet."""
+        self.verdict = True
+        km._set_env_or_park(self.be, SID, pick)
+        self.assertEqual([op[0] for op in km._pending_ops[SID]], ["env"], "parked, not applied")
+        self.assertEqual(self.be.calls, [], "never applied before the gate lifts")
+        self.verdict = False
+        err = io.StringIO()
+        with redirect_stderr(err):
+            km._apply_pending_ops()
+        self.assertNotIn(SID, km._pending_ops, "popped: a refused pick is never replayed forever")
+        return err.getvalue()
+
+    def test_a_parked_env_pick_the_backend_refuses_at_the_drain_is_said_with_names_only(self):
+        """Review round 1 of the env-pick door (2026-09-18): the drain's env arm discarded set_env's verdict, so a
+        parked pick the door refuses at replay (a queue mirrored before the credential-shape rule and drained after
+        a restart) retired its chip as if it had landed, with no frame and no stderr line, though the effort and
+        fast arms of the same loop had been changed to read theirs for exactly that reason. The words are names
+        only, through the chip's own renderer: the op's dict carries the values, and a credential-shaped one is what
+        the door refuses, so neither the stderr line nor the frame may quote the pick, and the frame's reason is
+        generic (the backend's own log line says why)."""
+        self.be.env_ok = False
+        val = "synthetic-notes-token-" + uuid.uuid4().hex     # assembled at run time: the scanner reads this repo
+        pick = {"NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val}
+        err = self._park_env_then_drain(pick)
+        self.assertEqual(self.be.calls, [("env", pick)], "fired once, at the drain, and refused there")
+        self.assertEqual([(a, m["type"], m["gesture"], m["sid"], m["flag"]) for a, m in self.frames],
+                         [("chat", "settingRefused", "command", SID, "env")],
+                         "the chat hears the refusal on the frame the effort and fast arms answer with")
+        text = self.frames[0][1]["text"]
+        self.assertIn("per-session env", text)
+        self.assertEqual(text, km._env_refusal(), "one sentence for the drain and the /new echo (review round 2, 2026-09-19)")
+        self.assertNotIn(val, text, "no value in the frame")
+        self.assertNotIn("credential", text, "no door wording: the reason stays generic")
+        self.assertIn("pending ops apply: _Backend refused '/env NOTES_API_TOKEN NOTES_ENDPOINT' for %s" % SID[:8], err,
+                      "the drain's own line, the op rendered as its names-only chip (_parked_md)")
+        self.assertNotIn(val, err, "no value on stderr")
+
+    def test_a_parked_env_pick_the_backend_takes_at_the_drain_says_nothing(self):
+        err = self._park_env_then_drain({"FEATURE_FLAG": "1"})
+        self.assertEqual(self.be.calls, [("env", {"FEATURE_FLAG": "1"})])
+        self.assertEqual(self.frames, [], "nothing to say: the pick landed")
+        self.assertEqual(err, "")
+
+    def _park_env_then_send_then_drain(self, be, pick, text):
+        """Park an env pick under a busy gate (the /new door's road) and a USER's send behind it (the composer's road when a
+        queue exists, _park_behind_queue), then drain with the gate quiet against `be`, the backend Sessions.backend_for
+        answers for the sid; returns the drain's stderr. The queue is the shape a session that dies under a parked pick
+        leaves: the pick at the head, the message behind it."""
+        self.verdict = True
+        km._set_env_or_park(be, SID, pick)
+        send = ("send", text, None, "q-" + SID[:8], True)     # (kind, text, echo, the press-time id, the user's word)
+        self.assertTrue(km._park_behind_queue(SID, send), "parked behind the pick")
+        self.assertEqual([op[0] for op in km._pending_ops[SID]], ["env", "send"], "the pick at the head, the send behind it")
+        self.verdict = False
+        err = io.StringIO()
+        with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: be)), redirect_stderr(err):
+            km._apply_pending_ops()
+        self.assertNotIn(SID, km._pending_ops, "both ops left the queue: the refused pick popped, the send delivered")
+        return err.getvalue()
+
+    def test_a_parked_env_pick_on_an_unowned_sid_is_refused_on_the_frame_and_the_send_behind_it_still_reaches_the_backend(self):
+        """Round 9 of fork PR #781's review (kernel-1 and extra9-1, one defect): set_env is SdkBackend's alone, so for a sid
+        Sessions.backend_for routes to _UNOWNED (a queue parked before the session died, or restored after a restart for a
+        session no backend owns) the drain's env arm raised AttributeError, and the per-sid handler popped the sid's WHOLE
+        parked queue: a send queued behind the pick was discarded without reaching any backend, with no frame and no
+        refusal line, only a traceback in the kernel log, where the effort and fast arms of the same loop refuse by name
+        and hand the send over. Both remedies are pinned at once: the drain guards the call as the /new door does, and
+        _UnownedBackend answers set_env False beside its other refusing setters, so the pick is REFUSED on the
+        settingRefused frame with the drain's stderr line (names only, through the chip's renderer), and the send behind
+        it is handed to the backend, which for _UNOWNED is its own refusal line, the proof the send reached it. Red at
+        the round-8 head: frames [], the traceback on stderr naming set_env, no send line, and the queue gone whole."""
+        val = "synthetic-notes-token-" + uuid.uuid4().hex     # assembled at run time: the scanner reads this repo
+        pick = {"NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val}
+        err = self._park_env_then_send_then_drain(km._UNOWNED, pick, "a message parked behind the pick")
+        # the verdict itself, by execution, first (round 9's closing commit, extra10-1): the method's presence is a source
+        # pin in tests/test_session_env.py (DrivePlumbing), and the drain refuses through its hasattr guard when the method
+        # is gone, so without this call a removed set_env left every behavioural test green. Red under method-removed
+        # (AttributeError, here, before the drain's assertions below) and under return-None (None is not False)
+        with redirect_stderr(io.StringIO()):
+            self.assertIs(km._UNOWNED.set_env(SID, pick), False, "the unowned backend's own verdict: False, as set_effort and set_fast answer")
+        self.assertEqual(self.frames, [("chat", self._frame("env", km._env_refusal()))],
+                         "the chat hears the refusal on the frame the effort and fast arms answer with, and nothing else")
+        self.assertIn("pending ops apply: _UnownedBackend refused '/env NOTES_API_TOKEN NOTES_ENDPOINT' for %s" % SID[:8], err,
+                      "the drain's own refusal line, the op rendered as its names-only chip")
+        self.assertIn("send to %s refused: no backend owns this session" % SID, err,
+                      "the send behind the pick reached the backend (its own refusal line is the proof): the queue survived the pick")
+        # the pick's own reason line, send's shape (round 9's closing commit, kernel-1): _env_refusal's sentence on the
+        # frame points at the backend's log line, and this route wrote none. Red at the round-9 head: the line absent
+        self.assertIn("per-session env for %s refused: no backend owns this session" % SID, err,
+                      "the unowned backend writes why it refused the pick, as its send does; the frame's sentence points at this line")
+        self.assertLess(err.index("per-session env for %s refused" % SID), err.index("pending ops apply: _UnownedBackend refused"),
+                        "the backend's reason line precedes the drain's own line, the order the SDK backend's roads have")
+        self.assertNotIn("Traceback", err, "no raise: the handler that pops the whole queue never ran")
+        self.assertNotIn("set_env", err, "no AttributeError naming the missing setter")
+        self.assertNotIn(val, err + repr(self.frames), "no value on stderr or in the frame")
+
+    def test_a_parked_env_pick_on_a_backend_without_set_env_is_refused_and_the_send_behind_it_is_delivered(self):
+        """The guard's own arm (round 9, kernel-1 and extra9-1): a backend shaped like the Codex one, every setter but
+        set_env (a per-session env rides the SDK's flag-settings file, which no other backend hands its CLI), so the
+        _UnownedBackend remedy does not reach it and the drain's hasattr guard is what refuses. The send parked behind the
+        pick is delivered to that backend's send. Red at the round-8 head: AttributeError, no frame, the send never sent."""
+        class _NoEnv:
+            """Every setter the drain calls except set_env; records what it was handed."""
+            def __init__(self): self.calls = []
+            def set_model(self, sid, v): self.calls.append(("model", v)); return True
+            def set_effort(self, sid, v): self.calls.append(("effort", v)); return True
+            def set_fast(self, sid, v): self.calls.append(("fast", v)); return True
+            def set_auth(self, sid, v): self.calls.append(("auth", v)); return False
+            def send(self, sid, text): self.calls.append(("send", text)); return True
+            def busy(self, sid): return True
+        be = _NoEnv()
+        self.assertFalse(hasattr(be, "set_env"))
+        err = self._park_env_then_send_then_drain(be, {"FEATURE_FLAG": "1"}, "a message parked behind the pick")
+        self.assertEqual(self.frames, [("chat", self._frame("env", km._env_refusal()))], "refused on the frame, once")
+        self.assertIn("pending ops apply: _NoEnv refused '/env FEATURE_FLAG' for %s" % SID[:8], err)
+        self.assertEqual(be.calls, [("send", "a message parked behind the pick")],
+                         "the send behind the pick was handed over; the pick reached no setter the backend lacks")
+        self.assertNotIn("Traceback", err)
 
 
 if __name__ == "__main__":

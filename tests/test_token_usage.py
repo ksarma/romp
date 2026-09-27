@@ -1607,6 +1607,10 @@ class CostWeighting(unittest.TestCase):
         self.saved_cfg, self.saved_refresh = km.PRICE_CONFIG, km._refresh_remote_prices
         self.saved_remote = dict(km._price_cache.get("remote", {}))
         self.saved_state, self.saved_discover = jd.STATE, jd.discover
+        self.saved_sdk = km._sdk_backend      # a build under the sandbox below caches the kernel's backend singleton over
+                                              # this directory for the rest of the process when this class builds first in
+                                              # its worker (the suite's ratchet in tests/conftest.py names the class that
+                                              # leaves it there); put back in tearDown
         km.PRICE_CONFIG = pathlib.Path(self.td.name) / "model-prices.json"
         km._refresh_remote_prices = lambda now: None      # no network in tests → defaults/config only
         km._price_cache["remote"] = {}
@@ -1618,6 +1622,7 @@ class CostWeighting(unittest.TestCase):
         km.PRICE_CONFIG, km._refresh_remote_prices = self.saved_cfg, self.saved_refresh
         km._price_cache["remote"] = self.saved_remote
         jd.STATE, jd.discover = self.saved_state, self.saved_discover
+        km._sdk_backend = self.saved_sdk
         self.td.cleanup()
 
     def test_price_for_exact_then_family_then_none(self):
