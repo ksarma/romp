@@ -17,7 +17,8 @@ loaded as a plugin (`-p tests.conftest`), serially and under -n 2 (the shape tes
 tests/test_tempdir_hygiene.py use). The child's environment is built from a rule (PATH, a fresh HOME and TMPDIR, the
 checkout on PYTHONPATH with bytecode writing off (PYTHONDONTWRITEBYTECODE), the locale, PYTHON_GIL and LD_LIBRARY_PATH
 when this process has them, and the plant's own output directory), never this process's environment filtered, since
-collecting the suite writes hundreds of variables at import.
+collecting the suite writes variables of its own at import (among them the floors in tests/__init__.py and
+tests/conftest.py).
 The children run with CI's pytest-timeout flags when pytest-timeout is installed (CI installs it on every cell), so the
 guard's exclusion of that plugin's own timer, alive through every test's teardown, is exercised by the green runs.
 
@@ -144,7 +145,8 @@ def pytest_sessionfinish(session):
 
 def pytest_unconfigure(config):
     plant_shared.RELEASE.set()  # the leaked, busy and daemon threads end, so the process can exit
-    _mark("release")            # the stop ran, after the guard had failed the run on the leaked thread
+    _mark("release")            # the stop ran, after the guard had run (in the leak runs it had failed the run on the
+                                # leaked thread)
 
 
 def _fixture_thread(tag):
@@ -608,7 +610,7 @@ class JoinRace(unittest.TestCase):
         on, for up to 5 s, after the guard returned."""
         left, par, child = self._chain(5.0, child_ends_on_second_read=True)
         self.assertFalse(child.is_alive(), "the guard returned while the child its parent started as it exited was still "
-                         "running: the guard did not read the thread list again")
+                         "running: it did not wait for that child, which only a second read of the thread list finds")
         self.assertNotIn(child, left)
         self.assertNotIn(par, left)
 
@@ -616,7 +618,9 @@ class JoinRace(unittest.TestCase):
         """The same chain with a child that runs on: at a short cap the guard returns the child, which only a second read
         of the thread list can find, and not its parent, which has ended."""
         left, par, child = self._chain(1.0, child_ends_on_second_read=False)
-        self.assertIn(child, left, "the child started as its parent exited is returned: the guard read the list again")
+        self.assertIn(child, left, "the guard did not return the chain's child, the thread its parent starts as it exits, "
+                      "which only a second read of the thread list finds (a guard that reads the list once is one way "
+                      "this happens)")
         self.assertTrue(child.is_alive())
         self.assertNotIn(par, left)
 
@@ -673,8 +677,8 @@ class JoinRace(unittest.TestCase):
         self.addCleanup(t.join)
         with mock.patch.object(time, "monotonic", side_effect=itertools.count(0, 1e6)):
             left = cf.threads_left_at_session_end(5.0)
-        self.assertNotIn(t, left, "the guard returned a thread that ends within its cap: the patched clock moved its "
-                         "deadline")
+        self.assertNotIn(t, left, "the guard returned a thread that ends within its cap: it did not wait for the thread (a "
+                         "leaked patch of time.monotonic that moved its deadline is one way this happens)")
         self.assertFalse(t.is_alive(), "the guard waited for the thread to end")
 
 
