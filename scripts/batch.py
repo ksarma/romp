@@ -54,6 +54,10 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     (CI does not run on the merge to main, so the tree that lands must be the tree the sweep and the
     batch branch's CI ran on), and a result that marks a webview leg not owed while the diff from main
     to the head owes it; land re-runs verify and refuses the same;
+  - land reads main on origin once more right before the merge call and refuses if it moved since verify;
+    the residual is stated, not closed: a move between that read and GitHub's merge (the merge pins the
+    head, not the base), and a move before an --auto merge fires later (--auto is refused until the
+    repository allows auto-merge and a rule on main gates a merge; the fork had neither on 2026-09-27);
   - land requires the batch head's CI run green, read from GitHub at land time before anything changes:
     the newest run of ci.yml from a push to the batch branch at exactly the verified head; a missing,
     pending or red run, or a failed read, is refused by name, and a run at another sha, from another
@@ -2564,9 +2568,11 @@ def main(argv=None):
                                    "pending or red is refused, --auto or not), retarget stacked members to %s, read %s on %s "
                                    "once more and refuse if it moved since verify, then `gh pr merge --merge "
                                    "--match-head-commit <verified sha>` and finish. The merge pins the head, not the base, so "
-                                   "a merge to %s between that last read and the merge call is not caught; with --auto the "
-                                   "merge happens later, when a rule on %s is met, and main is not read again then. Never "
-                                   "squash or rebase: that would leave every member open." % (MAIN, MAIN, REMOTE, MAIN, MAIN))
+                                   "a merge to %s between that last read and GitHub's merge is not caught; with --auto the "
+                                   "merge happens later, when a rule on %s is met, and main is not read again then (--auto "
+                                   "is refused until the repository allows auto-merge and a rule gates a merge; the fork had "
+                                   "neither on 2026-09-27). Never squash or rebase: that would leave every member open."
+                                   % (MAIN, MAIN, REMOTE, MAIN, MAIN))
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--auto", action="store_true",
                    help="arm auto-merge instead (lands when the required checks pass; needs the repository's \"Allow auto-merge\" "

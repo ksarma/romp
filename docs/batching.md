@@ -94,7 +94,8 @@ Per batch, in order:
    depends on it); wait for the new green.
 6. Merge: say "merge batch #B" to the batcher, who runs `scripts/batch.py land`: it requires the
    batch branch's CI run green at the batch head, reads main on origin again right before the merge
-   and refuses if the batch no longer contains it. The button and `gh pr merge <B> --merge
+   and refuses if the batch no longer contains it (a merge to main between that read and GitHub's
+   merge is the one move it cannot catch). The button and `gh pr merge <B> --merge
    --match-head-commit <sha>` check neither. No CI runs on the merge to main, so use either only
    while the batch PR's checks on its head are green and main is still at the SHA the first block
    names as contained; if main has moved, ask the batcher to merge it in, sweep and verify again. Member PRs
@@ -206,13 +207,14 @@ subject; `verify` refuses the branch otherwise.
    included), or when the read fails; a run of another commit, a manual run and a run on another
    branch do not count. Then it reads main on origin once more right before the merge call and
    refuses if it moved, merges with a merge commit, and runs `finish`. GitHub's merge pins the
-   head, not the base, so a merge to main between that last read and the merge call is not caught.
+   head, not the base, so a merge to main between that last read and GitHub's merge is not caught.
    `land --auto` arms auto-merge instead, after the same CI read (it does not wait for a pending
    run): it needs the repository's "Allow auto-merge" setting and a
    rule on main that gates a merge (the maintainer section above names the types), reads both before
    it retargets anything, and refuses naming what is missing or the rules it found instead; run
    `finish` once the PR lands. Auto-merge merges later, when the rule is met, and land cannot check
-   main again then. If the maintainer merged by the button or `gh pr merge`, check that the merge
+   main again then; on 2026-09-27 the fork had neither the setting nor such a rule, so `land --auto`
+   is refused and that case cannot arise yet. If the maintainer merged by the button or `gh pr merge`, check that the merge
    commit's first parent is the main that verify saw (`git rev-parse <merge>^1` against the SHA the
    body's first block names), then run `scripts/batch.py finish <name>` alone. If it is not, the tree
    on main was never swept or tested: run `scripts/sweep.py run` on a worktree at the merge commit
