@@ -829,7 +829,7 @@ def wait_for_census(before, timeout=5.0):
         time.sleep(0.02)
 
 
-# ── session-end thread guard (2026-09-26) ─────────────────────────────────────────────────────────────────────────────
+# -- session-end thread guard (2026-09-26) -----------------------------------------------------------------------------
 # A NON-DAEMON thread still running when the interpreter exits keeps its process from exiting, because the interpreter
 # joins every non-daemon thread at shutdown. Run serially, the run then hangs until the thread ends or CI's job cap
 # cancels the cell, and a cancelled cell is red. Under pytest-xdist the run passes: the controller kills a worker still

@@ -300,7 +300,7 @@ class SessionEndThreadGuard(unittest.TestCase):
                 raise AssertionError("a record of no known kind in the plant's output: " + name)
         return r.returncode, r.stdout + r.stderr, started, ended, finish, marks
 
-    # ── a leaked non-daemon thread fails the run ─────────────────────────────────────────────────────────────────────
+    # -- a leaked non-daemon thread fails the run ---------------------------------------------------------------------
 
     def _assert_leak_reported(self, rc, out, started, finish, marks):
         self.assertIn("plant-leaked", {n for names in started.values() for n, _daemon in names}, "the plant ran:\n" + out)
@@ -371,7 +371,7 @@ class SessionEndThreadGuard(unittest.TestCase):
         # process whose output this captures: a worker's own stdout goes to /dev/null
         self.assertRegex(out, r"ERROR at teardown of test_\w+ _+\n\[gw\d+\] ", "the report came from a worker:\n" + out)
 
-    # ── idle executor workers alone fail the run, and the process exits ──────────────────────────────────────────────
+    # -- idle executor workers alone fail the run, and the process exits ----------------------------------------------
 
     def _assert_idle_workers_fail_and_the_process_exits(self, rc, out, started, marks):
         self.assertEqual(rc, 1, "idle executor workers alone fail the run:\n" + out)
@@ -395,7 +395,7 @@ class SessionEndThreadGuard(unittest.TestCase):
         rc, out, started, _ended, _finish, marks = self._run(POOL_TEST, cap=LEAK_CAP_S, workers=2)
         self._assert_idle_workers_fail_and_the_process_exits(rc, out, started, marks)
 
-    # ── threads that end within the cap, and daemon threads, leave the run green ─────────────────────────────────────
+    # -- threads that end within the cap, and daemon threads, leave the run green -------------------------------------
 
     def _assert_green_and_waited(self, rc, out, started, ended, finish, _marks):
         self.assertEqual(rc, 0, "threads that end within the cap and daemon threads do not fail the run:\n" + out)
