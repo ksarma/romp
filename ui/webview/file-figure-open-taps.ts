@@ -102,9 +102,16 @@
 //   again at 343ee2eb5), is closed by the gate's refusal of a mouse's or a pen's record whose pointer left the viewer's window
 //   with a button down (0 of 10 under this gate), its cells in Firefox, on the hybrid page, the element hiding at that click's
 //   mousedown or its pointerdown, red at 343ee2eb5 and at 09f58bec6, with its cost cell, the viewer's own press on the control
-//   dragged out of its frame and back, which opens nothing and reveals the control, measured in Firefox alone (8 of 8 in a probe
-//   of these fixes, where 343ee2eb5's gate opened all 8; Chromium and WebKit keep a held left press in the frame it began in and
-//   opened it); Chromium opened neither order. The chain rule's costs, none measured, each a
+//   dragged out of its frame and back, which opens nothing and reveals the control, measured in Firefox (8 of 8 in a probe of these
+//   fixes, where 343ee2eb5's gate opened all 8; Chromium and WebKit keep a held left press in the frame it began in and opened it),
+//   and, with no cell, that refusal's other measured cost, found by a later check, in Chromium, a press on the control or the
+//   picture held while the top page hides the viewer's frame and shows it again, then released there, which opens nothing and
+//   reveals the control (11 of 11, where 343ee2eb5's gate opened all 11); Chromium opened neither order. The later check found a
+//   third order of the class outside the residual, in WebKit alone, open at this head and at 142ade155, at 09f58bec6 and at
+//   343ee2eb5, with no cell and for the owner (file-view.ts's gate comment states it): the mouse held on the control while the top
+//   page hides the viewer's frame and shows it again, then another document's mouse click on an element over the control that hides
+//   at that click's mousedown or its pointerdown, whose pointerup hands the held press's record to the slot (60 of 60 in that
+//   check's probe). The chain rule's costs, none measured, each a
 //   refusal that reveals the control: on a Firefox touchscreen whose tap's click came typed touch under a pointerId other than
 //   its pointerup's every tap, the tab then opening only from the mouse or the keyboard; every tap of a pen in the touch order
 //   whose click comes typed mouse, as WebKitGTK would type it by analogy with a touch's, the tab still opening from a finger, the
@@ -135,13 +142,17 @@
 // click or a two-finger touch are red at 0f998a3b9 in the engines that run them, whose gate left the slot alone at the tap's
 // mousedown, so the tap's click took the slot that pointerup with no click had filled, and the cell after nothing reads the same
 // there, by design; the chain rule's cells are red at 142ade155, where each covered click opened, and on the chat and the Files
-// pane under a gate without the rules that close each (in Firefox the tail and the mouseup's clear, and for the lone click after
-// the mouse held on the control or released in the other pane the refusal of a record still standing at a click too, four cells a
-// surface under a gate without the tail alone, those after the viewer's tap whose compatibility events or click went elsewhere;
-// the slot's pointerId test in Chromium; the touch records' refusal in WebKit; for the cells of the mouseup that ended the chain,
-// in Firefox and WebKit, the mouseup's clear, the gate at 1a6470e72 having none; and for the cells of a mouse's press whose
-// pointerup the viewer never heard, in Firefox and WebKit, the refusal of a record still standing at a click, the gates at
-// 1a6470e72 and at 09f58bec6 having none), while the cost cell reads the same there, by design; the reads of each of these reds
+// pane under a gate without the rules that close each (in Firefox the tail and the mouseup's clear, for the lone click after the
+// mouse held on the control the refusal of a record still standing at a click too, after the mouse released on the top page's bar
+// the refusal of a record whose pointer left the viewer's window with a button down too, and after the mouse released in the other
+// pane both refusals too, four cells a surface under a gate without the tail alone, those after the viewer's tap whose compatibility
+// events or click went elsewhere; the slot's pointerId test in Chromium; the touch records' refusal in WebKit; for the cells of the
+// mouseup that ended the chain, in Firefox and WebKit, the mouseup's clear, the gate at 1a6470e72 having none; for the cells of a
+// mouse's press whose pointerup the viewer never heard, the refusal of a record still standing at a click in WebKit, and in Firefox
+// both refusals, the gates at 1a6470e72 and at 09f58bec6 having neither; and for Firefox's cells of another document's mouse click
+// after a press that left the viewer's frame, the refusal of a record whose pointer left, the gates at 343ee2eb5 and at 09f58bec6
+// having none), while WebKit's cost cell reads the same there, by design, and Firefox's reads the press dragged out and back opening
+// there, as at 343ee2eb5, recording its cost; the reads of each of these reds
 // are a private witness kept out of the tree. file-view-outline.test.ts drives the same orders over the stand-in in CI, where
 // these legs launch no browser.
 import * as assert from "node:assert/strict";
@@ -1059,7 +1070,9 @@ async function otherDocumentTap(browser: any, engine: TapEngine, surface: TapSur
  *    09f58bec6, whose pointerup handed the slot the mouse's shown record, so the click opened. And its cost cell: the viewer's own
  *    press on the control dragged out into the other pane and back, released on the control, whose click opens nothing and reveals
  *    the control, and the next click opens once, where 343ee2eb5's gate opened that click.
- *  Red at 142ade155, where each covered click opened, but the cost cells, and on the chat and the Files pane under a gate without
+ *  Red at 142ade155, where each covered click opened, and Firefox's cost cell there reads the press dragged out and back opening, as
+ *  at 1a6470e72, at 09f58bec6 and at 343ee2eb5, recording the cost, while WebKit's cost cell alone reads the same there, by design;
+ *  and on the chat and the Files pane under a gate without
  *  the rules that close each; the reads of the reds are a private witness kept out of the tree.
  *  file-view-outline.test.ts drives the same orders over the stand-in in CI. */
 async function chainCells(browser: any, engine: TapEngine, device: TapDevice, surface: TapSurface, at: string, cell: CellFn, note: (m: string) => void): Promise<void> {

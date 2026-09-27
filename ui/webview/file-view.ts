@@ -2805,8 +2805,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   a button down and no relatedTarget, its pointer leaving this window's document for another frame or window with the press
   //   still held, marks every mouse and pen record refused, and the record stands, since that press may end where this window
   //   never hears it (the second order below; Firefox sends it as a held press leaves the viewer's frame, and Chromium and
-  //   WebKit, which keep a held left press in the frame it began in, sent it only for a held right press, whose click never
-  //   comes). A pointerout with an element of this document as its relatedTarget is the pointer moving inside it: a held press
+  //   WebKit, which keep a held left press in the frame it began in, sent it for a held right press, whose click never comes, and
+  //   Chromium for a held press whose frame the top page hides and shows again, whose click then comes, a cost below; WebKit
+  //   sends none there, the third order below). A pointerout with an element of this document as its relatedTarget is the pointer
+  //   moving inside it: a held press
   //   whose point another document's element takes while the pointer stays inside the frame sent Firefox's pointerout to this
   //   window's root element, so it ends nothing. A mouse's press and a pen's in the
   //   desktop order send their own mousedown after their pointerdown and before their pointerup, while a tap's compatibility
@@ -2935,9 +2937,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the viewer's tap whose mouseup of detail 0 ended its chain and another document's tap after a mouse's press whose pointerup
   // this window never heard, each red at 142ade155, the last at 1a6470e72 and at 09f58bec6 too, and on the chat and the Files
   // pane under a gate without the rules that close it (Firefox's lone click after a mouseup of another button or of detail 0 is
-  // closed by the tail and by the mouseup's clear alike, after the mouse held on the control or released in the other pane by the
-  // tail and by the refusal of a record standing at a click alike, and its four cells a surface after the viewer's tap whose
-  // compatibility events or click went elsewhere by the tail alone), and node guards in the outline suite over the same orders;
+  // closed by the tail and by the mouseup's clear alike, the one after the mouse released on the top page's bar by the refusal of
+  // a record whose pointer left this window with a button down as well, after the mouse held on the control by the tail and by
+  // the refusal of a record standing at a click alike, after the mouse released in the other pane by the tail and by both
+  // refusals alike, and its four cells a surface after the viewer's tap whose compatibility events or click went elsewhere by the
+  // tail alone; another document's tap after that release in the other pane is closed in Firefox by both refusals alike, so its
+  // cell there is red only under a gate without both, and WebKit's cells of the mouse held pin the refusal of a standing record
+  // alone), and node guards in the outline suite over the same orders, whose Firefox rows of a press that leaves the frame send
+  // no pointerout, so they guard the other rules without the refusal of a record whose pointer left;
   // the autoscroll's order, WebKit's touch ending in a touchcancel and a pen in the touch order have node guards alone, since no
   // cell in the tree drives them: no browser here drives a pen in the touch order, no cell a touchcancel, and the autoscroll's
   // order needs Firefox's autoscroll preference set at the browser's launch, which the legs' shared launcher (real-viewer-leg.ts
@@ -2954,7 +2961,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // of 16 (the Files pane 12, the chat 4), WebKit 7 of 7 (the hybrid page 3, a phone's page 2, the chat 2) and Chromium 0 of 51,
   // and every other order of the class it drives opened nothing; a check of these fixes drove orders that probe does not and
   // found two more of the class outside the residual, both closed here, the first by the refusal of a record standing at a click
-  // and the second by the refusal of a mouse's record whose pointer left this window with its button down (the paragraph after
+  // and the second by the refusal of a mouse's record whose pointer left this window with its button down, and a later check
+  // found a third, in WebKit, open here (the paragraph after
   // this one). Firefox's click and WebKit's carry the fields of the viewer's own tap's
   // click, in the same order; only coordinates and time differ, and a rule on coordinates would cost Chromium's taps, whose touch
   // adjustment moves a tap's click away from its pointerup. In it by reading, not drivable here: a second finger resting on
@@ -2988,7 +2996,25 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // and at 09f58bec6). The viewer's own press dragged out of the frame, brought back and released on the control sends this
   // window the same events, so it pays, a cost below. WebKit, which sends that release to this window, opened the second order
   // in no repetition, and Chromium opened neither order (Chromium 0 of 8 over both orders' shapes), and the next click opened in
-  // every repetition.
+  // every repetition. A third order of the class outside the residual, found by a later check of these fixes (the closing check
+  // at 142ade155 after the fixes for the file review's round 18), still opens the tab with the sign covered, in WebKit alone, and
+  // goes to the owner: the mouse pressed on the control with the control shown, any button, and held while the top page hides the
+  // viewer's frame and shows it again (display none, as the phone layout hides every pane but the one shown), so that the release
+  // lands on the top page; then a
+  // mouse click on an element of another document over the control that hides at that click's mousedown or its pointerdown
+  // reaches this window as a pointerup under pointerId 1, which hands the held press's record to the slot, a mouseup of detail 1
+  // and a click, which takes the slot and opens: 60 of 60 in a probe of these fixes (the hybrid page's Files pane 36 and chat 12,
+  // a phone's pages 12), and 21 of 21 at each of 343ee2eb5, 09f58bec6 and 142ade155 in the part of that probe run there, the next
+  // click opening each time, a press on the picture followed by such a click on the picture among them. Firefox sends that
+  // release's mouseup with detail 0 and no click after the frame shows again, and Chromium sends the pointerout above as the
+  // frame hides, which marks the record refused, so neither opened it (Firefox 0 of 40, Chromium 0 of 42). WebKit sends no
+  // pointerout there, and where the element cancels that click's mousedown and the pointer stays still, this window hears the
+  // events its own click would send, a pointerdown and a mousedown, then a pointerup, a mouseup of detail 1 and a click, with no
+  // event the gate listens to between them, so no event the gate hears tells that click from the viewer's own; the one sign this
+  // window gets is an intersection observer's report of the control leaving the viewport and coming back, which the gate does not
+  // read. By reading and not drivable here, a native context menu that takes a right press's release, as Safari's does, may leave
+  // the same state with no frame hidden. Reaching it needs the top page to hide the viewer's pane while a press is held and an
+  // element of the top page over the control that hides at its own press.
   // The gate's cost measured in WebKit, the same at 142ade155 (its cost cell; the closing check at 142ade155 after the fixes for
   // the file review's round 18): a tap whose pointerup another document's element takes, that element shown over the picture at
   // the tap's pointerdown and hidden at its pointerup, opens nothing and reveals the control, and the next tap opens, since
@@ -3019,20 +3045,24 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // popover closed by the right press's mousedown before the left press began), where 09f58bec6's gate opened all 12 on the left
   // press's own verdict; Firefox and Chromium open on that chord at neither head, 0 of 10 each, and on a device the right press's
   // native context menu, which Playwright's headless WebKit does not show, presumably takes the left click, not measured. And the
-  // refusal of a mouse's or a pen's record whose pointer left this window with a button down costs, measured in Firefox alone
-  // (Playwright's, on Linux): a press on the control dragged out of the viewer's frame, into the other pane or onto the top
-  // page's bar, then brought back and released on the control, opens nothing and reveals the control, and the next click opens, 8
-  // of 8 (the Files pane 4, the chat 4), where 343ee2eb5's gate opened all 8; Chromium and WebKit keep a held left press's
-  // pointer in the frame it began in, send no such pointerout for it and opened all 8; and no other gesture of the probe changed
-  // in any of the three engines, a click, a double click, a press held, a press moved inside the picture or the control or out to
-  // a paragraph and back, a selection, a right or a middle click, Enter, Space, a tap, a finger held and a pen's press among
-  // them, nor a press held while an element of the top page covered its point and went away, whose pointerout Firefox sent to
-  // this window's root element.
+  // refusal of a mouse's or a pen's record whose pointer left this window with a button down costs, measured in Firefox and in
+  // Chromium (Playwright's, on Linux): in Firefox, a press on the control dragged out of the viewer's frame, into the other pane
+  // or onto the top page's bar, then brought back and released on the control, opens nothing and reveals the control, and the
+  // next click opens, 8 of 8 (the Files pane 4, the chat 4), where 343ee2eb5's gate opened all 8; Chromium and WebKit keep a held
+  // left press's pointer in the frame it began in, send no such pointerout for it and opened all 8, and no other gesture of that
+  // probe changed in any of the three engines, a click, a double click, a press held, a press moved inside the picture or the
+  // control or out to a paragraph and back, a selection, a right or a middle click, Enter, Space, a tap, a finger held and a
+  // pen's press among them, nor a press held while an element of the top page covered its point and went away, whose pointerout
+  // Firefox sent to this window's root element; and in Chromium, found by a later check of these fixes, a press on the control or
+  // on the picture with the control shown, held while the top page hides the viewer's frame and shows it again, then released
+  // there, opens nothing and reveals the control, and the next click opens, 11 of 11 (the Files pane 9, the chat 2), where
+  // 343ee2eb5's gate opened all 11, since Chromium sends that pointerout as the frame hides; WebKit sends none there and opened
+  // all 11, and Firefox sends that release's mouseup with detail 0 and no click at either head. No cell drives that press.
   // The slot's four other clears (a pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive: the slot
   // is refilled at every pointerup, the click of a press this window heard follows that press's own pointerup, the mousedown's
   // clear, the mouseup's, the tail, the slot's pointerId test, the refusal of a record still standing at a click and the refusal
   // of a record whose pointer left this window with a button down refuse a click whose press this window did not hear, the
-  // residual aside, and a key's or a script's click
+  // residual and the third order above aside, and a key's or a script's click
   // never reads the slot, so dropping any one of the four alone changes no gesture a test drives; the press cells (a press with
   // no click, then a key's click or a script's) are red under a gate that lets a key's or a script's click read the slot with the
   // keydown's clear dropped. The tail's condition on the record under a click's own pointerId is defensive since a standing
