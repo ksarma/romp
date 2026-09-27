@@ -559,10 +559,11 @@ class JoinRace(unittest.TestCase):
     def _chain(self, cap_s, child_ends_on_second_read):
         """Runs the guard at cap `cap_s` over a parent thread that starts a non-daemon child as it exits. The child's start
         is tied to the guard's first read of the thread list: a spy on the guard's own binding reads the real list and
-        only then lets the parent go, so the first list holds the parent and not the child. With
-        `child_ends_on_second_read`, the spy's second read, again once it has read the list, lets the child end;
-        otherwise the child runs on until the test's cleanup lets it go, or for 5 s. Returns (the guard's result, the
-        parent, the child)."""
+        only then lets the parent go, so the first list holds the parent and not the child. Of each list it reads, the
+        spy hands the guard only the main thread, the parent and the child, so the guard waits for no other thread in
+        the process, such as another test's thread still running in the same worker. With `child_ends_on_second_read`,
+        the spy's second read, again once it has read the list, lets the child end; otherwise the child runs on until
+        the test's cleanup lets it go, or for 5 s. Returns (the guard's result, the parent, the child)."""
         cf = sys.modules["tests.conftest"]
         real_enumerate = cf._enumerate
         first_read, child_may_end = threading.Event(), threading.Event()
@@ -580,7 +581,8 @@ class JoinRace(unittest.TestCase):
         reads = []
 
         def spy():
-            listed = real_enumerate()
+            main = threading.main_thread()
+            listed = [t for t in real_enumerate() if t is main or t is par or t is child]
             reads.append(listed)
             if len(reads) == 1:
                 first_read.set()
