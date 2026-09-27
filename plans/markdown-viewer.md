@@ -9025,10 +9025,16 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests, and SECURITY.md, alone (70 files, the ledger entry's where line; run 2026-09-26 at the head that carries the
-fixes for the file review's round 18 and the merge of the fork's main after them, where the merge-base is 4a50a9b71, the fork's
-main the branch merged after those fixes, its tip the merge of the fork's batch PR 917, and the listing is the branch's whole
-delta over it; the run at the head that carries the bench's variants from those fixes, regression-3, from the merge-base
+upstream or tests, and SECURITY.md, alone (71 files, the ledger entry's where line; run 2026-09-27 at the head that carries the
+fixes after the closing check at 142ade155 after the fixes for the file review's round 18 and the merge of the fork's main after
+them, where the merge-base is ffab236bd, the fork's main the branch merged after those fixes, its tip the merge of the fork's
+batch PR 921, and the listing is the branch's whole delta over it; the runs at the head that carries the fixes for the file
+review's round 18 and the merge of the fork's main after them and at the head that carries the fixes after the closing check at
+142ade155 before the merge of the fork's main at ffab236bd, from the merge-base 4a50a9b71, the fork's main the branch merged after
+the fixes for the file review's round 18, its tip the merge of the fork's batch PR 917, listed 70, before
+ui/webview/file-comments-save-held-composer.test.ts, a module of main where the census entry for PR 915's wait line asserts that
+line's reason on its scene, joined the delta in that merge; the run at the head that carries the bench's variants from the fixes
+for the file review's round 18, regression-3, from the merge-base
 fa3ef54b5, the fork's main the branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch
 PR 907, listed the same 70; the run at the head that carries the marquee forbid's records from that round's fixes,
 tests-1 with regression-1 and regression-2, from the merge-base fa3ef54b5, listed 64, before
@@ -9241,7 +9247,7 @@ four it holds every leg to a roster line outside the exclusions, the leg that la
 line and no roster line (the module's own model of the convention, which PR 887's section on who owes what at the landing
 revises), and the roster's own tree test to exist, and a tree with
 some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
-landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-six standing suites were re-aimed, not undone:
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-seven standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -9317,7 +9323,11 @@ ui/webview/anchor-map-wrappers.test.ts and ui/webview/anchor-map-pairing-r6.test
 as the sanitizer and the anchor map's mirror do, and the unwrapped-kid test gains a marquee holding a badge picture and one
 holding a b before the depth-1 wrapper, red with the mirror dropped, tests-1 with regression-1) and
 ui/webview/md-config-block-boxes.test.ts (the marquee joins the forbid list's inline-block group in its docstring, and its probe
-of the tags a note keeps inline drops it, regression-2). The guide's Links in a file paragraph gained two sentences, the trail's and
+of the tags a note keeps inline drops it, regression-2), and since the merge of the fork's main at ffab236bd, whose batch PR 921
+brought it, ui/webview/file-comments-save-held-composer.test.ts (its wait-line test asserts, on its scene, the reason the seam
+test's re-parse census gives PR 915's wait line for its constant markup: the line's parent is the composer's button row, the
+Comments panel's parent is the viewer's main row, and the viewer's body does not hold the line). The guide's Links in a file
+paragraph gained two sentences, the trail's and
 the figure control's, its paragraph on a file's own HTML one on the marquee's removal (the file review's round 18,
 regression-2), and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
