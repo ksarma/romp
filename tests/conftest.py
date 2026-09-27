@@ -105,6 +105,17 @@ atexit.register(_remove_run_dirs)
 # as that: its phase is unknown, because it was spawned while no phase was set or was given an environment built
 # without the name. Keyed on that PROPERTY and never on a binary's name: a bus, a kernel, a session host, a mock ssh's
 # sleep are all the same leak.
+# One process is passed over, by identity and never by its name (2026-09-27, round 2 of fork PR #894's review): the
+# controller's own multiprocessing resource tracker, the pid the controller's multiprocessing.resource_tracker records
+# for its tracker, while that pid is the controller's child (_own_resource_tracker). The stdlib starts the tracker on
+# demand (a spawn-context ProcessPoolExecutor starts it, as tests/test_session_env.py's census pool class does in its
+# setUpClass); the tracker ignores SIGINT and SIGTERM and exits when the last write end of its pipe closes, the
+# controller's at the controller's exit, so it outlives the tests by design and ends with the controller. In a serial run
+# it holds the run's temp root through the environment it inherited (a serial run of that class was red on it before
+# this); under pytest-xdist it is a worker's and exits with the worker. A process holding a write end of its pipe (a
+# multiprocessing worker inherits one) is judged in its own right, and so is a second tracker a test starts itself.
+# tests/test_run_end_leaked_processes.py pins the pass-over, the second tracker, and a record naming a process that is
+# not the controller's child.
 # The roots are the controller's and every root listed in its `romp-tests-children`: since 2026-09-24 a nested process
 # (an xdist worker, a nested pytest, any child of the run that imports the tests package handed a root as its TMPDIR
 # together with the run's ROMP_TESTS_SYSTEM_TMPDIR, as a child given a copy of its parent's environment is) lists itself
@@ -400,13 +411,30 @@ def _pid_present(pid):
         return False
 
 
-def _leaked_run_processes(roots, bound_s=LEAK_EXIT_BOUND_S, pids=None):
+def _own_resource_tracker():
+    """The pids the run-end check passes over (the comment above LEAK_EXIT_BOUND_S): the controller's own multiprocessing
+    resource tracker, the pid its multiprocessing.resource_tracker records for its tracker, when that pid is this
+    process's child. Empty when this process never imported that module (it started no tracker), when the record holds
+    no pid, or when the pid is not this process's child (a process forked from another can inherit its parent's record)."""
+    rt = sys.modules.get("multiprocessing.resource_tracker")
+    pid = getattr(getattr(rt, "_resource_tracker", None), "_pid", None)
+    if not isinstance(pid, int):
+        return frozenset()
+    try:
+        ppid = _proc_stat(pid)[1]
+    except (OSError, ValueError, IndexError):
+        return frozenset()
+    return frozenset([pid]) if ppid == os.getpid() else frozenset()
+
+
+def _leaked_run_processes(roots, bound_s=LEAK_EXIT_BOUND_S, pids=None, skip_pids=()):
     """(holders still present, unjudged, procfs read): the processes holding `roots` after every holder seen first, and
     every process first listed as not judged, has been given until `bound_s` to exit (the event waited for is the pid's
     exit; the wait ends the moment the last one is gone). Nothing waits when nothing holds and nothing is listed.
     `pids` is _processes_holding's stand-in listing, handed to both scans (tests/test_run_end_leaked_processes.py times
-    the wait over its own children alone: a process another test lists would be waited for too)."""
-    holders, unjudged, ok = _processes_holding(roots, pids=pids)
+    the wait over its own children alone: a process another test lists would be waited for too); `skip_pids` is passed
+    over by both scans (the run end hands in _own_resource_tracker's)."""
+    holders, unjudged, ok = _processes_holding(roots, skip_pids=skip_pids, pids=pids)
     if not ok or not (holders or unjudged["listed"]):
         return holders, unjudged, ok
     deadline = time.monotonic() + bound_s
@@ -415,7 +443,7 @@ def _leaked_run_processes(roots, bound_s=LEAK_EXIT_BOUND_S, pids=None):
         pending = {pid for pid in pending if _pid_present(pid)}
         if pending:
             time.sleep(0.05)
-    return _processes_holding(roots, pids=pids)
+    return _processes_holding(roots, skip_pids=skip_pids, pids=pids)
 
 
 def _join_live_threads(bound_s, among=None):
@@ -452,11 +480,12 @@ PHASE_UNKNOWN = ("the phase at its spawn is unknown, since PYTEST_CURRENT_TEST i
 
 def _report_leaked_run_processes(session):
     """The controller's run-end check (the comment above LEAK_EXIT_BOUND_S): join the live non-daemon threads, then name
-    every process of the run that still holds one of its roots and make the run red; list this user's unreadable
-    processes of the run as not judged, count the other unreadable ones, and name the threads still running."""
+    every process of the run that still holds one of its roots, the controller's own resource tracker passed over
+    (_own_resource_tracker), and make the run red; list this user's unreadable processes of the run as not judged, count
+    the other unreadable ones, and name the threads still running."""
     bound = _leak_exit_bound()
     left = _join_live_threads(bound)
-    leaked, unjudged, ok = _leaked_run_processes(_run_roots(), bound)
+    leaked, unjudged, ok = _leaked_run_processes(_run_roots(), bound, skip_pids=_own_resource_tracker())
     if not ok:
         _say_at_run_end(session, "[tests] the run-end process check reads /proc and did not run on this platform")
         return

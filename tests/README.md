@@ -413,7 +413,16 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the witness and the phase is a pointer when there is one. Keyed on that
   property, never on a binary's name: a postal bus, a kernel, a session host and a
   mock ssh's orphaned `sleep` are the same leak (the tunnels module's mocks `exec`
-  their trailing sleep since the check found the orphans). The check never kills;
+  their trailing sleep since the check found the orphans). One process is passed
+  over, by identity and never by its name: the controller's own `multiprocessing`
+  resource tracker (the pid its `multiprocessing.resource_tracker` records for its
+  tracker, while that pid is the controller's child). The stdlib starts it on
+  demand (a spawn-context `ProcessPoolExecutor` starts it, as
+  `tests/test_session_env.py`'s census pool class does), and it ignores SIGINT and
+  SIGTERM and exits when the last write end of its pipe closes, the controller's at
+  the controller's exit. A process holding a write end (a `multiprocessing` worker
+  inherits one) is judged in its own right, and so is a second tracker a test
+  starts itself. The check never kills;
   it names the pid. What it does not read, each for the reason in the comment
   above `LEAK_EXIT_BOUND_S`:
   - a process whose environment, cwd, open files and argv carry no path under a

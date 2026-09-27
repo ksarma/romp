@@ -28,7 +28,7 @@ met where it folds out of the root or names a path elsewhere from that cwd, and 
 (the cwd under the root is then the hold); a path inside a longer argument not met (another); a sibling path with the
 root's name as a prefix is not the root; a child that exited is not reported; a child with no PYTEST_CURRENT_TEST is
 reported with an empty phase; the wait (a holder that exits ends it before the bound; one that never exits is reported
-at the bound; each timed over this test's own children, since the wait covers every listed process and a sibling test's
+at the bound; one passed over is neither reported nor waited for; each timed over this test's own children, since the wait covers every listed process and a sibling test's
 may be listed); this user's unreadable process of the run listed as not judged, and one that started before the scanning
 process or sits in another cgroup counted instead, and one that exits during the wait not listed; the thread join (every
 non-daemon thread joined, one started during the join too, a daemon thread never waited on, one that outlives the bound
@@ -46,10 +46,15 @@ process a non-daemon thread starts after its test returned is named, and a daemo
 idle pool a test left is waited the whole bound and reported as still running (the join's named cost, timed up to the
 check's first read of /proc); without procfs the check says so once and leaves the exit status alone, and Scanner's
 roots test, which reads no /proc, runs there; a test that leaves nothing ends the run green with no holder line. The
+controller's own multiprocessing resource tracker is passed over (it held the root while the test ran; the run ends
+green and the tracker is gone once the run's process has exited); a second tracker the test starts itself is named, and
+so is a sleeper, no child of the controller, that the test points the controller's tracker record at. The
 child runs set ROMP_TESTS_LEAK_EXIT_BOUND_S so a holder that never exits costs a fraction of a second rather than the
 whole bound; one run keeps the default, and a holder that exits inside it ends that run green. Guard holds the pytest
 guard: Scanner skips under `python -m unittest` after tests.conftest was imported, and runs under pytest. Synthetic
-throughout: the leaked processes are `sleep`s and Python sleepers this module starts and stops by the pid it recorded."""
+throughout: the leaked processes are `sleep`s, Python sleepers and resource trackers this module starts; it stops each
+sleeper by the pid it recorded, and a tracker ends with its run's process (stopped here by its pid only while it still
+runs)."""
 import importlib.util
 import json
 import os
@@ -432,6 +437,20 @@ class Scanner(unittest.TestCase):
         leaked, unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=10.0, pids=[q.pid])
         self.assertEqual((leaked, unjudged["listed"], ok), ([], [], True))
         self.assertLess(time.monotonic() - t0, 3.0, "no holder, nothing listed, no wait")
+
+    @procfs
+    def test_a_passed_over_pid_is_neither_reported_nor_waited_for(self):
+        """skip_pids, which the run end fills with the controller's own resource tracker (_own_resource_tracker): a holder
+        among them is passed over by the scan before the wait, so the wait does not start for it and nothing is reported;
+        the same holder not passed over is reported at the bound."""
+        p = self._sleeper(TMPDIR=self.root)
+        t0 = time.monotonic()
+        leaked, unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=10.0, pids=[p.pid], skip_pids={p.pid})
+        took = time.monotonic() - t0
+        self.assertEqual((leaked, unjudged["listed"], ok), ([], [], True))
+        self.assertLess(took, 3.0, "no wait for a passed-over holder, not the 10 s bound: %.2f s" % took)
+        leaked, _unjudged, ok = self.conftest._leaked_run_processes([self.root], bound_s=0.3, pids=[p.pid])
+        self.assertEqual([h["pid"] for h in leaked], [p.pid], "the control: not passed over, it is reported")
 
     def _non_dumpable(self, *sleep):
         """A child that made itself non-dumpable, holding the stand-in root in its environment, once its ready file says
@@ -967,6 +986,69 @@ class RunEnd(unittest.TestCase):
         self.assertIn("1 passed", out)
         self.assertNotIn("hold its temp root", out)
 
+    def _marker_pid(self, scratch, name):
+        """A tracker's pid a Leaker test wrote under `name` in its marker dir, kept out of the `pid-` records whose cleanup
+        sends SIGKILL: the tracker exits with the child run, and its pid may be reused by the time the cleanup runs."""
+        return int(Path(scratch, name).read_text())
+
+    @procfs
+    def test_the_controllers_own_resource_tracker_is_passed_over_and_exits_with_the_run(self):
+        """Round 2 of fork PR #894's review: a spawn-context process pool (tests/test_session_env.py's census pool class
+        starts one) starts the controller's multiprocessing resource tracker, which lives until the controller exits and
+        holds the run's root through the environment it inherited, so a serial run of that class ended red on it. The
+        child run's test starts the tracker and reads it holding the root off a scan of it; the run ends green with no
+        line naming it, and the tracker is gone once the child run's process has exited. Red before the pass-over: the
+        run ended 1 with the tracker named."""
+        r, pids, scratch = self._child_run("test_starts_the_resource_tracker")
+        out = r.stdout + r.stderr
+        tracker = self._marker_pid(scratch, "tracker")
+        gone = _tracker_gone(tracker)
+        self.assertIn("TMPDIR", json.loads(Path(scratch, "tracker-via").read_text()),
+                      "the tracker held the root through TMPDIR while the test ran: " + out)
+        self.assertEqual(r.returncode, 0, out)
+        self.assertIn("1 passed", out)
+        self._named_nowhere(out, tracker)
+        self.assertTrue(gone, "the tracker exited with the child run's process")
+
+    @procfs
+    def test_a_second_resource_tracker_a_test_starts_itself_is_named_and_the_controllers_is_not(self):
+        """The pass-over is by identity, never by the command line: the child run's test starts the controller's tracker
+        and a second one through a ResourceTracker of its own, which is also the controller's child and runs the same
+        command. The run is red, the second tracker is named, and no line names the controller's."""
+        r, pids, scratch = self._child_run("test_starts_the_resource_tracker_and_a_second_one")
+        out = r.stdout + r.stderr
+        tracker, second = self._marker_pid(scratch, "tracker"), self._marker_pid(scratch, "second")
+        gone = [_tracker_gone(tracker), _tracker_gone(second)]
+        self.assertEqual(r.returncode, 1, out)
+        self.assertIn("from multiprocessing.resource_tracker import main;main(", self._line(out, second))
+        self.assertEqual([line for line in out.splitlines() if line.startswith("[tests]   pid %d " % tracker)], [],
+                         "no line names the controller's tracker:\n" + out)
+        self.assertEqual(gone, [True, True], "both trackers exited with the child run's process")
+
+    @procfs
+    def test_a_tracker_record_naming_a_process_that_is_not_the_controllers_child_passes_nothing_over(self):
+        """The pass-over's second condition: the child run's test points the controller's tracker record at a sleeper that
+        holds the root and whose parent has exited, so it is no child of the controller. The sleeper is named and the run
+        is red."""
+        r, pids, _ = self._child_run("test_points_the_tracker_record_at_a_process_that_is_not_its_child")
+        out = r.stdout + r.stderr
+        self.assertIn("orphan", pids, out)
+        self.assertEqual(r.returncode, 1, out)
+        self.assertIn("sleep 120", self._line(out, pids["orphan"]))
+
+
+def _tracker_gone(pid):
+    """Whether the resource tracker a child run recorded at `pid` is gone within _gone's bound. One still running is still
+    that tracker (a pid is reused only after its process is gone), so it is stopped here, before this run's own check."""
+    if _gone(pid):
+        return True
+    _stop(pid)
+    return False
+
+
+_KEPT = []    # what a Leaker test keeps referenced until its run's process exits: on 3.13 and later a collected
+#               ResourceTracker stops its tracker
+
 
 def _record(label, pid):
     """A Leaker test's record of a process it left: `pid-<label>` in the marker dir, one file per process."""
@@ -1059,6 +1141,36 @@ class Leaker(unittest.TestCase):
             listed = [json.loads(line)["root"] for line in fh.read().splitlines()]
         Path(os.environ[MARKER_ENV], "outer.json").write_text(json.dumps(
             {"listed": listed, "standing": [r for r in listed if os.path.isdir(r)]}))
+
+    @child_mode
+    def test_starts_the_resource_tracker(self):
+        from multiprocessing import resource_tracker
+        resource_tracker.ensure_running()
+        pid = resource_tracker._resource_tracker._pid
+        Path(os.environ[MARKER_ENV], "tracker").write_text(str(pid))
+        conftest = sys.modules["tests.conftest"]
+        held = conftest._processes_holding(conftest._run_roots(), pids=[pid])[0]
+        Path(os.environ[MARKER_ENV], "tracker-via").write_text(json.dumps([via for h in held for via in h["via"]]))
+
+    @child_mode
+    def test_starts_the_resource_tracker_and_a_second_one(self):
+        from multiprocessing import resource_tracker
+        resource_tracker.ensure_running()
+        second = resource_tracker.ResourceTracker()
+        second.ensure_running()
+        _KEPT.append(second)
+        Path(os.environ[MARKER_ENV], "tracker").write_text(str(resource_tracker._resource_tracker._pid))
+        Path(os.environ[MARKER_ENV], "second").write_text(str(second._pid))
+
+    @child_mode
+    def test_points_the_tracker_record_at_a_process_that_is_not_its_child(self):
+        from multiprocessing import resource_tracker
+        sh = subprocess.run(["sh", "-c", "sleep 120 </dev/null >/dev/null 2>&1 & echo $!"], capture_output=True, text=True,
+                            timeout=30)
+        pid = int(sh.stdout)
+        _record("orphan", pid)
+        self.assertNotEqual(sys.modules["tests.conftest"]._proc_stat(pid)[1], os.getpid(), "its parent, the shell, has exited")
+        resource_tracker._resource_tracker._pid = pid
 
     @child_mode
     def test_leaves_nothing(self):
