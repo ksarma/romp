@@ -6,8 +6,10 @@
 //     Waiting on you, the chat and the VS Code timeline): the window path hands the handler no message from a foreign
 //     sender. The federation registry path is unchanged: only federation.js calls it, with a MessageEvent it built.
 //   - every other window listener, each with its own check at its head: the Waiting pane's panes cache, the VS Code
-//     settings sync, the shared file viewer, the file browser, the file-comments panel's replies, the gear's six
-//     listeners, the shell palette's two, and the VS Code strip's.
+//     settings sync, the shared file viewer's two (its viewFile relay, and the way back from a failed svg picture, which
+//     runs the fetch again on hostUp and sends a probe of the picture's address on any other kernel message), the file
+//     browser, the file-comments panel's replies, the gear's six listeners, the shell palette's two, and the VS Code
+//     strip's.
 // Each listener hears every class windowSender does not name foreign, which covers each one's real senders: the shell
 // (the embedder of a pane; to the shell's own page, its panes are windows on its origin), this document (self), a window
 // on the origin (a second chat column, a pane posting up to the shell, the VS Code webview host, which posts from its own
@@ -17,16 +19,19 @@
 // listenForFrames, installSettingsSync, initFileView and initFileBrowse, each with that stand-in as the global window
 // (which is also the window windowSender reads by default). The rest live inside modules that boot a page on import (the
 // Waiting pane, the shell palette), behind module state (the comments panel's live panel) or inside a closure (the gear,
-// the strip), so each is lifted out of its file by the TypeScript parser, from its function to its closing brace,
-// transpiled and run over stubs: every free identifier it reads is an inert stub except the effect it is tested for, which
-// counts, windowSender, which is the real helper, and window, which is the stand-in the helper reads. A representative arm
-// per listener reaches its effect once from every heard sender and never from a foreign one; the head check sits before
-// every arm, which the census below pins at source for every listener in ui/.
+// the strip, the file viewer's way back), so each is lifted out of its file by the TypeScript parser, from its function to
+// its closing brace, transpiled and run over stubs: every free identifier it reads is an inert stub except the effect it
+// is tested for, which counts, windowSender, which is the real helper, and window, which is the stand-in the helper reads.
+// A representative arm per listener reaches its effect once from every heard sender and never from a foreign one (the
+// way back has a leg per arm: hostUp, and the probe); the head check sits before every arm, which the census below pins
+// at source for every listener in ui/.
 //
 // The census reads the population instead of a list: every addEventListener("message", …) call in a ui/ source file
 // (tests excluded), the method named or a computed member, and every onmessage handler assigned to the window (by window,
 // self, globalThis or the bare global), must take the event as its one parameter, with no default, open with the check,
-// preceded by nothing but reads of the message, and be one of the gated sites below, each with an executed leg here. A new
+// preceded by nothing but reads of the message, and be one of the gated sites below, each with an executed leg here. A
+// listener handed over by name is read at the function written in place that a const of that name holds, found by the
+// name's binding; any other name fails. A new
 // window listener anywhere in ui/ fails it until it is gated and given a leg. A second census reads what the name
 // windowSender is bound to: in every ui/ file that calls the check, it is the helper's own import (gear.js: its require),
 // bound once and never written, so a local helper of the same name that lets one more sender through cannot stand in for
@@ -144,7 +149,8 @@ function withGlobals<T>(vals: Record<string, unknown>, fn: () => T): T {
     for (const [k, had, v] of saved) { if (had) g[k] = v; else delete g[k]; }
   }
 }
-type Installed = { site: string; data: unknown; what: string; setup: (effect: () => void) => { globals?: Record<string, unknown>; install: () => void } };
+type Installed = { site: string; data: unknown; what: string; setup: (effect: () => void) => { globals?: Record<string, unknown>; install: () => void };
+                   marker?: string };   // in a file with more than one window message listener: the text that picks the installed one's site
 const INSTALLED: Installed[] = [
   { site: "webview/frame-listener.ts", what: "a kernel-shaped feed frame reaching a pane's frame handler through listenForFrames",
     data: { type: "feed", ledgers: [{ id: SID, name: "api" }] },
@@ -153,7 +159,7 @@ const INSTALLED: Installed[] = [
     data: { type: "settingsSync", settings: { theme: "classic", figureHosts: ["example.invalid"] } },
     setup: (effect) => ({ globals: { localStorage: { setItem: (k: string) => { if (k === "romp:settings") effect(); } } },
                           install: () => installSettingsSync() }) },
-  { site: "webview/file-view.ts", what: "a viewFile relay that opens a file in the viewer (initFileView)",
+  { site: "webview/file-view.ts", what: "a viewFile relay that opens a file in the viewer (initFileView)", marker: 'm.romp === "viewFile"',
     data: { romp: "viewFile", path: "docs/design.md", sid: SID },
     setup: (effect) => ({ globals: { document: { addEventListener: () => { /* the viewer's press watch */ } } },
                           install: () => initFileView(() => { /* the kernel poster */ }, () => effect()) }) },
@@ -198,7 +204,13 @@ const WINDOW_NAMES = new Set(["window", "self", "globalThis"]);
 /** Every window message listener in `src`, read by the TypeScript parser (so a spelling in a comment or a string is no
  *  listener): each addEventListener("message", fn) call, whether the method is named (x.addEventListener, a bare
  *  addEventListener) or a computed member (x["addEventListener"]), and each assignment of an onmessage handler to the
- *  window by any of WINDOW_NAMES. Where it is, what it is on, and the listener's node and text. */
+ *  window by any of WINDOW_NAMES. Where it is, what it is on, and the listener's node and text. A listener handed to
+ *  addEventListener by a plain name (the file viewer's onKernelMessage, which its close removes by that name) is read at
+ *  the function the name holds, when a const of that name, found by the name's binding (declOf), is initialised to a
+ *  function written in place: a const is never rebound, and the binding, not the spelling, picks it, so another
+ *  declaration of the name elsewhere in the file is not the one read. Any other name (a let or a var, which can be
+ *  rebound; a parameter; a function declaration, which can be assigned to; a const holding a call's result) stays the
+ *  name, which the head census refuses. */
 function sitesIn(file: string, src: string): Site[] {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
   const out: Site[] = [];
@@ -218,11 +230,20 @@ function sitesIn(file: string, src: string): Site[] {
     if (ts.isIdentifier(n)) return { name: n.text, receiver: "" };
     return null;
   };
+  /** the listener a registration hands over: the argument, or the function a const it names holds (see above) */
+  const listenerOf = (a: any): any => {
+    const u = bare(a);
+    if (!ts.isIdentifier(u)) return a;
+    const d = declOf(u);
+    const init = d && isConstDecl(d) && ts.isIdentifier(d.name) && d.initializer ? bare(d.initializer) : null;
+    return init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) ? init : a;
+  };
   const visit = (n: any): void => {
     if (ts.isCallExpression(n) && n.arguments.length >= 2 && ts.isStringLiteralLike(n.arguments[0]) && n.arguments[0].text === "message") {
       const m = member(n.expression);
       if (m && m.name === "addEventListener") {
-        out.push({ file, line: line(n), receiver: m.receiver, fn: n.arguments[1], text: n.arguments[1].getText(sf), kind: "addEventListener" });
+        const fn = listenerOf(n.arguments[1]);
+        out.push({ file, line: line(n), receiver: m.receiver, fn, text: fn.getText(sf), kind: "addEventListener" });
       }
     }
     if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
@@ -262,8 +283,23 @@ const chain: any = { then: () => chain, catch: () => chain };   // a fetch's pro
 
 type Lifted = { file: string; marker: string; what: string; data: unknown;
                 named: (hit: () => void, w: Receiver) => Record<string, unknown>;   // the effect's binding, counting through hit
-                writes?: string };   // or: the effect is a write to this free name
+                writes?: string;   // or: the effect is a write to this free name
+                arm?: string };    // a listener with more than one arm the check must hold has a leg per arm, each naming its arm
+/** The file viewer's way back (openFileView's onKernelMessage) over a pane that waits, with the probes' budget full. Both of
+ *  its effects count: the way back (wayBackEvent, which runs the fetch again) and a probe of the picture's address
+ *  (probeServed, which sends one), so each of its two legs reads that a foreign sender reaches neither, and that a heard
+ *  sender reaches its own arm's effect and not the other's. */
+const wayBackScope = (hit: () => void): Record<string, unknown> => ({
+  wayBackEvent: hit, probeServed: () => { hit(); return true; }, paneWaits: () => true,
+  wayBackProbing: false, wayBackProbes: 3, wayBackSeq: 0, objUrl: "/file?path=docs%2Ffigure.svg&sid=" + SID + "&v=1",
+});
 const LIFTED: Lifted[] = [
+  { file: "webview/file-view.ts", marker: '"hostUp"', arm: "hostUp",
+    what: "the viewer's way back from a failed svg picture on hostUp (federation.js's own dispatch), which runs the fetch again",
+    data: { type: "hostUp", hosts: ["TESTHOST"] }, named: (hit) => wayBackScope(hit) },
+  { file: "webview/file-view.ts", marker: "probeServed(", arm: "probe",
+    what: "the viewer's way back from a failed svg picture on any other kernel message, which sends a probe of the picture's address",
+    data: { type: "sessions", sessions: [] }, named: (hit) => wayBackScope(hit) },
   { file: "webview/waiting.ts", marker: 'm.romp !== "panes"', what: "the shell's panes word replacing the Waiting pane's pane-routing cache",
     data: { romp: "panes", on: { files: true }, avail: { files: true } }, named: () => ({}), writes: "panesAvail" },
   { file: "webview/file-comments.ts", marker: '"fileCommentsResult"', what: "a fileCommentsResult settling the live panel's request",
@@ -324,7 +360,7 @@ function runLifted(leg: Lifted, row: Row): number {
 }
 
 for (const leg of LIFTED) {
-  const label = leg.file + " (" + leg.marker + ")";
+  const label = leg.file + " (" + (leg.arm ? leg.arm + " arm" : leg.marker) + ")";
   test(label + ": " + leg.what + " from a foreign sender reaches nothing", () => {
     const reached = FOREIGN.filter((row) => runLifted(leg, row) !== 0).map((row) => row.who);
     assert.deepEqual(reached, [], label + ": a foreign sender reached the effect: " + reached.join("; "));
@@ -357,6 +393,7 @@ function uiSources(): string[] {
  *  that calls, constructs and assigns nothing, so no arm runs before the check. */
 function headCheck(site: Site): string | null {
   const fn = site.fn;
+  if (ts.isIdentifier(fn)) return "the listener is a name no const holding a function written in place binds (sitesIn): " + fn.text;
   if (!(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || !fn.body || !ts.isBlock(fn.body)) return "the listener is not a function with a body";
   if (!fn.parameters.length || !ts.isIdentifier(fn.parameters[0].name)) return "the listener names no event parameter";
   if (fn.parameters.length !== 1 || fn.parameters[0].initializer || fn.parameters[0].dotDotDotToken) {
@@ -392,7 +429,7 @@ function headCheck(site: Site): string | null {
 // no other page can post to) would be listed in EXEMPT with its reason; there is none in ui/ today (federation.ts's
 // sockets use onmessage, and the design leaves WebSocket and MessageChannel handlers out).
 const GATED: Array<[string, number]> = [
-  ["webview/file-browse.ts", 1], ["webview/file-comments.ts", 1], ["webview/file-view.ts", 1], ["webview/frame-listener.ts", 1],
+  ["webview/file-browse.ts", 1], ["webview/file-comments.ts", 1], ["webview/file-view.ts", 2], ["webview/frame-listener.ts", 1],
   ["webview/gear.js", 6], ["webview/palette-main.ts", 2], ["webview/settings.ts", 1], ["webview/strip.ts", 1], ["webview/waiting.ts", 1],
 ];
 const EXEMPT: Array<[string, number, string]> = [];
@@ -426,6 +463,18 @@ test("the census reads every spelling of a window message listener: addEventList
   assert.deepEqual(found("onmessage = " + listener + ";"), ["onmessage on (bare)"]);
   assert.deepEqual(found("ws.onmessage = " + listener + "; port.onmessage = " + listener + ";"), [], "a socket's and a port's handler are not window listeners");
   assert.deepEqual(found("window.addEventListener(\"resize\", " + listener + "); const s = \"window.onmessage = f\";"), [], "another event, or a string");
+  // a listener handed over by name is read at the function written in place that a const of that name holds, the const
+  // the name's binding picks; any other name stays the name (the head census refuses it)
+  const text = (src: string) => sitesIn("webview/probe.ts", src).map((s) => s.text);
+  assert.deepEqual(text("const h = (e: MessageEvent): void => { go(e.data); }; window.addEventListener(\"message\", h);"), ["(e: MessageEvent): void => { go(e.data); }"], "a const arrow function");
+  assert.deepEqual(text("const h = function (e) { go(e.data); }; window.addEventListener(\"message\", h); window.removeEventListener(\"message\", h);"),
+    ["function (e) { go(e.data); }"], "a const function expression; a removal registers nothing");
+  assert.deepEqual(text("const h = (e) => { stop(); }; function f() { const h = (e) => { go(e.data); }; window.addEventListener(\"message\", h); }"),
+    ["(e) => { go(e.data); }"], "the binding picks the inner const, not the first declaration of the spelling");
+  assert.deepEqual(text("const h = (e) => { go(e.data); }; { const h = (e) => { stop(); }; } window.addEventListener(\"message\", h);"),
+    ["(e) => { go(e.data); }"], "the binding picks the outer const, not the last declaration of the spelling");
+  assert.deepEqual(text("let h = (e) => { go(e.data); }; window.addEventListener(\"message\", h);"), ["h"], "a let can be rebound");
+  assert.deepEqual(text("const h = wrap((e) => { go(e.data); }); window.addEventListener(\"message\", h);"), ["h"], "a const holding a call's result");
 });
 
 // ── the census: the name every check calls is the helper ──
@@ -1240,11 +1289,27 @@ test("the road census reads what it claims: every road around the spelled regist
 
 test("census: every gated site has an executed leg in this file (installed, or lifted by its marker)", () => {
   const legs = new Set<string>();
-  for (const leg of INSTALLED) { const ss = messageSites(leg.site); assert.equal(ss.length, 1, leg.site + " has one window message listener"); legs.add(leg.site + ":" + ss[0].line); }
-  for (const leg of LIFTED) { const s = siteOf(leg.file, leg.marker); legs.add(s.file + ":" + s.line); }
+  const runs: string[] = [];                      // each leg's listener, with its arm when it names one
+  const arms = new Map<string, boolean[]>();      // per listener: whether each of its legs names its arm
+  const add = (s: Site, arm: string | undefined): void => {
+    const k = s.file + ":" + s.line;
+    legs.add(k);
+    runs.push(arm ? k + " (" + arm + ")" : k);
+    arms.set(k, [...(arms.get(k) || []), !!arm]);
+  };
+  for (const leg of INSTALLED) {
+    if (leg.marker) { add(siteOf(leg.site, leg.marker), undefined); continue; }
+    const ss = messageSites(leg.site);
+    assert.equal(ss.length, 1, leg.site + " has one window message listener, or its installed leg names a marker");
+    add(ss[0], undefined);
+  }
+  for (const leg of LIFTED) add(siteOf(leg.file, leg.marker), leg.arm);
   const sites = uiSources().flatMap(messageSites).map((s) => s.file + ":" + s.line);
   assert.deepEqual(sites.filter((s) => !legs.has(s)), [], "a window message listener with no executed leg here");
-  assert.equal(legs.size, INSTALLED.length + LIFTED.length, "no two legs run the same listener");
+  assert.equal(runs.length, INSTALLED.length + LIFTED.length);
+  assert.equal(new Set(runs).size, runs.length, "no two legs run the same arm of one listener: " + runs.join(", "));
+  const unnamed = [...arms].filter(([, named]) => named.length > 1 && named.some((x) => !x)).map(([k]) => k);
+  assert.deepEqual(unnamed, [], "a listener with more than one leg names each leg's arm");
 });
 
 test("the census rule reads what it claims: a listener that acts before the check, or has none, is refused; the check after reads of the message is accepted", () => {
@@ -1269,4 +1334,23 @@ test("the census rule reads what it claims: a listener that acts before the chec
   assert.match(String(probe('function (e, f) { if (windowSender(e) === "foreign") return; go(f); }')), /more than its one event parameter/);
   assert.match(String(probe('(...e) => { if (windowSender(e[0]) === "foreign") return; }')), /names no event parameter|more than/);
   assert.equal(probe('(e: MessageEvent) => { if (windowSender(e) === "foreign") return; go(e.data); }'), null, "a type on the one parameter is no default");
+  // a listener handed over by name (sitesIn reads it at the function its const holds): the check at that function's head
+  // passes; an arm ahead of it, or a name the census cannot read as such a const, is refused
+  const byName = (src: string) => sitesIn("webview/probe.ts", src).map(headCheck);
+  assert.deepEqual(byName('const h = (e: MessageEvent): void => { if (windowSender(e) === "foreign") return; go(e.data); }; window.addEventListener("message", h);'), [null]);
+  assert.match(String(byName('const h = (e: MessageEvent): void => { const m = e.data; if (m.type === "hostUp") { up(); return; } if (windowSender(e) === "foreign") return; }; window.addEventListener("message", h);')[0]),
+    /runs before/, "an arm ahead of the check in a named listener");
+  assert.match(String(byName('const h = (e) => { if (windowSender(e) === "foreign") return; }; function f() { const h = (e) => { go(e.data); }; window.addEventListener("message", h); }')[0]),
+    /runs before|no `if/, "the const the name binds at the call is the inner one, which has no check");
+  assert.match(String(byName('const h = (e) => { go(e.data); }; { const h = (e) => { if (windowSender(e) === "foreign") return; }; } window.addEventListener("message", h);')[0]),
+    /runs before|no `if/, "the const the name binds at the call is the outer one, which has no check");
+  for (const src of [
+    'let h = (e) => { if (windowSender(e) === "foreign") return; }; h = (e) => { go(e.data); }; window.addEventListener("message", h);',
+    'var h = (e) => { if (windowSender(e) === "foreign") return; }; window.addEventListener("message", h);',
+    'function h(e) { if (windowSender(e) === "foreign") return; } window.addEventListener("message", h);',
+    'const h = wrap((e) => { if (windowSender(e) === "foreign") return; }); window.addEventListener("message", h);',
+    'function f(h) { window.addEventListener("message", h); }',
+    'const { h } = handlers; window.addEventListener("message", h);',
+    'window.addEventListener("message", h);',
+  ]) assert.match(String(byName(src)[0]), /a name no const holding a function written in place binds/, src);
 });

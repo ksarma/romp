@@ -837,6 +837,32 @@ test("the probes' budget spans the panes their own fetches paint: a probe that l
   }
 });
 
+test("over the re-ask's pane, a window message from a foreign sender runs nothing: its hostUp asks no fetch and its kernel message sends no probe, while this document's own dispatch of the same two still does (window-sender.ts; foreign-sender-listeners.test.ts runs the listener against every sender class)", async (t) => {
+  const probes = fakeProbes(t);
+  const { ctx, body } = await open(FIG, t);
+  delete disk[FIG];                                       // the address does not answer the viewer's fetch from here on
+  body.querySelector("img.fileview-img")!.dispatchEvent(new Ev("error"));
+  await settle();
+  assert.equal(ctx.error(), "no such file: " + FIG, "the re-ask's pane, which waits for a way back");
+  const asks = asksOf(FIG);
+  // a post with no source that names an origin is another window's, never this document's own dispatch: a sandboxed frame's
+  // (its opaque origin) or a page's on another origin, each gone before its message arrived
+  for (const origin of ["null", "https://example.invalid"]) {
+    win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] }, origin }));
+    win.dispatchEvent(new MessageEvent("message", { data: { type: "sessions", sessions: [] }, origin }));
+    await settle();
+  }
+  assert.equal(asksOf(FIG), asks, "a foreign hostUp asks the address nothing");
+  assert.equal(probes.length, 0, "a foreign kernel message sends no probe");
+  assert.equal(ctx.error(), "no such file: " + FIG, "the pane stands");
+  kernelMessage();
+  assert.equal(probes.length, 1, "this document's own dispatch of a kernel message sends the probe");
+  probes[0].onerror!();
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "hostUp", hosts: ["TESTHOST"] } }));
+  await settle();
+  assert.equal(asksOf(FIG) - asks, 1, "and its hostUp, as federation.js dispatches it, asks the address again");
+});
+
 test("the probes' budget refills at a reload, at the Source toggle and at a landing whose picture shows; a landing whose picture fails refills nothing", async (t) => {
   const probes = fakeProbes(t);
   const fv = await mod();

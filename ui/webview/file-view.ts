@@ -46,7 +46,7 @@ import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
 import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, the chat's own
 import { fenceCopyQueue, type Fence } from "./fence-source";   // what Copy copies: the fence's text as the file holds it, tabs and all
 import "./viewer-grammars";   // six more grammars for a viewed file, registered on the bundle's hljs core (rust, go, c, java, sql, toml)
-import { windowSender } from "./window-sender";   // initFileView's window listener hears no foreign sender
+import { windowSender } from "./window-sender";   // the viewer's two window listeners (initFileView's, openFileView's onKernelMessage) hear no foreign sender
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
 // the browser's frame with a line saying so — ui/CLAUDE.md's loading-state rule: the loader fades on the event, with a
@@ -3744,10 +3744,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // refills it, however many of them load (a new picture at an address the page has loaded before may load from the page's own
   // memory, with no request, while the page still holds that picture). Nothing runs once the Source toggle has been pressed
   // since the pane's paint (`paneView`). The listeners leave with the viewer (closeHooks: both exits).
+  // A window message from a foreign sender (window-sender.ts) runs neither the way back nor a probe, so a page romp does
+  // not control cannot make the viewer ask the address again or spend the probes: hostUp is this document's own dispatch
+  // (federation.js), and a kernel frame is that dispatch's, the pane shim's or the VS Code webview host's.
   const paneWaits = (): boolean => wayBack && viewError !== null && wrap.isConnected && !editing && paneView === viewSeq;
   const askAgain = (): void => { if (paneWaits()) fetchFile(true); };
   const wayBackEvent = (): void => { linkSeq++; fillProbes(); askAgain(); };
   const onKernelMessage = (e: MessageEvent): void => {
+    if (windowSender(e) === "foreign") return;
     const m = e.data;
     if (!m || typeof m.type !== "string") return;
     if (m.type === "hostUp") { wayBackEvent(); return; }
