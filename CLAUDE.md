@@ -105,6 +105,13 @@ This repo may go public; assume every commit is permanent and world-readable.
   old path for a rename; the file's own path otherwise, a merge's parents'
   included), so git prints the change and the scan reads it; the hook names
   `--no-verify` last, since it publishes the new text unread;
+  a commit whose header names an encoding off the hook's list of those git
+  converts to UTF-8 with every ASCII byte kept (UTF-8, EUC-JP, ISO-8859-1 and
+  CP1252 are on it; UTF-16, SHIFT_JIS, BIG5 and the EBCDIC pages are not) is
+  refused by name, clean or not, since the message and address checks read
+  the commit as git converts it, which under such an encoding can drop or
+  change the bytes of a banned string (one published that way, 2026-09-26);
+  recommit it under UTF-8, or push with `--no-verify`;
   and the maintainer's clone carries an UNTRACKED
   `tests/test_no_personal_identifiers.py` that scans the working tree for the
   same strings plus that machine's hostname and home path. The pytest file is
@@ -118,10 +125,11 @@ The rule above is about identifiers a human can enumerate. Credentials are the
 other half and cannot work that way: nobody knows a token's text until it leaks,
 so there is no list to write. **gitleaks** covers them, in two places:
 - **`.githooks/pre-push`** reads for itself the changes a push would publish:
-  the lines the pushed commits add, a merge by its combined diff (the lines in
-  none of its parents, so a secret typed into a conflict resolution is read
-  too), and a merge's binary path whole (below). It hands those bytes
-  to gitleaks, which runs no git, and refuses the push on a hit. It needs
+  the lines the pushed commits add, each merge by its combined diff (the lines
+  in none of its parents, so a secret typed into a conflict resolution is read
+  too) and by its first-parent diff, and a merge's binary path whole (below).
+  It hands those bytes to gitleaks, which runs no git, and refuses the push on
+  a hit. It needs
   gitleaks 8.25.0 or later: the hook's flags need 8.24.0, and this
   repository's `.gitleaks.toml` uses the `[[allowlists]]` form, which gitleaks
   reads correctly from 8.25.0 on (CI's pinned 8.28.0 is above the floor). A
@@ -131,8 +139,9 @@ so there is no list to write. **gitleaks** covers them, in two places:
   loud notice and no scan (requiring an install to push would break every clone
   that never asked for it); a gitleaks that fails to run refuses the push and
   says so, and so does one that ran but cannot show what it scanned: an error
-  line in its own log, or a scanned-byte figure that is not the count of bytes
-  the hook handed it, or no figure at all (the two coverage conditions). The
+  line in its own log, a scanned-byte figure that is not the count of bytes
+  the hook handed it or no figure at all, or a count of files read that is
+  not the count of files the hook handed it. The
   hook's read carries `--text`, so a diff attribute cannot hide a credential
   in a commit that is not a merge: a path git would otherwise call binary (a
   `-diff` line or the `binary` macro in an attributes file, or a blob over
@@ -142,11 +151,22 @@ so there is no list to write. **gitleaks** covers them, in two places:
   binary path whole from the merge's result blob. That whole read has a cost:
   a push is now refused when the blob holds a credential already published.
   Its witness is the round 10b case in `tests/pre-push-hook.bats` titled
-  "A.2's disclosed cost, with its witness".
+  "A.2's disclosed cost, with its witness". The first-parent read has the
+  same kind of cost: a merge that brings in a credential a remote already
+  holds (say, a branch merging a `main` that gained one since the branch was
+  cut) is refused, as it was before the hook read the changes itself.
   The hook also refuses a push on a line of git's answer it cannot read, and a
   push carrying a commit of 64 or more parents (the identifier scan refuses
   that too), since git's combined diff drops or garbles the lines such a merge
-  adds.
+  adds. A push that changes a path whose diff attribute names a driver with
+  a `diff.<driver>.textconv` is refused, naming the path and the driver, even
+  for a pure rename or a mode change: a credential could show only in the
+  driver's rendering, which the hook does not read. Review the path by hand,
+  then set `ROMP_NO_GITLEAKS=1` for that push. The hook refuses a push under
+  any `diff.<driver>.algorithm` in the clone's config, whether or not a
+  file's attribute names that driver, and under a value of `diff.algorithm`,
+  `diff.interHunkContext` or `diff.renames` that it does not read; each
+  refusal names the key and its remedy.
   The hook refuses a push with something to scan when the gitleaks config gives
   any rule a path condition, naming the rule and the config file, since the
   scan cannot apply the condition; support for such rules is a held follow-up.
@@ -158,8 +178,31 @@ so there is no list to write. **gitleaks** covers them, in two places:
   `GITLEAKS_CONFIG` or `GITLEAKS_CONFIG_TOML` gives, each with the files its
   `[extend]` names. With none of these, gitleaks uses its own default, which
   the hook does not read. It refuses the push on a construct it cannot parse,
-  and every scanner run reads the hook's copy of the config, so the hook's
-  check and the scan read the same bytes.
+  and on a key set twice in one table, naming the key, both lines and the
+  file. Keys are compared without case, as gitleaks compares them, so `id`
+  beside `ID` refuses, and so does a table named in two spellings
+  (`[extend]` beside `[Extend]`): gitleaks keeps one of the two by a rule
+  the hook cannot follow. Every scanner run reads the hook's copy of the
+  config, so the hook's check and the scan read the same bytes.
+  A path allowlist on a rule (the rule's own, or a targeted one) is matched
+  against the names the scan gives the pushed lines, not against the files'
+  paths. One that matches none of those names changes nothing, and the rule
+  fires. One that matches them makes gitleaks skip the rule, and the push is
+  refused, even when the file is clean, naming the rule and the file: an
+  allowlist for extensionless names does this, and so does `paths = ['.*']`
+  written to switch a rule off. Excuse a false alarm by its value, with a
+  regex or stopword allowlist, and switch a rule off with `disabledRules`.
+  Under a config that carries such an allowlist, the hook first runs
+  gitleaks once more, over text of its own, to check that the running
+  release reports the skip in words the hook reads (every release from
+  8.25.0 to 8.30.1 does); when it does not, the push is refused, naming the
+  gitleaks version: re-verify the hook against that release, or set
+  `ROMP_NO_GITLEAKS=1` for one push.
+  A repository rule anchored at the start of the text (`^` outside `(?m)`,
+  or `\A`) misses a credential on the first added line of a hunk whose
+  leading bytes gitleaks' file-type check would skip (an executable's `MZ`,
+  a PDF's `%PDF`, a zip's `PK` and the like); write such a rule with
+  `(?m)^`, which matches there.
   `ROMP_NO_GITLEAKS=1` skips the credential scan for one push, and
   `ROMP_GITLEAKS` points at a binary. A clone that carries any replace ref
   (`git replace`) is refused before either scan runs when either scan is armed,
