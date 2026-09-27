@@ -163,7 +163,9 @@ subject; `verify` refuses the branch otherwise.
    ../romp-batch-<name>` prints what `verify` will read.
 4. `scripts/batch.py verify <name>`. It reads the sweep result for the batch head's full sha and
    fails by name when it is missing, stale (recorded at another commit), unfinished, red, invalid,
-   incomplete or unreadable. It also fails as "behind" when the batch head does not contain main as
+   incomplete or unreadable. A missing result names the directory verify read and the variable it
+   came from (`ROMP_STATE_DIR`, `XDG_STATE_HOME` or `HOME`): a sweep run with another environment
+   wrote its result somewhere else. It also fails as "behind" when the batch head does not contain main as
    origin has it now: CI does not run on the merge to main, so a batch lands only when the tree that
    lands is the tree the sweep and the batch's CI ran on; run step 7, then steps 3 and 4 again. If
    an earlier `assemble` died part-way, `verify` fails with "assembly incomplete"; run `assemble`

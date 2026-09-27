@@ -1518,11 +1518,12 @@ class VerifyReadsTheSweep(_Base):
         self.assertIsNone(st["sweep"], "a failing case leaves no recorded sweep for the body")
         return p
 
-    def test_no_result_is_missing_and_names_the_full_sha_and_the_path(self):
+    def test_no_result_is_missing_and_names_the_full_sha_and_the_directory_it_read(self):
         fx = self.fx
         head = self.assembled()
-        p = self.refused("FAIL sweep missing: no result for the batch head %s at %s" % (head, sweep.result_path(head, env=fx.env)))
-        self.assertIn("run `scripts/sweep.py run --tree %s`" % fx.wt("b1"), p.stdout)
+        p = self.refused("FAIL sweep missing: no result for the batch head %s in %s (the state dir from XDG_STATE_HOME"
+                         % (head, sweep.sweeps_dir(env=fx.env)))
+        self.assertIn("run `scripts/sweep.py run --tree %s` with the same ROMP_STATE_DIR and XDG_STATE_HOME" % fx.wt("b1"), p.stdout)
 
     def test_a_pass_at_the_head_is_ok_and_recorded(self):
         fx = self.fx

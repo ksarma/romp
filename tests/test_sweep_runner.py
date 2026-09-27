@@ -533,11 +533,25 @@ class Reader(unittest.TestCase):
         self.assertIn("sweep at 1234567890: pass, finished 2026-01-01T00:01:00Z (pytest 0, bats 0, manager 0, tools 0, ledger 0; "
                       "not owed: deps, typecheck, npm-test, build)", line)
 
-    def test_missing_names_the_full_sha_and_the_path(self):
+    def test_missing_names_the_full_sha_the_directory_read_and_where_it_came_from(self):
+        """The runner and the reader share the state dir only when their environments agree (ROMP_STATE_DIR, else
+        XDG_STATE_HOME, else HOME), so a missing result names the directory the reader read and the variable it
+        came from, and says when that directory does not exist at all."""
         case, line = self.case()
         self.assertEqual(case, "missing")
         self.assertIn(self.SHA, line)
-        self.assertIn(sweep.result_path(self.SHA, self.env), line)
+        d = sweep.sweeps_dir(self.env)
+        self.assertIn("in %s (the state dir from XDG_STATE_HOME; the directory does not exist)" % d, line)
+        self.assertIn("with the same ROMP_STATE_DIR and XDG_STATE_HOME as this reader", line)
+        os.makedirs(d)
+        line = self.case()[1]
+        self.assertIn("in %s (the state dir from XDG_STATE_HOME)" % d, line, "an existing directory is named without the clause")
+        for env, source in (({"ROMP_STATE_DIR": os.path.join(self.tmp, "s"), "XDG_STATE_HOME": self.tmp}, "ROMP_STATE_DIR"),
+                            ({"HOME": self.tmp}, "HOME, with ROMP_STATE_DIR and XDG_STATE_HOME unset")):
+            with self.subTest(source=source):
+                a = sweep.assess(self.SHA, env=env)
+                self.assertEqual(a["case"], "missing")
+                self.assertIn("in %s (the state dir from %s" % (sweep.sweeps_dir(env), source), a["line"])
 
     def test_stale_by_branch_and_by_the_recorded_sha(self):
         self.write(self.result(sha=self.OTHER))

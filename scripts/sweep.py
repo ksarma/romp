@@ -101,6 +101,17 @@ def state_dir(env=None):
     return os.path.join(base, "romp")
 
 
+def state_dir_source(env=None):
+    """The variable state_dir took the state dir from, for a message: ROMP_STATE_DIR, XDG_STATE_HOME, or HOME
+    when neither is set."""
+    env = os.environ if env is None else env
+    if env.get("ROMP_STATE_DIR"):
+        return "ROMP_STATE_DIR"
+    if env.get("XDG_STATE_HOME"):
+        return "XDG_STATE_HOME"
+    return "HOME, with ROMP_STATE_DIR and XDG_STATE_HOME unset"
+
+
 def sweeps_dir(env=None):
     return os.path.join(state_dir(env), "sweeps")
 
@@ -259,8 +270,14 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
                 return done("stale", "sweep stale: the newest result for %s is at %s (finished %s), %s is at %s; sweep again "
                                      "at %s" % (branch, short(other.get("sha")), other.get("finished") or "never", subject,
                                                 short(sha), subject))
+        # The directory read is named with where it came from: the runner writes under the state dir ITS environment
+        # names, so a result written with another ROMP_STATE_DIR or XDG_STATE_HOME is missing here.
         hint = " --tree %s" % tree_hint if tree_hint else ""
-        return done("missing", "sweep missing: no result for %s %s at %s; run `scripts/sweep.py run%s`" % (subject, sha, path, hint))
+        d = sweeps_dir(env)
+        return done("missing", "sweep missing: no result for %s %s in %s (the state dir from %s%s); run `scripts/sweep.py "
+                               "run%s` with the same ROMP_STATE_DIR and XDG_STATE_HOME as this reader, or its result goes to "
+                               "another directory" % (subject, sha, d, state_dir_source(env),
+                                                      "" if os.path.isdir(d) else "; the directory does not exist", hint))
     try:
         data = _load(path)
     except (OSError, ValueError) as e:
