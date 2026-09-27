@@ -226,11 +226,72 @@ a running session declares its full per-session env: any var you don't name
 again is dropped, and `romp new --no-env <name>` declares the empty set, which
 clears them all. Keep secrets out of it: each value is copied into
 per-session files and the session registry under `~/.local/state/romp/`. A
-credential never goes in `--env`, and never in `service.env` either: a payload
-naming `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN`
-is refused outright. A session's credential is Claude Code's own resolution,
-the `apiKeyHelper` in its settings for a key and the login otherwise; see
-[Service environment and credentials](#service-environment-and-credentials).
+credential never goes in `--env`: a payload naming `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN` is refused outright, and so
+is one naming any other credential-shaped variable with a non-empty value (a
+name ending `_API_KEY` or `_TOKEN`, or one of 1Password's `OP_*` names, in any
+letter case for both; the same rule the hosted launch uses to keep such a name
+out of its `spawn.json`, and romp's own `ROMP_SERVE_TOKEN` is refused like any
+other). The refusal names the variable, never its value, and nothing is saved:
+a running session's env stays what it was. Where such a value belongs depends
+on which half of the rule it matched. Another provider's `_API_KEY` or
+`_TOKEN` variable goes in the process environment romp's service starts with
+(`service.env`, or the service unit's environment), which reaches every
+session's Claude process (the boot line described under
+[Service environment and credentials](#service-environment-and-credentials)
+names those variables), or a session's own shells load it from a secret
+manager themselves. The retired provider names (`ROMP_API_KEY_CMD`,
+`ROMP_API_KEY_REF` and `ANTHROPIC_API_KEY`) and 1Password's `OP_*` names never
+go in `service.env`: the boot check refuses them, as that section says, reading
+each name as spelled (`op`'s upper-case spellings; a lower-case `OP_*` spelling
+is refused at this door, which folds case, and not at boot). The other two
+Claude names, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN`, are not
+refused at boot: found in the kernel's own environment they are claimed at boot
+and handed to login-billed launches ([the login](#the-login)), and a pick
+naming either is refused at this door for its own reason. romp no longer runs
+`op`, so a helper that needs a 1Password token reads it from a file of its own,
+or the session's shells load it. A session's credential is Claude Code's own
+resolution, the `apiKeyHelper`
+in its settings for a key and the login otherwise. An env stored before this
+rule keeps launching as it was and is named once per session in the problem
+ring, names only: the session launches with the variable, and its value sits
+in the session registry and in the session's `sdk-flag-settings/<sid>.json`.
+Nothing in this change removes a value already stored; that is a separate
+decision. Until it is made, a re-declaration (`romp new --env` with the rest
+of the set, or `--no-env`) does what it did before the door: the registry
+follows it at once, the flag-settings file only at the session's next connect
+that writes it, and a file nothing rewrites stays as it was. A fork of that
+session (a cut turn, a comment thread) inherits its parent's env less any such
+name, so a fork's env can differ from its parent's by exactly those names; the
+parent's registry keeps it. After a re-declaration drops such a name from
+the registry, no row is filed or refreshed for it, and a row already in the
+ring leaves at the ring's roll-off or the kernel's restart, because the row
+reads the registry and not the file, which keeps the value until a connect
+that writes it. The problem ring shows the most recent problems, so the check
+is the command below, not the error centre. It lists, by name
+only, the stored offenders in the two launch files it reads, the per-session
+flag-settings files and the session registries, and in the temp file a kernel
+killed mid-write can leave beside either (`<sid>.json.<pid>.<hex>.tmp`, which
+holds what was being written; one caught mid-write can be truncated JSON,
+which is reported as unreadable rather than passed over). A pick parked in
+`pending-ops.json` is not read here; the door judges it at replay. The rule it
+spells is the doors' own, so it names exactly what they refuse. A file it
+cannot read, or that is not a settings object, is reported on stderr and
+skipped, never passed over in silence:
+
+```bash
+python3 -c 'import glob, json, os, sys
+S = os.environ.get("ROMP_STATE_DIR") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "romp")
+for p in sorted(glob.glob(S + "/sdk-flag-settings/*.json*") + glob.glob(S + "/sdk/*.json*")):
+    try: body = json.load(open(p))
+    except (OSError, ValueError) as e: print(p, "skipped: unreadable (%s)" % e.__class__.__name__, file=sys.stderr); continue
+    if not isinstance(body, dict) or not isinstance(body.get("env") or {}, dict): print(p, "skipped: not a settings object", file=sys.stderr); continue
+    env = body.get("env") or {}
+    for n in sorted(env):
+        u = n.upper()
+        if (env[n] or "").strip() and (u.endswith(("_API_KEY", "_TOKEN")) or u.startswith("OP_SESSION_") or u in ("OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN", "OP_ACCOUNT")):
+            print(p, n)'
+```
 
 Two things to know before building on `romp sessions --json`. **`waiting` means
 at rest**, the ordinary state of a session that has finished its turn, so
@@ -1406,7 +1467,7 @@ a session can print, so there is no quiet fallback anywhere.
 
 At boot the kernel also names, once and as information rather than a problem,
 the variables in its own environment shaped like credentials (names ending
-`_API_KEY` or `_TOKEN` in any letter case, and 1Password's own `OP_*` names)
+`_API_KEY` or `_TOKEN`, and 1Password's own `OP_*` names, in any letter case)
 that reach every session's Claude process and the shells it spawns: the SDK
 hands each session the kernel's environment, and romp takes only the login
 tokens it claims at boot (see [The login](#the-login)) out of it. The line
@@ -1891,7 +1952,12 @@ fold cold for want of a state counts for the pass, which heals it, and not
 here, where it would only be written cold again), before the entry is popped,
 and on a hit or a restore at the witness the entry stays as it always has. The
 write is charged to the pusher cycle's byte budget, which the kernel begins at
-each cycle's start and the pass shares near its end; over the budget the write
+each cycle's start, where the drops an earlier cycle owed, then the releases an
+earlier cycle owed, then the releases of the ends an earlier cycle saw while
+nothing was held, then the releases at the ends new to the cycle charge it
+before the builds' drops do (whichever runs first gets the room when one
+document fits, so what an earlier cycle deferred is paid before any new end),
+and the pass shares near its end; over the budget the write
 and the drop wait with the entry held (`converge.dropDeferred`), the drop then
 owed and paid at the next cycle's start with the room that cycle has, oldest
 first, or by the next fold over the file, whichever comes first. A document
@@ -1905,8 +1971,10 @@ The knobs: `ROMP_CKPT_CONVERGE_MS=0` turns the pass off and the drop write with
 it (the drop then pops as it did before the write existed, except under the
 incident scan's memo, which keeps a walked file's records resident when the
 document write is off, since its memo cannot reach the disk); `ROMP_CKPT_CONVERGE_MB`
-is the cycle budget both charge, and `0` turns the drop write off the same way
-rather than deferring every drop; both are read where the drop lives, so they
+is the cycle budget all three charge, and `0` turns the drop write off the same
+way rather than deferring every drop (and gives up every release at an agent's
+end whose file is still on disk, counted in `recordCache.releaseLost`); both
+are read where the drop lives, so they
 hold from the first fold, before the first pusher cycle begins. The pass also
 writes the ASSEMBLY document of an idle leaf that has none (the assembly
 document is otherwise written only at a settle, which an idle session never
@@ -2097,7 +2165,7 @@ spawn specification the kernel writes
 (`hosts/<sid>/spawn.json`, the plain fields of the SDK's options, at mode 0600
 in a 0700 directory, since it carries the environment overlay; a login token
 whatever its value, and any other name of that overlay carrying a value that
-ends `_API_KEY` or `_TOKEN`, in any letter case, or is one of 1Password's, is
+ends `_API_KEY` or `_TOKEN` or is one of 1Password's, in any letter case, is
 left out of the file and rides the host's process environment instead), through the
 SDK's own subprocess transport, so the command line and the environment are
 the SDK's byte for byte. It reads the CLI's stdout without pause and appends
@@ -2653,10 +2721,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   parse store's slots, one per session, cut and leaf), `lazyIndexes` (the
   lazy indexes alive, a weak count), `materializedLruSlots` (the
   materialized-atom LRU's slots, not the atoms: on a kernel whose LRU holds
-  its atom lists weakly a collected list's slots stay until they expire, so
-  this is an upper bound on the live materialized atoms; where the LRU holds
-  the lists strongly the two are equal; it is the same read as
-  `asmIndex.resident`, repeated here so the holders sit together),
+  its atom lists weakly a collected list's slots stay until the next build,
+  re-registration or release removes them, or, in the residual named under
+  `asmIndex.collected`, until the cap or a list registering the same row
+  under their id, so this is an upper bound on the live materialized atoms;
+  where the LRU holds the lists strongly the two are equal; it is the same
+  read as `asmIndex.resident`, repeated here so the holders sit together),
   `judgeUsageRows` (the judge-usage reader's rows in memory), `builtChat`
   (`tabs` cached, their `events`, the cached payloads' event counts, a count
   and not bytes, the occupancy measure of that cache, and `serializedBytes`, the sum over the
@@ -2725,7 +2795,47 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   stage is `jobsPass`, its opening `jobs.prelude`; each job is still its
   `jobs.<job>` stage, and a `jobs.<job>` row in `stages_ms` is this thread's
   own (since 2026-09-18); the pusher's cycle jobs are counted under
-  `pusher.cycleJobsMs`.
+  `pusher.cycleJobsMs`. With the nudge toggle off, fold ruling A condition 7
+  (as ruled on 2026-09-19) bounds two loaders of a session's goal store on
+  this thread's auto-nudge walk, the look's decision read and the placement
+  gate's currency check, each on its own: the walk takes at most one shared
+  goal-store load per alive session per pass, exactly one when its look
+  reaches the store and zero when the look is skipped or ends at a state gate
+  before the store read; the placement gate's post-derivation currency check
+  is a second load, a mechanism of its own and not an exception to the walk's
+  bound, at most one per derived session, counted apart by the test rather
+  than by a served counter (`memos.nudgeWalk.loads` counts the walk's loads,
+  `nudgeGate.derived` the derives that bound the gate's checks, and
+  `tests/test_nudge_walk_one_load_per_pass.py` counts each mechanism by
+  execution against whether the look ran, skipped or derived). Other readers of
+  the same store run on the same pass under their own rules and outside both
+  bounds, among them the dead-man's fresh re-read inside the look (`_wake_goal`,
+  the writer's loader, under `goals.loads`, at most one per stamped top whose
+  dead-man is due, per look), the writers' own loads at their write moments
+  (`_mark_nudge_failed`, `_file_wake_answer` and `_dead_wait_block`, each a
+  `load_goals` under `goals.loads`; the first two reached from the look's wake
+  legs and from the wake sweep, `_dead_wait_block` from the look's dormant-owner
+  branch in `_wake_goal`, since its other caller, `_dead_wait_sweep`, runs only
+  with the toggle on), the relay's read of each store it has queued entries for
+  (`_relay_store`, reached through `_relay_tick`, a `load_goals` under
+  `goals.loads`, called outside the toggle guard after the walk in the same
+  pass: `_relay_store`'s own read is at most one per queued sid per pass, none
+  while that sid's quiet key stands unchanged and no hold of its has ended (a
+  quiet key is held only after a pass over that sid left nothing to do until
+  the key moves or a hold ends, and is the store file, the postal log and the
+  queue entries by mtime and size, and whether the sid is alive); a dead
+  worker's queued sid is read too, since `_relay_store` loads before
+  `_relay_entry`'s alive check), the relay's fresh re-read of a pending
+  relay's node on disk (`_relay_ended_since`, reached from `_relay_entry`
+  inside `_relay_store`, a `load_goals` under `goals.loads`, one per pending
+  relay of a standing wait whose far-host status came back bounced or
+  withdrawn, none while that sid's quiet key stands unchanged and no hold of
+  its has ended), so on a pass the relay reads a queued sid's store at most
+  1 + N times, N the pending relays of standing waits whose status came back
+  bounced or withdrawn, and the wake sweep after the per-session loop (`_awaiting_wake_outcomes`, called outside
+  the toggle guard, one shared load per wake record it owns that
+  `memos.nudgeWalk.loads` does not count), which runs after the walk in the
+  same pass, not on it.
 - `caches`: one block per cache the kernel, the judge and the event model keep,
   each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
   lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`
@@ -3065,10 +3175,119 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   nobody can log into) or when the request says `?stacks=1` (`romp perf
   stacks`, T401); `null` otherwise.
 - `recordCache`: the reader's record cache (the JSONL records held in memory):
-  `entries`, `bytes`, `budgetBytes`, `countCap`, `inserts`, `evictions`,
+  `entries`, `bytes` (the held entries' weight in FILE bytes), `budgetBytes`
+  (the byte budget in the same unit: half of MemTotal in resident bytes,
+  divided by the resident bytes a held file byte takes,
+  `RECORD_CACHE_RESIDENT_PER_FILE_BYTE` in `kernel/event_model.py`, never
+  under 4 GiB; `ROMP_RECORD_CACHE_BUDGET_MB` sets it outright), `bytesMax`
+  (the most `bytes` has been this life, never lowered; it counts the ledger
+  only, and the process holds more while reads are in flight, including
+  concurrent reads of different files and a re-read that keeps both copies
+  of its file, and while a caller holds a popped entry's records),
+  `countCap`, `inserts`, `evictions`,
   `evictedBytes`, `budgetEvictions`, `dropped` and `droppedBytes` (the
-  quiescence drop), and `wholeReads`: every read that pulled a file whole,
-  keyed `kind<-caller` (the reader's kind, one of `zero`, `rewrite`, `guard`,
+  quiescence drop); the release at an agent's end (the SDK backend queues
+  each agent entering or leaving a session's live set: an agent's own end
+  events even on a session object that never saw it start, as after a
+  kernel restart under a session host, where the object knows an agent
+  already running only through a Task agent's row (seeded from the
+  registry's mirror, adopted from a turn-end report, or, when the mirror
+  lacked it, minted from the agent's progress frame, which carries no type)
+  or a Workflow run's roster; a turn-end report that lists a Task agent's
+  row as ended; where the CLI's end ends every agent inside it (the
+  reconnect teardown, and the CLI's end when the session is not detached),
+  every agent the object knows through its live set, a Task agent's row or
+  a run's roster; and, at a boot or a comment thread's wake that finds the
+  mirror naming a CLI that died with an earlier kernel, each Task agent's
+  row of that mirror. A row whose type was never learned counts as a Task
+  agent's row on each of those roads, and the kernel resolves its id when it
+  drains the end. When the id is not in the session's own subagents tree,
+  the resolution walks every sibling session's subagents tree in the project
+  directory, once for each such end, whatever its road: on the largest one
+  measured, on 2026-09-25, 87 to 134 ms the first time, sixteen runs, once
+  after a restart, and a median of 21 to 49 ms each later time, three runs
+  of ten walks, the longest single walk 53.5 ms, with every session that has
+  a subagents tree there alive, as on the measured box, since the jobs pass
+  keeps an alive session's tree; a tree no alive session owns is dropped and
+  walked again, and with no sibling alive a later walk cost a median of 88
+  to 97 ms. Each run's median walk is inside the 50 ms bound set for one
+  cycle's resolution, and one walk of the thirty exceeded it by 3.5 ms, so
+  the bound holds at the median for a cycle that carries at most one such
+  end, and a cycle that carries two is at or over it; a first cycle after a
+  restart with several such ends pays the first walk and a later walk for
+  each further one. No end is queued
+  for an agent none of
+  those names: a Workflow run's agents when the object holds no roster for
+  the run (one the report retires before any progress frame, or one that
+  ends or loses its CLI before any), and a subagent the old kernel knew only
+  by its start hook whose stop is lost; their entries fall to the quiescent
+  drop, the count cap or the byte budget. The pusher, at each
+  cycle's start, writes an ended
+  agent's checkpoint document when it lacks what the cache holds, then
+  drops its records, so a later fold whose cursor the document records
+  restores a tail from it; an end whose release finds no entry with weight
+  for the file (among them one drained before any read held the file, one
+  whose entry the cache evicted or dropped before the end or took between
+  the release's document write and its pop, an owed release whose entry
+  left the cache before its pay, and an agent's later end after its
+  earlier release was taken, such as its task's end or its workflow slot's
+  done state after its stop) is remembered, and the file released at the
+  first cycle after a read holds it, unless a cycle drains the agent's
+  start first (a start queued after the drain of the cycle that releases
+  the file, or one dropped past the queue's bound, does not forget the
+  end, and a release taken then pops the running agent's entry; only the
+  first of those counts in `falseEnds`, at the next cycle);
+  a whole re-read of a file after its release was taken is held whole
+  until the count cap, the byte budget or a quiescent drop reaches it,
+  unless a later end of the agent comes after that release: one that finds
+  the re-read holding the file releases it, and one that finds nothing
+  held is remembered as above, so the first whole re-read after it is
+  released at the next cycle; a file no fold holds
+  a recordable cursor for is dropped without a document and read whole at
+  its next fold, and a file that no longer exists is dropped with nothing
+  written; an agent whose start the cycle drains before a deferred release
+  is paid keeps its records, while a start the cycle does not drain first
+  (one queued after the drain, one dropped past the queue's bound, or one
+  whose end the kernel no longer holds) does not cancel the release, and
+  when the release is then taken only the first of those counts in
+  `falseEnds`):
+  `released` (per reason, today `agentEnded`, with `count` and `bytes`;
+  `agentEnded` is reported at zero until the first release, so the block
+  carries every key from a new kernel's first read),
+  `releaseDeferred` (deferrals of a release to the next cycle, counted once
+  per path per cycle, so an agent's second end in the cycle adds nothing, a
+  release refused on N cycles counts N, and the figure is not the number owed
+  now: its checkpoint budget refused the write, or a read replaced the entry
+  before the drop or was still reading the file when the drop came),
+  `releaseLost` (releases given up, the entry left to the cache's own
+  eviction, the count cap or the byte budget, or a later quiescent drop,
+  counted once per path per cycle where the release names a path (an end
+  given up past the bound of the ends the backend keeps, or one whose file
+  never resolved before its resolution raised, counts one each): no
+  document could be written, as with
+  `ROMP_CKPT_CONVERGE_MS=0` or `ROMP_CKPT_CONVERGE_MB=0` or when the check
+  whether a write was due raised; an owed release was dropped past its
+  bound; an agent's end was dropped past the queue's bound and then past the
+  bound of the ends the backend keeps (an end kept is released at the drain
+  like any other); or resolving or paying one raised. With the drop writes
+  off, an agent whose two ends, its stop and its task's end, reach two cycles
+  counts two. Each cause is said once on stderr in a summary line, and a
+  release that raises also writes its own line with the traceback at every
+  raise),
+  `falseEnds` (agents whose release at their end was taken, the entry
+  popped, that entered the live set again, counted at the cycle that
+  drains the start while the kernel still holds the end in its table of
+  released ends: a start queued after the drain of the cycle that took the
+  release counts at the next cycle, while a start dropped past the queue's
+  bound, or drained after the end left that table, counts none; a release
+  that was only owed, then cancelled, forgotten, given up or paid without
+  being taken, counts none) and `releasedReread` (`count` and `bytes` of
+  the first whole read of a path after a release popped it, when no other pop of the path came in
+  between: what releasing cost; at most `countCap` marks are outstanding,
+  the oldest dropped first, and a mark leaves when it is taken or cleared,
+  which frees its slot, so the bound is on outstanding marks, not on the
+  most recent releases); and
+  `wholeReads`: every read that pulled a file whole, keyed `kind<-caller` (the reader's kind, one of `zero`, `rewrite`, `guard`,
   `shrunk` and `upgrade`, and the first calling function outside the event
   model and the parse family), with `count` and `bytes`; a tail read, an
   append and a restore's tail read are not whole reads and are not counted;
@@ -3148,19 +3367,51 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   callback the census missed), `resident` (the entries in the
   process-wide LRU, `cap` of them across every session: the machine's memory
   over 32 KiB, never under 500,000; the LRU holds each turn's atom list by a
-  weak reference, so a tree nobody holds any more keeps nothing resident but
-  entries that expire, and `resident` counts those too until they do:
-  before this (measured 2026-09-15) a strong reference kept every superseded
-  generation's atoms, and its whole index behind them, resident until they
-  aged past the cap, about 1.2 GiB on a box whose LRU sat exactly at its cap
-  of a million entries, and live atoms evicted by stale ones were rebuilt),
-  `evictions` (a live entry past the cap: its slot's memo dropped, never a
-  field in place), `expired` (an entry whose list has been collected, dropped
-  when it reaches the cap or when a live list registers a slot under the id the
-  dead one held, no slot touched either way), `released` (entries popped the moment the
-  assembly entry that owned their index was dropped or replaced, rather than
-  a million entries later at the cap), `rowDecodes` (document rows decoded,
-  a build's or a light read's), `userFacts` (below), and `restoredTurns`.
+  weak reference, and a freed list's entries leave at the next build,
+  re-registration or release, except those of the residual named under
+  `collected` below, which wait for the cap or for a list registering the
+  same row under their id, so `resident` is the live entries plus those
+  of lists freed, or brought back by a finalizer, since the last of those,
+  and the residual's entries. A list a finalizer resurrects (no kernel path
+  does) can keep built slots whose entries left as dead ones, and `resident`
+  does not count those slots until a read registers them again, as it did
+  not before 2026-09-24. Before 2026-09-15 a strong
+  reference kept every superseded generation's atoms, and its whole index
+  behind them, resident until they aged past the cap, about 1.2 GiB on a box
+  whose LRU sat at its cap of a million entries, and live atoms
+  evicted by stale ones were rebuilt. Until 2026-09-24 a freed list's
+  entries stayed until the cap reached them or a new list registered the
+  same row under their list's id, and on a large machine the cap had not
+  come after 73 hours: 6.15 million entries against a cap of 7.73 million,
+  most of them for freed lists. On that machine, with nine sessions, the
+  live entries are at most about 1.0 million, so the cap sits about 7.7
+  times above them: the cap is a backstop, and `evictions` counts the live
+  entries it takes), `evictions` (a live entry past the cap: its slot's memo
+  dropped, never a field in place), `collected` (entries the collection event
+  removed: when a list holding entries is freed, its weak reference queues
+  itself, and the next build, re-registration or release removes that list's
+  entries, with one residual: on CPython 3.13 from 3.13.13 and
+  on 3.14.4 and later, entries that a finalizer (such as a `__del__` or
+  a generator's close) registers during the collection that frees
+  their list hold a reference that is never queued, so no removal
+  takes them, and they wait for the cap or for a list registering
+  the same row under their id; no kernel code defines a `__del__` or
+  a `weakref.finalize`), `expired` (an entry whose list has
+  been collected, dropped in one of three ways, no slot touched in any case:
+  by that removal, so every `collected` entry counts here too; by the cap; or
+  when a live list registers a slot under the id the dead one held. Every
+  registration first removes the entries of the lists already queued, so the
+  third way drops only an entry whose list's callback never queued it.
+  `expired` minus `collected` counts the last two ways. While `resident` has
+  stayed under the cap, it counts only the third; once the cap binds, it
+  also counts entries of lists freed, or brought back by a finalizer, since
+  the last build, re-registration or release that the cap dropped before a
+  removal could, and entries of the residual named under `collected` that
+  the cap dropped. A `resident` that keeps rising while `evictions` stays flat is
+  the sign of a leak), `released` (entries popped the moment the assembly
+  entry that owned their index was dropped or replaced, rather than a
+  million entries later at the cap), `rowDecodes` (document rows decoded, a
+  build's or a light read's), `userFacts` (below), and `restoredTurns`.
 - `skillLoadIndex`: the judge's skill-load boot pass (the tops older stores minted from
   the harness's own skill load): `filesRead` and `bytesRead` (transcripts read raw this
   boot, appended tails only once the persisted index holds a file), `filesIndexed`, and
@@ -3544,8 +3795,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   since 2026-09-18 such a look checks and
   records like any other, under its own mode tag, so with the gear off
   `skippedParses` rises toward `looks` on a quiet board, where until then
-  every wake-only look parsed) and `wakeOnlyRecorded` (memo rows a wake-only
-  look recorded); a memo row is the ten files' stat, the look's mode tag
+  every wake-only look parsed), `wakeOnlyRecorded` (memo rows a wake-only
+  look recorded) and `loads` (the walk's shared goal-store loads: one per
+  look that reaches the store, whether the read returns a store, returns a
+  fault or raises out of the look, none on a look that is skipped or that a
+  state gate ends before the store read, the walk's bound under fold ruling
+  A condition 7 since 2026-09-19, at most one per alive session per pass;
+  the condition bounds two loaders, this one and the placement gate's
+  post-derivation currency check, a second loader with a bound of its own,
+  at most one load per derived session, counted by the test and by no served
+  counter, `nudgeGate.derived` counting the derives that bound it; the store's
+  other readers on the pass are named with their bounds in the `jobs` block
+  above); a memo
+  row is the ten files' stat, the look's mode tag
   (`full`, `wake`, or `wake+reminders` for tracking off with nudges on), the
   earliest flip and the verdict, and a row serves a look of the same mode
   only (a row of another mode counts a miss under
@@ -4415,8 +4677,8 @@ memory-fraction bounds (`recordCache.budgetBytes`, `heap.hydrated.capBytes`,
 the judge child's copies of its tables carry the same keys) stay, each
 rounded up to a power of two with the occupancy beside it untouched: each is
 a fixed fraction of the machine's MemTotal, so every export from one machine
-shared all ten exactly and `budgetBytes`, half of it, gave the machine's RAM
-to the kilobyte; a value derived from a machine fact is a machine string in
+shared all ten exactly and `budgetBytes`, then half of it, gave the machine's
+RAM to the kilobyte; a value derived from a machine fact is a machine string in
 a number's clothing. A bound that binds is still visible next to its `bytes`
 or `entries`. The
 result goes under a `schema` line (`romp-perf-export/1`) with the UTC minute
@@ -4556,7 +4818,7 @@ pass's own, `failures` its tier crashes, and the four blocks (`recordCache` and 
 `parses` as the parse store's misses and hits, `goalIo` as the goal-store loads, saves and writes) are the DIFFERENCES
 against the previous pass's snapshot for every counter, so the kernel can feed its `/perf` counters per pass, while each
 block's GAUGES ride as their current values: in `recordCache` the keys `entries`, `bytes` (the cache's contents now),
-`budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document memo's size and cap);
+`bytesMax` (the life maximum of `bytes`), `budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document memo's size and cap);
 `parses` and `goalIo` carry counters only. `asmCheckpoint.restoreMs` is a counter like its neighbours (the restore's parts
 since boot, as described above), so the line carries the pass's own restore time. A non-numeric value (a name) rides as
 current too. `recovered` is the child's judge-module recovery flag (the once-per-storm

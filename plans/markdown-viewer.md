@@ -7947,7 +7947,7 @@ preview.ts, reader-place.ts, region-geometry.ts, session-badge.ts, settings.ts, 
 tab-widgets.ts, url-links.ts, viewer-grammars.ts, widget-prefs.ts). The npm packages those modules import (marked,
 DOMPurify, KaTeX, and highlight.js's core with its grammars) are named there and not read: their code is not the
 viewer's, the sanitizer's and the highlighter's parses run before the adoption over `clean`, and a write a package makes
-onto an element handed to it is its caller's site. The grep finds twenty-six matching lines in seven of those modules,
+onto an element handed to it is its caller's site. The grep finds twenty-seven matching lines in seven of those modules,
 each judged in the seam test with its reason and none a re-parse under the Rendered box after the adoption:
 file-view.ts's, counted below; every other reached module's judged in the seam test, each site with its line and its
 reason (JUDGED_SITES, per module), the breakdown stated there and not here, so a site that moves between two modules
