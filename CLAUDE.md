@@ -202,7 +202,8 @@ broad `git add` will sweep up your work). Conventions:
      the fork section above, and `scripts/fork-remotes.sh` makes it fail if tried.
   2. Open a PR within the fork against `main`. PRs land through a batch
      (`scripts/batch.py`; see `docs/batching.md`): do not click merge. A change that
-     must land alone is merged on the user's word. Opening a PR against the upstream
+     must land alone lands as a one-member batch (`scripts/batch.py plan --only N`) on the
+     user's word; `scripts/land.sh` merges only a batch PR. Opening a PR against the upstream
      project is a separate decision only the user makes.
   A fork PR runs no CI of its own (2026-09-27): its one check is the tier label (next
   bullet), which runs when the PR opens and when its labels change. GitHub's CI runs once

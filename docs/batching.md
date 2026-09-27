@@ -14,8 +14,8 @@ merged tree is the tree the sweep and CI tested.
 
 The tooling is `scripts/batch.py` (subcommands `plan`, `assemble`, `verify`, `summarize`, `pull`,
 `land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps a worktree's head
-and records the result, `check` reads it back), `scripts/land.sh` for one or two PRs that cannot
-wait, and `scripts/pr-orphans.sh`, which reports a merged PR whose content never reached main (it
+and records the result, `check` reads it back), `scripts/land.sh`, which merges a batch PR by hand
+and nothing else (a single PR lands as a one-member batch), and `scripts/pr-orphans.sh`, which reports a merged PR whose content never reached main (it
 also runs on every push to main).
 
 ## If you open a PR
@@ -24,10 +24,8 @@ also runs on every push to main).
    `Depends-on: #N` on one of the body's first 20 lines, outside fenced code (one PR per line, or
    `#N, #M` on one line), so the batcher orders it. Do not open a PR against another session's
    branch. Do not merge a PR into another PR's branch. If a PR's base branch belongs to a PR that
-   has already merged, retarget it before anything else: `gh pr edit N --base main`.
-   `scripts/land.sh` refuses any base but main (a merged PR's branch, an open PR's branch, a branch
-   with no PR), unless the base is the branch of the other PR in the same call, which then merges
-   first.
+   has already merged, retarget it before anything else: `gh pr edit N --base main`; `plan` leaves
+   such a PR out, naming the fix.
 2. Give it one tier label: `docs`, `fix`, `feature`, or `major-feature`
    (`gh pr edit N --add-label fix`); `tests-only`, the old name for `docs` (upstream renamed the
    label on 2026-09-08 and still accepts the old spelling), is accepted too. A `major-feature` PR is
@@ -45,8 +43,8 @@ also runs on every push to main).
    stated", which costs the maintainer a look.
 5. For an upstream-worthy change, add the ledger entry file and commit it with the change. Do not
    edit UPSTREAM.md.
-6. Do not click merge. If a change must land now, say so in the body; the maintainer merges it
-   alone or asks for it by name.
+6. Do not click merge. If a change must land now, say so in the body; it lands as a one-member
+   batch (`scripts/batch.py plan --only N`) on the maintainer's word. Nothing merges alone.
 7. Once the batcher has commented `in batch <name> at <sha>` on your PR, do not push to the branch.
    If a review finds something, push the fix, sweep the new head, and tell the batcher by postal
    (kind: coordinate); it re-pins your head and rebuilds. A push after the cut leaves your PR open after the batch merges,
@@ -64,8 +62,8 @@ on, admin bypass) is optional and comes after the first batch has shown the chec
 PR a required CI check is met by the run of the push to its branch, which attaches to the batch head.
 Strict mode ("require branches to be up to date") makes GitHub itself refuse a batch PR that is
 behind main, which is the case the no-CI-on-main rule cannot allow; without it only `scripts/batch.py
-land` checks. A member PR has no CI checks, so a rule requiring them also holds every PR merged alone
-with `scripts/land.sh`.
+land` checks. A member PR has no CI checks and never merges by itself: a single PR lands as a
+one-member batch, and `scripts/land.sh` merges only a batch PR.
 
 Auto-merge (`gh pr merge --auto`) needs two things: the repository's "Allow auto-merge" setting
 (`gh api repos/{owner}/{repo} --jq .allow_auto_merge`; off on this fork today, and turning it on is
@@ -104,37 +102,28 @@ Per batch, in order:
    to run `finish`.
 7. Nothing else. To revert a member later, `git revert -m 1 <its merge commit>` on a branch, as a PR.
 
-For one or two PRs that cannot wait: `scripts/land.sh N [M]` (`--help` prints the refusal table).
-It reads both PRs before merging either, merges each with a merge commit, and runs the orphan check
-afterward. It refuses: squash and rebase; a PR that is not open, or a draft; a conflicting PR, or
-one whose mergeability GitHub has not computed yet; failing checks (with or without `--auto`);
-pending checks or a PR blocked by a rule on main (without `--auto`); a PR behind main; and any base
-but main (a merged PR's branch, a branch with no PR, an open PR's branch). A PR with no checks at
-all is noted, not refused. Since member PRs run no CI, the only check it can read is the tier
-label, so it reads no test result. The next batch's sweep runs its Python, shell and node tests, but
-the sweep owes the webview legs only for what the batch itself changes since main, and main then
-already holds this PR; a `kernel/kernel.py`, `ui/` or `vscode-extension/` change merged this way is
-first webview-tested by the next batch's CI run (its `vscode-extension` job).
+A PR that cannot wait lands as a one-member batch, never alone: `scripts/batch.py plan --only N`
+(`--only N --only M` for a pair; a dependency not named leaves its dependent out), then batcher
+steps 2 to 5 and 8. It gets its own sweep at the batch head and the one CI run, like any batch.
+One batch at a time still holds, so while a batch is open the PR joins it (a re-plan and rebuild)
+or waits for it to land.
 
-A chain of two PRs lands in one call with no flag: the lower PR merges first whichever order you
-typed, its branch is deleted, GitHub retargets the upper PR to main, and it merges there. Each PR is
-read again right before its own merge. GitHub recomputes the upper PR's mergeability after the
-retarget and reports it as not computed meanwhile, so that read is repeated while it says so, ten
-times three seconds apart (`ROMP_LAND_MERGEABLE_POLLS` and `ROMP_LAND_MERGEABLE_POLL` change the
-count and the gap); a value that never settles stops the run. A head that moved since the check
-stops the run too (exit 2): nothing more is merged, and the orphan check still runs. A PR the first
-merge already marked merged is skipped. With `--auto`, a lower PR whose checks are green merges at
-once and the chain lands as above; one whose checks are pending is only armed, so its branch stays
-open and the run stops before the upper PR (exit 2) instead of merging it into that branch. Run
-`scripts/land.sh M` for the upper PR once the lower one is in. To merge only the upper PR, into the
-lower PR's open branch, `--into-open-pr` overrides the open-PR's-branch refusal; the content then
-sits on that branch until the lower PR merges, and the orphan check reports it until then.
+`scripts/land.sh B` merges a batch PR by hand (`--help` prints the refusal table). It refuses any PR
+that is not a batch PR, one without the `batch` label or whose head branch is not `batch/<name>`,
+and names the one-member batch route, so it never merges a member PR. For a batch PR it reads the
+checks GitHub reports at the head (failing refused; pending, or blocked by a rule on main, refused
+without `--auto`), the mergeability and the merge state, merges with a merge commit pinned to the
+head it checked, and runs the orphan check afterward. It reads neither the sweep result nor main,
+so treat it as the button (step 6): only while the batch PR's checks are green and main is still at
+the SHA the first block names. It still takes two numbers and keeps its rules for a stacked pair
+(the lower PR first, each read again right before its merge, a stop when a head moved) from when it
+merged member PRs; with one batch open at a time, one number is the case.
 
 It never passes `--delete-branch`: gh's flag also deletes the local branch, which is checked out in
 a session's worktree here; the remote branch is deleted by the repository setting, or through the
 API when that setting is off. The web button is equally safe now that branches delete on merge. If
-an urgent fix lands while a batch is open, `verify` refuses the batch as behind until the batcher
-merges main into it, sweeps again and re-verifies (batcher step 7).
+main moves while a batch is open, `verify` refuses the batch as behind until the batcher merges main
+into it, sweeps again and re-verifies (batcher step 7).
 
 ## If you are the batcher
 

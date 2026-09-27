@@ -27,7 +27,8 @@ biting; each is named here so the fake is not mistaken for evidence about GitHub
     null, which gh maps to UNKNOWN, meanwhile),
     `mergeStateStatus` (DIRTY when conflicting; BLOCKED when a rule on main gates a merge and the
     checks are not green; UNSTABLE when they are not green with no such rule; else CLEAN;
-    `mergeStateStatus` on the record overrides) and `statusCheckRollup` (from the record's `checks`:
+    `mergeStateStatus` on the record overrides), `labels` (the record's label names, as GitHub's label
+    objects) and `statusCheckRollup` (from the record's `checks`:
     success, pending, failure or none give one CheckRun named `ci`; a list is served as is, so a
     test can mix CheckRun and StatusContext entries). A merge without --auto is refused when the
     status is BLOCKED, as GitHub refuses it.
@@ -41,7 +42,8 @@ biting; each is named here so the fake is not mistaken for evidence about GitHub
     number to the error its merge fails with, after the head check, the way GitHub refuses a merge
     whose base moved under it. `after_merge` maps a PR
     number to branches that get one more commit right after that PR merges, standing in for an
-    author who pushes between land.sh's check and its merge.
+    author who pushes between land.sh's check and its merge; `after_merge_unlabel` maps a PR number
+    to PRs whose labels are removed right after it merges.
 
 Synthetic data only: PR numbers, titles and branches are the tests' inventions.
 """
@@ -167,6 +169,8 @@ def project(state, pr, fields):
             out[f] = mergeable_of(state, pr)
         elif f == "mergeStateStatus":
             out[f] = merge_state_status(state, pr)
+        elif f == "labels":
+            out[f] = [{"name": l} for l in pr.get("labels", [])]
         else:
             out[f] = pr.get(f)
     return out
@@ -189,6 +193,7 @@ def opts(argv, flags_with_value):
     return got
 
 
+_LABEL_COUNT = re.compile(r'^\[\.labels\[\]\.name \| select\(\. == "([^"]+)"\)\] \| length$')
 _ROW = re.compile(r'^\[((?:\.\w+(?:, )?)+)\] \| map\(if \. == null then "" else tostring end\) \| join\("\\u001f"\)$')
 
 
@@ -201,6 +206,9 @@ def apply_jq(rows, expr):
     m = _ROW.match(expr)
     if m and isinstance(rows, dict):
         return "\x1f".join("" if rows.get(k) is None else jq_word(rows.get(k)) for k in m.group(1).replace(".", "").split(", "))
+    m = _LABEL_COUNT.match(expr)
+    if m and isinstance(rows, dict):
+        return str(sum(1 for l in rows.get("labels") or [] if l.get("name") == m.group(1)))
     if expr == ".[] | [.number, (.mergeCommit.oid // \"none\"), .baseRefName] | @tsv":
         return "\n".join("%d\t%s\t%s" % (r["number"], (r.get("mergeCommit") or {}).get("oid") or "none", r["baseRefName"]) for r in rows)
     if expr == ".[0].number":
@@ -352,6 +360,8 @@ def pr_merge(state, argv):
     state.setdefault("merges", []).append({"pr": pr["number"], "auto": bool(o.get("--auto")), "commit": commit})
     for branch in (state.get("after_merge") or {}).get(str(pr["number"]), []):
         push_empty_commit(state, branch, env)
+    for other in (state.get("after_merge_unlabel") or {}).get(str(pr["number"]), []):
+        state["prs"][str(other)]["labels"] = []
     save(state)
     print("Merged pull request #%d" % pr["number"])
     if o.get("--delete-branch") or o.get("-d"):

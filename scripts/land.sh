@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# scripts/land.sh [--auto] [--into-open-pr] N [M]: merge one or two PRs alone, each with a merge
-# commit. `scripts/land.sh --help` prints the usage and the table of refusals; that table lives in
-# help() below and nowhere else, so this header does not repeat it.
+# scripts/land.sh [--auto] [--into-open-pr] N [M]: merge a batch PR by hand, with a merge commit.
+# `scripts/land.sh --help` prints the usage and the table of refusals; that table lives in help()
+# below and nowhere else, so this header does not repeat it.
 #
-# The batch (scripts/batch.py) is how PRs normally land; this is the path for an urgent fix or a
-# one-file ledger PR that conflicts with nothing. Per PR it runs
+# Every PR lands through scripts/batch.py, a single PR as a one-member batch (`plan --only N`), and
+# `scripts/batch.py land` is how a batch PR normally merges. This script merges only a batch PR: one
+# carrying the `batch` label whose head branch is batch/<name>, both read from GitHub in the first
+# read of each PR, so a member PR is refused before anything merges. Per PR it runs
 #   gh pr merge N --merge --match-head-commit <head> [--auto]
 # and afterward scripts/pr-orphans.sh, so a merge that strands a dependent is reported at once.
 #
@@ -43,19 +45,22 @@ ORPHANS="$(cd "$(dirname "$0")" && pwd)/pr-orphans.sh"
 cd "$(cd "$(dirname "$0")/.." && pwd)"
 GH="${ROMP_GH:-gh}"
 MAIN="${ROMP_MAIN_BRANCH:-main}"
+LABEL_BATCH=batch   # the label scripts/batch.py puts on a batch PR (LABEL_BATCH there)
 
 help() {
     cat <<EOF
 usage: scripts/land.sh [--auto] [--into-open-pr] N [M]
        scripts/land.sh --help
 
-Merges one or two PRs (numbers), each with a merge commit:
+Merges a batch PR (a number) by hand, with a merge commit:
   gh pr merge N --merge --match-head-commit <head> [--auto]
-then runs scripts/pr-orphans.sh, which reports a merged PR whose content is not on $MAIN. The batch
-(scripts/batch.py) is how PRs normally land; this is for an urgent fix or a one-file PR that
-conflicts with nothing. It reads no test result of its own, only the checks GitHub reports at the
-head: where PRs run no CI (docs/batching.md), that is the tier label check alone, and the PR merges
-with no test run behind it.
+then runs scripts/pr-orphans.sh, which reports a merged PR whose content is not on $MAIN. Every PR
+lands through scripts/batch.py, a single PR as a one-member batch (scripts/batch.py plan --only N),
+so this merges only a batch PR: one with the '$LABEL_BATCH' label whose head branch is
+batch/<name>. scripts/batch.py land is how a batch PR normally merges: it also reads the sweep
+result at the batch head, the batch push's CI run and main. This script reads none of those, only
+the checks GitHub reports at the head, so use it only as the button would be used (docs/batching.md,
+maintainer step 6): with the batch PR's checks green and main unmoved since verify.
 
 Refusals (exit 2). Every PR is read and checked before any is merged, so a refusal never follows a
 merge; the second PR of a pair is checked before the first one lands.
@@ -63,6 +68,10 @@ merge; the second PR of a pair is checked before the first one lands.
                                  stacked on this one is never marked merged and its content never
                                  reaches $MAIN by itself.
   not open, or a draft           The PR's state and draft flag as GitHub reports them.
+  not a batch PR                 No '$LABEL_BATCH' label, or a head branch that is not batch/<name>.
+                                 A single PR lands as a one-member batch through scripts/batch.py
+                                 (plan --only N, then assemble, sweep, verify, push, summarize and
+                                 land); this script never merges a member PR.
   merge commits not allowed      The repository setting (gh repo edit --enable-merge-commit).
   conflicting                    mergeable: CONFLICTING against its base. Resolve on the branch.
   mergeability not computed      mergeable: UNKNOWN. GitHub computes it after a push; re-run in a
@@ -223,11 +232,12 @@ if [ "$auto" = 1 ]; then
     echo "land: merging with --auto (auto-merge is allowed and $MAIN has required rules that gate a merge:$(list "$gating$prot_gating"); a PR whose checks are pending lands when they pass)"
 fi
 
-# read_pr <n>: the fields the checks use, into pr_* variables. Two reads: the flat fields, then the
+# read_pr <n>: the fields the checks use, into pr_* variables. Three reads: the flat fields, the
 # check rollup reduced by gh's --jq to one row per check, kind/name/status/conclusion/state (a
-# CheckRun has status and conclusion, a commit StatusContext has state). The fields are joined on
-# US (\x1f), a byte no check name holds; a '|' shifted the fields of a check named 'build | linux',
-# and a tab is IFS whitespace to `read`, which folds the empty fields together.
+# CheckRun has status and conclusion, a commit StatusContext has state), and how many of the PR's
+# labels are exactly the batch label (0 or 1). The fields are joined on US (\x1f), a byte no check
+# name holds; a '|' shifted the fields of a check named 'build | linux', and a tab is IFS whitespace
+# to `read`, which folds the empty fields together.
 read_pr() {
     local row
     row="$("$GH" pr view "$1" --json state,isDraft,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus \
@@ -235,6 +245,7 @@ read_pr() {
     IFS="$US" read -r pr_state pr_draft pr_base pr_head_ref pr_head_sha pr_mergeable pr_mss <<< "$row"
     pr_rollup="$("$GH" pr view "$1" --json statusCheckRollup \
         --jq '(.statusCheckRollup // [])[] | [.__typename, (.name // .context), .status, .conclusion, .state] | map(. // "") | join("\u001f")')"
+    pr_batch_label="$("$GH" pr view "$1" --json labels --jq "[.labels[].name | select(. == \"$LABEL_BATCH\")] | length")"
 }
 
 # settle_mergeable <n>: re-read while mergeable is UNKNOWN, up to ROMP_LAND_MERGEABLE_POLLS more
@@ -262,10 +273,12 @@ settle_mergeable() {
 stash_pr() {
     states[$1]="$pr_state"; drafts[$1]="$pr_draft"; bases[$1]="$pr_base"; head_refs[$1]="$pr_head_ref"
     head_shas[$1]="$pr_head_sha"; mergeables[$1]="$pr_mergeable"; msss[$1]="$pr_mss"; rollups[$1]="$pr_rollup"
+    batch_labels[$1]="$pr_batch_label"
 }
 load_pr() {
     pr_state="${states[$1]}"; pr_draft="${drafts[$1]}"; pr_base="${bases[$1]}"; pr_head_ref="${head_refs[$1]}"
     pr_head_sha="${head_shas[$1]}"; pr_mergeable="${mergeables[$1]}"; pr_mss="${msss[$1]}"; pr_rollup="${rollups[$1]}"
+    pr_batch_label="${batch_labels[$1]}"
 }
 
 # classify_checks <rollup rows>: checks_failing and checks_pending as ", "-joined names, checks_n.
@@ -304,15 +317,29 @@ notes=1
 note() { if [ "$notes" = 1 ]; then echo "land: $*"; fi; }  # printed in the first pass only
 
 # check_pr <i> <verb>: the rules, against the pr_* variables loaded for prs[i]. <verb> is "refused"
-# before any merge and "stopped" after one. Order: state, draft, base, mergeability, checks, then
-# the merge state, so the message names the first thing the maintainer can act on.
+# before any merge and "stopped" after one. Order: state, draft, batch PR, base, mergeability,
+# checks, then the merge state, so the message names the first thing the maintainer can act on.
 check_pr() {
-    local i="$1" verb="$2" n="${prs[$1]}" j other open_base merged_base
+    local i="$1" verb="$2" n="${prs[$1]}" j other open_base merged_base missing
     if [ "$pr_state" != "OPEN" ]; then
         fail "$verb" "#$n is $pr_state, not open"
     fi
     if [ "$pr_draft" = "true" ]; then
         fail "$verb" "#$n is a draft"
+    fi
+    # Every PR lands through scripts/batch.py, a single PR as a one-member batch (2026-09-27), so this
+    # merges a batch PR only: the batch label AND a head branch batch/<name>, both as batch.py makes
+    # them and both from the read above (and re-read before the merge, in pass 2).
+    missing=""
+    [ "$pr_batch_label" = 1 ] || missing="no '$LABEL_BATCH' label"
+    case "$pr_head_ref" in
+        batch/?*) ;;
+        *) missing="${missing:+$missing, and }head branch '$pr_head_ref', not batch/<name>" ;;
+    esac
+    if [ -n "$missing" ]; then
+        fail "$verb" "$(printf '%s\n  %s' \
+            "#$n is not a batch PR ($missing); this script merges only a batch PR." \
+            "A single PR lands through scripts/batch.py as a one-member batch: scripts/batch.py plan --only $n, then assemble, sweep, verify, push, summarize and land (docs/batching.md).")"
     fi
     if [ "$pr_base" != "$MAIN" ]; then
         other=""
@@ -387,7 +414,7 @@ check_pr() {
 }
 
 # Pass 1: read every PR, then check every PR, so a refusal never follows a merge.
-states=(); drafts=(); bases=(); head_refs=(); head_shas=(); mergeables=(); msss=(); rollups=()
+states=(); drafts=(); bases=(); head_refs=(); head_shas=(); mergeables=(); msss=(); rollups=(); batch_labels=()
 merged_in_run=(); armed_in_run=()
 for i in "${!prs[@]}"; do
     read_pr "${prs[$i]}"

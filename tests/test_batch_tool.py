@@ -416,6 +416,48 @@ class Plan(_Base):
         self.assertIn("merged PR #100", reasons[108])
         self.assertIn("gh pr edit 108 --base main", reasons[108])
 
+    def test_only_plans_a_single_pr_as_a_one_member_batch(self):
+        """A single PR lands through batch.py as a one-member batch (pre-round ruling Q8; scripts/land.sh merges only a
+        batch PR): plan --only N plans N alone; a dependency not named is not taken in, so its dependent is left out
+        with it; a number that is not an open PR is refused."""
+        fx = self.fx
+        self.two_members()
+        fx.branch("k", {"k.txt": "k\n"})
+        fx.pr(111, "k", title="k alone", labels=["fix"], body=TRAILER)
+        p = fx.ok("plan", "--only", "111", "--name", "one")
+        st = fx.state("one")
+        self.assertEqual(st["order"], [111])
+        self.assertEqual({e["n"]: e["reason"] for e in st["excluded"]},
+                         {101: "not named by plan --only", 102: "not named by plan --only"})
+        self.assertIn("excluded, not named by plan --only: #101, #102", p.stdout)
+        fx.ok("plan", "--only", "102", "--name", "two")
+        st = fx.state("two")
+        self.assertEqual(st["order"], [])
+        self.assertEqual({e["n"]: e["reason"] for e in st["excluded"]}[102], "depends on #101 (not named by plan --only)")
+        fx.ok("plan", "--only", "101", "--only", "102", "--name", "pair")
+        self.assertEqual(fx.state("pair")["order"], [101, 102])
+        p = fx.run("plan", "--only", "999", "--name", "three")
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("--only #999: not an open PR", p.stderr)
+
+    def test_a_one_member_batch_lands_through_the_whole_route(self):
+        fx = self.fx
+        self.two_members()
+        fx.branch("k", {"k.txt": "k\n"})
+        fx.pr(111, "k", title="k alone", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--only", "111", "--name", "one")
+        fx.ok("assemble", "one")
+        fx.push_batch("one")
+        fx.sweep("one")
+        fx.ok("verify", "one")
+        fx.ok("summarize", "one")
+        fx.ci("one")
+        fx.ok("land", "one")
+        gh = fx.gh()
+        self.assertEqual(gh["prs"]["111"]["state"], "MERGED", "marked merged by the batch PR's merge")
+        self.assertEqual((gh["prs"]["101"]["state"], gh["prs"]["102"]["state"]), ("OPEN", "OPEN"))
+        self.assertEqual([c[2] for c in fx.calls("pr", "merge")], [str(gh["next_number"] - 1)], "the one merge is the batch PR's")
+
     def test_a_batch_pr_is_never_a_member_of_the_next_batch(self):
         fx = self.fx
         fx.branch("batch/2020-01-01a", {"x.txt": "x\n"})

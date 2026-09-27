@@ -11,7 +11,9 @@ SHAs, leave every member open, and break retargeting.
 
 Subcommands, in the order a batch goes through them:
 
-  plan       [--labeled] [--name N]   pick the members, order them, predict conflicts, write the plan
+  plan       [--labeled] [--only N]... [--name N]
+                                      pick the members, order them, predict conflicts, write the plan
+                                      (--only N: a single PR lands as a one-member batch)
   assemble   <name> [--without N] [--resolve N] [--repin N|all] [--continue|--abort] [--merge-main]
                                       merge the pinned heads into ../romp-batch-<name> (the branch
                                       is the mutex: refuses if another origin/batch/* exists)
@@ -33,7 +35,8 @@ wrong repository.
 
 Contracts the tests hold this file to (tests/test_batch_tool.py):
   - plan orders dependents after their bases and excludes drafts, `major-feature` and `hold`; a
-    `Depends-on` cycle excludes its members (and their dependents), not the plan;
+    `Depends-on` cycle excludes its members (and their dependents), not the plan; plan --only N plans N
+    alone (a single PR lands as a one-member batch), refusing a number that is not an open PR;
   - plan excludes a candidate whose pinned head has no passing sweep result of its own (read through the
     reader verify uses, its webview decision checked against git), naming the case, and its dependents
     with it; assemble --repin refuses a re-read head without one;
@@ -83,6 +86,7 @@ LABEL_MAJOR = "major-feature"
 LABEL_HOLD = "hold"
 LABEL_LAND = "land"
 LABEL_BATCH = "batch"
+NOT_ONLY = "not named by plan --only"
 # `docs` is upstream's name for tier 0 (renamed from tests-only on 2026-09-08; upstream's
 # scripts/ci/tier_policy.py still reads tests-only as an alias), so a PR labeled either way is tier 0.
 # The fork's .github/workflows/pr-tier.yml counts the same labels (plus LABEL_BATCH).
@@ -426,6 +430,10 @@ def cmd_plan(args):
                        % (name, ", ".join("#%d" % n for n in old.get("pulled", [])) or "none"), code=2)
     prs = gh_json("pr", "list", "--state", "open", "--limit", str(PR_LIST_LIMIT), "--json", PR_FIELDS, cwd=root)
     by_n = {pr["number"]: pr for pr in prs}
+    only = sorted(set(args.only or []))
+    absent = [n for n in only if n not in by_n]
+    if absent:
+        raise Fail("--only %s: not an open PR" % ", ".join("#%d" % n for n in absent), code=2)
 
     excluded = {}   # n -> reason
     cands = {}
@@ -441,6 +449,8 @@ def cmd_plan(args):
             excluded[n] = "a batch PR"
         elif args.labeled and LABEL_LAND not in labels:
             excluded[n] = "not labeled %s (plan --labeled)" % LABEL_LAND
+        elif only and n not in only:
+            excluded[n] = NOT_ONLY
         else:
             trailer, terr = parse_trailer(pr.get("body"))
             cands[n] = {
@@ -556,8 +566,12 @@ def cmd_plan(args):
                                                          (" with " + ", ".join("#%d" % k for k in pc["with"])) if pc["with"] else ""))
         print("  #%d %s @%s [%s]%s" % (n, m["title"], short(m["head"]), m["tier"] or "unlabeled",
                                      ("  " + "; ".join(flags)) if flags else ""))
+    others = [row["n"] for row in state["excluded"] if row["reason"] == NOT_ONLY]
     for row in state["excluded"]:
-        print("  excluded #%d: %s" % (row["n"], row["reason"]))
+        if row["reason"] != NOT_ONLY:
+            print("  excluded #%d: %s" % (row["n"], row["reason"]))
+    if others:
+        print("  excluded, %s: %s" % (NOT_ONLY, ", ".join("#%d" % n for n in others)))
     missing = [n for n in ordered if cands[n]["trailer"] is None]
     if missing:
         print("message the authors once (trailer missing): %s" % ", ".join("#%d" % n for n in missing))
@@ -2231,7 +2245,7 @@ def cmd_land(args):
         print("merging with --auto: auto-merge is allowed and %s" % gating)
         cmd.append("--auto")
     retarget_stacked_members(root, state)
-    # main may have moved since verify read it (a merge by hand, scripts/land.sh): the last read before
+    # main may have moved since verify read it (a merge by hand): the last read before
     # the merge call, so the tree that lands is still the batch head's. GitHub's merge pins the head
     # (--match-head-commit), not the base, so the gap left is the one between this read and that call.
     main_now = main_on_origin(root)
@@ -2478,6 +2492,9 @@ def main(argv=None):
                                    "against the accumulating tree; pin every head SHA; write the plan. Nothing is merged."
                                    % (MAIN, LABEL_MAJOR, LABEL_HOLD))
     p.add_argument("--labeled", action="store_true", help="only PRs labeled `%s`" % LABEL_LAND)
+    p.add_argument("--only", type=int, action="append", metavar="N",
+                   help="only PR N (repeatable): a single PR lands as a one-member batch; a dependency not named is "
+                        "not taken in, so its dependent is left out with it")
     p.add_argument("--name", help="batch name (default: today's date plus the first free letter)")
     p.add_argument("--force", action="store_true", help="overwrite a plan that was already assembled")
     p.add_argument("--no-fetch", action="store_true", help=HELP_NO_FETCH)
