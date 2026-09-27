@@ -549,7 +549,7 @@ witness_cases() {   # <the title's words after "round 10b (C, ">
     # blank-line witness in tests/pre-push-hook.bats (a PGP private key block whose blank line
     # falls at byte 100,000 of a one-piece reading, where gitleaks ends its first chunk, found
     # whole because the hook pieces the file at its CAP), red by publication under CAP=110000 and
-    # CAP=130000, and G2 above for a CAP of 125,011 or more. The values just above 100,000 that the
+    # CAP=130000, and G2 above for a CAP of 125,009 or more. The values just above 100,000 that the
     # witness cannot reach, which its title names as this pin's, are the band this pin backs up;
     # it guards the value only.
     cap=$(hook_constant CAP)
@@ -557,7 +557,7 @@ witness_cases() {   # <the title's words after "round 10b (C, ">
         echo "the hook's CAP is $cap bytes, above 100,000, the most gitleaks reads of a file in one chunk."
         echo "This pin guards the constant's value; the executed proof of the property, a piece read whole, is the case"
         echo "'round 10b (C, the blank-line witness for the band from 100,000 to 125,000)' in tests/pre-push-hook.bats,"
-        echo "with G2 in this file for a CAP of 125,011 or more."
+        echo "with G2 in this file for a CAP of 125,009 or more."
         false; }
     n=$(witness_cases "the blank-line witness for the band from 100,000 to 125,000)")
     [ "$n" -eq 1 ] || {
