@@ -5296,24 +5296,13 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           unanswered word makes that word the new process's, held or released on that process's own evidence. And a
           hub files the host's own dial under the hostname the host declares until its own dial to the alias its kernel
           dials folds the host there (_canon_peer_name), so the hub can name the upgraded host under the one name while
-          the held word carries the other, and with a bus id the word does not carry: the word then stays held, this
-          bus's restart ending nothing, until the roster this bus stores on the row holding the word (the union
-          _order_row keeps) names the host under the held word's name, and that roster's word under that name then
-          replaces it, held or released on that process's own evidence; the word stays held for the file's life when no
-          roster stored on that row names the host so. Which namings reach that stored roster depends on the order of
-          this bus's dials and the hub's rosters: at an answer whose fold is handed its dial's build (_placed),
-          _order_row keeps a name of the rows it replaces and forgets that the answer does not carry only where the last
-          roster naming it was recorded after that build, so a naming can leave the word held (the reviewer's verifier
-          at the seventy-fourth commit, by execution: on its road vfy2DeclHubRestartsFoldsFFirst the restarted hub's
-          dial, filed here under the name it declares, named the host under the held word's name with a session; the hub
-          folded the host under the alias before this bus's dial to it was answered; and the word stayed held after that
-          answer, two more exchanges and this bus's restart). That naming needs a session
-          of the host on the hub's row for it under that name, since a hub gossips a far host only through the session
-          rows of its row for that host, each labelled with the name that row is filed under (presence_payload): the
-          hub filing the host there with no session of it on that row does not name it there, and the word stays held.
-          The hub files the host under the alias again once its next dial to the alias folds the host there, and under
-          the declared name when the host's own dial reaches it before the hub's own dial has reached the host's
-          current process (a later process of the host, or the host after the hub restarts) (round 6 of fork PR #897,
+          the held word carries the other, and with a bus id the word does not carry: the word then stays held, on the
+          restricted side, until a later word of the hub about the host under the held word's name reaches this bus and
+          the writer's rules release it (_order_row and _via_held in this process; the carried rows' check in
+          _remote_sids_document after this bus restarts); whether and when that happens depends on the order of the
+          hub's rosters and this bus's dials and restarts, and the word can stay held for the file's life (witness: the
+          reviewer's verifier's road vfy2DeclHubRestartsFoldsFFirst at the seventy-fourth commit, by execution)
+          (round 6 of fork PR #897,
           the reviewer's verifier at the fifty-sixth, fifty-seventh and
           seventy-third commits, by execution; the
           witnesses, tests/test_dead_session_staleness.py ReaderFollowsTheWriter
