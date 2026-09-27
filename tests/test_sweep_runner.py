@@ -1,0 +1,576 @@
+#!/usr/bin/env python3
+"""scripts/sweep.py, the local sweep runner whose result file is the landing gate (2026-09-27).
+
+scripts/batch.py verify and land read a result keyed by the batch head's full sha (tests/test_batch_tool.py
+holds that side). This module holds the writer: every leg's rc is recorded under the full sha of a clean
+tree, every leg runs after a red one, the webview legs follow CLAUDE.md's rule, a dirty tree is refused and a
+tree that changes during the run is recorded invalid, the leg environment carries no session, hook or
+credential variables, and nothing is written in the working tree.
+
+Every test builds its own world: a bare origin, a clone holding a tiny tree, and fakes for npm, bats, node
+and the pytest interpreter (one script, told apart by its name) that record their argv, cwd and environment
+variable NAMES and exit with the code the test sets. The real suite never runs. Synthetic data only.
+"""
+import fcntl
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+# Hermetic state BEFORE the load below: the runner resolves its state dir from ROMP_STATE_DIR or XDG_STATE_HOME,
+# and only pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+
+ROOT = Path(__file__).resolve().parents[1]
+SWEEP = ROOT / "scripts" / "sweep.py"
+
+
+def _load_sweep():
+    spec = importlib.util.spec_from_file_location("sweep_runner", SWEEP)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+sweep = _load_sweep()
+
+# The box rule's TMPDIR template (tests/test_tempdir_hygiene.py, SWEEP_TMPDIR_TEMPLATE): the runner's TMPDIR is no longer.
+BOX_TMPDIR_TEMPLATE = "/tmp/sweep-XXXXXX"
+SID = "11111111-2222-3333-4444-555555555555"
+
+FAKE = r'''#!%(python)s
+import json, os, shutil, subprocess, sys
+name = os.path.basename(sys.argv[0])
+args = sys.argv[1:]
+ctl_path = os.environ.get("SWEEP_FAKE_CTL")
+ctl = json.load(open(ctl_path)) if ctl_path else {}
+if name == "python" and args[:1] == ["-c"]:
+    print(ctl.get("probe_version", "3.99.0"))
+    print(" ".join(ctl.get("missing", [])))
+    sys.exit(0)
+if name == "python":
+    leg = "pytest"
+elif name == "npm":
+    leg = {"ci": "deps", "test": "npm-test"}.get(args[0] if args else "") or {"typecheck": "typecheck", "build": "build"}.get(args[1] if len(args) > 1 else "", "npm?")
+elif name == "node":
+    leg = "manager" if any(a.startswith("tests/manager-") for a in args) else "tools"
+elif name == "upstream-ledger.py":
+    leg = "ledger"
+else:
+    leg = name
+keep = ("TMPDIR", "SWEEP_WRAPPED", "ROMP_SERVED_TESTS_REQUIRE", "ROMP_GITLEAKS_REQUIRE", "BATS_TEST_TIMEOUT")
+with open(os.environ["SWEEP_FAKE_LOG"], "a") as f:
+    f.write(json.dumps({"leg": leg, "argv": args, "cwd": os.getcwd(), "names": sorted(os.environ),
+                        "values": {k: os.environ[k] for k in keep if k in os.environ}}) + "\n")
+act = ctl.get("action", {}).get(leg)
+if act == "commit":
+    subprocess.run(["git", "-C", ctl["tree"], "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null",
+                    "commit", "-q", "--allow-empty", "-m", "moved during the sweep"], check=True,
+                   env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1"))
+elif act == "copy-result":
+    shutil.copy(ctl["result"], ctl["copy_to"])
+elif act == "leak":
+    with open(os.path.join(ctl["tree"], "leaked.txt"), "w") as f:
+        f.write("a test that wrote into the tree\n")
+sys.exit(ctl.get("rc", {}).get(leg, 0))
+'''
+
+SEED = {
+    ".gitignore": "vscode-extension/node_modules\n",
+    "README.md": "# notes-api\n",
+    "kernel/kernel.py": "VERSION = 1\n",
+    "kernel/other.py": "OTHER = 1\n",
+    "ui/x.js": "export const x = 1;\n",
+    "vscode-extension/package.json": "{\"name\": \"notes-api-ext\"}\n",
+    "vscode-extension/src/a.ts": "export const a = 1;\n",
+    "tests/a.bats": "@test 'a' { true; }\n",
+    "tests/manager-a.test.js": "// manager\n",
+    "tools/a.test.mjs": "// tools\n",
+    "vendor/track-changents/hooks/a.test.mjs": "// hooks\n",
+}
+
+
+class World:
+    def __init__(self, seed=None):
+        self.tmp = tempfile.mkdtemp(prefix="sweeprun-")
+        self.bare = os.path.join(self.tmp, "origin.git")
+        self.tree = os.path.join(self.tmp, "tree")
+        self.bin = os.path.join(self.tmp, "bin")
+        self.xdg = os.path.join(self.tmp, "xdg")
+        self.ctl_path = os.path.join(self.tmp, "ctl.json")
+        self.log_path = os.path.join(self.tmp, "fake.log")
+        os.makedirs(self.bin)
+        fake = FAKE % {"python": sys.executable}
+        for name in ("python", "npm", "node", "bats"):
+            with open(os.path.join(self.bin, name), "w") as f:
+                f.write(fake)
+            os.chmod(os.path.join(self.bin, name), 0o755)
+        self.python = os.path.join(self.bin, "python")
+        self.env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ.get("PATH", ""), XDG_STATE_HOME=self.xdg,
+                        GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
+                        GIT_AUTHOR_NAME="romp tests", GIT_AUTHOR_EMAIL="tests@example.invalid",
+                        GIT_COMMITTER_NAME="romp tests", GIT_COMMITTER_EMAIL="tests@example.invalid",
+                        SWEEP_FAKE_CTL=self.ctl_path, SWEEP_FAKE_LOG=self.log_path)
+        self.env.pop("ROMP_STATE_DIR", None)
+        self.ctl({})
+        self.git("init", "-q", "--bare", self.bare, cwd=self.tmp)
+        self.git("symbolic-ref", "HEAD", "refs/heads/main", cwd=self.bare)
+        os.makedirs(self.tree)
+        self.git("init", "-q", cwd=self.tree)
+        self.git("symbolic-ref", "HEAD", "refs/heads/main", cwd=self.tree)
+        files = dict(SEED if seed is None else seed)
+        files["scripts/upstream-ledger.py"] = fake
+        self.write(files)
+        os.chmod(os.path.join(self.tree, "scripts", "upstream-ledger.py"), 0o755)
+        self.git("add", "-A", cwd=self.tree)
+        self.git("commit", "-q", "-m", "seed", cwd=self.tree)
+        self.git("remote", "add", "origin", self.bare, cwd=self.tree)
+        self.git("push", "-q", "-u", "origin", "main", cwd=self.tree)
+
+    def close(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def git(self, *args, cwd=None):
+        p = subprocess.run(["git", *args], cwd=cwd or self.tree, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if p.returncode != 0:
+            raise AssertionError("git %s: %s" % (" ".join(args), p.stderr))
+        return p.stdout.strip()
+
+    def write(self, files):
+        for path, content in files.items():
+            p = os.path.join(self.tree, path)
+            if content is None:
+                os.remove(p)
+                continue
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f:
+                f.write(content)
+
+    def change(self, files, msg="a change"):
+        """One commit on a branch `work` cut from main, so origin/main is the merge base."""
+        if self.git("rev-parse", "--abbrev-ref", "HEAD") != "work":
+            self.git("checkout", "-q", "-b", "work")
+        self.write(files)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", msg)
+        return self.head()
+
+    def head(self):
+        return self.git("rev-parse", "HEAD")
+
+    def ctl(self, data):
+        with open(self.ctl_path, "w") as f:
+            json.dump(dict(data, tree=self.tree), f)
+
+    def calls(self):
+        if not os.path.exists(self.log_path):
+            return []
+        with open(self.log_path) as f:
+            return [json.loads(line) for line in f]
+
+    def legs_called(self):
+        return [c["leg"] for c in self.calls()]
+
+    def run(self, *extra, env=None, check=None):
+        p = subprocess.run([sys.executable, str(SWEEP), "run", "--tree", self.tree, "--python", self.python, "--workers", "2", *extra],
+                           env=env or self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+        if check is not None and p.returncode != check:
+            raise AssertionError("sweep run exited %d, expected %d:\n%s%s" % (p.returncode, check, p.stdout, p.stderr))
+        return p
+
+    def result_path(self, sha=None):
+        return os.path.join(self.xdg, "romp", "sweeps", (sha or self.head()) + ".json")
+
+    def result(self, sha=None):
+        with open(self.result_path(sha)) as f:
+            return json.load(f)
+
+
+class _Base(unittest.TestCase):
+    seed = None
+
+    def setUp(self):
+        self.w = World(self.seed)
+        self.addCleanup(self.w.close)
+
+
+class Runner(_Base):
+    def test_a_pass_writes_every_leg_under_the_full_sha(self):
+        w = self.w
+        sha = w.head()
+        self.assertRegex(sha, r"^[0-9a-f]{40}$")
+        w.run(check=0)
+        self.assertTrue(os.path.exists(w.result_path(sha)), "the result is <state>/sweeps/<full sha>.json")
+        r = w.result(sha)
+        self.assertEqual(r["sha"], sha)
+        self.assertEqual(r["verdict"], "pass")
+        self.assertEqual(r["red"], [])
+        self.assertEqual(sorted(r["legs"]), sorted(sweep.LEGS), "every leg of the roster is recorded")
+        for name in sweep.LEGS:
+            leg = r["legs"][name]
+            if leg["owed"] is False:
+                self.assertTrue(leg.get("why"), "%s is not owed and says why" % name)
+                continue
+            self.assertIn("cmd", leg, name)
+            self.assertIs(type(leg["rc"]), int, name)
+            self.assertEqual(leg["rc"], 0, name)
+        self.assertEqual([n for n in sweep.LEGS if r["legs"][n]["owed"] is not False],
+                         ["deps", "pytest", "bats", "manager", "tools", "ledger"],
+                         "untouched webview paths owe no webview leg; an absent node_modules owes deps")
+        self.assertEqual(w.legs_called(), ["deps", "pytest", "bats", "manager", "tools", "ledger"], "run in roster order")
+        self.assertTrue(r["finished"])
+        self.assertIsNone(r["invalid"])
+
+    def test_a_red_leg_is_named_and_every_later_leg_still_runs(self):
+        w = self.w
+        w.ctl({"rc": {"bats": 1}})
+        p = w.run(check=1)
+        r = w.result()
+        self.assertEqual(r["verdict"], "red")
+        self.assertEqual(r["red"], ["bats"])
+        self.assertEqual(r["legs"]["bats"]["rc"], 1)
+        self.assertEqual(w.legs_called(), ["deps", "pytest", "bats", "manager", "tools", "ledger"], "the legs after the red one ran too")
+        self.assertIn("sweep red at %s: bats (rc 1)" % w.head()[:10], p.stdout)
+
+    def test_the_webview_legs_follow_the_rule(self):
+        cases = (("kernel/kernel.py", True), ("ui/x.js", True), ("vscode-extension/src/a.ts", True),
+                 ("README.md", False), ("kernel/other.py", False))
+        for path, owed in cases:
+            with self.subTest(path=path):
+                w = World()
+                self.addCleanup(w.close)
+                w.change({path: "changed\n"})
+                w.run(check=0)
+                r = w.result()
+                for name in sweep.WEBVIEW_LEGS:
+                    self.assertIs(r["legs"][name]["owed"], owed, "%s after a change to %s" % (name, path))
+                called = w.legs_called()
+                for name in sweep.WEBVIEW_LEGS:
+                    self.assertEqual(name in called, owed, "the npm fake ran %s: %r" % (name, called))
+                self.assertEqual(r["owed"]["webview"]["paths"], [path] if owed else [])
+                self.assertEqual(r["base"], w.git("rev-parse", "origin/main"))
+
+    def test_no_origin_main_owes_the_webview_legs(self):
+        w = self.w
+        w.git("update-ref", "-d", "refs/remotes/origin/main")
+        w.run(check=0)
+        r = w.result()
+        for name in sweep.WEBVIEW_LEGS:
+            self.assertIs(r["legs"][name]["owed"], True, name)
+        self.assertIn("no origin/main", r["owed"]["webview"]["why"])
+        self.assertIsNone(r["base"])
+
+    def test_a_dirty_tree_is_refused_and_nothing_is_written(self):
+        w = self.w
+        for label, files in (("modified", {"README.md": "# edited\n"}), ("untracked", {"notes/new.txt": "new\n"})):
+            with self.subTest(label):
+                w.write(files)
+                p = w.run(check=2)
+                self.assertIn("is not clean", p.stderr)
+                self.assertIn(list(files)[0], p.stderr, "the refusal names the path")
+                self.assertFalse(os.path.exists(w.result_path()), "no result for a dirty tree")
+                self.assertEqual(w.calls(), [])
+                w.git("checkout", "-q", "--", ".")
+                w.git("clean", "-q", "-fd")
+
+    def test_the_runner_writes_nothing_in_the_tree(self):
+        w = self.w
+        before = w.git("status", "--porcelain", "--ignored", "--untracked-files=all")
+        w.run(check=0)
+        self.assertEqual(w.git("status", "--porcelain", "--ignored", "--untracked-files=all"), before)
+        self.assertTrue(w.result()["legs"]["pytest"]["log"].startswith(os.path.join(w.xdg, "romp", "sweeps", "logs", w.head())),
+                        "logs live under the state dir")
+
+    def test_head_moving_during_the_run_is_invalid(self):
+        w = self.w
+        start = w.head()
+        w.ctl({"action": {"bats": "commit"}})
+        p = w.run(check=3)
+        r = w.result(start)
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertIn(start[:10], r["invalid"])
+        self.assertIn(w.head()[:10], r["invalid"], "the reason names where HEAD went")
+        self.assertNotEqual(w.head(), start)
+        self.assertIn("sweep invalid at %s" % start[:10], p.stdout)
+
+    def test_a_file_a_leg_leaves_in_the_tree_is_invalid(self):
+        w = self.w
+        w.ctl({"action": {"manager": "leak"}})
+        w.run(check=3)
+        r = w.result()
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertIn("leaked.txt", r["invalid"])
+
+    def test_the_file_says_running_until_the_end(self):
+        w = self.w
+        copy = os.path.join(w.tmp, "mid-run.json")
+        w.ctl({"action": {"bats": "copy-result"}, "result": w.result_path(), "copy_to": copy})
+        w.run(check=0)
+        with open(copy) as f:
+            mid = json.load(f)
+        self.assertEqual(mid["verdict"], "running")
+        self.assertIsNone(mid["finished"])
+        self.assertEqual(mid["legs"]["pytest"]["rc"], 0, "written after every leg")
+        self.assertIsNone(mid["legs"]["manager"]["rc"])
+        self.assertEqual(w.result()["verdict"], "pass")
+
+    def test_a_second_run_on_the_same_sha_is_refused(self):
+        w = self.w
+        d = os.path.join(w.xdg, "romp", "sweeps")
+        os.makedirs(d)
+        with open(os.path.join(d, w.head() + ".lock"), "a+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            p = w.run(check=2)
+        self.assertIn("a sweep of %s is already running" % w.head()[:10], p.stderr)
+        self.assertFalse(os.path.exists(w.result_path()))
+        self.assertEqual(w.calls(), [])
+        w.run(check=0)
+
+    def test_the_pytest_leg_drops_session_git_and_credential_variables(self):
+        w = self.w
+        env = dict(w.env, ROMP_SID=SID, CLAUDE_CODE_SESSION_ID=SID, GIT_DIR=os.path.join(w.tmp, "no-such-git-dir"),
+                   SWEEP_PROBE_TOKEN="plain")
+        w.run(env=env, check=0)
+        call = [c for c in w.calls() if c["leg"] == "pytest"][0]
+        for name in ("ROMP_SID", "CLAUDE_CODE_SESSION_ID", "GIT_DIR", "SWEEP_PROBE_TOKEN", "GIT_CONFIG_GLOBAL"):
+            self.assertNotIn(name, call["names"], "the pytest leg inherits %s" % name)
+        self.assertFalse([n for n in call["names"] if sweep.DROP_CREDENTIAL.search(n)], "a credential-shaped name reaches pytest")
+        ledger = [c for c in w.calls() if c["leg"] == "ledger"][0]
+        self.assertIn("SWEEP_PROBE_TOKEN", ledger["names"], "only the test legs drop credential-shaped names")
+        self.assertNotIn("ROMP_SID", ledger["names"])
+        tmpdir = call["values"]["TMPDIR"]
+        self.assertLessEqual(len(os.fsencode(tmpdir)), len(BOX_TMPDIR_TEMPLATE), tmpdir)
+        self.assertNotRegex(tmpdir, r"-[A-Za-z]", "a letter after the dash spells a short option")
+        self.assertFalse(os.path.exists(tmpdir), "the runner removes its TMPDIR")
+        self.assertEqual(call["values"]["ROMP_SERVED_TESTS_REQUIRE"], "1")
+        argv = call["argv"]
+        self.assertEqual(argv[:4], ["-m", "pytest", "tests", "-n"])
+        self.assertIn("no:anyio", argv)
+        self.assertIn("--ignore=tests/test_cut_turn_tree_kill.py", argv)
+        r = w.result()
+        rec = r["legs"]["pytest"]
+        self.assertIn("ROMP_SID", rec["env_dropped"])
+        self.assertIn("SWEEP_PROBE_TOKEN", rec["env_dropped"])
+        self.assertNotIn(SID, json.dumps(r), "the result records variable names, never values")
+        self.assertNotIn("plain", json.dumps(rec["env_dropped"]))
+        self.assertEqual(r["sha"], w.head(), "an inherited GIT_DIR does not move the runner's own git calls")
+
+    def test_a_wrap_prefixes_one_leg_and_its_rc_is_the_legs(self):
+        w = self.w
+        w.run("--wrap", "pytest=env SWEEP_WRAPPED=1", check=0)
+        by_leg = {c["leg"]: c for c in w.calls()}
+        self.assertEqual(by_leg["pytest"]["values"].get("SWEEP_WRAPPED"), "1")
+        self.assertNotIn("SWEEP_WRAPPED", by_leg["bats"]["values"])
+        r = w.result()
+        self.assertEqual(r["legs"]["pytest"]["wrap"], ["env", "SWEEP_WRAPPED=1"])
+        self.assertIsNone(r["legs"]["bats"]["wrap"])
+        w2 = World()
+        self.addCleanup(w2.close)
+        w2.run("--wrap", "*=env SWEEP_WRAPPED=star", "--wrap", 'bats=sh -c "exit 7" --', check=1)
+        r2 = w2.result()
+        self.assertEqual(r2["legs"]["bats"]["rc"], 7, "the recorded rc is the wrapper's")
+        self.assertEqual(r2["red"], ["bats"])
+        self.assertEqual({c["leg"]: c["values"].get("SWEEP_WRAPPED") for c in w2.calls()}.get("pytest"), "star",
+                         "* applies to a leg with no prefix of its own")
+        self.assertNotIn("bats", w2.legs_called(), "the leg's own prefix replaced *")
+
+    def test_a_leg_rerun_keeps_history_and_rereads_the_verdict(self):
+        w = self.w
+        w.ctl({"rc": {"pytest": 1}})
+        w.run(check=1)
+        first = w.result()
+        self.assertEqual(first["red"], ["pytest"])
+        w.ctl({})
+        before = len(w.calls())
+        p = w.run("--leg", "pytest", check=0)
+        r = w.result()
+        self.assertEqual(r["verdict"], "pass", p.stdout + p.stderr)
+        self.assertEqual([c["leg"] for c in w.calls()[before:]], ["pytest"], "only the named leg ran again")
+        self.assertEqual([(h["leg"], h["rc"]) for h in r["history"]], [("pytest", 1)], "the red attempt is kept")
+        for name in ("bats", "manager", "tools", "ledger"):
+            self.assertEqual(r["legs"][name]["started"], first["legs"][name]["started"], "%s was not touched" % name)
+        w.change({"README.md": "moved on\n"})
+        p = w.run("--leg", "pytest", check=2)
+        self.assertIn("no result at %s to re-run a leg in; run the full sweep" % w.head()[:10], p.stderr)
+
+    def test_an_empty_glob_is_a_red_leg_not_a_bare_run(self):
+        seed = dict(SEED)
+        del seed["tests/a.bats"]
+        w = World(seed)
+        self.addCleanup(w.close)
+        w.run(check=1)
+        r = w.result()
+        self.assertEqual(r["red"], ["bats"])
+        self.assertIsNone(r["legs"]["bats"]["rc"])
+        self.assertIn("no files matched tests/*.bats", r["legs"]["bats"]["error"])
+        self.assertNotIn("bats", w.legs_called(), "bats was never run with no file arguments")
+
+    def test_deps_never_runs_npm_ci_through_a_symlinked_node_modules(self):
+        w = self.w
+        shared = os.path.join(w.tmp, "shared-node_modules")
+        os.makedirs(shared)
+        os.symlink(shared, os.path.join(w.tree, "vscode-extension", "node_modules"))
+        w.run(check=0)
+        r = w.result()
+        self.assertIs(r["legs"]["deps"]["owed"], False)
+        self.assertIn("a symlink", r["legs"]["deps"]["why"])
+        self.assertNotIn("deps", w.legs_called())
+
+    def test_a_pytest_interpreter_without_the_plugins_is_refused(self):
+        w = self.w
+        w.ctl({"missing": ["xdist"]})
+        p = w.run(check=2)
+        self.assertIn("lacks xdist", p.stderr)
+        self.assertFalse(os.path.exists(w.result_path()))
+
+    def test_check_reads_the_result_as_batch_does(self):
+        w = self.w
+        cmd = [sys.executable, str(SWEEP), "check", "--tree", w.tree]
+        p = subprocess.run(cmd, env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("FAIL sweep missing: no result for HEAD %s" % w.head(), p.stdout)
+        w.run(check=0)
+        p = subprocess.run(cmd, env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("ok   sweep at %s: pass" % w.head()[:10], p.stdout)
+
+
+class Reader(unittest.TestCase):
+    """assess, the reader scripts/batch.py verify calls: each case by name, over files written the way the runner
+    writes them. The batch side of the same cases is tests/test_batch_tool.py, VerifyReadsTheSweep."""
+
+    SHA = "1234567890" + "a" * 30
+    OTHER = "1234567890" + "b" * 30      # same 10-character prefix, another commit
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sweepread-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.env = {"XDG_STATE_HOME": self.tmp, "HOME": self.tmp}
+
+    def result(self, sha=None, **over):
+        sha = sha or self.SHA
+        legs = {n: {"owed": True, "rc": 0, "started": "2026-01-01T00:00:01Z", "finished": "2026-01-01T00:00:02Z"} for n in sweep.LEGS}
+        for n in sweep.WEBVIEW_LEGS + ("deps",):
+            legs[n] = {"owed": False, "rc": None, "why": "not owed here"}
+        data = {"schema": sweep.SCHEMA, "sha": sha, "branch": "batch/b1", "started": "2026-01-01T00:00:00Z",
+                "finished": "2026-01-01T00:01:00Z", "legs": legs, "verdict": "pass", "red": [], "invalid": None}
+        data.update(over)
+        return data
+
+    def write(self, data, sha=None):
+        sweep.write_result(sweep.result_path(sha or data["sha"], self.env), data)
+
+    def case(self, sha=None, branch=None):
+        a = sweep.assess(sha or self.SHA, branch=branch, env=self.env)
+        return a["case"], a["line"]
+
+    def test_pass(self):
+        self.write(self.result())
+        case, line = self.case()
+        self.assertEqual(case, "pass")
+        self.assertIn("sweep at 1234567890: pass, finished 2026-01-01T00:01:00Z (pytest 0, bats 0, manager 0, tools 0, ledger 0; "
+                      "not owed: deps, typecheck, npm-test, build)", line)
+
+    def test_missing_names_the_full_sha_and_the_path(self):
+        case, line = self.case()
+        self.assertEqual(case, "missing")
+        self.assertIn(self.SHA, line)
+        self.assertIn(sweep.result_path(self.SHA, self.env), line)
+
+    def test_stale_by_branch_and_by_the_recorded_sha(self):
+        self.write(self.result(sha=self.OTHER))
+        case, line = self.case(branch="batch/b1")
+        self.assertEqual(case, "stale")
+        self.assertIn("the newest result for batch/b1 is at 1234567890", line)
+        self.assertEqual(self.case()[0], "missing", "without the branch a result at another sha is not found")
+        self.write(self.result(sha=self.OTHER), sha=self.SHA)    # the file named for SHA records OTHER
+        case, line = self.case()
+        self.assertEqual(case, "stale", "the full sha decides, not its 10-character prefix")
+        self.assertIn("records sha", line)
+
+    def test_unfinished_red_invalid_incomplete_unreadable(self):
+        cases = []
+        self.write(self.result(finished=None, verdict="running"))
+        cases.append(("unfinished", self.case()))
+        legs = self.result()["legs"]
+        legs["bats"]["rc"] = 1
+        self.write(self.result(legs=legs, verdict="red", red=["bats"]))
+        cases.append(("red", self.case()))
+        self.write(self.result(legs=legs, verdict="pass"))       # a recorded pass over a red leg
+        cases.append(("invalid", self.case()))
+        self.write(self.result(invalid="HEAD moved to 0000000000 during the run", verdict="invalid"))
+        cases.append(("invalid", self.case()))
+        legs = self.result()["legs"]
+        del legs["bats"]
+        self.write(self.result(legs=legs))
+        cases.append(("incomplete", self.case()))
+        self.write(self.result(schema=0))
+        cases.append(("unreadable", self.case()))
+        os.makedirs(os.path.dirname(sweep.result_path(self.SHA, self.env)), exist_ok=True)
+        with open(sweep.result_path(self.SHA, self.env), "w") as f:
+            f.write("{")
+        cases.append(("unreadable", self.case()))
+        for expected, (case, line) in cases:
+            with self.subTest(expected=expected, line=line):
+                self.assertEqual(case, expected)
+                self.assertTrue(line.startswith("sweep %s" % expected), line)
+        self.assertIn("bats (rc 1)", cases[1][1][1])
+        self.assertIn("disagrees with its legs", cases[2][1][1])
+        self.assertIn("HEAD moved", cases[3][1][1])
+        self.assertIn("no bats leg", cases[4][1][1])
+        self.assertIn("schema 0", cases[5][1][1])
+
+
+class Rules(unittest.TestCase):
+    def test_the_verdict_rule(self):
+        v = sweep.verdict_of
+
+        def result(finished="2026-01-01T00:00:00Z", invalid=None, **legs):
+            base = {n: {"owed": False, "rc": None} for n in sweep.LEGS}
+            base.update(legs)
+            return {"finished": finished, "invalid": invalid, "legs": base}
+        self.assertEqual(v(result(finished=None)), "running")
+        self.assertEqual(v(result(invalid="HEAD moved")), "invalid")
+        self.assertEqual(v(result(bats={"owed": True, "rc": 1})), "red")
+        self.assertEqual(v(result(bats={"owed": True, "rc": None})), "red", "an owed leg with no rc is red")
+        self.assertEqual(v(result(bats={"owed": True, "rc": False})), "red", "rc must be the integer 0")
+        self.assertEqual(v(result(bats={"rc": 0})), "pass", "a leg that does not say it is not owed is owed")
+        self.assertEqual(v(result(bats={"owed": "no", "rc": None})), "red", "only owed: false excuses a leg")
+        self.assertEqual(v(result(pytest={"owed": True, "rc": 0})), "pass", "a not-owed leg's empty rc is fine")
+        missing = result(pytest={"owed": True, "rc": 0})
+        del missing["legs"]["bats"]
+        self.assertEqual(v(missing), "red", "a leg absent from the record is owed")
+
+    def test_webview_owed_is_the_claude_md_rule(self):
+        w = sweep.webview_owed
+        self.assertEqual(w(["kernel/kernel.py", "kernel/other.py", "ui/a/b.ts", "vscode-extension/x", "uix/y", "README.md"]),
+                         ["kernel/kernel.py", "ui/a/b.ts", "vscode-extension/x"])
+        self.assertEqual(w([]), [])
+
+    def test_the_state_dir_resolves_as_bin_romp_does(self):
+        sd = sweep.state_dir
+        self.assertEqual(sd({"ROMP_STATE_DIR": "/s", "XDG_STATE_HOME": "/x", "HOME": "/h"}), "/s")
+        self.assertEqual(sd({"ROMP_STATE_DIR": "", "XDG_STATE_HOME": "/x", "HOME": "/h"}), "/x/romp")
+        self.assertEqual(sd({"XDG_STATE_HOME": "", "HOME": "/h"}), "/h/.local/state/romp")
+
+    def test_every_flag_has_help(self):
+        bare = re.compile(r"^  (-{1,2}[\w-]+(?: [\w|<>=.-]+)?|[a-z]+)\s*$")
+        run = lambda *a: subprocess.run([sys.executable, str(SWEEP), *a], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        top = run("--help")
+        self.assertEqual(top.returncode, 0, top.stderr)
+        for sub in ("run", "check"):
+            p = run(sub, "--help")
+            self.assertEqual(p.returncode, 0, p.stderr)
+            for line in p.stdout.splitlines():
+                self.assertIsNone(bare.match(line), "%s --help: %r has no help text" % (sub, line.strip()))
+
+
+if __name__ == "__main__":
+    unittest.main()
