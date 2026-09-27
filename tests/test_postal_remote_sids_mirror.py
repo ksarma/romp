@@ -3091,9 +3091,10 @@ class Mirror(unittest.TestCase):
         hub's answer to a dial built after, which omits FAR (the word leaves the roster and is held: a restarted hub, and
         FAR's bus never heard answering, stamped with the bus of the roster that named it, not the row's); the
         restarted hub's dial under its declared name, canonicalized to HUB, gossiping FAR2's unanswered word; its answer
-        to our next dial, which omits FAR2 (held: FAR2's bus never heard answering); the kernel's down notify for HUB
-        (peer_update, linkDown); and two refused dials (_peer_exchange_once, the far side answering 409 and then 403
-        through a stubbed _peer_http, no socket). The seenAt of HUB's row is set back between steps so each held word's
+        to our next dial, which omits FAR2 (held: FAR2's bus never heard answering); the restarted hub's dial again,
+        carrying a relay whose origin, FAR3, no roster of that hub process named here (an origin hold on HUB's row, round
+        7 of fork PR #897: _origin_holds); the kernel's down notify for HUB (peer_update, linkDown); and two refused
+        dials (_peer_exchange_once, the far side answering 409 and then 403 through a stubbed _peer_http, no socket). The seenAt of HUB's row is set back between steps so each held word's
         second tells the row it left."""
         self._forget_presence_cache()
         self._local_listing_answered_empty()
@@ -3107,7 +3108,7 @@ class Mirror(unittest.TestCase):
                 return _real(*args, **kw)
             setattr(pm, name, counted)
             self.addCleanup(setattr, pm, name, real)
-        far2 = FAR + "-two"
+        far2, far3 = FAR + "-two", FAR + "-three"
         far_word = {"id": B, "name": "api", "via": FAR, "viaBus": "far-bus", "viaAnswered": False}
         far2_word = {"id": C, "name": "tests", "via": far2, "viaBus": "far-two-bus", "viaAnswered": False}
         web = {"id": A, "name": "web"}
@@ -3122,9 +3123,9 @@ class Mirror(unittest.TestCase):
             return sorted((pa.get("id"), pa.get("via"), pa.get("heldAt"), pa.get("hubBus"), pa.get("hubRoad"))
                           for pa in (pm.PEER_STATE.get(HUB) or {}).get("viaHeld") or [])
 
-        def hub_dials(presence, bus_id):
+        def hub_dials(presence, bus_id, relays=()):
             resp, status = pm.peer_exchange_handle(dict(self._exchange_request(HUB_DECL, presence), busId=bus_id,
-                                                        tier="trusted"))
+                                                        tier="trusted", relays=list(relays)))
             self.assertEqual(status, 200, resp)
 
         self._notify(HUB, up=True)
@@ -3156,6 +3157,14 @@ class Mirror(unittest.TestCase):
         self._hub_answers_our_dial(HUB, [web], "hub-bus-2")
         note()
         snap["answerRoad"], snap["bothHeld"] = pm.PEER_STATE[HUB].get("road"), held()
+        hub_dials([web], "hub-bus-2", relays=[{"mid": "px-drive-origin", "to": "api", "frm": "x", "body": "synthetic",
+                                              "kind": "delegate", "origin": far3}])
+        note()
+        hub_row = pm.PEER_STATE[HUB]
+        snap["originHeld"] = sorted((pa.get("id"), pa.get("via"), pa.get("heldAt"), pa.get("hubBus"), pa.get("hubRoad"))
+                                    for pa in hub_row.get("viaHeld") or [] if pa.get("originHold") is True)
+        snap["originSeenAt"], snap["originMark"] = hub_row.get("seenAt"), (hub_row.get("viaMark") or {}).get(far3)
+        snap["namedBy"] = {far: at[1] for far, at in (hub_row.get("viaNamedBy") or {}).items()}
         self._notify(HUB, up=False)
         note()
 
@@ -3181,12 +3190,13 @@ class Mirror(unittest.TestCase):
         branches that drive takes: the handler's dial and the fold's answer, each roster answered and carrying a bus id
         (the dials a tier, the answers with a tier and without, each answer with its dial's capture), filed under the
         name the hub declares and then under the alias, with _drop_peer_name_dupes forgetting the declared row; the far
-        hosts' unanswered words the answers then omit, held; the kernel's up notify, which stores nothing, and its down
+        hosts' unanswered words the answers then omit, held; a relay from an origin the restarted hub's process never
+        named here, an origin hold (round 7 of fork PR #897); the kernel's up notify, which stores nothing, and its down
         notify of a host with a row; and the dialer's 409 and a 403 that carries a body. The keys found on any row after
-        any step, with the keys _via_held stamps on a held word beyond the gossip row's own (a recorder replaces its row
-        whole, so a key one exchange carries, theirTier, is gone after the next), are exactly the keys the declaration's
-        comment names in double quotes (road's two values beside them): a key stored on those branches that the comment
-        omits reds here, and so does a key the comment names that no step stores. A STATED LIMIT (round 6 of fork PR
+        any step, with the keys _via_held and _origin_holds stamp on a held entry beyond the gossip row's own (a recorder
+        replaces its row whole, so a key one exchange carries, theirTier, is gone after the next), are exactly the keys
+        the declaration's comment names in double quotes (road's two values beside them): a key stored on those branches
+        that the comment omits reds here, and so does a key the comment names that no step stores. A STATED LIMIT (round 6 of fork PR
         #897, the reviewer's verifier at the sixty-second commit, by execution): a key a writer stores only on a branch
         the drive does not take is not seen (among them a dial or an answer carrying no bus id, an unanswered roster,
         a refusal whose body is empty), so the comment's word for such a branch rests on reading the writer; the
@@ -3198,7 +3208,8 @@ class Mirror(unittest.TestCase):
         named = _peer_state_shape_comment_keys()
         self.assertEqual(sorted(named), sorted(stored | stamps),
                          "PEER_STATE's shape comment names, in double quotes, every key a writer stores on a row and every "
-                         "key _via_held stamps on a held word on the branches the drive takes, and no other (missing: %r; "
+                         "key _via_held or _origin_holds stamps on a held entry on the branches the drive takes, and no "
+                         "other (missing: %r; "
                          "named, stored by no step: %r)" % (sorted((stored | stamps) - named), sorted(named - stored - stamps)))
         self.assertTrue({"road", "viaHeld", "heldAt", "hubBus", "hubRoad"} <= stored | stamps,
                         "decision 5's five, each stored by a writer: %r" % sorted(stored | stamps))
@@ -3252,7 +3263,12 @@ class Mirror(unittest.TestCase):
         since the merge a word may leave a row a later roster filed), and with the bus of the roster that named it,
         "hub-bus", not the row's, "hub-bus-2" (a stamp from the row's busId, the forty-ninth commit's, reds). FAR2's
         word, named by the restarted hub's dial and omitted by its answer to our next dial, is stamped with that dial
-        row's second, bus and road. Through the real handler, fold, down notify and dialer
+        row's second, bus and road. The origin hold (round 7 of fork PR #897, the reviewer's round-6 ruling R1, which
+        approves it; _origin_holds): the restarted hub's dial carrying a relay whose origin, FAR3, no roster of that
+        process named here arms an entry with an empty id, stamped with that dial row's second, the exchange's bus id and
+        its road, FAR3's mark moved to that recording unreleased; and `viaNamedBy` keeps, per far host, the bus of the
+        last roster that named it: FAR by the declared dial ("hub-bus"), moved to HUB with the fold, and FAR2 by the
+        restarted hub's dial ("hub-bus-2"). Through the real handler, fold, down notify and dialer
         (_drive_every_peer_state_writer)."""
         called, snap, _, _ = self._drive_every_peer_state_writer()
         self.assertEqual(snap["declaredRoad"], "dial", "the handler files the hub's dial with road dial")
@@ -3265,6 +3281,12 @@ class Mirror(unittest.TestCase):
         self.assertEqual(snap["bothHeld"], sorted([(B, FAR, snap["earlySeenAt"], "hub-bus", "answer"),
                                                    (C, FAR + "-two", snap["dialSeenAt"], "hub-bus-2", "dial")]),
                          "a held word keeps its stamps across the hub's later rosters, and FAR2's carries its dial row's")
+        self.assertEqual(snap["originHeld"], [("", FAR + "-three", snap["originSeenAt"], "hub-bus-2", "dial")],
+                         "the origin hold: an empty id, the arming row's second, the exchange's bus id and its road")
+        self.assertTrue(isinstance(snap["originMark"], list) and snap["originMark"][0] > 0 and snap["originMark"][1] is False,
+                        "FAR3's mark moved to the arming recording, unreleased: %r" % (snap["originMark"],))
+        self.assertEqual(snap["namedBy"], {FAR: "hub-bus", FAR + "-two": "hub-bus-2"},
+                         "viaNamedBy: the bus of the last roster that named each far host, FAR's moved with the fold")
 
 
 
@@ -3368,7 +3390,8 @@ def _peer_state_lock_census(source):
         refused. Refused: "answered set outside the lock in <function>, ..." and "answered set handed on in <function>
         ...", each naming the function and line.
       THE RECORDING SEQUENCE: every reference of the name _PEER_SEQ, the recording sequence each recorder mints and each
-        dial's build reads (round 6 of fork PR #897, the reviewer's round-5 ruling C), outside the module scope is
+        dial's build reads (round 6 of fork PR #897, the reviewer's round-5 ruling C), and the origin hold reads for the
+        recording the mint numbered in the same hold (round 7, the reviewer's round-6 ruling R1), outside the module scope is
         PROTECTED as above, and is its one cell, `_PEER_SEQ[0]`, read or written (a row's marks, which hold its numbers,
         live in PEER_STATE and are covered by the rules above). So the sequence is minted and read under the lock alone,
         a number minted in one recording is the order of that recording, and no reference hands the list out of a
@@ -4057,10 +4080,13 @@ class PeerStateLock(unittest.TestCase):
                          "membership test (the reviewer's round-5 ruling B): %r" % got["answered"])
         self.assertTrue({"_heard_answering", "_via_held"} <= set(got["protected"]),
                         "each reached only through call sites that hold the lock")
-        self.assertEqual(sorted({fn for fn, _, _ in got["sequence"]}), ["_order_row", "build_exchange_request"],
-                         "THE RECORDING SEQUENCE's population, derived from the source: the recorders' mint and the dial's "
-                         "capture (the reviewer's round-5 ruling C): %r" % got["sequence"])
-        self.assertIn("_order_row", got["protected"], "the mint, reached only through the recorders' holds")
+        self.assertEqual(sorted({fn for fn, _, _ in got["sequence"]}), ["_order_row", "_origin_holds", "build_exchange_request"],
+                         "THE RECORDING SEQUENCE's population, derived from the source: the recorders' mint, the origin "
+                         "hold's read of the recording the mint numbered in the same hold (round 7 of fork PR #897, the "
+                         "reviewer's round-6 ruling R1) and the dial's capture (the reviewer's round-5 ruling C): %r"
+                         % got["sequence"])
+        self.assertTrue({"_order_row", "_origin_holds"} <= set(got["protected"]),
+                        "the mint and the origin hold's read, each reached only through the recorders' holds")
         self.assertIsInstance(pm._PEER_STATE_LOCK, type(threading.Lock()), "a plain lock (it does not re-enter)")
         for other in ("_REMOTE_SIDS_LOCK", "_peer_lock", "_outbox_lock"):
             self.assertIsNot(pm._PEER_STATE_LOCK, getattr(pm, other), "one lock per subject: not %s" % other)

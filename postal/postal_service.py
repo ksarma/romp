@@ -4389,11 +4389,13 @@ def _fold_rows(rows):
     latest recording that carried it, with the bus id of the roster that did (`namedAt`, [recording, bus id], which
     tells a hub process's own word from an earlier process's when an answer drops it: _via_held); answered only if
     every row is (`presenceAnswered`); the latest
-    unanswered roster of any of them (`mark`); and per far host, the latest unanswered word and whether every row
-    has released it (`viaMark`). No row, the start of this bus process: nothing named, held, the mark at 0, so a
+    unanswered roster of any of them (`mark`); per far host, the latest unanswered word and whether every row
+    has released it (`viaMark`); and per far host, the recording and bus id of the latest roster of any of them that
+    named it (`viaNamedBy`, the origin hold's event since round 7 of fork PR #897: _origin_holds). No row, the start of
+    this bus process: nothing named, held, the mark at 0, so a
     source's first roster in this process releases only on this bus's own dial's answer (residual (3c), closed in
     the held direction by the reviewer's decision 4 of round 5: no release from state this process does not hold)."""
-    out = {"presence": [], "presenceAnswered": False, "mark": 0, "namedAt": {}, "viaMark": {}}
+    out = {"presence": [], "presenceAnswered": False, "mark": 0, "namedAt": {}, "viaMark": {}, "viaNamedBy": {}}
     rows = [r for r in rows if isinstance(r, dict)]
     if not rows:
         return out
@@ -4411,6 +4413,9 @@ def _fold_rows(rows):
             m, freed = (list(v) + [0, False])[:2] if isinstance(v, (list, tuple)) else (0, False)
             pm, pf = out["viaMark"].get(far, (int(m or 0), True))
             out["viaMark"][far] = [max(pm, int(m or 0)), bool(pf) and bool(freed)]
+        for far, at in (r.get("viaNamedBy") if isinstance(r.get("viaNamedBy"), dict) else {}).items():
+            if isinstance(at, (list, tuple)) and len(at) == 2 and int(at[0] or 0) >= out["viaNamedBy"].get(far, [-1])[0]:
+                out["viaNamedBy"][far] = [int(at[0] or 0), str(at[1] or "")]
     out["presence"] = [pa for _, pa in seen.values()]
     out["namedAt"] = {k: at for k, (at, _) in seen.items()}
     return out
@@ -4449,6 +4454,10 @@ def _order_row(row, prev, folded, built):
       of the host in `presence` carries viaAnswered as released, so the mirror's via row is unanswered while the
       host is held. A word the answer drops unanswered is the hub's held word (_via_held), released by omission only
       on an answer placed after the host's mark.
+    - per far host a roster names, `viaNamedBy` [this recording, the roster's bus id], the last roster that named it,
+      the others kept from the rows the roster is ordered after (round 7 of fork PR #897, the reviewer's round-6 ruling
+      R1): the origin hold's event, a roster of the hub's current process naming the host (_origin_holds). Only the
+      roster's own gossip rows count, never a word the merged roster keeps from an earlier process.
     Returns `row`, which the recorder stores (bound from this call, the census follows the stored row back to `prev`'s
     read: one hold). It runs under _PEER_STATE_LOCK, held by the two recorders, in the hold that reads `prev` and
     stores `row`."""
@@ -4477,6 +4486,9 @@ def _order_row(row, prev, folded, built):
     row["presence"] = [dict(pa, viaAnswered=bool(marks.get(str(pa["via"]), [0, False])[1])) if pa.get("via") else pa
                        for pa in fresh + kept]
     row["namedAt"], row["viaMark"] = named, marks
+    named_by = dict(base["viaNamedBy"])
+    named_by.update((far, [seq, str(row.get("busId") or "")]) for far in carried)
+    row["viaNamedBy"] = named_by
     return row
 
 
@@ -4507,7 +4519,9 @@ def _via_held(presence, bus, road, *prevs, built=None):
     dial this bus built after the host's last unanswered word and the host's bus has been heard answering here (below),
     or the far host's own row speaks for it here (_direct_row_speaks, the fold, while that row speaks). This bus's
     restart releases nothing: the via row is carried with its bit False and holds the arm (the reviewer's decision 4 on
-    round 5).
+    round 5). A restarted hub that RELAYS a far host's mail before its current process has named that host holds the
+    host whether or not this bus keeps a word of it: the ORIGIN HOLD (_origin_holds; round 7 of fork PR #897, the
+    reviewer's round-6 ruling R1), an entry of `viaHeld` with no session id, which this function does not carry.
     The same process's silence IS the far host's word: a hub gossips a far host only through that host's session rows
     (presence_payload) and forgets a far host's PEER_STATE only at its own fold, whose rows then name the host's bus
     under the other name, so a hub process that named the host and now omits it has recorded the host's next exchange,
@@ -4587,7 +4601,7 @@ def _via_held(presence, bus, road, *prevs, built=None):
     for prev in prevs:
         if not isinstance(prev, dict):
             continue
-        words += [pa for pa in rows(prev.get("viaHeld")) if isinstance(pa, dict)]
+        words += [pa for pa in rows(prev.get("viaHeld")) if isinstance(pa, dict) and not pa.get("originHold")]
         words += [dict(pa, heldAt=int(prev.get("seenAt") or 0), hubBus=_named_at(prev, pa)[1],
                        hubRoad=str(prev.get("road") or ""))
                   for pa in rows(prev.get("presence"))
@@ -4609,6 +4623,66 @@ def _via_held(presence, bus, road, *prevs, built=None):
         kept.add(one)
         held.append(pa)
     return held
+
+
+def _origin_holds(row, host, relays, bus, *prevs):
+    """THE ORIGIN HOLD (round 7 of fork PR #897, the reviewer's round-6 ruling R1 on extra5-1, and its decisions 1 and
+    2): a relay from an origin the hub's CURRENT process has not named to this bus holds that origin on the hub's row
+    until a roster of that process names it. `row` is the hub's row a recorder is about to store (ordered by
+    _order_row, its held words from _via_held), `host` the name the exchange is filed under, `relays` the exchange's
+    relays (the request's at peer_exchange_handle, the answer's at peer_exchange_apply), `bus` the exchange's bus id,
+    and `prevs` the rows the recorder read (the row it replaces and the rows the same bus left under other names).
+    THE ROAD: a far host F's session S mails this bus through a hub; the hub parks the mail (its link here down; the
+    outbox stays on disk across the self-update path); the hub's bus restarts; the restarted hub, which has not heard
+    F, relays the mail. The relay carries its origin, the hub's name for F when it parked it (_relay_in), and the
+    exchange carries no word of F. A restarted hub's dial merges, so the old process's word about F stays in the row
+    with its bit released; its answer drops that word, which _via_held does not hold, its bit being True; F's own row
+    here, answered from F's previous process, folds the word; and a bus that never heard F from the hub has no word
+    of F at all. Before round 7 the mirror then vouched for F's word or had none, and S, live, answered rule 5 while
+    another row vouched (the reviewer's ten measured roads).
+    THE RULE: for a forwarded relay (its origin other than `host`) whose origin was last named by a roster that did
+    not carry `bus` (the row's `viaNamedBy`, _order_row; a bus id is minted per process, BUS_ID, so a restarted hub's
+    new id matches none of its old rosters), the origin's mark moves to this recording (`viaMark` [the recording,
+    False]), every word of the origin in the row's presence is stored viaAnswered False, and `viaHeld` gains an
+    ORIGIN HOLD: an entry for the origin with an empty id and `originHold` True, stamped heldAt (the row's seenAt),
+    hubBus (`bus`) and hubRoad (the row's road), which the writer writes as via:<hub>/<origin>, heard, its bit False,
+    no sids (_remote_sids_document). It arms on the relay as the recorder reads it, whatever _relay_in then rules
+    (landed, bounced, a deduped resend or quarantined), and before the mirror's write. An exchange with no bus id
+    cannot say which process named the origin, so its relays arm it (such a hub predates presenceAnswered, and its
+    own row holds every sid already, cost (a)). The hold is carried from `prevs` until a roster carrying `bus` names
+    the origin, the hub having heard the host since its restart; a word the merged roster keeps from an earlier
+    process does not count. The origin's words then stand, held or released by their own order (_order_row: an answer
+    to a dial this bus built after the mark releases them). The same process's omission never ends the hold (the
+    relay carries no bus id of the origin, and _via_held's release needs one), and this bus's restart ends nothing:
+    the via row is carried with its bit False until the hub's word about the origin, heard in the new process,
+    replaces it (held or released by its own order), or the origin's own row answers a dial of the new process and
+    the carry drops it, when the row names no other bus of the origin (_direct_row_speaks; the reviewer's round-6
+    decision 1: that answer lists the origin's live sessions), where the hold ends. In this bus process the hold
+    never folds into the origin's own row, since the mail did not ride that row's exchange. Runs under
+    _PEER_STATE_LOCK, held by the recorder from its read of `prevs` through its store, after _via_held; the costs are
+    the writer's (_remote_sids_document, THE ORIGIN HOLD)."""
+    held = [pa for pa in row.get("viaHeld") or [] if isinstance(pa, dict) and not pa.get("originHold")]
+    named_by = row.get("viaNamedBy") if isinstance(row.get("viaNamedBy"), dict) else {}
+
+    def named_now(far):                               # the last roster that named `far` carried this exchange's bus id
+        at = named_by.get(far)
+        return bool(bus) and isinstance(at, (list, tuple)) and len(at) == 2 and str(at[1]) == str(bus)
+    holds = {}
+    for prev in prevs:                                # the holds the rows read carry, until the hub's current process names
+        for pa in (prev.get("viaHeld") if isinstance(prev, dict) and isinstance(prev.get("viaHeld"), list) else []):
+            if isinstance(pa, dict) and pa.get("originHold") and pa.get("via") and not named_now(str(pa["via"])):
+                holds.setdefault(str(pa["via"]), pa)
+    for m in relays if isinstance(relays, list) else []:
+        origin = str(m.get("origin") or "") if isinstance(m, dict) else ""
+        if not origin or origin == str(host) or named_now(origin):
+            continue                                  # the hub's own mail, or an origin its current process has named here
+        row.setdefault("viaMark", {})[origin] = [_PEER_SEQ[0], False]   # this recording (_order_row minted it in this hold)
+        row["presence"] = [dict(pa, viaAnswered=False) if isinstance(pa, dict) and str(pa.get("via") or "") == origin
+                           else pa for pa in row.get("presence") or []]
+        holds.setdefault(origin, {"via": origin, "id": "", "originHold": True, "viaAnswered": False,
+                                  "heldAt": int(row.get("seenAt") or 0), "hubBus": str(bus or ""),
+                                  "hubRoad": str(row.get("road") or "")})
+    row["viaHeld"] = held + [holds[o] for o in sorted(holds)]
 
 
 def _local_listing_owned():
@@ -4930,7 +5004,10 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     never reported it, or holds it down before or after the exchange (a down notify does not unsend the mail; a
     held-down host can dial this bus over its cache); a host held down after an ANSWERED exchange can carry such a
     session's mail only on its next exchange, which replaces the bit: THE CONTRAST is where the session's mail can
-    have landed, not the host's link. The gate stops the cached row's own fold and vouch; the reader's
+    have landed, not the host's link. For a far host behind a hub, the exchange that carries a session's mail carries
+    the host's word, and since round 7 of fork PR #897 that holds across the hub's restart through the origin hold
+    (THE ORIGIN HOLD below): a relay from an origin the restarted hub has not named holds the origin on the hub's row.
+    The gate stops the cached row's own fold and vouch; the reader's
     listing-unanswered arm stops the presumption from another host's word while the cached row is heard in this
     process (the twenty-ninth commit, which read reachable rows alone, so the kernel's down notify after the
     exchange that carried the mail let rule 5 presume the session closed, the reviewer's verifier's roads through
@@ -5001,6 +5078,49 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     ..._and_our_restart_does until round 6 of fork PR #897) and
     test_a_hub_known_by_its_declared_name_that_restarts_and_then_folds_keeps_the_held_word there, and
     tests/test_postal_remote_sids_mirror.py test_a_hubs_held_word_about_a_far_host_stays_heard_until_the_hub_names_that_host_again).
+    THE ORIGIN HOLD (round 7 of fork PR #897, the reviewer's round-6 ruling R1 on extra5-1, and its decisions 1 and 2).
+    The road: a session on a far host mails this bus through a hub; the hub parks the mail, its link here down (the
+    outbox stays on disk across the self-update path); the hub's bus restarts; and the restarted hub, which has not
+    heard the host, relays the mail. The exchange that carried it carried no word of the host: a restarted hub's dial
+    merges and keeps the old process's word with its bit released, its answer drops that word unheld, the host's own
+    row here folds it, or this bus never heard one; until this round the live sender answered rule 5 while another row
+    vouched (the reviewer's ten roads). The rule, this round's change: a relay from an origin the hub's current process
+    has not named here holds the origin on the hub's row until a roster of that process names it (_origin_holds: the
+    origin's mark moves to the recording, its words are stored unanswered, and the row carries an origin hold, an
+    entry of its held words with no session id), armed before any relay lands. This writer changes in three places
+    for it: its loop over a hub's words admits an origin hold, which has no session id; it adds no sid for one; and it
+    never folds one into the origin's own row, since in this bus process the mail did not ride that row's exchange.
+    So it writes via:<hub>/<origin>, heard, its bit False, no sids. After this bus restarts the via row is carried with its bit
+    False until the hub's word about the origin, heard in the new process, replaces it (held or released by its own
+    order, (3c) above), or the origin's own row answers a dial of the new process and the carry drops it, when the row
+    names no other bus of the origin (_direct_row_speaks, the carry's fold; the reviewer's round-6 decision 1: that
+    answer lists the origin's live sessions): the origin hold ends there. The key is a relay, not the restart (its
+    decision 2): a restarted hub that relays nothing leaves a far host's words to their own order. The witnesses,
+    tests/test_dead_session_staleness.py ReaderFollowsTheWriter
+    test_origin_hold_a_relay_through_a_restarted_hub_holds_its_origin_until_the_hubs_current_process_names_it (the ten
+    roads, each rule 5 at the eightieth commit), its controls
+    test_origin_hold_controls_the_release_where_the_hub_names_the_origin_and_the_roads_with_no_restarted_hubs_relay,
+    and the end after this bus's restart,
+    test_decision_1_after_our_restart_the_carry_drops_the_origin_hold_once_the_origins_own_row_answers_our_dial. Its
+    costs, on the restricted side, each with its witness there:
+      (r1) an origin the relaying hub's current process never names (its host never reaches the restarted hub, or
+           reaches it only with no session, since a hub gossips a far host only through its session rows) keeps the
+           hold whatever _relay_in ruled on the relay, and every sid nothing names here is cannot-determine for the
+           file's life, this bus's restart included
+           (test_cost_r1_an_origin_the_restarted_hub_never_names_holds_every_sid_across_our_restart);
+      (r2) a hub process that heard the origin but never named it here (its link here down for the whole life of the
+           origin's only session, which then ended) relays that session's mail: held until the hub names the origin
+           again (test_cost_r2_a_hub_process_that_never_named_the_origin_here_holds_until_it_names_it_again);
+      (r3) the hub's current process names the origin under another name than the parked record carries (the old
+           process filed the host under the alias it dials, the new one files the host's own dial under the hostname
+           it declares until its own dial folds it, _canon_peer_name): held until the hub names it under the record's
+           name
+           (test_cost_r3_an_origin_the_restarted_hub_names_under_another_name_stays_held_until_it_names_it_under_the_records_name);
+      (r4) an origin this bus also hears directly stays held through its own answered row in this bus process, so a
+           sid nothing names stays cannot-determine after this bus's dial reaches the host and its row answers
+           (test_cost_r4_an_origin_this_bus_also_hears_directly_stays_held_through_its_own_answered_row_in_this_process).
+    The follow-up after this PR is the origin's bus id on a forwarded record (an exchange-field change), which would
+    release the hold by the same hub process's omission and follow a renamed origin.
     The SAME hub process's omission, in its answer to a dial this bus built after the host's last unanswered word, is
     the release: a hub gossips a far host
     only through that host's session rows and forgets a far host's PEER_STATE only at its own fold, whose rows then
@@ -5228,7 +5348,7 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     unanswered word, whose word releases the held one, or, for an answer with an empty listing, omits the host, for a
     far bus heard answering in this process); this bus's restart releases nothing (the reviewer's decision 4 on round
     5: a carried host row keeps its bit and holds the arm): no timer. The ruling asked for no new writer state; the
-    population carries the writer state rounds 4 and 6 of fork PR #897 add, two of its keys unread since round 6
+    population carries the writer state rounds 4, 6 and 7 of fork PR #897 add, two of its keys unread since round 6
     (`road` and `hubRoad`, below), all in memory and gone with the process (the keys the recorders store that they
     did not at the twenty-eighth commit, round 3's last, derived by running both, and the state beside the table: the
     reviewer's round-5 ruling E). Round 4's: on every row a recorder
@@ -5251,7 +5371,10 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     answering (_ANSWERED_BUSES),
     which the reviewer's round-5 ruling B approves; and the ORDER STATE, which its ruling C approves: the recording
     sequence (_PEER_SEQ), each row's mark and each name's recording and roster bus id (`mark`, `namedAt`), each far
-    host's mark and release (`viaMark`), and each dial's capture of the sequence handed to its fold.
+    host's mark and release (`viaMark`), and each dial's capture of the sequence handed to its fold. Round 7's, which
+    the reviewer's round-6 ruling R1 approves (THE ORIGIN HOLD above): per far host the recording and bus id of the
+    last roster that named it (`viaNamedBy`), and the origin hold, an entry of `viaHeld` with an empty id and
+    `originHold` True, stamped heldAt, hubBus and hubRoad; both pinned there as well.
     The arm only adds a cannot-determine answer, so it creates no rule 5. The four roads
     it closes, each driven through the real builders, handler, fold, this writer and the reader under both root
     shapes, are tests/test_dead_session_staleness.py ReaderFollowsTheWriter test_a_session_started_on_a_hub_during_its_blink_is_cannot_determine_while_its_word_about_another_host_vouches,
@@ -5405,6 +5528,7 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           restart, closes that end) (tests/test_dead_session_staleness.py ReaderFollowsTheWriter
           test_cost_ii_a_host_this_bus_never_dials_stays_held_across_its_answered_dials_and_our_restart). Its closure is
           the source's own order, a far-side sequence on each roster, which would let a dial release too.
+    The origin hold's costs, (r1) to (r4), are stated with their witnesses under THE ORIGIN HOLD above.
     Costs (c), (e), (i) and (ii) are ACCEPTED as restricted-side costs (the reviewer's rulings; (i) and (ii) its round-5
     ruling C and decision 2): at the branch's base the judge
     never reached rule 5 at all, so every state the arm holds at cannot-determine was unsettled there too, and the
@@ -5531,19 +5655,22 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
         words = [(pa, int(st.get("seenAt") or 0)) for pa in st.get("presence") or []]   # of the same pair under another far
         words += [(pa, int(pa.get("heldAt") or 0)) for pa in st.get("viaHeld") or []]   # name: the hub's word moved with the
         for pa, seen in words:                        # name), and the hub's HELD words: a far host's unanswered word its roster
-            far = pa.get("via")                       # no longer names, heard in this process, its bit False (_via_held)
-            if not (pa.get("id") and far):
-                continue
+            far = pa.get("via")                       # no longer names, heard in this process, its bit False (_via_held),
+            #                                           and its origin holds (_origin_holds)
+            if not (far and (pa.get("id") or pa.get("originHold"))):
+                continue                              # a word with no session id counts only as an origin hold (round 7)
             far, far_bus = str(far), str(pa.get("viaBus") or "")
             if far_bus:
                 current_word.add((str(host), far_bus))
-            if _direct_row_speaks(peers, far, far_bus, table, links):
+            if not pa.get("originHold") and _direct_row_speaks(peers, far, far_bus, table, links):
                 folded.add(_remote_sids_via_key(host, far))
-                continue                              # heard directly, its link not held down, its roster answered: its own row speaks
+                continue                              # heard directly, its link not held down, its roster answered: its own
+            #                                           row speaks; an origin hold never folds in this process (_origin_holds)
             row = hosts.setdefault(_remote_sids_via_key(host, far),
                                    {"kind": "via", "sids": [], "heard": True, "expired": False, "seenAt": 0,
                                     "via": str(host), "host": far, "viaBus": far_bus, "answered": True})
-            row["sids"].append(str(pa["id"]))
+            if pa.get("id"):                          # an origin hold names no session
+                row["sids"].append(str(pa["id"]))
             row["answered"] = row["answered"] and pa.get("viaAnswered") is True   # the FAR host's bit, as the hub stamped it
             row["viaBus"] = row["viaBus"] or far_bus
             row["seenAt"] = max(row["seenAt"], seen)
@@ -5817,6 +5944,13 @@ PEER_STATE = {}                            # host -> its row. THE ROW'S SHAPE: e
 #                                            ruling C, which approves it; _order_row): "mark", the recording of the row's last
 #                                            unanswered roster (0, this process's start); "namedAt", {name: [the recording that last
 #                                            carried it, that roster's bus id]}; "viaMark", {far host: [its mark, released]}.
+#                                            And the origin hold (round 7 of fork PR #897, the reviewer's round-6 ruling
+#                                            R1, which approves it; _origin_holds): "viaNamedBy", {far host: [the
+#                                            recording of the last roster that named it, that roster's bus id]}, which
+#                                            _order_row sets and moves with the order state (_fold_rows); and on "viaHeld",
+#                                            an entry for a relay's origin the hub's current process has not named here,
+#                                            its id empty, "originHold" True, stamped heldAt, hubBus and hubRoad (the row's
+#                                            seenAt, the exchange's bus id and the row's road when it armed).
 #                                            `presence` is then the union of the rosters this bus could not place,
 #                                            `presenceAnswered` the stored bit. road, viaHeld, heldAt, hubBus and hubRoad are round
 #                                            4's (the thirty-first to the thirty-third commits), approved by the reviewer's decision
@@ -5878,9 +6012,11 @@ _PEER_SEQ = [0]                            # the RECORDING SEQUENCE (round 6 of 
 #                                            and each dial's build reads the current one (build_exchange_request's `built`),
 #                                            handed to the fold of its answer, so an answer is placed after every roster
 #                                            recorded before its dial was built (_placed), the one exact order this bus
-#                                            has on a source's rosters. A row's `mark` and each far host's in `viaMark` are
-#                                            numbers from it. In memory only, from 0 at each process start, gone with the
-#                                            process, written and read under _PEER_STATE_LOCK alone (the census:
+#                                            has on a source's rosters. A row's `mark` and each far host's in `viaMark` and
+#                                            `viaNamedBy` are numbers from it (an origin hold reads the number the mint gave
+#                                            its recording, in the same hold: _origin_holds). In memory only, from 0 at each
+#                                            process start, gone with the process, written and read under _PEER_STATE_LOCK
+#                                            alone (the census:
 #                                            tests/test_postal_remote_sids_mirror.py PeerStateLock, THE RECORDING SEQUENCE)
 _outbox_lock = threading.Lock()           # serializes an outbox record's listing-into-flight, carry mark and
 #                                            unlink (recall, ack, bounce): none interleaves (_relays_for, _flight_done)
@@ -7010,6 +7146,9 @@ def peer_exchange_handle(data, flight=None):
         # the hub names that host again or the same hub process omits it in its answer to a dial this bus built after
         # the host's last unanswered word; after this bus restarts its via row is carried unanswered and holds (_via_held)
         row["viaHeld"] = _via_held(row["presence"], bus_id, "dial", prev, *gone)
+        _origin_holds(row, host, data.get("relays"), bus_id, prev, *gone)   # a relay from a far host this hub process has
+        #                                              not named here holds that host (round 7 of fork PR #897, the
+        #                                              reviewer's round-6 ruling R1), armed before the relays land below
         _heard_answering(row)                        # the far bus ids this roster shows answering (the reviewer's round-5
         #                                              ruling B), in the hold that stores the row, before the fold
         PEER_STATE[host] = row
@@ -7169,6 +7308,9 @@ def peer_exchange_apply(host, req_sent, resp, flight=None, built=None):
         row = _order_row(row, prev, gone, cap)       # ordered after every roster recorded before our dial was built: the
         #                                              one release (round 6 of fork PR #897, the reviewer's round-5 ruling C)
         row["viaHeld"] = _via_held(row["presence"], bus_id, "answer", prev, *gone, built=cap)   # ...and its held words
+        _origin_holds(row, host, resp.get("relays"), bus_id, prev, *gone)   # ...and the origins of its relays this hub
+        #                                              process has not named here (round 7 of fork PR #897, the reviewer's
+        #                                              round-6 ruling R1), armed before the relays land below
         _heard_answering(row)                        # the far bus ids this roster shows answering (the reviewer's round-5
         #                                              ruling B), in the hold that stores the row, before the fold
         PEER_STATE[host] = row
