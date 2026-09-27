@@ -23,10 +23,12 @@ run goes through every callback they leave for later (timers, animation frames, 
 listeners) and an exercise: every other listener and handler they register (on the window, the document, a frame or an
 element), handed a stand-in event; every callback they hand to a stand-in (an observer's, a fetch's then); and every word
 a message listener's arms compare against, from each pane. Then it forges a message from each sender the shell must
-refuse (a page that opened it, a sandboxed frame, a window it does not hold, itself, its own dispatch, a sourceless post
-with the opaque origin) and from a pane, and reads which function the check is when each message is delivered. The
-other pages' scripts run through the same exercise for their census (ServedPagesExecuted). Synthetic only: no session
-data, a loopback origin.
+refuse (a page that opened it, a sandboxed frame, a window it does not hold, a frame nested in a pane, sandboxed or on its
+origin, a same-origin window that replaced its window.parent with the shell, a window it opened, on another origin or on
+its own, itself, its own dispatch, a sourceless post with the opaque origin) and from a pane, over windows that carry the
+edges a browser gives them (parent, top, opener, and the shell's frames), and reads which function the check is when
+each message is delivered. The other pages' scripts run through the same exercise for their census
+(ServedPagesExecuted). Synthetic only: no session data, a loopback origin.
 
 The line after the adopted three is the fork's LOCK (2026-09-26): it makes the check's property read-only and
 non-configurable once defined, so a later write of it, under any name and on any road (a road the stand-in does not
@@ -473,10 +475,11 @@ class KernelListenerCensus(unittest.TestCase):
 # A stand-in browser for the shell's inline scripts: node's vm runs them in a context whose global answers every name
 # it does not hold with an inert stub (callable, constructible, every property another stub, 0 as a number), so the
 # scripts boot far enough to register their listeners without a DOM. What the checks read is real: location (the
-# shell's origin), document.querySelectorAll('iframe') (the shell's frames), window.parent/top (the shell is the top
-# window). Before any message is tested it runs what the scripts left for later and the exercise (ShellListenersExecuted
-# names the roads). The harness then hands each registered window message listener a message from each sender and counts
-# how often the listener reads the message's data: a listener that returns before reading it acts on nothing.
+# shell's origin), document.querySelectorAll('iframe') and window.frames (the shell's frames), window.parent/top (the
+# shell is the top window), and each sending window's parent, top and opener. Before any message is tested it runs what
+# the scripts left for later and the exercise (ShellListenersExecuted names the roads). The harness then hands each
+# registered window message listener a message from each sender and counts how often the listener reads the message's
+# data: a listener that returns before reading it acts on nothing.
 _HARNESS = r"""
 'use strict';
 const vm = require('vm');
@@ -519,12 +522,17 @@ function stubbed(o) {
                         set(t, k, v) { onWrite(k, v); t[k] = v; return true; } });
 }
 // windows: a pane of the shell (the chat), the Files pane, a sandboxed frame of the shell, a frame of the shell on
-// another origin, a same-origin window the shell does not hold (a popup, a frame nested in a pane), a page on another
-// origin that opened the shell
+// another origin, a same-origin window the shell does not hold and that has no edge to it, a page on another origin that
+// opened the shell; and, for the frames in the shell's tab and the windows it opened (their edges are set once the
+// shell's window exists, below): a frame nested in the chat pane, sandboxed and on the shell's origin; a same-origin
+// window nested in a pane that replaced its own window.parent with the shell (no iframe of the shell holds it); a window
+// the shell opened, on another origin and on the shell's
 const POSTED = [];
 function win(name) { return stubbed({ name, postMessage(m) { POSTED.push([name, m]); }, focus() {} }); }
 const CHAT = win('chat'), FILES = win('files'), SANDBOXED = win('sandboxed'), XFRAME = win('xframe'),
       STRAY = win('stray'), OPENER = win('opener');
+const NESTED_SBX = win('nested-sandboxed'), NESTED = win('nested'), FORGED = win('parent-replaced'),
+      POPUP = win('popup'), POPUP_SO = win('popup-same-origin');
 function frame(id, w) { return stubbed({ id, contentWindow: w, getAttribute(n) { return n === 'id' ? id : null; },
                                          addEventListener(type, f) { other(type, f); }, removeEventListener() {} }); }
 const FRAMES = [frame('f-chat', CHAT), frame('f-files', FILES), frame('f-url', SANDBOXED), frame('f-x', XFRAME)];
@@ -616,6 +624,24 @@ Object.assign(target, {
   removeEventListener() {},
 });
 const ctx = vm.createContext(G);
+// Each window's edges, as a browser gives them, set before the scripts run. The shell's page is the top of its tab: the
+// target's window, parent and top are all G, which a script reads as the shell's window (vm hands the context's global
+// back, not G, when a script reads a name that holds G, so the edges below point at the shell's window as its scripts see
+// it). Its iframes are its children: each has the shell as parent and top, and window.frames lists them (in a browser
+// window.frames is the window itself, indexed by its frames; vm's global reads window[i] but answers `i in window` false,
+// so Array.prototype.indexOf over it finds nothing, and an array of the same windows stands in, with window.length and
+// window[i] reading the same list). A frame nested in a pane has the pane as parent and the shell as top. A window the
+// shell opened has the shell as its opener, and the page that opened the shell is its opener.
+// test_the_stand_in_windows_carry_the_edges_a_browser_gives_them reads these edges as the scripts see them.
+const SHELL_WIN = vm.runInContext('window', ctx);
+[CHAT, FILES, SANDBOXED, XFRAME].forEach((w) => { w.parent = SHELL_WIN; w.top = SHELL_WIN; });
+target.frames = [CHAT, FILES, SANDBOXED, XFRAME];
+target.length = target.frames.length;
+target.frames.forEach((w, i) => { target[i] = w; });
+[NESTED_SBX, NESTED].forEach((w) => { w.parent = CHAT; w.top = SHELL_WIN; });
+FORGED.parent = SHELL_WIN; FORGED.top = SHELL_WIN;
+POPUP.opener = SHELL_WIN; POPUP_SO.opener = SHELL_WIN;
+target.opener = OPENER;
 const ERRORS = [];
 SCRIPTS.forEach((body, n) => {
   try { vm.runInContext(body, ctx, { filename: 'landing-script-' + n + '.js', timeout: 5000 }); }
@@ -649,8 +675,13 @@ const SENDERS = {
   opener: [OPENER, ELSEWHERE],             // a page on another origin that opened the dashboard
   sandboxedFrame: [SANDBOXED, 'null'],    // a sandboxed iframe of the shell (opaque origin)
   otherOriginFrame: [XFRAME, ELSEWHERE],  // an iframe of the shell showing another origin
-  strayWindow: [STRAY, ORIGIN],           // same origin, but not a frame of this document (a popup, a nested frame)
-  shellItself: [vm.runInContext('window', ctx), ORIGIN],   // the shell's own window, as its scripts see it
+  strayWindow: [STRAY, ORIGIN],           // same origin, but not a frame of this document, with no edge to it
+  nestedSandboxed: [NESTED_SBX, 'null'],  // a sandboxed frame nested in a pane: its top is the shell, no iframe of it
+  nestedSameOrigin: [NESTED, ORIGIN],     // a frame on the shell's origin nested in a pane: the same top, no iframe of it
+  nestedParentReplaced: [FORGED, ORIGIN], // a same-origin window nested in a pane that set its window.parent to the shell
+  popup: [POPUP, ELSEWHERE],               // a page on another origin the shell opened: its opener is the shell
+  popupSameOrigin: [POPUP_SO, ORIGIN],    // a window on the shell's origin the shell opened
+  shellItself: [SHELL_WIN, ORIGIN],       // the shell's own window, as its scripts see it
   dispatch: [null, ''],                    // no source, no origin: an event this document dispatched
   sourcelessElsewhere: [null, ELSEWHERE], // no source, another origin
   sourcelessOpaque: [null, 'null'],       // no source, the opaque origin: a sandboxed frame gone after it posted
@@ -725,9 +756,22 @@ function descriptorSeen() {
   return { writable: 'value' in d ? d.writable : null, configurable: d.configurable, enumerable: d.enumerable,
            value: 'value' in d ? textOf(d.value) : null, accessor: 'get' in d || 'set' in d };
 }
+// the windows' edges as a script on the shell's page reads them (window, window.top, window.frames, a sender's parent,
+// top and opener), after the scripts, what they left for later and the exercise
+target.__b5w = { chat: CHAT, files: FILES, sandboxed: SANDBOXED, xframe: XFRAME, nested: NESTED_SBX, nestedSo: NESTED,
+                 forged: FORGED, popup: POPUP, popupSo: POPUP_SO, opener: OPENER };
+const EDGES = vm.runInContext(
+  "(function(w){var f=window.frames,inF=function(x){return Array.prototype.indexOf.call(f,x)>=0;};" +
+  "return {shellIsItsOwnParentAndTop:window.parent===window&&window.top===window," +
+  "framesAreTheFourIframes:window.length===4&&inF(w.chat)&&inF(w.files)&&inF(w.sandboxed)&&inF(w.xframe)," +
+  "iframesAreItsChildren:[w.chat,w.files,w.sandboxed,w.xframe].every(function(x){return x.parent===window&&x.top===window.top;})," +
+  "nestedShareItsTopUnderThePane:[w.nested,w.nestedSo].every(function(x){return x.parent===w.chat&&x.top===window.top&&!inF(x);})," +
+  "parentReplacedReadsAsItsChild:w.forged.parent===window&&w.forged.top===window.top&&!inF(w.forged)," +
+  "popupsItOpened:w.popup.opener===window&&w.popupSo.opener===window," +
+  "itsOpener:window.opener===w.opener};})(__b5w)", ctx);
 const out = { errors: ERRORS, listeners: LISTENERS.map((l) => ({ src: l.src, checkDefined: l.checkDefined })),
               assigns: ASSIGNED.map(textOf), afterBoot: AFTER_BOOT, late: LATE_RUN, exercise: EXERCISE, onmessage: ONMESSAGE,
-              descriptor: descriptorSeen(),
+              descriptor: descriptorSeen(), edges: EDGES,
               // how often a planted road ran, by the counter a plant bumps (window.__b5reached): a road the lock leaves
               // nothing to hear on shows it ran here
               reached: typeof target.__b5reached === 'number' ? target.__b5reached : 0 };
@@ -893,12 +937,23 @@ class ShellListenersExecuted(unittest.TestCase):
     caught only when its text names addEventListener (KernelListenerCensus); under a computed name, no test catches it. A
     write of the check there is refused by the lock (CheckLocked)."""
 
-    REFUSED = ("opener", "sandboxedFrame", "otherOriginFrame", "strayWindow", "shellItself", "dispatch",
-               "sourcelessElsewhere", "sourcelessOpaque")
+    REFUSED = ("opener", "sandboxedFrame", "otherOriginFrame", "strayWindow", "nestedSandboxed", "nestedSameOrigin",
+               "nestedParentReplaced", "popup", "popupSameOrigin", "shellItself", "dispatch", "sourcelessElsewhere",
+               "sourcelessOpaque")
 
     @classmethod
     def setUpClass(cls):
         cls.run_ = _run_landing("reads")
+
+    def test_the_stand_in_windows_carry_the_edges_a_browser_gives_them(self):
+        # the refused senders above are refused over windows related to the shell as a browser relates them, read the way
+        # a script on the shell reads them: so a check that took a window in the shell's frames, one sharing its top, one
+        # whose parent reads as the shell, or one the shell opened, for a pane, hears a sender here (a sandboxed frame of
+        # the shell, a frame nested in a pane, the window that replaced its parent, a popup) and fails the reads test
+        self.assertEqual(self.run_["edges"], {
+            "shellIsItsOwnParentAndTop": True, "framesAreTheFourIframes": True, "iframesAreItsChildren": True,
+            "nestedShareItsTopUnderThePane": True, "parentReplacedReadsAsItsChild": True, "popupsItOpened": True,
+            "itsOpener": True})
 
     def test_every_listener_registers_with_the_check_already_defined(self):
         got = sorted(_name_of(l["src"]) for l in self.run_["listeners"])
@@ -1149,15 +1204,30 @@ class CheckLocked(unittest.TestCase):
         self.assertIn("try{", LOCK, "the served lock line carries the try that absorbs it")
 
 
-# The adopted check alone, over stand-in windows: the truth table of what it admits.
+# The adopted check alone, over stand-in windows: the truth table of what it admits. The windows carry the edges a
+# browser gives them: the shell's page is the top of its tab (its own parent and top); its iframes (a pane, a pane marked
+# data-protocol=none, a sandboxed frame) have it as parent and top and are listed in window.frames, which is the window
+# itself with a length and an index per frame; a frame nested in the pane has the pane as parent and the shell as top; a
+# same-origin window nested in the pane can replace its own window.parent with the shell; a window the shell opened has
+# it as opener, and the page that opened the shell is its opener; the stray window has no edge to the shell.
 _CHECK_HARNESS = r"""
 'use strict';
-const ORIGIN = 'http://127.0.0.1:7777';
-const pane = { n: 'pane' }, urlPane = { n: 'urlPane' }, nested = { n: 'nested' }, stray = { n: 'stray' };
-let FRAMES = [{ contentWindow: pane, getAttribute: () => null },
-              { contentWindow: urlPane, getAttribute: (k) => (k === 'data-protocol' ? 'none' : null) }];
-let THROW = false;
+const ORIGIN = 'http://127.0.0.1:7777', ELSEWHERE = 'https://elsewhere.example';
 global.window = global;
+global.parent = global;
+global.top = global;
+const pane = { n: 'pane', parent: window, top: window }, urlPane = { n: 'urlPane', parent: window, top: window },
+      sandboxed = { n: 'sandboxed', parent: window, top: window }, nested = { n: 'nested', parent: pane, top: window },
+      parentReplaced = { n: 'parentReplaced', parent: window, top: window }, popup = { n: 'popup', opener: window },
+      opener = { n: 'opener' }, stray = { n: 'stray' };
+global.opener = opener;
+let FRAMES = [{ contentWindow: pane, getAttribute: () => null },
+              { contentWindow: urlPane, getAttribute: (k) => (k === 'data-protocol' ? 'none' : null) },
+              { contentWindow: sandboxed, getAttribute: () => null }];
+global.frames = global;
+global.length = FRAMES.length;
+FRAMES.forEach((f, i) => { global[i] = f.contentWindow; });
+let THROW = false;
 global.location = { origin: ORIGIN };
 global.document = { querySelectorAll: (s) => { if (THROW) throw new Error('detached'); return s === 'iframe' ? FRAMES : []; } };
 REGION
@@ -1167,7 +1237,13 @@ const rows = {
   paneOtherOrigin: ok({ source: pane, origin: 'https://elsewhere.example' }),
   paneOpaqueOrigin: ok({ source: pane, origin: 'null' }),
   urlPaneMarkedNone: ok({ source: urlPane, origin: ORIGIN }),
+  sandboxedFrame: ok({ source: sandboxed, origin: 'null' }),
   nestedFrame: ok({ source: nested, origin: ORIGIN }),
+  nestedFrameOpaqueOrigin: ok({ source: nested, origin: 'null' }),
+  parentReplaced: ok({ source: parentReplaced, origin: ORIGIN }),
+  popup: ok({ source: popup, origin: ELSEWHERE }),
+  popupSameOrigin: ok({ source: popup, origin: ORIGIN }),
+  opener: ok({ source: opener, origin: ELSEWHERE }),
   strayWindow: ok({ source: stray, origin: ORIGIN }),
   itself: ok({ source: window, origin: ORIGIN }),
   noSource: ok({ source: null, origin: ORIGIN }),
@@ -1176,13 +1252,22 @@ const rows = {
   noEvent: ok(null),
 };
 THROW = true; rows.throws = ok({ source: pane, origin: ORIGIN });
+// the edges, read as the check would read them
+const inFrames = (x) => Array.prototype.indexOf.call(window.frames, x) >= 0;
+rows.edges = { framesListTheIframes: window.length === 3 && inFrames(pane) && inFrames(urlPane) && inFrames(sandboxed),
+               nestedSharesTheTop: nested.top === window.top && nested.parent === pane && !inFrames(nested),
+               parentReplacedReadsAsAChild: parentReplaced.parent === window && !inFrames(parentReplaced),
+               popupOpenedByIt: popup.opener === window, itsOpener: window.opener === opener,
+               ownParentAndTop: window.parent === window && window.top === window };
 process.stdout.write(JSON.stringify(rows));
 """
 
 
 class AdoptedCheckExecuted(unittest.TestCase):
     """The adopted lines, run: true only for a same-origin iframe of this document that is not marked
-    data-protocol=none; false for every other sender and when the frame walk throws."""
+    data-protocol=none; false for every other sender (a sandboxed iframe of the shell, listed in its frames; a frame
+    nested in a pane, which shares the shell's top; a window whose parent reads as the shell but that no iframe holds; a
+    window the shell opened; the page that opened it) and when the frame walk throws."""
 
     def test_the_truth_table(self):
         node = shutil.which("node")
@@ -1201,10 +1286,15 @@ class AdoptedCheckExecuted(unittest.TestCase):
             shutil.rmtree(fx, ignore_errors=True)
         self.assertEqual(r.returncode, 0, r.stderr[-2000:])
         rows = json.loads(r.stdout)
+        self.assertEqual(rows.pop("edges"), {
+            "framesListTheIframes": True, "nestedSharesTheTop": True, "parentReplacedReadsAsAChild": True,
+            "popupOpenedByIt": True, "itsOpener": True, "ownParentAndTop": True,
+        }, "the stand-in windows carry the edges a browser gives them")
         self.assertEqual(rows, {
             "pane": True, "paneOtherOrigin": False, "paneOpaqueOrigin": False, "urlPaneMarkedNone": False,
-            "nestedFrame": False, "strayWindow": False, "itself": False, "noSource": False, "noSourceNoOrigin": False,
-            "noSourceOpaqueOrigin": False, "noEvent": False, "throws": False,
+            "sandboxedFrame": False, "nestedFrame": False, "nestedFrameOpaqueOrigin": False, "parentReplaced": False,
+            "popup": False, "popupSameOrigin": False, "opener": False, "strayWindow": False, "itself": False,
+            "noSource": False, "noSourceNoOrigin": False, "noSourceOpaqueOrigin": False, "noEvent": False, "throws": False,
         })
 
 

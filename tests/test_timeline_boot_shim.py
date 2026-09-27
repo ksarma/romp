@@ -61,9 +61,15 @@ class TimelineBootDispatch(unittest.TestCase):
 # The boot, run in node: stand-ins for the few browser names it touches (HTMLElement for the DOM shims, the host
 # bridge acquireVsCodeApi, the shell as window.parent, the shell's own parent as window.top, and window.frames, which
 # is the window itself, whose length and indexes list the two frames inside this one), a fake panel, and the one
-# window message listener it registers. ROMP_TEST_OWN is the page's own origin ("-" for a page with no location);
+# window message listener it registers. ROMP_TEST_OWN is the page's location.origin ("-" for a page with no location);
 # ROMP_TEST_PERF=1 publishes a performance collector on window.__rompPerf first, as federation.js does on the kernel's
 # page, in the shape of perf-telemetry.ts's wrapFrameHandler, counting every message it is handed.
+# The shell's own parent, GRAND, is a window on another origin (its sender posts OTHER). That layout is the harness's,
+# not one a browser gives the kernel's /timeline: the kernel serves its pages with frame-ancestors 'self' and
+# X-Frame-Options SAMEORIGIN, so no page on another origin frames the shell. The rows use GRAND as the shared top of
+# the frames in this tab. Synthetic pages in Chromium, Firefox and WebKit (2026-09-27) gave every sender the same class
+# with the shell at the top of its tab as under a page on another origin, so no expectation here depends on GRAND's
+# origin.
 _BOOT_HARNESS = r"""
 'use strict';
 const ORIGIN = 'http://127.0.0.1:7777', OTHER = 'https://elsewhere.example';
@@ -77,6 +83,11 @@ global.parent = SHELL;
 global.top = GRAND;
 const OPENER = { name: 'a page on another origin that opened /timeline' };
 global.opener = OPENER;
+// the pages this one opened (window.open with no noopener, as the boot's external-link opener does): each is the top of
+// its own tab, its own parent and top, and its opener is this window
+const opened = (name) => { const w = { name, opener: window }; w.parent = w; w.top = w; return w; };
+const POPUP = opened('a page on another origin that /timeline opened');
+const SANDBOXED_POPUP = opened('a sandboxed page that /timeline opened');
 // the frames in this tab besides this one and the shell: each shares this window's top, the shell's own parent
 const SIBLING_SAME_TOP = { name: 'a sandboxed frame beside this one', parent: SHELL, top: GRAND };
 const CHILD_SAME_TOP = { name: 'a sandboxed frame inside this one', parent: window, top: GRAND };
@@ -102,6 +113,8 @@ const SENDERS = {
   peer: [{}, ORIGIN],             // another window on this origin
   ownOriginChild: [OWN_ORIGIN_CHILD, ORIGIN],      // a frame inside this one on this origin, in its frames: a peer
   opener: [OPENER, OTHER],        // the page on another origin that opened /timeline: this window's opener
+  popup: [POPUP, OTHER],          // a page on another origin that /timeline opened: its opener is this window
+  sandboxedPopup: [SANDBOXED_POPUP, 'null'],       // a sandboxed page that /timeline opened: its opener is this window
   top: [GRAND, OTHER],            // the top window, the shell's own parent on another origin: not this frame's parent
   stranger: [{}, OTHER],          // a window on another origin this one does not know
   sandboxed: [{}, 'null'],        // a sandboxed frame
@@ -156,19 +169,20 @@ class TimelineBootSenders(unittest.TestCase):
     sandboxed frame) is dropped there, before the page's performance collector sees it: neither drawn nor counted.
     ui/webview/timeline-boot-senders.test.ts pins the rule to windowSender itself, over a grid of receiving windows,
     senders and origins, with and without a real collector. The rows here hold the same rule in the kernel's own suite
-    over named senders, on a page on a loopback origin, on a page whose own origin is opaque (no window is a peer of it)
-    and on a page with no location; the receivers only that grid holds are VS Code's webview frames, whose parent is
-    the frame itself or deleted."""
+    over named senders, on a page on a loopback origin, on a page whose location.origin is "null" (no window is a peer
+    of it) and on a page with no location; the receivers only that grid holds are VS Code's webview frames, whose parent
+    is the frame itself or deleted."""
 
     def test_a_data_frame_is_drawn_from_every_heard_sender_and_from_no_other(self):
         got = _run_boot(_OWN_ORIGIN, perf=False)
         self.assertEqual(got["listeners"], 1, "the boot registers one window message listener")
         self.assertEqual(got["updates"], _HEARD,
                          "drawn once from each heard sender (a frame inside this one on its origin included), never "
-                         "from a page on another origin (the one that opened this page included), the top window above "
-                         "the shell, a sandboxed frame (beside or inside this one, sharing its top or not, listed in its "
-                         "frames or not, or gone after it posted), an origin that overlaps this one's text or differs "
-                         "only in its port, or a sourceless post that names another origin")
+                         "from a page on another origin (the one that opened this page, or one this page opened, "
+                         "included), a sandboxed page this page opened, the top window above the shell, a sandboxed "
+                         "frame (beside or inside this one, sharing its top or not, listed in its frames or not, or gone "
+                         "after it posted), an origin that overlaps this one's text or differs only in its port, or a "
+                         "sourceless post that names another origin")
 
     def test_with_the_pages_collector_a_foreign_message_is_neither_drawn_nor_counted(self):
         # the collector wraps the frame listener; the sender check runs outside it, so the collector counts exactly
@@ -178,8 +192,12 @@ class TimelineBootSenders(unittest.TestCase):
         self.assertEqual(got["updates"], _HEARD)
         self.assertEqual(got["counted"], _HEARD, "the collector counted only the heard senders' frames")
 
-    def test_on_a_page_whose_own_origin_is_opaque_no_window_is_a_peer(self):
-        # a sandboxed page's origin is "null", and so is every sandboxed frame's: the same text is no shared origin
+    def test_on_a_page_whose_location_origin_is_null_no_window_is_a_peer(self):
+        # the page's own origin as the boot reads it is location.origin, the origin of the page's URL: "null" for an
+        # opaque URL (about:srcdoc, data:), and so is a sandboxed frame's post: the same text is no shared origin. (A
+        # sandboxed page served over http keeps its URL's origin in location.origin, though its document's origin is
+        # opaque; that page is the loopback row above, not this one.) A frame inside such a page can be on the kernel's
+        # origin (ownOriginChild posts ORIGIN), which matches nothing here either
         for perf in (False, True):
             with self.subTest(perf=perf):
                 got = _run_boot("null", perf=perf)

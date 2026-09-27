@@ -71,7 +71,10 @@ type Listener = (e: unknown) => void;
  *  added to, and the methods those listeners call on window. It also carries the two edges a browser gives a window that
  *  relate it to the other frames in its tab: top, and frames, which is the window itself, whose length and indexes list
  *  the frames inside it (holdFrames). Its edges and every object it holds are non-enumerable (hideEdges, and defineHidden
- *  for the frames listed later), so a dump of it is its name, serial and frame count. */
+ *  for the frames listed later), so a dump of it is its name, serial and frame count. A browser makes window[i] enumerable
+ *  (Object.keys(window) lists "0"), so a check that enumerated the frames instead of indexing them would find none here;
+ *  the grids that list their frames enumerably are window-sender.test.ts, chat-foreign-frame.test.ts and
+ *  timeline-boot-senders.test.ts. */
 class Receiver {
   parent: unknown;
   top: unknown;

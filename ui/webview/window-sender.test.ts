@@ -230,7 +230,8 @@ test("a frame beside this one or inside it, sharing its top and listed in its fr
     ["the pane", pane, ownChild, ORIGIN, "peer"],               // a frame inside it on its origin: the same top, in its frames
     ["the pane", pane, sibling, ORIGIN, "peer"],                // a frame beside it on its origin, such as a second chat column
     ["the pane", pane, shell, ORIGIN, "embedder"],              // its parent, which is also its top
-    ["the pane", pane, pane, "null", "self"],
+    ["the pane", pane, pane, ORIGIN, "self"],                   // its own post, which names its own origin
+    ["the pane", pane, pane, "null", "self"],                   // "null" on purpose: self is decided before the origin is read
     ["the shell's page", shell, sibling, "null", "foreign"],    // a sandboxed frame inside it: in its frames, its top the shell
     ["the shell's page", shell, child, "null", "foreign"],      // a sandboxed frame inside one of its panes: the same top
     ["the shell's page", shell, pane, ORIGIN, "peer"],          // a pane posting up to it: in its frames, the same top

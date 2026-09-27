@@ -6,9 +6,10 @@
 // kernel's boot is run as served, once over each receiving window below, and its one window message listener is handed
 // a data frame from every sender and origin below; the frame must be drawn exactly when windowSender, reading the same
 // window, does not name the sender foreign. So the pair cannot drift apart for any sender the grid can express: a
-// window that opened this one, a sibling or child frame (with a top of its own, or sharing the receiving window's top,
-// the child also listed in its frames), an origin whose text overlaps this one's or drops its port, a sourceless post
-// with the opaque origin, a page whose own origin is opaque, a window with no location, a missing event.
+// window that opened this one, a window it opened, a sibling or child frame (with a top of its own, or sharing the
+// receiving window's top, the child also listed in its frames), an origin whose text overlaps this one's or drops its
+// port, a sourceless post with the opaque origin, a page whose location.origin is "null" (an opaque URL such as
+// about:srcdoc or data:), a window with no location, a missing event.
 // The grid runs twice: without a performance collector, and with a real one (perf-telemetry.ts) on window.__rompPerf,
 // as federation.js publishes it on the kernel's page. Both hosts wrap the frame listener in that collector and run the
 // sender check outside the wrapper, so a foreign message is neither drawn nor counted in the page's telemetry.
@@ -55,11 +56,14 @@ function win(name: string, fields: Record<string, unknown> = {}): Win {
   return hideEdges(w);
 }
 /** `w` holding one frame, which shares `w`'s top, listed as a browser lists the frames inside a window: window.frames is
- *  the window itself, with a length and an index per frame (hidden, like the other edges). */
+ *  the window itself (hidden, like the other edges), with a length and an index per frame. The index is defined as a
+ *  browser defines window[i], enumerable, configurable and read-only, so a check that enumerates the frames (for...in,
+ *  Object.keys) instead of indexing them finds the frame here as it would in a browser. The frame is a window whose own
+ *  edges are hidden, so a dump of `w` stays its primitives and that frame's name and serial. */
 function holdingAFrame(w: Win): Win {
   const kid = win("a frame inside it, sharing its top and listed in its frames", { parent: w, top: w.top });
   defineHidden(w, "frames", w);
-  defineHidden(w, "0", kid);
+  Object.defineProperty(w, "0", { value: kid, enumerable: true, configurable: true, writable: false });
   w.length = 1;
   return w;
 }
@@ -74,7 +78,9 @@ function receivers(): Win[] {
     win("a pane framed in the shell, opened by another page", { parent: SHELL, top: GRAND, opener: OPENER, location: { origin: ORIGIN } }),
     win("a top-level page another page opened", { opener: OPENER, location: { origin: ORIGIN } }),
     win("a top-level page no page opened", { opener: null, location: { origin: ORIGIN } }),
-    win("a framed page whose own origin is opaque", { parent: SHELL, top: GRAND, opener: OPENER, location: { origin: "null" } }),
+    // location.origin is the origin of the page's URL: "null" for an opaque URL (about:srcdoc, data:), while a sandboxed
+    // page served over http keeps its URL's origin there (the first receiver's case)
+    win("a framed page whose location.origin is \"null\"", { parent: SHELL, top: GRAND, opener: OPENER, location: { origin: "null" } }),
     win("a framed page with no location", { parent: SHELL, top: GRAND, opener: OPENER, location: undefined }),
     win("a VS Code webview frame whose parent is the frame itself", { opener: null, location: { origin: VSCODE_ORIGIN } }),
     win("a VS Code webview frame whose parent is deleted", { parent: undefined, top: undefined, opener: null, location: { origin: VSCODE_ORIGIN } }),
@@ -86,6 +92,7 @@ function sources(w: Win): Array<[string, unknown]> {
     ["this window", w], ["its parent", w.parent], ["a sibling frame", win("a sibling frame", { parent: w.parent })],
     ["a frame inside it", win("a frame inside it", { parent: w })], ["the page that opened it", w.opener], ["its top window", w.top],
     ["a sibling frame sharing its top", win("a sibling frame sharing its top", { parent: w.parent, top: w.top })],
+    ["a window it opened", win("a window it opened", { opener: w })],
     ["a frame inside it, sharing its top and listed in its frames", frameIn(w)],
     ["the shell's parent", GRAND], ["a window it does not know", win("a stray window")],
     ["null", null], ["undefined", undefined], ["no source key", ABSENT],
@@ -142,10 +149,29 @@ function bootOver(w: Win, boot: string, perf?: RompPerf, fed?: boolean): Booted 
   return out;
 }
 
-test("the stand-ins inspect as their primitives: every enumerable key of each window holds a primitive", () => {
-  const all: object[] = [GRAND, SHELL, OPENER, ...receivers()];
-  for (const w of receivers()) all.push(...sources(w).map(([, s]) => s).filter((s): s is object => typeof s === "object" && s !== null));
-  for (const o of all) for (const k of Object.keys(o)) assert.ok(staysEnumerable((o as any)[k]), k + " is enumerable and holds a " + typeof (o as any)[k]);
+test("the stand-ins inspect as their primitives: every enumerable key of each window holds a primitive, but a frame index, which holds a window that does", () => {
+  const rs = receivers();
+  const all = new Set<object>([GRAND, SHELL, OPENER, ...rs]);
+  for (const w of rs) for (const [, s] of sources(w)) if (typeof s === "object" && s !== null) all.add(s);
+  let indexes = 0;
+  for (const o of all) {
+    for (const k of Object.keys(o)) {
+      const v = (o as any)[k];
+      if (/^\d+$/.test(k)) {
+        // window[i], enumerable as in a browser: a window whose own enumerable keys are primitives, so a dump stops there
+        indexes++;
+        assert.ok(typeof v === "object" && v !== null && Object.keys(v).every((j) => staysEnumerable(v[j])), "frame index " + k + " holds a window that inspects as its primitives");
+        continue;
+      }
+      assert.ok(staysEnumerable(v), k + " is enumerable and holds a " + typeof v);
+    }
+  }
+  assert.equal(indexes, rs.length, "each receiver lists its frame under an enumerable index, as a browser does, and no other window has one");
+  for (const w of rs) {
+    const d = Object.getOwnPropertyDescriptor(w, "0");
+    assert.ok(d && d.enumerable === true && d.writable === false && d.configurable === true && Object.keys(w).includes("0"),
+      w.name + ": window[0] is enumerable, read-only and configurable, as a browser defines it");
+  }
 });
 
 /** Runs the boot over every receiving window and hands its window listener a data frame from every sender and origin,
