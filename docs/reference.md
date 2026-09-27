@@ -4652,8 +4652,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   parse pair, captions file, archive record and unit cache, and no goal
   store: its idle path reads none. On the child road the gate runs in the
   child and this block reads this process's counters, which stay at zero
-  while the child judges (the done line carries no tiers block), so
-  `romp perf` prints no gated runs on the `tiers` line.
+  while the child judges, so `romp perf` prints no gated runs on the
+  `tiers` line; the child's own gate counters for its last pass ride its
+  done line and are served as `judge.child.tierGate`.
   `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
   `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
   the `judge` line, since the judge's CPU share alone cannot tell a cheaper
@@ -4859,7 +4860,7 @@ process split from the clock semantics. Every counter on
 the done line is a PER-PASS figure: `wallMs`, `tierCpuMs` and `workerCpuMs` are
 the pass's own, `failures` its tier crashes, and the five blocks (`recordCache` and `asmCheckpoint` from the event model,
 `parses` as the parse store's misses and hits, `goalIo` as the goal-store loads, saves and writes, `tierGate` as the tiers'
-gate counters per stage (`plan`, `group`, `close`, `distill`, `unblock`, `consolidate`): `ran`, `skipped`, `stamped`,
+gate counters per stage (`plan`, `group`, `close`, `distill`, `unblock`, `consolidate` and `index`): `ran`, `skipped`, `stamped`,
 `bypassed`, `incomplete`, `due_clock`, the admittance the pass ran under) are the DIFFERENCES against the previous pass's snapshot for every counter, so the kernel can feed its `/perf`
 counters per pass, while each block's GAUGES ride as their current values: in `recordCache` the keys `entries`, `bytes`
 (the cache's contents now), `bytesMax` (the life maximum of `bytes`), `budgetBytes` and `countCap` (its caps); in `asmCheckpoint` the key `asmDocMemo` (the document
@@ -6365,14 +6366,16 @@ Bounds and counters, all on `/perf` under `judge`:
 - On the child road `parses.judge` and the `goals` block read zero: the judges' parses and store writes happen in the
   child, and their per-pass figures ride its done line as `judge.child.parses` and `judge.child.goalIo`. So do
   `judge.tiers` and the judge-module memos (`memos.chain`, `courierSkip`, `plannerSkip`, `backref`, `captions`): the
-  gate and those memos run in the child, the done line carries neither, and `romp perf` prints no gated runs and zero
-  chain memo hits while the child judges. `memos.goalArchive` moves here too: a store load that replays a `restore`
-  override (`_replay_overrides`, under `load_goals` and `load_goals_shared`) reads the archive through the counted
-  shared reader. `judge.cpu_ms_workers` is the in-process pools' share, near zero on this road.
+  gate and those memos run in the child. The done line carries the gate's per-pass counters, served as
+  `judge.child.tierGate`, and none of the memos; `romp perf` reads this process's `judge.tiers` and `memos.chain`, so
+  it prints no gated runs and zero chain memo hits while the child judges. `memos.goalArchive` moves here too: a store
+  load that replays a `restore` override (`_replay_overrides`, under `load_goals` and `load_goals_shared`) reads the
+  archive through the counted shared reader. `judge.cpu_ms_workers` is the in-process pools' share, near zero on this
+  road.
 - `cpu_ms_sum` counts the child's tier and worker CPU as it counts the in-process tiers and pools; `cpu_ms_child_workers`
   is the workers' share alone; `child` is the last done line's numbers: `seq`, `pid`, `t`, `chars` (the line's length),
   `status` (`ok` or `failed`), `failures` (a count), `recovered`, `wallMs`, `tierStarts`, `tierCpuMs`, `workerCpuMs`,
-  and its four counter blocks (`recordCache`, `asmCheckpoint`, `parses`, `goalIo`) as the child sent them. The line's
+  and its five counter blocks (`recordCache`, `asmCheckpoint`, `parses`, `goalIo`, `tierGate`) as the child sent them. The line's
   text is not served: its first failure is an exception message that can name a path or quote session text, and the
   snapshot is meant to be pasteable (2026-09-18). `tierStarts` is counted at the request, so a long pass reads it
   during the pass.

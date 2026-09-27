@@ -1865,6 +1865,13 @@ RELEASE_CENSUS = {
     (SB, "SdkBackend._on_session_gone", MIRROR, "setitem"): [
         (Q, "test_a_reattached_objects_seeded_agent_row_ends_when_its_cli_dies_while_idle")],
     (SB, "SdkBackend._heal_cut_session", SESSIONS, "pop"): [(DROP, "called by and inside " + _GONE_ROAD)] * 2,
+    # kernel/kernel.py holds no session structure. Its one site is upstream's _chat_row_sig, which met this census at fold
+    # 3's merge of fork main at batch 921: the mirror predicate, keyed on the key name "bgTasks" alone, whatever the
+    # receiver, reads its write into its own dict as a mirror write.
+    ("kernel/kernel.py", "_chat_row_sig", MIRROR, "setitem"): [
+        (X, "a key of the chat-build signature's own copy of a liveness row (`out`, a dict comprehension over the row, "
+            "which it leaves as it was): it writes neither the reg's bgTasks mirror nor any structure a session knows its "
+            "agents by")],
 }
 CENSUS_NOT_COVERAGE = (
     "The census proves classification, not coverage: that a queue call follows a site cannot show that the call queues what "
@@ -1913,9 +1920,11 @@ def release_census(trees):
     agents: a pop, clear, popitem, discard, remove or set update, a del of a subscript, a `-=` or `&=`, a rebinding outside
     __init__, and a subscript assignment (directly, or through a local alias bound from a structure's get, setdefault or
     subscript), on any receiver, over CENSUS_STRUCTS; every write of the reg's bgTasks mirror (_update_reg's bgTasks keyword,
-    a subscript assignment to "bgTasks"); and every drop of a session object from `sessions` (those methods, a del, a
-    subscript assignment). Returns ([(file, function, structure, operation, line)], {(file, function): [(line, live)]}), the
-    second the queue calls of each function (`live` the literal, or None when it is not one)."""
+    a subscript assignment to "bgTasks"; that predicate is keyed on the key name alone, whatever the receiver, so a write of
+    the key into a function's own dict is a site too, which the table records EXEMPT with its reason); and every drop of a
+    session object from `sessions` (those methods, a del, a subscript assignment). Returns ([(file, function, structure,
+    operation, line)], {(file, function): [(line, live)]}), the second the queue calls of each function (`live` the literal,
+    or None when it is not one)."""
     sites, queues = [], {}
     for rel, tree in trees:
         for qual, nodes in _census_scopes(tree):
@@ -2043,8 +2052,10 @@ class ReleaseCensus(unittest.TestCase):
     removes a _subagents entry, a _bg_tasks row or a roster needs a queue call with live False after it in its function; a
     mirror write needs one anywhere in its function; an ADD needs one with live True after it; and each road test named
     must exist in this module. That the named test shows its road releasing the finished agent is the test's to show, not
-    the census's (CENSUS_NOT_COVERAGE, which the failure message carries). kernel/kernel.py holds no session structure,
-    and the census finds nothing there.
+    the census's (CENSUS_NOT_COVERAGE, which the failure message carries). kernel/kernel.py holds no session structure:
+    the one site the census finds there, _chat_row_sig's write of "bgTasks" into its own copy of a liveness row, is
+    recorded EXEMPT, and test_kernel_py_holds_no_session_structure holds every site found there to an EXEMPT row of its
+    own, so a real mirror write planted in kernel/kernel.py fails it.
     Shown red before it was relied on (2026-09-25), and kept red by the test_the_census_reds_* tests below: a clear of
     _subagents in a new function of SdkSession with no queue call; a _bg_tasks clear planted in SdkBackend._on_session_gone,
     a function already listed, ahead of its queue call; the queue call removed from
@@ -2070,7 +2081,13 @@ class ReleaseCensus(unittest.TestCase):
 
     def test_kernel_py_holds_no_session_structure(self):
         sites, _queues = release_census([t for t in self.trees if t[0] == "kernel/kernel.py"])
-        self.assertEqual(sites, [])
+        by_key = {}
+        for s in sorted(sites, key=lambda s: s[4]):                      # source order, the table's order per key
+            by_key.setdefault(s[:4], []).append(s)
+        unexempt = [s for k, found in by_key.items() for i, s in enumerate(found)
+                    if [v for v, _why in RELEASE_CENSUS.get(k, [])][i:i + 1] != [X]]   # each site needs an EXEMPT row of its own
+        self.assertEqual(unexempt, [], "kernel/kernel.py holds no session structure: every site the census finds there is "
+                                       "recorded EXEMPT, one row per site")
 
     def test_the_census_reds_on_a_planted_site_in_a_new_function(self):
         probs = release_census_problems(self._planted(

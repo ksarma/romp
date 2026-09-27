@@ -2049,8 +2049,9 @@ class _PerfStats:
         with self.lock:
             self.judge["orphansSwept"] += 1
     CHILD_NUMBERS = ("wallMs", "tierStarts", "tierCpuMs", "workerCpuMs")   # the done line's per-pass figures judge.child keeps
-    CHILD_BLOCKS = ("recordCache", "asmCheckpoint", "parses", "goalIo")    # its counter blocks (per-pass deltas, gauges current),
-    #                                                                          served under judge.child as the child sends them
+    CHILD_BLOCKS = ("recordCache", "asmCheckpoint", "parses", "goalIo",    # its counter blocks (per-pass deltas, gauges current),
+                    "tierGate")                                            #  served under judge.child as the child sends them: the
+    #                                                                          line's whole block set (judge.py's _serve_counter_blocks)
 
     def judge_child_done(self, done, pid=None, chars=None):
         """The child's done line (plans/judges-process.md rule 1): its tier starts and tier CPU join the in-process
@@ -2059,10 +2060,15 @@ class _PerfStats:
         to stand verbatim (2026-09-18): its failures.first is an exception message, which names paths and quotes session
         text, so a snapshot could not be pasted anywhere public. `chars` is the line's length as it arrived (the reader's
         count; the line re-encoded when none is given), `status` one of two fixed tokens (`ok`, `failed`), `failures` a
-        count, every other scalar a number or a boolean, and the four blocks (CHILD_BLOCKS: the record cache, the
-        assembly checkpoints, the parse store, the goal-store I/O, their counters as per-pass deltas and their gauges as
-        current values, the child's round three) as the child sent them: numbers are not a leak, and the kernel's own
-        blocks read zero for the child's work."""
+        count, every other scalar a number or a boolean, and the five blocks (CHILD_BLOCKS: the record cache, the
+        assembly checkpoints, the parse store, the goal-store I/O and the tiers' evidence gate, their counters as per-pass
+        deltas and their gauges as current values, the child's round three) as the child sent them: numbers are not a
+        leak, and the kernel's own blocks read zero for the child's work. The gate block, `tierGate`, is judge.py's
+        tier_stats on the child's side: per gated tier its ran, skipped, stamped, bypassed, incomplete and due_clock
+        counts, plus `stamps`, the stamps held (a gauge), fixed names over integers; judge.tiers reads this process's gate
+        counters, which stay at zero on the child road. The list is the done line's whole block set, as upstream serves
+        the line whole (fold 3 brought the gate block onto the line, and a list left at four dropped it;
+        tests/test_perf_stats.py holds the list to _serve_counter_blocks's keys)."""
         f = done.get("failures")
         failures = int(f.get("count") or 0) if isinstance(f, dict) else 0
 
