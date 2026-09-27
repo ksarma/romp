@@ -4797,8 +4797,10 @@ PROBE
 # planted `tipname=$(git rev-parse ...)` left 174 and the whole file green).
 # The census case below reads the hook's text: every line running a reading
 # tool (the vocabulary stated at CENSUS_TOOLS, the census's bound) must be a
-# judged_read call, a line inside a function the helper is handed WHOLE (the
-# functions derived from the call sites: the first word after the call's --),
+# judged_read call, a line of the LAST statement of a function the helper is
+# handed WHOLE (the functions derived from the call sites: the first word after
+# the call's --; since round 12l no other statement of such a body, and no
+# substitution in it, that runs a reading tool),
 # an array-literal assignment (the scanner's argument list) or a line under an
 # `outside judged_read:` marker (a trailing comment, the comment block above
 # the statement or its backslash-continued first line, or the block above the
@@ -4959,7 +4961,9 @@ census_records() {   # <bash file> <mode: tools, vars or calls> [<word regex, fo
 # Splits each masked line at the operators (||, &&, |, |&, a lone &, ;), the substitutions' and subshells' parentheses, the
 # backtick, a brace that opens no ${, a case pattern's close (the byte 001) and, on a line holding a judged_read call, its
 # first " -- ", and prints one record per simple command: the line number, the start, the flags (P a case pattern, A
-# arithmetic, R an array literal's elements, T the tagged command after a call's --), the token that ends it, whether its
+# arithmetic, R an array literal's elements, T the tagged command after a call's --, S a command inside a command or
+# process substitution or a backtick pair, at any depth and across lines: round 12l, the landing round's extra7-1, read
+# on a stack of its own that no line resets, while the flags above keep their per-line stack), the token that ends it, whether its
 # last word touches that token, then each word masked and RAW, read back from the raw text at the same offset (masking
 # keeps every byte's place), unit-separated. mode tools keeps a record with a reading tool's word in its raw words, each
 # word tested unquoted (a copy with its quote and backslash characters removed, so a word whose quoting or escaping
@@ -4968,6 +4972,7 @@ census_records() {   # <bash file> <mode: tools, vars or calls> [<word regex, fo
 BEGIN { US = sprintf("%c", 31); toolre = "(^|[^A-Za-z0-9_.-])(" tools ")([^A-Za-z0-9_.-]|$)" }
 function top() { return sp > 0 ? stk[sp] : "" }
 function ctxflag(   t) { t = top(); return (t == "A" || t == "a") ? "A" : (t == "R" ? "R" : "") }
+function subflag(   k) { if (bq) return "S"; for (k = 1; k <= xsp; k++) if (xs[k] == "C") return "S"; return "" }
 function endseg(pos, tok,   k) {
     ns++; sst[ns] = start; slen[ns] = pos - start; stok[ns] = tok; sfl[ns] = cur
     if (tok == "pat") { sfl[ns] = sfl[ns] "P"; for (k = ns - 1; k >= 1 && stok[k] == "|"; k--) sfl[k] = sfl[k] "P" }
@@ -4993,24 +4998,24 @@ function emit(k,   s, L, ms, rs, j, ws, w, x, y, out, tool, dol, fn, touch) {
 }
 {
     m = $0; r = ""; if ((getline r < rawf) <= 0) r = ""
-    n = length(m); ns = 0; sp = 0; start = 1; cur = ""; jd = 0
+    n = length(m); ns = 0; sp = 0; start = 1; cur = subflag(); jd = 0
     if (m ~ /(^|[ \t!&|;(])judged_read[ \t]/) jd = index(m, " -- ")
     i = 1
     while (i <= n) {
         c = substr(m, i, 1); c2 = substr(m, i, 2); L = 0
-        if (jd && i == jd) { endseg(i, "--"); i += 4; start = i; cur = ctxflag() "T"; continue }
+        if (jd && i == jd) { endseg(i, "--"); i += 4; start = i; cur = ctxflag() "T" subflag(); continue }
         if (c == "\\") { i += 2; continue }
-        if (substr(m, i, 3) == "$((") { tok = "$(("; L = 3; stk[++sp] = "A" }
-        else if (c2 == "((") { tok = c2; L = 2; stk[++sp] = "A" }
-        else if (c2 == "$(" || c2 == "<(" || c2 == ">(") { tok = c2; L = 2; stk[++sp] = "C" }
+        if (substr(m, i, 3) == "$((") { tok = "$(("; L = 3; stk[++sp] = "A"; xs[++xsp] = "o" }
+        else if (c2 == "((") { tok = c2; L = 2; stk[++sp] = "A"; xs[++xsp] = "o" }
+        else if (c2 == "$(" || c2 == "<(" || c2 == ">(") { tok = c2; L = 2; stk[++sp] = "C"; xs[++xsp] = "C" }
         else if (c2 == "||" || c2 == "&&" || c2 == "|&") { tok = c2; L = 2 }
-        else if (c == "|" || c == ";" || c == "`") { tok = c; L = 1 }
+        else if (c == "|" || c == ";" || c == "`") { tok = c; L = 1; if (c == "`") bq = !bq }
         else if (c == "&") { if (substr(m, i - 1, 1) !~ /[<>]/ && substr(m, i + 1, 1) != ">") { tok = c; L = 1 } }
-        else if (c == "(") { tok = c; L = 1; stk[++sp] = (substr(m, i - 1, 1) == "=") ? "R" : ((top() == "A" || top() == "a") ? "a" : "P") }
-        else if (c == ")") { tok = c; L = 1; if (top() == "A" && substr(m, i + 1, 1) == ")") L = 2; if (sp > 0) sp-- }
+        else if (c == "(") { tok = c; L = 1; stk[++sp] = (substr(m, i - 1, 1) == "=") ? "R" : ((top() == "A" || top() == "a") ? "a" : "P"); xs[++xsp] = "o" }
+        else if (c == ")") { tok = c; L = 1; if (top() == "A" && substr(m, i + 1, 1) == ")") L = 2; if (sp > 0) sp--; if (xsp > 0) xsp-- }
         else if (c == "\001") { tok = "pat"; L = 1 }
         else if ((c == "{" || c == "}") && substr(m, i - 1, 1) != "$") { tok = c; L = 1 }
-        if (L) { endseg(i, tok); i += L; start = i; cur = ctxflag(); continue }
+        if (L) { endseg(i, tok); i += L; start = i; cur = ctxflag() subflag(); continue }
         i++
     }
     endseg(n + 1, "eol")
@@ -5118,9 +5123,26 @@ census_command() {   # reads mw and rw (a record's words), fl, et and touch, and
     done
     return 0
 }
-undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per command line the census finds declared by nothing, "declared: <body|array|marker> <line> <function or ->: <tools>" per command line it finds declared outside a judged_read call, "swallowed: ..." per `|| true` or `|| :` inside a body passed whole, and one "census: ..." line of counts; run under `run`
+census_final_start() {   # <function>: the index of the first line of that function's last statement (its final pipeline), from masked, fstart and fend, the caller's: the last body line that is not blank, then up while the line above continues into it (it ends inside a quoted string, by the parity of the quote characters the masked text keeps, a backslash pair dropped first, or it ends with a backslash, |, && or |&); the header line for a one-line function (round 12l)
+    local f=$1 i q=0 t
+    local -a open
+    [ "${fend[$f]}" -gt "${fstart[$f]}" ] || { echo "${fstart[$f]}"; return 0; }
+    for ((i = fstart[$f] + 1; i < fend[$f]; i++)); do
+        t=${masked[i]//\\?/}; t=${t//[!\'\"]/}
+        q=$(( (q + ${#t}) % 2 )); open[i]=$q
+    done
+    i=$((fend[$f] - 1))
+    while [ "$i" -gt $((fstart[$f] + 1)) ] && [ -z "${masked[i]//[[:space:]]/}" ] && [ "${open[i - 1]}" = 0 ]; do i=$((i - 1)); done
+    while [ "$i" -gt $((fstart[$f] + 1)) ]; do
+        t=${masked[i - 1]%"${masked[i - 1]##*[![:space:]]}"}
+        if [ "${open[i - 1]}" = 1 ] || [[ "$t" == *\\ || "$t" == *\| || "$t" == *'&&' || "$t" == *'|&' ]]; then i=$((i - 1)); continue; fi
+        break
+    done
+    echo "$i"
+}
+undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per command line the census finds declared by nothing, "declared: <body|array|marker> <line> <function or ->: <tools>" per command line it finds declared outside a judged_read call, "swallowed: ..." per `|| true` or `|| :` inside a body passed whole whose next byte is no word character, and one "census: ..." line of counts; run under `run`. A body passed whole declares the lines of its LAST statement alone, the pipeline whose status judged_read judges, and none that holds a reading tool inside a command or process substitution (round 12l, the landing round's extra7-1: a read as a statement of its own ahead of that pipeline, or in a ROMP_X=$(git ...) prefix on one of its stages, lost its status and was declared by the body until then)
     local -a orig masked mw rw rec
-    local -A fstart fend passed inpassed found_at
+    local -A fstart fend passed inpassed found_at subst_at fpstart
     local i name m rest after w f s found cmd word rword wkind u ln fl et touch calls=0 total=0 body=0 array=0 marker=0 undeclared=0 swallowed=0
     mapfile -t orig < "$1"
     mapfile -t masked < <(masked_text "$1")
@@ -5137,9 +5159,10 @@ undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per com
         if [ -n "${fstart[$w]:-}" ]; then passed[$w]=1; fi
     done
     for f in "${!passed[@]}"; do
+        fpstart[$f]=$(census_final_start "$f")
         for ((i = fstart[$f]; i <= fend[$f]; i++)); do
             inpassed[$i]=$f
-            if [[ "${masked[i]}" =~ \|\|[[:space:]]*(true|:)([[:space:]]|$) ]]; then echo "swallowed: $((i + 1)):${orig[i]}"; swallowed=$((swallowed + 1)); fi
+            if [[ "${masked[i]}" =~ \|\|[[:space:]]*(true|:)([^A-Za-z0-9_]|$) ]]; then echo "swallowed: $((i + 1)):${orig[i]}"; swallowed=$((swallowed + 1)); fi
         done
     done
     # Each simple command the splitter finds with a reading tool's word in its raw words (a call's tagged command, the
@@ -5148,6 +5171,7 @@ undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per com
         census_rec "${rec[@]}"
         census_command
         [ -z "$cmd" ] || found_at[$ln]="${found_at[$ln]:-} $cmd"
+        [ -z "$cmd" ] || [[ "$fl" != *S* ]] || subst_at[$ln]="${subst_at[$ln]:-} $cmd"
     done < <(census_records "$1" tools)
     for ((i = 0; i < ${#orig[@]}; i++)); do
         found=${found_at[$((i + 1))]:-}
@@ -5156,7 +5180,11 @@ undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per com
         m=${masked[i]}
         total=$((total + 1))
         f=""; for name in "${!fstart[@]}"; do if [ "$i" -ge "${fstart[$name]}" ] && [ "$i" -le "${fend[$name]}" ]; then f=$name; break; fi; done
-        if [ -n "${inpassed[$i]:-}" ]; then body=$((body + 1)); echo "declared: body $((i + 1)) ${inpassed[$i]}: $found"; continue; fi
+        if [ -n "${inpassed[$i]:-}" ]; then
+            f=${inpassed[$i]}
+            if [ -z "${subst_at[$((i + 1))]:-}" ] && [ "$i" -ge "${fpstart[$f]}" ]; then body=$((body + 1)); echo "declared: body $((i + 1)) $f: $found"; continue; fi
+            undeclared=$((undeclared + 1)); echo "undeclared: $((i + 1)):${orig[i]}"; continue
+        fi
         if [[ "$m" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*\+?=\( ]]; then array=$((array + 1)); echo "declared: array $((i + 1)) ${f:--}: $found"; continue; fi
         if [[ "${orig[i]}" == *"#"*"outside judged_read"* ]]; then marker=$((marker + 1)); echo "declared: marker $((i + 1)) ${f:--}: $found"; continue; fi
         s=$i; while [ "$s" -gt 0 ] && [[ "${orig[s - 1]}" == *\\ ]]; do s=$((s - 1)); done          # the statement's first line
@@ -5238,8 +5266,13 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
     [ "$(sed -E 's/.*body=([0-9]+).*/\1/' <<< "$census")" -ge 10 ]
     [ "$(sed -E 's/.*marker=([0-9]+).*/\1/' <<< "$census")" -ge 8 ]
     [ "$(sed -E 's/.*array=([0-9]+).*/\1/' <<< "$census")" -eq 0 ]          # since round 9d no array literal of the hook names a tool (gitleaks_args' list begins with dir); the class stays read, pinned on plant-e below
-    # the bound the passed-whole rule rests on: a body handed to the helper reaches it through pipefail, so a `|| true` or
-    # `|| :` inside one would hide a stage's status from the set; none is there, and the census names any that appears
+    # the bound the passed-whole rule rests on: a body handed to the helper reaches it through pipefail by its LAST
+    # pipeline alone, so the census declares that pipeline's lines only, and names as undeclared any other statement of
+    # the body that runs a reading tool and any command or process substitution that runs one anywhere in the body (a
+    # ROMP_X= prefix on a stage holding one among them), and as swallowed any `|| true` or `|| :` in it whose next byte
+    # is no word character (`|| :)` closing a substitution among them); none is there (round 12l, the landing round's
+    # extra7-1: until then every line of such a body was declared and a swallowed status read only before a blank or
+    # the line's end; the plants inside a passed body are case 562's)
     [[ "$output" != *"swallowed: "* ]]
     [[ "$census" == *"swallowed=0 "* ]]
     # the census's own sensitivity, executed over planted copies (the first line is the shebang; the plant is line 2)
@@ -12368,7 +12401,7 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     at_base
 }
 
-@test "every read of the hook is DECLARED, round 12b split (1 of 2): the census's sensitivity to the shapes it READS, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a redirection operator standing alone ahead of the command word, a quoted command word, a command after a lone & and after |&, a wrapper outside the prefixes, and a command word whose quoting or escaping splits the tool's name, alone and under a wrapper, each planted alone and flagged once by the census and not by the pins; a tilde prefix and a dollar-double-quote planted together, each flagged once by the census and not by the pins" {
+@test "every read of the hook is DECLARED, round 12b split (1 of 2): the census's sensitivity to the shapes it READS, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a redirection operator standing alone ahead of the command word, a quoted command word, a command after a lone & and after |&, a wrapper outside the prefixes, and a command word whose quoting or escaping splits the tool's name, alone and under a wrapper, each planted alone and flagged once by the census and not by the pins; a tilde prefix and a dollar-double-quote planted together, each flagged once by the census and not by the pins; and since round 12l (the landing round's extra7-1) four plants inside path_skips, a body passed whole, each alone: a read as a statement of its own ahead of the body's last pipeline, a read in a substitution whose status || : swallows, and a read in a substitution on a ROMP_X= prefix of a stage of that pipeline, bare and with || true inside, each flagged undeclared once, the two swallowed ones named swallowed too (all four passed the census at 64e1da798)" {
     local plant k=0
     # round 9b (the round 8 rulings' F): the shapes the census and its pins read nothing of until then (the round 8
     # refuters' probes: undeclared=0 and no pin line for each at cad898dd2), each planted alone and flagged ONCE, by
@@ -12414,6 +12447,34 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     [ "$(grep '^undeclared: ' <<< "$output")" = $'undeclared: 2:~/bin/git rev-parse HEAD\nundeclared: 3:$"git" rev-parse HEAD' ]
     run census_unread_shapes "$TEST_DIR/plant-r10c-c.sh"
     [ -z "$output" ]
+    # round 12l (the landing round's extra7-1): a body passed whole reaches judged_read through pipefail by its LAST
+    # pipeline alone, so the census declares that pipeline's lines only. Each plant goes inside path_skips (passed whole,
+    # its last pipeline the awk over the log): a read as a statement of its own ahead of it; a read in a substitution
+    # whose status || : swallows, a statement of its own too; and a read in a ROMP_X=$(...) prefix on the awk stage,
+    # bare and with || true inside, the prefix a substitution whose status no stage carries. Each passed the census at
+    # 64e1da798, which declared every line of a passed body and read a swallowed status only before a blank or the
+    # line's end.
+    local h
+    h=$(grep -n '^path_skips() {' "$HOOK" | cut -d: -f1)
+    [ -n "$h" ]
+    [ "$(sed -n "$((h + 1))p" "$HOOK")" = "    LC_ALL=C awk '" ]
+    run undeclared_reads "$HOOK"
+    [[ "$output" == *"declared: body $((h + 1)) path_skips: awk"* ]]
+    sed "${h}a\\    git rev-parse HEAD > /dev/null" "$HOOK" > "$TEST_DIR/plant-r12l-1.sh"
+    sed "${h}a\\    x=\$(git rev-parse HEAD || :)" "$HOOK" > "$TEST_DIR/plant-r12l-2.sh"
+    sed "$((h + 1))s/^    LC_ALL=C awk '\$/    LC_ALL=C ROMP_X=\$(git rev-parse HEAD) awk '/" "$HOOK" > "$TEST_DIR/plant-r12l-3.sh"
+    sed "$((h + 1))s/^    LC_ALL=C awk '\$/    LC_ALL=C ROMP_X=\$(git rev-parse HEAD || true) awk '/" "$HOOK" > "$TEST_DIR/plant-r12l-4.sh"
+    local -a want=('    git rev-parse HEAD > /dev/null' '    x=$(git rev-parse HEAD || :)' "    LC_ALL=C ROMP_X=\$(git rev-parse HEAD) awk '" "    LC_ALL=C ROMP_X=\$(git rev-parse HEAD || true) awk '")
+    local -a sw=(0 1 0 1)
+    for k in 1 2 3 4; do
+        [ "$(diff "$HOOK" "$TEST_DIR/plant-r12l-$k.sh" | grep -c '^>')" -eq 1 ]
+        [ "$(sed -n "$((h + 1))p" "$TEST_DIR/plant-r12l-$k.sh")" = "${want[k - 1]}" ]
+        run undeclared_reads "$TEST_DIR/plant-r12l-$k.sh"
+        [ "$(grep '^undeclared: ' <<< "$output")" = "undeclared: $((h + 1)):${want[k - 1]}" ]
+        [ "$(grep -c '^swallowed: ' <<< "$output")" -eq "${sw[k - 1]}" ]
+        [ "${sw[k - 1]}" -eq 0 ] || [ "$(grep '^swallowed: ' <<< "$output")" = "swallowed: $((h + 1)):${want[k - 1]}" ]
+        [[ "${output##*$'\n'}" == *" swallowed=${sw[k - 1]} undeclared=1" ]]
+    done
 }
 
 @test "every read of the hook is DECLARED, round 12b split (2 of 2): the pins over the shapes the census CANNOT read, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a command word held in a variable by a lookup or a path-qualified default, a lookup's answer as the command word, a trap action running a reading tool, source or . of a substitution and bash -c, each pinned once and read by the census nowhere; an alias defined and the word-shaped pins read unquoted; a variable given a reading tool's path then run; a here-doc; the scanner's lookup excepted by its exact text; the three variable command words excepted only inside their owners; an owner renamed named by the pin, its words then pinned" {
@@ -13208,7 +13269,7 @@ r12d_sk_merge() {   # the evil merge of item 3: config/deploy.sh at its base (se
     r10a_passes
 }
 
-@test "round 12d (decision 1, blob_pieces): a merge's binary path read whole, its result blob ending with the sidekiq URL and no final newline: refused naming the rule, the merge and the path (PUBLISHED at 0b6c76916, both scanners: the blob's last line was written with a newline; red under the mutant deleting blob_pieces' nonl)" {
+@test "round 12d (decision 1, blob_pieces; re-aimed in round 12l): a merge's binary path read whole, its result blob ending with the sidekiq URL and no final newline: refused naming the rule, the merge and the path, a refusal the merge's first-parent piece carries alone since round 12f; the scan of record's figures pin blob_pieces' nonl, the blob half of decision 1's mirror: scanned ~126 bytes and leaks found: 2, the blob piece's last line written without its newline (127 bytes and 1 leak under the mutant deleting blob_pieces' nonl, both scanners, the refusal kept; PUBLISHED at 0b6c76916, both scanners: the blob's last line was written with a newline)" {
     r11a_base
     r12d_base_file data/blob.dat 'hdr\nx\001y\n'
     git -C "$REPO" checkout -q -b side
@@ -13225,6 +13286,8 @@ r12d_sk_merge() {   # the evil merge of item 3: config/deploy.sh at its base (se
     [ "$(git -C "$REPO" diff-tree -p -c --text "$sha" | grep -c '^Binary files differ$')" -eq 1 ]
     push_main_through_hook_with_shim
     r12d_refused_as sidekiq-sensitive-url data/blob.dat
+    [[ "$output" == *"scanned ~126 bytes"* ]]                # the blob piece ends as the blob ends: its last line has no newline
+    [[ "$output" == *"leaks found: 2"* ]]                    # the first-parent piece's finding and the blob piece's
 }
 
 # Round 12f retired the RESULT BLOBS read (romp-manager's ruling on round 12e's audit, 2026-09-27 03:31Z, its (3):
@@ -13750,8 +13813,11 @@ r12d2_setting_refused() {   # <the clause the refusal line carries>: the push ju
 #   pass     diff_settings passes it: under the value the feed's hunks are git log's, and git log's move from its
 #            hunks under no key (so the fixture shows the value at work); pass= drops the second clause
 #   both     diff-tree reads it as git log does: the same two clauses
-#   pinned   the feed's own option fixes it: the feed's hunks do not move, and every hunk git log frames under the
-#            value is one the feed frames
+#   pinned   the feed's own option fixes it: the feed's hunks do not move, every hunk git log frames under the value
+#            is one the feed frames, and git log's hunks move (so the row shows the option at work); pinned= drops
+#            the third clause, for a key git log's own options fix too (round 12l: until then no pinned row asked git
+#            log to move, and the diff.submodule row passed over a gitlink whose commits did not exist, which gave
+#            git log nothing to show under the key; the landing round's fresh-1)
 #   inert    git log's hunks do not move under it, and the feed's do not
 #   refused  the push is refused naming the key (diff_settings, or since round 12e, for a driver's textconv, the
 #            DIFF ATTRIBUTES read, keyed on the NAME LISTING since round 12f, over a fixture path whose attribute
@@ -13762,7 +13828,15 @@ r12d2_setting_refused() {   # <the clause the refusal line carries>: the push ju
 # (its added lines alone); main's command is gitleaks' own, git log -p -U0 <range> --diff-merges=first-parent, with
 # --format=%H for the commit lines; the feed's is the hook's own, captured by a git on its PATH that copies what the
 # feed's diff-tree prints. The fixture holds no merge: every pushed merge's first-parent hunks are read under the same
-# three options (merge_fp_pieces, round 12e, every merge and every hunk since round 12f).
+# options (merge_fp_pieces, round 12e, every merge and every hunk since round 12f). Since round 12l the fixture's
+# gitlink is a real submodule whose objects are present (sub, added from a repository of the case's own), moved over
+# two commits of its own that edit a file and add one, so a key that changes how git log reads a gitlink change has
+# something to show; a row's value may carry a companion setting after " + " (a key the row's key acts under, here
+# diff.submodule=diff for the two ignore keys and diff.external), in which case the arms compare against the hunks
+# under the companion alone rather than under no key; and the table holds one key that is not a diff key,
+# submodule.<name>.ignore, a submodule's own key that git log honours for its gitlink (<name> is sub). The
+# environment's GIT_DIFF_OPTS, which reaches a submodule's diff under main's git log and not under the feed, is no
+# key: the round 12l case for it pins its refusal by name under diff.submodule=diff.
 r12d2_keys() {   # the census's table: key, value, disposition, why (TAB-separated)
     cat <<'EOF'
 diff.algorithm	histogram	pass	--diff-algorithm (diff_settings)
@@ -13774,10 +13848,15 @@ diff.renames	copies	pass	-C (diff_settings)
 diff.renames	true	pass=	-M, as when the key is unset
 diff.indentHeuristic	false	both	diff-tree reads it and slides a hunk as git log does
 diff.renameLimit	1	both	a basic key, which diff-tree reads
-diff.context	5	pinned	-U0, which main runs git log with too
-diff.suppressBlankEmpty	true	pinned	-c diff.suppressBlankEmpty=false; under -U0 git log prints no context line
-diff.ignoreSubmodules	all	pinned	--ignore-submodules=none: the feed reads a gitlink change git log drops
-diff.submodule	log	pinned	--submodule=short: a gitlink change read as its Subproject line
+diff.submodule	diff	pass	--submodule, the clone's value passed (diff_settings, round 12l): the submodule's own diff between the two gitlinks, read as git log reads it
+diff.submodule	log	pass	--submodule, passed: the gitlink change read as no added line, as git log reads it
+diff.submodule	short	pass=	--submodule=short, as when the key is unset
+diff.context	5	pinned=	-U0, which main runs git log with too
+diff.suppressBlankEmpty	true	pinned=	-c diff.suppressBlankEmpty=false; under -U0 git log prints no context line
+diff.ignoreSubmodules	all	pinned	--ignore-submodules=none: the feed reads a gitlink change git log drops, its Subproject line here
+diff.ignoreSubmodules	all + diff.submodule=diff	pinned	the same under diff.submodule=diff: the submodule's own lines, which git log drops, read (a credential there refuses where main's hook passes it)
+submodule.<name>.ignore	all	pinned	--ignore-submodules=none beats the submodule's own key, which git log honours from the clone's config or .gitmodules: the feed reads the gitlink change git log drops
+submodule.<name>.ignore	all + diff.submodule=diff	pinned	the same under diff.submodule=diff: the submodule's own lines, which git log drops, read
 diff.<driver>.binary	true	pinned	--text; a merge reads a binary path whole (merge_binary_reads)
 diff.<driver>.textconv	@W@/upper.sh	refused	the DIFF ATTRIBUTES read refuses a path git log diffs whose attribute names the driver (round 12e, over the NAME LISTING since round 12f; until round 12e render: --no-textconv read the pushed bytes, git log the rendering)
 diff.<driver>.algorithm	histogram	refused	diff_settings refuses it by name (round 12d2; round 12e keyed it on the pushed paths' attributes, and round 12f restored the refusal of the key alone)
@@ -13792,6 +13871,7 @@ diff.colorMovedWS	allow-indentation-change	inert	the same
 diff.dirstat	lines	inert	--dirstat only
 diff.dstPrefix	d/	inert	the path prefixes alone (listed from git 2.45)
 diff.external	@W@/ext.sh	inert	git log runs no external diff without --ext-diff
+diff.external	@W@/ext.sh + diff.submodule=diff	inert	the clone's own config reaches no submodule's diff, which git runs as git diff under the submodule's configuration (an external diff from the global configuration prints its own lines there in both reads, refused as foreign: round 12l's case, a disclosed false refusal)
 diff.guitool	zz	inert	difftool only
 diff.mnemonicPrefix	true	inert	the path prefixes alone
 diff.noprefix	true	inert	the path prefixes alone
@@ -13817,9 +13897,13 @@ r12d2_hunks() {   # <a diff stream on stdin>: one line per hunk, "<commit>\t<pat
         inh && /^\\ / { h = h "\037\\"; next }
         END { flush() }' | LC_ALL=C sort
 }
-r12d2_census_fixture() {   # the census's history: a base on the remote (BASE), then two commits each key has something to act on (a histogram shape, two edits three lines apart, a slider, a rename and a copy with edits, two renames to new basenames past a limit of 1, a driver's file, a gitlink change, a line with no final newline); the scripts and files the table's values name, under $TEST_DIR/census
+r12d2_census_fixture() {   # the census's history: a base on the remote (BASE), then two commits each key has something to act on (a histogram shape, two edits three lines apart, a slider, a rename and a copy with edits, two renames to new basenames past a limit of 1, a driver's file, a gitlink change of a real submodule whose objects are present, over two commits of its own, a line with no final newline); the scripts and files the table's values name, under $TEST_DIR/census
     local W=$TEST_DIR/census i
-    mkdir -p "$W/shim" "$REPO/conf" "$REPO/src" "$REPO/keys" "$REPO/old" "$REPO/ren" "$REPO/drv" "$REPO/sub"     # sub: the gitlink's path, empty, so git add -A keeps its entry
+    mkdir -p "$W/shim" "$REPO/conf" "$REPO/src" "$REPO/keys" "$REPO/old" "$REPO/ren" "$REPO/drv"
+    git init -q "$W/subsrc"                                             # the submodule's own repository (round 12l)
+    seq 1 20 | sed 's/^/sub line /' > "$W/subsrc/s.txt"
+    git -C "$W/subsrc" add s.txt
+    git -C "$W/subsrc" commit -qm "the submodule's base"
     printf '#!/bin/sh\ntr a-z A-Z < "$1"\n' > "$W/upper.sh"
     printf '#!/bin/sh\necho EXTERNAL "$@"\n' > "$W/ext.sh"
     printf '#!/bin/sh\nexit 1\n' > "$W/no-scanner"
@@ -13837,7 +13921,7 @@ r12d2_census_fixture() {   # the census's history: a base on the remote (BASE), 
     for i in $(seq 1 30); do printf 'second rename line %s\n' "$i"; done > "$REPO/ren/r2.txt"
     printf 'alpha\nbeta\ngamma\n' > "$REPO/drv/file.drv"
     git -C "$REPO" add -A
-    git -C "$REPO" update-index --add --cacheinfo "160000,$(printf '1%.0s' $(seq 1 40)),sub"
+    git -C "$REPO" -c protocol.file.allow=always submodule --quiet add "$W/subsrc" sub
     git -C "$REPO" commit -qm "the census base"
     git -C "$REPO" push -q origin main
     BASE="$(git -C "$REPO" rev-parse HEAD)"
@@ -13856,24 +13940,30 @@ r12d2_census_fixture() {   # the census's history: a base on the remote (BASE), 
     sed -i '5s/.*/second rename line five/' "$REPO/ren2/q2.txt"
     printf 'alpha\nbeta2\ngamma\n' > "$REPO/drv/file.drv"
     printf 'a\nb' > "$REPO/notes/nonl.txt"
+    seq 1 20 | sed 's/^/sub line /; 5s/.*/sub line five/; 9s/.*/sub line nine/' > "$REPO/sub/s.txt"   # two edits one hunk apart in git diff's context, then a file added
+    git -C "$REPO/sub" commit -qam "the submodule's edits"
+    printf 'sub added\n' > "$REPO/sub/t.txt"
+    git -C "$REPO/sub" add t.txt
+    git -C "$REPO/sub" commit -qm "the submodule's new file"
     git -C "$REPO" add -A
-    git -C "$REPO" update-index --add --cacheinfo "160000,$(printf '2%.0s' $(seq 1 40)),sub"
     git -C "$REPO" commit -qm "the census edits"
     sed -i '12s/.*/twelve/' "$REPO/src/nums.txt"
     git -C "$REPO" commit -qam "a second commit"
     unset ROMP_NO_GITLEAKS
 }
-r12d2_census_run() {   # <hook> <key, or nothing> <value>: the key set in the clone, the hook run once with run_hook's ref line over BASE, the feed's stream captured, main's git log read under the same key, the key unset; writes feed, log and out under $TEST_DIR/census
-    local hook=$1 k=$2 v=$3 W=$TEST_DIR/census
+r12d2_census_run() {   # <hook> <key, or nothing> <value> [<companion key>=<value>]: the key (and the companion) set in the clone, the hook run once with run_hook's ref line over BASE, the feed's stream captured, main's git log read under the same keys, the keys unset; writes feed, log and out under $TEST_DIR/census
+    local hook=$1 k=$2 v=$3 c=${4:-} W=$TEST_DIR/census
+    [ -z "$c" ] || git -C "$REPO" config "${c%%=*}" "${c#*=}"
     [ -z "$k" ] || git -C "$REPO" config "$k" "$v"
     : > "$W/feed.raw"
     ( cd "$REPO" && PATH="$W/shim:$PATH" ROMP_GITLEAKS="$W/no-scanner" ROMP_PRIVATE_STRINGS="$W/no-denylist" bash "$hook" origin git@example.invalid:x/y.git <<< "refs/heads/main $(git rev-parse HEAD) refs/heads/main $BASE" ) > "$W/out" 2>&1 || :
     r12d2_hunks < "$W/feed.raw" > "$W/feed"
     git -C "$REPO" log -p -U0 --format=%H HEAD --not --remotes "$BASE" --diff-merges=first-parent 2> /dev/null | r12d2_hunks > "$W/log"
     [ -z "$k" ] || git -C "$REPO" config --unset-all "$k"
+    [ -z "$c" ] || git -C "$REPO" config --unset-all "${c%%=*}"
 }
 r12d2_census() {   # <hook> <table> [<one key>]: prints the first disagreement between the table and git's own listing or the executions, and returns 1; returns 0 when they agree (the fixture built first, r12d2_census_fixture)
-    local hook=$1 table=$2 only=${3:-} W=$TEST_DIR/census key val disp why k v gv gmin
+    local hook=$1 table=$2 only=${3:-} W=$TEST_DIR/census key val disp why k v c gv gmin
     if [ -z "$only" ]; then
         git help --config | grep -i '^diff\.' | LC_ALL=C sort -u > "$W/listed"
         cut -f 1 <<< "$table" | LC_ALL=C sort -u > "$W/rows"
@@ -13885,6 +13975,7 @@ r12d2_census() {   # <hook> <table> [<one key>]: prints the first disagreement b
             grep -qixF -- "$k" "$W/listed" && continue
             case "$k" in
                 'diff.<driver>.algorithm') continue ;;                                      # gitattributes(5)'s, which the listing lacks
+                'submodule.<name>.ignore') continue ;;                                      # a submodule's own key, no diff key, which git log honours for its gitlink (round 12l)
                 diff.dstPrefix|diff.srcPrefix) [ "$gmin" -lt 45 ] && continue ;;            # listed from git 2.45: an older git ignores the key, so its row runs as inert
                 diff.trustExitCode|'diff.<driver>.trustExitCode') [ "$gmin" -lt 46 ] && continue ;;   # listed from git 2.46, likewise
             esac
@@ -13898,19 +13989,27 @@ r12d2_census() {   # <hook> <table> [<one key>]: prints the first disagreement b
     : > "$W/done"
     while IFS=$'\t' read -r -u 7 key val disp why; do
         [ -z "$only" ] || [ "$key" = "$only" ] || continue
-        k=${key/<driver>/zz}; v=${val//@W@/$W}
-        r12d2_census_run "$hook" "$k" "$v"
+        k=${key/<driver>/zz}; k=${k/<name>/sub}; v=${val//@W@/$W}; c=""
+        if [[ "$v" == *" + "* ]]; then c=${v#* + }; v=${v%% + *}; fi                # a companion setting: the arms compare against the hunks under it alone
+        if [ -n "$c" ]; then
+            r12d2_census_run "$hook" "${c%%=*}" "${c#*=}"
+            cp "$W/feed" "$W/feed.base"; cp "$W/log" "$W/log.base"
+        else
+            cp "$W/feed.none" "$W/feed.base"; cp "$W/log.none" "$W/log.base"
+        fi
+        r12d2_census_run "$hook" "$k" "$v" "$c"
         printf '%s=%s\n' "$k" "$val" >> "$W/done"
         case "$disp" in
             pass|both|pass=)
                 cmp -s "$W/feed" "$W/log" || { echo "under $k=$val the feed's hunks are not git log's"; return 1; }
-                [ "$disp" = pass= ] || ! cmp -s "$W/log" "$W/log.none" || { echo "under $k=$val git log's hunks do not move over the fixture, so its row shows nothing"; return 1; } ;;
-            pinned)
-                cmp -s "$W/feed" "$W/feed.none" || { echo "under $k=$val the feed's hunks move, and its row says the feed pins it"; return 1; }
-                [ -z "$(LC_ALL=C comm -23 "$W/log" "$W/feed")" ] || { echo "under $k=$val git log frames a hunk the feed does not"; return 1; } ;;
+                [ "$disp" = pass= ] || ! cmp -s "$W/log" "$W/log.base" || { echo "under $k=$val git log's hunks do not move over the fixture, so its row shows nothing"; return 1; } ;;
+            pinned|pinned=)
+                cmp -s "$W/feed" "$W/feed.base" || { echo "under $k=$val the feed's hunks move, and its row says the feed pins it"; return 1; }
+                [ -z "$(LC_ALL=C comm -23 "$W/log" "$W/feed")" ] || { echo "under $k=$val git log frames a hunk the feed does not"; return 1; }
+                [ "$disp" = pinned= ] || ! cmp -s "$W/log" "$W/log.base" || { echo "under $k=$val git log's hunks do not move over the fixture, so its row shows nothing"; return 1; } ;;
             inert)
-                cmp -s "$W/log" "$W/log.none" || { echo "under $k=$val git log's hunks move, and its row says inert"; return 1; }
-                cmp -s "$W/feed" "$W/feed.none" || { echo "under $k=$val the feed's hunks move, and its row says inert"; return 1; } ;;
+                cmp -s "$W/log" "$W/log.base" || { echo "under $k=$val git log's hunks move, and its row says inert"; return 1; }
+                cmp -s "$W/feed" "$W/feed.base" || { echo "under $k=$val the feed's hunks move, and its row says inert"; return 1; } ;;
             refused)
                 grep -qF -- "romp pre-push: this clone sets $k, " "$W/out" || { echo "under $k=$val the hook does not refuse naming the key"; return 1; } ;;
             *) echo "the row for $key carries the disposition $disp, no known kind"; return 1 ;;
@@ -13919,7 +14018,7 @@ r12d2_census() {   # <hook> <table> [<one key>]: prints the first disagreement b
     return 0
 }
 
-@test "round 12d2 (ITEM A, the census): the diff keys are DERIVED: every diff key the running git lists (git help --config; git 2.43.0 and 2.55.0 executed) has a row, with gitattributes(5)'s diff.<driver>.algorithm, which that listing lacks, and no row names another key but the four a later git lists; under each key's value, by execution over a fixture each key has something to act on, the feed's hunks are git log's where the hook passes the key or diff-tree reads it, do not move where the feed's own option pins it or the key is inert (git log's not moving either), and the push is refused where the hook refuses it; and the census reds over a row calling diff.algorithm inert, a hook copy whose feed drops --diff-algorithm, and a table missing a listed key" {
+@test "round 12d2 (ITEM A, the census; re-derived in round 12l over a populated submodule): the diff keys are DERIVED: every diff key the running git lists (git help --config; git 2.43.0 and 2.55.0 executed) has a row, with gitattributes(5)'s diff.<driver>.algorithm, which that listing lacks, and submodule.<name>.ignore, a submodule's own key, and no row names another key but the four a later git lists; under each key's value, by execution over a fixture each key has something to act on (since round 12l a gitlink change of a real submodule whose objects are present), the feed's hunks are git log's where the hook passes the key (diff.submodule among them since round 12l) or diff-tree reads it, do not move where the feed's own option pins it (git log's moving, unless the row says pinned=) or the key is inert (git log's not moving either), and the push is refused where the hook refuses it; and the census reds over a row calling diff.algorithm inert, a hook copy whose feed drops --diff-algorithm, a hook copy whose feed drops --submodule (the value 64e1da798 never passed), a row calling diff.context pinned where git log's hunks do not move, and a table missing a listed key" {
     r12d2_census_fixture
     run r12d2_census "$HOOK" "$(r12d2_keys)"
     [ "$output" = "" ]
@@ -13937,6 +14036,17 @@ r12d2_census() {   # <hook> <table> [<one key>]: prints the first disagreement b
     run r12d2_census "$TEST_DIR/hook-noalg" "$(r12d2_keys)" diff.algorithm
     [ "$status" -ne 0 ]
     [ "$output" = "under diff.algorithm=histogram the feed's hunks are not git log's" ]
+    # round 12l: the hook's diff.submodule pass removed, its feed reading every gitlink change under diff-tree's default
+    [ "$(grep -c ' "--submodule=$sm")$' "$HOOK")" -eq 1 ]
+    sed 's/ "--submodule=$sm")$/)/' "$HOOK" > "$TEST_DIR/hook-nosm"
+    [ "$(diff "$HOOK" "$TEST_DIR/hook-nosm" | grep -c '^>')" -eq 1 ]
+    run r12d2_census "$TEST_DIR/hook-nosm" "$(r12d2_keys)" diff.submodule
+    [ "$status" -ne 0 ]
+    [ "$output" = "under diff.submodule=diff the feed's hunks are not git log's" ]
+    # round 12l: a pinned row asks git log's hunks to move, so a key git log's own -U0 fixes, called pinned, shows nothing
+    run r12d2_census "$HOOK" "$(sed 's/^diff\.context\t5\tpinned=\t/diff.context\t5\tpinned\t/' <<< "$(r12d2_keys)")" diff.context
+    [ "$status" -ne 0 ]
+    [ "$output" = "under diff.context=5 git log's hunks do not move over the fixture, so its row shows nothing" ]
     # a listed key the table lacks
     run r12d2_census "$HOOK" "$(grep -v '^diff\.wsErrorHighlight' <<< "$(r12d2_keys)")"
     [ "$status" -ne 0 ]
@@ -15362,6 +15472,264 @@ r12f_keyset() {   # <hook>: the remote's main and its tracking ref set back to B
     [[ "$output" != *"ADDS a credential"* ]]
     at_base
     rm "$REPO/.git/info/attributes"
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+# ── round 12l: the clone's diff.submodule passed to the feed, the per-file trace line's second spelling pinned, and the landing round's other hook fixes (romp-manager's rulings on round 12, the landing round, 2026-09-27 18:50Z) ──
+# The landing round's review found a default-rule road main refuses (fresh-1): under diff.submodule=diff, main's hook,
+# gitleaks' git log -p, reads a gitlink change as the submodule's own diff between the two gitlinks, and a credential
+# in a line a submodule commit adds was refused there and published at 64e1da798, whose feed read the change as its
+# Subproject line alone (--submodule=short), while the round 12d2 census called the key pinned over a gitlink whose
+# commits did not exist. The ruling passes the clone's value to the feed, so the read frames what main's does, and
+# refuses by name a value the hook cannot frame so. The cases below push a superproject with a submodule whose objects
+# are present (a real submodule, added from a repository of the case's own), and the census's fixture is populated
+# the same way (the round 12d2 section). tests-1: the path skips' second per-file spelling, pinned. Each pin pushes
+# for real with the identifier scan off and the real scanner armed; every value is assembled at run time.
+
+@test "round 12l (tests-1, the per-file trace line's capitalized spelling; a PIN of the spelling recorded by execution over gitleaks 8.25.0 to 8.30.1, not a derivation, since those releases are not in CI): a gitleaks whose every run's log spells each per-file line TRC Scanning path, the wording of gitleaks 8.25.0, 8.25.1 and 8.26.0: under the honest per-rule allowlist a clean push passes, the canary's run and the scan of record's each counting their files; under the crafted number path the token at app/settings.py is still refused by the skip line; each push with both runs' logs rewritten (creds.c and creds.d in calls.filtered) (red under the mutant dropping the capitalized alternative from path_skips, both scanners, where the count lines of both runs refuse the clean push: 0 scanning path lines where the hook wrote 1 pieces)" {
+    r11a_base
+    r11a_config "$(r12b_config tables "$R12B3_HONEST")"
+    r12b3_scanner all 's/ TRC scanning path / TRC Scanning path /'
+    r12b3_clean
+    push_main_through_hook_with_shim
+    r10a_passes
+    [ "$(LC_ALL=C sort -u "$TEST_DIR/calls.filtered" | tr '\n' ' ')" = "creds.c creds.d " ]
+    : > "$TEST_DIR/calls.filtered"
+    r11a_config "$(r12b_config tables)"
+    r11a_witness S3
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    push_main_through_hook_with_shim
+    r12b_refused_by_skip generic-api-key app/settings.py
+    [ "$(LC_ALL=C sort -u "$TEST_DIR/calls.filtered" | tr '\n' ' ')" = "creds.c creds.d " ]
+}
+
+r12l_super() {   # r11a_base, then a submodule at sub whose objects are present (added from a repository of the case's own, subsrc, one clean file), committed with its .gitmodules and pushed without the hook (BASE moves)
+    r11a_base
+    git init -q "$TEST_DIR/subsrc"
+    printf 'hello\n' > "$TEST_DIR/subsrc/a.txt"
+    git -C "$TEST_DIR/subsrc" add a.txt
+    git -C "$TEST_DIR/subsrc" commit -qm "the submodule's base"
+    git -C "$REPO" -c protocol.file.allow=always submodule --quiet add "$TEST_DIR/subsrc" sub
+    git -C "$REPO" commit -qm "the submodule added"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+}
+r12l_sub_commit() {   # <path in sub> <printf format> [<argument>...]: that file written in the submodule and committed there
+    local path=$1 fmt=$2
+    shift 2
+    # shellcheck disable=SC2059   # the format is the caller's
+    printf "$fmt" "$@" > "$REPO/sub/$path"
+    git -C "$REPO/sub" add -- "$path"
+    git -C "$REPO/sub" commit -qm "the submodule's $path"
+}
+r12l_bump() {   # <path in sub> <printf format> [<argument>...]: r12l_sub_commit, then the superproject's commit moving the gitlink to it; sets sha
+    r12l_sub_commit "$@"
+    git -C "$REPO" add sub
+    r11b_commit "the gitlink moved"
+}
+r12l_again() { git -C "$TEST_DIR/remote.git" update-ref refs/heads/main "$BASE"; git -C "$REPO" update-ref refs/remotes/origin/main "$BASE"; }   # the remote and its tracking ref back at the base, so the same commits are pushed again
+r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in no output line
+    r12d_refused_as "$1" "$2"
+    [[ "$output" != *"$(probe_token)"* ]]
+}
+
+@test "round 12l (fresh-1, the road): a submodule commit adding sub/deploy.env with a github-pat credential, and the superproject's commit moving the gitlink to it, under diff.submodule=diff, which has main's git log read the submodule's own diff between the two gitlinks: refused naming github-pat, the commit and sub/deploy.env, with the figure main's gitleaks logs (PUBLISHED at 64e1da798, both scanners, whose feed read the gitlink change as its Subproject line alone; refused at main, both scanners; red under the mutant dropping --submodule from the feed's options)" {
+    r12l_super
+    r12l_bump deploy.env 'DEPLOY_TOKEN=%s\n' "$(probe_token)"
+    git -C "$REPO" config diff.submodule diff
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c "^+DEPLOY_TOKEN=")" -eq 1 ]      # the premise: git log reads the submodule's line under the key
+    push_main_through_hook_with_shim
+    r12l_cred_refused github-pat sub/deploy.env
+    [[ "$output" == *"scanned ~54 bytes"* ]]
+}
+
+@test "round 12l (fresh-1, the controls): the same push with diff.submodule unset (short) and under diff.submodule=log passes at the fix, as at main and at 64e1da798, both scanners: under short git log reads the gitlink change as its Subproject line, under log as a summary of the submodule's commits, no added line of either a hunk gitleaks' git mode reads (main scans no byte of it under log), so a credential in a submodule commit's subject passes under log too, as at main (red under the mutant dropping the feed's read of the log lines, where the log push is refused as a foreign line)" {
+    r12l_super
+    r12l_bump deploy.env 'DEPLOY_TOKEN=%s\n' "$(probe_token)"
+    push_main_through_hook_with_shim
+    r10a_passes
+    r12l_again
+    git -C "$REPO" config diff.submodule log
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c '^  > the submodule')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r10a_passes
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'y\n' > "$REPO/sub/y.txt"
+    git -C "$REPO/sub" add y.txt
+    git -C "$REPO/sub" commit -qm "a subject naming $(probe_token)"
+    git -C "$REPO" add sub
+    r11b_commit "the gitlink moved again"
+    push_main_through_hook_with_shim
+    r10a_passes
+    [[ "$output" != *"$(probe_token)"* ]]
+}
+
+@test "round 12l (fresh-1, an unpopulated submodule): the gitlink moved to a submodule commit this clone does not hold (the submodule deinitialized, its repository removed), under diff.submodule=diff, where git log prints the change's header with (commits not present) and reads no line: passes at the fix, as at main and at 64e1da798, both scanners" {
+    r12l_super
+    r12l_bump deploy.env 'DEPLOY_TOKEN=%s\n' "$(probe_token)"
+    git -C "$REPO" submodule --quiet deinit -f sub
+    rm -rf "$REPO/.git/modules/sub"
+    git -C "$REPO" config diff.submodule diff
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c '^Submodule sub [0-9a-f]*\.\.\.[0-9a-f]* (commits not present)$')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12l (fresh-1, a submodule added): a new submodule s2 whose one file holds the credential, added under diff.submodule=diff, where git log reads the new submodule's whole tree as added lines: refused naming github-pat, the commit and s2/k.env (PUBLISHED at 64e1da798, both scanners; refused at main, both scanners)" {
+    r11a_base
+    git init -q "$TEST_DIR/s2"
+    printf 'NEWTOK=%s\n' "$(probe_token)" > "$TEST_DIR/s2/k.env"
+    git -C "$TEST_DIR/s2" add k.env
+    git -C "$TEST_DIR/s2" commit -qm "s2"
+    git -C "$REPO" -c protocol.file.allow=always submodule --quiet add "$TEST_DIR/s2" s2
+    r11b_commit "a submodule added"
+    git -C "$REPO" config diff.submodule diff
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c '^Submodule s2 0000000\.\.\.[0-9a-f]* (new submodule)$')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r12l_cred_refused github-pat s2/k.env
+}
+
+@test "round 12l (fresh-1, a merge moving the gitlink): a merge whose own resolution moves the gitlink to a submodule commit adding sub/evil.env with the credential, neither parent holding that commit, under diff.submodule=diff: refused naming github-pat, the merge and sub/evil.env, through the merge's first-parent diff, which reads the submodule's lines as git log does (the combined diff reads a gitlink as its Subproject lines under any value) (PUBLISHED at 64e1da798, both scanners; refused at main, both scanners; red under the mutant dropping the first-parent read's submodule header line)" {
+    r12l_super
+    git -C "$REPO" checkout -q -b side2
+    r12d_commit_file x.txt 'x\n'
+    git -C "$REPO" checkout -q main
+    r12d_commit_file m.txt 'm\n'
+    git -C "$REPO" merge -q --no-ff --no-commit side2 > /dev/null 2>&1 || :
+    r12l_sub_commit evil.env 'EVIL=%s\n' "$(probe_token)"
+    git -C "$REPO" add sub
+    r11b_commit "the merge, moving the gitlink itself"
+    is_merge "$sha"
+    git -C "$REPO" config diff.submodule diff
+    [ "$(git -C "$REPO" diff-tree -p -c --submodule=diff "$sha" | grep -c '^++Subproject commit ')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r12l_cred_refused github-pat sub/evil.env
+}
+
+@test "round 12l (fresh-1, the submodule's lines framed as any file's): under diff.submodule=diff a clean push whose submodule commit edits two lines four apart (one hunk of the submodule's diff, which git runs with git diff's context: its added lines one piece, as gitleaks' git mode joins them), adds a file git calls binary (its Binary notice read and nothing scanned, as gitleaks skips it) and a file with no final newline, with a file of the superproject's own, passes at the fix with the figure main's gitleaks logs, scanned ~18 bytes, both scanners (~63 bytes at 64e1da798, the Subproject line and the superproject's file; red under the mutant dropping the feed's read of a Binary notice in a submodule's diff, where the push is refused as a foreign line)" {
+    r12l_super
+    r12l_sub_commit n.txt '%s\n' $(seq 1 20)
+    git -C "$REPO" add sub
+    git -C "$REPO" commit -qm "the submodule's n.txt"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    seq 1 20 | sed '5s/.*/five/; 9s/.*/nine/' > "$REPO/sub/n.txt"
+    printf 'x\000y\n' > "$REPO/sub/b.bin"
+    printf 'nonl' > "$REPO/sub/z.txt"
+    git -C "$REPO/sub" add -A
+    git -C "$REPO/sub" commit -qm "the submodule's edits"
+    git -C "$REPO" add sub
+    r12d_commit_file top.txt 'top\n'
+    git -C "$REPO" config diff.submodule diff
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c '^Binary files /dev/null and b/sub/b.bin differ$')" -eq 1 ]
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c '^@@ -2,11 +2,11 @@')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r10a_passes
+    [[ "$output" == *"scanned ~18 bytes"* ]]                   # five and nine, 10 bytes in one piece; nonl, 4, its newline dropped; top, 4
+}
+
+@test "round 12l (fresh-1, the newline mirror and the ~ line in a submodule's diff): under diff.submodule=diff, a submodule file whose last line is the sidekiq URL with no final newline is refused naming sidekiq-sensitive-url (the piece ends as git's added text ends, decision 1's mirror), and a submodule file whose first line, led by MZ, holds the credential is refused naming github-pat (the piece opens with the ~ line gitleaks' type check needs); both PUBLISHED at 64e1da798, both scanners, and refused at main, both scanners" {
+    r12l_super
+    git -C "$REPO" config diff.submodule diff
+    r12l_bump sk.txt 'url = %s' "$(r12d_sk)"
+    push_main_through_hook_with_shim
+    r12l_cred_refused sidekiq-sensitive-url sub/sk.txt
+    [[ "$output" == *"scanned ~51 bytes"* ]]
+    git -C "$REPO" reset -q --hard "$BASE"
+    git -C "$REPO/sub" reset -q --hard "$(git -C "$REPO" ls-tree HEAD sub | awk '{ print $3 }')"
+    r12l_bump m.txt 'MZ %s\n' "$(probe_token)"
+    push_main_through_hook_with_shim
+    r12l_cred_refused github-pat sub/m.txt
+}
+
+@test "round 12l (fresh-1, GIT_DIFF_OPTS under diff.submodule=diff, refused by name): the environment's GIT_DIFF_OPTS sets the context of the diff git log runs inside a submodule, while the feed reads with it unset, so under diff.submodule=diff a push with GIT_DIFF_OPTS=--unified=3 is refused by name with the remedy, the feed unread: the credential push (refused at main, PUBLISHED at 64e1da798, both scanners) and a clean one (passed at main: a disclosed false refusal); with GIT_DIFF_OPTS unset the clean push passes (red under the mutant deleting that refusal, where the credential push is refused as a credential and the clean one passes)" {
+    local clause="this clone's diff.submodule is diff and the environment sets GIT_DIFF_OPTS to \"--unified=3\", which gives the diff git log runs inside a submodule for a gitlink change its own count of context lines, while the credential feed reads with GIT_DIFF_OPTS unset (its -U0 pinned), so that diff's hunks cannot be framed as gitleaks' git mode would frame them; unset GIT_DIFF_OPTS for the push, or set diff.submodule to short or log, or set ROMP_NO_GITLEAKS=1 for one push"
+    r12l_super
+    git -C "$REPO" config diff.submodule diff
+    r12l_bump deploy.env 'DEPLOY_TOKEN=%s\n' "$(probe_token)"
+    export GIT_DIFF_OPTS=--unified=3
+    push_main_through_hook_with_shim
+    r12d2_setting_refused "$clause"
+    [[ "$output" != *"$(probe_token)"* ]]
+    git -C "$REPO" reset -q --hard "$BASE"
+    git -C "$REPO/sub" reset -q --hard "$(git -C "$REPO" ls-tree HEAD sub | awk '{ print $3 }')"
+    r12l_bump clean.txt 'the front door is blue\n'
+    push_main_through_hook_with_shim
+    r12d2_setting_refused "$clause"
+    unset GIT_DIFF_OPTS
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12l (fresh-1, a diff.submodule value the hook does not read, refused by name): diff.submodule set with no value, which git log stops on (main's hook published the credential push unscanned: gitleaks scanned no commit, both scanners), and diff.submodule=Diff, which git warns on and ignores, reading short (main's hook scanned and passed the clean push: a disclosed false refusal), each refuse by name with the remedy, the feed unread (red under the mutant taking any value as short)" {
+    r12l_super
+    r12l_bump deploy.env 'DEPLOY_TOKEN=%s\n' "$(probe_token)"
+    printf '[diff]\n\tsubmodule\n' >> "$REPO/.git/config"
+    push_main_through_hook_with_shim
+    r12d2_setting_refused "this clone's diff.submodule is set with no value, which is not a value the hook reads (short, log or diff, spelled so: git warns on any other value and keeps the one it read before, and stops on no value), so the credential feed cannot read a gitlink change as gitleaks' git mode would; set it to short, log or diff, or unset it (git config --unset-all diff.submodule), or set ROMP_NO_GITLEAKS=1 for one push"
+    [[ "$output" != *"$(probe_token)"* ]]
+    git -C "$REPO" config --unset-all diff.submodule
+    git -C "$REPO" reset -q --hard "$BASE"
+    git -C "$REPO/sub" reset -q --hard "$(git -C "$REPO" ls-tree HEAD sub | awk '{ print $3 }')"
+    r12l_bump clean.txt 'the front door is blue\n'
+    git -C "$REPO" config diff.submodule Diff
+    push_main_through_hook_with_shim
+    r12d2_setting_refused "this clone's diff.submodule is set to \"Diff\", which is not a value the hook reads (short, log or diff, spelled so: git warns on any other value and keeps the one it read before, and stops on no value), so the credential feed cannot read a gitlink change as gitleaks' git mode would; set it to short, log or diff, or unset it (git config --unset-all diff.submodule), or set ROMP_NO_GITLEAKS=1 for one push"
+}
+
+@test "round 12l (fresh-1, the keys that have git log drop a gitlink change): under diff.submodule=diff, with diff.ignoreSubmodules=all, with submodule.sub.ignore=all in the clone's config, and with ignore = all in the work tree's .gitmodules, each of which has main's git log drop the change (main passes the credential push, both scanners), the feed reads it all the same (--ignore-submodules=none, its own pin) and refuses the credential push naming github-pat and sub/deploy.env, a refusal main's hook does not make (each PUBLISHED at 64e1da798 and at main, both scanners); a clean push under the first passes, as at main (the pin reads more, never less, and refuses no clean push)" {
+    r12l_super
+    git -C "$REPO" config diff.submodule diff
+    r12l_bump deploy.env 'DEPLOY_TOKEN=%s\n' "$(probe_token)"
+    git -C "$REPO" config diff.ignoreSubmodules all
+    [ -z "$(git -C "$REPO" log -1 -p -U0 --format=)" ]                                        # the premise: git log drops the change under the key
+    push_main_through_hook_with_shim
+    r12l_cred_refused github-pat sub/deploy.env
+    git -C "$REPO" config --unset diff.ignoreSubmodules
+    git -C "$REPO" config submodule.sub.ignore all
+    [ -z "$(git -C "$REPO" log -1 -p -U0 --format=)" ]
+    push_main_through_hook_with_shim
+    r12l_cred_refused github-pat sub/deploy.env
+    git -C "$REPO" config --unset submodule.sub.ignore
+    git -C "$REPO" config -f "$REPO/.gitmodules" submodule.sub.ignore all
+    [ -z "$(git -C "$REPO" log -1 -p -U0 --format=)" ]
+    push_main_through_hook_with_shim
+    r12l_cred_refused github-pat sub/deploy.env
+    git -C "$REPO" checkout -q -- .gitmodules
+    git -C "$REPO" reset -q --hard "$BASE"
+    git -C "$REPO/sub" reset -q --hard "$(git -C "$REPO" ls-tree HEAD sub | awk '{ print $3 }')"
+    r12l_bump clean.txt 'the front door is blue\n'
+    git -C "$REPO" config diff.ignoreSubmodules all
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12l (fresh-1, what the submodule's own diff runs, the same in both reads): git runs that diff as git diff inside the submodule, under the submodule's configuration and attributes, for main's git log and the feed alike: a textconv driver the submodule's attributes name renders the credential upper-cased in both, and the push is refused naming generic-api-key, as at main, both scanners (PUBLISHED at 64e1da798, both scanners); an external diff a global diff.external names prints its own lines in both, and a clean push is refused naming the feed's foreign line, where main's hook and 64e1da798 pass it, reading no line of the change (a disclosed false refusal), and passes once the external diff is unset" {
+    r12l_super
+    git -C "$REPO" config diff.submodule diff
+    printf '#!/bin/sh\ntr a-z A-Z < "$1"\n' > "$TEST_DIR/upper"
+    chmod 755 "$TEST_DIR/upper"
+    git config --global diff.zz.textconv "$TEST_DIR/upper"
+    printf 'deploy.env diff=zz\n' > "$REPO/sub/.gitattributes"
+    r12l_bump deploy.env 'DEPLOY_TOKEN=%s\n' "$(probe_token)"
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c '^+DEPLOY_TOKEN=GHP_')" -eq 1 ]      # the premise: git log reads the submodule's line through the driver
+    push_main_through_hook_with_shim
+    r12l_cred_refused generic-api-key sub/deploy.env
+    git config --global --unset diff.zz.textconv
+    rm "$REPO/sub/.gitattributes"
+    git -C "$REPO" reset -q --hard "$BASE"
+    git -C "$REPO/sub" reset -q --hard "$(git -C "$REPO" ls-tree HEAD sub | awk '{ print $3 }')"
+    r12l_bump clean.txt 'the front door is blue\n'
+    printf '#!/bin/sh\necho EXTERNAL "$@"\n' > "$TEST_DIR/ext"
+    chmod 755 "$TEST_DIR/ext"
+    git config --global diff.external "$TEST_DIR/ext"
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c '^EXTERNAL clean.txt ')" -eq 1 ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read whole (git diff-tree exited 0 and printed a line inside commit 1 of the 1 it was given, ${sha:0:10}, that is none of the shapes the feed reads or recognizes"* ]]
+    at_base
+    git config --global --unset diff.external
     push_main_through_hook_with_shim
     r10a_passes
 }
