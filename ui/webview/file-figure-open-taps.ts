@@ -1,18 +1,22 @@
 // The one gate's tap cells, one set for every engine (the file review's round 17, tests-1 with regression-1, and the coordinator's
 // decisions 1 to 3 on it; its round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them and the
-// closing check after those fixes), for the
+// closing check after those fixes; and the closing check at 142ade155 after the fixes for the file review's round 18), for the
 // link-navigation follow-on of plans/markdown-viewer.md: file-figure-open-browser.test.ts runs them in Chromium, and
 // file-figure-open-engines-browser.test.ts in WebKit and Firefox, a leg of its own that stays off the shared roster of browser legs,
 // since the job that runs the roster installs Chromium alone. The gate (file-view.ts webGestureShown and the recorder above it)
 // records a press's verdict at the window's pointerdown and fills a one-click slot at the pointerup, and a click by a pointer reads
-// the record under its own pointerId or, with none, the press the slot handed it; a record ends at its own pointerup, which hands it
-// to the slot, and every record ends at a dragstart and at a mousedown with no pointerdown of a mouse or a pen before it, which
-// empties the slot too unless it is the compatibility mousedown of the one-finger tap whose pointerup filled the slot. The engines
-// differ in what a tap's click carries, read off the page as each cell's precondition: Chromium gives the click the touch's own
-// pointerId, Firefox its press's (0, a mouse's and a touch's alike), and WebKit under Playwright's touch emulation on Linux (a
-// stand-in for WebKitGTK, and presumably WPE, on a touchscreen; no cell claims iOS Safari, whose click WebKit's iOS source gives the
-// touch's own pointerId, read and not run on a device) pointerId 1 of type mouse while its press carried the touch's; in each the
-// click finds its press in the slot. The cells, on the chat modal and the Files pane at 900 by 700, on a phone's pages (hasTouch and
+// the record under its own pointerId or, with none, the press the slot handed it, either only right after a primary mouseup whose
+// detail is above 0, and the slot only under the slot's own pointerId when the click is typed as the slot's pointerup was; a record
+// ends at its own pointerup, which hands it to the slot, at its own pointercancel and at the next primary press, every record ends at
+// a dragstart and at a mousedown with no pointerdown of a mouse or a pen before it, which empties the slot too unless it is the
+// compatibility mousedown of the one-finger tap, or of the touch-order pen, whose pointerup filled the slot, and a touchend or a
+// touchcancel marks every touch record refused, and the record stands. The engines differ in what a tap's click carries, read off
+// the page as each cell's precondition: Chromium gives the click the touch's own pointerId and type, Firefox its press's (0, a
+// mouse's and a touch's alike), and WebKit under Playwright's touch emulation on Linux (a stand-in for WebKitGTK, and presumably WPE,
+// on a touchscreen; no cell claims iOS Safari, whose click WebKit's iOS source gives the touch's own pointerId, read and not run on a
+// device) pointerId 1 of type mouse while its press carried the touch's; in each the click finds its press in the slot, in Chromium
+// and Firefox under the slot's own pointerId and type, and in WebKit under another type. The cells, on the chat modal and the Files
+// pane at 900 by 700, on a phone's pages (hasTouch and
 // isMobile at a device scale of 1 with the kernel's viewport meta, which WebKit's mobile layout needs: without it a tap on the
 // control lands off target) and on a hybrid page (hasTouch with a mouse), Firefox on the hybrid page alone since its engine takes no
 // isMobile, each a count of [popups, document requests] taken by the gate's own window.open calls (file-figure-open-stacking.ts
@@ -62,6 +66,18 @@
 //   opens once; so does the tap after a right click with the control above the top page's window at the tap's start, the frame
 //   moved back at the element's pointerup; and in Firefox alone, a tap on a hover tooltip of the top page over the control, hidden
 //   as the tap moves the mouse off its cell (Chromium and WebKit send that tap's mouse events to the tooltip);
+// - the chain rule's cells (chainCells; the closing check at 142ade155 after the fixes for the file review's round 18), in the
+//   dashboard's shape with the viewer's frame beside another pane's frame over a bar of the top page, each covered click wanted
+//   opening nothing and the next click opening once: in Firefox, on the hybrid page, the lone click Firefox sends after another
+//   document cancels a tap's pointerdown, after a right or a middle click, after the viewer's own tap whose compatibility events or
+//   click went to another document, and after the mouse held on the control or pressed there and released on the top page's bar or
+//   in the other pane; in Chromium, on the hybrid page, another document's tap whose click carries another touch's pointerId, after
+//   the viewer's own tap with a second finger resting on the bar or in the other pane, or with an element of the top page appearing
+//   over the picture; in WebKit, on the hybrid page and on a phone's pages, another document's tap after the viewer's own tap whose
+//   pointerup that document took, so the viewer heard its touchend and no pointerup, and the cost cell, the viewer's own tap whose
+//   pointerup an element of the top page takes, which opens nothing and reveals the control, a stated cost, and the next tap opens
+//   once. The residual, an element of another document shown over the picture during the viewer's own tap and then a tap on that
+//   element, which opens in Firefox and WebKit, has no cell: no event the viewer hears tells it from the viewer's own tap;
 // - the clicks by no pointer: Enter on the control in view opens once, and so does Enter after a refused tap; a press with no click
 //   after it begun with the control out of view, the control then scrolled into view with no pointer or key event, then Enter on it
 //   opens once; the same press begun with the control shown, the flyout then shown over the control with no event, then a script's
@@ -80,7 +96,10 @@
 // beside the mouse are red at ef686b029 and under A18-M, that gate restored; the other-document cells after a right click, a middle
 // click or a two-finger touch are red at 0f998a3b9 in the engines that run them, whose gate left the slot alone at the tap's
 // mousedown, so the tap's click took the slot that pointerup with no click had filled, and the cell after nothing reads the same
-// there, by design; the reads of each of these reds are a private witness kept out of the tree. file-view-outline.test.ts drives
+// there, by design; the chain rule's cells are red at 142ade155, where each covered click opened, and on the Files pane under a gate
+// without the rule that closes each (the tail in Firefox, the slot's pointerId test in Chromium, the touch records' refusal in
+// WebKit), while the cost cell reads the same there, by design; the reads of each of these reds are a private witness kept out of the
+// tree. file-view-outline.test.ts drives
 // the same orders over the stand-in in CI, where these legs launch no browser.
 import * as assert from "node:assert/strict";
 import { openViewer, frames, pageHtml, PARA, REPORT, ORIGIN, SID } from "./real-viewer-leg";
@@ -802,7 +821,10 @@ async function framedScene(browser: any, engine: TapEngine, surface: TapSurface,
  *  control shown: a finger's tap on the tooltip moves the mouse off the cell before its compatibility mousedown, which lands in the
  *  viewer with its click (Chromium and WebKit send that tap's mouse events to the tooltip); it opens nothing, and the next click opens
  *  once. The gate empties the slot at a mousedown with no pointerdown of a mouse or a pen before it unless that mousedown is the
- *  compatibility mousedown of the one-finger tap whose pointerup filled the slot, so such a click finds no press. */
+ *  compatibility mousedown of the one-finger tap, or of the touch-order pen, whose pointerup filled the slot, so after a pointerup
+ *  of the viewer's with no click after it such a click finds no press. A click with no mousedown and no mouseup before it, as Firefox
+ *  sends after another document cancels a tap's pointerdown, and a tap after the viewer's own tap whose compatibility events and
+ *  click went elsewhere are chainCells's (the closing check at 142ade155 after the fixes for the file review's round 18). */
 async function otherDocumentTap(browser: any, engine: TapEngine, surface: TapSurface, at: string, cell: CellFn, note: (m: string) => void): Promise<void> {
   await framedScene(browser, engine, surface, COVER_TEXT, "other-document", async (s) => {
     const rec: Record<string, unknown> = {};
