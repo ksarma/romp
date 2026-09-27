@@ -199,3 +199,47 @@ test("a window related to this one other than as its parent is judged by its ori
     assert.equal(windowSender({ source: src, origin: ORIGIN }, w), "peer", who + ", this origin");
   }
 });
+
+// A frame in the same tab as this window, beside it in the shell or inside it, shares this window's top, and a frame
+// inside it is listed in its frames (window.frames is the window itself: frames.length and frames[i] are the frames
+// inside it). Neither edge makes a window this one's embedder: such a frame is judged by the origin its post names, like
+// any window other than this one and its parent. A sandboxed frame names the opaque origin "null", so it is foreign; a
+// frame inside this one on this window's own origin is a peer. The receiving windows carry both edges as a browser gives
+// them: a pane framed in the romp shell, whose top is the shell's page, and the shell's own top-level page, whose top is
+// itself and whose frames hold its panes.
+test("a frame beside this one or inside it, sharing its top and listed in its frames, is judged by its origin", () => {
+  type Win = { name: string; parent?: unknown; top?: unknown; frames?: unknown; length?: number; location?: { origin: string }; [i: number]: unknown };
+  /** Lists `kids` as the frames inside `w`, as a browser does: w.frames is w, with a length and an index per frame. */
+  const holdFrames = (w: Win, kids: unknown[]): void => { w.frames = w; w.length = kids.length; kids.forEach((k, i) => { w[i] = k; }); };
+  const shell: Win = { name: "the romp shell's page", location: { origin: ORIGIN } };
+  shell.parent = shell;
+  shell.top = shell;
+  const pane: Win = { name: "a pane framed in the shell", parent: shell, top: shell, location: { origin: ORIGIN } };
+  const sibling: Win = { name: "a sandboxed frame beside the pane", parent: shell, top: shell };
+  const child: Win = { name: "a sandboxed frame inside the pane", parent: pane, top: shell };
+  const ownChild: Win = { name: "a frame inside the pane on its origin", parent: pane, top: shell };
+  holdFrames(pane, [child, ownChild]);
+  holdFrames(shell, [pane, sibling]);
+  assert.ok(pane.frames === pane && pane.length === 2 && pane[0] === child && pane[1] === ownChild, "the pane's frames list the two frames inside it");
+  assert.ok(Array.prototype.indexOf.call(shell.frames, sibling) === 1 && sibling.top === pane.top && child.top === pane.top,
+    "the sibling is one of the shell's frames, and it and the pane's frames share the pane's top");
+  const ROWS: [string, Win, Win, string, string][] = [
+    // the receiving window, the sender, the origin the sender's post names, the class
+    ["the pane", pane, sibling, "null", "foreign"],             // a sandboxed frame beside it: the same top
+    ["the pane", pane, child, "null", "foreign"],               // a sandboxed frame inside it: the same top, in its frames
+    ["the pane", pane, ownChild, ORIGIN, "peer"],               // a frame inside it on its origin: the same top, in its frames
+    ["the pane", pane, sibling, ORIGIN, "peer"],                // a frame beside it on its origin, such as a second chat column
+    ["the pane", pane, shell, ORIGIN, "embedder"],              // its parent, which is also its top
+    ["the pane", pane, pane, "null", "self"],
+    ["the shell's page", shell, sibling, "null", "foreign"],    // a sandboxed frame inside it: in its frames, its top the shell
+    ["the shell's page", shell, child, "null", "foreign"],      // a sandboxed frame inside one of its panes: the same top
+    ["the shell's page", shell, pane, ORIGIN, "peer"],          // a pane posting up to it: in its frames, the same top
+    ["the shell's page", shell, shell, ORIGIN, "self"],
+  ];
+  const wrong: string[] = [];
+  for (const [who, w, source, origin, want] of ROWS) {
+    const got = windowSender({ source, origin }, w);
+    if (got !== want) wrong.push(who + ", " + source.name + ", origin " + origin + ": " + got + ", expected " + want);
+  }
+  assert.deepEqual(wrong, [], "rows the helper classifies otherwise:\n  " + wrong.join("\n  "));
+});

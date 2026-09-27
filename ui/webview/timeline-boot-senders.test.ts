@@ -6,8 +6,9 @@
 // kernel's boot is run as served, once over each receiving window below, and its one window message listener is handed
 // a data frame from every sender and origin below; the frame must be drawn exactly when windowSender, reading the same
 // window, does not name the sender foreign. So the pair cannot drift apart for any sender the grid can express: a
-// window that opened this one, a sibling or child frame, an origin whose text overlaps this one's or drops its port, a
-// sourceless post with the opaque origin, a page whose own origin is opaque, a window with no location, a missing event.
+// window that opened this one, a sibling or child frame (with a top of its own, or sharing the receiving window's top,
+// the child also listed in its frames), an origin whose text overlaps this one's or drops its port, a sourceless post
+// with the opaque origin, a page whose own origin is opaque, a window with no location, a missing event.
 // The grid runs twice: without a performance collector, and with a real one (perf-telemetry.ts) on window.__rompPerf,
 // as federation.js publishes it on the kernel's page. Both hosts wrap the frame listener in that collector and run the
 // sender check outside the wrapper, so a foreign message is neither drawn nor counted in the page's telemetry.
@@ -17,7 +18,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { hideEdges, staysEnumerable, defineHidden } from "../test-dom-shim";
 import { windowSender } from "./window-sender";
 import { createPerfTelemetry, type PerfDeps, type RompPerf } from "./perf-telemetry";
 
@@ -44,7 +45,7 @@ const OTHER_VSCODE_ORIGIN = "vscode-webview://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee
 const OTHER_ORIGIN = "https://example.invalid";
 const ABSENT = Symbol("absent");   // the event carries no such key at all
 
-type Win = { name: string; parent?: unknown; opener?: unknown; top?: unknown; location?: { origin?: string } };
+type Win = { name: string; parent?: unknown; opener?: unknown; top?: unknown; frames?: unknown; length?: number; location?: { origin?: string } };
 /** A window: its fields first, then hideEdges, so its edges (parent, and the others the helper hides) enumerate as
  *  nothing and a dump of it is its name and serial. */
 function win(name: string, fields: Record<string, unknown> = {}): Win {
@@ -53,12 +54,23 @@ function win(name: string, fields: Record<string, unknown> = {}): Win {
   if (!("top" in fields)) w.top = w;
   return hideEdges(w);
 }
+/** `w` holding one frame, which shares `w`'s top, listed as a browser lists the frames inside a window: window.frames is
+ *  the window itself, with a length and an index per frame (hidden, like the other edges). */
+function holdingAFrame(w: Win): Win {
+  const kid = win("a frame inside it, sharing its top and listed in its frames", { parent: w, top: w.top });
+  defineHidden(w, "frames", w);
+  defineHidden(w, "0", kid);
+  w.length = 1;
+  return w;
+}
+/** The frame `w` holds (holdingAFrame). */
+const frameIn = (w: Win): unknown => (w as unknown as Record<number, unknown>)[0];
 const GRAND = win("the shell's own parent");
 const SHELL = win("the romp shell", { parent: GRAND, top: GRAND });
 const OPENER = win("a page on another origin that opened this one");
-/** The receiving windows: each kind the boot can run in, or that tells a rule apart. */
+/** The receiving windows: each kind the boot can run in, or that tells a rule apart. Each holds one frame (holdingAFrame). */
 function receivers(): Win[] {
-  return [
+  return ([
     win("a pane framed in the shell, opened by another page", { parent: SHELL, top: GRAND, opener: OPENER, location: { origin: ORIGIN } }),
     win("a top-level page another page opened", { opener: OPENER, location: { origin: ORIGIN } }),
     win("a top-level page no page opened", { opener: null, location: { origin: ORIGIN } }),
@@ -66,13 +78,15 @@ function receivers(): Win[] {
     win("a framed page with no location", { parent: SHELL, top: GRAND, opener: OPENER, location: undefined }),
     win("a VS Code webview frame whose parent is the frame itself", { opener: null, location: { origin: VSCODE_ORIGIN } }),
     win("a VS Code webview frame whose parent is deleted", { parent: undefined, top: undefined, opener: null, location: { origin: VSCODE_ORIGIN } }),
-  ];
+  ]).map(holdingAFrame);
 }
 /** The senders, relative to the receiving window. */
 function sources(w: Win): Array<[string, unknown]> {
   return [
     ["this window", w], ["its parent", w.parent], ["a sibling frame", win("a sibling frame", { parent: w.parent })],
     ["a frame inside it", win("a frame inside it", { parent: w })], ["the page that opened it", w.opener], ["its top window", w.top],
+    ["a sibling frame sharing its top", win("a sibling frame sharing its top", { parent: w.parent, top: w.top })],
+    ["a frame inside it, sharing its top and listed in its frames", frameIn(w)],
     ["the shell's parent", GRAND], ["a window it does not know", win("a stray window")],
     ["null", null], ["undefined", undefined], ["no source key", ABSENT],
   ];
@@ -222,6 +236,41 @@ test("in a VS Code webview frame, a post from another webview's origin draws not
     listener({ source: stray, origin: VSCODE_ORIGIN, data: { type: "data", data: { from: "this webview's origin" } } });
     assert.deepEqual(run.drawn.map((d) => (d as { from: string }).from), ["this webview's origin"], w.name + ": this webview's origin is drawn");
   }
+});
+
+// The grid above holds the boot to windowSender, whatever windowSender says; this leg holds both to the answer outright for
+// the frames in the same tab as the page: a frame beside a pane in the shell shares the pane's top, and a frame inside the
+// page shares its top and is listed in its frames. Neither edge makes a window the page's embedder: a sandboxed frame
+// names the opaque origin "null" and draws nothing, and a frame on the page's own origin is a peer and is drawn.
+test("a frame beside the page or inside it, sharing its top and listed in its frames, is judged by its origin: a sandboxed one draws nothing, one on the page's origin is drawn", () => {
+  const [pane, , topLevel] = receivers();
+  assert.equal(pane.top, GRAND, pane.name + ": its top is the shell's own parent");
+  assert.equal(topLevel.top, topLevel, topLevel.name + ": its own top");
+  const sibling = win("a frame beside the pane in the shell", { parent: pane.parent, top: pane.top });
+  const CASES: Array<[Win, string, unknown, string, string]> = [
+    // the receiving window, the sender, its source, the origin its post names, the class
+    [pane, "a sandboxed frame beside it, sharing its top", sibling, "null", "foreign"],
+    [pane, "a sandboxed frame inside it, sharing its top and listed in its frames", frameIn(pane), "null", "foreign"],
+    [pane, "a frame beside it on its origin, sharing its top", sibling, ORIGIN, "peer"],
+    [pane, "a frame inside it on its origin, sharing its top and listed in its frames", frameIn(pane), ORIGIN, "peer"],
+    [topLevel, "a sandboxed frame inside it, sharing its top and listed in its frames", frameIn(topLevel), "null", "foreign"],
+    [topLevel, "a frame inside it on its origin, sharing its top and listed in its frames", frameIn(topLevel), ORIGIN, "peer"],
+  ];
+  const wrong: string[] = [];
+  for (const w of [pane, topLevel]) {
+    const run = bootOver(w, timelineBoot());
+    assert.equal(run.error, null, w.name + ": the boot ran");
+    const listener = run.listeners[0];
+    for (const [rw, who, source, origin, want] of CASES) {
+      if (rw !== w) continue;
+      const cls = windowSender({ source, origin }, w);
+      const before = run.drawn.length;
+      listener({ source, origin, data: { type: "data", data: { from: who } } });
+      const drawn = run.drawn.length - before, wantDrawn = want === "foreign" ? 0 : 1;
+      if (cls !== want || drawn !== wantDrawn) wrong.push(w.name + " / " + who + ", origin " + origin + ": windowSender says " + cls + ", drawn " + drawn + "; expected " + want + ", drawn " + wantDrawn);
+    }
+  }
+  assert.deepEqual(wrong, [], "the helper or the boot answers otherwise:\n  " + wrong.join("\n  "));
 });
 
 test("a foreign window's posts add no frame type to the timeline page's telemetry, and the page's own frames keep their type", () => {

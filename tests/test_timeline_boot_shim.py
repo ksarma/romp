@@ -59,7 +59,8 @@ class TimelineBootDispatch(unittest.TestCase):
 
 
 # The boot, run in node: stand-ins for the few browser names it touches (HTMLElement for the DOM shims, the host
-# bridge acquireVsCodeApi, the shell as window.parent, the shell's own parent as window.top), a fake panel, and the one
+# bridge acquireVsCodeApi, the shell as window.parent, the shell's own parent as window.top, and window.frames, which
+# is the window itself, whose length and indexes list the two frames inside this one), a fake panel, and the one
 # window message listener it registers. ROMP_TEST_OWN is the page's own origin ("-" for a page with no location);
 # ROMP_TEST_PERF=1 publishes a performance collector on window.__rompPerf first, as federation.js does on the kernel's
 # page, in the shape of perf-telemetry.ts's wrapFrameHandler, counting every message it is handed.
@@ -76,6 +77,15 @@ global.parent = SHELL;
 global.top = GRAND;
 const OPENER = { name: 'a page on another origin that opened /timeline' };
 global.opener = OPENER;
+// the frames in this tab besides this one and the shell: each shares this window's top, the shell's own parent
+const SIBLING_SAME_TOP = { name: 'a sandboxed frame beside this one', parent: SHELL, top: GRAND };
+const CHILD_SAME_TOP = { name: 'a sandboxed frame inside this one', parent: window, top: GRAND };
+const OWN_ORIGIN_CHILD = { name: 'a frame inside this one on its origin', parent: window, top: GRAND };
+// the frames inside this one, as a browser lists them: window.frames is the window itself, with a length and an index each
+global.frames = global;
+global.length = 2;
+global[0] = CHILD_SAME_TOP;
+global[1] = OWN_ORIGIN_CHILD;
 global.location = OWN === '-' ? undefined : { origin: OWN };
 global.acquireVsCodeApi = () => ({ postMessage() {} });
 global.addEventListener = (t, f) => { if (t === 'message') LISTENERS.push(f); };
@@ -90,12 +100,15 @@ const SENDERS = {
   self: [window, ORIGIN],
   embedder: [SHELL, ORIGIN],      // the shell, this frame's parent
   peer: [{}, ORIGIN],             // another window on this origin
+  ownOriginChild: [OWN_ORIGIN_CHILD, ORIGIN],      // a frame inside this one on this origin, in its frames: a peer
   opener: [OPENER, OTHER],        // the page on another origin that opened /timeline: this window's opener
   top: [GRAND, OTHER],            // the top window, the shell's own parent on another origin: not this frame's parent
   stranger: [{}, OTHER],          // a window on another origin this one does not know
   sandboxed: [{}, 'null'],        // a sandboxed frame
   sandboxedSibling: [{ parent: SHELL }, 'null'],   // a sandboxed frame beside this one in the shell
   sandboxedChild: [{ parent: window }, 'null'],    // a sandboxed frame inside this one
+  sandboxedSiblingSameTop: [SIBLING_SAME_TOP, 'null'],   // a sandboxed frame beside this one, sharing its top
+  sandboxedChildInFrames: [CHILD_SAME_TOP, 'null'],      // a sandboxed frame inside this one, sharing its top, in its frames
   overlappingOrigin: [{}, ORIGIN + '0'],           // another port whose text begins with this origin
   noPort: [{}, 'http://127.0.0.1'],                // this origin's scheme and host on another port (the default)
   otherPort: [{}, 'http://127.0.0.1:7778'],        // this origin's scheme and host on another port
@@ -111,7 +124,7 @@ process.stdout.write(JSON.stringify({ listeners: LISTENERS.length, updates: UPDA
                                       perf: typeof global.__rompPerf === 'object' }));
 """
 _OWN_ORIGIN = "http://127.0.0.1:7777"   # the harness's ORIGIN
-_HEARD = ["dispatch", "fedDirect", "self", "embedder", "peer"]
+_HEARD = ["dispatch", "fedDirect", "self", "embedder", "peer", "ownOriginChild"]
 _HEARD_NO_PEER = ["dispatch", "fedDirect", "self", "embedder"]
 
 
@@ -151,10 +164,11 @@ class TimelineBootSenders(unittest.TestCase):
         got = _run_boot(_OWN_ORIGIN, perf=False)
         self.assertEqual(got["listeners"], 1, "the boot registers one window message listener")
         self.assertEqual(got["updates"], _HEARD,
-                         "drawn once from each heard sender, never from a page on another origin (the one that opened "
-                         "this page included), the top window above the shell, a sandboxed frame (beside or inside this "
-                         "one, or gone after it posted), an origin that overlaps this one's text or differs only in its "
-                         "port, or a sourceless post that names another origin")
+                         "drawn once from each heard sender (a frame inside this one on its origin included), never "
+                         "from a page on another origin (the one that opened this page included), the top window above "
+                         "the shell, a sandboxed frame (beside or inside this one, sharing its top or not, listed in its "
+                         "frames or not, or gone after it posted), an origin that overlaps this one's text or differs "
+                         "only in its port, or a sourceless post that names another origin")
 
     def test_with_the_pages_collector_a_foreign_message_is_neither_drawn_nor_counted(self):
         # the collector wraps the frame listener; the sender check runs outside it, so the collector counts exactly

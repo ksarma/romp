@@ -11,6 +11,9 @@
 // window and location (node has neither), which are the receiving window the leg models and its location: W for a chat
 // in the romp shell, or one of the two VS Code frames. windowSender reads that same window, so a check the handler
 // spells with window or location sees the window the helper sees. Any other name read on those stand-ins is the stub.
+// W carries the two edges a browser gives a frame that relate it to the other frames in its tab: top, the shell's page,
+// which a frame beside it in the shell and a frame inside it share; and frames, the window itself, whose length and
+// indexes list the frames inside it. A frame related to the chat by either edge is judged by its origin all the same.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -52,8 +55,17 @@ function standIn<T extends object>(o: T): T {
   return new Proxy(o, { get: (t, k) => (typeof k === "string" && !(k in t) ? stub : Reflect.get(t, k)) });
 }
 const SHELL = standIn({ name: "the shell" });
-type Win = { parent?: unknown; location: { origin: string } };
-const W: Win = standIn({ parent: SHELL, location: standIn({ origin: ORIGIN }) });
+type Win = { parent?: unknown; top?: unknown; frames?: unknown; length?: number; location: { origin: string }; [i: number]: unknown };
+const W: Win = standIn({ parent: SHELL, top: SHELL, location: standIn({ origin: ORIGIN }) });
+// in the romp shell beside the chat, and inside the chat: each shares the chat's top, the shell's page
+const SANDBOXED_SIBLING = { name: "a sandboxed frame beside the chat", parent: SHELL, top: SHELL };
+const SANDBOXED_CHILD = { name: "a sandboxed frame inside the chat", parent: W, top: SHELL };
+const OWN_ORIGIN_CHILD = { name: "a frame inside the chat on its origin", parent: W, top: SHELL };
+// the frames inside the chat, as a browser lists them: window.frames is the window itself, with a length and an index each
+W.frames = W;
+W.length = 2;
+W[0] = SANDBOXED_CHILD;
+W[1] = OWN_ORIGIN_CHILD;
 // VS Code's webview frame: its origin is the webview's, and VS Code's script there sets window.parent to the frame
 // itself, or deletes it in older releases (then window.parent reads undefined). The host forwards the extension's
 // messages from its own window on that origin.
@@ -72,11 +84,14 @@ const HEARD: Record<string, Sent> = {
   "a peer (the VS Code webview host, the frame's window.parent replaced)": { source: VSCODE_HOST, origin: VSCODE_ORIGIN, to: W_VSCODE },
   "a peer (the VS Code webview host, the frame's window.parent deleted)": { source: VSCODE_HOST, origin: VSCODE_ORIGIN, to: W_VSCODE_OLDER },
   "a peer (a sourceless post on this document's origin)": { source: null, origin: ORIGIN },
+  "a peer (a frame inside the chat on its origin, sharing its top and listed in its frames)": { source: OWN_ORIGIN_CHILD, origin: ORIGIN },
   dispatch: { source: null, origin: "" },
 };
 const FOREIGN: Record<string, Sent> = {
   // a sandboxed pane beside the chat in the romp shell: its parent is the chat's parent
   "a sandboxed frame (opaque origin)": { source: { name: "a sandboxed frame", parent: SHELL }, origin: "null" },
+  "a sandboxed frame beside the chat in the shell, sharing its top (opaque origin)": { source: SANDBOXED_SIBLING, origin: "null" },
+  "a sandboxed frame inside the chat, sharing its top and listed in its frames (opaque origin)": { source: SANDBOXED_CHILD, origin: "null" },
   "a page on another origin": { source: { name: "another page" }, origin: "https://example.invalid" },
   "a sandboxed frame inside the VS Code webview": { source: { name: "a sandboxed frame" }, origin: "null", to: W_VSCODE },
   // a frame removed right after it posts can leave its message with no source; its origin is still set

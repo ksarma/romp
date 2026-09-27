@@ -68,30 +68,52 @@ const OTHER_ORIGIN = "https://example.invalid";
 
 type Listener = (e: unknown) => void;
 /** A receiving window: what windowSender reads (its parent, its location's origin), the target a listener under test is
- *  added to, and the methods those listeners call on window. Its edges and every object it holds are non-enumerable
- *  (hideEdges), so a dump of it is its name and serial. */
+ *  added to, and the methods those listeners call on window. It also carries the two edges a browser gives a window that
+ *  relate it to the other frames in its tab: top, and frames, which is the window itself, whose length and indexes list
+ *  the frames inside it (holdFrames). Its edges and every object it holds are non-enumerable (hideEdges, and defineHidden
+ *  for the frames listed later), so a dump of it is its name, serial and frame count. */
 class Receiver {
   parent: unknown;
+  top: unknown;
+  frames: unknown;
+  length = 0;
   location: { origin: string };
   listeners: Array<[string, Listener]> = [];
   dispatched: string[] = [];
-  constructor(public name: string, parent: unknown, origin: string) {
+  constructor(public name: string, parent: unknown, origin: string, top?: unknown) {
     this.parent = parent;
+    this.top = top;
+    this.frames = this;
     this.location = { origin };
     hideEdges(this);
   }
   addEventListener(type: string, fn: Listener): void { this.listeners.push([type, fn]); }
   dispatchEvent(ev: { type: string }): boolean { this.dispatched.push(ev.type); return true; }
   messageListeners(): Listener[] { return this.listeners.filter(([t]) => t === "message").map(([, f]) => f); }
+  /** Lists `kids` as the frames inside this window: frames[i] (this[i], hidden) and frames.length. */
+  holdFrames(kids: unknown[]): void { kids.forEach((k, i) => defineHidden(this, String(i), k)); this.length = kids.length; }
 }
+/** The frame listed at index `i` of `w`'s frames. */
+const frameIn = (w: Receiver, i: number): unknown => (w as unknown as Record<number, unknown>)[i];
 type Ctx = "pane" | "shell" | "vscode" | "vscode, older";
 const SHELL = hideEdges({ name: "the romp shell" });
-/** A fresh receiving window of each kind: a pane in the romp shell (its parent is the shell), the shell's own top-level
- *  page (its parent is itself), and VS Code's webview frame, whose script sets window.parent to the frame itself (1.103 on)
- *  or deletes it (1.88 to 1.102). */
+/** A fresh receiving window of each kind: a pane in the romp shell (its parent and its top are the shell), the shell's
+ *  own top-level page (its parent and its top are itself), and VS Code's webview frame, whose script sets window.parent
+ *  to the frame itself (1.103 on) or deletes it (1.88 to 1.102). The pane holds two frames, each sharing its top: a
+ *  sandboxed one (frameIn 0) and one on its origin (frameIn 1); the shell's page holds a sandboxed frame (frameIn 0). */
 function receiver(ctx: Ctx): Receiver {
-  if (ctx === "pane") return new Receiver("a pane in the romp shell", SHELL, ORIGIN);
-  if (ctx === "shell") { const w = new Receiver("the romp shell's page", null, ORIGIN); w.parent = w; return w; }
+  if (ctx === "pane") {
+    const w = new Receiver("a pane in the romp shell", SHELL, ORIGIN, SHELL);
+    w.holdFrames([sandboxed(w, SHELL), hideEdges({ name: "a frame on the pane's origin", parent: w, top: SHELL })]);
+    return w;
+  }
+  if (ctx === "shell") {
+    const w = new Receiver("the romp shell's page", null, ORIGIN);
+    w.parent = w;
+    w.top = w;
+    w.holdFrames([sandboxed(w, w)]);
+    return w;
+  }
   if (ctx === "vscode") { const w = new Receiver("a VS Code webview frame", null, VSCODE_ORIGIN); w.parent = w; return w; }
   return new Receiver("a VS Code webview frame, window.parent deleted", undefined, VSCODE_ORIGIN);
 }
@@ -100,7 +122,7 @@ const CHILD_PANE = hideEdges({ name: "a pane of the shell" });
 const VSCODE_HOST = hideEdges({ name: "the VS Code webview host" });
 const OTHER_PAGE = hideEdges({ name: "a page on another origin" });
 const OTHER_WEBVIEW = hideEdges({ name: "a window on another VS Code webview's origin" });
-const sandboxed = (parent: unknown) => hideEdges({ name: "a sandboxed frame", parent });
+const sandboxed = (parent: unknown, top?: unknown) => hideEdges({ name: "a sandboxed frame", parent, top });
 
 type Row = { who: string; ctx: Ctx; source: (w: Receiver) => unknown; origin: string };
 const HEARD: Row[] = [
@@ -113,10 +135,14 @@ const HEARD: Row[] = [
   { who: "the VS Code webview host (the frame's window.parent deleted)", ctx: "vscode, older", source: () => VSCODE_HOST, origin: VSCODE_ORIGIN },
   { who: "this document's own dispatch of a kernel frame (no source, no origin)", ctx: "pane", source: () => null, origin: "" },
   { who: "a sourceless post on this document's origin", ctx: "pane", source: () => null, origin: ORIGIN },
+  { who: "a frame inside the pane on its origin, sharing its top and listed in its frames", ctx: "pane", source: (w) => frameIn(w, 1), origin: ORIGIN },
 ];
 const FOREIGN: Row[] = [
   { who: "a sandboxed frame beside the pane in the shell (opaque origin)", ctx: "pane", source: (w) => sandboxed(w.parent), origin: "null" },
   { who: "a sandboxed frame inside the shell's page (opaque origin)", ctx: "shell", source: (w) => sandboxed(w), origin: "null" },
+  { who: "a sandboxed frame beside the pane in the shell, sharing its top (opaque origin)", ctx: "pane", source: (w) => sandboxed(w.parent, w.top), origin: "null" },
+  { who: "a sandboxed frame inside the pane, sharing its top and listed in its frames (opaque origin)", ctx: "pane", source: (w) => frameIn(w, 0), origin: "null" },
+  { who: "a sandboxed frame inside the shell's page, sharing its top and listed in its frames (opaque origin)", ctx: "shell", source: (w) => frameIn(w, 0), origin: "null" },
   { who: "a page on another origin that opened the pane", ctx: "pane", source: () => OTHER_PAGE, origin: OTHER_ORIGIN },
   { who: "a page on another origin that opened the shell", ctx: "shell", source: () => OTHER_PAGE, origin: OTHER_ORIGIN },
   { who: "a sandboxed frame inside the VS Code webview", ctx: "vscode", source: (w) => sandboxed(w), origin: "null" },
@@ -130,12 +156,17 @@ const FOREIGN: Row[] = [
 // ── the stand-ins stay small in a dump ──
 
 test("the stand-ins inspect as their primitives: every enumerable key of a receiving window and of each sending window holds a primitive", () => {
-  const all: object[] = [SHELL, SECOND_COLUMN, CHILD_PANE, VSCODE_HOST, OTHER_PAGE, OTHER_WEBVIEW, sandboxed(SHELL),
-    receiver("pane"), receiver("shell"), receiver("vscode"), receiver("vscode, older")];
+  const pane = receiver("pane"), shell = receiver("shell");
+  const all: object[] = [SHELL, SECOND_COLUMN, CHILD_PANE, VSCODE_HOST, OTHER_PAGE, OTHER_WEBVIEW, sandboxed(SHELL), sandboxed(SHELL, SHELL),
+    pane, shell, receiver("vscode"), receiver("vscode, older"), frameIn(pane, 0) as object, frameIn(pane, 1) as object, frameIn(shell, 0) as object];
   for (const o of all) {
     for (const k of Object.keys(o)) assert.ok(staysEnumerable((o as any)[k]), k + " is enumerable and holds a " + typeof (o as any)[k]);
   }
   assert.ok(windowSender({ source: SHELL, origin: ORIGIN }, receiver("pane")) === "embedder", "a hidden parent is still read");
+  // the frames edges are there for a check to read, hidden or not: each receiver's frames is itself, listing its frames
+  assert.ok(pane.frames === pane && pane.length === 2 && pane.top === SHELL && (frameIn(pane, 0) as { parent: unknown }).parent === pane,
+    "the pane's frames list its two frames, and its top is the shell");
+  assert.ok(shell.frames === shell && shell.length === 1 && shell.top === shell, "the shell's page lists its one frame, and it is its own top");
 });
 
 // ── the listeners run as installed ──
