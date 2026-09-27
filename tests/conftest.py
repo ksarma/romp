@@ -6,6 +6,7 @@ test module, so this is a suite-wide floor; per-class _rebind_state/tempdir isol
 top exactly as before."""
 import atexit
 import collections
+import concurrent.futures.thread    # the session-end thread guard reads its exit-join table (EXIT_JOIN_TABLES)
 import importlib.util
 import os
 import re
@@ -1553,21 +1554,25 @@ def wait_for_census(before, timeout=5.0):
 
 # -- session-end thread guard (2026-09-26) -----------------------------------------------------------------------------
 # A NON-DAEMON thread still running when the interpreter exits keeps its process from exiting, because the interpreter
-# joins every non-daemon thread at shutdown. Run serially, the run then hangs until the thread ends or CI's job cap
-# cancels the cell, and a cancelled cell is red. Under pytest-xdist the run passes: the controller kills a worker still
-# alive when the run ends, and the run's status comes from the test reports alone, so the fork's Linux cells lost the
-# signal when they moved to two workers (2026-09-25). Two kinds of thread the guard names do not keep the process from
-# exiting, and the guard fails on them too: an idle concurrent.futures worker and a thread stopped only after the check
-# (both below). This guard restores the signal in every process that runs tests, the one serial process or each worker.
-# When the process's LAST test tears down (nextitem is None), after the runner has torn down every fixture of every
-# scope, session ones included (this implementation is trylast, so it runs after the runner's own
-# pytest_runtest_teardown), each non-daemon thread still alive is given until one shared deadline to end, and the
-# threads still alive at the deadline fail that teardown, each named with its target and its stack. Not waited for:
-# daemon threads (the interpreter does not join them), the main thread, the thread running this check, and any thread
-# whose name starts with pytest_timeout, or whose target's module, or a Timer's function's module, starts with
-# pytest_timeout. That exclusion exists for pytest-timeout's timer for the running test, a non-daemon threading.Timer
-# that the plugin cancels and joins only after the test's protocol returns, so under CI's --timeout-method=thread it is
-# always alive here.
+# joins every non-daemon thread at shutdown. So does a concurrent.futures thread still running a task, WHATEVER ITS
+# DAEMON FLAG: before that join the interpreter calls concurrent.futures' exit hooks, which join every thread in their
+# tables (EXIT_JOIN_TABLES below), and a thread takes its daemon flag from the thread that creates it, so a pool started
+# from a daemon thread has daemon workers that the hooks join all the same. Run serially, the run then hangs until the
+# thread ends or CI's job cap cancels the cell, and a cancelled cell is red. Under pytest-xdist the run passes: the
+# controller kills a worker still alive when the run ends, and the run's status comes from the test reports alone, so
+# the fork's Linux cells lost the signal when they moved to two workers (2026-09-25). Two kinds of thread the guard
+# names do not keep the process from exiting, and the guard fails on them too: an idle concurrent.futures worker and a
+# thread stopped only after the check (both below). This guard restores the signal in every process that runs tests, the
+# one serial process or each worker. When the process's LAST test tears down (nextitem is None), after the runner has
+# torn down every fixture of every scope, session ones included (this implementation is trylast, so it runs after the
+# runner's own pytest_runtest_teardown), each guarded thread still alive, every non-daemon thread and every thread in
+# those tables, is given until one shared deadline to end, and the threads still alive at the deadline fail that
+# teardown, each named with its target and its stack. Not waited for: daemon threads outside those tables (the
+# interpreter's shutdown joins none of them; an atexit handler may join one, and the guard does not read atexit
+# handlers), the main thread, the thread running this check, and any thread whose name starts with pytest_timeout, or
+# whose target's module, or a Timer's function's module, starts with pytest_timeout. That exclusion exists for
+# pytest-timeout's timer for the running test, a non-daemon threading.Timer that the plugin cancels and joins only after
+# the test's protocol returns, so under CI's --timeout-method=thread it is always alive here.
 # HOW THE REPORT REACHES THE CONTROLLER. The failure is the teardown phase's test report. A worker sends every test report
 # to the controller over xdist's channel, this one included; the controller prints it as `ERROR at teardown of <that
 # test>` and counts it in the run's exit status. Nothing else a worker does after its session would be seen: its stdout
@@ -1579,36 +1584,73 @@ def wait_for_census(before, timeout=5.0):
 # from.
 # THE CAP, 10 s, from the census of 2026-09-26 on the fork's main (the full suite on 3.12 at -n 2, twice, and at -n 4;
 # every third test module, 314 of 940, serially, twice each on 3.12 and on 3.14t with the GIL off). No non-daemon thread
-# but pytest-timeout's timer was alive at any session end, so no exit latency could be measured there. The tests' own
-# joins measured it instead: the longest time from a stop to a thread's end was 5.03 s, a daemon thread's end under the
-# product's 5 s wait for a session host's hello. The longest join of a non-daemon thread, 2.98 s, was not an exit: it
-# was a concurrency test's hammer threads joined as they finished their work, so it bounds no exit latency. The cap is
-# about twice 5.03 s and exactly twice tests/test_thread_stop_census.py's BOUND_S (5 s, the longest wait that census
-# reads as bounded). A run that leaves no thread pays nothing, since a join returns the moment its thread ends; a run
-# that leaks one pays the cap once per process, then fails. A last test whose own teardown fails skips the check (the
-# runner's teardown raised first), in a run that is red already.
+# but pytest-timeout's timer was alive at any session end, so no exit latency could be measured there (that census read
+# non-daemon threads only). The tests' own joins measured it instead: the longest time from a stop to a thread's end was
+# 5.03 s, a daemon thread's end under the product's 5 s wait for a session host's hello. The longest join of a
+# non-daemon thread, 2.98 s, was not an exit: it was a concurrency test's hammer threads joined as they finished their
+# work, so it bounds no exit latency. The cap is about twice 5.03 s and exactly twice tests/test_thread_stop_census.py's
+# BOUND_S (5 s, the longest wait that census reads as bounded). A run that leaves no thread pays nothing, since a join
+# returns the moment its thread ends; a run that leaks one pays the cap once per process, then fails. A last test whose
+# own teardown fails skips the check (the runner's teardown raised first), in a run that is red already.
 # AFTER THE CHECK, which runs at the last test's teardown. A thread STARTED after it, in a pytest_sessionfinish or
 # pytest_unconfigure hook or an atexit handler, is not checked. A thread STOPPED only after it, by a config.add_cleanup
 # callback, pytest_sessionfinish or pytest_unconfigure, is checked and fails the guard, although the process would exit:
 # the guard cannot tell a thread a later hook will stop from one nothing stops. The witness is the leak pins in
 # tests/test_session_end_thread_guard.py: their leaked thread is released at pytest_unconfigure, the run fails, the stop
 # writes a release marker, and every process that ran tests then writes its atexit marker, which the interpreter runs
-# only after joining its non-daemon threads. Nothing in tests/ starts or stops a thread there today: its
-# pytest_sessionfinish and pytest_unconfigure hooks and its atexit handlers only remove directories, and it registers
-# no config cleanup.
+# only after concurrent.futures' exit hooks and its join of the non-daemon threads have returned. Nothing in tests/
+# starts or stops a thread there today: its pytest_sessionfinish and pytest_unconfigure hooks and its atexit handlers
+# only remove directories, and it registers no config cleanup.
 # concurrent.futures THREADS fail the guard for either of two causes. A ThreadPoolExecutor's worker (of a pool, or of an
 # asyncio event loop's default executor) or a ProcessPoolExecutor's manager thread may be IDLE, in a pool left without
-# shutdown or a loop never closed: no join ends it, but the interpreter wakes it at exit (threading._register_atexit), so
-# it would not have hung a serial run or kept an xdist worker from exiting, and failing on it is the stricter reading.
-# Or it may be BUSY, with a task still running (in the worker, or in the manager thread's pool), which shutdown(wait=False)
-# and loop.close() (it shuts its default executor down with wait=False) do not end: at exit the process waits for that
-# task like any other thread still running. The report's label names both causes; a ThreadPoolExecutor worker's stack
-# shows which, and a manager thread's stack reads the same either way. A process that leaves one pays the cap once. None
-# is left on main.
+# shutdown or a loop never closed: no join ends it, but the interpreter wakes it at exit (threading._register_atexit),
+# so it would not have hung a serial run or kept an xdist worker from exiting, and failing on it is the stricter
+# reading. Or it may be BUSY, with a task still running (in the worker, or in the manager thread's pool), which
+# shutdown(wait=False) and loop.close() (it shuts its default executor down with wait=False) do not end: at exit the
+# process waits for that task like any other thread still running. Either cause holds for a thread of either daemon
+# flag, since the exit hooks wake and join daemon ones too: the guard reads the hooks' tables (EXIT_JOIN_TABLES) and
+# waits for every thread in them, and a loaded concurrent.futures module without its table fails the guard, naming the
+# attribute, rather than leaving its daemon threads unread. The report's label names both causes; a ThreadPoolExecutor
+# worker's stack shows which, and a manager thread's stack reads the same either way. A process that leaves one pays the
+# cap once. No non-daemon one was left at a session end on main (the census above, which read non-daemon threads
+# only).
 THREAD_GUARD_CAP_S = 10.0
 _monotonic = time.monotonic   # bound at import: a test's leaked patch of time.monotonic cannot move the guard's deadline
 _enumerate = threading.enumerate    # bound at import too: a test's leaked patch of threading.enumerate cannot empty the
                                     # guard's list, and a test that patches this name reaches the guard alone
+# The tables concurrent.futures' exit hooks join, as (module, attribute). The two hooks are the only functions the
+# standard library registers with threading._register_atexit (3.10 to 3.14), which threading._shutdown calls before it
+# joins the non-daemon threads; each joins every thread in its module's table, whatever the thread's daemon flag.
+EXIT_JOIN_TABLES = (("concurrent.futures.thread", "_threads_queues"),      # ThreadPoolExecutor workers
+                    ("concurrent.futures.process", "_threads_wakeups"))    # ProcessPoolExecutor manager threads
+
+
+def _exit_joined_threads():
+    """The threads concurrent.futures' exit hooks will join, whatever their daemon flags: every thread in the table of
+    each EXIT_JOIN_TABLES module that is loaded. This file imports concurrent.futures.thread, so its table is always
+    read; a process that never loaded concurrent.futures.process has no ProcessPoolExecutor. A loaded module without its
+    table fails the guard, naming the attribute, rather than leaving unguarded the daemon threads that table would list.
+    A table keeps a thread that has ended until the thread object is collected; the guard asks it only about listed
+    threads, which are alive."""
+    joined = set()
+    for module, attr in EXIT_JOIN_TABLES:
+        mod = sys.modules.get(module)
+        if mod is None:
+            continue
+        table = getattr(mod, attr, None)
+        if table is None:
+            pytest.fail("tests/conftest.py's session-end thread guard cannot read %s.%s on this Python (%s): "
+                        "that table lists the threads concurrent.futures' exit hook joins at exit whatever their "
+                        "daemon flag, and without it the guard cannot tell which daemon threads hold the process at "
+                        "exit. Find where this Python keeps the table and point EXIT_JOIN_TABLES at it."
+                        % (module, attr, sys.version.split()[0]), pytrace=False)
+        while True:
+            try:
+                joined.update(table)    # a WeakKeyDictionary: iterating it yields its threads
+                break
+            except RuntimeError:        # another thread added to the table while it was read: read it again
+                pass
+    return joined
 
 
 def _pytest_timeout_timer(t):
@@ -1622,23 +1664,32 @@ def _pytest_timeout_timer(t):
     return t.name.startswith("pytest_timeout") or mod.startswith("pytest_timeout")
 
 
-def _guarded_thread(t):
-    """Whether the session-end guard waits for `t`: a non-daemon thread other than the main thread and the thread running
-    the check, and not one _pytest_timeout_timer matches (a `pytest_timeout` prefix of its name or of its callable's
-    module)."""
-    return not (t.daemon or t is threading.main_thread() or t is threading.current_thread() or _pytest_timeout_timer(t))
+def _guarded_thread(t, joined_at_exit=None):
+    """Whether the session-end guard waits for `t`: a non-daemon thread, or a daemon thread in `joined_at_exit` (the
+    threads concurrent.futures' exit hooks join; _exit_joined_threads() is read here when it is not given), other than
+    the main thread and the thread running the check, and not one _pytest_timeout_timer matches (a `pytest_timeout`
+    prefix of its name or of its callable's module)."""
+    if t is threading.main_thread() or t is threading.current_thread() or _pytest_timeout_timer(t):
+        return False
+    if not t.daemon:
+        return True
+    return t in (_exit_joined_threads() if joined_at_exit is None else joined_at_exit)
 
 
 def threads_left_at_session_end(cap_s):
-    """The guarded threads (_guarded_thread) still alive once each has had until one deadline, cap_s from the call, to end.
-    Each is joined in turn for the time remaining, and the thread list is read again after every pass, so a thread that
-    starts another as it exits is waited for too. Starts no thread. Every wait is a join, which returns when its thread
-    ends, except for a thread caught mid-start, which join refuses: the list is then read again at once, in a busy loop
-    that ends when that start() returns or at the deadline. The loop spins only while every listed guarded thread is
-    mid-start, since a live one's join blocks the pass instead. Returns [] when none is left."""
+    """The guarded threads (_guarded_thread: every non-daemon thread, and every thread concurrent.futures' exit hooks
+    join whatever its daemon flag) still alive once each has had until one deadline, cap_s from the call, to end. Each
+    is joined in turn for the time remaining, and the thread list and the exit-join tables are read again after every
+    pass, so a thread that starts another as it exits is waited for too. Starts no thread. Every wait is a join, which
+    returns when its thread ends, except for a thread caught mid-start, which join refuses: the list is then read again
+    at once, in a busy loop that ends when that start() returns or at the deadline. The loop spins only while every
+    listed guarded thread is mid-start, since a live one's join blocks the pass instead. Returns [] when none is left.
+    A loaded concurrent.futures module without its exit-join table fails the guard (_exit_joined_threads)."""
     deadline = _monotonic() + cap_s
     while True:
-        left = [t for t in _enumerate() if _guarded_thread(t)]
+        listed = _enumerate()
+        joined = _exit_joined_threads()     # after the list: a listed worker whose pool's submit returned is in it
+        left = [t for t in listed if _guarded_thread(t, joined)]
         if not left or _monotonic() >= deadline:
             return left
         for t in left:
@@ -1677,16 +1728,19 @@ def pytest_runtest_teardown(item, nextitem):
     if not left:
         return
     frames = sys._current_frames()
-    pytest.fail("non-daemon threads still running at the end of this process's session, after up to %g s for each to end "
-                "(tests/conftest.py, the session-end thread guard). A thread a test starts must end before the test does. "
-                "A thread still running when the interpreter exits keeps the process from exiting: run serially, the run "
-                "hangs until the thread ends or the job cap cancels it; under pytest-xdist the controller kills a worker "
-                "still alive when the run ends, and the run would pass without this report. Two kinds of named thread let "
-                "the process exit and fail this guard all the same: an idle concurrent.futures worker, which the interpreter "
-                "wakes at exit, and a thread stopped only after this check (a config cleanup, pytest_sessionfinish or "
-                "pytest_unconfigure). %s is this process's last test, where the check runs, and not necessarily the one "
-                "that started a thread; each thread's target and stack say where it came from.\n\n%s"
-                % (THREAD_GUARD_CAP_S, item.nodeid, "\n".join(_thread_report(t, frames) for t in left)), pytrace=False)
+    pytest.fail("threads still running at the end of this process's session, after up to %g s for each to end "
+                "(tests/conftest.py, the session-end thread guard): non-daemon threads, and concurrent.futures "
+                "threads of either daemon flag, which its exit hooks join. A thread a test starts must end before the "
+                "test does. A named thread still running when the interpreter exits keeps the process from exiting: "
+                "run serially, the run hangs until the thread ends or the job cap cancels it; under pytest-xdist the "
+                "controller kills a worker still alive when the run ends, and the run would pass without this report. "
+                "Two kinds of named thread let the process exit and fail this guard all the same: an idle "
+                "concurrent.futures worker, which the interpreter wakes at exit, and a thread stopped only after this "
+                "check (a config cleanup, pytest_sessionfinish or pytest_unconfigure). %s is this process's last test, "
+                "where the check runs, and not necessarily the one that started a thread; each thread's target and "
+                "stack say where it came from."
+                "\n\n%s" % (THREAD_GUARD_CAP_S, item.nodeid, "\n".join(_thread_report(t, frames) for t in left)),
+                pytrace=False)
 
 
 # Browser-backed served-page tests fail loudly where they must run (T308, 2026-09-10). tests/test_*_browser.py and

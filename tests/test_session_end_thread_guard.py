@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """tests/conftest.py's session-end thread guard (2026-09-26): at the end of each process's session, the one serial
-process or each pytest-xdist worker, a non-daemon thread still running after the guard's cap fails the process's last
-test at teardown, named with its target and stack.
+process or each pytest-xdist worker, a guarded thread still running after the guard's cap fails the process's last test
+at teardown, named with its target and stack. Guarded: every non-daemon thread, and every thread in concurrent.futures'
+exit-join tables (tests/conftest.py's EXIT_JOIN_TABLES) whatever its daemon flag.
 
-Why it exists. A non-daemon thread still running when the interpreter exits keeps its process from exiting. Run serially,
-the run hangs until the thread ends or CI's job cap cancels the cell, which is a red cell. Under pytest-xdist the
-controller kills a worker still alive when the run ends and the run passes, so the fork's Linux cells lost that signal
-when they moved to two workers (2026-09-25). Two kinds of thread the guard names do not keep the process from exiting,
-and the guard fails on them too: an idle concurrent.futures worker and a thread stopped only after the check
-(tests/conftest.py's comment on the guard says why). A worker's stdout goes to /dev/null and its exit status is not
-read, so the guard reports through the one thing a worker sends the controller, a test report: the teardown phase's,
-printed by the controller as `ERROR at teardown of <the worker's last test>` and counted in the run's exit status.
+Why it exists. A non-daemon thread still running when the interpreter exits keeps its process from exiting. So does a
+concurrent.futures thread still running a task, whatever its daemon flag: the interpreter's exit hooks for
+concurrent.futures join every thread in their tables, and a pool started from a daemon thread has daemon workers, since
+a thread takes its daemon flag from the thread that creates it. Run serially, the run hangs until the thread ends or
+CI's job cap cancels the cell, which is a red cell. Under pytest-xdist the controller kills a worker still alive when
+the run ends and the run passes, so the fork's Linux cells lost that signal when they moved to two workers (2026-09-25).
+Two kinds of thread the guard names do not keep the process from exiting, and the guard fails on them too: an idle
+concurrent.futures worker and a thread stopped only after the check (tests/conftest.py's comment on the guard says why).
+A worker's stdout goes to /dev/null and its exit status is not read, so the guard reports through the one thing a worker
+sends the controller, a test report: the teardown phase's, printed by the controller as `ERROR at teardown of <the
+worker's last test>` and counted in the run's exit status.
 
 Pinned by running pytest in a child over synthetic files in a scratch directory outside tests/, with tests/conftest.py
 loaded as a plugin (`-p tests.conftest`), serially and under -n 2 (the shape tests/test_served_tests_require.py and
@@ -23,30 +27,49 @@ The children run with CI's pytest-timeout flags when pytest-timeout is installed
 guard's exclusion of that plugin's own timer, alive through every test's teardown, is exercised by the green runs.
 
 - A LEAKED non-daemon thread (it waits on an event the scratch conftest sets only at pytest_unconfigure, after the guard
-  has run) fails the run, serially and under -n 2, with exactly one error, whose text names the thread, its target and
-  a frame of its stack; under -n 2 that text is in the controller's output under a worker's `[gwN]` line, which is how
-  the report is shown to have reached the controller. Daemon threads alive at the same moment are not named. The leaked
-  thread is stopped only after the check, so these pins also witness that such a thread fails the guard although the
-  process exits: it is still alive at pytest_sessionfinish, the scratch conftest's stop writes a release marker, and
-  every process that ran tests then writes its atexit marker, which the interpreter runs only after joining its
-  non-daemon threads (a worker killed by xdist's controller writes none). Serially the plant also leaves four
-  ThreadPoolExecutor workers: an IDLE one in each of a pool left open and an event loop's default executor, the loop
-  never closed, and a BUSY one, running a task, in each of a pool shut down with wait=False and a closed loop's default
-  executor. All four are named with the label naming both causes, and each busy worker's report block, the one carrying
-  its task's frame, carries the running-task cause. These runs shorten the guard's cap to LEAK_CAP_S through the scratch
-  conftest, so a leak costs the pins seconds and not the full cap.
+  has run) fails the run, serially and under -n 2, with exactly one error, whose text names the thread, its target and a
+  frame of its stack; under -n 2 that text is in the controller's output under a worker's `[gwN]` line, which is how the
+  report is shown to have reached the controller. Plain daemon threads (no concurrent.futures thread among them) alive
+  at the same moment are not named. The leaked thread is stopped only after the check, so these pins also witness that
+  such a thread fails the guard although the process exits: it is still alive at pytest_sessionfinish, the scratch
+  conftest's stop writes a release marker, and every process that ran tests then writes its atexit marker, which the
+  interpreter runs only after joining its non-daemon threads and the threads concurrent.futures' exit hooks join (a
+  worker killed by xdist's controller writes none). Serially the plant also leaves four ThreadPoolExecutor workers: an
+  IDLE one in each of a pool left open and an event loop's default executor, the loop never closed, and a BUSY one,
+  running a task, in each of a pool shut down with wait=False and a closed loop's default executor. All four are named
+  with the label naming both causes, and each busy worker's report block, the one carrying its task's frame, carries the
+  running-task cause. These runs shorten the guard's cap to LEAK_CAP_S through the scratch conftest, so a leak costs the
+  pins seconds and not the full cap.
 - IDLE EXECUTOR WORKERS ALONE (the pool left open and the loop never closed, no other guarded thread) fail the run,
   serially and under -n 2, and the process exits: every process that ran tests writes its atexit marker. The message's
   wording, that such a worker lets the process exit, is pinned by its text; the markers are the executed evidence.
-- Threads that END WITHIN THE CAP (each test starts one that sleeps WITHIN_S and exits) and DAEMON threads that run past
-  the session (one per test, released at unconfigure) leave the run green, serially and under -n 2, at the guard's own
-  cap. The guard's wait is WITNESSED, not assumed: the scratch conftest records at pytest_sessionfinish, which runs after
-  the guard, which plant threads are alive. Every within-cap thread must be gone (the guard joined it; without the guard
-  the last test's thread, started milliseconds earlier, is still sleeping) and every daemon thread still alive (it ran
-  through the guard and was not waited for or named). And the wait must be a join, which returns when its thread ends,
-  not a sleep through the cap: each within-cap thread writes its end time as its last act, and the session must finish
-  within half the cap of the process's last one (it finishes milliseconds after; a guard that slept its cap would finish
-  nine seconds after).
+- A BUSY WORKER OF A POOL A DAEMON THREAD STARTED (the daemon thread starts a ThreadPoolExecutor, submits a task that
+  runs until the scratch conftest's stop and EXIT_HOLD_S past it, and shuts the pool down with wait=False) fails the
+  run, serially and under -n 2, with exactly one error naming the worker, whose own daemon flag the plant records as
+  True, with the label's running-task cause and its task's frame; the daemon thread that started the pool, still
+  running, is not named. The run also witnesses the premise: the worker is alive at pytest_sessionfinish, and the
+  process's atexit marker follows the task's end, written as its last act EXIT_HOLD_S after the stop, so the interpreter
+  joined that daemon thread before it ran its atexit handlers. Every process that ran tests exits.
+- An IDLE WORKER OF A POOL A DAEMON THREAD STARTED (the pool left open) behaves as the idle-worker pins above say: it
+  fails the run, serially and under -n 2, named with the label, and every process that ran tests exits (its atexit
+  marker).
+- A MISSING EXIT-JOIN TABLE fails the run loudly: with the scratch conftest deleting concurrent.futures.thread's
+  _threads_queues for the session (put back at pytest_sessionfinish, after the guard), a serial run of one plain test
+  fails with exactly one error naming concurrent.futures.thread._threads_queues; the same with
+  concurrent.futures.process's _threads_wakeups (the module loaded by the scratch conftest). In this process
+  (ExitJoinTables): each EXIT_JOIN_TABLES attribute exists on this Python and is a global its module's exit hook reads;
+  the two hooks are the only ones the standard library registers with threading._register_atexit, derived from its
+  source; and a live daemon thread in either table (the busy worker of a pool a daemon thread started, and a stand-in
+  for a ProcessPoolExecutor's manager thread) is returned by the guard while a plain daemon thread beside it is not.
+- Threads that END WITHIN THE CAP (each test starts one that sleeps WITHIN_S and exits) and plain DAEMON threads that
+  run past the session (one per test, released at unconfigure) leave the run green, serially and under -n 2, at the
+  guard's own cap. The guard's wait is WITNESSED, not assumed: the scratch conftest records at pytest_sessionfinish,
+  which runs after the guard, which plant threads are alive. Every within-cap thread must be gone (the guard joined it;
+  without the guard the last test's thread, started milliseconds earlier, is still sleeping) and every plain daemon
+  thread still alive (it ran through the guard and was not waited for or named). And the wait must be a join, which
+  returns when its thread ends, not a sleep through the cap: each within-cap thread writes its end time as its last act,
+  and the session must finish within half the cap of the process's last one (it finishes milliseconds after; a guard
+  that slept its cap would finish nine seconds after).
 - The guard runs AFTER THE RUNNER HAS TORN DOWN EVERY FIXTURE. The scratch conftest carries two autouse fixtures, one
   session-scoped and one function-scoped, each starting a non-daemon thread that waits on its own event and is stopped
   and joined only at the fixture's teardown. Every run above stays free of their names and the green runs pass, so a
@@ -83,6 +106,7 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import threading
 import time
@@ -99,12 +123,14 @@ EXECUTOR_LABEL = ("(a ThreadPoolExecutor worker, of a pool or an asyncio loop's 
                   "shutdown, or running a task, which shutdown(wait=False) and loop.close() do not end; its stack shows which)")
 RUNNING_TASK_CAUSE = "or running a task, which shutdown(wait=False) and loop.close() do not end"
 # the message's clauses on exit, serially and under pytest-xdist, with the two kinds of named thread that let a process exit
-EXIT_CLAUSES = ("A thread still running when the interpreter exits keeps the process from exiting: run serially, the run hangs "
-                "until the thread ends or the job cap cancels it; under pytest-xdist the controller kills a worker still alive "
-                "when the run ends, and the run would pass without this report. Two kinds of named thread let the process exit "
-                "and fail this guard all the same: an idle concurrent.futures worker, which the interpreter wakes at exit, and "
-                "a thread stopped only after this check (a config cleanup, pytest_sessionfinish or pytest_unconfigure).")
+EXIT_CLAUSES = ("A named thread still running when the interpreter exits keeps the process from exiting: run serially, the "
+                "run hangs until the thread ends or the job cap cancels it; under pytest-xdist the controller kills a worker "
+                "still alive when the run ends, and the run would pass without this report. Two kinds of named thread let the "
+                "process exit and fail this guard all the same: an idle concurrent.futures worker, which the interpreter wakes "
+                "at exit, and a thread stopped only after this check (a config cleanup, pytest_sessionfinish or "
+                "pytest_unconfigure).")
 LEAK_CAP_S = 2.0      # the guard's cap in the leak runs: long enough to be a real wait, short enough to cost little
+EXIT_HOLD_S = 1.0     # how long the busy worker of a daemon-started pool runs on after the stop, before its end record
 WITHIN_S = 1.0        # a within-cap thread's life after its test: a tenth of the guard's own cap
 TESTS = 4             # tests in the plant, each starting its threads: every worker's last test starts some
 
@@ -119,6 +145,8 @@ import pytest
 import plant_shared
 
 CAP = {cap!r}                   # None keeps the guard's own cap
+DROP = {drop!r}                 # (module, attribute) deleted for the session, or None
+_DROPPED = []
 
 
 def _mark(kind):
@@ -130,8 +158,14 @@ def _mark(kind):
 def pytest_configure(config):
     if CAP is not None:
         sys.modules["tests.conftest"].THREAD_GUARD_CAP_S = CAP
-    # the interpreter runs atexit handlers only after it has joined every non-daemon thread, so this marker says the
-    # process got past that join: one still held by a thread, or killed by xdist's controller, writes none
+    if DROP is not None:            # a Python without that exit-join table, for the session
+        import importlib
+        mod = importlib.import_module(DROP[0])
+        _DROPPED.append((mod, DROP[1], getattr(mod, DROP[1])))
+        delattr(mod, DROP[1])
+    # the interpreter runs atexit handlers only after it has joined every non-daemon thread and every thread
+    # concurrent.futures' exit hooks join, so this marker says the process got past those joins: one still held by a
+    # thread, or killed by xdist's controller, writes none
     atexit.register(_mark, "atexit")
 
 
@@ -141,6 +175,8 @@ def pytest_sessionfinish(session):
     rec = dict(alive=alive, t=time.monotonic(), cap=sys.modules["tests.conftest"].THREAD_GUARD_CAP_S)
     with open(os.path.join(os.environ["PLANT_OUT"], "finish-%d.json" % os.getpid()), "w") as f:
         json.dump(rec, f)
+    for mod, attr, value in _DROPPED:   # put back after the guard, so the exit hook finds its table
+        setattr(mod, attr, value)
 
 
 def pytest_unconfigure(config):
@@ -177,6 +213,7 @@ import concurrent.futures, json, os, threading, time
 import plant_shared
 
 WITHIN_S = {within!r}
+EXIT_HOLD_S = {hold!r}
 POOL = []
 
 
@@ -203,11 +240,38 @@ def _busy_loop_task():
     plant_shared.RELEASE.wait(120)          # a task still running at the check, in a closed event loop's default executor
 
 
+def _busy_daemon_pool_task():
+    plant_shared.RELEASE.wait(120)          # a task still running at the check, in a pool a daemon thread started
+    time.sleep(EXIT_HOLD_S)                 # and on past the stop, so the process's exit must wait for it
+    name = threading.current_thread().name
+    with open(os.path.join(os.environ["PLANT_OUT"], "ended-%d-%s.json" % (os.getpid(), name)), "w") as f:
+        json.dump(time.monotonic(), f)      # its last act: the worker's task returns right after this write
+
+
+def _daemon_starts_pool(busy, ready):
+    # runs on a daemon thread, so the pool's worker is a daemon thread too: it takes its flag from the thread creating it
+    prefix = "plant-dpool-busy" if busy else "plant-dpool-idle"
+    pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix=prefix)
+    if busy:
+        pool.submit(_busy_daemon_pool_task)
+        pool.shutdown(wait=False)           # does not end the running task: its worker runs on
+    else:
+        pool.submit(int).result()
+        POOL.append(pool)                   # kept referenced and never shut down: its worker idles
+    _record(prefix, [t for t in threading.enumerate() if t.name.startswith(prefix + "_")])
+    ready.set()
+    plant_shared.RELEASE.wait(120)          # a plain daemon thread running past the session: never named
+
+
+def _record(tag, threads):
+    with open(os.path.join(os.environ["PLANT_OUT"], "started-%d-%s.json" % (os.getpid(), tag)), "w") as f:
+        json.dump([[t.name, t.daemon] for t in threads], f)
+
+
 def _start(tag, threads):
     for t in threads:
         t.start()
-    with open(os.path.join(os.environ["PLANT_OUT"], "started-%d-%s.json" % (os.getpid(), tag)), "w") as f:
-        json.dump([[t.name, t.daemon] for t in threads], f)
+    _record(tag, threads)
 '''
 
 GREEN_TEST = '''
@@ -242,6 +306,21 @@ def test_event_loop_left_open():
     POOL.append(loop)                       # never closed: its default executor's worker idles
 '''
 
+DAEMON_POOL_TEST = '''
+def test_daemon_thread_starts_a_{kind}_pool():
+    ready = threading.Event()
+    _start("dspawner-{kind}", [threading.Thread(target=_daemon_starts_pool, args=({busy}, ready),
+                                                name="plant-dspawner-{kind}", daemon=True)])
+    assert ready.wait(60)
+'''
+DAEMON_BUSY_TEST = DAEMON_POOL_TEST.format(kind="busy", busy=True)
+DAEMON_IDLE_TEST = DAEMON_POOL_TEST.format(kind="idle", busy=False)
+
+PLAIN_TEST = '''
+def test_plain():
+    _start("plain", [])                     # records that this process ran a test
+'''
+
 BUSY_TEST = '''
 def test_busy_pool_shut_down_without_wait():
     pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="plant-busy-pool")
@@ -258,19 +337,20 @@ def test_busy_worker_of_a_closed_event_loop():
 
 
 class SessionEndThreadGuard(unittest.TestCase):
-    def _run(self, plant, *, cap=None, workers=None):
+    def _run(self, plant, *, cap=None, workers=None, drop=None):
         """pytest in a child over the plant `plant` (PLANT's helpers plus test functions), tests/conftest.py loaded as a
         plugin. Returns (exit status, the child's output, {pid: [[name, daemon]] started}, {pid: {within-cap thread name:
         its end time}}, {pid: {"alive": plant threads alive at pytest_sessionfinish, "t": that time, "cap": the guard's
         cap}}, {"release": {pid: time of the scratch conftest's stop at pytest_unconfigure}, "atexit": {pid: time of the
-        process's atexit handler}}), the times from each process's monotonic clock."""
+        process's atexit handler}}), the times from each process's monotonic clock. `drop`, a (module, attribute) pair,
+        is deleted by the scratch conftest for the session."""
         d = os.path.realpath(tempfile.mkdtemp(prefix="tg-"))       # resolved: macOS temp dirs sit under a symlink
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         case, out, home, tmp = (os.path.join(d, n) for n in ("case", "out", "home", "tmp"))
         for p in (case, out, home, tmp):
             os.makedirs(p)
-        for name, body in (("plant_shared.py", SHARED), ("conftest.py", CONFTEST.format(cap=cap)),
-                           ("test_plant.py", PLANT.format(within=WITHIN_S) + plant)):
+        for name, body in (("plant_shared.py", SHARED), ("conftest.py", CONFTEST.format(cap=cap, drop=drop)),
+                           ("test_plant.py", PLANT.format(within=WITHIN_S, hold=EXIT_HOLD_S) + plant)):
             with open(os.path.join(case, name), "w") as f:
                 f.write(body)
         env = {"PATH": os.environ.get("PATH", os.defpath), "HOME": home, "TMPDIR": tmp, "PYTHONPATH": REPO,
@@ -313,7 +393,7 @@ class SessionEndThreadGuard(unittest.TestCase):
         self.assertIn("in _leaked\n    plant_shared.RELEASE.wait(120)", out,
                       "the report carries the thread's stack, down to the plant's frame")
         self.assertIn("session-end thread guard", out, "the report says what made it")
-        self.assertNotIn("plant-daemon", out, "daemon threads alive at the same moment are not named")
+        self.assertNotIn("plant-daemon", out, "plain daemon threads alive at the same moment are not named")
         self.assertNotIn("plant-fx-", out, "threads the fixtures stop at teardown are not named")
         # the leaked thread is stopped only after the check, so the run also witnesses that such a thread fails the guard
         # although the process exits
@@ -325,7 +405,8 @@ class SessionEndThreadGuard(unittest.TestCase):
         self.assertEqual({pid: kinds for pid, kinds in missing.items() if kinds}, {},
                          "every process that ran tests wrote a release marker (the scratch conftest's stop at "
                          "pytest_unconfigure ran) and an atexit marker (it exited: the interpreter runs atexit handlers "
-                         "only after joining its non-daemon threads); these processes are missing one:\n" + out)
+                         "only after joining its non-daemon threads and the threads concurrent.futures' exit hooks join); "
+                         "these processes are missing one:\n" + out)
         for pid in started:
             self.assertGreaterEqual(marks["atexit"][pid], marks["release"][pid],
                                     "process %d's atexit marker follows its release marker" % pid)
@@ -381,7 +462,8 @@ class SessionEndThreadGuard(unittest.TestCase):
         self.assertTrue(started, "the plant's tests recorded the processes that ran them:\n" + out)
         self.assertEqual(sorted(pid for pid in started if pid not in marks["atexit"]), [],
                          "every process that ran tests exited: its atexit handler, which the interpreter runs only after "
-                         "joining its non-daemon threads, wrote its marker; these processes wrote none:\n" + out)
+                         "joining its non-daemon threads and the threads concurrent.futures' exit hooks join, wrote its "
+                         "marker; these processes wrote none:\n" + out)
         self.assertIn(EXIT_CLAUSES, out, "a WORDING check: the message says an idle concurrent.futures worker lets the "
                       "process exit, serially and under pytest-xdist; the atexit markers above are the executed evidence "
                       "that it does:\n" + out)
@@ -395,10 +477,94 @@ class SessionEndThreadGuard(unittest.TestCase):
         rc, out, started, _ended, _finish, marks = self._run(POOL_TEST, cap=LEAK_CAP_S, workers=2)
         self._assert_idle_workers_fail_and_the_process_exits(rc, out, started, marks)
 
-    # -- threads that end within the cap, and daemon threads, leave the run green -------------------------------------
+    # -- the worker of a pool a daemon thread started is guarded: concurrent.futures' exit hook joins it ---------------
+
+    def _assert_daemon_pool_worker_reported(self, rc, out, started, marks, kind):
+        """What the busy and the idle runs share. The pool's worker, plant-dpool-<kind>_0, was a daemon thread (the plant
+        records its flag), and the run fails with exactly one error, naming that worker once with the executor label; the
+        daemon thread that started the pool and the plain daemon threads beside it are not named; every process that ran
+        tests exits. Returns the worker's report block."""
+        worker, spawner = "plant-dpool-%s_0" % kind, "plant-dspawner-%s" % kind
+        flags = {n: daemon for names in started.values() for n, daemon in names}
+        self.assertIs(flags.get(spawner), True, "the thread that started the pool was a daemon thread:\n" + out)
+        self.assertIs(flags.get(worker), True, "the pool's worker was a daemon thread, its flag taken from the daemon "
+                      "thread that created it:\n" + out)
+        self.assertEqual(rc, 1, "the %s worker of a pool a daemon thread started fails the run:\n%s" % (kind, out))
+        self.assertEqual(len(re.findall(r"ERROR at teardown of test_", out)), 1, "one error, at a teardown:\n" + out)
+        self.assertRegex(out, r"\n1 error\b|, 1 error\b", out)
+        self.assertEqual(out.count("thread '%s'" % worker), 1, "the report names the worker once:\n" + out)
+        mine = [b for b in self._report_blocks(out) if b.startswith("thread '%s' " % worker)]
+        self.assertEqual(len(mine), 1, "one report block is the worker's:\n" + out)
+        self.assertIn(EXECUTOR_LABEL, mine[0].split("\n", 1)[0], "the worker carries the executor label:\n" + mine[0])
+        self.assertNotIn(spawner, out, "the daemon thread that started the pool, still running, is not named")
+        self.assertNotIn("plant-daemon", out, "plain daemon threads alive at the same moment are not named")
+        self.assertNotIn("plant-fx-", out, "threads the fixtures stop at teardown are not named")
+        self.assertEqual(sorted(pid for pid in started if pid not in marks["atexit"]), [],
+                         "every process that ran tests exited: its atexit handler wrote its marker; these processes wrote "
+                         "none:\n" + out)
+        return mine[0]
+
+    def _assert_daemon_pool_busy_worker_reported(self, rc, out, started, ended, finish, marks):
+        worker = "plant-dpool-busy_0"
+        block = self._assert_daemon_pool_worker_reported(rc, out, started, marks, "busy")
+        self.assertIn("in _busy_daemon_pool_task\n", block, "the worker's block carries its task's frame:\n" + block)
+        self.assertIn(RUNNING_TASK_CAUSE, block.split("\n", 1)[0], "and the label's running-task cause:\n" + block)
+        # the premise, executed: the interpreter joins this daemon thread at exit, so the process waits for its task
+        owner = [pid for pid, names in started.items() if worker in {n for n, _daemon in names}]
+        self.assertEqual(len(owner), 1, "one process started the worker:\n" + out)
+        pid = owner[0]
+        self.assertIn(worker, finish.get(pid, {}).get("alive", []), "the worker was still running at "
+                      "pytest_sessionfinish, after the guard:\n" + out)
+        self.assertIn(worker, ended.get(pid, {}), "the worker's task wrote its end record, EXIT_HOLD_S after the stop: "
+                      "the process did not exit before its daemon worker ended:\n" + out)
+        self.assertGreaterEqual(ended[pid][worker] - marks["release"][pid], EXIT_HOLD_S / 2,
+                                "the task ended EXIT_HOLD_S after the scratch conftest's stop")
+        self.assertGreaterEqual(marks["atexit"][pid], ended[pid][worker],
+                                "the process's atexit handler ran after its daemon worker's task ended: the interpreter "
+                                "joined that daemon thread before it ran its atexit handlers")
+
+    def test_a_busy_worker_of_a_pool_a_daemon_thread_started_fails_a_serial_run(self):
+        plant = "".join(DAEMON_TEST.format(i=i) for i in range(TESTS)) + DAEMON_BUSY_TEST
+        rc, out, started, ended, finish, marks = self._run(plant, cap=LEAK_CAP_S)
+        self._assert_daemon_pool_busy_worker_reported(rc, out, started, ended, finish, marks)
+
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
+    def test_under_two_workers_a_busy_worker_of_a_pool_a_daemon_thread_started_fails_the_run(self):
+        plant = "".join(DAEMON_TEST.format(i=i) for i in range(TESTS)) + DAEMON_BUSY_TEST
+        rc, out, started, ended, finish, marks = self._run(plant, cap=LEAK_CAP_S, workers=2)
+        self._assert_daemon_pool_busy_worker_reported(rc, out, started, ended, finish, marks)
+        self.assertEqual(len(finish), 3, "a controller and two workers each reached pytest_sessionfinish:\n" + out)
+        self.assertRegex(out, r"ERROR at teardown of test_\w+ _+\n\[gw\d+\] ", "the report came from a worker:\n" + out)
+
+    def test_an_idle_worker_of_a_pool_a_daemon_thread_started_fails_a_serial_run_and_the_process_exits(self):
+        rc, out, started, _ended, _finish, marks = self._run(DAEMON_IDLE_TEST, cap=LEAK_CAP_S)
+        self._assert_daemon_pool_worker_reported(rc, out, started, marks, "idle")
+
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
+    def test_under_two_workers_an_idle_worker_of_a_pool_a_daemon_thread_started_fails_the_run_and_each_worker_exits(self):
+        rc, out, started, _ended, _finish, marks = self._run(DAEMON_IDLE_TEST, cap=LEAK_CAP_S, workers=2)
+        self._assert_daemon_pool_worker_reported(rc, out, started, marks, "idle")
+
+    # -- a missing exit-join table fails the run, naming it -------------------------------------------------------------
+
+    def test_a_missing_exit_join_table_fails_a_serial_run_naming_the_attribute(self):
+        for module, attr in (("concurrent.futures.thread", "_threads_queues"),
+                             ("concurrent.futures.process", "_threads_wakeups")):
+            with self.subTest(table="%s.%s" % (module, attr)):
+                rc, out, started, _ended, _finish, marks = self._run(PLAIN_TEST, drop=(module, attr))
+                self.assertTrue(started, "the plant's test ran:\n" + out)
+                self.assertEqual(rc, 1, "a missing %s.%s fails the run:\n%s" % (module, attr, out))
+                self.assertEqual(len(re.findall(r"ERROR at teardown of test_plain", out)), 1, "one error, at the "
+                                 "teardown of the process's last test:\n" + out)
+                self.assertIn("session-end thread guard cannot read %s.%s on this Python" % (module, attr), out,
+                              "the error names the missing attribute:\n" + out)
+                self.assertEqual(sorted(pid for pid in started if pid not in marks["atexit"]), [],
+                                 "the process exited once the scratch conftest put the table back:\n" + out)
+
+    # -- threads that end within the cap, and plain daemon threads, leave the run green -------------------------------
 
     def _assert_green_and_waited(self, rc, out, started, ended, finish, _marks):
-        self.assertEqual(rc, 0, "threads that end within the cap and daemon threads do not fail the run:\n" + out)
+        self.assertEqual(rc, 0, "threads that end within the cap and plain daemon threads do not fail the run:\n" + out)
         self.assertIn("%d passed" % TESTS, out, out)
         self.assertNotIn("error", out.lower(), out)
         names = sorted(n for ns in started.values() for n, _daemon in ns if not n.startswith("plant-fx-"))
@@ -418,8 +584,8 @@ class SessionEndThreadGuard(unittest.TestCase):
             self.assertIn(pid, finish, "the process that started threads reached pytest_sessionfinish:\n" + out)
             for name, daemon in ns:
                 if daemon:
-                    self.assertIn(name, finish[pid]["alive"], "a daemon thread ran through the guard, neither waited for "
-                                                              "nor named")
+                    self.assertIn(name, finish[pid]["alive"], "a plain daemon thread ran through the guard, neither "
+                                                              "waited for nor named")
                 else:
                     self.assertNotIn(name, finish[pid]["alive"], "the guard waited for the within-cap thread %s to end "
                                      "before the session finished (without the guard it is still running)" % name)
@@ -514,6 +680,104 @@ class ThreadReportLabel(unittest.TestCase):
         self.assertIn("runs concurrent.futures.process._ExecutorManagerThread.run (a ProcessPoolExecutor's manager "
                       "thread: a pool left without shutdown, or one shut down with wait=False while a task still runs; its "
                       "stack reads the same either way)", report)
+
+
+@unittest.skipUnless("tests.conftest" in sys.modules, "the guard is tests/conftest.py's (pytest-only)")
+class ExitJoinTables(unittest.TestCase):
+    """The guard reads concurrent.futures' exit-join tables (tests/conftest.py's EXIT_JOIN_TABLES) and waits for every
+    thread in them, whatever its daemon flag, as the interpreter's exit hooks do. In this process: the two tables exist on
+    this Python and are what their modules' exit hooks read; the two hooks are the only ones the standard library
+    registers with threading._register_atexit; and a live daemon thread in either table is returned by the guard while a
+    plain daemon thread beside it is not."""
+
+    TABLES = (("concurrent.futures.thread", "_threads_queues"), ("concurrent.futures.process", "_threads_wakeups"))
+
+    def test_the_guard_reads_the_tables_the_exit_hooks_join(self):
+        cf = sys.modules["tests.conftest"]
+        self.assertEqual(cf.EXIT_JOIN_TABLES, self.TABLES)
+        for module, attr in self.TABLES:
+            with self.subTest(table="%s.%s" % (module, attr)):
+                mod = importlib.import_module(module)
+                self.assertTrue(hasattr(mod, attr), "%s.%s exists on this Python" % (module, attr))
+                self.assertIn(attr, mod._python_exit.__code__.co_names, "%s's exit hook reads its table as the global "
+                              "%s" % (module, attr))
+
+    def test_they_are_the_only_exit_hooks_the_standard_library_registers(self):
+        """Derived from the standard library's source on this Python: every module outside its test packages, idlelib and
+        site-packages whose code calls _register_atexit (threading's own definition of it excluded)."""
+        root = sysconfig.get_paths()["stdlib"]
+        skip = {"test", "tests", "idlelib", "site-packages", "dist-packages", "__pycache__"}
+        call = re.compile(r"^(?![ \t]*def\b)[^#\n]*\b_register_atexit\(", re.M)
+        found, read = set(), 0
+        for d, dirs, files in os.walk(root):
+            dirs[:] = [x for x in dirs if x not in skip]
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                with open(os.path.join(d, f), encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+                read += 1
+                if "_register_atexit(" in text and call.search(text):
+                    mod = os.path.relpath(os.path.join(d, f), root)[:-len(".py")].replace(os.sep, ".")
+                    found.add(mod[:-len(".__init__")] if mod.endswith(".__init__") else mod)
+        self.assertGreater(read, 100, "the walk read the standard library under %s" % root)
+        self.assertEqual(found, {module for module, _attr in self.TABLES})
+
+    def _returned_alone(self, thread, plain):
+        """The guard's result at a short cap over a list of the main thread, `thread` and `plain` (a daemon thread in no
+        table), through the guard's own binding of threading.enumerate."""
+        cf = sys.modules["tests.conftest"]
+        with mock.patch.object(cf, "_enumerate", return_value=[threading.main_thread(), thread, plain]):
+            return cf.threads_left_at_session_end(0.2)
+
+    def test_a_daemon_threads_pool_worker_is_returned_and_a_plain_daemon_thread_is_not(self):
+        """A pool started from a daemon thread: its worker, a daemon thread, is in concurrent.futures.thread's table."""
+        import concurrent.futures
+        stop, ready, box = threading.Event(), threading.Event(), {}
+
+        def spawner():
+            pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="plant-inproc-dpool")
+            pool.submit(stop.wait, 60)
+            pool.shutdown(wait=False)
+            box["worker"] = [t for t in threading.enumerate() if t.name.startswith("plant-inproc-dpool_")]
+            ready.set()
+            stop.wait(60)
+
+        def cleanup():
+            stop.set()
+            for t in [spawn] + box.get("worker", []):
+                t.join(60)
+
+        spawn = threading.Thread(target=spawner, name="plant-inproc-dspawner", daemon=True)
+        spawn.start()
+        self.addCleanup(cleanup)
+        self.assertTrue(ready.wait(30))
+        worker, = box["worker"]
+        self.assertTrue(worker.daemon, "the worker took the daemon flag of the thread that created it")
+        self.assertEqual(self._returned_alone(worker, spawn), [worker], "the guard returned the busy daemon worker, which "
+                         "concurrent.futures' exit hook joins, and not the plain daemon thread that started its pool")
+
+    def test_a_daemon_thread_in_the_process_pool_table_is_returned_and_a_plain_daemon_thread_is_not(self):
+        """A ProcessPoolExecutor started from a daemon thread has a daemon manager thread, which the process module's exit
+        hook joins. Stood in for by a live daemon thread entered in concurrent.futures.process's own table, with a wakeup
+        the hook can call, and taken out again at cleanup; no process is spawned."""
+        import concurrent.futures.process as cfp
+        stop = threading.Event()
+
+        class Wakeup:                   # the exit hook calls wakeup() on each entry before it joins the thread
+            def wakeup(self):
+                stop.set()
+
+        manager = threading.Thread(target=stop.wait, args=(60,), name="plant-inproc-manager", daemon=True)
+        plain = threading.Thread(target=stop.wait, args=(60,), name="plant-inproc-plain", daemon=True)
+        for t in (manager, plain):
+            t.start()
+            self.addCleanup(t.join, 60)
+        self.addCleanup(stop.set)
+        cfp._threads_wakeups[manager] = Wakeup()
+        self.addCleanup(cfp._threads_wakeups.pop, manager, None)
+        self.assertEqual(self._returned_alone(manager, plain), [manager], "the guard returned the daemon thread in "
+                         "concurrent.futures.process's table, and not the plain daemon thread")
 
 
 @unittest.skipUnless("tests.conftest" in sys.modules, "the guard is tests/conftest.py's (pytest-only)")
@@ -621,9 +885,9 @@ class JoinRace(unittest.TestCase):
 
     def test_off_the_main_thread_neither_the_main_thread_nor_the_checking_thread_is_waited_for(self):
         """The guard leaves out the main thread and the thread running the check. Every other pin runs the guard on the
-        main thread, where the two are one object; here a NON-daemon helper thread runs it (a daemon one is left out as a
-        daemon before either clause is read) over a thread list of exactly those two. Waiting for either would take the
-        whole cap: the main thread is blocked joining the helper, and a thread's join on itself raises the RuntimeError
+        main thread, where the two are one object; here a NON-daemon helper thread runs it (a daemon one, in no
+        concurrent.futures table, would be left out as a daemon whatever either clause said, so dropping a clause would go
+        unseen) over a thread list of exactly those two. Waiting for either would take the whole cap: the main thread is blocked joining the helper, and a thread's join on itself raises the RuntimeError
         the guard passes over as a thread caught mid-start."""
         cf = sys.modules["tests.conftest"]
         cap = 2.0
