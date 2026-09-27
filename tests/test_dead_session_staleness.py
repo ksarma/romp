@@ -1077,7 +1077,9 @@ class ReaderFollowsTheWriter(unittest.TestCase):
     mail riding its host's cached exchange), each rule 5 before the listing-unanswered arm and cannot-determine by it,
     with the arm's release on the source's next answering exchange; the release pins (B_cached, B_older_peer); the
     controls (the A road, a down host beside C, a lone cached host); residual (3a), a far host whose cached roster is
-    empty behind a heard hub, whose session still answers rule 5; residual (3b), a far host gone after a cached
+    empty behind a heard hub, whose session still answers rule 5 (since round 7 of fork PR #897, where its mail's relay
+    comes from a hub process that has named that host to this bus process before: the origin hold); residual (3b), a
+    far host gone after a cached
     exchange with its hub; and the witnesses of costs (a) and (c). Since the thirtieth commit (the reviewer's verifier
     at the twenty-ninth, by execution) the held-down roads: a host whose cached exchange carried its session's mail
     held down by our kernel after it (by its request, V5, or its response to our dial, V5b; beside C, or beside the
@@ -4367,12 +4369,12 @@ def origin_restart_road(road, first, blink, heard_before):   # R1 to R4 (heard_b
     origin_exch(hub, HUB, f, F); origin_exch(us, US, hub, HUB)
     step(road, "afterSEnds", us, new=S["new"], nobody=S["nobody"])
     return us, f, hub, c
-def origin_direct_road(road, first):               # D1, D2: F also a peer this bus dials, answered from F's previous process
-    us, f, hub, c = origin_world(road)
-    origin_trust(us, F, 50003)
+def origin_direct_road(road, first, ours=F):       # D1, D2: F also a peer this bus dials, answered from F's previous process;
+    us, f, hub, c = origin_world(road)             # `ours` is the name this bus's kernel dials F by (the hub's, F, unless given)
+    origin_trust(us, ours, 50003)
     origin_exch(f, F, hub, HUB); origin_exch(hub, HUB, f, F)
     origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
-    origin_exch(us, US, f, F)                      # our dial to F: F's own row here, answered
+    origin_exch(us, US, f, ours)                   # our dial to F: F's own row here, answered
     f2 = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts: a new bus id, its only route to us the hub's gossip
     origin_trust(f2, HUB, 50002)
     origin_exch(f2, F, hub, HUB); origin_exch(hub, HUB, f2, F)
@@ -4383,7 +4385,7 @@ def origin_direct_road(road, first):               # D1, D2: F also a peer this 
     origin_land(road, us, hub, first)
     origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)   # one more pair with the restarted hub, F unheard there
     step(road, "afterOnePairWithHub", us, new=S["new"], nobody=S["nobody"])
-    origin_exch(us, US, f2, F)                     # our next dial reaches F's new process: its answer names S
+    origin_exch(us, US, f2, ours)                  # our next dial reaches F's new process: its answer names S
     out["roads"][road]["viaRowsAtOurDialToF"] = carried_via(us)
     step(road, "afterOurDialToF", us, new=S["new"], nobody=S["nobody"])
     return us, f2, hub, c
@@ -4544,6 +4546,156 @@ out["roads"][road]["heldNamedUnderTheAlias"] = held_words(us, HUB)
 step(road, "namedUnderTheAlias", us, new=S["new"], nobody=S["nobody"])
 origin_exch(us, US, hub, HUB)                      # our placed answer releases it
 step(road, "releasedUnderTheAlias", us, new=S["new"], nobody=S["nobody"])
+# COST (r3), THE OTHER DIRECTION (round 7 of fork PR #897, the reviewer's verifier at the eighty-first commit, its road
+# V7renamedSameProcess2): the parked record carries the hostname F DECLARES. The hub never restarts and runs this build.
+# F's bus restarts; its first dial declares F_DECL, and no row at the hub carries F's new bus id, so the hub files that dial
+# under F_DECL and parks the mail it carries with origin F_DECL; the hub's dial to the alias then folds F_DECL into F before
+# the hub's next exchange here, and from then on the hub names F under the alias alone. The hold on F_DECL stands until the
+# hub gossips F_DECL here again: here F's bus restarts once more, its first dial filed under F_DECL while the hub exchanges
+# here
+road = "originHoldUnderTheDeclaredNameSameHubProcess"
+us, f, hub, c = origin_world(road)
+origin_exch(hub, HUB, f, F); origin_exch(f, F_DECL, hub, HUB)   # F filed under the alias; its own dial joins it by bus id
+origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)    # we hear F's answered word under the alias
+f2 = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts: a new bus id
+origin_trust(f2, HUB, 50002)
+LISTINGS["f"] = [S["other"], S["new"]]             # S starts on F
+origin_exch(f2, F_DECL, hub, HUB)                  # F's first dial: no row at the hub carries its bus id, filed under F_DECL
+out["roads"][road]["hubRowsAfterFirstDial"] = sorted(k for k in hub.PEER_STATE if k in (F, F_DECL))
+out["roads"][road]["park"] = park(f2, S["new"], "px-" + road)
+out["roads"][road]["atHub"] = origin_exch(f2, F_DECL, hub, HUB)["atDst"]   # parked for us, its origin F_DECL
+out["roads"][road]["parkedOrigin"] = [m.get("origin") for m in hub.outbox_list(US)]
+origin_exch(hub, HUB, f2, F)                       # the hub's dial to the alias folds F_DECL into F
+out["roads"][road]["hubRowsAfterFold"] = sorted(k for k in hub.PEER_STATE if k in (F, F_DECL))
+out["roads"][road]["landing"] = origin_exch(hub, HUB, us, US)["atDst"]
+out["roads"][road]["heldAtLanding"] = held_words(us, HUB)
+step(road, "atLanding", us, new=S["new"], nobody=S["nobody"])
+origin_exch(us, US, hub, HUB)
+step(road, "ourPlacedAnswer", us, new=S["new"], nobody=S["nobody"])
+for _ in range(3):                                 # three rounds: F's dial, the hub's dial to F, and a pair with us
+    origin_exch(f2, F_DECL, hub, HUB); origin_exch(hub, HUB, f2, F); origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
+step(road, "threeMoreRounds", us, new=S["new"], nobody=S["nobody"])
+LISTINGS["f"] = [S["other"]]                       # S ends; F answers the hub without it
+origin_exch(hub, HUB, f2, F); origin_exch(us, US, hub, HUB)
+step(road, "afterSEnds", us, new=S["new"], nobody=S["nobody"])
+us = load_bus("us")                                # our bus restarts over the same root
+origin_trust(us, HUB, 50002); notify(us, C, True)
+origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB); origin_exch(c, C, us, US); origin_exch(us, US, c, C)
+step(road, "ourRestartPairs", us, new=S["new"], nobody=S["nobody"])
+for _ in range(3):
+    origin_exch(f2, F_DECL, hub, HUB); origin_exch(hub, HUB, f2, F); origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
+step(road, "ourRestartThreeRounds", us, new=S["new"], nobody=S["nobody"])
+f3 = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts again: its first dial filed under F_DECL at the hub
+origin_trust(f3, HUB, 50002)
+origin_exch(f3, F_DECL, hub, HUB); origin_exch(hub, HUB, us, US)   # ...and the hub's dial here names F_DECL again
+step(road, "hubNamesTheDeclaredName", us, new=S["new"], nobody=S["nobody"])
+# ...AND ACROSS THE HUB'S RESTART (the verifier's road V7renamedAtHubStart): F's session S mails ours while the hub is
+# down, parked in F's outbox; the restarted hub hears our session first; F's first dial to it declares F_DECL, filed under
+# that name (no row there carries F's bus id), and carries S's mail, parked with origin F_DECL; the restarted hub's dial to
+# the alias folds F_DECL into F before its next exchange here, which relays the mail and names F under the alias alone
+road = "originHoldUnderTheDeclaredNameAcrossTheHubsRestart"
+us, f, hub, c = origin_world(road)
+origin_exch(hub, HUB, f, F); origin_exch(f, F_DECL, hub, HUB)   # F filed under the alias; its own dial joins it by bus id
+origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
+origin_exch(f, F_DECL, hub, HUB)                   # F learns our session through the hub
+LISTINGS["f"] = [S["other"], S["new"]]
+out["roads"][road]["park"] = park(f, S["new"], "px-" + road)   # parked in F's outbox: the hub is down
+hub = origin_restart(road)
+origin_exch(us, US, hub, HUB)                      # the restarted hub hears our session first
+out["roads"][road]["atHub"] = origin_exch(f, F_DECL, hub, HUB)["atDst"]   # F's first dial: filed under F_DECL, parked for us
+out["roads"][road]["hubRowsAfterFarDial"] = sorted(k for k in hub.PEER_STATE if k in (F, F_DECL))
+out["roads"][road]["parkedOrigin"] = [m.get("origin") for m in hub.outbox_list(US)]
+origin_exch(hub, HUB, f, F)                        # the restarted hub's dial to the alias folds F_DECL into F
+out["roads"][road]["hubRowsAfterFold"] = sorted(k for k in hub.PEER_STATE if k in (F, F_DECL))
+out["roads"][road]["landing"] = origin_exch(hub, HUB, us, US)["atDst"]
+out["roads"][road]["heldAtLanding"] = held_words(us, HUB)
+step(road, "atLanding", us, new=S["new"], nobody=S["nobody"])
+origin_exch(us, US, hub, HUB)
+step(road, "ourPlacedAnswer", us, new=S["new"], nobody=S["nobody"])
+for _ in range(3):
+    origin_exch(f, F_DECL, hub, HUB); origin_exch(hub, HUB, f, F); origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
+step(road, "threeMoreRounds", us, new=S["new"], nobody=S["nobody"])
+LISTINGS["f"] = [S["other"]]                       # S ends
+origin_exch(hub, HUB, f, F); origin_exch(us, US, hub, HUB)
+step(road, "afterSEnds", us, new=S["new"], nobody=S["nobody"])
+# COST (r2) ACROSS OUR RESTART (round 7 of fork PR #897, the reviewer's verifier at the eighty-first commit, its roads
+# V7ourRestartRelayEnded and V7ourRestartRelayEndedLong): the hub, never restarted, named F to our PREVIOUS process; while
+# our bus is down, S on F mails ours through the hub, which parks it; S and every other session on F end; our bus
+# restarts, and the hub's first exchange with our new process relays S's mail with no word of F. Naming counts per process
+# of ours too, so the relay holds F until the hub names it again
+road = "originHoldR2AcrossOurRestart"
+us, f, hub, c = origin_world(road)
+origin_exch(f, F, hub, HUB); origin_exch(hub, HUB, f, F)
+origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)   # the hub names F to our bus
+origin_exch(f, F, hub, HUB)                        # F learns our session through the hub
+LISTINGS["f"] = [S["other"], S["new"]]
+out["roads"][road]["park"] = park(f, S["new"], "px-" + road)
+out["roads"][road]["atHub"] = origin_exch(f, F, hub, HUB)["atDst"]   # parked for us: our bus is down
+LISTINGS["f"] = []                                 # S and every other session on F end
+origin_exch(hub, HUB, f, F)
+us = load_bus("us")                                # our bus restarts over the same root
+origin_trust(us, HUB, 50002); notify(us, C, True)
+origin_exch(c, C, us, US); origin_exch(us, US, c, C)
+out["roads"][road]["landing"] = origin_exch(hub, HUB, us, US)["atDst"]   # the hub's first exchange with our new process
+out["roads"][road]["heldAtLanding"] = held_words(us, HUB)
+step(road, "atLanding", us, new=S["new"], nobody=S["nobody"])
+origin_exch(us, US, hub, HUB)
+step(road, "ourPlacedAnswer", us, new=S["new"], nobody=S["nobody"])
+for _ in range(2):
+    origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
+step(road, "afterTwoMorePairs", us, new=S["new"], nobody=S["nobody"])
+LISTINGS["f"] = [S["fLater"]]                      # a new session on F: the hub names F again
+origin_exch(hub, HUB, f, F); origin_exch(us, US, hub, HUB)
+step(road, "afterHubNamesFAgain", us, new=S["new"], nobody=S["nobody"])
+# DECISION 1 UNDER NICKNAME DRIFT (round 7 of fork PR #897, the reviewer's verifier at the eighty-first commit, its roads
+# V7directD2AliasOurRestart and V7directD2AliasOurRestartHubNames): D2 where this bus's kernel dials F by F_HERE, a name
+# other than the hub's. The carried origin hold has no bus id, so the carry's fold looks for F's row by the name the hold
+# carries, F, and F's row here under F_HERE, answering our dial in the new process, does not end it; the hub's word
+# naming F's new bus does
+F_HERE = F + "-here"                               # this bus's kernel's name for F, not the hub's
+road = "originHoldD2UnderOurOwnNameForF"
+us, f2, hub, c = origin_direct_road(road, "answer", ours=F_HERE)
+us = load_bus("us")                                # our bus restarts over the same root
+origin_trust(us, HUB, 50002); notify(us, C, True); origin_trust(us, F_HERE, 50003)
+origin_exch(c, C, us, US); origin_exch(us, US, c, C)
+step(road, "ourBusRestarted", us, new=S["new"], nobody=S["nobody"])
+origin_exch(us, US, f2, F_HERE)                    # F's answer to our dial in the new process, under our name for it
+out["roads"][road]["viaRowsAfterFarAnswers"] = carried_via(us)
+step(road, "farAnswersOurDialAfterOurRestart", us, new=S["new"], nobody=S["nobody"])
+origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)   # a pair with the restarted hub, which has not heard F
+step(road, "hubPairSilentOnF", us, new=S["new"], nobody=S["nobody"])
+origin_exch(f2, F, hub, HUB); origin_exch(hub, HUB, f2, F)     # F reaches the restarted hub: it hears F's new process
+origin_exch(hub, HUB, us, US)                      # the hub's dial names F's new bus, which folds into F's row here
+out["roads"][road]["viaRowsAfterHubWord"] = carried_via(us)
+step(road, "hubNamesFNewBus", us, new=S["new"], nobody=S["nobody"])
+# RESIDUAL (3a) WITH ITS MAIL RELAYED (round 7 of fork PR #897, the reviewer's verifier at the eighty-first commit, its roads
+# V7emptyCacheNamedBefore and V7emptyCacheNeverNamed): F's cached roster is EMPTY (its kernel has not answered since its
+# bus started: no twin), and a session started there mails ours through the hub, one process throughout. Where that hub
+# process named F to our bus before (an earlier session of F, ended with an answered empty listing, then F's bus restarted
+# during its kernel's blink), the relay holds nothing: rule 5, the residual. Where it never has, the relay's origin hold
+# keeps S, and a sid nothing names, cannot-determine
+for road, named_before in (("residual3aRelayedHubNamedFBefore", True), ("residual3aRelayedHubNeverNamedF", False)):
+    us, f, hub, c = origin_world(road)
+    if named_before:
+        origin_exch(f, F, hub, HUB); origin_exch(hub, HUB, f, F)
+        origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)   # the hub names F to our bus
+        LISTINGS["f"] = []                         # F's session ends: F answers empty, and the hub's word omits F
+        origin_exch(hub, HUB, f, F); origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
+        f = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts during its kernel's blink: no twin
+        origin_trust(f, HUB, 50002)
+    else:
+        origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
+    LISTINGS["f"] = None                           # F's kernel does not answer: its exchanges carry an empty cache
+    origin_exch(f, F, hub, HUB); origin_exch(hub, HUB, f, F)   # F learns our session through the hub
+    origin_exch(hub, HUB, us, US); origin_exch(us, US, hub, HUB)
+    step(road, "beforeMail", us, new=S["new"], nobody=S["nobody"])
+    out["roads"][road]["park"] = park(f, S["new"], "px-" + road)   # S starts on F and mails ours
+    out["roads"][road]["atHub"] = origin_exch(f, F, hub, HUB)["atDst"]
+    out["roads"][road]["landing"] = origin_exch(hub, HUB, us, US)["atDst"]
+    out["roads"][road]["heldAtLanding"] = held_words(us, HUB)
+    step(road, "atLanding", us, new=S["new"], nobody=S["nobody"])
+    origin_exch(us, US, hub, HUB)
+    step(road, "ourPlacedAnswer", us, new=S["new"], nobody=S["nobody"])
 print(json.dumps(out))
 """, HERE, BIN, str(others), json.dumps(ROAD_SIDS), R_US, R_B, R_C, R_HUB, R_F, R_HUB2, R_HUB_DECL, R_G, R_HUB_DECL2],
                                 capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
@@ -5551,11 +5703,19 @@ print(json.dumps(out))
         heard hub whose cached roster is EMPTY. Its kernel has not answered since its bus started (no twin), or its last
         answered listing named nobody, so its exchange with the hub carries presenceAnswered False and no session row;
         presence_payload stamps a far host's bit only on that host's session rows, so the hub gossips no row about F and
-        no via row exists to carry F's bit, and the hub's answered row vouches. A session started on F meanwhile reaches
-        the judge through its own mail relayed by the hub and answers rule 5: a false rule 5 left open, until F's
-        answering exchange with the hub and the hub's next exchange here. The follow-up is the carrier fix, each heard far
-        host's answered bit carried independent of session rows (an exchange-field change outside this fix-tier PR); this
-        witness asserts the rule-5 answer, so it turns red when the carrier lands and the disclosure moves with it."""
+        no via row exists to carry F's bit, and the hub's answered row vouches. A session started on F meanwhile answers
+        rule 5 in farEmptyCacheViaHub, which relays no mail. Its mail reaches the judge relayed by the hub, and since round
+        7 of fork PR #897 that relay decides the answer (the writer's docstring, THE ORIGIN HOLD; the reviewer's verifier
+        at the eighty-first commit, its roads V7emptyCacheNamedBefore and V7emptyCacheNeverNamed). Where a roster of the
+        relaying hub's current process has named F to this bus process before (here an earlier session of F, ended with
+        an answered empty listing, then F's bus restarted during its kernel's blink), the relay holds nothing and the
+        session answers rule 5 at the landing and after our placed answer: a false rule 5 left open, until F's answering
+        exchange with the hub and the hub's next exchange here. Where none has, the relay's origin hold keeps the
+        session, and a sid nothing names, cannot-determine by the hub's via row about F, which carries the hold alone
+        (heard, its bit False, no sids), until a roster of that hub process names F; that leg is red at the eightieth
+        commit, where both answered rule 5. The follow-up is the carrier fix, each heard far host's answered bit carried
+        independent of session rows (an exchange-field change outside this fix-tier PR); this witness asserts the rule-5
+        answers, so it turns red when the carrier lands and the disclosure moves with it."""
         S = ROAD_SIDS
         for shape, got in self.roads.items():
             with self.subTest(shape=shape):
@@ -5572,6 +5732,26 @@ print(json.dumps(out))
                     self.assertEqual(got["roads"]["farEmptyCacheViaHub"][step]["rows"],
                                      {R_HUB: [True, False, True, True, True, True, [S["hubsid"]]]},
                                      "the hub's row alone, answered and vouching: no via row about F at %s" % step)
+                named = got["roads"]["residual3aRelayedHubNamedFBefore"]
+                self.assertEqual((named["landing"], named["heldAtLanding"]), ([[S["new"], R_F, "ack"]], []),
+                                 "the relay from F landed, and the hub process that relays it had named F to this bus")
+                self.assertEqual([self._road(got, "residual3aRelayedHubNamedFBefore", step, key)
+                                  for step in ("atLanding", "ourPlacedAnswer") for key in ("new", "nobody")], [RULE_5] * 4,
+                                 "RESIDUAL (3a) HOLDS where the relaying hub's current process named F here before: the "
+                                 "session whose mail the hub relayed answers rule 5")
+            with self.subTest(shape=shape, hub_named_f_here=False):
+                never = got["roads"]["residual3aRelayedHubNeverNamedF"]
+                held = UNANSWERED(R_VIA_F + " (listing unanswered)")
+                self.assertEqual(never["landing"], [[S["new"], R_F, "ack"]], "the relay from F landed")
+                self.assertEqual([self._road(got, "residual3aRelayedHubNeverNamedF", step, key)
+                                  for step in ("atLanding", "ourPlacedAnswer") for key in ("new", "nobody")], [held] * 4,
+                                 "THE ORIGIN HOLD: the hub's current process never named F here, so the relay holds the "
+                                 "session and a sid nothing names cannot-determine ([true, 5, no-reachable-host-names-it] "
+                                 "at the eightieth commit)")
+                self.assertEqual((never["heldAtLanding"], never["atLanding"]["rows"][R_VIA_F]),
+                                 ([[R_F, ""]], [True, False, True, False, True, False, []]),
+                                 "the hub's row carries the origin hold for F, and its via row about F is the hold alone: "
+                                 "heard, its bit False, no sids")
 
     def test_residual_3b_a_far_host_gone_after_a_cached_exchange_with_its_hub_holds_every_sid_while_the_hub_gossips_it(self):
         """RESIDUAL (3b) and cost (d), disclosed on the restricted side (the ruling; X_far_cached_then_gone, the second
@@ -8494,7 +8674,15 @@ print(json.dumps(out))
         session S, which then ended) relays S's mail, so the relay holds the origin until that hub process names it
         again. E3 (the hub's dial carries the relay) and E4 (its answer to our dial): cannot-determine for the ended S
         and a sid nothing names at the landing and after two more pairs, then rule 5 once a new session on F has the hub
-        name F again. At the eightieth commit rule 5 throughout, right for the ended S."""
+        name F again. At the eightieth commit rule 5 throughout, right for the ended S.
+        NAMING COUNTS PER PROCESS OF THIS BUS TOO (round 7 of fork PR #897, the reviewer's verifier at the eighty-first
+        commit, its roads V7ourRestartRelayEnded and V7ourRestartRelayEndedLong): the record of which hub process named a
+        host here starts empty at each start of this bus. The hub, never restarted, named F to our previous process;
+        while our bus is down S on F mails ours through the hub, which parks it, and S and every other session on F end;
+        our bus restarts, and the hub's first exchange with our new process relays S's mail with no word of F. The relay
+        holds F: cannot-determine for the ended S and a sid nothing names after our placed answer and after two more
+        pairs, where the eightieth commit read rule 5 (right for the ended S), then rule 5 once a new session on F has the
+        hub name F again. The same road inside one process of ours holds nothing (E1, E2, the controls)."""
         S = ROAD_SIDS
         held = UNANSWERED(R_VIA_F + " (listing unanswered)")
         for shape, got in self.roads.items():
@@ -8504,6 +8692,19 @@ print(json.dumps(out))
                     self.assertEqual([self._road(got, road, step, key) for step in
                                       ("atLanding", "afterTwoMorePairs", "afterHubNamesFAgain") for key in ("new", "nobody")],
                                      [held] * 4 + [RULE_5] * 2, "COST (r2): held until the same hub process names F again")
+            with self.subTest(shape=shape, road="originHoldR2AcrossOurRestart"):
+                r = got["roads"]["originHoldR2AcrossOurRestart"]
+                self.assertEqual((r["atHub"], r["landing"]), ([[S["new"], None, "hold"]], [[S["new"], R_F, "ack"]]),
+                                 "the hub parked S's mail while our bus was down, and its first exchange with our new "
+                                 "process relayed it")
+                self.assertEqual([self._road(got, "originHoldR2AcrossOurRestart", step, key) for step in
+                                  ("ourPlacedAnswer", "afterTwoMorePairs") for key in ("new", "nobody")], [held] * 4,
+                                 "COST (r2) ACROSS OUR RESTART: the hub named F to our previous process only, so the relay "
+                                 "holds F in the new one ([true, 5, no-reachable-host-names-it] at the eightieth commit)")
+                self.assertEqual(r["heldAtLanding"], [[R_F, ""]], "the hub's row carries the origin hold for F")
+                self.assertEqual([self._road(got, "originHoldR2AcrossOurRestart", "afterHubNamesFAgain", key)
+                                  for key in ("new", "nobody")], [RULE_5] * 2,
+                                 "released once a new session on F has the hub name F again")
 
     def test_cost_r3_an_origin_the_restarted_hub_names_under_another_name_stays_held_until_it_names_it_under_the_records_name(self):
         """COST (r3) of the origin hold, on the restricted side (the writer's docstring, THE ORIGIN HOLD): the hub's old
@@ -8534,6 +8735,72 @@ print(json.dumps(out))
                 self.assertEqual([self._road(got, "originHoldRenamedAcrossTheRestart", step, "nobody") for step in
                                   ("namedUnderTheAlias", "releasedUnderTheAlias")], [held, RULE_5],
                                  "F's word held by its order until our placed answer, then released")
+
+    def test_cost_r3_the_other_direction_a_record_under_the_declared_name_holds_until_the_hub_gossips_that_name_again(self):
+        """COST (r3), THE OTHER DIRECTION, on the restricted side (the writer's docstring, THE ORIGIN HOLD; round 7 of fork
+        PR #897, the reviewer's verifier at the eighty-first commit, its road V7renamedSameProcess2): the parked record
+        carries the hostname F declares, and the hub names F under the alias its kernel dials. The hub runs this build and
+        never restarts. F's bus restarts, and its first dial declares F_DECL; no row at the hub carries F's new bus id, so
+        the hub files that dial under F_DECL and parks the mail it carries with origin F_DECL. The hub's dial to the alias
+        then folds F_DECL into F before the hub's next exchange here, and from then on the hub names F under the alias
+        alone, so no roster of that hub process names F_DECL: the origin hold on F_DECL stands, and a sid nothing names is
+        cannot-determine by the hub's via row about F_DECL at the landing, after our placed answer and after three more
+        rounds (S rule 4, by the hub's word under the alias); after S ends, S too; and across our restart, the via row
+        carried with its bit False, after a pair with the hub and one with C and after three more rounds. At the
+        eightieth commit each of those read rule 5 for the sid nothing names, and for S after it ended. The hold ends
+        where the hub gossips F_DECL here again: F's bus restarts once more, its first dial filed under F_DECL, and the
+        hub's dial here names F_DECL, whose word replaces the carried row (heard, naming F's session) and is held or
+        released by its own order. The same across the hub's restart (the verifier's road V7renamedAtHubStart): S's mail
+        parked in F's outbox while the hub is down, F's first dial to the restarted hub filed under F_DECL, and the
+        restarted hub's dial to the alias folding it before the relay: held at the landing, after our placed answer and
+        after three more rounds, and S too after it ends, where the eightieth commit read rule 5."""
+        S = ROAD_SIDS
+        road = "originHoldUnderTheDeclaredNameSameHubProcess"
+        held = UNANSWERED(R_VIA_F_UNDER_DECL + " (listing unanswered)")
+        carried = UNANSWERED(R_VIA_F_UNDER_DECL + " (not heard, listing unanswered)")
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                r = got["roads"][road]
+                self.assertEqual((r["hubRowsAfterFirstDial"], r["atHub"], r["parkedOrigin"], r["hubRowsAfterFold"],
+                                  r["landing"]),
+                                 (sorted([R_F, R_F_DECL]), [[S["new"], None, "hold"]], [R_F_DECL], [R_F],
+                                  [[S["new"], R_F_DECL, "ack"]]),
+                                 "the hub filed F's first dial under F_DECL and parked S's mail with that origin, then folded "
+                                 "F_DECL into the alias before relaying it here")
+                self.assertEqual([self._road(got, road, step, key) for step in
+                                  ("atLanding", "ourPlacedAnswer", "threeMoreRounds") for key in ("new", "nobody")],
+                                 [RULE_4, held] * 3,
+                                 "COST (r3), the declared name: the hub names F under the alias alone, and the origin hold on "
+                                 "F_DECL holds a sid nothing names ([true, 5, no-reachable-host-names-it] at the eightieth "
+                                 "commit)")
+                self.assertEqual([self._road(got, road, "afterSEnds", key) for key in ("new", "nobody")], [held] * 2,
+                                 "after S ends, S too is held (rule 5 at the eightieth commit)")
+                self.assertEqual([self._road(got, road, step, key) for step in
+                                  ("ourRestartPairs", "ourRestartThreeRounds") for key in ("new", "nobody")], [carried] * 4,
+                                 "across our restart the via row about F_DECL is carried with its bit False and holds (rule 5 "
+                                 "at the eightieth commit)")
+                self.assertEqual(r["heldAtLanding"], [[R_F_DECL, ""]], "the hub's row carries the origin hold for F_DECL")
+                self.assertEqual((r["ourRestartThreeRounds"]["rows"][R_VIA_F_UNDER_DECL],
+                                  r["hubNamesTheDeclaredName"]["rows"][R_VIA_F_UNDER_DECL]),
+                                 ([False, False, True, False, False, False, []],
+                                  [True, False, True, False, True, False, [S["other"]]]),
+                                 "the carried row, not heard; then the hub's word under F_DECL, heard, replaces it")
+                self.assertEqual([self._road(got, road, "hubNamesTheDeclaredName", key) for key in ("new", "nobody")],
+                                 [held] * 2, "the word under F_DECL is held by its own order")
+            with self.subTest(shape=shape, hub_restarted=True):
+                restarted = "originHoldUnderTheDeclaredNameAcrossTheHubsRestart"
+                r = got["roads"][restarted]
+                self.assertEqual((r["atHub"], r["hubRowsAfterFarDial"], r["parkedOrigin"], r["hubRowsAfterFold"],
+                                  r["landing"]),
+                                 ([[S["new"], None, "hold"]], [R_F_DECL], [R_F_DECL], [R_F], [[S["new"], R_F_DECL, "ack"]]),
+                                 "the restarted hub filed F's first dial under F_DECL and parked S's mail with that origin, "
+                                 "then folded F_DECL into the alias before relaying it here")
+                self.assertEqual([self._road(got, restarted, step, key) for step in
+                                  ("atLanding", "ourPlacedAnswer", "threeMoreRounds", "afterSEnds") for key in ("new", "nobody")],
+                                 [RULE_4, held] * 3 + [held] * 2,
+                                 "the same across the hub's restart: the origin hold on F_DECL holds a sid nothing names, and "
+                                 "S after it ends ([true, 5, no-reachable-host-names-it] at the eightieth commit)")
+                self.assertEqual(r["heldAtLanding"], [[R_F_DECL, ""]], "the hub's row carries the origin hold for F_DECL")
 
     def test_cost_r4_an_origin_this_bus_also_hears_directly_stays_held_through_its_own_answered_row_in_this_process(self):
         """COST (r4) of the origin hold, on the restricted side (the writer's docstring, THE ORIGIN HOLD): the hold never
@@ -8588,6 +8855,38 @@ print(json.dumps(out))
                 self.assertEqual((self._road(got, "originHoldD1", "hubNamesFAfterOurRestart", "nobody"),
                                   d1["viaRowsAfterHubWord"]), (RULE_5, [via_f_of_hub]),
                                  "D1: the hub's word naming F's new bus folds into F's row, and the carried row leaves")
+
+    def test_decision_1_under_nickname_drift_the_origins_row_under_another_name_does_not_end_the_carried_hold(self):
+        """DECISION 1'S END REACHES ONLY THE ORIGIN'S ROW UNDER THE NAME THE HOLD CARRIES (round 7 of fork PR #897, the
+        reviewer's verifier at the eighty-first commit, its roads V7directD2AliasOurRestart and
+        V7directD2AliasOurRestartHubNames). A carried origin hold has no bus id of the origin, so the carry's fold
+        (_direct_row_speaks) finds the origin's row only by the name the hold carries, the hub's name for F. D2's world
+        where this bus's kernel dials F by F_HERE, a name other than the hub's (nickname drift), then OUR bus restarts:
+        F's row under F_HERE answers our dial in the new process naming S, so S is rule 4, but the carried via row about F
+        stays and a sid nothing names is cannot-determine by it, and still after a pair with the restarted hub, which has
+        not heard F: the hold lasts until the hub's word, cost (r1). Once F reaches the restarted hub and the hub's dial
+        names F's new bus, that word folds into F's row by its bus id, the carried row leaves, and a sid nothing names is
+        rule 5. At the eightieth commit no via row was carried and a sid nothing names read rule 5 at each held step. The
+        control is D2 without the drift, where F's answer to our dial ends the carried hold
+        (test_decision_1_after_our_restart_the_carry_drops_the_origin_hold_once_the_origins_own_row_answers_our_dial)."""
+        road = "originHoldD2UnderOurOwnNameForF"
+        carried = UNANSWERED(R_VIA_F + " (not heard, listing unanswered)")
+        via_f_of_hub = "via:" + R_F + "-here/" + R_HUB   # F's word about the hub, under F_HERE (the second roads child's)
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape):
+                r = got["roads"][road]
+                self.assertEqual([self._road(got, road, step, key) for step in
+                                  ("farAnswersOurDialAfterOurRestart", "hubPairSilentOnF") for key in ("new", "nobody")],
+                                 [RULE_4, carried] * 2,
+                                 "F's row under our own name for it answers our dial in the new process, and the carried "
+                                 "origin hold, which the carry looks up by the hub's name, stays ([true, 5, "
+                                 "no-reachable-host-names-it] at the eightieth commit for the sid nothing names)")
+                self.assertEqual(r["viaRowsAfterFarAnswers"], sorted([via_f_of_hub, R_VIA_F]),
+                                 "the via row about F is carried beside F's own row")
+                self.assertEqual((self._road(got, road, "hubNamesFNewBus", "nobody"), r["viaRowsAfterHubWord"]),
+                                 (RULE_5, [via_f_of_hub]),
+                                 "the hub's word naming F's new bus folds into F's row by its bus id, and the carried row "
+                                 "leaves")
 
 
 class PlantDedupe(unittest.TestCase):
