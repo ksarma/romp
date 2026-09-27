@@ -890,8 +890,9 @@ class JoinRace(unittest.TestCase):
         """The guard leaves out the main thread and the thread running the check. Every other pin runs the guard on the
         main thread, where the two are one object; here a NON-daemon helper thread runs it (a daemon one, in no
         concurrent.futures table, would be left out as a daemon whatever either clause said, so dropping a clause would go
-        unseen) over a thread list of exactly those two. Waiting for either would take the whole cap: the main thread is blocked joining the helper, and a thread's join on itself raises the RuntimeError
-        the guard passes over as a thread caught mid-start."""
+        unseen) over a thread list of exactly those two. Waiting for either would take the whole cap: the main thread is
+        blocked joining the helper, and a thread's join on itself raises the RuntimeError the guard passes over as a
+        thread caught mid-start."""
         cf = sys.modules["tests.conftest"]
         cap = 2.0
         got = {}
