@@ -94,9 +94,12 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   Other timers and threads are still waited for, among them near misses that start like the prefix (a thread named
   pytest-worker, Timers whose functions are in pytest_asyncio and pytest_testmon).
 
-Each child-run pin was run with the guard removed from tests/conftest.py and fails there: the leak and idle-worker runs
-pass (exit 0, no error) and the green runs' witness finds the within-cap threads alive at sessionfinish. Synthetic
-fixtures only; no kernel, no network.
+Each child-run pin was run with the guard removed from tests/conftest.py and fails there: the leak, idle-worker,
+daemon-started-pool and missing-table runs pass (exit 0, no error) and the green runs' witness finds the within-cap
+threads alive at sessionfinish. The pins for the exit-join tables were also run with the guard as it was before it read
+them, when it waited for non-daemon threads only, and fail there: the daemon-started-pool and missing-table runs pass,
+and in this process the guard returns neither daemon thread and has no EXIT_JOIN_TABLES. Synthetic fixtures only; no
+kernel, no network.
 """
 import importlib.util
 import itertools
@@ -112,6 +115,8 @@ import threading
 import time
 import unittest
 from unittest import mock
+
+from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(HERE)
@@ -693,11 +698,13 @@ class ExitJoinTables(unittest.TestCase):
     TABLES = (("concurrent.futures.thread", "_threads_queues"), ("concurrent.futures.process", "_threads_wakeups"))
 
     def test_the_guard_reads_the_tables_the_exit_hooks_join(self):
+        import concurrent.futures.process   # noqa: F401  loaded, so both modules are in sys.modules below
+        import concurrent.futures.thread    # noqa: F401
         cf = sys.modules["tests.conftest"]
         self.assertEqual(cf.EXIT_JOIN_TABLES, self.TABLES)
         for module, attr in self.TABLES:
             with self.subTest(table="%s.%s" % (module, attr)):
-                mod = importlib.import_module(module)
+                mod = sys.modules[module]
                 self.assertTrue(hasattr(mod, attr), "%s.%s exists on this Python" % (module, attr))
                 self.assertIn(attr, mod._python_exit.__code__.co_names, "%s's exit hook reads its table as the global "
                               "%s" % (module, attr))
@@ -743,15 +750,12 @@ class ExitJoinTables(unittest.TestCase):
             ready.set()
             stop.wait(60)
 
-        def cleanup():
-            stop.set()
-            for t in [spawn] + box.get("worker", []):
-                t.join(60)
-
         spawn = threading.Thread(target=spawner, name="plant-inproc-dspawner", daemon=True)
+        threads = [spawn]                   # the worker joins the list once it is known
+        self.addCleanup(join_started, stop, threads, 60)
         spawn.start()
-        self.addCleanup(cleanup)
         self.assertTrue(ready.wait(30))
+        threads.extend(box["worker"])
         worker, = box["worker"]
         self.assertTrue(worker.daemon, "the worker took the daemon flag of the thread that created it")
         self.assertEqual(self._returned_alone(worker, spawn), [worker], "the guard returned the busy daemon worker, which "
@@ -770,10 +774,9 @@ class ExitJoinTables(unittest.TestCase):
 
         manager = threading.Thread(target=stop.wait, args=(60,), name="plant-inproc-manager", daemon=True)
         plain = threading.Thread(target=stop.wait, args=(60,), name="plant-inproc-plain", daemon=True)
+        self.addCleanup(join_started, stop, (manager, plain), 60)
         for t in (manager, plain):
             t.start()
-            self.addCleanup(t.join, 60)
-        self.addCleanup(stop.set)
         cfp._threads_wakeups[manager] = Wakeup()
         self.addCleanup(cfp._threads_wakeups.pop, manager, None)
         self.assertEqual(self._returned_alone(manager, plain), [manager], "the guard returned the daemon thread in "

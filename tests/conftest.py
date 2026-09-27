@@ -1612,8 +1612,9 @@ def wait_for_census(before, timeout=5.0):
 # waits for every thread in them, and a loaded concurrent.futures module without its table fails the guard, naming the
 # attribute, rather than leaving its daemon threads unread. The report's label names both causes; a ThreadPoolExecutor
 # worker's stack shows which, and a manager thread's stack reads the same either way. A process that leaves one pays the
-# cap once. No non-daemon one was left at a session end on main (the census above, which read non-daemon threads
-# only).
+# cap once. No non-daemon one was left at a session end on main (the census above, which read non-daemon threads only),
+# and none of either flag in a run of the full suite on 3.12 at -n 4 with the tables read (2026-09-27; the served-page
+# tests skipped, the extension's node deps absent): the guard named no thread there.
 THREAD_GUARD_CAP_S = 10.0
 _monotonic = time.monotonic   # bound at import: a test's leaked patch of time.monotonic cannot move the guard's deadline
 _enumerate = threading.enumerate    # bound at import too: a test's leaked patch of threading.enumerate cannot empty the
