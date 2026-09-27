@@ -2184,7 +2184,7 @@ test("how a click finds its press, a tap on another document's element, a guard 
   const want = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
   const tap = { opened: 1, reveals: 0 };
   assert.deepEqual(got, Object.fromEntries([...leftovers.map(([n]) => [n, want] as [string, unknown]), ["a one-finger tap, as Chromium sends it", tap], ["a one-finger tap, as WebKit sends it", tap], ["a one-finger tap, as Firefox sends it", tap]]),
-    "a click whose press and release this window never heard finds no press, [that click, the next], and a one-finger tap opens once (a property pin over window.open's calls and the scrollIntoView record)");
+    "after a pointerup of this window with no click after it, the click of a tap on another document's element finds no press, its compatibility mousedown having emptied the slot, [that click, the next], and a one-finger tap opens once (a property pin over window.open's calls and the scrollIntoView record)");
 });
 // ── the chain rule, the guards CI runs (the closing check at 142ade155 after the fixes for the file review's round 18; the browser
 // cells, file-figure-open-taps.ts chainCells, skip in CI) ── A verdict moves from a press to a click only along that gesture's own
