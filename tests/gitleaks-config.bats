@@ -233,8 +233,10 @@ hook_repo() {
 
 # ── round 9d: the scanner in the hook's directory mode ─────────────────────
 # Since round 9 the hook reads the lines a push adds itself, writes them into numbered files
-# (pieces) of at most 98,304 bytes, each beginning with a line holding ~, and runs `gitleaks dir .`
-# from inside their directory, so gitleaks runs no git. Each case below pins one premise of that
+# (pieces) of at most 98,304 bytes, since round 12d one hunk's added lines to a piece, a piece
+# beginning with a line holding ~ only where gitleaks' type check would skip it without one, and
+# runs `gitleaks dir .` from inside their directory, so gitleaks runs no git. Each case below pins
+# one premise of that
 # design against the installed scanner, G2 with the cap read from the hook's awk text and G4 with
 # the names the hook's own piecing awk gives its copies; tests/pre-push-hook.bats drives the hook
 # itself, through pushes.
@@ -271,17 +273,18 @@ path_rule_probe() {
 
 @test "round 9d, G1: the value excuse holds in directory mode over a piece named by number, as the hook scans it" {
     # A piece carries no real path, so .gitleaks.toml's excuse has only the value to key on, and it
-    # must hold there: RFC 6455's nonce behind the ~ line gives no finding under the config and one
-    # under the default rules (so the config is what excuses it), and a secret that contains the
-    # nonce gives one finding under the config.
+    # must hold there: RFC 6455's nonce in a piece of one text line, framed as the hook frames a
+    # text piece since round 12d (no ~ line), gives no finding under the config and one under the
+    # default rules (so the config is what excuses it), and a secret that contains the nonce gives
+    # one finding under the config.
     mkdir "$TEST_DIR/p"
-    printf '~\nheaders = {"Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}\n' > "$TEST_DIR/p/1"
+    printf 'headers = {"Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}\n' > "$TEST_DIR/p/1"
     run scan_pieces "$TEST_DIR/p" --config "$CFG"
     [ "$status" -eq 0 ] || { echo "the nonce was not excused in directory mode (exit $status):"; echo "$output"; false; }
     unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML   # no --config below: the default rules, whatever the environment names
     run scan_pieces "$TEST_DIR/p"
     [ "$status" -eq 2 ] || { echo "the default rules did not report the nonce, so the case proves nothing (exit $status):"; echo "$output"; false; }
-    printf '~\napi_key = "%s%s%s"\n' "dGhlIHNhbXBsZSBub25jZQ==" "Zk8vQ2xhdWRl" "U2VjcmV0OTk5" > "$TEST_DIR/p/1"
+    printf 'api_key = "%s%s%s"\n' "dGhlIHNhbXBsZSBub25jZQ==" "Zk8vQ2xhdWRl" "U2VjcmV0OTk5" > "$TEST_DIR/p/1"
     run scan_pieces "$TEST_DIR/p" --config "$CFG"
     [ "$status" -eq 2 ] || { echo "a secret containing the nonce was excused (exit $status):"; echo "$output"; false; }
     [[ "$output" =~ leaks\ found:\ ([0-9]+) ]] && [ "${BASH_REMATCH[1]}" -eq 1 ] || {
@@ -301,26 +304,30 @@ hook_constant() {   # <CAP | V>
     grep -E "$pat" "$hook" | sed -E "s/^(.*[;[:space:]])?$1 = ([0-9]+).*\$/\\2/"
 }
 
-@test "round 9d, G2: a piece of the hook's cap, CAP bytes read from its awk line, is read whole: each of its dense distinct tokens is found (red for a CAP of 125,011 bytes or more, CAP=130000 among them)" {
+@test "round 9d, G2: a piece of the hook's cap, CAP bytes read from its awk line, is read whole: each of its dense distinct tokens is found (red for a CAP of 125,009 bytes or more, CAP=130000 among them)" {
     # The hook caps a piece at CAP bytes (98,304 at this writing) because gitleaks reads a file of
     # up to 100,000 bytes in one chunk and a larger one in chunks, missing a match that crosses a
     # cut (in a 200,000-byte file of these lines 8.28.0 and 8.30.1 miss 3 of 4,878). A piece of
-    # exactly the cap, packed with distinct github-pat shaped lines behind the ~ line, must be read
-    # whole: every token found, and the byte figure the piece's size. A later gitleaks that reads
-    # files in smaller chunks turns this red, and the hook's cap moves with it.
+    # exactly the cap, packed with distinct github-pat shaped lines from its first byte, as the hook
+    # writes a text piece since round 12d (no ~ line, which it writes only ahead of leading bytes
+    # gitleaks' type check would skip), must be read whole: every token found, and the byte figure
+    # the piece's size. A later gitleaks that reads files in smaller chunks turns this red, and the
+    # hook's cap moves with it.
     # CAP is read from the hook (hook_constant; round 10b, from the round 9 rulings' group C): until
     # then this case built a piece of a restated 98,304 bytes and stayed green whatever CAP the hook
     # held. Its range, measured on this layout under 8.28.0 and 8.30.1: gitleaks' first chunk is its
     # 100,000-byte read plus a peek of up to 25,000 bytes for a blank line, and this piece holds
-    # none, so a CAP up to 125,010 is still read whole (green) and a CAP of 125,011 or more puts the
-    # token that starts at byte 124,970 across the cut (red, that token missed). The band
-    # above 100,000 that stays green here belongs to the round 10b cap pin below and to the
-    # blank-line witness it names.
+    # none, so a CAP up to 125,008 is still read whole (green) and a CAP of 125,009 or more puts the
+    # token that starts at byte 124,968 across the cut (red, that token missed; re-derived in round
+    # 12d2 for the piece without the ~ line, which moved each token two bytes, from 125,010 and
+    # 125,011 and byte 124,970, by execution under 8.28.0 and 8.30.1). The band above 100,000 that
+    # stays green here belongs to the round 10b cap pin below and to the blank-line witness it
+    # names.
     cap=$(hook_constant CAP)
     mkdir "$TEST_DIR/p"
-    n=$(( (cap - 2) / 41 ))                       # 41 bytes a line, after the 2-byte ~ line
-    pad=$(( cap - 2 - n * 41 ))
-    { printf '~\n'; dense_tokens "$n"; [ "$pad" -eq 0 ] || printf '%*s\n' $(( pad - 1 )) '' | tr ' ' x; } > "$TEST_DIR/p/1"
+    n=$(( cap / 41 ))                             # 41 bytes a line, from the piece's first byte
+    pad=$(( cap - n * 41 ))
+    { dense_tokens "$n"; [ "$pad" -eq 0 ] || printf '%*s\n' $(( pad - 1 )) '' | tr ' ' x; } > "$TEST_DIR/p/1"
     [ "$(( $(wc -c < "$TEST_DIR/p/1") ))" -eq "$cap" ]
     [ "$(( $(grep -c '^gh' "$TEST_DIR/p/1") ))" -eq "$n" ]
     [ "$(( $(grep '^gh' "$TEST_DIR/p/1" | sort -u | wc -l) ))" -eq "$n" ]   # distinct
@@ -333,8 +340,10 @@ hook_constant() {   # <CAP | V>
 
 @test "round 9d, G3: a piece that begins with an archive or document signature is read only behind the hook's ~ line" {
     # gitleaks skips a file whose first bytes carry a zip, gzip or PDF signature: it counts 0 bytes
-    # and finds nothing below the signature. A pushed file's added lines can begin that way, so each
-    # piece the hook writes begins with a line holding ~, which moves the signature off byte 0. Both
+    # and finds nothing below the signature. A hunk's added lines can begin that way, so a piece
+    # whose leading bytes carry such a signature begins with a line holding ~, which moves the
+    # signature off byte 0 (since round 12d the hook writes that line only there, its type table
+    # deciding, and tests/pre-push-hook.bats derives the table against the running gitleaks). Both
     # halves, per signature: without the ~ line, 0 bytes and no finding; with it, the piece's size
     # and the token found.
     mkdir "$TEST_DIR/p"
@@ -371,9 +380,11 @@ hook_pieces_awk() {
 
 # The hook's piecing awk run as its feed runs it at a file's first added line: choose over the
 # path, then newpiece, once for each path of the list, in order, so each path is one piece,
-# numbered from 1. The hook's own code writes the pieces (the ~ line each), the index (piece,
-# commit, path, closing field) and the path-scoped index (piece, the copy's name, the second copy's
-# name, the rule, closing field), the files the hook's shell reads to write and scan the copies.
+# numbered from 1. The hook's own code writes the index (piece, commit, path, closing field) and the
+# path-scoped index (piece, the copy's name, the second copy's name, the rule, closing field), the
+# files the hook's shell reads to write and scan the copies; it writes no piece file here, since a
+# piece is written as its lines arrive and this driver gives none (and since round 12d a piece opens
+# with the ~ line only ahead of leading bytes gitleaks' type check would skip).
 # This driver adds one line per piece of what choose answered (sfx, the suffix it matched,
 # lower-cased, and osfx, the same bytes as the path spells them), which G4's shape check composes
 # its expected names from. Its status is the awk's: 1 when the list cannot be read.

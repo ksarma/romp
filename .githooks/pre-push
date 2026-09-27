@@ -473,6 +473,25 @@
 #       for, without which the awk records untailed, refused naming the read,
 #       so a cut inside the parents of a merge of 64 or more, which would read
 #       as fewer, is refused
+#   the DIFF SETTINGS of this clone
+#       the TAIL marker its command line adds, romp-pre-push.tail=end, one -c
+#       entry git reads after every value of the clone's (the system, global,
+#       local and worktree files, then the environment's and the command
+#       line's), so a whole answer ends with that entry, once (diff_settings,
+#       round 12d2: the feed's diff-tree read each commit under its own
+#       defaults while main's hook, gitleaks' git log -p -U0, framed the hunks
+#       under the clone's diff.algorithm, diff.interHunkContext and
+#       diff.renames, and a PEM private key block beside blank lines under
+#       histogram or an interHunkContext of 3, and a key block moved under
+#       diff.renames=false, published where main's hook refused them;
+#       romp-manager's ruling on decision 5, 2026-09-26 18:58Z, its (a)): an
+#       answer whose last entry is not the marker, or that holds it twice, is
+#       refused as read short, an entry for a key it was not asked for as
+#       foreign, and a value the hook does not pass refuses naming the key,
+#       the feed unread. Its end: the tail marker, the answer's last entry, so
+#       an answer cut inside the marker or ahead of it, or silent, lacks the
+#       marker whole and is refused as read short (a cut of the NUL after it
+#       alone drops no byte of any entry)
 #   the CREDENTIAL FEED of the push
 #       each listed commit's head marker, its own name ahead of its diff
 #       (--always), in the order fed, read from the list file diff-tree reads:
@@ -869,7 +888,9 @@
 # tests/pre-push-hook.bats' newline case; the round 5 refuter, 2026-09-22).
 # The credential scan's files live in the same directory: the commits it
 # feeds (creds.list, and once each in creds.revs for their parent counts,
-# whose record is creds.parents), the pieces (creds.d), the path-scoped
+# whose record is creds.parents), the clone's diff settings the feed is
+# given (creds.diffcfg, the DIFF SETTINGS read's answer, written by
+# judged_read's one open), the pieces (creds.d), the path-scoped
 # copies (creds.p) and the probe run's probes and second copies (creds.q),
 # those three directories made by one mkdir, a writer like the others; each
 # selected piece's directory in the last two is made by xargs running mkdir
@@ -903,11 +924,32 @@
 # ONE git diff-tree over the push (credential_feed): a merge by the lines in
 # none of its parents (-c), where a line typed into a conflict resolution
 # lands, so a merge that brings in content a remote already holds adds
-# nothing; a rename by its edits (-M), so a pure rename adds nothing (within
-# git's rename limit, diff.renameLimit: past it a rename is read as a new
-# file, more bytes, never fewer); every blob of a root or one-parent commit
-# as text (--text), its NUL bytes mapped to 0x01 so any awk carries the line;
-# and no textconv and no colour, each option given explicitly. Three inputs
+# nothing; a rename by its edits (-M, or as the clone's diff.renames has git
+# log read one: below), so a pure rename adds nothing (within git's rename
+# limit, diff.renameLimit, which diff-tree reads as git log does: past it a
+# rename is read as a new file, more bytes, never fewer); every blob of a
+# root or one-parent commit as text (--text), its NUL bytes mapped to 0x01 so
+# any awk carries the line; and no textconv and no colour, each option given
+# explicitly. Three porcelain keys decide where main's hook, gitleaks' git
+# log -p -U0, cuts a commit into hunks, and a hunk is a piece (below), whose
+# bounds decide what a rule sees; so the read is given the clone's own values
+# (the DIFF SETTINGS read, diff_settings; romp-manager's ruling on decision
+# 5, 2026-09-26 18:58Z, its (a)): diff.algorithm as --diff-algorithm,
+# diff.interHunkContext as --inter-hunk-context, and diff.renames as -M,
+# --no-renames (false) or -C (copies, a copy then read by its edits). Until
+# round 12d2 a PEM private key block beside blank lines, one hunk under
+# histogram or an interHunkContext of 3 and two under diff-tree's myers, and
+# a key block added over two commits and then moved under
+# diff.renames=false, which git log reads as one new file, published where
+# main's hook refused them, both scanners. A value the hook does not pass
+# (one git log stops on, or a spelling of a count git reads and the hook does
+# not) refuses the push by name, and so does any diff.<driver>.algorithm,
+# which git log applies path by path and keeps for the paths it diffs after,
+# a framing one pass over the push cannot mirror (a false refusal for a
+# driver no attribute names). The census of git's diff keys behind the
+# three (git 2.43.0 and 2.55.0), each key passed, read by diff-tree as git
+# log reads it, pinned by the feed's own options, refused, or inert for the
+# added lines' hunks, by execution, is named at diff_settings. Three inputs
 # that reach diff-tree from outside its options are pinned on its command
 # line: GIT_DIFF_OPTS unset for the read (env -u), since its --unified=<n>
 # replaces the -U0 given for a one-parent diff; diff.suppressBlankEmpty=false
@@ -980,7 +1022,40 @@
 # it inside a piece that joined a file's hunks, so the round 11 rulings' M1,
 # M2 and M3 (nuget-config-password redefined) and a repository rule
 # ^zzkey_[0-9a-f]{16} on a hunk's first added line published where main's
-# hook refused them (decision 5's report, both scanners). A piece also ends
+# hook refused them (decision 5's report, both scanners). One hunk to a
+# piece retires two round 11 rulings (romp-manager's answer on round 12d1's
+# questions, 2026-09-26 23:46Z, its (4)): B's probe written behind its
+# copy's first line (R2), never built, since a copy now begins where its
+# hunk begins and the ^ and \A redefinitions it was for are refused as
+# credentials by the copy itself; and the 16:50Z stated limit for a
+# repository rule anchored at the start of the text, whose witness, a key on
+# line 1 of config/app.env, is now refused. What one hunk to a piece costs,
+# and where it stops, against main's hook and against the round 11 head
+# (0b6c76916), whose piece joined a file's hunks: a match that spans two
+# hunks is whole in neither piece and publishes, as it publishes at main,
+# whose git mode reads each hunk apart (parity with main, and a loss against
+# that head, which refused it: a PEM private key block that git's myers
+# splits at its blank line into two hunks, the witness in
+# tests/pre-push-hook.bats, round 12d2, the case titled "round 12d2 (ITEM A,
+# the control, and item 6's parity)"; the ruling's (d), item 6); each hunk
+# is a piece of its own, so a file edited in many places costs as many
+# pieces and no more processes, the shell's loops and the scanners' reads
+# growing with them (a push of one selected .yaml of 10,000 hunks took
+# 11.9 s against 2.3 s with a file's hunks in one piece, decision 5's check,
+# and one of 4,000 hunks 6.3 to 6.5 s against 2.1 to 2.3 s, the round 12d1
+# audit; the ruling's (d)); and a
+# merge is read by the lines in none of its parents (-c), each where the side
+# commit that added it put it, while main's hook reads a merge by its
+# first-parent diff, so a line that opens or closes a hunk of that diff can
+# sit inside a hunk of the side commit, where a rule anchored at the start or
+# the end of the text misses it: a stated limit for merges, named outside
+# the closed class, since the hook cannot probe a custom rule's value (the
+# ruling's item 2, under decision 5's (ii)), with its witnesses fpmerge (a
+# repository rule ^zzkey_), fpnuget (nuget-config-password redefined with ^,
+# so it reaches one of the five) and fpm2 (M2's \s*$), each published at the
+# fix where main's hook refused it, both scanners (tests/pre-push-hook.bats,
+# round 12d2, the three cases titled "round 12d2 (item 2, OUTSIDE the closed
+# class"). A piece also ends
 # as its hunk's added text ends: git's no-newline notice after an added line
 # drops that line's newline in the piece, and a merge's own last line, after
 # which a combined diff prints no notice, loses it when the merge's result
@@ -999,10 +1074,37 @@
 # source, and its deriving case in tests/pre-push-hook.bats, which checks it
 # against the running gitleaks; decision 5's check found that the
 # prototype's test of a piece's first line missed Mach-O's BE BA FE CA, which
-# its list lacked, and Dex and Dey, whose signatures reach past that line). A
-# rule anchored at the start of the text misses a credential on the first
-# line of a piece that carries the ~ line, where git mode reads it: a hunk
-# whose first bytes are such a signature. gitleaks scans the pieces from
+# its list lacked, and Dex and Dey, whose signatures reach past that line).
+# The ~ line costs two things, each named here. A rule anchored at the start
+# of the text (^ outside (?m), or \A) misses a credential on the first line
+# of a piece that carries the ~ line, where git mode reads that line at the
+# start of its hunk: a stated limit, named outside the closed class
+# (romp-manager's answer on round 12d1's questions, 2026-09-26 23:46Z, its
+# (1)), since gitleaks' directory and stdin modes both run the type check on
+# a piece's leading bytes, so a piece led by a signature cannot be read
+# without moving its first byte. It needs a repository's own start-anchored
+# rule and a credential on the first line of a hunk led by a signature, and
+# reaches no default rule: the one start anchor in gitleaks 8.28.0's and
+# 8.30.1's default configs is azure-ad-client-secret's, a ^ in an
+# alternation with \s, which takes the ~ line's newline (each default config
+# read out of its binary and every rule's regex scanned for a ^ outside (?m)
+# and a \A, 2026-09-27; that rule's secret opening an MZ-led first line is
+# refused, as at main). Its remedy: write the rule with (?m)^, which matches
+# after the ~ line's newline. Its witnesses, each published at the fix where
+# main's hook refused it, both scanners: TildeMZ, nuget-config-password
+# redefined as ^.*<add key=... with the first line of a nuget config led by
+# MZ, and TildeZZ, a repository rule ^.*zzkey_ with the first line of
+# config/app.env led by MZ=; and TildeZZ's rule written with (?m)^ is
+# refused (tests/pre-push-hook.bats, round 12d2, the ITEM R cases). And the
+# offset class, a false refusal: a piece that takes the ~ line and holds
+# ustar at byte 255, DICM at 126 or CD001 at 32,767 has that signature moved,
+# by the line's two bytes, onto the offset the type check reads (257, 128 or
+# 32,769), so gitleaks skips the piece and the byte figure refuses the push,
+# loudly, never published, where main's hook passes it (its witness,
+# tests/pre-push-hook.bats, round 12d2, the case titled "round 12d2 (ITEM D,
+# the offset class, a disclosed false refusal)"; decision 5's check, finding
+# C, and the round 12d1 audit's finding 7); a lone signature at such an
+# offset takes the ~ line and is read. gitleaks scans the pieces from
 # inside their directory (gitleaks dir) and runs no git, so no git
 # configuration key reaches its read and no .gitleaksignore of the work tree
 # applies. It logs one figure for the bytes it scanned, and the push is
@@ -1117,7 +1219,13 @@
 # credential main's hook refused; the round 10 rulings, 2026-09-26). So a
 # third run, the PROBE run, reads one more directory holding, for each
 # selected piece, a PROBE at the copy's exact name (12/12.yaml), a short
-# text the rule reports under gitleaks' default rules, and a SECOND COPY of
+# text the rule reports under gitleaks' default rules, ending in its newline,
+# with no ~ line: the framing of a piece of one hunk whose last line ends in
+# a newline and whose leading bytes gitleaks does not skip by type, which is
+# the framing each probe mirrors (decision 1, the coordinator's ruling of
+# 2026-09-26 17:20Z; a copy framed otherwise, behind a ~ line or ending
+# without a newline, meets the rule as its piece does, and the probe checks
+# only that the rule reaches the copy's name), and a SECOND COPY of
 # the piece at the directory's root, named romp-copy-, the piece's number in
 # letters (a to j for 0 to 9), a dot when the suffix does not start with one,
 # and the file's own suffix as it spells it (romp-copy-bc.yaml,
@@ -1254,17 +1362,20 @@
 # tests/pre-push-hook.bats, round 12b, the cases titled
 # "round 12b (C, the cost witness, a clean piece)" and
 # "round 12b (C, the cost witness, paths '.*')"; a match
-# with more than 16,384 of its bytes before a piece boundary, in a file whose
+# with more than 16,384 of its bytes before a piece boundary, in a hunk whose
 # added lines pass 98,304 bytes or in a line longer than 81,916 bytes (cut
 # into windows), is whole in neither piece (the replay and the windows'
 # overlap repeat exactly the last 16,384 bytes, so what decides is how many
 # of the match's bytes lie before the boundary, not its length: one with at
 # most 16,384 before it is whole in the next piece; the round 9 rulings,
 # 2026-09-25, and the round 10b witnesses in tests/pre-push-hook.bats, which
-# place a match at the bound and one byte past it); and a piece whose bytes
-# carry a binary type's signature at its fixed offset (DICOM at 128, tar at
-# 257, ISO 9660 at 32,769) is skipped by gitleaks and refused by the byte
-# figure, loudly, never published. The byte figure is a log line gitleaks does
+# place a match at the bound and one byte past it); and a piece that takes
+# the ~ line, its leading bytes a signature gitleaks skips, and holds ustar
+# at byte 255, DICM at 126 or CD001 at 32,767, which the line moves onto the
+# offset gitleaks' type check reads, is skipped by gitleaks and refused by
+# the byte figure, loudly, never published (the pieces paragraph above; a
+# lone signature at such an offset takes the ~ line and is read). The byte
+# figure is a log line gitleaks does
 # not document (scanned ~N bytes); it equalled the bytes read on every input
 # tried, in 8.28.0 and 8.30.1, from 0 bytes to 178 MB, and a gitleaks that
 # stops writing it refuses every push with content, visibly, where
@@ -3503,7 +3614,10 @@ scan_identifiers() {
 # own parent), so --always prints the commit's name ahead of its diff and
 # again after it, for the empty diff: the head marker and the tail marker.
 # Each option is explicit: -p -U0,
-# the added lines alone; -r, into subtrees; -M, a rename by its edits; -c, a
+# the added lines alone; -r, into subtrees; the three from the clone's diff
+# settings (diff_settings, below the piecing): --diff-algorithm,
+# --inter-hunk-context, and -M (a rename by its edits), --no-renames or -C (a
+# copy by its edits too), as git log reads diff.renames; -c, a
 # merge by the lines in none of its parents (a combined hunk carries one
 # column per parent, the hunk header's @ count less one); --root, a root
 # commit against the empty tree (plumbing reads no log.showRoot); --text,
@@ -3531,29 +3645,44 @@ scan_identifiers() {
 # clean push under GIT_DIFF_OPTS=--unified=3 with the key true was refused,
 # its empty context line a line of none of the shapes the feed reads (the
 # round 10 rulings' extra5-1, 2026-09-26); either pin alone keeps that push
-# whole, since diff-tree prints context only under GIT_DIFF_OPTS. The
-# population behind the two pins is the round 10 rulings check's record,
-# dated and not a closed claim (git 2.43.0's documentation: git(1)'s
-# environment, git-config(1)'s diff keys, gitattributes(5)'s diff drivers;
-# its builtin/diff-tree.c reads git_diff_basic_config alone; executed
-# 2026-09-26). Read by diff-tree and inert for this feed: diff.renameLimit
+# whole, since diff-tree prints context only under GIT_DIFF_OPTS. Since one
+# hunk is one piece (round 12d), a key that moves where a hunk starts or
+# ends matters as much as one that changes which lines are +, and git log,
+# main's read, frames hunks under porcelain keys diff-tree does not read; so
+# the diff keys are a census by execution, no longer a dated record
+# (tests/pre-push-hook.bats, round 12d2, the case titled "the diff keys are
+# DERIVED", over the diff keys git help --config lists, git 2.43.0 and 2.55.0
+# executed, and gitattributes(5)'s diff.<driver>.algorithm, which that
+# listing lacks). Passed from the clone
+# (diff_settings): diff.algorithm, diff.interHunkContext, diff.renames. Read
+# by diff-tree as git log reads them: diff.indentHeuristic, diff.renameLimit
 # (past git's limit a rename is read as a new file, more bytes, never
-# fewer), diff.indentHeuristic, the colour keys (--no-color),
-# diff.wsErrorHighlight, diff.dirstat, a driver's textconv and command
-# (--no-textconv, --no-ext-diff), its binary key (the merge route below),
-# its xfuncname or funcname (a hunk header's tail), wordRegex, cachetextconv
-# and algorithm (a line in none of the parents is + under any algorithm),
-# core.abbrev, core.bigFileThreshold, core.attributesFile and
-# i18n.logOutputEncoding (diff-tree prints only commit names here). Porcelain
-# keys diff-tree does not read, each executed inert: diff.context,
-# diff.interHunkContext, diff.algorithm, diff.renames, diff.orderFile,
-# diff.noprefix, diff.mnemonicPrefix, diff.relative, diff.external,
-# diff.ignoreSubmodules, diff.submodule, diff.colorMoved, color.ui and
-# log.showSignature. Environment variables inert here: GIT_EXTERNAL_DIFF and
+# fewer). Pinned by the read's own options: diff.context (-U0, which main's
+# git log is given too), diff.suppressBlankEmpty (the -c above),
+# diff.ignoreSubmodules and diff.submodule (--ignore-submodules=none and
+# --submodule=short, so a gitlink change is its Subproject line), a driver's
+# binary key (--text; a merge's binary path is read whole, below) and its
+# textconv (--no-textconv: the feed reads the bytes the push carries, where
+# git log reads a driver's rendering of them). Refused by name
+# (diff_settings): a driver's algorithm. Inert for the added lines' hunks:
+# the colour and stat keys, diff.external and a driver's command (git log
+# runs neither without --ext-diff), the path prefixes (with diff.srcPrefix
+# and diff.dstPrefix, from git 2.45), the trustExitCode keys (from git 2.46,
+# for an external diff's status), diff.orderFile,
+# diff.relative, a driver's xfuncname, wordRegex and cachetextconv,
+# diff.wordRegex and the diff tools. Keys outside diff.*, from the round 10
+# rulings check's dated record (git 2.43.0, its builtin/diff-tree.c reading
+# git_diff_basic_config alone; executed 2026-09-26): read by diff-tree and
+# inert for this feed, core.abbrev, core.bigFileThreshold,
+# core.attributesFile and i18n.logOutputEncoding (diff-tree prints only
+# commit names here); not read by diff-tree, color.ui and log.showSignature.
+# Environment variables inert here: GIT_EXTERNAL_DIFF and
 # the diff path counters (--no-ext-diff); the config sources
 # (GIT_CONFIG_COUNT and its pairs, GIT_CONFIG_PARAMETERS, GIT_CONFIG_GLOBAL,
 # GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM), which the command line's -c
-# beats; GIT_ATTR_SOURCE, GIT_FLUSH, GIT_PAGER and PAGER, the pathspec
+# beats (for the three keys diff_settings passes they reach the read as they
+# reach main's git log, through the clone's effective values);
+# GIT_ATTR_SOURCE, GIT_FLUSH, GIT_PAGER and PAGER, the pathspec
 # variables, GIT_PRINT_SHA1_ELLIPSIS and the locale. GIT_TRACE and its
 # family pointed at the read's own stdout put trace lines into the stream,
 # which the awk refuses as unmarked or foreign, never publishing: a crafted
@@ -3570,7 +3699,10 @@ scan_identifiers() {
 # two all-digit names compare as numbers otherwise); a commit two refs share
 # is fed twice and its lines written once (the seen set). Each hunk's added
 # lines start a new piece (the hunk header closes the piece before it, so no
-# piece holds two hunks' lines), a file named by its sequence number in the
+# piece holds two hunks' lines; what that costs and where it stops, a match
+# spanning two hunks published as at main, the time a file edited in many
+# places takes, and a merge's first-parent anchors, a stated limit, are in
+# the header's pieces paragraph), a file named by its sequence number in the
 # piece directory, which begins with a line holding ~ only where gitleaks
 # would skip it by its type without one (the header; skipped, in the
 # piecing); a piece holds at most CAP bytes, and the line that would pass it
@@ -3615,11 +3747,13 @@ scan_identifiers() {
 # (--full-index spells it whole), the section's note takes. It RECOGNIZES AND
 # IGNORES, between a header and its first hunk, the --- source line and the
 # index (in a diff --git section), old mode, new mode, mode, new file mode,
-# deleted file mode, similarity index, rename from and rename to lines, and
-# inside a hunk a line whose columns are a run of -, + and space not all + (a
-# context, removed or added-against-one-parent line, which the content rule
-# skips on purpose; in a diff --combined section one whose columns hold no -
-# is a line of the merge's result and advances the count of its lines). The
+# deleted file mode, similarity index, rename from and rename to lines, the
+# copy from and copy to lines -C prints (under diff.renames=copies, round
+# 12d2), and inside a hunk a line whose columns are a run of -, + and space
+# not all + (a context, removed or added-against-one-parent line, which the
+# content rule skips on purpose; in a diff --combined section one whose
+# columns hold no - is a line of the merge's result and advances the count
+# of its lines). The
 # note: for each diff --combined section in which the awk wrote a line, the
 # last such line's number in the merge's result, its piece, whether that
 # piece is path-scoped, and at the end whether it opens with the ~ line and
@@ -3635,8 +3769,8 @@ scan_identifiers() {
 # binary file, a line each, counted in the record, and scan_credentials reads
 # that path whole from the merge's result blob (merge_binary_reads; the cost,
 # in the header: a merge whose binary path holds a credential a remote already
-# published refuses the push). Any other line is foreign: a copy or
-# dissimilarity line, which only -C and -B print; a bare Subproject line; a
+# published refuses the push). Any other line is foreign: a dissimilarity
+# line, which only -B prints; a bare Subproject line; a
 # Binary notice in a diff --git section, which --text keeps a real git from
 # printing, or in a combined section with no path; anything else. The feed
 # cannot account for what a foreign line stands for, so it refuses the push
@@ -3856,8 +3990,119 @@ CRED_PIECES_AWK='
             else if (sfx == ".php") srule = "freemius-secret-key"
         }
         function letters(n,   s, i) { n = n ""; s = ""; for (i = 1; i <= length(n); i++) s = s substr("abcdefghij", substr(n, i, 1) + 1, 1); return s }'
-credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file> <binary paths file> <merges' last lines file>
-    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r -M -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short --full-index < "$1" \
+# The DIFF SETTINGS of this clone, read once per push ahead of the feed
+# (diff_settings; romp-manager's ruling on decision 5, 2026-09-26 18:58Z, its
+# (a)). Main's hook runs gitleaks' git mode, git log -p -U0, a porcelain
+# command, which frames each commit's hunks under the clone's diff.algorithm,
+# diff.interHunkContext and diff.renames, three keys diff-tree does not read;
+# and since one hunk is one piece, a hunk's boundaries decide what a rule
+# sees. So the feed is given the clone's three values as options:
+# --diff-algorithm=<the algorithm>, --inter-hunk-context=<the count> and, for
+# diff.renames, -M (true, or unset), --no-renames (false) or -C (copies), so
+# its hunks are git log's. Until round 12d2 the feed read each commit under
+# diff-tree's defaults: a PEM private key block beside blank lines, which
+# histogram, or an interHunkContext of 3, keeps in one hunk where myers
+# splits it, published under either setting where main's hook refused it
+# through the default rule private-key (decision 5's check, finding 1); and a
+# key block added over two commits and then moved, which git log reads under
+# diff.renames=false as one new file, published where main's hook refused it
+# (found by the round 12d2 census, which named that third key). One read: git
+# config -z --get-regexp over those three keys and every
+# diff.<driver>.algorithm, the clone's effective values in the order git
+# reads them (the system, global, local and worktree files, then the
+# environment's and the command line's), with a TAIL marker,
+# romp-pre-push.tail=end, given on this git's own command line and so read
+# after every value of the clone's: an answer whose last entry is not that
+# marker, or that holds it twice, is refused as read short, and an entry for
+# any other key as foreign. Each value is judged as git log judges it, the
+# last one read taken: diff.algorithm myers, default (myers), minimal,
+# patience or histogram, in any case; diff.interHunkContext a decimal count
+# with an optional k, m or g (1,024, 1,048,576 or 1,073,741,824 times), at
+# most 2,147,483,647 lines, git's int; diff.renames true, yes, on, a count
+# other than 0, or no value (-M), false, no, off, 0 or an empty value
+# (--no-renames), copies or copy (-C), in any case. A value git log stops on
+# (an algorithm it does not know, no value where one is needed, a count below
+# 0 or past git's int) refuses the push by name, as main's hook refused it
+# when git log stopped, with a remedy; so does a value git reads and the hook
+# does not (a count spelled in octal or hex, with a sign or a space, or a
+# count with a k, m or g read as a boolean), a false refusal on a spelling
+# the hook could widen to. And a diff.<driver>.algorithm key, set at all,
+# refuses the push by name: git log applies a driver's algorithm to the paths
+# the diff attribute gives that driver and keeps it for every path it diffs
+# after (git 2.43.0, executed), while --diff-algorithm makes diff-tree ignore
+# a driver's algorithm, and diff-tree, reading the whole push in one pass,
+# walks the commits in another order than one git log per ref, so neither
+# framing can be mirrored; a false refusal for a clone that sets the key for
+# no path. The census over git's diff keys (those git help --config lists,
+# git 2.43.0 and 2.55.0 executed, and gitattributes(5)'s
+# diff.<driver>.algorithm, which that listing lacks), each passed here, read
+# by diff-tree as git log reads it, pinned by
+# the feed's own options, refused here or inert for the added lines' hunks,
+# by execution: tests/pre-push-hook.bats, round 12d2, the case titled "the
+# diff keys are DERIVED". Status 1 when a refusal was made (unscanned);
+# feed_opts, the caller's, holds the three options otherwise.
+diff_settings() {   # sets feed_opts, the caller's
+    local LC_ALL=C rec key val shown noval num mul tl_low="" alg=myers ihc=0 ren=-M n=0 marks=0 last="" bad="" f="$scratch/creds.diffcfg"
+    local fixed="the credential feed was not read, and the scan follows once the setting is fixed"
+    feed_opts=()
+    if ! judged_read gate="the DIFF SETTINGS of this clone" 0 "the DIFF SETTINGS of this clone could not be read for the credential scan (git config exited {rc}), so whether its diff.algorithm, diff.interHunkContext or diff.renames frames the pushed lines' hunks otherwise than git's defaults is unknown; $fixed" -o "$f" -- git -c romp-pre-push.tail=end config -z --get-regexp '^(diff\.algorithm|diff\.interhunkcontext|diff\.renames|diff\..+\.algorithm|romp-pre-push\.tail)$'; then
+        return 1
+    fi
+    rec=""
+    while IFS= read -r -d '' -u 6 rec || [ -n "$rec" ]; do
+        n=$((n + 1)); key=${rec%%$'\n'*}
+        if [ "$key" = "$rec" ]; then noval=1; val=""; shown="set with no value"; else noval=0; val=${rec#*$'\n'}; shown="set to \"$val\""; fi
+        last=$rec; rec=""
+        if [ "$key" = romp-pre-push.tail ]; then marks=$((marks + 1)); continue; fi
+        [ -z "$bad" ] || continue
+        case "$key" in
+            diff.algorithm)
+                tl_lower "$val"
+                case "$noval:$tl_low" in
+                    0:myers|0:default) alg=myers ;;
+                    0:minimal|0:patience|0:histogram) alg=$tl_low ;;
+                    *) bad="this clone's diff.algorithm is $shown, which git reads as no diff algorithm (git log stops on it), so the credential feed cannot frame the pushed lines' hunks as gitleaks' git mode would; set it to myers, minimal, patience or histogram, or unset it (git config --unset-all diff.algorithm), or set ROMP_NO_GITLEAKS=1 for one push; $fixed" ;;
+                esac ;;
+            diff.interhunkcontext)
+                num=$val; mul=1; ihc=-1
+                case "$num" in *[kK]) mul=1024; num=${num%?} ;; *[mM]) mul=1048576; num=${num%?} ;; *[gG]) mul=1073741824; num=${num%?} ;; esac
+                case "$noval:$num" in
+                    0:0) ihc=0 ;;
+                    0:[1-9]*) case "$num" in *[!0-9]*) ;; *) if [ "${#num}" -le 10 ] && [ "$num" -le 2147483647 ]; then ihc=$((num * mul)); fi ;; esac ;;
+                esac
+                if [ "$ihc" -lt 0 ] || [ "$ihc" -gt 2147483647 ]; then
+                    bad="this clone's diff.interHunkContext is $shown, which is not a count the hook reads (a decimal count of lines from 0 to 2147483647, a k, m or g after it multiplying it by 1024, 1048576 or 1073741824; git log stops on no value, and on a count below 0 or past that), so the credential feed cannot frame the pushed lines' hunks as gitleaks' git mode would; set it to such a count, or unset it (git config --unset-all diff.interHunkContext), or set ROMP_NO_GITLEAKS=1 for one push; $fixed"
+                fi ;;
+            diff.renames)
+                tl_lower "$val"
+                case "$noval:$tl_low" in
+                    1:*|0:true|0:yes|0:on) ren=-M ;;
+                    0:|0:false|0:no|0:off|0:0) ren=--no-renames ;;
+                    0:copies|0:copy) ren=-C ;;
+                    0:[1-9]*)
+                        case "$tl_low" in
+                            *[!0-9]*) bad=x ;;
+                            *) if [ "${#tl_low}" -le 10 ] && [ "$tl_low" -le 2147483647 ]; then ren=-M; else bad=x; fi ;;
+                        esac ;;
+                    *) bad=x ;;
+                esac
+                [ "$bad" != x ] || bad="this clone's diff.renames is $shown, which is not a value the hook reads (true, yes, on or a count other than 0 for renames; false, no, off, 0 or an empty value for none; copies or copy; git log stops on a value it cannot read as one of those), so the credential feed cannot frame the pushed lines' hunks as gitleaks' git mode would; set it to one of those, or unset it (git config --unset-all diff.renames), or set ROMP_NO_GITLEAKS=1 for one push; $fixed" ;;
+            diff.*.algorithm)
+                bad="this clone sets $key, a diff algorithm for the paths its diff attribute names, which git log applies path by path and keeps for the paths it diffs after, in the order it walks one ref's commits, so the credential feed, which reads the whole push in one pass, cannot frame the pushed lines' hunks as gitleaks' git mode would; unset it (git config --unset-all $key), or set ROMP_NO_GITLEAKS=1 for one push; $fixed" ;;
+            *)
+                bad="the DIFF SETTINGS of this clone could not be read for the credential scan (git config exited 0 and answered an entry for $key, a key it was not asked for), so what the answer holds is unknown; $fixed" ;;
+        esac
+    done 6< "$f"
+    if [ "$marks" -ne 1 ] || [ "$last" != $'romp-pre-push.tail\nend' ]; then
+        unscanned "the DIFF SETTINGS of this clone were read short for the credential scan (git config exited 0, and its answer does not end with the one entry its command line adds, romp-pre-push.tail, the tail marker read after every value of the clone's, or holds it more than once; entries read: $n), so a setting the answer lost could frame the pushed lines' hunks otherwise; $fixed"
+        return 1
+    fi
+    if [ -n "$bad" ]; then unscanned "$bad"; return 1; fi
+    feed_opts=("--diff-algorithm=$alg" "--inter-hunk-context=$ihc" "$ren")
+    return 0
+}
+credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file> <binary paths file> <merges' last lines file> <diff-tree option>...: diff_settings' three
+    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:8}" -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none --submodule=short --full-index < "$1" \
     | LC_ALL=C tr '\000' '\001' \
     | LC_ALL=C ROMP_LIST_FILE=$1 ROMP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 ROMP_BINARY_FILE=$6 ROMP_TAIL_FILE=$7 awk "$CRED_PIECES_AWK"'
         BEGIN {
@@ -3890,7 +4135,7 @@ credential_feed() {   # <list file> <record file> <piece directory> <index file>
             choose(f); next
         }
         hdr && kind == "combined" && /^index [0-9a-f,]+\.\.[0-9a-f]+( [0-7]+)?$/ { res = $0; sub(/.*\.\./, "", res); sub(/ .*/, "", res); next }
-        hdr && /^(--- |index |old mode |new mode |mode |new file mode |deleted file mode |similarity index |rename from |rename to )/ { next }
+        hdr && /^(--- |index |old mode |new mode |mode |new file mode |deleted file mode |similarity index |rename from |rename to |copy from |copy to )/ { next }
         hdr && kind == "combined" && hp != "" && $0 == "Binary files differ" {
             if (!skip) { printf "%s\t%s\t.\n", sha, hp >> bin; nbin++ }
             next
@@ -5366,7 +5611,7 @@ scan_credentials() {
     # shellcheck disable=SC2034  # cfg_name: set by gitleaks_config, for the lines that name the config the runs read
     local rdone rpieces rbytes rpbytes rbin rtail rest piece fsha fpath fterm data pdone plisted pbig nbig pcount scanning dmade=0 dmiss dfirst d cfg_name="" cfg_forms="" gl_version=""
     local sname prule qtext qbytes qn qwant qv qp_pkcs qp_nuget qp_k8s qp_tf qp_php kind qa qb qc qd qnamed qmiss qfound qother qend qseen seen_lines="" run_rc=0
-    local -a cfg=() ix_sha ix_path pdirs
+    local -a cfg=() ix_sha ix_path pdirs feed_opts=()
     if ! credential_scan_armed; then
         [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0     # a skip asked for: silent
         # No binary. Loud rather than silent, but not a blocker: requiring an
@@ -5450,10 +5695,16 @@ scan_credentials() {
                 failed_creds=1
             fi
         fi
+        # The clone's diff settings (diff_settings), read ahead of the feed
+        # and handed to its diff-tree, so its hunks are the ones git log
+        # frames for main's hook; a setting unread, or one the hook does not
+        # pass, refuses by name, and the feed is not read.
         rbytes=""; rpbytes=""; rbin=""; rtail=""
         if [ "$nfed" -eq 0 ]; then
             rbytes=0; rpbytes=0
-        elif judged_read gate="the CREDENTIAL FEED of the push" 0 "the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk exited {rc})" -- credential_feed "$scratch/creds.list" "$scratch/creds.record" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$scratch/creds.binary" "$scratch/creds.tails"; then
+        elif ! diff_settings; then
+            failed_creds=1
+        elif judged_read gate="the CREDENTIAL FEED of the push" 0 "the CREDENTIAL FEED of the push could not be read (a stage of git diff-tree, tr and awk exited {rc})" -- credential_feed "$scratch/creds.list" "$scratch/creds.record" "$scratch/creds.d" "$scratch/creds.index" "$scratch/creds.pindex" "$scratch/creds.binary" "$scratch/creds.tails" "${feed_opts[@]}"; then
             record=""
             { IFS= read -r record || :; } < "$scratch/creds.record"
             case "$record" in
@@ -5629,7 +5880,13 @@ scan_credentials() {
             # entropy floors, so only the repository's own allowlists can drop
             # one). generic-api-key also catches the yaml probe's data key when
             # every rule runs, which is why the run enables the five alone and
-            # the check counts a probe under its own rule only.
+            # the check counts a probe under its own rule only. Each probe is a
+            # text ending in its newline, with no ~ line: it mirrors a piece of
+            # one hunk whose last line ends in a newline and whose leading
+            # bytes gitleaks does not skip by type (decision 1, the
+            # coordinator's ruling of 2026-09-26 17:20Z: the probe's texts say
+            # which framing they mirror). The copy keeps its piece's own
+            # framing; the probe tests only the rule's reach at its name.
             printf -v qv '%s%s' Rq7Zp2Wx9Kd4 Tm8Vb3Nc
             qp_pkcs="romp probe"$'\n'
             printf -v qp_nuget '<add key="Clear%sPassword" value="%s" />\n' Text "$qv"

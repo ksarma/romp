@@ -13565,3 +13565,549 @@ r12d_types_check() {   # <hook file> <work directory>: prints "mismatch: <label>
     push_main_through_hook_with_shim
     r10a_passes
 }
+
+# ── round 12d2: the clone's diff settings, the census of git's diff keys, and the stated limits of per-hunk pieces (romp-manager's ruling on decision 5, 2026-09-26 18:58Z, its (a), (d) and item 2, and the 23:46Z answer on round 12d1's questions) ──
+# Decision 5's check (agents/d5-measure-results.md in the fold's notes, finding 1) found that per-hunk pieces frame a
+# commit as gitleaks' git mode frames it, main's hook's git log -p -U0, only under diff-tree's defaults: git log is a
+# porcelain command and frames each commit's hunks under the clone's diff.algorithm and diff.interHunkContext, which
+# diff-tree does not read, so a PEM private key block beside blank lines that histogram, or an interHunkContext of 3,
+# keeps in one hunk, and diff-tree's myers splits, published at the round 12d1 head where main's hook refused it
+# through the default rule private-key. The ruling passes the clone's two values to the feed, with a census of git's
+# diff keys (the case titled "the diff keys are DERIVED" below), which found a third: diff.renames, under which git log
+# reads a moved file whole (false) or a copy by its edits (copies). diff_settings reads the three and every
+# diff.<driver>.algorithm in one git config read closed by a tail marker (its table and short cases below), passes
+# each value as --diff-algorithm, --inter-hunk-context and -M, --no-renames or -C, refuses a value it does not pass
+# by name, and refuses a driver's algorithm, which git keeps for the paths it diffs after. Then the stated limits the
+# ruling names, each witness titled OUTSIDE the closed class: a merge's first-parent anchors (item 2), and a
+# start-anchored rule's match on the first line of a piece whose leading bytes take the ~ line (the 23:46Z answer's
+# (1)), with its remedy, (?m)^, pinned; and item 6's parity (a match spanning two hunks publishes, as at main). Each
+# pin pushes for real with the identifier scan off and the real scanner armed; every value is assembled at run time.
+
+r12d2_keyblock() {   # a PEM private key block with a blank line inside it, from fixed parts
+    local i
+    printf -- '-----BEGIN RSA %s-----\n' "PRIVATE ""KEY"
+    printf 'Proc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,%s%s\n\n' 7F3A9C2E5B1D8F4A 0C6E2B9D3A7F1E5C
+    for i in 1 2 3 4 5 6; do printf 'TWlJQ1hBSUJBQUtCZ1FDN3pGd0lEQVFBQm9JR0FNT3Bxcl%dNmVkWG9Ld3B5VDRsZ1N3YVhrcE5\n' "$i"; done
+    printf -- '-----END RSA %s-----\n' "PRIVATE ""KEY"
+}
+r12d2_keysplit() {   # keys/notes.txt at its base, pushed without the hook (BASE moves), then the key block inserted beside its blank lines and one of them edited, committed (sha): myers splits the block at its blank line, histogram and an interHunkContext of 3 keep it in one hunk (decision 5's check, keysplitH and keysplitI)
+    r12d_base_file keys/notes.txt '\n# note\n\n\n\n# note\n}\n'
+    { printf '\n'; r12d2_keyblock; printf '# note\n edited\n\n\n# note\n}\n'; } > "$REPO/keys/notes.txt"
+    git -C "$REPO" add keys/notes.txt
+    r11b_commit "a key block inserted, a blank line edited"
+}
+r12d2_keymoved() {   # a key block added over two commits, its END line last, then the file moved; sha is the move
+    r12d2_keyblock | head -n 9 > "$REPO/k1.txt"
+    git -C "$REPO" add k1.txt
+    git -C "$REPO" commit -qm "the key block without its end line"
+    r12d2_keyblock | tail -n 1 >> "$REPO/k1.txt"
+    git -C "$REPO" commit -qam "its end line"
+    mkdir -p "$REPO/keys"
+    git -C "$REPO" mv k1.txt keys/k1.txt
+    r11b_commit "the file moved"
+}
+r12d2_setting_refused() {   # <the clause the refusal line carries>: the push just made was refused by that line alone, the feed unread, no credential named, the remote at its base
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: $1; the credential feed was not read, and the scan follows once the setting is fixed; the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"ADDS a credential"* ]]
+    [[ "$output" != *"$(r12d_pw)"* ]]
+    at_base
+}
+
+@test "round 12d2 (ITEM A, histogram): a PEM private key block inserted beside blank lines in keys/notes.txt, the clone's diff.algorithm histogram, which keeps the block in one hunk where diff-tree's default myers splits it at its blank line: refused naming private-key, the commit and the file, the figure main's gitleaks logs (PUBLISHED at af10f4c4b, the round 12d1 head, both scanners, where main's hook refused it; red under the mutant that drops --diff-algorithm from the feed's options)" {
+    r11a_base
+    git -C "$REPO" config diff.algorithm histogram
+    r12d2_keysplit
+    push_main_through_hook_with_shim
+    r12d_refused_as private-key keys/notes.txt
+    [[ "$output" == *"scanned ~599 bytes"* ]]
+}
+
+@test "round 12d2 (ITEM A, interHunkContext): the same block under diff.interHunkContext=3, which fuses its two hunks: refused naming private-key, the commit and the file (PUBLISHED at af10f4c4b, both scanners, where main's hook refused it; red under the mutant that drops --inter-hunk-context from the feed's options)" {
+    r11a_base
+    git -C "$REPO" config diff.interHunkContext 3
+    r12d2_keysplit
+    push_main_through_hook_with_shim
+    r12d_refused_as private-key keys/notes.txt
+}
+
+@test "round 12d2 (ITEM A, a setting from the command line): the same block pushed as git -c diff.algorithm=histogram push, a value git hands the hook and main's git log alike (GIT_CONFIG_PARAMETERS): refused naming private-key, the commit and the file (PUBLISHED at af10f4c4b, both scanners)" {
+    r11a_base
+    r12d2_keysplit
+    mkdir -p "$TEST_DIR/hooks"
+    printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$HOOK" > "$TEST_DIR/hooks/pre-push"
+    chmod 755 "$TEST_DIR/hooks/pre-push"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
+    run git -C "$REPO" -c diff.algorithm=histogram push origin main
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+    r12d_refused_as private-key keys/notes.txt
+}
+
+@test "round 12d2 (ITEM A, the control, and item 6's parity): the same block under no diff setting publishes at the fix, as at main and at af10f4c4b: git log's myers splits it at its blank line, so the match spans two hunks, which gitleaks' git mode reads apart, and one hunk to a piece reads them apart too; 0b6c76916, whose piece joined a file's hunks, refused it (the loss against that head, stated in the header's pieces paragraph)" {
+    r11a_base
+    r12d2_keysplit
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= "$sha" | grep -c '^@@')" -eq 2 ]
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d2 (ITEM A, diff.renames): a key block added over two commits, its END line last, then its file moved, under diff.renames=false, which git log reads as the moved file added whole: refused naming private-key, the move and keys/k1.txt (PUBLISHED at af10f4c4b and at 0b6c76916, both scanners, where main's hook refused it: the feed's -M read the move as no lines; found by the census below; red under the mutant that gives -M whatever diff.renames says)" {
+    r11a_base
+    git -C "$REPO" config diff.renames false
+    r12d2_keymoved
+    push_main_through_hook_with_shim
+    r12d_refused_as private-key keys/k1.txt
+}
+
+@test "round 12d2 (ITEM A, diff.renames, the control): the same key block moved under no diff setting passes at the fix, as at main and at af10f4c4b (git log's default renames read the move as no lines too, and neither of the two commits that added the block holds it whole)" {
+    r11a_base
+    r12d2_keymoved
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d2 (ITEM A, diff.renames=copies): a repository rule ^zzkey_[0-9a-f]{16}, b.env a copy of a.env whose line 15 is the key, a.env edited in the same commit, under diff.renames=copies, which git log reads as the copy's one edit: refused naming zz-key, the commit and b.env (PUBLISHED at af10f4c4b and at 0b6c76916, both scanners, where main's hook refused it: the feed read b.env as a new file, the key inside its piece; red under the mutant that gives -M in place of -C)" {
+    r11a_base
+    r11a_config "$(r12d_zz_config caret)"
+    seq 1 30 | sed 's/^/K/; s/$/=v/' > "$REPO/a.env"
+    git -C "$REPO" add a.env
+    git -C "$REPO" commit -qm "a.env"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" config diff.renames copies
+    seq 1 30 | sed 's/^/K/; s/$/=v/' | sed "15s/.*/$(r12d_zz)/" > "$REPO/b.env"
+    printf 'K31=v\n' >> "$REPO/a.env"
+    git -C "$REPO" add a.env b.env
+    r11b_commit "a copy of a.env, its line 15 a key, and a.env edited"
+    [ "$(git -C "$REPO" diff-tree -p -U0 -r -C "$sha" | grep -c '^copy from a.env$')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r12d_refused_as zz-key b.env
+}
+
+@test "round 12d2 (ITEM A, diff.renames=copies, the control): a clean copy with an edit under diff.renames=copies passes: the copy from and copy to lines diff-tree prints under -C are read as header lines, not refused as foreign (red under the mutant that drops them from the feed's header lines)" {
+    r11a_base
+    git -C "$REPO" config diff.renames copies
+    seq 1 30 | sed 's/^/line /' > "$REPO/orig.txt"
+    git -C "$REPO" add orig.txt
+    git -C "$REPO" commit -qm "orig.txt"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    seq 1 30 | sed 's/^/line /; 15s/.*/line fifteen/' > "$REPO/copy.txt"
+    printf 'line 31\n' >> "$REPO/orig.txt"
+    git -C "$REPO" add orig.txt copy.txt
+    r11b_commit "a clean copy with an edit"
+    [ "$(git -C "$REPO" diff-tree -p -U0 -r -C "$sha" | grep -c '^copy to copy.txt$')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d2 table case: the DIFF SETTINGS of this clone: a git silent on config -z --get-regexp alone (exit 0, nothing printed), through a real push of the histogram block under diff.algorithm=histogram, is refused naming the answer read short, its tail marker missing, the feed unread and no credential named, and the remote stays at its base (red by publication under the mutant that takes an answer without the marker as no setting)" {
+    r11a_base
+    git -C "$REPO" config diff.algorithm histogram
+    r12d2_keysplit
+    calls_silent_on git dcfg '[ "${1:-}" = -c ] && [ "${3:-}" = config ] && [ "${4:-}" = -z ] && [ "${5:-}" = --get-regexp ]'
+    push_main_through_hook_with_shim
+    fired dcfg "config -z --get-regexp"
+    r12d2_setting_refused "the DIFF SETTINGS of this clone were read short for the credential scan (git config exited 0, and its answer does not end with the one entry its command line adds, romp-pre-push.tail, the tail marker read after every value of the clone's, or holds it more than once; entries read: 0), so a setting the answer lost could frame the pushed lines' hunks otherwise"
+}
+
+@test "round 12d2 short case: the DIFF SETTINGS of this clone: the clone setting diff.interHunkContext twice, 0 and then 3, the value git log takes (the last), and a git whose config -z --get-regexp answer is cut to its first entry, 0 (exit 0, the second value and the marker cut), through a real push of the key block that 3 keeps in one hunk, is refused naming the answer read short, the feed unread and no credential named, and the remote stays at its base (red by publication under the mutant that takes an answer without its marker as whole: the cut answer's 0 splits the block, which git log's 3 keeps whole)" {
+    r11a_base
+    git -C "$REPO" config --add diff.interHunkContext 0
+    git -C "$REPO" config --add diff.interHunkContext 3
+    r12d2_keysplit
+    calls_short_on git dcfg '[ "${1:-}" = -c ] && [ "${3:-}" = config ] && [ "${4:-}" = -z ] && [ "${5:-}" = --get-regexp ]' less:47
+    push_main_through_hook_with_shim
+    fired_short dcfg "config -z --get-regexp"
+    grep -F "config -z --get-regexp" "$TEST_DIR/calls.dcfg" | grep -qF '[whole 71 cut 24]'        # the answer cut to its first entry, 24 bytes of 71
+    r12d2_setting_refused "the DIFF SETTINGS of this clone were read short for the credential scan (git config exited 0, and its answer does not end with the one entry its command line adds, romp-pre-push.tail, the tail marker read after every value of the clone's, or holds it more than once; entries read: 1), so a setting the answer lost could frame the pushed lines' hunks otherwise"
+}
+
+@test "round 12d2 (the DIFF SETTINGS read, a foreign entry): a git whose config answer carries an entry for a key it was not asked for ahead of the rest, through a real push of a clean file, is refused naming that key, the feed unread, and the remote stays at its base (red under the mutant that deletes that arm, where the entry is skipped and the push passes)" {
+    r11a_base
+    git_shim "$(printf 'if [ "${1:-}" = -c ] && [ "${3:-}" = config ] && [ "${4:-}" = -z ]; then echo fired >> %q; printf "user.zzsynth\\nx\\0"; exec "$real_git" "$@"; fi' "$TEST_DIR/calls.dforeign")"
+    r12d_commit_file notes/clean.txt 'nothing to see\n'
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.dforeign")" -eq 1 ]
+    r12d2_setting_refused "the DIFF SETTINGS of this clone could not be read for the credential scan (git config exited 0 and answered an entry for user.zzsynth, a key it was not asked for), so what the answer holds is unknown"
+}
+
+@test "round 12d2 (ITEM A, a value the hook does not pass): diff.algorithm=fast, and diff.algorithm set with no value, each refuse a clean push by name with the remedy, the feed unread (git log stops on both, so main's hook refused them as a scan that could not run; red under the mutant that reads an algorithm it does not know as myers)" {
+    r11a_base
+    r12d_commit_file notes/clean.txt 'nothing to see\n'
+    git -C "$REPO" config diff.algorithm fast
+    push_main_through_hook_with_shim
+    r12d2_setting_refused "this clone's diff.algorithm is set to \"fast\", which git reads as no diff algorithm (git log stops on it), so the credential feed cannot frame the pushed lines' hunks as gitleaks' git mode would; set it to myers, minimal, patience or histogram, or unset it (git config --unset-all diff.algorithm), or set ROMP_NO_GITLEAKS=1 for one push"
+    git -C "$REPO" config --unset-all diff.algorithm
+    printf '[diff]\n\talgorithm\n' >> "$REPO/.git/config"
+    push_main_through_hook_with_shim
+    r12d2_setting_refused "this clone's diff.algorithm is set with no value, which git reads as no diff algorithm (git log stops on it), so the credential feed cannot frame the pushed lines' hunks as gitleaks' git mode would; set it to myers, minimal, patience or histogram, or unset it (git config --unset-all diff.algorithm), or set ROMP_NO_GITLEAKS=1 for one push"
+}
+
+@test "round 12d2 (ITEM A, a count the hook does not pass): diff.interHunkContext=-1, which git log stops on, and 010, which git reads as octal 8 and the hook does not read, each refuse a clean push by name with the remedy, the feed unread; 3k, 3,072 lines, passes (red under the mutant that reads a count it does not parse as 0)" {
+    r11a_base
+    r12d_commit_file notes/clean.txt 'nothing to see\n'
+    local clause
+    for v in -1 010; do
+        git -C "$REPO" config --unset-all diff.interHunkContext || :
+        printf '[diff]\n\tinterHunkContext = %s\n' "$v" >> "$REPO/.git/config"          # written into the file: git config reads a value led by - as an option
+        push_main_through_hook_with_shim
+        clause="this clone's diff.interHunkContext is set to \"$v\", which is not a count the hook reads (a decimal count of lines from 0 to 2147483647, a k, m or g after it multiplying it by 1024, 1048576 or 1073741824; git log stops on no value, and on a count below 0 or past that), so the credential feed cannot frame the pushed lines' hunks as gitleaks' git mode would; set it to such a count, or unset it (git config --unset-all diff.interHunkContext), or set ROMP_NO_GITLEAKS=1 for one push"
+        r12d2_setting_refused "$clause"
+    done
+    git -C "$REPO" config --unset-all diff.interHunkContext
+    git -C "$REPO" config diff.interHunkContext 3k
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d2 (ITEM A, a rename value the hook does not pass): diff.renames=maybe, which git log stops on, refuses a clean push by name with the remedy, the feed unread; COPY and an empty value, which git reads as copies and as false, pass (red under the mutant that reads a value it does not know as true)" {
+    r11a_base
+    r12d_commit_file notes/clean.txt 'nothing to see\n'
+    git -C "$REPO" config diff.renames maybe
+    push_main_through_hook_with_shim
+    r12d2_setting_refused "this clone's diff.renames is set to \"maybe\", which is not a value the hook reads (true, yes, on or a count other than 0 for renames; false, no, off, 0 or an empty value for none; copies or copy; git log stops on a value it cannot read as one of those), so the credential feed cannot frame the pushed lines' hunks as gitleaks' git mode would; set it to one of those, or unset it (git config --unset-all diff.renames), or set ROMP_NO_GITLEAKS=1 for one push"
+    git -C "$REPO" config diff.renames COPY
+    push_main_through_hook_with_shim
+    r10a_passes
+    r12d_commit_file notes/clean2.txt 'nothing more to see\n'
+    git -C "$REPO" config diff.renames ""
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12d2 (ITEM A, a driver's algorithm): diff.zz.algorithm=histogram in the clone, for the paths a diff=zz attribute names, refuses a clean push by name with the remedy, the feed unread: git log applies a driver's algorithm path by path and keeps it for the paths it diffs after, so the feed, one pass over the push, cannot frame hunks as git log does (a disclosed false refusal when no attribute names the driver; red under the mutant that skips that arm)" {
+    r11a_base
+    r12d_commit_file notes/clean.txt 'nothing to see\n'
+    git -C "$REPO" config diff.zz.algorithm histogram
+    push_main_through_hook_with_shim
+    r12d2_setting_refused "this clone sets diff.zz.algorithm, a diff algorithm for the paths its diff attribute names, which git log applies path by path and keeps for the paths it diffs after, in the order it walks one ref's commits, so the credential feed, which reads the whole push in one pass, cannot frame the pushed lines' hunks as gitleaks' git mode would; unset it (git config --unset-all diff.zz.algorithm), or set ROMP_NO_GITLEAKS=1 for one push"
+}
+
+# The census of git's diff keys (the ruling's (a)): git lists its configuration keys itself (git help --config: 30 diff
+# keys in git 2.43.0, the box's, and 34 in git 2.55.0, CI's, which adds diff.srcPrefix and diff.dstPrefix, from 2.45,
+# and diff.trustExitCode and diff.<driver>.trustExitCode, from 2.46), and gitattributes(5) documents one more diff key
+# that listing lacks, diff.<driver>.algorithm. Keys are matched without case, as git reads them (2.45 respells
+# diff.noprefix as diff.noPrefix). Each key has a row, a key a later git lists included (an older git ignores the key,
+# so its row runs as inert there): its test value, its disposition and why, one of
+#   pass     diff_settings passes it: under the value the feed's hunks are git log's, and git log's move from its
+#            hunks under no key (so the fixture shows the value at work); pass= drops the second clause
+#   both     diff-tree reads it as git log does: the same two clauses
+#   pinned   the feed's own option fixes it: the feed's hunks do not move, and every hunk git log frames under the
+#            value is one the feed frames
+#   inert    git log's hunks do not move under it, and the feed's do not
+#   render   the feed's hunks do not move (--no-textconv), while git log reads a driver's rendering of the bytes
+#   refused  the push is refused naming the key (diff_settings)
+# The hunks compared are the added lines of each hunk, keyed by commit and path, as gitleaks' git mode takes a hunk
+# (its added lines alone); main's command is gitleaks' own, git log -p -U0 <range> --diff-merges=first-parent, with
+# --format=%H for the commit lines; the feed's is the hook's own, captured by a git on its PATH that copies what the
+# feed's diff-tree prints. The fixture holds no merge: a merge's first-parent anchors are item 2's stated limit.
+r12d2_keys() {   # the census's table: key, value, disposition, why (TAB-separated)
+    cat <<'EOF'
+diff.algorithm	histogram	pass	--diff-algorithm (diff_settings)
+diff.algorithm	patience	pass=	--diff-algorithm
+diff.algorithm	minimal	pass=	--diff-algorithm
+diff.interHunkContext	3	pass	--inter-hunk-context (diff_settings)
+diff.renames	false	pass	--no-renames (diff_settings)
+diff.renames	copies	pass	-C (diff_settings)
+diff.renames	true	pass=	-M, as when the key is unset
+diff.indentHeuristic	false	both	diff-tree reads it and slides a hunk as git log does
+diff.renameLimit	1	both	a basic key, which diff-tree reads
+diff.context	5	pinned	-U0, which main runs git log with too
+diff.suppressBlankEmpty	true	pinned	-c diff.suppressBlankEmpty=false; under -U0 git log prints no context line
+diff.ignoreSubmodules	all	pinned	--ignore-submodules=none: the feed reads a gitlink change git log drops
+diff.submodule	log	pinned	--submodule=short: a gitlink change read as its Subproject line
+diff.<driver>.binary	true	pinned	--text; a merge reads a binary path whole (merge_binary_reads)
+diff.<driver>.textconv	@W@/upper.sh	render	--no-textconv: the feed reads the pushed bytes, git log a driver's rendering of them
+diff.<driver>.algorithm	histogram	refused	diff_settings refuses it by name
+diff.<driver>.cachetextconv	true	inert	caches a textconv's output; alone it changes no line
+diff.<driver>.command	@W@/ext.sh	inert	git log runs no external driver without --ext-diff
+diff.<driver>.xfuncname	^beta	inert	a hunk header's tail, no added line
+diff.<driver>.wordRegex	.	inert	word diffs only
+diff.<driver>.trustExitCode	true	inert	an external driver's exit status, which git log runs no driver to give (listed from git 2.46)
+diff.autoRefreshIndex	false	inert	work tree diffs only
+diff.colorMoved	zebra	inert	colour, which git log prints none of into a pipe
+diff.colorMovedWS	allow-indentation-change	inert	the same
+diff.dirstat	lines	inert	--dirstat only
+diff.dstPrefix	d/	inert	the path prefixes alone (listed from git 2.45)
+diff.external	@W@/ext.sh	inert	git log runs no external diff without --ext-diff
+diff.guitool	zz	inert	difftool only
+diff.mnemonicPrefix	true	inert	the path prefixes alone
+diff.noprefix	true	inert	the path prefixes alone
+diff.orderFile	@W@/order.txt	inert	the order of a commit's paths, which frames no hunk
+diff.relative	true	inert	git log runs at the work tree's root, where no path lies outside
+diff.srcPrefix	s/	inert	the path prefixes alone (listed from git 2.45)
+diff.statGraphWidth	10	inert	--stat only
+diff.statNameWidth	10	inert	--stat only
+diff.tool	zz	inert	difftool only
+diff.trustExitCode	true	inert	an external diff's exit status, which git log runs no external diff to give (listed from git 2.46)
+diff.wordRegex	.	inert	word diffs only
+diff.wsErrorHighlight	all	inert	colour only
+EOF
+}
+r12d2_hunks() {   # <a diff stream on stdin>: one line per hunk, "<commit>\t<path>\t<its added lines, each after 0x1f, a no-newline notice as \>", sorted; a path's one-letter prefix (a/, b/, none under diff.noprefix) dropped
+    LC_ALL=C awk '
+        function flush() { if (inh) print c "\t" p "\t" h; inh = 0 }
+        length($0) == 40 && $0 !~ /[^0-9a-f]/ { flush(); c = $0; hdr = 0; next }
+        /^diff --(git|combined) / { flush(); p = ""; hdr = 1; next }
+        hdr && /^\+\+\+ / { p = substr($0, 5); sub(/\t$/, "", p); if (p ~ /^[a-z]\//) p = substr(p, 3); next }
+        /^@@/ { flush(); hdr = 0; if (p != "" && p != "/dev/null") { inh = 1; h = "" } next }
+        inh && /^\+/ { h = h "\037" substr($0, 2); next }
+        inh && /^\\ / { h = h "\037\\"; next }
+        END { flush() }' | LC_ALL=C sort
+}
+r12d2_census_fixture() {   # the census's history: a base on the remote (BASE), then two commits each key has something to act on (a histogram shape, two edits three lines apart, a slider, a rename and a copy with edits, two renames to new basenames past a limit of 1, a driver's file, a gitlink change, a line with no final newline); the scripts and files the table's values name, under $TEST_DIR/census
+    local W=$TEST_DIR/census i
+    mkdir -p "$W/shim" "$REPO/conf" "$REPO/src" "$REPO/keys" "$REPO/old" "$REPO/ren" "$REPO/drv" "$REPO/sub"     # sub: the gitlink's path, empty, so git add -A keeps its entry
+    printf '#!/bin/sh\ntr a-z A-Z < "$1"\n' > "$W/upper.sh"
+    printf '#!/bin/sh\necho EXTERNAL "$@"\n' > "$W/ext.sh"
+    printf '#!/bin/sh\nexit 1\n' > "$W/no-scanner"
+    chmod 755 "$W/upper.sh" "$W/ext.sh" "$W/no-scanner"
+    printf '%s\n' notes/nonl.txt src/copy.txt src/orig.txt src/nums.txt drv/file.drv conf/app.conf keys/slide.txt > "$W/order.txt"
+    printf '#!/usr/bin/env bash\nif [[ " $* " == *" --stdin "* ]] && [[ " $* " == *" --text "* ]]; then %q "$@" | tee -a %q; exit "${PIPESTATUS[0]}"; fi\nexec %q "$@"\n' "$(type -P git)" "$W/feed.raw" "$(type -P git)" > "$W/shim/git"
+    chmod 755 "$W/shim/git"
+    add_remote
+    printf '%s\n' 'a {' '}' 'x' 'a {' '}' > "$REPO/conf/app.conf"
+    seq 1 20 > "$REPO/src/nums.txt"
+    printf '\nBEGIN\nK1\nEND\n' > "$REPO/keys/slide.txt"
+    for i in $(seq 1 30); do printf 'moved line %s\n' "$i"; done > "$REPO/old/moved.txt"
+    for i in $(seq 1 30); do printf 'orig line %s\n' "$i"; done > "$REPO/src/orig.txt"
+    for i in $(seq 1 30); do printf 'first rename line %s\n' "$i"; done > "$REPO/ren/r1.txt"
+    for i in $(seq 1 30); do printf 'second rename line %s\n' "$i"; done > "$REPO/ren/r2.txt"
+    printf 'alpha\nbeta\ngamma\n' > "$REPO/drv/file.drv"
+    git -C "$REPO" add -A
+    git -C "$REPO" update-index --add --cacheinfo "160000,$(printf '1%.0s' $(seq 1 40)),sub"
+    git -C "$REPO" commit -qm "the census base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf '*.drv diff=zz\n' > "$REPO/.git/info/attributes"
+    printf '%s\n' 'a {' 'x' 'x' 'x' 'x' '  z' 'a {' '  z' '}' 'x' 'the key line' '}' > "$REPO/conf/app.conf"
+    seq 1 20 | sed '3s/.*/three/; 7s/.*/seven/' > "$REPO/src/nums.txt"
+    printf '\nBEGIN\nK2\nEND\n\nBEGIN\nK1\nEND\n' > "$REPO/keys/slide.txt"
+    mkdir -p "$REPO/new" "$REPO/ren2" "$REPO/notes"
+    git -C "$REPO" mv old/moved.txt new/moved.txt
+    sed -i '10s/.*/moved line ten/' "$REPO/new/moved.txt"
+    sed '15s/.*/orig line fifteen/' "$REPO/src/orig.txt" > "$REPO/src/copy.txt"
+    printf 'orig line 31\n' >> "$REPO/src/orig.txt"
+    git -C "$REPO" mv ren/r1.txt ren2/q1.txt                       # new basenames: git pairs a moved file with one of its own basename past any rename limit
+    git -C "$REPO" mv ren/r2.txt ren2/q2.txt
+    sed -i '5s/.*/first rename line five/' "$REPO/ren2/q1.txt"
+    sed -i '5s/.*/second rename line five/' "$REPO/ren2/q2.txt"
+    printf 'alpha\nbeta2\ngamma\n' > "$REPO/drv/file.drv"
+    printf 'a\nb' > "$REPO/notes/nonl.txt"
+    git -C "$REPO" add -A
+    git -C "$REPO" update-index --add --cacheinfo "160000,$(printf '2%.0s' $(seq 1 40)),sub"
+    git -C "$REPO" commit -qm "the census edits"
+    sed -i '12s/.*/twelve/' "$REPO/src/nums.txt"
+    git -C "$REPO" commit -qam "a second commit"
+    unset ROMP_NO_GITLEAKS
+}
+r12d2_census_run() {   # <hook> <key, or nothing> <value>: the key set in the clone, the hook run once with run_hook's ref line over BASE, the feed's stream captured, main's git log read under the same key, the key unset; writes feed, log and out under $TEST_DIR/census
+    local hook=$1 k=$2 v=$3 W=$TEST_DIR/census
+    [ -z "$k" ] || git -C "$REPO" config "$k" "$v"
+    : > "$W/feed.raw"
+    ( cd "$REPO" && PATH="$W/shim:$PATH" ROMP_GITLEAKS="$W/no-scanner" ROMP_PRIVATE_STRINGS="$W/no-denylist" bash "$hook" origin git@example.invalid:x/y.git <<< "refs/heads/main $(git rev-parse HEAD) refs/heads/main $BASE" ) > "$W/out" 2>&1 || :
+    r12d2_hunks < "$W/feed.raw" > "$W/feed"
+    git -C "$REPO" log -p -U0 --format=%H HEAD --not --remotes "$BASE" --diff-merges=first-parent 2> /dev/null | r12d2_hunks > "$W/log"
+    [ -z "$k" ] || git -C "$REPO" config --unset-all "$k"
+}
+r12d2_census() {   # <hook> <table> [<one key>]: prints the first disagreement between the table and git's own listing or the executions, and returns 1; returns 0 when they agree (the fixture built first, r12d2_census_fixture)
+    local hook=$1 table=$2 only=${3:-} W=$TEST_DIR/census key val disp why k v gv gmin
+    if [ -z "$only" ]; then
+        git help --config | grep -i '^diff\.' | LC_ALL=C sort -u > "$W/listed"
+        cut -f 1 <<< "$table" | LC_ALL=C sort -u > "$W/rows"
+        [ -s "$W/listed" ] || { echo "git help --config lists no diff key"; return 1; }
+        while IFS= read -r k; do grep -qixF -- "$k" "$W/rows" || { echo "git help --config lists $k, which the table has no row for"; return 1; }; done < "$W/listed"
+        gv=$(git version); gv=${gv#git version }; gmin=${gv#2.}; gmin=${gmin%%[!0-9]*}
+        case "$gv" in 2.*) ;; *) echo "git version $gv is not a git 2"; return 1 ;; esac
+        while IFS= read -r k; do
+            grep -qixF -- "$k" "$W/listed" && continue
+            case "$k" in
+                'diff.<driver>.algorithm') continue ;;                                      # gitattributes(5)'s, which the listing lacks
+                diff.dstPrefix|diff.srcPrefix) [ "$gmin" -lt 45 ] && continue ;;            # listed from git 2.45: an older git ignores the key, so its row runs as inert
+                diff.trustExitCode|'diff.<driver>.trustExitCode') [ "$gmin" -lt 46 ] && continue ;;   # listed from git 2.46, likewise
+            esac
+            echo "the table's row for $k names a key git help --config does not list"; return 1
+        done < "$W/rows"
+    fi
+    r12d2_census_run "$hook" "" ""
+    [ -s "$W/log" ] || { echo "git log framed no hunk over the fixture"; return 1; }
+    cmp -s "$W/feed" "$W/log" || { echo "under no diff key the feed's hunks are not git log's"; return 1; }
+    cp "$W/feed" "$W/feed.none"; cp "$W/log" "$W/log.none"
+    : > "$W/done"
+    while IFS=$'\t' read -r -u 7 key val disp why; do
+        [ -z "$only" ] || [ "$key" = "$only" ] || continue
+        k=${key/<driver>/zz}; v=${val//@W@/$W}
+        r12d2_census_run "$hook" "$k" "$v"
+        printf '%s=%s\n' "$k" "$val" >> "$W/done"
+        case "$disp" in
+            pass|both|pass=)
+                cmp -s "$W/feed" "$W/log" || { echo "under $k=$val the feed's hunks are not git log's"; return 1; }
+                [ "$disp" = pass= ] || ! cmp -s "$W/log" "$W/log.none" || { echo "under $k=$val git log's hunks do not move over the fixture, so its row shows nothing"; return 1; } ;;
+            pinned)
+                cmp -s "$W/feed" "$W/feed.none" || { echo "under $k=$val the feed's hunks move, and its row says the feed pins it"; return 1; }
+                [ -z "$(LC_ALL=C comm -23 "$W/log" "$W/feed")" ] || { echo "under $k=$val git log frames a hunk the feed does not"; return 1; } ;;
+            inert)
+                cmp -s "$W/log" "$W/log.none" || { echo "under $k=$val git log's hunks move, and its row says inert"; return 1; }
+                cmp -s "$W/feed" "$W/feed.none" || { echo "under $k=$val the feed's hunks move, and its row says inert"; return 1; } ;;
+            render)
+                cmp -s "$W/feed" "$W/feed.none" || { echo "under $k=$val the feed's hunks move, and its row says the feed reads the pushed bytes"; return 1; }
+                ! cmp -s "$W/log" "$W/log.none" || { echo "under $k=$val git log's hunks do not move, so its row shows no rendering"; return 1; } ;;
+            refused)
+                grep -qF -- "romp pre-push: this clone sets $k, " "$W/out" || { echo "under $k=$val the hook does not refuse naming the key"; return 1; } ;;
+            *) echo "the row for $key carries the disposition $disp, no known kind"; return 1 ;;
+        esac
+    done 7<<< "$table"
+    return 0
+}
+
+@test "round 12d2 (ITEM A, the census): the diff keys are DERIVED: every diff key the running git lists (git help --config; git 2.43.0 and 2.55.0 executed) has a row, with gitattributes(5)'s diff.<driver>.algorithm, which that listing lacks, and no row names another key but the four a later git lists; under each key's value, by execution over a fixture each key has something to act on, the feed's hunks are git log's where the hook passes the key or diff-tree reads it, do not move where the feed's own option pins it or the key is inert (git log's not moving either), and the push is refused where the hook refuses it; and the census reds over a row calling diff.algorithm inert, a hook copy whose feed drops --diff-algorithm, and a table missing a listed key" {
+    r12d2_census_fixture
+    run r12d2_census "$HOOK" "$(r12d2_keys)"
+    [ "$output" = "" ]
+    [ "$status" -eq 0 ]
+    [ "$(wc -l < "$TEST_DIR/census/done")" -eq "$(r12d2_keys | wc -l)" ]        # every row executed, none skipped (and the listing check asks a row of each listed key)
+    # a key that moves git log's hunks, called inert
+    run r12d2_census "$HOOK" "$(sed 's/^diff\.algorithm\thistogram\tpass\t/diff.algorithm\thistogram\tinert\t/' <<< "$(r12d2_keys)")" diff.algorithm
+    [ "$status" -ne 0 ]
+    [ "$output" = "under diff.algorithm=histogram git log's hunks move, and its row says inert" ]
+    # the hook's pass removed: its feed reads every commit under myers
+    [ "$(grep -c 'feed_opts=("--diff-algorithm=$alg" ' "$HOOK")" -eq 1 ]
+    sed 's/feed_opts=("--diff-algorithm=$alg" /feed_opts=(/' "$HOOK" > "$TEST_DIR/hook-noalg"
+    run cmp -s "$HOOK" "$TEST_DIR/hook-noalg"
+    [ "$status" -ne 0 ]
+    run r12d2_census "$TEST_DIR/hook-noalg" "$(r12d2_keys)" diff.algorithm
+    [ "$status" -ne 0 ]
+    [ "$output" = "under diff.algorithm=histogram the feed's hunks are not git log's" ]
+    # a listed key the table lacks
+    run r12d2_census "$HOOK" "$(grep -v '^diff\.wsErrorHighlight' <<< "$(r12d2_keys)")"
+    [ "$status" -ne 0 ]
+    [ "$output" = "git help --config lists diff.wsErrorHighlight, which the table has no row for" ]
+}
+
+r12d2_fp_merge() {   # <zz|nuget|m2>: decision 5's check's first-parent witnesses (fpmerge, fpnuget, fpm2): a base on the remote, a side commit adding the credential beside another edit, main making that other edit alone, and a merge taking the side's version, so the credential is a line of the merge's first-parent hunk (its first line for zz and nuget, its only line for m2) and not the first or last line of the side commit's hunk; sha and merge are the merge
+    local c
+    case "$1" in
+        zz)
+            r12d_base_file config/app.env 'K1=v\nK2=v\nK3=v\nK4=v\nK5=v\nK6=v\n'
+            git -C "$REPO" checkout -q -b side
+            printf 'K1=v\nK2=v\nK3=v\nK4=side\n%s\nK5=v\nK6=v\n' "$(r12d_zz)" > "$REPO/config/app.env"
+            git -C "$REPO" commit -qam "side: K4 changed, a key added after it"
+            git -C "$REPO" checkout -q main
+            sed -i 's/^K4=v$/K4=side/' "$REPO/config/app.env"
+            git -C "$REPO" commit -qam "main: the same K4 change" ;;
+        nuget|m2)
+            r12d_base_file deploy/prod.nuget.config '<configuration>\n<feed name="a" />\n<feed name="b" />\n</configuration>\n'
+            c=$(r12d_cred)
+            git -C "$REPO" checkout -q -b side
+            if [ "$1" = nuget ]; then
+                printf '<configuration>\n<feed name="a2" />\n%s\n<feed name="b" />\n</configuration>\n' "$c" > "$REPO/deploy/prod.nuget.config"
+            else
+                printf '<configuration>\n%s\n<feed name="a2" />\n<feed name="b" />\n</configuration>\n' "$c" > "$REPO/deploy/prod.nuget.config"
+            fi
+            git -C "$REPO" commit -qam "side: feed a renamed, a password added beside it"
+            git -C "$REPO" checkout -q main
+            sed -i 's|^<feed name="a" />$|<feed name="a2" />|' "$REPO/deploy/prod.nuget.config"
+            git -C "$REPO" commit -qam "main: the same rename" ;;
+    esac
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1 || :
+    git -C "$REPO" checkout -q side -- .
+    r11b_commit "the merge, the side's version taken"
+    merge=$sha
+    is_merge "$merge"
+}
+r12d2_published() {   # the push just made passed: status 0, no romp line, the remote holding main's tip (r10a_passes), and the witness's value in no output line
+    r10a_passes
+    [[ "$output" != *"$(r12d_pw)"* ]]
+    [[ "$output" != *"$(r12d_zz)"* ]]
+}
+
+@test "round 12d2 (item 2, OUTSIDE the closed class, the stated limit for a merge's first-parent anchors): fpmerge: a repository rule ^zzkey_[0-9a-f]{16}, its key the second added line of a side commit's hunk and the first line of the merge's first-parent hunk, main having made the side's other edit: PUBLISHES at the fix, as at af10f4c4b and at 0b6c76916, where main's hook, which reads a merge by its first-parent diff, refused it (both scanners); the feed reads a merge by the lines in none of its parents and the key by its side commit's hunk, and the hook cannot probe a custom rule's value" {
+    r11a_base
+    r11a_config "$(r12d_zz_config caret)"
+    r12d2_fp_merge zz
+    [ "$(git -C "$REPO" diff -U0 "$merge^1" "$merge" | grep -A1 '^@@' | sed -n 2p)" = "+$(r12d_zz)" ]
+    push_main_through_hook_with_shim
+    r12d2_published
+}
+
+@test "round 12d2 (item 2, OUTSIDE the closed class, the stated limit for a merge's first-parent anchors): fpnuget: nuget-config-password redefined with regex ^<add key=..., so the limit reaches one of the five, the password the second added line of the side commit's hunk and the first of the merge's first-parent hunk: PUBLISHES at the fix, as at af10f4c4b and at 0b6c76916, where main's hook refused it (both scanners)" {
+    r11a_base
+    r11a_config "$(r12d_nuget_config caret)"
+    r12d2_fp_merge nuget
+    [ "$(git -C "$REPO" diff -U0 "$merge^1" "$merge" | grep -A1 '^@@' | sed -n 2p)" = "+$(r12d_cred)" ]
+    push_main_through_hook_with_shim
+    r12d2_published
+}
+
+@test "round 12d2 (item 2, OUTSIDE the closed class, the stated limit for a merge's first-parent anchors): fpm2: nuget-config-password redefined with M2's regex <add key=...\\s*/>\\s*\$, the password the first of two added lines in the side commit's hunk and the only line of the merge's first-parent hunk: PUBLISHES at the fix, as at af10f4c4b and at 0b6c76916, where main's hook refused it (both scanners)" {
+    r11a_base
+    r11a_config "$(r12d_nuget_config m2)"
+    r12d2_fp_merge m2
+    [ "$(git -C "$REPO" diff -U0 "$merge^1" "$merge" | grep -c '^+[^+]')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r12d2_published
+}
+
+r12d2_dot_config() {   # <nuget|zz|zzm>: a start-anchored rule under useDefault whose anchor reaches past a leading signature: nuget-config-password as ^.*<add key=... (TildeMZ), a repository rule ^.*zzkey_ (TildeZZ), and that rule written (?m)^.*zzkey_, the remedy the 23:46Z answer names
+    local key
+    case "$1" in
+        nuget)
+            key=$(printf '<add key="Clear%sPassword" value="([^"]+)"' Text)
+            printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "nuget-config-password"\nregex = %s\nsecretGroup = 1\n' "'''^.*$key'''" ;;
+        zz) printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "zz-key"\nregex = %s\nkeywords = ["zzkey_"]\n' "'''^.*zzkey_[0-9a-f]{16}'''" ;;
+        zzm) printf '[extend]\nuseDefault = true\n\n[[rules]]\nid = "zz-key"\nregex = %s\nkeywords = ["zzkey_"]\n' "'''(?m)^.*zzkey_[0-9a-f]{16}'''" ;;
+    esac
+}
+
+@test "round 12d2 (ITEM R, OUTSIDE the closed class, the stated limit for a signature-led first line): TildeMZ: nuget-config-password redefined as ^.*<add key=..., the first line of deploy/prod.nuget.config led by MZ, a signature gitleaks' type check skips, so its piece begins with the ~ line and the anchor meets that line: PUBLISHES at the fix, as at af10f4c4b and at 0b6c76916, where main's hook refused it (both scanners)" {
+    r11a_base
+    r11a_config "$(r12d2_dot_config nuget)"
+    r12d_commit_file deploy/prod.nuget.config 'MZ %s\n<!-- prod -->\n' "$(r12d_cred)"
+    push_main_through_hook_with_shim
+    r12d2_published
+}
+
+@test "round 12d2 (ITEM R, OUTSIDE the closed class, the stated limit for a signature-led first line): TildeZZ: a repository rule ^.*zzkey_[0-9a-f]{16}, the first line of config/app.env led by MZ=: PUBLISHES at the fix, as at af10f4c4b and at 0b6c76916, where main's hook refused it (both scanners)" {
+    r11a_base
+    r11a_config "$(r12d2_dot_config zz)"
+    r12d_commit_file config/app.env 'MZ=%s\nMODE=prod\n' "$(r12d_zz)"
+    push_main_through_hook_with_shim
+    r12d2_published
+}
+
+@test "round 12d2 (ITEM R, the limit's remedy): the TildeZZ push with its rule written (?m)^.*zzkey_[0-9a-f]{16}, which matches after the ~ line's newline: refused naming zz-key, the commit and config/app.env, at the fix as at main (both scanners)" {
+    r11a_base
+    r11a_config "$(r12d2_dot_config zzm)"
+    r12d_commit_file config/app.env 'MZ=%s\nMODE=prod\n' "$(r12d_zz)"
+    push_main_through_hook_with_shim
+    r12d_refused_as zz-key config/app.env
+}
+
+@test "round 12d2 (ITEM R, no default rule reached): the one start anchor in gitleaks 8.28.0's and 8.30.1's default configs, azure-ad-client-secret's, a ^ in an alternation with \\s, takes the ~ line's newline as \\s: its secret opening the MZ-led first line of config/app.env is refused naming the rule, the commit and the file, at the fix as at main and at 0b6c76916 (both scanners)" {
+    r11a_base
+    r12d_commit_file config/app.env '%s\nMODE=prod\n' "$(printf 'MZa8Q~%s%s' Xq3Vt7Lm9Rw2Kp5 Ns8Dj4Hf6Gb1Cz0Ye)"
+    push_main_through_hook_with_shim
+    r12d_refused_as azure-ad-client-secret config/app.env
+    [[ "$output" != *"Xq3Vt7Lm9Rw2Kp5"* ]]
+}
+
+@test "round 12d2 (ITEM D, the offset class, a disclosed false refusal): a clean new file whose first line is led by MZ, so its piece takes the ~ line, and whose byte 255 begins ustar, which that line's two bytes move to byte 257, where the type check reads tar, is refused on the byte figure, loudly, never published, where main's hook passes it; the same file with ustar at byte 257, and one led by no signature with ustar at byte 257 or DICM at byte 128, pass (both scanners)" {
+    r11a_base
+    { printf 'MZ first line\n'; head -c 241 /dev/zero | tr '\0' q; printf 'ustar tail\nb\n'; } > "$REPO/data.txt"
+    [ "$(head -c 260 "$REPO/data.txt" | tail -c 5)" = ustar ]
+    git -C "$REPO" add data.txt
+    r11b_commit "an MZ-led text with ustar at byte 255"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the CREDENTIAL scan read 0 of the 270 bytes of added lines it was fed; the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"ADDS a credential"* ]]
+    at_base
+    { printf 'MZ first line\n'; head -c 243 /dev/zero | tr '\0' q; printf 'ustar tail\nb\n'; } > "$REPO/data.txt"
+    { printf 'hello\n'; head -c 251 /dev/zero | tr '\0' q; printf 'ustar tail\nb\n'; } > "$REPO/data2.txt"
+    { printf 'hello\n'; head -c 122 /dev/zero | tr '\0' q; printf 'DICM tail\nb\n'; } > "$REPO/data3.txt"
+    git -C "$REPO" add data.txt data2.txt data3.txt
+    git -C "$REPO" commit -q --amend -m "ustar at byte 257 behind MZ, and lone offset signatures"
+    push_main_through_hook_with_shim
+    r10a_passes
+}
