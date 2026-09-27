@@ -241,8 +241,10 @@ name `global` (as the target of an assignment, an augmented assignment, a loop,
 a comprehension, a with or a walrus, or by an import, a def or class statement
 or an except clause) or a module-level augmented assignment), through a local
 whose every binding is read (a walrus in a nested def's, class's or lambda's
-header is a binding it does not read) and through a dict literal's values; the
-part before any `;`, stripped and lower-cased, is compared with the types a
+header is a binding it does not read) and through a dict literal's values (a
+call or a Content-Type write inside a lambda's body is refused before its type
+is read, below); the part before any `;`, stripped and lower-cased, is compared
+with the types a
 browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and
 application/xhtml+xml among them; and text/javascript under each name a browser
@@ -258,10 +260,10 @@ statements; isinstance, str, len, and getattr of self with a string-constant
 name and a None default, where neither the definition nor the module binds the
 name, nothing rebinds it (no function binds it under a `global` declaration, no
 module-level statement writes it, and the file does none of the writes listed
-below that rebind every builtin) and the module holds no star import; the
-one rebinding of the page parameter to itself encoded, its one argument the
-string constant `"utf-8"` (`body = body.encode("utf-8") if isinstance(body, str)
-else body`); a loop over a parameter's items (`for k, v in (headers or
+below that rebind every builtin) and the module holds no star import; the one
+rebinding of the page parameter to itself or to itself encoded by
+`.encode("utf-8")`, alone or as the branches of an `isinstance(<page>, str)`
+test (`body = body.encode("utf-8") if isinstance(body, str) else body`); a loop over a parameter's items (`for k, v in (headers or
 {}).items():`) and an if on a parameter or on that getattr, each into header
 calls; header values built from string constants holding no CR or LF,
 parameters, the loop's targets, attributes read on self, str, len and a `%`
@@ -305,10 +307,10 @@ reached by a tuple or list unpacking, an inline walrus,
 argument) is outside the list and not seen,
 and a module
 name or a builtin so rewritten is read as the file's text binds it. A `_send`
-definition in a class that a function
-defines, and a page function that a function encloses,
-fail the run by name: the census does not read the enclosing function's scope,
-so it would take a name that function binds (a builtin or a module name it
+definition in a class that a function defines, a page function that a function
+encloses, and a `_send` call or a Content-Type write inside a lambda's body fail
+the run by name: the census does not read the enclosing function's or lambda's
+scope, so it would take a name that scope binds (a builtin or a module name it
 shadows) for the module's. The page
 function of each script-running route is followed to the text it returns or
 inlines, and a
@@ -336,22 +338,70 @@ BoolOp's operands, a method call's receiver and a subscript's container when
 they name a module constant (a name one plain single-name assignment binds as a
 top-level statement and nothing else binds at module level, in a module with no
 star import that writes no name of its module namespace through a computed name
-and may not rewrite it at run time, as listed below) or a local, the
-receiver of `.encode` or `.format_map` whatever it is, a class attribute the
-class body binds, a loop, unpacking or with target from its source, and a local
+and may not rewrite it at run time, as listed below) or a local, the receiver of
+`.encode` or `.format_map` whatever it is (but the name str, bytes or bytearray
+before `.format_map`, refused below), a loop, unpacking or with
+target from its source, and a local
 container's appended or stored values; it passes over a base whose own text it
 does not read (in a module that holds no star import, a top-level import
-statement that is its name's one module-level binding and is not rebound, or a
-builtin that no module-level binding shadows and that is not rebound, a call of
-super() excepted, whose methods are a base class's; a parameter, an except name,
+statement that is its name's one module-level binding and is not rebound, or one
+of the seven builtins a page may name, each for what its result is (str, its
+argument's text or a value's printed form, a call of it with more than one
+positional argument, a starred argument or a keyword other than `object`, any of
+which may be an encoding or an errors argument that decodes its first, refused
+by name, an honest decode of bytes failing closed with it; int and float, a
+number's digits; dict, a mapping
+of its arguments' keys and values; max, one of its arguments, or, handed one
+iterable, an element of it; getattr, an attribute of its first argument; and
+chr, the character a code point names: getattr and chr give text their arguments
+do not hold, and max over one iterable returns an element its argument holds,
+whose join with the text beside the call the census does not compute, so each
+falls under the call limit below, getattr and chr as its witnesses) that no
+module-level binding shadows and that is not rebound, any
+other builtin refused by name, and a call of super() refused by name as well,
+its methods being a base class's (the names the import system
+binds in every module, `__doc__`, `__name__`, `__package__`, `__spec__` and
+`__loader__`, are no builtins here: a page that reads one the file does not bind
+is refused by name); a parameter, an except name,
 or a name the function binds from one of those),
-reading as text the arguments of a call of such a base or of a method on one
-(`dict(X).get(k)` and `json.loads(json.dumps(X))[0]` read X), and over a bare
-module name that is such an import or such a builtin, or, in such a module, a
+reading as text the arguments a call of such a base or of a method on one is handed, never
+the text it computes from them: text a call computes from its arguments is not
+read, a stated limit (`dict(X).get(k)` and `json.loads(json.dumps(X))[0]` read
+X; the limit's witnesses are `chr(n)`, whose character is not n's text,
+`getattr(o, name)`, whose attribute is not its arguments' text, and a decoder,
+`base64.b64decode(X).decode()` or zlib or gzip over an embedded bundle
+(`zlib.decompress(base64.b64decode(X)).decode()`), each read only as its
+arguments' own text; an encoded asset kept ASCII and decoded where the page is
+built is such a shape, and can be honest; max handed one iterable, which returns
+an element of it, is such a call too: `max("af")` gives the character f), and over a bare module name that is such an import or one of the seven builtins a page may name, or, in such a module, a
 top-level def or class statement that is its name's one module-level binding and
 is not rebound. Text such a base holds is not read, as with code behind a name
-on self: a constant that a sibling module defines and the page imports, or an
-attribute set on self or another parameter before the call. A name is rebound
+on self (a method called on self): a constant that a sibling module defines and
+the page imports, an attribute set before the call on a parameter other than
+self and other than a classmethod's first parameter, and an attribute of a class
+the pass reaches as a value without resolving it as the class (among them a
+class passed to a parameter or given as its default, a loop, comprehension or
+unpacking target bound to one, an if-expression over classes standing as the
+attribute's base, and a subscript of a container of classes); an attribute read
+on self (`self.X` as a
+value, a receiver or a container, `self.X.get(k)`, `self.X[0]` and
+`self.__doc__` among them) is refused by name, whatever sets it, and so is an
+attribute read on a class, as a value, a receiver or a container, through the
+class's own name (a name a class statement binds, in the innermost function
+scope around the read that binds the name or, where none does, at the top level
+of the file, whatever else binds it at module level) or through a name the
+census resolves to such a class (a classmethod's first parameter in that method,
+`cls.X`, or a local or a module constant bound to one, `h = Handler` and then
+`h.X`), or through a method call on a name whose value holds such a class (a
+local or a module constant bound to a list, tuple, set or dict literal with one
+among its elements, keys or values, `_REG.get(k).X`, or a local or a module
+constant bound to such a call), and so is a text method called on such a name
+(`Handler.format(...)`) and a replacement field in a `.format` or `.format_map`
+that reaches an attribute of its argument (below): no class attribute is read as
+page text. A call of a name the census resolves to such a class, the class's own
+name among them, is refused by name (a classmethod's first parameter, `cls()`,
+as a call), so no attribute of the instance it makes is read either. A name is
+rebound
 when a function binds it under `global` or a statement at module level writes
 it, in one of the forms listed above for a route's type; every name is rebound,
 as under a star import, in a file that writes its module namespace through a
@@ -376,7 +426,11 @@ write through the name by one arm; an attribute named `__globals__`,
 `__builtins__`, f_globals, f_builtins or f_locals, on any receiver; a listed
 callable (locals, exec, eval, compile, `__import__`, import_module or _getframe)
 reached in the first three ways; or one of those callables or attributes,
-globals, vars, setattr, delattr or `__dict__` reached in the fourth. The four
+globals, vars, setattr, delattr or `__dict__` reached in the fourth; or, in a
+position of the fourth, a key that is a join the census does not fold, whatever
+it spells: a `.join`, `.format`, `.format_map` or `.replace` called on the name
+str, bytes or bytearray (`str.join("", [...])`), or a `%`, `.format` or
+`.format_map` on a string constant that is not expanded (below). The four
 ways, the whole of the reach the census reads for each of these names
 (`__dict__` in the fourth alone, beside the attribute the computed-name forms
 above name): by its own name, in any context; by a name
@@ -391,8 +445,8 @@ name itself; as an attribute of that name on a builtins receiver
 `import_module("builtins")`, a call of either reached in these ways), or on any
 receiver for exec, eval, locals, `__import__`,
 import_module and _getframe; or by its name spelled as a string, or as a join of
-string constants that reads as one, where a run-time lookup by name takes it
-(the second argument of getattr, setattr, delattr or hasattr, called by its
+string constants that reads as one, of the kinds whose text the census reads
+whole (listed below), where a run-time lookup by name takes it (the second argument of getattr, setattr, delattr or hasattr, called by its
 name, by a name an import binds to it or as an attribute of a builtins receiver;
 any argument of operator.attrgetter (any dotted part of the name) or
 operator.methodcaller, called as `.attrgetter` or `.methodcaller` on a name that
@@ -403,10 +457,18 @@ on a namespace
 expression: a subscript's slice, or the first argument of `.get`, `.pop`,
 `.setdefault` or a `__getitem__`-family call, whose receiver is a `__dict__`,
 `__builtins__` or a call of vars, globals or locals reached in the first three
-ways). Every builtin is rebound in such a file and in a
-file that names `__builtins__`, imports the builtins module or writes a module
-spelled "builtins" (an attribute store, a setattr or delattr, or a write through
-its `__dict__` or vars()). A function's `X = []` of a local of the same name, or
+ways). Every builtin is rebound in such a file and in a file that names
+`__builtins__` as a name, imports the builtins module (`import builtins`, a
+submodule or an alias among them; `from builtins import ...` at any level; or
+`from X import builtins` or `from X import __builtins__`, aliased or not, for
+any module X at any level) or writes a module that may be the builtins module:
+an attribute store or delete on it, a setattr or delattr on it, or its
+`__dict__` or vars() used any way but for a `.get` read, where a module that may
+be the builtins module is `__builtins__`; `sys.modules[k]`, `sys.modules.get(k)`
+or a call of `__import__` or import_module as above, whose k is the string
+"builtins" or no string constant; a name that an assignment, an annotated
+assignment or a walrus binds to one of these; or an if-expression or a boolean
+operation with one of these among its operands. A function's `X = []` of a local of the same name, or
 its `X.append(...)`, does not rebind it. It follows a call whose callee
 is a module function (a top-level def statement that is its name's one
 module-level binding, not rebound, in a module with no star import, and bound by
@@ -416,22 +478,69 @@ applied), a text method or a file read, or any other method (through its
 receiver, as above, so `_K.__call__(t)` on a module constant `_K` that holds a
 lambda reads `_K` and the lambda's body, whose parameters are value slots), and
 it reads every call's arguments; a call to any other callee passes when the
-callee is such an import, such a builtin or a parameter. It reads both operands
-of a `/`, a path join, where `__file__` is a value slot when no statement of the
-file binds it, in any scope and by any form, the file neither writes a name of
-its module namespace through a computed name nor may rewrite it at run time and
-the module holds no star import, and is refused by name otherwise. It reads a
+callee is such an import, one of the seven builtins a page may name or a
+parameter other than a classmethod's first parameter, and is refused by name for
+any other builtin, for str handed more than one positional argument, a starred
+argument or a keyword other than `object`, and, as a call, for a classmethod's
+first parameter, its class. It reads both operands
+of a `/`, a path join. `__file__`, wherever a page reads it (as a bare name, the
+base of a receiver, a container or an attribute, or a callee), is refused by
+name in a file where a statement binds it, in any scope and by any form, before
+any scope's or module-level binding of it is read, and there a file read whose
+path the census builds from `Path(__file__)` or `open(__file__)` is refused as a
+file the walk does not scan; where no statement binds it, it is a value slot as
+a bare name (the argument of `Path(__file__)` among them) when the file neither
+writes a name of its module namespace through a computed name nor may rewrite it
+at run time and the module holds no star import, and is refused by name in every
+other case, with that file's reason in a file that writes its namespace through
+a computed name or may rewrite it at run time and with no reason in a module
+that holds a star import. It reads a
 lambda's body, its
-parameters value slots, and its defaults where the lambda stands. A None, bool
-or int constant, the empty bytes constant and a `*` or `<<` over int constants
-are value slots with no text. The run fails by name (SERVED) on
+parameters value slots, and its defaults where the lambda stands. It reads a
+subscript's container only under a constant index: a slice of any shape, or an
+index that is no constant (a name, a call, a parameter, a tuple, or a negative
+number, which parses as a unary expression), over a container whose text it
+reads (a literal, an f-string, an operator or an if-expression, a module
+constant or a local, an attribute, a subscript or a method call on one of those,
+or a boolean operation with one of those among its operands) is refused by name,
+since it reads the container whole and does not compute what the index selects;
+honest forms fail closed with it (`_PAGE[1:]`, a template's leading newline cut;
+`PAGES[key]` over a dict constant, the key no constant; `_P[-1]`), and a
+container that is a base whose own text it does not read, or a call of one or of
+a method on one, passes whatever its index. A None, bool or int constant, the empty bytes constant and a `*` or `<<` over int constants are value
+slots the pass reads as no text; one that stands directly as a `%` operand
+(bare, a tuple element or a dict literal's value, an int modulo such as `n % 60`
+among them), as a `.format` argument (an element of a starred list or tuple
+literal and a value of a `**` dict literal among them) or as a value of the dict
+literal a `.format_map` is handed is refused by name, whether or not a
+conversion takes it, since a conversion can turn it into characters (a `%c`, a
+`%x`, a `{:c}`, a `%.1s` over the empty bytes), and one held deeper there (a
+name or a local bound to one, an if-expression's branch, a list's element, or a
+call's argument, one of the seven builtins' among them) is read as a value slot
+and not refused. The run fails by name (SERVED) on
 any other reference to `_send` (a read of it that is not a call's function, a
 store or delete of an attribute so named, or a string equal to `_send`), a
 content type the pass cannot read, a script-running
 type written outside `_send`, a function that answers outside `_send` more often
 than it writes a Content-Type header, a container the module writes at run time,
-any other receiver or container, any other callee (a module constant, a local, a
-class, a subscript, a call and a lambda among them), any other bare module name
+an attribute read on self, a class attribute (an attribute read on a class
+through the class's own name, a name the census resolves to it or a method call
+on a name whose value holds it), a replacement field reaching an attribute or an
+index of its argument in a `.format` or `.format_map`, a name the
+import system binds in every module
+that the file does not bind, a subscript by a slice or an index other than a
+constant over a container whose text the pass reads, a subscript by a constant
+index over such a container that stands as an operand of a `+`, a `%`, an
+f-string, a `.join`, a `.format`, a `.format_map` or a `.replace`, a value slot
+that stands directly as a `%` operand, a `.format` argument or a `.format_map`
+value, a builtin other than the seven a page may name, a call of str with more
+than one positional argument, a starred argument or a keyword other than
+`object`, a join, format, format_map or replace called on the name
+str, bytes or bytearray, a `%`, `.format` or `.format_map` on a string constant
+that is not expanded, `__file__` in a file where a statement binds it, any other
+receiver or container, any other callee (a module constant, a local, a class, a
+classmethod's first parameter, a subscript, a call and a lambda among them), any
+other bare module name
 (one bound other than by one assignment, one bound by an annotated, unpacking or
 chained assignment, one annotated at module level beside its assignment, one no
 module-level statement binds that a function or a
@@ -446,8 +555,7 @@ file that may rewrite the builtins, and a rebound import, builtin,
 function or class among them), any other kind of
 expression in a page (a non-empty bytes, float, complex or Ellipsis constant, an
 f-string's format spec, any other operator, a comparison and a unary expression
-among them), and a route whose text the pass cannot read, unless the served
-allowlist, SERVED_ALLOW, names the place
+among them), and a route whose body yields no piece and no file slot, unless the served allowlist, SERVED_ALLOW, names the place
 by its function and expression, with the number of places the entry covers and
 the reason (the two answers with no body, the CORS preflight's 204 and the
 websocket upgrade's 101, are named there); an entry that names nothing in the
@@ -455,20 +563,47 @@ run, or covers a different number of places, fails the run too. In served text
 every `fetch(` and `import(` on a line is read by its own argument, and no
 comment skip applies, since a joined constant is one line whatever it starts
 with. Each string literal is read on its own, and so is the text of each of
-these joins of string constants, at its first literal's line: a `+` of them
-(an f-string's literal text at its start or end among them), an f-string whose
-fields are string constants, a `%`, `.format` or `.format_map` of them, a
-`.join` over a list or tuple of them or over a dict literal whose keys they are
-(the keys in order, a repeated key at its first place) and a `.replace` of them
-(implicitly concatenated literals are one constant already). A tool's name, a
-tag, an
+these joins of string constants, at its first literal's line: a `+` of them (an
+f-string's literal text at its start or end among them), an f-string whose
+fields are string constants, a `%` of them, and a `.join`, `.format`,
+`.format_map` or `.replace` called on a string constant or on one of these
+joins: a `.join` over a list or tuple of them or over a dict literal whose keys
+they are (the keys in order, a repeated key at its first place), and a
+`.format`, `.format_map` or `.replace` of them (implicitly concatenated literals
+are one constant already). The same methods called on the name str, bytes or
+bytearray (`str.join("", [...])`, unbound) are no such join and refuse by name.
+A `%`, `.format` or `.format_map` on a string constant or on one of these joins
+is not expanded when a field or precision is wider than a million characters (a
+`%` conversion's width or precision, or any run of digits in a format field's
+own spec) or when a format spec holds a replacement field, whose width is
+computed at run time; each such call refuses by name, whatever its arguments. A
+tool's name, a tag, an
 attribute, an import or a fetch URL split across such a join is therefore read
 whole, and a site both reads find is listed once; a fetch URL cut at the join is
-listed as the joined text reads it, whole. Text a page joins through anything
-but a string constant (a name, a call, an attribute, or a field or a `%` slot
-holding one) is read piece by piece: a tool's name, a tag or an
-attribute split there is not seen, and a fetch
-URL cut there is classed by the part before the cut. A `.join` over a set
+listed as the joined text reads it, whole. A `.format` or `.format_map` whose
+format string holds a replacement field whose name reaches an attribute or an
+index of its argument (`{0.CSS}`, `{h.CSS}`, `{self.body}`, `{0[k]}`) refuses by
+name, since the text such a field reads is the argument's attribute or item,
+which the pass does not read: the census looks for such a field where the format
+string is the receiver's text, a string constant or one of these joins, or the
+value of a module constant or a local bound to one, and a format string the pass
+reaches any other way (a function's return among them) is text a call computes
+from its arguments, the call limit. Text a page joins through anything but a
+string constant (a
+name, a call, an attribute, a subscript of a container whose text the pass does
+not read, or a field or a `%` slot holding one) is read piece by piece: a tool's name, a tag or an attribute split there is not seen, and a
+fetch URL cut there is classed by the part before the cut. A subscript by a
+constant index over a container whose text the pass reads (the containers named
+above for a slice) that stands as an operand of one of these joins, a `+`, a `%`
+or an f-string, or the receiver or an argument of a `.join`, `.format`,
+`.format_map` or `.replace` (an element of a list, tuple or set literal or a key
+of a dict literal handed to `.join`, an element of a starred list or tuple
+literal handed to `.format`, and a value of a dict literal handed to `.format`
+or `.format_map`, among them), is refused by name, since the pass reads its
+container whole and not the text the join makes of the pieces the indexes
+select; the refusal is keyed on such a container, and a subscript of any other
+container is read piece by piece, as above; a subscript read through a function
+falls under the call limit above. A `.join` over a set
 literal or a set comprehension, its one argument or, unbound as in
 `str.join("", {...})`, its second, refuses by name, its iteration order not
 fixed, so its join is no one text. A file the page reads at
