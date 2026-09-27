@@ -264,16 +264,21 @@ class Fixture:
     def push_batch(self, name):
         self.dev_git("push", "-q", "-u", "origin", "batch/" + name)
 
-    def sweep(self, name, sha=None, **over):
+    def sweep(self, name, sha=None, webview=None, **over):
         """A sweep result for batch/<name>'s current head (or `sha`), written through scripts/sweep.py's own
-        writer where the runner writes it: every leg rc 0 but deps and the webview legs, not owed; `over`
-        replaces top-level keys, and the verdict is the runner's rule over the result unless given."""
+        writer where the runner writes it: every leg rc 0 but deps, not owed, and the webview legs, owed and rc 0
+        when the head changed kernel/kernel.py, ui/ or vscode-extension/ since main (the rule verify re-derives),
+        else not owed; `webview` True or False sets them instead; `over` replaces top-level keys, and the verdict
+        is the runner's rule over the result unless given."""
         sha = sha or self.dev_git("rev-parse", "batch/" + name)
         stamp = sweep.now()
         legs = {n: {"owed": True, "rc": 0, "cmd": ["true"], "started": stamp, "finished": stamp} for n in sweep.LEGS}
         for n in sweep.TEST_LEGS:
             legs[n].update(tests=1, failed=0)
-        for n in ("deps",) + sweep.WEBVIEW_LEGS:
+        if webview is None:
+            base = self.dev_git("merge-base", sha, "origin/main")
+            webview = bool(sweep.webview_owed(self.dev_git("diff", "--no-renames", "--name-only", base, sha).splitlines()))
+        for n in ("deps",) + (() if webview else sweep.WEBVIEW_LEGS):
             legs[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
         data = {"schema": sweep.SCHEMA, "sha": sha, "branch": "batch/" + name, "tree": self.wt(name), "started": stamp,
                 "finished": stamp, "legs": legs, "history": [], "red": [], "invalid": None}
@@ -1593,6 +1598,28 @@ class VerifyReadsTheSweep(_Base):
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         self.assertIn("scripts/sweep.py is missing beside batch.py", p.stderr)
         self.assertNotIn("ok   sweep", p.stdout)
+
+    def test_a_result_that_excuses_webview_legs_the_diff_owes_fails(self):
+        """verify re-derives the webview rule from git (what changed between main and the batch head) rather than
+        trusting the result's own decision: a result that marks the webview legs not owed while the batch changes
+        ui/ fails by name, and one that ran them passes."""
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n", "ui/pane.js": "export const pane = 1;\n"})
+        fx.pr(101, "a", title="notes: a pane", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        head = fx.dev_git("rev-parse", "batch/b1")
+        main = fx.bare_rev("main")
+        fx.sweep("b1", webview=False)    # a result that marks the three webview legs not owed
+        self.refused("FAIL sweep webview: the result at %s marks typecheck, npm-test, build not owed, but ui/pane.js changed "
+                     "between %s at %s and the batch head" % (head[:10], "origin/main", main[:10]))
+        legs = self.legs()
+        for n in sweep.WEBVIEW_LEGS:
+            legs[n] = {"owed": True, "rc": 0, "tests": 1, "failed": 0, "started": sweep.now(), "finished": sweep.now()}
+        fx.sweep("b1", legs=legs)
+        p = fx.ok("verify", "b1")
+        self.assertIn("ok   sweep at %s: pass" % head[:10], p.stdout)
+        self.assertNotIn("sweep webview", p.stdout)
 
     def test_the_free_text_flag_is_gone(self):
         fx = self.fx

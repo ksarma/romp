@@ -1477,6 +1477,24 @@ def check_contains_main(root, name, head, lines):
     return None
 
 
+def webview_contradiction(root, sweep, result, main_seen, head):
+    """The result's webview decision checked against git, never taken on its word: the webview legs the
+    result marks not owed while kernel/kernel.py, ui/ or vscode-extension/ changed between main (as verify
+    read it) and the batch head, as a FAIL line; None when the two agree. The runner decides from the merge
+    base with its own origin/main, which is main or older, so its set of changes is never the smaller."""
+    excused = [n for n in sweep.WEBVIEW_LEGS if not sweep.is_owed(n, (result.get("legs") or {}).get(n))]
+    if not excused:
+        return None
+    base = git("merge-base", main_seen, head, cwd=root)
+    hits = sweep.webview_owed(git("diff", "--no-renames", "--name-only", base, head, cwd=root).splitlines())
+    if not hits:
+        return None
+    shown = ", ".join(hits[:5]) + (" and %d more" % (len(hits) - 5) if len(hits) > 5 else "")
+    return ("FAIL sweep webview: the result at %s marks %s not owed, but %s changed between %s at %s and the batch head "
+            "(CLAUDE.md's webview rule owes them); sweep again with this checkout's scripts/sweep.py"
+            % (short(head), ", ".join(excused), shown, remote_main(), short(main_seen)))
+
+
 def cmd_verify(args, quiet=False):
     root = repo_root()
     state = load_state(root, args.name)
@@ -1548,7 +1566,12 @@ def cmd_verify(args, quiet=False):
     # The sweep result the runner wrote for this exact sha (scripts/sweep.py), read through its own reader;
     # every case but a pass names itself (missing, stale, unfinished, red, invalid, incomplete, unreadable).
     a = sweep.assess(head, subject="the batch head", branch=br, tree_hint=worktree_dir(root, args.name))
-    if a["case"] == "pass":
+    contradiction = webview_contradiction(root, sweep, a["result"], main_seen, head) if a["case"] == "pass" and main_seen else None
+    if contradiction:
+        ok = False
+        state["sweep"] = None
+        lines.append(contradiction)
+    elif a["case"] == "pass":
         legs = a["result"]["legs"]
         state["sweep"] = {"head": head, "path": a["path"], "verdict": "pass", "finished": a["result"].get("finished"),
                           "legs": [[n, legs[n].get("rc") if sweep.is_owed(n, legs[n]) else "not owed"] for n in sweep.LEGS],
