@@ -4,12 +4,12 @@ name: CI
 # postal/), the shell surfaces (hooks / postal / manager), and the VS Code
 # extension build; and scan the whole history for credentials (the secrets job).
 #
-# LINUX runs on every push to a batch branch (batch/**) and by hand; it is free on a public repo,
-# with no minute cap. Member PRs and merges to main run none (2026-09-27): the local sweep
-# (scripts/sweep.py) recorded at the batch head is the landing gate, and scripts/batch.py land
-# refuses a batch whose head does not contain main, so the merge commit's tree is the batch head's
-# tree, the one this workflow tested on the batch push (docs/batching.md). A private repository
-# then spends its minutes once per batch head.
+# LINUX runs on every push to a batch branch (batch/**), on the weekly schedule and by hand; it is
+# free on a public repo, with no minute cap. Member PRs and merges to main run none (2026-09-27):
+# the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate, and
+# scripts/batch.py land refuses a batch whose head does not contain main, so the merge commit's tree
+# is the batch head's tree, the one this workflow tested on the batch push (docs/batching.md). A
+# private repository then spends its minutes once per batch head.
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
 # an earlier note here said it was billed), but the macOS cells are slow (the bats
 # suite alone is about 16 minutes) and the runners are scarcer, so they do NOT run
