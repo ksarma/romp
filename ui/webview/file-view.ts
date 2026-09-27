@@ -2791,13 +2791,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // 142ade155 after the fixes for the file review's round 18, with the coordinator's decisions on it): a verdict moves from a
   // press to a click only along that gesture's own chain of events as this window hears them, the last link before a pointer's
   // click a primary mouseup whose detail is above 0, and a carried verdict ends at the events below that show this window has
-  // lost the chain, a mouseup of detail 0 or of another button among them, though not at every event that shows it: a primary
-  // mouseup of detail above 0 with no pointerup since the pointerdown of the record the next click reads shows it too and ends
-  // nothing, and the first of the two orders of the class outside the residual (below, for the owner) opens the tab through it:
+  // lost the chain, a mouseup of detail 0 or of another button among them, and a record still standing at a pointer's click under
+  // that click's pointerId, a press whose pointerup this window never heard and so has no heard chain to the click, refuses it:
   // - a pointerdown records the press's verdict and its pointer type under its pointerId, a primary one first ending every
   //   earlier record whatever its pointer type, since a new primary contact means every earlier one has ended. A record ends at
   //   its own pointerup, which hands it to the slot, at its own pointercancel (a swipe that scrolls, and in Chromium and Firefox
-  //   the picture's own drag), and at a click on a web picture under its pointerId, which the gate reads; a dragstart ends every
+  //   the picture's own drag), and at a click on a web picture under its pointerId, which it refuses; a dragstart ends every
   //   record, since WebKit's drag of the picture sends no pointerup and no pointercancel; a mousedown with no pointerdown of a
   //   mouse or a pen before it ends every record and takes no verdict, and it empties the slot unless it is the compatibility
   //   mousedown of the one-finger tap, or of the touch-order pen, whose pointerup filled the slot (the slot's rule, below); and a
@@ -2820,32 +2819,33 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   guard, red at 142ade155); and a touch record deleted at its touchend let a click under its pointerId read another pointer's
   //   shown slot, an order the closing check's search of the closed direction composed and, by reading, no engine measured
   //   reaches (the node guard of a touch record a touchend ended, red under a gate that deletes it). The pointerup's end of its
-  //   own record is defensive once the mousedown's clear stands: the mouse's next press after a lost pointerup reaches this
-  //   window as a mousedown with no pointerdown, or with a pointerdown, and either ends the record, and a tap's or a touch-order
-  //   pen's compatibility mousedown after its pointerup ends it too; in Firefox, where another document's element takes that next
-  //   press, a mouse click's or a tap's, this window hears that click's pointerup, its mouseup of detail 1 and its click, or that
-  //   tap's mouseup of detail 1 and its click, with neither, and the click reads the record with the pointerup's end or without
-  //   it (the two orders for the owner, below); so dropping the pointerup's end alone changes no order an engine measured sends
-  //   and reds only the pen guard's row of a pointerup, then a mouseup of detail 1 and the pen's click with no mousedown before
-  //   them, an order no engine measured sends, whose click then reads the pen's own record. The dragstart's clear is not
-  //   defensive: in Firefox, the mouse held on the picture with the control shown, then a tap on an element of another document
-  //   over the control that hides at that tap's compatibility mousedown, starts a drag of the held picture, and this window hears
-  //   its dragstart and then that tap's mouseup of detail 1 and its click on the picture under pointerId 0; the dragstart ends
-  //   the mouse's record, so that click opens nothing and reveals, while under a gate whose dragstart ends no record it read the
-  //   held mouse's record and opened the tab with the control covered at the tap's start, 5 of 5 (the Files pane 3, the chat 2;
-  //   the closing check at 142ade155 after the fixes for the file review's round 18), and its node guard is red under that gate.
-  //   Dropping the mousedown's clear alone lets a press whose pointerup never came hand its record to the next click's pointerup,
-  //   which its node guard reds. The cost, measured in WebKit (Playwright's, on Linux: a mouse drag of a web picture, and a drag
-  //   in a same-origin frame standing in for another pane): after a drag anywhere in the page, another pane's included, the
-  //   mouse's next click on a web picture opens nothing and reveals its sign, whatever covers or shows it, a right click before
-  //   that drag included, and the click after it opens; where a press's pointerup never comes, the mouse's next click is refused
-  //   the same way; a first press elsewhere costs nothing. Chromium and Firefox end such a drag with a pointercancel and send the
-  //   next press's pointerdown, so they carry no cost. The cost of the primary clear, on a device with a mouse and a touchscreen:
-  //   a contact held on a picture while a primary press of the other pointer type lands elsewhere in this window loses its
-  //   record, a mouse held while a finger presses or a finger held while the mouse presses, so its click opens nothing and
-  //   reveals; where an element of another document takes that press, this window hears no pointerdown of it and the record
-  //   stands unless a mousedown with no pointerdown or a dragstart ends it, as Firefox sent with the mouse held on the control or
-  //   on the picture, and in WebKit that press's click reads the record (the first order for the owner, below);
+  //   own record is what lets a pointer's click take its press, since a record still standing at a click refuses that click:
+  //   dropping it alone refuses every click that carries its own press's pointerId, a mouse's in every engine and a tap's in
+  //   Chromium and Firefox (WebKit's tap click, under pointerId 1, still finds the slot), and 13 of the outline suite's 58
+  //   top-level tests are red under it; in Firefox, where another document's element takes the mouse's next press after a lost
+  //   pointerup, a mouse click's, this window hears that click's pointerup, its mouseup of detail 1 and its click, and the
+  //   pointerup hands the mouse's record to the slot (the order for the owner, below). The dragstart's clear is defensive now
+  //   that a record still standing at a click refuses it: in Firefox, the mouse held on the picture with the control shown, then
+  //   a tap on an element of another document over the control that hides at that tap's compatibility mousedown, starts a drag of
+  //   the held picture, and this window hears its dragstart and then that tap's mouseup of detail 1 and its click on the picture
+  //   under pointerId 0; the dragstart ends the mouse's record, so that click opens nothing and reveals, and under the gate at
+  //   09f58bec6 with the dragstart's clear dropped the click read the held mouse's record and opened the tab with the control
+  //   covered at the tap's start, 5 of 5 (the Files pane 3, the chat 2; the closing check at 142ade155 after the fixes for the
+  //   file review's round 18), where its node guard is red, while with that clear dropped from this gate the click finds the
+  //   record standing and refuses, 0 of 5 (the Files pane 3, the chat 2), no tap cell of Firefox or WebKit changes and no test is
+  //   red. Dropping the mousedown's clear alone lets a press whose pointerup never came hand its record to the next click's
+  //   pointerup, which its node guard reds. The cost, measured in WebKit (Playwright's, on Linux: a mouse drag of a web picture,
+  //   and a drag in a same-origin frame standing in for another pane): after a drag anywhere in the page, another pane's
+  //   included, the mouse's next click on a web picture opens nothing and reveals its sign, whatever covers or shows it, a right
+  //   click before that drag included, and the click after it opens; where a press's pointerup never comes, the mouse's next
+  //   click is refused the same way; a first press elsewhere costs nothing. Chromium and Firefox end such a drag with a
+  //   pointercancel and send the next press's pointerdown, so they carry no cost. The cost of the primary clear, on a device with
+  //   a mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type lands elsewhere in
+  //   this window loses its record, a mouse held while a finger presses or a finger held while the mouse presses, so its click
+  //   opens nothing and reveals; where an element of another document takes that press, this window hears no pointerdown of it
+  //   and the record stands unless a mousedown with no pointerdown or a dragstart ends it, as Firefox sent with the mouse held on
+  //   the control or on the picture, and in WebKit that press's click finds the record standing and refuses (the first order
+  //   below, closed);
   // - a pointerup fills the one-click slot with the record under its own pointerId, or with nothing when that pointer recorded
   //   none, and notes that pointerup's pointerId and pointer type; any pointerdown, pointercancel or keydown empties the slot,
   //   and so does a mousedown with no pointerdown of a mouse or a pen before it, unless the pointerup that filled the slot was a
@@ -2882,10 +2882,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   mousedown, mouseup and click under its own touch's pointerId, which took the slot and opened the tab with the sign covered
   //   at that tap's start (the same check). The boundary and capture events a browser sends between a pointerup and its click
   //   (lostpointercapture, pointerout) leave the slot alone;
-  // - a click by a pointer (trusted, and its pointerId other than -1, or none with a detail above 0) reads, only while the tail
-  //   stands, the record under its own pointerId while that record stands, and with none the press the slot handed it; that press
-  //   must be this picture's, its verdict shown, and the sign in view again at the click (controlInView), and with neither the
-  //   click opens nothing and reveals;
+  // - a click by a pointer (trusted, and its pointerId other than -1, or none with a detail above 0) opens nothing and reveals
+  //   where a record still stands under its own pointerId, whatever that record's verdict, since this window never heard that
+  //   press's pointerup and so heard no chain from it to the click (the closing check at 142ade155 after the fixes for the file
+  //   review's round 18, the first order below); with none it reads, only while the tail stands, the press the slot handed it,
+  //   which must be this picture's, its verdict shown, and the sign in view again at the click (controlInView), and with no press
+  //   the click opens nothing and reveals;
   // - a click by no pointer, a key's (pointerId -1, detail 0) or a script's (untrusted), reads no record and no slot: it is read
   //   at the click by signShown, a key's after the key gate has let its press through.
   // The engines measured: Chromium gives a tap's click the touch's own pointerId and pointer type, Firefox its press's (0, for a
@@ -2917,15 +2919,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // The chain rule's pins: browser cells in the dashboard's shape, the viewer's frame beside another pane's frame over a bar of
   // the top page (file-figure-open-taps.ts chainCells), for Firefox's lone click, Chromium's click under another touch's
   // pointerId, WebKit's touch whose pointerup this window never heard and, in Firefox and WebKit, another document's tap after
-  // the viewer's tap whose mouseup of detail 0 ended its chain, each red at 142ade155, and on the chat and the Files pane under a
-  // gate without the rules that close it (Firefox's lone click after a mouseup of another button or of detail 0 is closed by the
-  // tail and by the mouseup's clear alike, and its six cells a surface with no mouseup after the viewer's tap or the mouse's
-  // press by the tail alone), and node guards in the outline suite over the same orders; the autoscroll's order, WebKit's touch
-  // ending in a touchcancel and a pen in the touch order have node guards alone, since no cell in the tree drives them: no
-  // browser here drives a pen in the touch order, no cell a touchcancel, and the autoscroll's order needs Firefox's autoscroll
-  // preference set at the browser's launch, which the legs' shared launcher (real-viewer-leg.ts inBrowser) does not set; a probe
-  // kept out of the tree that set it read that order opening the tab with the sign covered at 142ade155 and refused here, the
-  // next click opening.
+  // the viewer's tap whose mouseup of detail 0 ended its chain and another document's tap after a mouse's press whose pointerup
+  // this window never heard, each red at 142ade155, the last at 1a6470e72 and at 09f58bec6 too, and on the chat and the Files
+  // pane under a gate without the rules that close it (Firefox's lone click after a mouseup of another button or of detail 0 is
+  // closed by the tail and by the mouseup's clear alike, after the mouse held on the control or released in the other pane by the
+  // tail and by the refusal of a record standing at a click alike, and its four cells a surface after the viewer's tap whose
+  // compatibility events or click went elsewhere by the tail alone), and node guards in the outline suite over the same orders;
+  // the autoscroll's order, WebKit's touch ending in a touchcancel and a pen in the touch order have node guards alone, since no
+  // cell in the tree drives them: no browser here drives a pen in the touch order, no cell a touchcancel, and the autoscroll's
+  // order needs Firefox's autoscroll preference set at the browser's launch, which the legs' shared launcher (real-viewer-leg.ts
+  // inBrowser) does not set; a probe kept out of the tree that set it read that order opening the tab with the sign covered at
+  // 142ade155 and refused here, the next click opening.
   // The residual, which no event this window hears tells from the viewer's own tap: an element of another same-origin document
   // shown over the picture during the viewer's own tap takes that tap's compatibility events and click, and then a tap on that
   // element over the control, which goes away during the press, reaches this window as a mousedown, a mouseup of detail 1 and a
@@ -2935,33 +2939,39 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // Files pane 12, the chat 4); in WebKit, shown at the pointerup, 7 of 7 (the hybrid page 3, a phone's page 2, the chat 2); in
   // Chromium 0 of 36, the foreign tap's click carrying its own touch's pointerId; the same probe under this gate read Firefox 16
   // of 16 (the Files pane 12, the chat 4), WebKit 7 of 7 (the hybrid page 3, a phone's page 2, the chat 2) and Chromium 0 of 51,
-  // and every other order of the class it drives opened nothing; a check of these fixes drove orders that probe does not, and two
-  // more of the class, outside the residual, open (the paragraph after this one). Firefox's click and WebKit's carry the fields
-  // of the viewer's own tap's click, in the same order; only coordinates and time differ, and a rule on coordinates would cost
-  // Chromium's taps, whose touch adjustment moves a tap's click away from its pointerup. In it by reading, not drivable here: a
-  // second finger resting on another document during the viewer's tap, in Firefox and WebKit; a tap whose click the engine
-  // withholds (a long press's context menu, a tap past the click slop without a pointercancel), in Firefox and WebKit; and a
-  // foreign tap by the same pen under the same pointerId. Today the only element of the dashboard's top page that cancels a
-  // pointerdown is the update banner's drag handle, and it stays put during a press; the residual needs an element that appears
-  // over the picture during a tap. Whether to accept it is the owner's decision.
-  // Two orders of the class outside the residual open the tab with the sign covered at the start of another document's gesture,
-  // at 142ade155 and at 1a6470e72 too, and go to the owner with it (a check of these fixes, the closing check at 142ade155 after
-  // the fixes for the file review's round 18). First, this window heard a mouse's press begin and not end, the mouse held on the
-  // control or on the picture with the control shown, any button, in WebKit, or pressed on the control and released over another
-  // pane in Firefox; then a tap on an element of another document over the control that hides at that tap's compatibility
-  // mousedown reaches this window as a mouseup of detail 1 and a click alone, WebKit's under pointerId 1 typed mouse, the held
-  // mouse's own, and Firefox's under pointerId 0 typed touch, and the click reads the mouse's record under that pointerId,
-  // whatever its type: WebKit 22 of 22 (the hybrid page's Files pane 14 and chat 4, a phone's pages 4), Firefox 7 of 7 (the Files
-  // pane 5, the chat 2). A primary mouseup with no pointerup since that record's pointerdown tells this click from the mouse's
-  // own, whose pointerup came before its mouseup in every mouse press the probes recorded. With the mouse held, Firefox sends
+  // and every other order of the class it drives opened nothing; a check of these fixes drove orders that probe does not and
+  // found two more of the class outside the residual, the first closed here by the refusal of a record standing at a click and
+  // the second open (the paragraph after this one). Firefox's click and WebKit's carry the fields of the viewer's own tap's
+  // click, in the same order; only coordinates and time differ, and a rule on coordinates would cost Chromium's taps, whose touch
+  // adjustment moves a tap's click away from its pointerup. In it by reading, not drivable here: a second finger resting on
+  // another document during the viewer's tap, in Firefox and WebKit; a tap whose click the engine withholds (a long press's
+  // context menu, a tap past the click slop without a pointercancel), in Firefox and WebKit; and a foreign tap by the same pen
+  // under the same pointerId. Today the only element of the dashboard's top page that cancels a pointerdown is the update
+  // banner's drag handle, and it stays put during a press; the residual needs an element that appears over the picture during a
+  // tap. Whether to accept it is the owner's decision.
+  // Two orders of the class outside the residual opened the tab with the sign covered at the start of another document's gesture,
+  // at 142ade155, at 1a6470e72 and at 09f58bec6 (a check of these fixes, the closing check at 142ade155 after the fixes for the
+  // file review's round 18); the first is closed here and the second goes to the owner with the residual. First, this window
+  // heard a mouse's press begin and not end, the mouse held on the control or on the picture with the control shown, any button,
+  // in WebKit, or pressed on the control and released over another pane in Firefox; then a tap on an element of another document
+  // over the control that hides at that tap's compatibility mousedown reaches this window as a mouseup of detail 1 and a click
+  // alone, WebKit's under pointerId 1 typed mouse, the held mouse's own, and Firefox's under pointerId 0 typed touch, and the
+  // click read the mouse's record under that pointerId, whatever its type: WebKit 22 of 22 (the hybrid page's Files pane 14 and
+  // chat 4, a phone's pages 4), Firefox 7 of 7 (the Files pane 5, the chat 2). A primary mouseup with no pointerup since that
+  // record's pointerdown tells this click from the mouse's own, whose pointerup came before its mouseup in every mouse press the
+  // probes recorded, so the record still standing at the click shows this window never heard that press end, and the gate refuses
+  // the click: under this gate that tap opened nothing and revealed the control, WebKit 0 of 22 (the hybrid page's Files pane 14
+  // and chat 4, a phone's pages 4) and Firefox 0 of 7 (the Files pane 5, the chat 2), the next click opening each time (Firefox's
+  // and WebKit's cells and the node guard, red at 142ade155, at 1a6470e72 and at 09f58bec6). With the mouse held, Firefox sends
   // that tap's mousedown to this window's document, or a dragstart where the press was on the picture, and either ends the
   // record, so it opens nothing there. Second, in Firefox, the mouse pressed on the control and released over another pane, then
   // a mouse click on an element of another document over the control that hides at that click's pointerdown or its mousedown
   // reaches this window as a pointerup, which hands the mouse's record to the slot, a mouseup of detail 1 and a click, and the
   // click takes the slot: 10 of 10 (the Files pane 8, the chat 2). No event this window hears tells it from the viewer's own
   // press dragged out of the frame, brought back and released on the control. WebKit, which sends that release to this window,
-  // and Chromium opened neither order (Chromium 0 of 8 over both orders' shapes), the next click opened in every repetition, and
-  // no cell drives either order.
+  // opened the second order in no repetition, and Chromium opened neither order (Chromium 0 of 8 over both orders' shapes), the
+  // next click opened in every repetition, and no cell drives the second, which this gate leaves open (10 of 10 again under it,
+  // the Files pane 8, the chat 2).
   // The gate's cost measured in WebKit, the same at 142ade155 (its cost cell; the closing check at 142ade155 after the fixes for
   // the file review's round 18): a tap whose pointerup another document's element takes, that element shown over the picture at
   // the tap's pointerdown and hidden at its pointerup, opens nothing and reveals the control, and the next tap opens, since
@@ -2980,30 +2990,43 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // mouseup, and an eraser's tap whose mouseup does not carry the primary button, unmeasured) opens nothing and reveals the
   // control, while Enter or Space on the control, read at the click, still opens; so does a pointer's click after whose pointerup
   // a mouseup other than a primary one of detail above 0 came, an order none of the three engines measured sends before a click
-  // (a click's own primary mouseup comes last, and a chorded button's mousedown already ends every record).
+  // (a click's own primary mouseup comes last, and a chorded button's mousedown already ends every record); and so does a
+  // pointer's click that finds a record still standing under its own pointerId, a press whose pointerup this window never heard,
+  // the next click opening: no gesture of the viewer's own that the legs drive leaves one (no cell of either leg changed with the
+  // refusal), while one the road probe drives does, a cost measured in WebKit alone (Playwright's, on Linux; the same check's
+  // probe at 09f58bec6 and here): a left click chorded into a held right press, the right button pressed, the left pressed and
+  // released, then the right released, which WebKit sends as the right press's pointerdown and mousedown, a pointerdown and a
+  // mousedown of the left press, its mouseup of detail 1 and its click, the left press's pointerup held until the last button's
+  // release, so the click finds that press's record standing and opens nothing and reveals the control, whatever covers or shows
+  // it, 12 of 12 (with the control shown 5, under the text-size flyout 6 and under the Outline popover 1, the flyout and the
+  // popover closed by the right press's mousedown before the left press began), where 09f58bec6's gate opened all 12 on the left
+  // press's own verdict; Firefox and Chromium open on that chord at neither head, 0 of 10 each, and on a device the right press's
+  // native context menu, which Playwright's headless WebKit does not show, presumably takes the left click, not measured.
   // The slot's four other clears (a pointerdown's, a pointercancel's, a keydown's and the taking click's) are defensive: the slot
   // is refilled at every pointerup, the click of a press this window heard follows that press's own pointerup, the mousedown's
-  // clear, the mouseup's, the tail and the slot's pointerId test refuse a click whose press this window did not hear, the
-  // residual and the two orders for the owner aside, and a key's or a script's click never reads the slot, so dropping any one of
-  // the four alone changes no gesture a test drives; the press cells (a press with no click, then a key's click or a script's)
-  // are red under a gate that lets a key's or a script's click read the slot with the keydown's clear dropped. The touch-order
-  // pen's wait for its compatibility mousedown is defensive in every gesture a browser here drives, since no browser here drives
-  // a pen in that order: dropping the wait alone changes no gesture a test drives in a browser, and the pen guard's row of a
-  // pointerup, then a mouseup of detail 1 and the pen's click with no mousedown before them, an order no engine measured sends,
-  // is red under a gate without it (the closing check at 142ade155 after the fixes for the file review's round 18). The tail does
-  // not refuse every click that no mousedown here came before: a mouseup whose mousedown another element took came to this window
-  // with detail 0 in the order the closing check at 142ade155 measured, the viewer's own tap whose compatibility mousedown an
-  // element of the top page took and hid at, in Firefox and WebKit (Chromium sent this window no mouseup at all), but with detail
-  // 1 and a click after it where this window had heard a mouse's press begin and not end, in Firefox after a press released over
-  // another pane and in WebKit with the mouse held (the first order for the owner, above), so a touch-order pen's click after
-  // such a mouseup would pass the tail, and the wait refuses it. One physical gesture's later events are closed by their own
-  // fields and never by time: a click whose detail is above 1, following a refused click of its run (the second click of a double
-  // click, and in Chromium the second tap of a double tap, whose click carries detail 2), opens nothing, since the first click's
-  // reveal put the sign on the screen between the two; in Firefox and WebKit each tap's click carries detail 1, so a second tap
-  // is read at its own start and opens once the first tap's reveal has shown the sign; a held key's repeats and Space's release
-  // are the key gate's.
+  // clear, the mouseup's, the tail, the slot's pointerId test and the refusal of a record still standing at a click refuse a
+  // click whose press this window did not hear, the residual and the order for the owner aside, and a key's or a script's click
+  // never reads the slot, so dropping any one of the four alone changes no gesture a test drives; the press cells (a press with
+  // no click, then a key's click or a script's) are red under a gate that lets a key's or a script's click read the slot with the
+  // keydown's clear dropped. The tail's condition on the record under a click's own pointerId is defensive since a standing
+  // record refuses: with no tail the slot hands the click nothing, so the click refuses whether that record is read or not, and a
+  // gate that reads it with no tail reds no test. The touch-order pen's wait for its compatibility mousedown is defensive in
+  // every gesture a browser here drives, since no browser here drives a pen in that order: dropping the wait alone changes no
+  // gesture a test drives in a browser, and the pen guard's row of a pointerup, then a mouseup of detail 1 and the pen's click
+  // with no mousedown before them, an order no engine measured sends, is red under a gate without it (the closing check at
+  // 142ade155 after the fixes for the file review's round 18). The tail does not refuse every click that no mousedown here came
+  // before: a mouseup whose mousedown another element took came to this window with detail 0 in the order the closing check at
+  // 142ade155 measured, the viewer's own tap whose compatibility mousedown an element of the top page took and hid at, in Firefox
+  // and WebKit (Chromium sent this window no mouseup at all), but with detail 1 and a click after it where this window had heard
+  // a mouse's press begin and not end, in Firefox after a press released over another pane and in WebKit with the mouse held (the
+  // first order above), so a touch-order pen's click after such a mouseup would pass the tail, and the wait refuses it. One
+  // physical gesture's later events are closed by their own fields and never by time: a click whose detail is above 1, following
+  // a refused click of its run (the second click of a double click, and in Chromium the second tap of a double tap, whose click
+  // carries detail 2), opens nothing, since the first click's reveal put the sign on the screen between the two; in Firefox and
+  // WebKit each tap's click carries detail 1, so a second tap is read at its own start and opens once the first tap's reveal has
+  // shown the sign; a held key's repeats and Space's release are the key gate's.
   type FigurePress = { img: Element; ok: boolean; type: string };
-  const presses = new Map<number, FigurePress>();        // the press records, by pointerId, each until its pointerup or its pointercancel, a primary press, a dragstart, a mousedown no mouse's or pen's pointerdown came before or a click on a web picture under its pointerId; a touchend or a touchcancel marks every touch record refused, and the record stands
+  const presses = new Map<number, FigurePress>();        // the press records, by pointerId, each until its pointerup or its pointercancel, a primary press, a dragstart, a mousedown no mouse's or pen's pointerdown came before or a click on a web picture under its pointerId, which a record still standing refuses; a touchend or a touchcancel marks every touch record refused, and the record stands
   let slot: FigurePress | null = null;                   // the one-click slot: the record of the last pointerup, until a pointerdown, a pointercancel, a keydown, a mousedown no mouse's or pen's pointerdown came before (but a one-finger tap's own, or a touch-order pen's), a mouseup other than a primary one of detail above 0, or the click that takes it
   let slotted: FigurePress | null = null;                // what the current click took from the slot at the window, read by webGestureShown
   let mouseDownDue = false;                               // a mouse's or a pen's pointerdown came and its own mousedown has not, until that mousedown, its pointerup or its pointercancel
@@ -3051,9 +3074,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   };
   const onFigureCancel = (ev: PointerEvent): void => { presses.delete(ev.pointerId); slot = null; mouseDownDue = false; tapDue = false; tail = false; };
   const onFigureKey = (): void => { slot = null; tail = false; };
-  const onFigureDragStart = (): void => { presses.clear(); };   // a drag ends every record: WebKit's drag of the picture sends no pointerup and no pointercancel, and no click follows a drag
+  const onFigureDragStart = (): void => { presses.clear(); };   // a drag ends every record: WebKit's drag of the picture sends no pointerup and no pointercancel, and no click follows a drag (defensive: a record still standing at a click refuses it)
   const onFigureMouseUp = (ev: MouseEvent): void => { tail = ev.button === 0 && ev.detail > 0; if (!tail) { slot = null; tapDue = false; } };   // a pointer's click comes right after its primary mouseup, whose detail is the click count; a mouseup with no click after it carries detail 0, and it or a mouseup of another button ends the chain: the slot empties and the tap's flag clears
-  const onFigureTouchEnd = (): void => { for (const [id, r] of [...presses]) if (r.type === "touch") presses.set(id, { img: r.img, ok: false, type: r.type }); };   // a touch has ended: its record stands, refused, so a click under its pointerId reads that refusal and never falls through to the slot
+  const onFigureTouchEnd = (): void => { for (const [id, r] of [...presses]) if (r.type === "touch") presses.set(id, { img: r.img, ok: false, type: r.type }); };   // a touch has ended: its record stands, refused, so a pointerup under its pointerId hands the slot a refusal, and a click under it finds the record standing and never falls through to the slot
   const onClickRun = (ev: MouseEvent): void => {          // the click takes the slot, and a click of detail 1 begins a new run
     const cpid = (ev as PointerEvent).pointerId, ctype = (ev as PointerEvent).pointerType;
     clickTail = tail;
@@ -3070,15 +3093,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   for (const [type, cb] of gateListeners) window.addEventListener(type, cb, true);
   closeHooks.push(() => { for (const [type, cb] of gateListeners) window.removeEventListener(type, cb, true); });   // every window listener of the gate goes with the viewer, the capture flag its add carried
   /** The gate's verdict at a click that would open a web picture's tab, the refusal's reveal made here: a click by a pointer takes
-   *  the press the recorder above matched to it (the record under its own pointerId while it stands, else the slot's), and only
-   *  right after a primary mouseup of detail above 0; a click by no pointer is read at the click by signShown, and a later click of a
-   *  refused run opens nothing. */
+   *  the press the slot handed it, only right after a primary mouseup of detail above 0 and only while no record stands under the
+   *  click's own pointerId (a standing record is a press whose pointerup this window never heard, and the click refuses); a click by
+   *  no pointer is read at the click by signShown, and a later click of a refused run opens nothing. */
   const webGestureShown = (img: Element, ev: MouseEvent): boolean => {
     const sign = figureSign(img);
     const pid = (ev as PointerEvent).pointerId;
     const byPointer = ev.isTrusted && (typeof pid === "number" ? pid !== -1 : ev.detail > 0);
     const own = typeof pid === "number" && clickTail ? presses.get(pid) : undefined;
-    const press = byPointer ? own ?? slotted ?? undefined : undefined;   // a pointer's click: its own record, else the press the slot handed it; a key's or a script's click reads neither
+    const press = byPointer ? (own ? undefined : slotted ?? undefined) : undefined;   // a pointer's click: a record still standing under its own pointerId refuses, this window never having heard that press's pointerup, and with none the press the slot handed it; a key's or a script's click reads neither
     slotted = null;
     clickTail = false;
     if (typeof pid === "number") presses.delete(pid);

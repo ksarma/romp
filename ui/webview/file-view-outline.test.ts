@@ -1791,34 +1791,35 @@ test("the one gate's later events of one gesture, a guard CI runs (the file revi
 });
 // ── how a click finds its press, the guards CI runs (the file review's round 17, tests-1 with regression-1; the browser cells
 // that drive each engine's own tap skip in CI) ── The gate records a press's verdict at the window's pointerdown and fills its
-// one-click slot at the window's pointerup, both in the capture phase, and a click by a pointer reads the record under its own
-// pointerId or, with none, the press the slot handed it, while a key's or a script's click reads neither and is read at the
-// click. A record ends at its own pointerup, which hands it to the slot, at its pointercancel and at the next primary press, and
-// every record ends at a dragstart and at a mousedown with no pointerdown of a mouse or a pen before it, which takes no verdict
-// (the file review's round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them) and empties the
-// slot unless it is the compatibility mousedown of the one-finger tap whose pointerup filled it (the closing check after those
-// fixes). A pointer's click takes a record or the slot only right after a primary mouseup of detail above 0; a mouseup other than
-// a primary one of detail above 0 empties the slot and clears the tap's flag; a touchend or a touchcancel marks every touch
-// record refused, and the record stands; a click of the slot's pointer type must carry the slot's pointerId; and a pen whose
-// pointerup comes before its own mousedown (the touch order) gets the one-finger tap's exception, its slot taken only after that
-// mousedown and by a click that names that pen or carries no pointerId (the closing check at 142ade155 after the fixes for the
-// file review's round 18). The stand-in's dispatch never reaches the window, so each pointer event is dispatched on the window
-// here, its target the element a press there would land on, as a browser delivers it to the capture listener before the page's
-// own; a pointer's trusted click comes right after its primary mouseup, whose detail is the click count (at least 1), as every
-// engine measured sends it (gateClick and plainClick), and is dispatched on the window, which hands it the slot, and then on its
-// element with the fields the gate reads (pointerId, pointerType where a guard names it, detail, and isTrusted, which a node
-// Event cannot carry and the stand-in's click can, so the gate reads it as trusted); bareClick sends a click with no mouseup
-// before it, Firefox's lone click after another document cancelled a tap's pointerdown, and a key's or a script's click. WebKit's
-// tap, as measured under Playwright's touch emulation on Linux: a pointerdown and a pointerup under the touch's pointerId (2),
-// the capture and boundary events after them (lostpointercapture, pointerout), the compatibility mousedown, then the mouseup and
-// a trusted click under pointerId 1 of type mouse, detail 1; and the mouse's own next press after WebKit's drag of the picture,
-// and after a drag in another pane that this window never hears: a mousedown with no pointerdown before it, a pointerup under
-// pointerId 1, the mouseup and the click. Firefox's chord: a left press's pointerdown and mousedown, then the chorded button's
-// mousedown with no pointerdown of its own, then the left press's pointerup, its mouseup and its click, under pointerId 0. A tap
-// on another document's element over the picture that goes away during the press: the tap's compatibility mousedown, its mouseup
-// and its click, with no pointerdown or pointerup in this window. Each cell opens a viewer of its own, so no cell's record or
-// slot reaches the next; the executed proof in each engine is the browser cells (file-figure-open-engines-browser.test.ts for
-// WebKit and Firefox, file-figure-open-browser.test.ts for Chromium).
+// one-click slot at the window's pointerup, both in the capture phase, and a click by a pointer refuses where a record still
+// stands under its own pointerId, a press whose pointerup this window never heard, and with none reads the press the slot handed
+// it, while a key's or a script's click reads neither and is read at the click. A record ends at its own pointerup, which hands
+// it to the slot, at its pointercancel and at the next primary press, and every record ends at a dragstart and at a mousedown
+// with no pointerdown of a mouse or a pen before it, which takes no verdict (the file review's round 18, extra5-1, extra5-2 and
+// correctness-1, with the coordinator's decisions on them) and empties the slot unless it is the compatibility mousedown of the
+// one-finger tap whose pointerup filled it (the closing check after those fixes). A pointer's click takes the slot only right
+// after a primary mouseup of detail above 0; a mouseup other than a primary one of detail above 0 empties the slot and clears the
+// tap's flag; a touchend or a touchcancel marks every touch record refused, and the record stands; a click of the slot's pointer
+// type must carry the slot's pointerId; and a pen whose pointerup comes before its own mousedown (the touch order) gets the
+// one-finger tap's exception, its slot taken only after that mousedown and by a click that names that pen or carries no pointerId
+// (the closing check at 142ade155 after the fixes for the file review's round 18). The stand-in's dispatch never reaches the
+// window, so each pointer event is dispatched on the window here, its target the element a press there would land on, as a
+// browser delivers it to the capture listener before the page's own; a pointer's trusted click comes right after its primary
+// mouseup, whose detail is the click count (at least 1), as every engine measured sends it (gateClick and plainClick), and is
+// dispatched on the window, which hands it the slot, and then on its element with the fields the gate reads (pointerId,
+// pointerType where a guard names it, detail, and isTrusted, which a node Event cannot carry and the stand-in's click can, so the
+// gate reads it as trusted); bareClick sends a click with no mouseup before it, Firefox's lone click after another document
+// cancelled a tap's pointerdown, and a key's or a script's click. WebKit's tap, as measured under Playwright's touch emulation on
+// Linux: a pointerdown and a pointerup under the touch's pointerId (2), the capture and boundary events after them
+// (lostpointercapture, pointerout), the compatibility mousedown, then the mouseup and a trusted click under pointerId 1 of type
+// mouse, detail 1; and the mouse's own next press after WebKit's drag of the picture, and after a drag in another pane that this
+// window never hears: a mousedown with no pointerdown before it, a pointerup under pointerId 1, the mouseup and the click.
+// Firefox's chord: a left press's pointerdown and mousedown, then the chorded button's mousedown with no pointerdown of its own,
+// then the left press's pointerup, its mouseup and its click, under pointerId 0. A tap on another document's element over the
+// picture that goes away during the press: the tap's compatibility mousedown, its mouseup and its click, with no pointerdown or
+// pointerup in this window. Each cell opens a viewer of its own, so no cell's record or slot reaches the next; the executed proof
+// in each engine is the browser cells (file-figure-open-engines-browser.test.ts for WebKit and Firefox,
+// file-figure-open-browser.test.ts for Chromium).
 type GatePtr = { pointerId: number; pointerType: string; isPrimary?: boolean; button?: number };
 /** An event on the window, its target `target` and its fields `props`, as the gate's capture listeners hear it. */
 const onWindow = (type: string, target: El, props: Record<string, unknown> = {}): void => {
@@ -2188,16 +2189,19 @@ test("how a click finds its press, a tap on another document's element, a guard 
     "after a pointerup of this window with no click after it, the click of a tap on another document's element finds no press, its compatibility mousedown having emptied the slot, [that click, the next], and a one-finger tap opens once (a property pin over window.open's calls and the scrollIntoView record)");
 });
 // ── the chain rule, the guards CI runs (the closing check at 142ade155 after the fixes for the file review's round 18; the browser
-// cells, file-figure-open-taps.ts chainCells, skip in CI) ── A verdict moves from a press to a click only along that gesture's own
-// chain of events as this window hears them. Each guard replays an engine's order as the browser cells recorded it, the events this
-// window heard, with the element the gesture lands on; "|" in a row's name marks where another element goes over the control. The
-// mutants the checklist records: P6-OFF (the tail dropped, both reads), P6-ANYDETAIL (the tail set by any primary mouseup), P5-OFF
-// (the slot's pointerId test dropped), P3-OFF (a touchend and a touchcancel mark nothing), P3-TC (the touchcancel listener left
-// out), P3-DEL (a touchend deletes the touch records in place of marking them refused), P4-OFF (no touch-order pen), P4-ANY (a
-// touch-order pen's slot taken by any click), P4-NOID (that slot refused to a click with no pointerId), P4-NOMD (that slot taken
-// with no wait for the pen's compatibility mousedown), MU-OFF (a mouseup other than a primary one of detail above 0 empties
-// nothing), MU-DETAIL (that clear keyed on the detail alone), MU-FLAG (that mouseup clears the tap's flag and leaves the slot) and
-// MU-SLOT (it empties the slot and leaves the flag, defensive, so no guard reds under it).
+// cells, file-figure-open-taps.ts chainCells, skip in CI) ── A verdict moves from a press to a click only along that gesture's
+// own chain of events as this window hears them, and a record still standing at a pointer's click under its pointerId, a press
+// whose pointerup this window never heard, refuses that click. Each guard replays an engine's order as the browser cells recorded
+// it, the events this window heard, with the element the gesture lands on; "|" in a row's name marks where another element goes
+// over the control. The mutants the checklist records: P6-OFF (the tail dropped, both reads), P6-ANYDETAIL (the tail set by any
+// primary mouseup), P5-OFF (the slot's pointerId test dropped), P3-OFF (a touchend and a touchcancel mark nothing), P3-TC (the
+// touchcancel listener left out), P3-DEL (a touchend deletes the touch records in place of marking them refused), P4-OFF (no
+// touch-order pen), P4-ANY (a touch-order pen's slot taken by any click), P4-NOID (that slot refused to a click with no
+// pointerId), P4-NOMD (that slot taken with no wait for the pen's compatibility mousedown), MU-OFF (a mouseup other than a
+// primary one of detail above 0 empties nothing), MU-DETAIL (that clear keyed on the detail alone), MU-FLAG (that mouseup clears
+// the tap's flag and leaves the slot) MU-SLOT (it empties the slot and leaves the flag, defensive, so no guard reds under it) and
+// OWNREF-OFF (a click reads the record still standing under its own pointerId as its press, the gate at 09f58bec6, whose compiled
+// code it equals).
 /** Firefox's mouse click under pointerId 0 on `target`: its pointerdown, mousedown, pointerup, mouseup and click (typed mouse). */
 const ffMouseClick = (target: El): void => {
   const m: GatePtr = { pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0 };
@@ -2218,7 +2222,7 @@ const engineTap = (target: El, engine: "chromium" | "firefox" | "webkit", touchI
   if (engine === "webkit") gateClick(target, 1, 1, true, "mouse");
   else gateClick(target, touchId, 1, true, "touch");
 };
-test("how a click finds its press, Firefox's lone click after another document cancelled a tap's pointerdown, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): Firefox sends that tap's click, trusted, under pointerId 0 of type touch and detail 1, into this window with no mousedown and no mouseup before it, so it takes no press: after a right click or a middle click on the picture with the control shown, whose pointerup filled the slot, after the viewer's own tap whose compatibility events went to another document's element, after that tap's compatibility mousedown alone (the element taking its mouseup and click), after its mouseup alone of detail 0 (the element taking its mousedown), after the mouse held on the control, released or not, after the mouse pressed on the control and released outside the viewer's frame (a pointerup and a mouseup of detail 0 and no click), and after a middle press's autoscroll ended by a left press on the picture (a pointerup and a mouseup of detail 0 and no click), then another element over the control: the lone click opens nothing and reveals the control, and the next click of the mouse opens once (a property pin over window.open's calls and the scrollIntoView record; red at 142ade155, where each lone click took the slot or the mouse's own record and opened, and under P6-OFF with MU-OFF, a gate with neither the tail nor the mouseup's clear; under P6-OFF alone the four rows with no mouseup after the slot's fill or the mouse's press, the tap whose compatibility events went elsewhere, that tap's compatibility mousedown alone, the mouse held on the control and the mouse dragged into another pane, the mouseup's clear closing the other five too, since each ends in a mouseup of another button or of detail 0; the rows ending in a mouseup of detail 0, the tap's, the release outside the frame and the autoscroll's, red under P6-ANYDETAIL)", async (t) => {
+test("how a click finds its press, Firefox's lone click after another document cancelled a tap's pointerdown, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): Firefox sends that tap's click, trusted, under pointerId 0 of type touch and detail 1, into this window with no mousedown and no mouseup before it, so it takes no press: after a right click or a middle click on the picture with the control shown, whose pointerup filled the slot, after the viewer's own tap whose compatibility events went to another document's element, after that tap's compatibility mousedown alone (the element taking its mouseup and click), after its mouseup alone of detail 0 (the element taking its mousedown), after the mouse held on the control, released or not, after the mouse pressed on the control and released outside the viewer's frame (a pointerup and a mouseup of detail 0 and no click), and after a middle press's autoscroll ended by a left press on the picture (a pointerup and a mouseup of detail 0 and no click), then another element over the control: the lone click opens nothing and reveals the control, and the next click of the mouse opens once (a property pin over window.open's calls and the scrollIntoView record; red at 142ade155, where each lone click took the slot or the mouse's own record and opened; under P6-OFF with MU-OFF, a gate with neither the tail nor the mouseup's clear, the seven rows but the mouse held on the control and the mouse dragged into another pane, whose lone click finds the mouse's record standing and refuses, and all nine under P6-OFF with MU-OFF and OWNREF-OFF, the gate at 09f58bec6 with neither; under P6-OFF alone the two rows with no mouseup after the slot's fill, the tap whose compatibility events went elsewhere and that tap's compatibility mousedown alone, the mouseup's clear closing the five that end in a mouseup of another button or of detail 0 and the refusal of a standing record the two of the mouse's press; the rows ending in a mouseup of detail 0, the tap's, the release outside the frame and the autoscroll's, red under P6-ANYDETAIL)", async (t) => {
   const got: Record<string, unknown> = {};
   const m: GatePtr = { pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0 };
   const f: GatePtr = { pointerId: 0, pointerType: "touch", isPrimary: true, button: 0 };
@@ -2506,7 +2510,7 @@ test("the one gate's window listeners go with the viewer, a guard CI runs (the f
   const gone = gate.map(([type, cb]) => [type, calls.remove.some(([rt, rcb, rcap]) => rt === type && rcb === cb && rcap)]);
   assert.deepEqual(gone, gate.map(([type]) => [type, true]), "each is removed at the close, the same function with the capture flag, [type, removed] (a property pin over the window's remove calls)");
 });
-test("how a click finds its press, Firefox's drag of the held picture before another document's tap, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): the mouse held on the picture with the control shown, its pointerdown and mousedown under pointerId 0, then another element over the control, then a tap on an element of another document over the control that hides at that tap's compatibility mousedown, which in Firefox starts a drag of the held picture, so this window hears a dragstart and then that tap's mouseup of detail 1 and its click on the picture under pointerId 0 typed touch, with no pointerdown, mousedown or pointerup of the tap: the dragstart ended the mouse's record, so the click opens nothing and reveals the control, and, that element gone, a click of the mouse on the picture opens once (a property pin over window.open's calls and the scrollIntoView record; red under a gate whose dragstart ends no record, where the click read the held mouse's record and opened, and green at 142ade155 and at 1a6470e72 by design, whose dragstart ends every record too)", async (t) => {
+test("how a click finds its press, Firefox's drag of the held picture before another document's tap, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): the mouse held on the picture with the control shown, its pointerdown and mousedown under pointerId 0, then another element over the control, then a tap on an element of another document over the control that hides at that tap's compatibility mousedown, which in Firefox starts a drag of the held picture, so this window hears a dragstart and then that tap's mouseup of detail 1 and its click on the picture under pointerId 0 typed touch, with no pointerdown, mousedown or pointerup of the tap: the dragstart ended the mouse's record, so the click opens nothing and reveals the control, and, that element gone, a click of the mouse on the picture opens once (a property pin over window.open's calls and the scrollIntoView record; red under a gate whose dragstart ends no record and whose click reads the record under its own pointerId, the gate at 09f58bec6 with its dragstart's clear dropped, where the click read the held mouse's record and opened; green under this gate with the dragstart's clear dropped, where the click finds that record standing and refuses, so the clear is defensive here, and green at 142ade155 and at 1a6470e72 by design, whose dragstart ends every record too)", async (t) => {
   const got: Record<string, unknown> = {};
   got.ff = await gateCell(t, "the mouse held on the picture, | then Firefox's dragstart and another document's tap", (g, opens) => {
     const m: GatePtr = { pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0 };
@@ -2523,4 +2527,31 @@ test("how a click finds its press, Firefox's drag of the held picture before ano
   });
   t.diagnostic("record " + JSON.stringify(got));
   assert.deepEqual(got, { ff: [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }] }, "the other document's click after the drag of the held picture opens nothing and reveals the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
+});
+test("how a click finds its press, another document's tap after a mouse's press whose pointerup this window never heard, a guard CI runs (the closing check at 142ade155 after the fixes for the file review's round 18): the mouse pressed on the control or on the picture with the control shown, its pointerdown and mousedown heard and no pointerup, held there as WebKit sends it under pointerId 1, or released over another pane as Firefox sends it under pointerId 0, then another element over the control, then a tap on an element of another document over the control that hides at that tap's compatibility mousedown, so this window hears that tap's mouseup of detail 1 and its click alone, WebKit's under pointerId 1 typed mouse, the held mouse's own, and Firefox's under pointerId 0 typed touch: the mouse's record still stands at that click, so the click opens nothing and reveals the control, and, that element gone, a click of the mouse on the picture opens once (a property pin over window.open's calls and the scrollIntoView record; each row red at 142ade155, at 1a6470e72 and at 09f58bec6, whose click read the mouse's record under its pointerId and opened)", async (t) => {
+  const got: Record<string, unknown> = {};
+  type Row = { name: string; pid: number; on: "ctl" | "img"; click: [number, string]; next: (g: KeyGate) => void };
+  const rows: Row[] = [
+    { name: "WebKit's order, the mouse held on the control, the click under pointerId 1 typed mouse", pid: 1, on: "ctl", click: [1, "mouse"], next: (g) => mouseClick(g.img) },
+    { name: "WebKit's order, the mouse held on the picture, the click under pointerId 1 typed mouse", pid: 1, on: "img", click: [1, "mouse"], next: (g) => mouseClick(g.img) },
+    { name: "Firefox's order, the mouse pressed on the control and released over another pane, the click under pointerId 0 typed touch", pid: 0, on: "ctl", click: [0, "touch"], next: (g) => ffMouseClick(g.img) },
+  ];
+  for (const r of rows) {
+    got[r.name] = await gateCell(t, "the mouse's press with no pointerup heard, | then another document's tap: " + r.name, (g, opens) => {
+      const m: GatePtr = { pointerId: r.pid, pointerType: "mouse", isPrimary: true, button: 0 };
+      const at = r.on === "ctl" ? g.ctl : g.img;
+      g.place(IN_BOX);
+      onWindow("pointerdown", at, { ...m });                                 // the mouse's press, its pointerup never heard here
+      onWindow("mousedown", at, { button: 0 });
+      g.cover(new El("div"));
+      gateClick(at, r.click[0], 1, true, r.click[1]);                         // the other tap's mouseup of detail 1 and its click, its compatibility mousedown taken by the element
+      const first = opens();
+      g.cover(null);
+      r.next(g);
+      return [first, opens()];
+    });
+  }
+  t.diagnostic("record " + JSON.stringify(got));
+  const want = [{ opened: 0, reveals: 1 }, { opened: 1, reveals: 0 }];
+  assert.deepEqual(got, Object.fromEntries(rows.map((r) => [r.name, want])), "the other document's click after the mouse's press whose pointerup this window never heard opens nothing and reveals the control, and the next click opens once, [that click, the next] (a property pin over window.open's calls and the scrollIntoView record)");
 });
