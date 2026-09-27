@@ -109,6 +109,10 @@ setup() {
 
     export ROMP_PRIVATE_STRINGS="$STRINGS"
     export ROMP_NO_GITLEAKS=1          # the credential half: stubbed in install-sh.bats, real in gitleaks-config.bats and the last section here
+    # The credential feed reads GIT_DIFF_OPTS as main's git log reads it (round 12n, romp-manager's ruling P on round
+    # 12l's audit A1), so a value in the runner's environment would move the hunks every credential case frames; the
+    # cases that set it export it for their own push alone.
+    unset GIT_DIFF_OPTS
 }
 
 teardown() { rm -rf "${TEST_DIR:-}"; }
@@ -1259,11 +1263,11 @@ two_files_credential_second() {   # sha is the commit
 # a clean push), and a replace ref (both scans read a substitute while the push
 # transfers the original); log.showRoot set to false hid a root commit's diff.
 # The feed is plumbing given each option explicitly (--no-textconv, --text,
-# --no-color, --root), since round 11c with the two inputs that reach it from
-# outside its options pinned (env -u GIT_DIFF_OPTS, git -c
-# diff.suppressBlankEmpty=false: the round 11c section's witnesses), and the
-# porcelain keys are ones diff-tree never reads, so a credential under each is
-# found and a clean push under each passes; the cases stay as regression pins.
+# --no-color, --root), with git -c diff.suppressBlankEmpty=false pinned (the
+# round 11c section's witnesses) and GIT_DIFF_OPTS read as main's git log reads
+# it (round 12n's section), and the porcelain keys are ones diff-tree never
+# reads, so a credential under each is found and a clean push under each
+# passes; the cases stay as regression pins.
 # The identifier scan, when armed, refuses a TEXT file under a -diff attribute
 # before either scan reads it (the attribute section at the end), so the two
 # -diff cases here, the credential half's, run with the denylist absent.
@@ -3737,18 +3741,19 @@ wc_silent() {   # a wc that reads its input and answers nothing, exit 0
     [ "$status" -eq 128 ]
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the CONTENT of notes.txt at the tip of refs/heads/main (${sha:0:10}), which git calls binary and the identifier scan therefore skipped, could not be read (git cat-file exited 128)"* ]]
+    [[ "$output" == *"the CONTENT of notes.txt at the tip of refs/heads/main (${sha:0:10}), which git calls binary and the identifier scan therefore skipped, could not be read (a stage of git cat-file, head, od, awk and cat exited 128)"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"is text that"* ]]                      # unread, so not called text either
 }
 
 # The byte judge's count of zero (the second class): a cat-file that exits 0
 # and prints nothing, or an od that fails inside the counting group (whose
-# status is the drain's), left awk a count of zero bytes for a blob with
-# bytes, and the blob passed as empty content, a banned string in a -diff file
-# published through a real push (the round 4 refuters, 2026-09-22). The gate
-# is the blob's size (cat-file -s), read apart: zero bytes read is empty
-# content only when the size is zero. The fixture puts the attribute in
+# status was the drain's until round 12n), left awk a count of zero bytes for
+# a blob with bytes, and the blob passed as empty content, a banned string in
+# a -diff file published through a real push (the round 4 refuters,
+# 2026-09-22). The gate is the blob's size (cat-file -s), read apart: zero
+# bytes read is empty content only when the size is zero; since round 12n a
+# failed head, od or awk is the read's own status (round 12m's audit A2). The fixture puts the attribute in
 # .git/info/attributes so the leak commit changes one path, and the leak is a
 # middle commit gone at the tip.
 silent_cat_file_blob() {   # <blob>: a git whose `cat-file blob <blob>` exits 0 and prints nothing, the real git for every other command (cat-file -s included)
@@ -3787,18 +3792,19 @@ hidden_file_in_middle_commit_after_base() {   # a base on the remote (BASE), the
     [[ "$output" == *"the CONTENT of notes.txt in commit ${leak:0:10}, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file blob exited 0)"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"is text that"* ]]                      # judged by nothing: refused for the read, not for the blob
-    [[ "$output" != *"could not be read (git cat-file exited"* ]]
+    [[ "$output" != *"could not be read (a stage of git cat-file"* ]]
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
 }
 
-@test "an od that FAILS inside the counting group (exit 1, no git shim) leaves the same count of zero and is refused the same way through a real push: the group's status is the drain's, so the size is the gate; the remote stays at the base" {
+@test "an od that FAILS inside the counting group (exit 1, no git shim), through a real push, is refused naming the BYTE COUNTS read and od's status, the size never asked: since round 12n the group returns the count's status when head, od or awk fails and drains only after a count that passed (round 12m's audit A2, the fold owner's call; until then the group returned the drain's status, the failed od left a count of zero and the size read refused it as short); the remote stays at the base" {
     hidden_file_in_middle_commit_after_base
     od_failing
     run _hook_in "$REPO" -c 'printf "ab" | od -An -v -tu1'
     [ "$status" -eq 1 ]
     push_main_through_hook_with_shim
     [ "$status" -ne 0 ]
-    [[ "$output" == *"the CONTENT of notes.txt in commit ${leak:0:10}, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file blob exited 0)"* ]]
+    [[ "$output" == *"the CONTENT of notes.txt in commit ${leak:0:10}, which git calls binary and the identifier scan therefore skipped, could not be read (a stage of git cat-file, head, od, awk and cat exited 1)"* ]]
+    [[ "$output" != *"was read as 0 bytes"* ]]
     [[ "$output" != *"is text that"* ]]
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
 }
@@ -4802,8 +4808,10 @@ PROBE
 # sites: the first word after the call's --; since round 12l no other statement
 # of such a body, and no substitution in it, that runs a reading tool; since
 # round 12m the body read into statements, that statement one pipeline in the
-# foreground, so a read sharing its first line after ; or &, or chained to it
-# by && or ||, is not declared),
+# foreground, so a read sharing its first line after ; or & is not declared;
+# since round 12n pipelines joined by && keep the statement's status and one
+# chained by || does not, a group stage is read by the same rule, and a
+# statement turning pipefail off is named),
 # an array-literal assignment (the scanner's argument list) or a line under an
 # `outside judged_read:` marker (a trailing comment, the comment block above
 # the statement or its backslash-continued first line, or the block above the
@@ -5126,57 +5134,108 @@ census_command() {   # reads mw and rw (a record's words), fl, et and touch, and
     done
     return 0
 }
-census_statements() {   # <masked text file> <functions, each "name:first:last" (1-based lines, the header to the closing brace)>: the statement reader of a body passed whole, run over the masked text as the splitter reads it (round 12m, round 12l's audit A3 and A4 under the landing round's extra7-1: the census judges statements, not lines); prints the program's F, X and B lines (its comment)
+census_statements() {   # <masked text file> <functions, each "name:first:last" (1-based lines, the header to the closing brace)> <raw text file>: the statement reader of a body passed whole, run over the masked text as the splitter reads it and over the raw text at the same offsets (round 12m, round 12l's audit A3 and A4 under the landing round's extra7-1: the census judges statements, not lines; round 12n, round 12m's audit A2 and A3, the fold owner's calls: a group read by the same rule, && keeping a status, a pipefail toggle named); prints the program's F, X, T, B and G lines (its comment)
     if [ ! -f "$TEST_DIR/stmt.awk" ]; then
         cat > "$TEST_DIR/stmt.awk" <<'AWK'
-# The statement reader of a body passed whole (round 12m, round 12l's audit A3 and A4 under extra7-1's property). For
-# each function fns names ("name:first:last": 1-based lines, the header to the closing brace) it reads the masked text
-# from the header's { on and splits it where the splitter splits (;, a lone &, &&, ||, | and |&), with the nestings
-# bash opens there: a brace group, a ( ) subshell, $( ), <( ), >( ), a backtick pair, (( )), $(( )), ${ }, [[ ]] and
-# the keyword compounds (if, while, until, for, select and case, each from its word at a command's start to its fi,
-# done or esac). A newline ends a statement unless it falls inside a quote (by the parity of the quote characters the
-# masked text keeps), after a trailing backslash, inside a nesting, or after |, |&, && or ||. It prints
-# "X <line> <from> <to>" for each line of each keyword compound; "F <line> <from> <to>" for each line of each stage of
-# the body's LAST statement, when that statement is one pipeline (no && or || at its top) run in the foreground (not
-# ended by &), neither negated (!) nor a coproc, and the body was read whole (<to> 0: to the line's end); and
-# "B <name> <the last statement's index> <its pipelines> <flags>", the flags u (not read whole: an unbalanced nesting
-# or quote), a (in the background), n (negated or a coproc) and c (chained), or - for none.
+# The statement reader of a body passed whole (round 12m, round 12l's audit A3 and A4 under extra7-1's property; round
+# 12n, round 12m's audit A2 and A3). For each function fns names ("name:first:last": 1-based lines, the header to the
+# closing brace) it reads the masked text from the header's { on and splits it where the splitter splits (;, a lone &,
+# &&, ||, | and |&), with the nestings bash opens there: a brace group, a ( ) subshell, $( ), <( ), >( ), a backtick
+# pair, (( )), $(( )), ${ }, [[ ]] and the keyword compounds (if, while, until, for, select and case, each from its
+# word at a command's start to its fi, done or esac). A brace group or a subshell that opens at a command's start at
+# the top of the body, or at the top of such a group, is a FRAME, split into statements by the same rule. A newline
+# ends a statement unless it falls inside a quote (by the parity of the quote characters the masked text keeps), after
+# a trailing backslash, inside a nesting other than the frame's own, or after |, |&, && or ||. A statement KEEPS its
+# status when it is one pipeline, or pipelines joined by && (a failure on either side is the statement's status: the
+# left's when it fails, else the right's), run in the foreground (not ended by &), no pipeline negated (!) or a coproc,
+# and no || at its top (a pipeline on the right of || runs only when the left fails, and the left's failure is then
+# lost). It prints "X <line> <from> <to>" for each line of each keyword compound; "F <line> <from> <to>" for each line
+# of each stage of the body's LAST statement, when that statement keeps its status and the body was read whole (<to> 0:
+# to the line's end), except that a stage holding a frame is not printed: in its place, the frame's own last statement
+# is read by the same rule, its stages printed when it keeps its status and nothing when it does not; "T <line>" for
+# each simple command anywhere in the body that turns pipefail off, the rule's premise (set with a + option group
+# holding o followed by pipefail, or shopt with -u and -o and then pipefail, or either with a word holding an
+# expansion in pipefail's place), its words read from the raw text with their quote and backslash characters removed;
+# "B <name> <the last statement's index> <its pipelines> <flags>" for the body and "G <name> <frame> <its last
+# statement's index> <its pipelines> <flags>" for each frame, the flags u (the body not read whole: an unbalanced
+# nesting or quote), a (in the background), n (a pipeline negated or a coproc) and o (a || at its top), or - for none.
 BEGIN { nf = split(fns, fl, " ") }
-{ line[NR] = $0 }
+{ line[NR] = $0; if ((getline r < rawf) > 0) raw[NR] = r; else raw[NR] = "" }
 function top() { return sp > 0 ? typ[sp] : "" }
 function push(t) { typ[++sp] = t; tl[sp] = ln; tc[sp] = i }
 function pop() { if (sp > 0) sp--; else bad = 1 }
 function span(tag, l1, c1, l2, c2,   l) { for (l = l1; l <= l2; l++) print tag, l, (l == l1 ? c1 : 1), (l == l2 ? c2 : 0) }
 function content() { cs_has = 1; pend = 0 }
 function wordchar() { if (!inword) { inword = 1; ws = i; watcmd = atcmd }; content() }
-function newstage(l, c) { cs_l = l; cs_c = c; cs_has = 0 }
-function endstage(l, c) { if (cs_has) { ns++; s_st[ns] = st; s_sl[ns] = cs_l; s_sc[ns] = cs_c; s_el[ns] = l; s_ec[ns] = c; cp_has = 1 }; cs_has = 0 }
-function endpipe() { if (cp_has) { st_npl[st]++; st_has[st] = 1; if (cp_lost) st_lost[st] = 1 }; cp_has = 0; cp_lost = 0 }
-function endstmt(async) { if (st_has[st]) { st_async[st] = async; last = st; st++ } }
+function newstage(l, c) { cs_l = l; cs_c = c; cs_has = 0; cs_grp = 0 }
+function endstage(l, c) { if (cs_has) { ns++; s_fr[ns] = fr; s_st[ns] = st; s_sl[ns] = cs_l; s_sc[ns] = cs_c; s_el[ns] = l; s_ec[ns] = c; s_grp[ns] = cs_grp; cp_has = 1 }; cs_has = 0; cs_grp = 0 }
+function endpipe() { if (cp_has) { st_npl[fr, st]++; st_has[fr, st] = 1; if (cp_lost) st_lost[fr, st] = 1 }; cp_has = 0; cp_lost = 0 }
+function endstmt(async) { if (st_has[fr, st]) { st_async[fr, st] = async; last = st; st++ } }
+function flags(F, S) { return (st_async[F, S] ? "a" : "") (st_lost[F, S] ? "n" : "") (st_or[F, S] ? "o" : "") }
+function newcmd() { cn = 0; ctog = 0 }
+function togchk(   k, j, u, o) {
+    for (k = 1; k <= cn; k++) if (cw[k] == "set" || cw[k] == "shopt") break
+    if (k > cn) return 0
+    if (cw[k] == "set") {
+        for (j = k + 1; j < cn; j++) if (cw[j] ~ /^\+[A-Za-z]*o[A-Za-z]*$/ && (cw[j + 1] == "pipefail" || cw[j + 1] ~ /\$/)) return k
+        return 0
+    }
+    u = 0; o = 0
+    for (j = k + 1; j <= cn; j++) {
+        if (cw[j] ~ /^-[A-Za-z]+$/) { if (cw[j] ~ /u/) u = 1; if (cw[j] ~ /o/) o = 1; continue }
+        if (u && o && (cw[j] == "pipefail" || cw[j] ~ /\$/)) return k
+    }
+    return 0
+}
+function fopen(t,   id, k) {
+    id = ++nfr; if (!cs_grp) cs_grp = id
+    content()
+    k = ++fsp
+    sv_fr[k] = fr; sv_base[k] = base; sv_st[k] = st; sv_last[k] = last; sv_csl[k] = cs_l; sv_csc[k] = cs_c; sv_csh[k] = cs_has; sv_csg[k] = cs_grp; sv_cph[k] = cp_has; sv_cpl[k] = cp_lost
+    push(t); fr = id; base = sp; st = 1; last = 0; cp_has = 0; cp_lost = 0; newstage(ln, i + 1); atcmd = 1; newcmd()
+}
+function fclose(   k) {
+    endstage(ln, i - 1); endpipe(); endstmt(0); fr_last[fr] = last
+    k = fsp--
+    fr = sv_fr[k]; base = sv_base[k]; st = sv_st[k]; last = sv_last[k]; cs_l = sv_csl[k]; cs_c = sv_csc[k]; cs_has = sv_csh[k]; cs_grp = sv_csg[k]; cp_has = sv_cph[k]; cp_lost = sv_cpl[k]
+    pop(); content(); atcmd = 0; newcmd()
+}
 function op(tok, L) {
-    if (sp == 0) {
+    if (sp == base) {
         endstage(ln, i - 1)
         if (tok != "|" && tok != "|&") endpipe()
+        if (tok == "||") st_or[fr, st] = 1
         if (tok == ";" || tok == "&") endstmt(tok == "&")
         newstage(ln, i + L)
     }
-    pend = (tok == "|" || tok == "|&" || tok == "&&" || tok == "||"); atcmd = 1; i += L
+    pend = (tok == "|" || tok == "|&" || tok == "&&" || tok == "||"); atcmd = 1; i += L; newcmd()
 }
-function endword(   w) {
+function endword(   w, y, k) {
     if (!inword) return
     inword = 0; w = substr(line[ln], ws, i - ws)
+    y = substr(raw[ln], ws, i - ws); gsub(/["'\\]/, "", y); cw[++cn] = y; cwl[cn] = ln
+    if (!ctog && (k = togchk())) { ctog = 1; print "T", cwl[k] }
     if (!watcmd) { atcmd = 0; if (w == "]]" && top() == "D") pop(); return }
-    if (w == "!" || w == "coproc") { if (sp == 0) cp_lost = 1; atcmd = 1; return }
+    if (w == "!" || w == "coproc") { if (sp == base) cp_lost = 1; atcmd = 1; return }
     if (w == "time" || w == "then" || w == "do" || w == "else" || w == "elif") { atcmd = 1; return }
     if (w == "if" || w == "while" || w == "until" || w == "for" || w == "select" || w == "case") { push("K"); tc[sp] = ws; atcmd = (w == "if" || w == "while" || w == "until"); return }
     if (w == "fi" || w == "done" || w == "esac") { if (top() == "K") { span("X", tl[sp], tc[sp], ln, i - 1); pop() } else bad = 1; atcmd = 0; return }
     if (w == "[[") { push("D"); atcmd = 0; return }
     atcmd = 0
 }
-function parse(k,   s, e, one, t, n, c, c2, c3, p, fin, j, flags) {
+function decl(F, S,   j, C, L) {
+    for (j = 1; j <= ns; j++) {
+        if (s_fr[j] != F || s_st[j] != S) continue
+        C = s_grp[j]
+        if (C) { L = fr_last[C]; if (L && flags(C, L) == "") decl(C, L) }
+        else span("F", s_sl[j], s_sc[j], s_el[j], s_ec[j])
+    }
+}
+function parse(k,   s, e, one, t, n, c, c2, c3, p, fin, j, f, g) {
     s = fb[k]; e = fe[k]; one = (s == e)
     sp = 0; q = 0; bad = 0; atcmd = 1; inword = 0; pend = 0; ns = 0; st = 1; last = 0; cp_has = 0; cp_lost = 0; fin = 0
-    delete st_npl; delete st_has; delete st_async; delete st_lost
+    fr = 1; nfr = 1; base = 0; fsp = 0; newcmd()
+    delete st_npl; delete st_has; delete st_async; delete st_lost; delete st_or; delete fr_last
     for (ln = s; ln <= e && !fin; ln++) {
         if (!one && ln == e) break
         t = line[ln]; n = length(t); bs = 0
@@ -5188,25 +5247,35 @@ function parse(k,   s, e, one, t, n, c, c2, c3, p, fin, j, flags) {
             if (c == "'" || c == "\"") { q = 1 - q; wordchar(); i++; continue }
             if (c3 == "$((") { endword(); content(); push("A"); atcmd = 0; i += 3; continue }
             if (c2 == "${") { endword(); content(); push("E"); atcmd = 0; i += 2; continue }
-            if (c2 == "$(" || c2 == "<(" || c2 == ">(") { endword(); content(); push("C"); atcmd = 1; i += 2; continue }
+            if (c2 == "$(" || c2 == "<(" || c2 == ">(") { endword(); content(); push("C"); atcmd = 1; i += 2; newcmd(); continue }
             if (c2 == "((") { endword(); content(); push("A"); atcmd = 0; i += 2; continue }
-            if (c == "(") { endword(); content(); push("P"); atcmd = (substr(t, i - 1, 1) != "="); i++; continue }
+            if (c == "(") {
+                endword()
+                if (atcmd && sp == base && substr(t, i - 1, 1) != "=") { fopen("S"); i++; continue }
+                content(); push("P"); atcmd = (substr(t, i - 1, 1) != "="); i++; newcmd(); continue
+            }
             if (c == ")") {
-                endword(); content()
+                endword()
+                if (top() == "S") { fclose(); i++; continue }
+                content()
                 if (top() == "A" && substr(t, i + 1, 1) == ")") { pop(); i += 2 }
                 else if (top() == "C" || top() == "P" || top() == "A") { pop(); i++ }
                 else { bad = 1; i++ }
-                atcmd = 0; continue
+                atcmd = 0; newcmd(); continue
             }
-            if (c == "`") { endword(); content(); if (top() == "B") { pop(); atcmd = 0 } else { push("B"); atcmd = 1 }; i++; continue }
+            if (c == "`") { endword(); content(); if (top() == "B") { pop(); atcmd = 0 } else { push("B"); atcmd = 1 }; i++; newcmd(); continue }
             if (c == "}" && top() == "E") { pop(); content(); i++; continue }
             if (c2 == "||" || c2 == "&&" || c2 == "|&") { endword(); op(c2, 2); continue }
             if (c == "|" || c == ";") { endword(); op(c, 1); continue }
             if (c == "&" && substr(t, i - 1, 1) !~ /[<>]/ && substr(t, i + 1, 1) != ">") { endword(); op(c, 1); continue }
-            if (c == "\001") { endword(); content(); atcmd = 1; i++; continue }
-            if (!inword && atcmd && c == "{" && (i == n || substr(t, i + 1, 1) ~ /[ \t]/)) { content(); push("G"); atcmd = 1; i++; continue }
+            if (c == "\001") { endword(); content(); atcmd = 1; i++; newcmd(); continue }
+            if (!inword && atcmd && c == "{" && (i == n || substr(t, i + 1, 1) ~ /[ \t]/)) {
+                if (sp == base) { fopen("F"); i++; continue }
+                content(); push("G"); atcmd = 1; i++; newcmd(); continue
+            }
             if (!inword && atcmd && c == "}" && (i == n || substr(t, i + 1, 1) ~ /[ \t;&|)<>]/)) {
-                if (top() == "G") { pop(); content(); atcmd = 0; i++; continue }
+                if (top() == "F") { fclose(); i++; continue }
+                if (top() == "G") { pop(); content(); atcmd = 0; i++; newcmd(); continue }
                 if (one && sp == 0) { endstage(ln, i - 1); endpipe(); endstmt(0); fin = 1; break }
                 bad = 1; i++; continue
             }
@@ -5214,23 +5283,25 @@ function parse(k,   s, e, one, t, n, c, c2, c3, p, fin, j, flags) {
         }
         if (fin) break
         endword()
-        if (q || bs || sp > 0 || pend) { if (sp > 0 && !q && !bs) atcmd = 1; continue }
+        if (!q && !bs) newcmd()
+        if (q || bs || sp > base || pend) { if (sp > base && !q && !bs) atcmd = 1; continue }
         endstage(ln, n); endpipe(); endstmt(0); newstage(ln + 1, 1); atcmd = 1
     }
     if (one && !fin) bad = 1
     if (sp != 0 || q || cs_has || cp_has) bad = 1
-    flags = (bad ? "u" : "") (last && st_async[last] ? "a" : "") (last && st_lost[last] ? "n" : "") (last && st_npl[last] > 1 ? "c" : "")
-    print "B", fname[k], last, (last ? st_npl[last] : 0), (flags == "" ? "-" : flags)
-    if (flags == "" && last) for (j = 1; j <= ns; j++) if (s_st[j] == last) span("F", s_sl[j], s_sc[j], s_el[j], s_ec[j])
+    f = (bad ? "u" : "") (last ? flags(1, last) : "")
+    print "B", fname[k], last, (last ? st_npl[1, last] : 0), (f == "" ? "-" : f)
+    for (j = 2; j <= nfr; j++) { g = (fr_last[j] ? flags(j, fr_last[j]) : ""); print "G", fname[k], j, fr_last[j] + 0, (fr_last[j] ? st_npl[j, fr_last[j]] : 0), (g == "" ? "-" : g) }
+    if (f == "" && last) decl(1, last)
 }
 END { for (k = 1; k <= nf; k++) { split(fl[k], pp, ":"); fname[k] = pp[1]; fb[k] = pp[2] + 0; fe[k] = pp[3] + 0; parse(k) } }
 AWK
     fi
-    LC_ALL=C awk -v fns="$2" -f "$TEST_DIR/stmt.awk" "$1"
+    LC_ALL=C awk -v fns="$2" -v rawf="$3" -f "$TEST_DIR/stmt.awk" "$1"
 }
-undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per command line the census finds declared by nothing, "declared: <body|array|marker> <line> <function or ->: <tools>" per command line it finds declared outside a judged_read call, "swallowed: ..." per `|| true` or `|| :` inside a body passed whole whose next byte is no word character, and one "census: ..." line of counts; run under `run`. A body passed whole declares a line only when every read on it is a stage of the body's LAST statement, the pipeline whose status judged_read judges, read by census_statements: that statement one pipeline, with no && or || at its top, run in the foreground, neither negated nor a coproc, the read outside every keyword compound and outside every command or process substitution (round 12l, the landing round's extra7-1: a read as a statement of its own ahead of that pipeline, or in a ROMP_X=$(git ...) prefix on one of its stages, lost its status and was declared by the body until then; round 12m, round 12l's audit A3 and A4: the last statement was read by its lines until then, so a read on the pipeline's first line as a statement of its own, after ; or a lone &, and a read chained to the pipeline by || or && were declared)
+undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per command line the census finds declared by nothing, "declared: <body|array|marker> <line> <function or ->: <tools>" per command line it finds declared outside a judged_read call, "swallowed: ..." per `|| true` or `|| :` inside a body passed whole whose next byte is no word character, and one "census: ..." line of counts; run under `run`. A body passed whole declares a line only when every read on it is a stage of the body's LAST statement, whose status judged_read judges, read by census_statements: that statement one pipeline or pipelines joined by &&, with no || at its top, run in the foreground, no pipeline negated or a coproc, the read outside every keyword compound and outside every command or process substitution, and a stage that is a brace group or a subshell read by the same rule, its own last statement declared when it keeps its status; and it names as undeclared, too, a line of such a body holding a statement that turns pipefail off, the premise the rule rests on (round 12l, the landing round's extra7-1: a read as a statement of its own ahead of that pipeline, or in a ROMP_X=$(git ...) prefix on one of its stages, lost its status and was declared by the body until then; round 12m, round 12l's audit A3 and A4: the last statement was read by its lines until then, so a read on the pipeline's first line as a statement of its own, after ; or a lone &, and a read chained to the pipeline by || were declared; round 12n, round 12m's audit A2 and A3, the fold owner's calls: until then a group stage was declared whole, a read ahead of its own last statement among it, a read joined by && was named, and a pipefail toggle was read by nothing)
     local -a orig masked mw rw rec
-    local -A fstart fend passed inpassed found_at subst_at other_at fspan xspan
+    local -A fstart fend passed inpassed found_at subst_at other_at fspan xspan tog
     local i name m rest after w f s found cmd word rword wkind u ln fl et touch sk sl sfrom sto sn d stf fns="" calls=0 total=0 body=0 array=0 marker=0 undeclared=0 swallowed=0
     mapfile -t orig < "$1"
     mapfile -t masked < <(masked_text "$1")
@@ -5253,18 +5324,20 @@ undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per com
             if [[ "${masked[i]}" =~ \|\|[[:space:]]*(true|:)([^A-Za-z0-9_]|$) ]]; then echo "swallowed: $((i + 1)):${orig[i]}"; swallowed=$((swallowed + 1)); fi
         done
     done
-    # The passed bodies read into statements (census_statements, round 12m): the spans of the last statement's stages,
-    # where that statement is one pipeline in the foreground, and of the keyword compounds.
+    # The passed bodies read into statements (census_statements, round 12m; groups read by the same rule since round
+    # 12n): the spans of the last statement's stages, where that statement keeps its status, and of the keyword
+    # compounds, and the lines of the statements that turn pipefail off.
     stf=$(mktemp "$TEST_DIR/census.XXXXXX")
     printf '%s\n' "${masked[@]}" > "$stf"
     while read -r sk sl sfrom sto; do
-        case "$sk" in F) fspan[$sl]="${fspan[$sl]:-} $sfrom:$sto" ;; X) xspan[$sl]="${xspan[$sl]:-} $sfrom:$sto" ;; esac
-    done < <(census_statements "$stf" "${fns# }")
+        case "$sk" in F) fspan[$sl]="${fspan[$sl]:-} $sfrom:$sto" ;; X) xspan[$sl]="${xspan[$sl]:-} $sfrom:$sto" ;; T) tog[$sl]=1 ;; esac
+    done < <(census_statements "$stf" "${fns# }" "$1")
     rm -f "$stf"
     # Each simple command the splitter finds with a reading tool's word in its raw words (a call's tagged command, the
     # read the tags judge, set aside): the tool it runs, by census_command. In a passed body, a read whose start (the
     # record's column) lies in no stage span of the last statement, or in a keyword compound's span, is another
-    # statement's, a chained pipeline's or a compound's (round 12m).
+    # statement's, one in a statement that loses its status (a || at its top, a negation, a coproc, the background),
+    # a compound's, or one inside a group ahead of the group's own last statement (round 12m; groups since round 12n).
     while IFS=$'\x1f' read -r -a rec; do
         census_rec "${rec[@]}"
         census_command
@@ -5278,6 +5351,10 @@ undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per com
     done < <(census_records "$1" tools)
     for ((i = 0; i < ${#orig[@]}; i++)); do
         found=${found_at[$((i + 1))]:-}
+        if [ -n "${tog[$((i + 1))]:-}" ]; then                 # a statement turning pipefail off in a passed body (round 12n): named whatever it reads
+            [ -z "$found" ] || total=$((total + 1))
+            undeclared=$((undeclared + 1)); echo "undeclared: $((i + 1)):${orig[i]}"; continue
+        fi
         [ -n "$found" ] || continue
         found=${found# }
         m=${masked[i]}
@@ -5370,23 +5447,29 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
     [ "$(sed -E 's/.*marker=([0-9]+).*/\1/' <<< "$census")" -ge 8 ]
     [ "$(sed -E 's/.*array=([0-9]+).*/\1/' <<< "$census")" -eq 0 ]          # since round 9d no array literal of the hook names a tool (gitleaks_args' list begins with dir); the class stays read, pinned on plant-e below
     # the bound the passed-whole rule rests on: a body handed to the helper returns the status of its LAST statement,
-    # and every stage's status reaches judged_read through pipefail only when that statement is one pipeline (no && or
-    # || at its top), run in the foreground, neither negated nor a coproc. So the census reads each passed body into
-    # its statements over the masked text (census_statements: a statement ends at a newline outside a quote, a
-    # continuation or a nesting, and at ; and a lone &; && and || join pipelines into one statement) and declares a read
-    # only as a stage of that last pipeline, outside every keyword compound and every command or process substitution.
-    # It names as undeclared a read in any other statement (on a line of its own, or sharing the pipeline's first line
-    # after ; or a lone &), every read of a last statement that chains pipelines by && or || (a read on the right of ||
-    # runs only when the left fails, and one on its left loses its failure), and a read in a substitution anywhere in
-    # the body (a ROMP_X= prefix on a stage among them); and as swallowed any `|| true` or `|| :` in the body whose
-    # next byte is no word character (`|| :)` closing a substitution among them). None is there. The stated limit: a
-    # brace group or subshell that is a stage of that pipeline is declared whole, though a read ahead of the group's
-    # own last statement loses its status there; byte_counts' group is the hook's one, its head, od and awk behind the
-    # drain whose status the group returns by design, and the line below pins it declared so the limit is shown by
-    # execution. (Round 12l, the landing round's extra7-1: until then every line of such a body was declared and a
-    # swallowed status read only before a blank or the line's end. Round 12m, round 12l's audit A3 and A4: until then
-    # the last statement was found by its lines, so a read sharing the pipeline's first line and a read chained to it
-    # by || or && were declared. The plants inside a passed body are case 562's.)
+    # and every stage's status reaches judged_read through pipefail, which the hook turns on once (set -euo pipefail)
+    # and the rule assumes stays on, only when that statement keeps its status: one pipeline, or pipelines joined by &&
+    # (a failure on either side is the statement's status, the left's when it fails, else the right's), run in the
+    # foreground, no pipeline negated or a coproc, and no || at its top (a pipeline on the right of || runs only when
+    # the left fails, and the left's failure is then lost). So the census reads each passed body into its statements
+    # over the masked text (census_statements: a statement ends at a newline outside a quote, a continuation or a
+    # nesting, and at ; and a lone &) and declares a read only as a stage of that last statement, outside every keyword
+    # compound and every command or process substitution; a stage that is a brace group or a subshell is read by the
+    # same rule, its own last statement's stages declared when that statement keeps its status. It names as undeclared
+    # a read in any other statement (on a line of its own, sharing the last statement's first line after ; or a lone &,
+    # or inside a group ahead of the group's own last statement), every read of a last statement that loses its status,
+    # a read in a substitution anywhere in the body (a ROMP_X= prefix on a stage among them), and a statement anywhere
+    # in the body that turns pipefail off, the assumption above (set with a + option group holding o and then pipefail,
+    # shopt with -u and -o and then pipefail, or either with an expansion in pipefail's place); and as swallowed any
+    # `|| true` or `|| :` in the body whose next byte is no word character (`|| :)` closing a substitution among them).
+    # None is there. The line below pins byte_counts' group read by that rule and declared: its head, od and awk joined
+    # by && to the drain, so a failed stage is the group's status. (Round 12l, the landing round's extra7-1: until then
+    # every line of such a body was declared and a swallowed status read only before a blank or the line's end. Round
+    # 12m, round 12l's audit A3 and A4: until then the last statement was found by its lines, so a read sharing the
+    # pipeline's first line and a read chained to it by || were declared. Round 12n, round 12m's audit A2 and A3, the
+    # fold owner's calls: until then a group stage was declared whole, byte_counts' head, od and awk ahead of a drain
+    # whose status the group returned among it, a read joined by && was named, and a pipefail toggle was read by
+    # nothing. The plants inside a passed body are case 562's and case 693's.)
     [[ "$output" != *"swallowed: "* ]]
     [[ "$census" == *"swallowed=0 "* ]]
     [ "$(grep -c '^declared: body [0-9]* byte_counts: git head od awk cat$' <<< "$output")" -eq 1 ]
@@ -11711,7 +11794,10 @@ r11b_empty_path_case() {   # <the empty string, quoted>: S1's rule with that pat
 # and a mkdir that fails refuses with a romp line, never bash's; the new read's table and short cases. And
 # romp-manager's 06:29Z ruling on round 11b's flag 7: the empty path exempt in all four quote forms, one pin per
 # form. A title that says a witness is refused at 93684a4d1 records the run made against that hook for the round's
-# log; every credential-shaped string is assembled at run time.
+# log; every credential-shaped string is assembled at run time. Since round 12n (romp-manager's ruling P on round 12l's
+# audit A1, 2026-09-27 20:52Z) the feed and the first-parent read honour GIT_DIFF_OPTS as main's git log does, so the
+# -c diff.suppressBlankEmpty=false pin alone keeps the witness whole: the cases below that named env -u GIT_DIFF_OPTS
+# are re-aimed, and the census of the pins asserts that no read unsets the variable.
 
 r11c_blank_context_history() {   # r9d_base, then a clean history whose edits sit beside blank lines: an edit, a rename with an edit, a mode change, a deletion, a file with no final newline edited, and a two-parent merge adding a clean line of its own beside blank lines while auto-merging a path under a committed -diff attribute (its combined diff a Binary notice, read whole)
     r9d_base
@@ -11752,7 +11838,7 @@ r11c_blank_context_push() {   # the push of main under GIT_DIFF_OPTS=--unified=3
     unset GIT_DIFF_OPTS
 }
 
-@test "round 11c (C, extra5-1, the witness): a clean multi-commit push whose edits sit beside blank lines (an edit, a rename with an edit, a mode change, a deletion, a missing final newline, a two-parent merge adding a line of its own and auto-merging a -diff path) under GIT_DIFF_OPTS=--unified=3 with diff.suppressBlankEmpty=true in the clone passes, and a credential beside blank lines under the same two is still refused naming it (the clean push refused at 93684a4d1: GIT_DIFF_OPTS moved the feed's -U0, and a blank context line printed empty was none of the shapes the feed reads; the witness is red under the mutant removing both pins, since either alone keeps it whole)" {
+@test "round 11c (C, extra5-1, the witness): a clean multi-commit push whose edits sit beside blank lines (an edit, a rename with an edit, a mode change, a deletion, a missing final newline, a two-parent merge adding a line of its own and auto-merging a -diff path) under GIT_DIFF_OPTS=--unified=3 with diff.suppressBlankEmpty=true in the clone passes, and a credential beside blank lines under the same two is still refused naming it (the clean push refused at 93684a4d1: GIT_DIFF_OPTS moved the feed's -U0, and a blank context line printed empty was none of the shapes the feed reads; since round 12n the feed and the first-parent read honour GIT_DIFF_OPTS as main's git log does, so their context lines reach the awk and the -c diff.suppressBlankEmpty=false pin alone keeps the push whole: the witness is red under the mutant dropping that pin from both reads, the context-line pin)" {
     r11c_blank_context_history
     git -C "$REPO" config diff.suppressBlankEmpty true
     [ "$(GIT_DIFF_OPTS=--unified=3 git -C "$REPO" diff-tree -p -U0 "$(git -C "$REPO" rev-list --reverse "$BASE..main" | head -n 1)" | grep -c '^$')" -ge 1 ]   # the premise: under the two, plumbing's -U0 prints context, a blank line of it empty
@@ -11770,27 +11856,24 @@ r11c_blank_context_push() {   # the push of main under GIT_DIFF_OPTS=--unified=3
     at_base
 }
 
-@test "round 11c (C, extra5-1, decision 7's execution item 5): the key's older spelling, diff.suppress-blank-empty=true in the clone, which git still reads, under GIT_DIFF_OPTS=--unified=3, prints a blank context line empty; the same clean push passes through the hook, and through a copy of the hook whose feed drops env -u GIT_DIFF_OPTS, so the three context lines reach diff-tree and the feed's command-line -c diff.suppressBlankEmpty=false alone, read last, beats the key, while a copy dropping the -c pin too refuses it (refused at 93684a4d1, as under the key's own spelling; re-aimed in round 12a, the round 11 rulings' F, the owner's choice (1): only a copy can isolate the -c pin, since env -u removes every source of context; since round 12e each copy edits the feed's line alone, the first-parent read's line carrying the same two pins, witnessed by its own round 12e case)" {
-    local no_env="$TEST_DIR/pre-push-no-env" neither="$TEST_DIR/pre-push-neither"
+@test "round 11c (C, extra5-1, decision 7's execution item 5): the key's older spelling, diff.suppress-blank-empty=true in the clone, which git still reads, under GIT_DIFF_OPTS=--unified=3, prints a blank context line empty; the same clean push passes through the hook, whose feed reads GIT_DIFF_OPTS as main's git log does (round 12n), so the three context lines reach diff-tree and the feed's command-line -c diff.suppressBlankEmpty=false alone, read last, beats the key, while a copy dropping the -c pin from the feed's line refuses it (refused at 93684a4d1, as under the key's own spelling; re-aimed in round 12a, the round 11 rulings' F, the owner's choice (1), and again in round 12n, romp-manager's ruling P on round 12l's audit A1: until then the hook's feed ran under env -u GIT_DIFF_OPTS and only a copy without it could isolate the -c pin; the copy edits the feed's line alone, the first-parent read's line carrying the same pin, witnessed by its own round 12e case)" {
+    local neither="$TEST_DIR/pre-push-neither"
     r11c_blank_context_history
     git -C "$REPO" config diff.suppress-blank-empty true
     [ "$(GIT_DIFF_OPTS=--unified=3 git -C "$REPO" diff-tree -p -U0 "$(git -C "$REPO" rev-list --reverse "$BASE..main" | head -n 1)" | grep -c '^$')" -ge 1 ]   # the premise: the older spelling takes effect
     r11c_blank_context_push
     r10a_passes
-    # the copies, made here from the hook under test: each drops one pin from the feed's diff-tree line (the one given
-    # -c --root, a merge's combined diff), the first-parent read's line (round 12e) left whole
-    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree ' "$HOOK")" -eq 2 ]
-    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree .* -c --root ' "$HOOK")" -eq 1 ]
-    sed '/ -c --root /s/env -u GIT_DIFF_OPTS git -c core.quotePath=true/git -c core.quotePath=true/' "$HOOK" > "$no_env"
-    sed '/ -c --root /s/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /' "$no_env" > "$neither"
-    chmod 755 "$no_env" "$neither"
-    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true' "$no_env")" -eq 1 ]            # the first-parent read's, left whole
-    [ "$(grep -c 'env -u GIT_DIFF_OPTS git -c core.quotePath=true .* --diff-merges=first-parent ' "$no_env")" -eq 1 ]
-    [ "$(grep -c -- '^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin ' "$no_env")" -eq 1 ]
+    # the copy, made here from the hook under test: it drops the -c pin from the feed's diff-tree line (the one given
+    # -c --root, a merge's combined diff), the first-parent read's line (round 12e) left whole; no read of the hook
+    # unsets GIT_DIFF_OPTS (the census of the pins, below)
+    [ "$(grep -c -- '^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p ' "$HOOK")" -eq 2 ]
+    [ "$(grep -c -- '^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p .* -c --root ' "$HOOK")" -eq 1 ]
+    sed '/ -c --root /s/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /' "$HOOK" > "$neither"
+    chmod 755 "$neither"
     # (-p tells the two feed reads from the name listing's diff-tree, round 12f, which prints no patch and carries no pin)
     [ "$(grep -c -- '^    git -c core.quotePath=true diff-tree --stdin -p ' "$neither")" -eq 1 ]
-    [ "$(diff "$HOOK" "$no_env" | grep -c '^>')" -eq 1 ]
-    [ "$(diff "$no_env" "$neither" | grep -c '^>')" -eq 1 ]
+    [ "$(grep -c -- '^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p .* --diff-merges=first-parent ' "$neither")" -eq 1 ]
+    [ "$(diff "$HOOK" "$neither" | grep -c '^>')" -eq 1 ]
     # the remote and its tracking ref back at the base, so the same commits are pushed again
     git -C "$TEST_DIR/remote.git" update-ref refs/heads/main "$BASE"
     git -C "$REPO" update-ref refs/remotes/origin/main "$BASE"
@@ -11798,11 +11881,9 @@ r11c_blank_context_push() {   # the push of main under GIT_DIFF_OPTS=--unified=3
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read whole (git diff-tree exited 0 and printed a line inside commit "* ]]
     at_base
-    HOOK=$no_env r11c_blank_context_push
-    r10a_passes
 }
 
-r11c_git_calls() {   # <bash file>: one line per git command the census finds (a judged_read call's tagged command among them): its line, the words ahead of its command word and its words from git on, raw, the three fields separated by the byte 037 (a tab, which read takes as whitespace, would drop an empty field)
+r11c_git_calls() {   # <bash file> [<census_records' calls records of that file, when the caller holds them>]: one line per git command the census finds (a judged_read call's tagged command among them): its line, the words ahead of its command word and its words from git on, raw, the three fields separated by the byte 037 (a tab, which read takes as whitespace, would drop an empty field)
     local -a orig masked mw rw rec
     local -A fstart fend
     local ln fl et touch cmd word rword wkind u k
@@ -11816,16 +11897,19 @@ r11c_git_calls() {   # <bash file>: one line per git command the census finds (a
         k=0
         while [ "$k" -lt "${#rw[@]}" ]; do census_unquote "${rw[k]}"; [ "${u##*/}" = git ] && break; k=$((k + 1)); done
         printf '%s\037%s\037%s\n' "$ln" "${rw[*]:0:k}" "${rw[*]:k}"
-    done < <(census_records "$1" calls)
+    done < <(if [ "$#" -gt 1 ]; then printf '%s\n' "$2"; else census_records "$1" calls; fi)
 }
-r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin and returns 1, 0 when every pin is carried: the feed's diff-tree (the one git read given diff-tree, --stdin and --text) runs under env -u GIT_DIFF_OPTS with -c diff.suppressBlankEmpty=false among git's own options; every git log or rev-list given --format or --pretty carries --encoding=UTF-8, or -c i18n.logOutputEncoding=UTF-8 among git's own options; any other git read given a format is a for-each-ref whose format is %(refname) alone, the stated exemption (ref names are not re-encoded); and the reads given a format number as many as the lines of the text that run git log or git rev-list with one, a second derivation
-    local ln pre args sub g n i x fmt enc feed=0 formats=0 lines calls
-    local -a a
+r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin and returns 1, 0 when every pin is carried: no git read the census finds unsets GIT_DIFF_OPTS or runs under an environment that lacks it (an env -u or --unset of it, an assignment of it ahead of git, env -i or a lone -), and no statement of the text names GIT_DIFF_OPTS, so none unsets, sets or exports it for the reads after it (round 12n, romp-manager's ruling P on round 12l's audit A1: the feed reads the variable as main's git log does); the feed's diff-tree reads (the git reads given diff-tree, --stdin and --text: the feed and, since round 12e, the merges' first-parent read) carry -c diff.suppressBlankEmpty=false among git's own options; every git log or rev-list given --format or --pretty carries --encoding=UTF-8, or -c i18n.logOutputEncoding=UTF-8 among git's own options; any other git read given a format is a for-each-ref whose format is %(refname) alone, the stated exemption (ref names are not re-encoded); and the reads given a format number as many as the lines of the text that run git log or git rev-list with one, a second derivation
+    local ln pre args sub g n i x fmt enc feed=0 formats=0 lines calls named recs
+    local -a a p
     # The list is read whole before the loop, never through a pipe the loop reads: the loop returns at the first read
     # lacking its pin, and a pipe closed while r11c_git_calls still writes gives its printf EPIPE, which, with SIGPIPE
     # ignored (a systemd service; a CI runner may run so), bash prints as a write error into run's output, where the
     # case asserts the output exactly (round 11e; with SIGPIPE at its default the writer died silently)
-    calls=$(r11c_git_calls "$1")
+    # One pass of the splitter serves both derivations: the calls records, and those whose raw words name GIT_DIFF_OPTS
+    # (the names regex keeps them too), read for the statement check after the loop.
+    recs=$(census_records "$1" calls 'GIT_DIFF_OPTS')
+    calls=$(r11c_git_calls "$1" "$recs")
     while IFS=$'\037' read -r ln pre args; do
         read -r -a a <<< "$args"
         g=" "; n=1
@@ -11842,9 +11926,21 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
             case "$x" in --format|--format=*|--pretty|--pretty=*) fmt=$x ;; --encoding=UTF-8) enc=1 ;; esac
         done
         [[ "$g" != *" -c i18n.logOutputEncoding=UTF-8 "* ]] || enc=1
+        # the words ahead of git (its prefixes and assignments), unquoted: none may take GIT_DIFF_OPTS from the read
+        # (read word by word only when a word could: one naming the variable, or an option word)
+        case "$pre" in
+            *GIT_DIFF_OPTS*|*-*)
+                read -r -a p <<< "$pre"
+                for ((i = 0; i < ${#p[@]}; i++)); do
+                    census_unquote "${p[i]}"; x=$u
+                    case "$x" in
+                        GIT_DIFF_OPTS=*|--unset=GIT_DIFF_OPTS|-uGIT_DIFF_OPTS|-i|--ignore-environment|-) echo "the git at line $ln runs with GIT_DIFF_OPTS taken from it ($x)"; return 1 ;;
+                        -u|--unset) census_unquote "${p[i + 1]:-}"; [ "$u" != GIT_DIFF_OPTS ] || { echo "the git at line $ln runs with GIT_DIFF_OPTS taken from it ($x GIT_DIFF_OPTS)"; return 1; } ;;
+                    esac
+                done ;;
+        esac
         if [ "$sub" = diff-tree ] && [[ " $args " == *" --stdin "* ]] && [[ " $args " == *" --text "* ]]; then
             feed=$((feed + 1))
-            [[ " $pre " == *" env -u GIT_DIFF_OPTS "* ]] || { echo "the feed's git at line $ln runs without env -u GIT_DIFF_OPTS"; return 1; }
             [[ "$g" == *" -c diff.suppressBlankEmpty=false "* ]] || { echo "the feed's git at line $ln carries no -c diff.suppressBlankEmpty=false"; return 1; }
         fi
         [ -n "$fmt" ] || continue
@@ -11858,33 +11954,52 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
         esac
     done <<< "$calls"
     [ "$feed" -eq 2 ] || { echo "the hook holds $feed feed reads (git diff-tree given --stdin and --text), where it holds two: the feed and, since round 12e, the merges' first-parent read"; return 1; }
+    # a statement anywhere in the text that names GIT_DIFF_OPTS (an unset, an export, an assignment, a read of it): the
+    # census's own records, each word read raw, so a quoted or escaped spelling is found too
+    named=$(awk -F $'\037' '{ for (i = 7; i <= NF; i += 2) { w = $i; gsub(/["\047\\]/, "", w); if (w ~ /GIT_DIFF_OPTS/) { print $1; exit } } }' <<< "$recs")
+    [ -z "$named" ] || { echo "the statement at line $named names GIT_DIFF_OPTS, which the feed reads as main's git log does"; return 1; }
     [ "$formats" -ge 1 ] || { echo "no git log or rev-list read given a format was found"; return 1; }
     lines=$(grep -cE '^[^#]*git (-c [^ ]+ )*(log|rev-list) .*--(format|pretty)' "$1" || true)
     [ "$formats" -eq "$lines" ] || { echo "the census found $formats git log or rev-list reads given a format, where $lines lines of the text run one"; return 1; }
     return 0
 }
 
-@test "round 11c (C, the census of the pins): over the hook's git calls, the feed's diff-tree (and since round 12e the merges' first-parent diff-tree, the other git diff-tree given --stdin and --text) runs under env -u GIT_DIFF_OPTS with -c diff.suppressBlankEmpty=false, and every git log or rev-list read given a format pins its output encoding (--encoding=UTF-8), the list of reads derived from the hook's git calls and equal to the lines that run one, the for-each-ref %(refname) reads the stated exemption; each pin removed in a copy, one at a time, reds the check, and so does a new format read of either kind" {
+@test "round 11c (C, the census of the pins), re-aimed in round 12n (romp-manager's ruling P on round 12l's audit A1, its condition 3): over the hook's git calls, no git read runs with GIT_DIFF_OPTS taken from it (an env -u or --unset of it, an assignment of it ahead of git, env -i), and no statement of the hook names GIT_DIFF_OPTS, so the feed and the first-parent read see it as main's git log does; the feed's diff-tree and the merges' first-parent diff-tree (the git diff-tree reads given --stdin and --text) carry -c diff.suppressBlankEmpty=false, and every git log or rev-list read given a format pins its output encoding (--encoding=UTF-8), the list of reads derived from the hook's git calls and equal to the lines that run one, the for-each-ref %(refname) reads the stated exemption; each pin removed in a copy, one at a time, reds the check, and so do env -u GIT_DIFF_OPTS put back on either read, an unset of it at the top of the text, and a new format read of either kind; and the prefix rule's other arms (an assignment of it ahead of git, env -i, env's --unset in both spellings, -u joined to the name, a lone -), each on a text of one git read, red it naming the word (until round 12n the check required env -u GIT_DIFF_OPTS on both reads)" {
     run r11c_pins_check "$HOOK"
     [ "$output" = "" ]
     [ "$status" -eq 0 ]
-    [ "$(r11c_git_calls "$HOOK" | awk -F $'\037' '$3 ~ /(^| )(log|rev-list) / && $3 ~ /--(format|pretty)/' | wc -l)" -ge 3 ]     # read, not assumed: the logs are judged_read's tagged commands
-    local -a drop=('s/env -u GIT_DIFF_OPTS git -c core.quotePath=true/git -c core.quotePath=true/'
-        's/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /'
+    # the list read once under run (a substitution in the case's own shell runs its loop under bats' traps, about ten
+    # times slower): the logs are judged_read's tagged commands, read, not assumed, and the two feed reads are found
+    run r11c_git_calls "$HOOK"
+    [ "$status" -eq 0 ]
+    [ "$(awk -F $'\037' '$3 ~ /(^| )(log|rev-list) / && $3 ~ /--(format|pretty)/' <<< "$output" | wc -l)" -ge 3 ]
+    [ "$(awk -F $'\037' '$3 ~ /(^| )diff-tree / && $3 ~ / --stdin / && $3 ~ / --text /' <<< "$output" | wc -l)" -eq 2 ]
+    local -a drop=('s/^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" -c --root /    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" -c --root /'
+        '/ -c --root /s/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /'
         's/rev-list --no-walk=unsorted --stdin --encoding=UTF-8 /rev-list --no-walk=unsorted --stdin /'
         "/--format='authored/s/ --encoding=UTF-8 / /"
         "/--format='message/s/ --encoding=UTF-8 / /"
-        '/ --diff-merges=first-parent /s/env -u GIT_DIFF_OPTS git -c core.quotePath=true/git -c core.quotePath=true/'
-        '/ --diff-merges=first-parent /s/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /')
-    local -a said=("runs without env -u GIT_DIFF_OPTS" "carries no -c diff.suppressBlankEmpty=false" "git rev-list at line" "git log at line" "git log at line" "runs without env -u GIT_DIFF_OPTS" "carries no -c diff.suppressBlankEmpty=false")
+        's/^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" --diff-merges=first-parent /    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" --diff-merges=first-parent /'
+        '/ --diff-merges=first-parent /s/ -c diff.suppressBlankEmpty=false diff-tree / diff-tree /'
+        '1a unset GIT_DIFF_OPTS')
+    local -a said=("runs with GIT_DIFF_OPTS taken from it (-u GIT_DIFF_OPTS)" "carries no -c diff.suppressBlankEmpty=false" "git rev-list at line" "git log at line" "git log at line" "runs with GIT_DIFF_OPTS taken from it (-u GIT_DIFF_OPTS)" "carries no -c diff.suppressBlankEmpty=false" "the statement at line 2 names GIT_DIFF_OPTS")
     local k
-    for k in 0 1 2 3 4 5 6; do
+    for k in 0 1 2 3 4 5 6 7; do
         sed "${drop[k]}" "$HOOK" > "$TEST_DIR/pins-$k.sh"
-        run cmp -s "$HOOK" "$TEST_DIR/pins-$k.sh"
-        [ "$status" -ne 0 ]                                                    # the removal landed
+        [ "$(diff "$HOOK" "$TEST_DIR/pins-$k.sh" | grep -c '^>')" -eq 1 ]                 # the change landed, on one line
         run r11c_pins_check "$TEST_DIR/pins-$k.sh"
         [ "$status" -ne 0 ]
         [[ "$output" == *"${said[k]}"* ]]
+    done
+    # the prefix rule's other arms, each on a text of one git read (the check refuses at the first git read it refuses,
+    # ahead of the counts it makes over a whole hook, so a one-line text reaches each arm at a fraction of the cost)
+    local -a arm=('GIT_DIFF_OPTS= git diff-tree --stdin -p --text' 'env -i git diff-tree --stdin -p --text' 'env --unset=GIT_DIFF_OPTS git diff-tree --stdin -p --text' 'env --unset GIT_DIFF_OPTS git diff-tree --stdin -p --text' 'env -uGIT_DIFF_OPTS git diff-tree --stdin -p --text' 'env - git diff-tree --stdin -p --text')
+    local -a armsaid=('(GIT_DIFF_OPTS=)' '(-i)' '(--unset=GIT_DIFF_OPTS)' '(--unset GIT_DIFF_OPTS)' '(-uGIT_DIFF_OPTS)' '(-)')
+    for k in 0 1 2 3 4 5; do
+        printf '#!/usr/bin/env bash\n%s\n' "${arm[k]}" > "$TEST_DIR/pins-arm-$k.sh"
+        run r11c_pins_check "$TEST_DIR/pins-arm-$k.sh"
+        [ "$status" -ne 0 ]
+        [ "$output" = "the git at line 2 runs with GIT_DIFF_OPTS taken from it ${armsaid[k]}" ]
     done
     { sed -n '1p' "$HOOK"; printf '%s\n' 'x=$(git log -1 --format=%s HEAD)'; sed -n '2,$p' "$HOOK"; } > "$TEST_DIR/pins-new.sh"
     run r11c_pins_check "$TEST_DIR/pins-new.sh"
@@ -12516,7 +12631,7 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     at_base
 }
 
-@test "every read of the hook is DECLARED, round 12b split (1 of 2): the census's sensitivity to the shapes it READS, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a redirection operator standing alone ahead of the command word, a quoted command word, a command after a lone & and after |&, a wrapper outside the prefixes, and a command word whose quoting or escaping splits the tool's name, alone and under a wrapper, each planted alone and flagged once by the census and not by the pins; a tilde prefix and a dollar-double-quote planted together, each flagged once by the census and not by the pins; and since round 12l (the landing round's extra7-1) four plants inside path_skips, a body passed whole, each alone: a read as a statement of its own ahead of the body's last pipeline, a read in a substitution whose status || : swallows, and a read in a substitution on a ROMP_X= prefix of a stage of that pipeline, bare and with || true inside, each flagged undeclared once, the two swallowed ones named swallowed too (all four passed the census at 64e1da798); and since round 12m (round 12l's audit A3 and A4, the census reading statements) three more in path_skips, each alone: a read sharing the awk's first line after ;, named once, and a read chained to the awk by || and by &&, each named with the awk's line (all three passed the census at 1e827e62d)" {
+@test "every read of the hook is DECLARED, round 12b split (1 of 2): the census's sensitivity to the shapes it READS, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a redirection operator standing alone ahead of the command word, a quoted command word, a command after a lone & and after |&, a wrapper outside the prefixes, and a command word whose quoting or escaping splits the tool's name, alone and under a wrapper, each planted alone and flagged once by the census and not by the pins; a tilde prefix and a dollar-double-quote planted together, each flagged once by the census and not by the pins; and since round 12l (the landing round's extra7-1) four plants inside path_skips, a body passed whole, each alone: a read as a statement of its own ahead of the body's last pipeline, a read in a substitution whose status || : swallows, and a read in a substitution on a ROMP_X= prefix of a stage of that pipeline, bare and with || true inside, each flagged undeclared once, the two swallowed ones named swallowed too (all four passed the census at 64e1da798); and since round 12m (round 12l's audit A3 and A4, the census reading statements) three more in path_skips, each alone: a read sharing the awk's first line after ;, named once, and a read chained to the awk by ||, named with the awk's line (both passed the census at 1e827e62d), and the same read chained by &&, a control since round 12n, declared with the awk (a failure on either side of && is the statement's status; round 12m's census named it); and since round 12n (round 12m's audit A2, the fold owner's call: a group read by the same rule) four more in path_skips, each alone: a brace group and a subshell as the awk's first stage, each holding a read ahead of its own last statement, and a brace group whose last statement puts the read on the right of ||, each named once (all three passed the census at 43bbcb7b0, which declared a group stage whole), and the brace group with the read as its own last statement, a control, declared" {
     local plant k=0
     # round 9b (the round 8 rulings' F): the shapes the census and its pins read nothing of until then (the round 8
     # refuters' probes: undeclared=0 and no pin line for each at cad898dd2), each planted alone and flagged ONCE, by
@@ -12591,23 +12706,53 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
         [[ "${output##*$'\n'}" == *" swallowed=${sw[k - 1]} undeclared=1" ]]
     done
     # round 12m (round 12l's audit A3 and A4, extra7-1's property): the census reads a passed body into statements, so
-    # three more plants in path_skips, each alone, are named: a read sharing the awk's first line as a statement of its
-    # own after ; (A3); a read chained to the awk by || at the end of the line before (A4: the awk then runs only when
-    # the read fails, and the read's failure is lost when it does); and the same read chained by && (the awk then runs
-    # only when the read passes, so the body returns the status of whichever ran last). A last statement that chains
-    # pipelines has no one pipeline whose status is the body's, so every read in it is named: the chained read's line
-    # and the awk's. Each of the three passed the census at 1e827e62d, which found the last statement by its lines.
+    # two more plants in path_skips, each alone, are named: a read sharing the awk's first line as a statement of its
+    # own after ; (A3); and a read chained to the awk by || at the end of the line before (A4: the awk then runs only
+    # when the read fails, and the read's failure is lost when it does), a last statement that loses its status, so
+    # every read in it is named, the chained read's line and the awk's. Each passed the census at 1e827e62d, which found
+    # the last statement by its lines. The same read chained by && is a control since round 12n (round 12m's audit F3,
+    # the fold owner's call): the awk runs only when the read passes, so the statement's status is the read's when it
+    # fails and the awk's otherwise, and both lines are declared (round 12m's census named them).
     sed "$((h + 1))s|^    LC_ALL=C awk '\$|    git rev-parse HEAD > /dev/null; LC_ALL=C awk '|" "$HOOK" > "$TEST_DIR/plant-r12m-1.sh"
     sed "${h}a\\    git rev-parse HEAD > /dev/null ||" "$HOOK" > "$TEST_DIR/plant-r12m-2.sh"
     sed "${h}a\\    git rev-parse HEAD > /dev/null &&" "$HOOK" > "$TEST_DIR/plant-r12m-3.sh"
     local -a w12m=("    git rev-parse HEAD > /dev/null; LC_ALL=C awk '" '    git rev-parse HEAD > /dev/null ||' '    git rev-parse HEAD > /dev/null &&')
-    local -a u12m=("undeclared: $((h + 1)):${w12m[0]}" "undeclared: $((h + 1)):${w12m[1]}"$'\n'"undeclared: $((h + 2)):    LC_ALL=C awk '" "undeclared: $((h + 1)):${w12m[2]}"$'\n'"undeclared: $((h + 2)):    LC_ALL=C awk '")
+    local -a u12m=("undeclared: $((h + 1)):${w12m[0]}" "undeclared: $((h + 1)):${w12m[1]}"$'\n'"undeclared: $((h + 2)):    LC_ALL=C awk '")
     for k in 1 2 3; do
         [ "$(diff "$HOOK" "$TEST_DIR/plant-r12m-$k.sh" | grep -c '^>')" -eq 1 ]
         [ "$(sed -n "$((h + 1))p" "$TEST_DIR/plant-r12m-$k.sh")" = "${w12m[k - 1]}" ]
         run undeclared_reads "$TEST_DIR/plant-r12m-$k.sh"
-        [ "$(grep '^undeclared: ' <<< "$output")" = "${u12m[k - 1]}" ]
-        [[ "${output##*$'\n'}" == *" swallowed=0 undeclared=$(grep -c '^undeclared: ' <<< "${u12m[k - 1]}")" ]]
+        if [ "$k" -lt 3 ]; then
+            [ "$(grep '^undeclared: ' <<< "$output")" = "${u12m[k - 1]}" ]
+            [[ "${output##*$'\n'}" == *" swallowed=0 undeclared=$(grep -c '^undeclared: ' <<< "${u12m[k - 1]}")" ]]
+        else
+            [[ "$output" != *"undeclared: "* ]]
+            [[ "$output" == *$'\n'"declared: body $((h + 1)) path_skips: git"$'\n'"declared: body $((h + 2)) path_skips: awk"$'\n'* ]]
+            [[ "${output##*$'\n'}" == *" swallowed=0 undeclared=0" ]]
+        fi
+    done
+    # round 12n (round 12m's audit A2, the fold owner's call): a brace group or a subshell that is a stage of the last
+    # pipeline is read by the same rule as the body, so a read ahead of the group's own last statement, whose status
+    # the group loses, is named: the audit's two witnesses as the awk's first stage, each alone, each named once, and a
+    # group whose own last statement loses its status, the read on the right of || (all three passed the census at
+    # 43bbcb7b0, which declared a group stage whole); and a control, the read as the brace group's own last
+    # statement, whose status is the group's, declared with the awk.
+    sed "$((h + 1))s|^    LC_ALL=C awk '\$|    { git rev-parse HEAD > /dev/null; true; } \| LC_ALL=C awk '|" "$HOOK" > "$TEST_DIR/plant-r12n-1.sh"
+    sed "$((h + 1))s|^    LC_ALL=C awk '\$|    ( git rev-parse HEAD > /dev/null; true ) \| LC_ALL=C awk '|" "$HOOK" > "$TEST_DIR/plant-r12n-2.sh"
+    sed "$((h + 1))s|^    LC_ALL=C awk '\$|    { true \|\| git rev-parse HEAD > /dev/null; } \| LC_ALL=C awk '|" "$HOOK" > "$TEST_DIR/plant-r12n-3.sh"
+    sed "$((h + 1))s|^    LC_ALL=C awk '\$|    { true; git rev-parse HEAD > /dev/null; } \| LC_ALL=C awk '|" "$HOOK" > "$TEST_DIR/plant-r12n-4.sh"
+    local -a w12n=("    { git rev-parse HEAD > /dev/null; true; } | LC_ALL=C awk '" "    ( git rev-parse HEAD > /dev/null; true ) | LC_ALL=C awk '" "    { true || git rev-parse HEAD > /dev/null; } | LC_ALL=C awk '" "    { true; git rev-parse HEAD > /dev/null; } | LC_ALL=C awk '")
+    for k in 1 2 3 4; do
+        [ "$(diff "$HOOK" "$TEST_DIR/plant-r12n-$k.sh" | grep -c '^>')" -eq 1 ]
+        [ "$(sed -n "$((h + 1))p" "$TEST_DIR/plant-r12n-$k.sh")" = "${w12n[k - 1]}" ]
+        run undeclared_reads "$TEST_DIR/plant-r12n-$k.sh"
+        if [ "$k" -lt 4 ]; then
+            [ "$(grep '^undeclared: ' <<< "$output")" = "undeclared: $((h + 1)):${w12n[k - 1]}" ]
+            [[ "${output##*$'\n'}" == *" swallowed=0 undeclared=1" ]]
+        else
+            [[ "$output" != *"undeclared: "* ]]
+            [[ "$output" == *$'\n'"declared: body $((h + 1)) path_skips: git awk"$'\n'* ]]
+        fi
     done
 }
 
@@ -13969,8 +14114,9 @@ r12d2_setting_refused() {   # <the clause the refusal line carries>: the push ju
 # diff.submodule=diff for the two ignore keys and diff.external), in which case the arms compare against the hunks
 # under the companion alone rather than under no key; and the table holds one key that is not a diff key,
 # submodule.<name>.ignore, a submodule's own key that git log honours for its gitlink (<name> is sub). The
-# environment's GIT_DIFF_OPTS, which reaches a submodule's diff under main's git log and not under the feed, is no
-# key: the round 12l case for it pins its refusal by name under diff.submodule=diff.
+# environment's GIT_DIFF_OPTS, which the feed reads as main's git log does, a submodule's own diff included, is no
+# key: the round 12n case pins it on a split key block, and the round 12l case for it, re-aimed in round 12n, under
+# diff.submodule=diff.
 r12d2_keys() {   # the census's table: key, value, disposition, why (TAB-separated)
     cat <<'EOF'
 diff.algorithm	histogram	pass	--diff-algorithm (diff_settings)
@@ -14989,13 +15135,13 @@ r12e_fp_refused() {   # <clause>: the push just made was refused by that line of
     r10a_passes
 }
 
-@test "round 12e (ITEM 1, the feed's pins in the first-parent read): the round 11c blank-context history (a merge writing a line of its own among its commits) under GIT_DIFF_OPTS=--unified=3 and diff.suppressBlankEmpty=true passes, and a copy of the hook whose first-parent read drops both pins (env -u GIT_DIFF_OPTS and -c diff.suppressBlankEmpty=false), the feed's kept, refuses it naming that read's foreign line: GIT_DIFF_OPTS gives the merge's two-way diff context, a blank line of it printed empty" {
+@test "round 12e (ITEM 1, the feed's pin in the first-parent read), re-aimed in round 12n (romp-manager's ruling P on round 12l's audit A1, its condition 3): the round 11c blank-context history (a merge writing a line of its own among its commits) under GIT_DIFF_OPTS=--unified=3 and diff.suppressBlankEmpty=true passes, the first-parent read taking the variable as main's git log does, and a copy of the hook whose first-parent read drops its -c diff.suppressBlankEmpty=false pin, the feed's kept, refuses it naming that read's foreign line: GIT_DIFF_OPTS gives the merge's two-way diff context, a blank line of it printed empty (until round 12n the copy dropped env -u GIT_DIFF_OPTS too, which the read no longer carries)" {
     r11c_blank_context_history
     git -C "$REPO" config diff.suppressBlankEmpty true
     r11c_blank_context_push
     r10a_passes
     [ "$(grep -c -- '--diff-merges=first-parent' "$HOOK")" -ge 1 ]
-    sed '/ --diff-merges=first-parent /s/env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree /git -c core.quotePath=true diff-tree /' "$HOOK" > "$TEST_DIR/hook-fp-nopins"
+    sed '/ --diff-merges=first-parent /s/^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree /    git -c core.quotePath=true diff-tree /' "$HOOK" > "$TEST_DIR/hook-fp-nopins"
     chmod 755 "$TEST_DIR/hook-fp-nopins"
     [ "$(diff "$HOOK" "$TEST_DIR/hook-fp-nopins" | grep -c '^>')" -eq 1 ]
     git -C "$TEST_DIR/remote.git" update-ref refs/heads/main "$BASE"
@@ -15777,21 +15923,36 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
     r12l_cred_refused github-pat sub/m.txt
 }
 
-@test "round 12l (fresh-1, GIT_DIFF_OPTS under diff.submodule=diff, refused by name): the environment's GIT_DIFF_OPTS sets the context of the diff git log runs inside a submodule, while the feed reads with it unset, so under diff.submodule=diff a push with GIT_DIFF_OPTS=--unified=3 is refused by name with the remedy, the feed unread: the credential push (refused at main, PUBLISHED at 64e1da798, both scanners) and a clean one (passed at main: a disclosed false refusal); with GIT_DIFF_OPTS unset the clean push passes (red under the mutant deleting that refusal, where the credential push is refused as a credential and the clean one passes)" {
-    local clause="this clone's diff.submodule is diff and the environment sets GIT_DIFF_OPTS to \"--unified=3\", which gives the diff git log runs inside a submodule for a gitlink change its own count of context lines, while the credential feed reads with GIT_DIFF_OPTS unset (its -U0 pinned), so that diff's hunks cannot be framed as gitleaks' git mode would frame them; unset GIT_DIFF_OPTS for the push, or set diff.submodule to short or log, or set ROMP_NO_GITLEAKS=1 for one push"
+@test "round 12l (fresh-1, GIT_DIFF_OPTS under diff.submodule=diff), re-aimed in round 12n (romp-manager's ruling P on round 12l's audit A1, its condition 4: the refusal by name retired on measured parity with main): git runs a submodule's own diff as git diff inside the submodule, which reads the environment's GIT_DIFF_OPTS for main's git log and the feed alike, so under diff.submodule=diff with GIT_DIFF_OPTS=--unified=3 the credential push is refused naming github-pat and sub/deploy.env and a clean push passes, as at main; and a PEM private key block whose halves sit eight unchanged lines apart in a submodule file, one hunk under GIT_DIFF_OPTS=--unified=5 and two under git diff's own context, is refused naming private-key under the variable and passes without it, as at main (both scanners; each push under the variable refused by name at 1e827e62d; red under the mutant restoring that refusal, and the split block under the mutant putting env -u GIT_DIFF_OPTS back on the feed's git, where it publishes)" {
     r12l_super
     git -C "$REPO" config diff.submodule diff
     r12l_bump deploy.env 'DEPLOY_TOKEN=%s\n' "$(probe_token)"
     export GIT_DIFF_OPTS=--unified=3
     push_main_through_hook_with_shim
-    r12d2_setting_refused "$clause"
-    [[ "$output" != *"$(probe_token)"* ]]
+    r12l_cred_refused github-pat sub/deploy.env
     git -C "$REPO" reset -q --hard "$BASE"
     git -C "$REPO/sub" reset -q --hard "$(git -C "$REPO" ls-tree HEAD sub | awk '{ print $3 }')"
     r12l_bump clean.txt 'the front door is blue\n'
     push_main_through_hook_with_shim
-    r12d2_setting_refused "$clause"
+    r10a_passes
     unset GIT_DIFF_OPTS
+    # the split block: the file at its base in the submodule, pushed without the hook (BASE moves), then the block's
+    # first ten lines added after its first line and its END line after the eighth unchanged line below them
+    mkdir -p "$REPO/sub/keys"
+    r12l_bump keys/notes.txt 'top\nu1\nu2\nu3\nu4\nu5\nu6\nu7\nu8\nend\n'
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    { printf 'top\n'; r12d2_keyblock | head -n 10; printf 'u%s\n' 1 2 3 4 5 6 7 8; r12d2_keyblock | tail -n 1; printf 'end\n'; } > "$REPO/sub/keys/notes.txt"
+    git -C "$REPO/sub" commit -qam "the key block split around unchanged lines"
+    git -C "$REPO" add sub
+    r11b_commit "the gitlink moved"
+    [ "$(GIT_DIFF_OPTS=--unified=5 git -C "$REPO" log -1 -p -U0 --format= | grep -c '^@@ ')" -eq 1 ]   # the premise: main's git log reads one hunk under the variable
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c '^@@ ')" -eq 2 ]                            # and two without it
+    export GIT_DIFF_OPTS=--unified=5
+    push_main_through_hook_with_shim
+    unset GIT_DIFF_OPTS
+    r12d_refused_as private-key sub/keys/notes.txt
+    r12l_again
     push_main_through_hook_with_shim
     r10a_passes
 }
@@ -15868,7 +16029,7 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
     r10a_passes
 }
 
-@test "round 12m (round 12l's audit A3 and A4 under extra7-1's property: the census reads a passed body into statements): in one copy of the hook, each plant in a passed body of its own, the census names once each a read joined to probe_check's awk line as a background job of its own (a lone &), a negated last pipeline (!), a coproc, a last pipeline ended by &, and a last statement that is a keyword compound; and three controls stay declared: path_skips' awk after a statement that runs no read on its first line (;), tip_candidates' awk and tr behind a keyword compound that runs no read, and unlisted_verdict_path's awk inside a brace group over three lines (each of the five named shapes passed the census at 1e827e62d)" {
+@test "round 12m (round 12l's audit A3 and A4 under extra7-1's property: the census reads a passed body into statements): in one copy of the hook, each plant in a passed body of its own, the census names once each a read joined to probe_check's awk line as a background job of its own (a lone &), a negated last pipeline (!), a coproc, a last pipeline ended by &, and a last statement that is a keyword compound; and three controls stay declared: path_skips' awk after a statement that runs no read on its first line (;), tip_candidates' awk and tr behind a keyword compound that runs no read, and unlisted_verdict_path's awk inside a brace group over three lines, read by the same rule since round 12n, the awk its last statement (each of the five named shapes passed the census at 1e827e62d); and since round 12n (round 12m's audit A3, the fold owner's call) a statement turning pipefail off, the premise the passed-whole rule rests on, is named: set +o pipefail ahead of name_listing's pipeline and shopt -u -o pipefail ahead of diff_attrs', each named once, while set -euo pipefail ahead of parent_counts', which turns it on, stays unnamed (both toggles passed the census at 43bbcb7b0)" {
     # A body passed whole returns its last statement's status, and every stage's status reaches judged_read through
     # pipefail only when that statement is one pipeline run in the foreground: a read ahead of it after a lone & runs
     # as a background job whose status nothing waits for; ! inverts the pipeline's status; a coproc and a pipeline
@@ -15876,10 +16037,12 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
     # three controls show the reader splits statements at ; and reads a keyword compound and a group over several lines
     # as bash does, so none costs a read its declaration (a reader that took that ; for a pipeline's end inside one
     # statement, the compound's ; for a statement's end, or a newline inside the group for one, names the reads after
-    # it).
+    # it). Since round 12n the pipefail toggles: a statement that turns pipefail off anywhere in a passed body takes
+    # away the mechanism every stage's status reaches judged_read by, so its line is named whatever it reads, and one
+    # that turns pipefail on is not (a census that named any set or shopt holding pipefail names the control).
     local f n c="$TEST_DIR/plant-r12m-b.sh" want=""
     local -A at
-    for f in probe_check tip_unlisted_read_file config_bytes tip_blobs merge_rename_candidates path_skips tip_candidates unlisted_verdict_path; do
+    for f in probe_check tip_unlisted_read_file config_bytes tip_blobs merge_rename_candidates path_skips tip_candidates unlisted_verdict_path name_listing diff_attrs parent_counts; do
         at[$f]=$(grep -n "^$f() {" "$HOOK" | cut -d: -f1)
         [ -n "${at[$f]}" ]
     done
@@ -15892,14 +16055,19 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
         -e "${at[tip_candidates]}"'a\    if :; then :; fi' \
         -e "$((at[unlisted_verdict_path] + 1))"'i\    {' \
         -e "$((at[unlisted_verdict_path] + 1))"'a\    }' \
+        -e "${at[name_listing]}"'a\    set +o pipefail' \
+        -e "${at[diff_attrs]}"'a\    shopt -u -o pipefail' \
+        -e "${at[parent_counts]}"'a\    set -euo pipefail' \
         "$HOOK" > "$c"
-    [ "$(diff "$HOOK" "$c" | grep -c '^>')" -eq 9 ]
+    [ "$(diff "$HOOK" "$c" | grep -c '^>')" -eq 12 ]
     local -A planted=(
         [probe_check]="    git rev-parse HEAD > /dev/null & LC_ALL=C awk -F '\\t' '"
         [tip_unlisted_read_file]='    ! LC_ALL=C awk -v sha="$1" '"'"
         [config_bytes]='    coproc wc -c < "$1"'
         [tip_blobs]="$(sed -n "$((at[tip_blobs] + 1))p" "$HOOK") &"
         [merge_rename_candidates]="    if :; then $(sed -n "$((at[merge_rename_candidates] + 1))p" "$HOOK" | sed 's/^    //'); fi"
+        [name_listing]='    set +o pipefail'
+        [diff_attrs]='    shopt -u -o pipefail'
     )
     for f in "${!planted[@]}"; do
         n=$(grep -n "^$f() {" "$c" | cut -d: -f1)
@@ -15909,7 +16077,10 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
     want=$(sort -n <<< "$want" | sed '/^$/d; s/^/undeclared: /')
     run undeclared_reads "$c"
     [ "$(grep '^undeclared: ' <<< "$output")" = "$want" ]
-    [[ "${output##*$'\n'}" == *" swallowed=0 undeclared=5" ]]
+    [[ "${output##*$'\n'}" == *" swallowed=0 undeclared=7" ]]
+    n=$(grep -n '^parent_counts() {' "$c" | cut -d: -f1)
+    [ "$(sed -n "$((n + 1))p" "$c")" = '    set -euo pipefail' ]
+    [[ "$output" == *$'\n'"declared: body $((n + 2)) parent_counts: git"$'\n'* ]]
     n=$(grep -n '^tip_candidates() {' "$c" | cut -d: -f1)
     [ "$(sed -n "$((n + 1))p" "$c")" = '    if :; then :; fi' ]
     [[ "$output" == *$'\n'"declared: body $((n + 2)) tip_candidates: awk"$'\n'* ]]
@@ -15920,4 +16091,89 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
     n=$(grep -n '^path_skips() {' "$c" | cut -d: -f1)
     [ "$(sed -n "$((n + 1))p" "$c")" = "    :; LC_ALL=C awk '" ]
     [[ "$output" == *$'\n'"declared: body $((n + 1)) path_skips: awk"$'\n'* ]]
+}
+
+# ── round 12n: GIT_DIFF_OPTS read as main's git log reads it (romp-manager's ruling P on round 12l's audit A1, 2026-09-27 20:52Z), and byte_counts' status (round 12m's audit A2, the fold owner's call) ──
+# With GIT_DIFF_OPTS=--unified=3 in the pusher's environment, main's git log -p -U0 frames a PEM private key block
+# beside blank lines as one hunk and main's hook refuses it through the default rule private-key; the feed read with
+# the variable unset, framed two hunks, one piece each, and published it. The feed and the first-parent read now take
+# the variable as main's git log does, and the -c diff.suppressBlankEmpty=false pin keeps every context line it adds
+# readable: the witness pushes below, each with its verdict at main and at 1e827e62d in its title, and the re-aimed
+# round 11c and round 12e cases above. byte_counts' group returned the drain's status, so a head, od or awk that
+# failed after printing its counts was not the read's status; the group joins the count to the drain by && now.
+# Every credential-shaped string is assembled at run time.
+
+@test "round 12n (romp-manager's ruling P on round 12l's audit A1, its conditions 1 and 3): the PEM private key block inserted beside blank lines in keys/notes.txt (r12d2_keysplit), pushed under GIT_DIFF_OPTS=--unified=3, which has main's git log -p -U0 read it as one hunk, is refused naming private-key, the commit and the file, with the figure main's gitleaks logs (PUBLISHED at 1e827e62d and at 64e1da798, whose feed read with GIT_DIFF_OPTS unset and split the block into two hunks; refused at main; both scanners); with GIT_DIFF_OPTS unset the same push publishes, as at main and at 1e827e62d, the block two hunks under git's own -U0 (red under the mutant putting env -u GIT_DIFF_OPTS back on the feed's git)" {
+    r11a_base
+    r12d2_keysplit
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= "$sha" | grep -c '^@@ ')" -eq 2 ]                              # the premise: two hunks under -U0
+    [ "$(GIT_DIFF_OPTS=--unified=3 git -C "$REPO" log -1 -p -U0 --format= "$sha" | grep -c '^@@ ')" -eq 1 ]    # and one under the variable, main's framing
+    export GIT_DIFF_OPTS=--unified=3
+    push_main_through_hook_with_shim
+    unset GIT_DIFF_OPTS
+    r12d_refused_as private-key keys/notes.txt
+    [[ "$output" == *"scanned ~605 bytes"* ]]
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12n (romp-manager's ruling P on round 12l's audit A1, its condition 2: no false refusal from context lines): the round 11c blank-context history (an edit, a rename with an edit, a mode change, a deletion, a missing final newline, a two-parent merge adding a line of its own beside blank lines and auto-merging a -diff path) passes under GIT_DIFF_OPTS=--unified=3 with diff.suppressBlankEmpty=true given through GIT_CONFIG_COUNT, and then through GIT_CONFIG_PARAMETERS, in place of the clone's configuration, and under GIT_DIFF_OPTS=-u5 with the key in the clone (round 10's extra5-1 witnesses; the key in the clone under --unified=3 is the round 11c witness case), as at main and at 1e827e62d, both scanners: the feed and the first-parent read take the variable's context and the command line's -c pin, read last, prints each blank context line as a space (each push red under the mutant dropping -c diff.suppressBlankEmpty=false from both reads, the context-line pin)" {
+    local first
+    r11c_blank_context_history
+    first="$(git -C "$REPO" rev-list --reverse "$BASE..main" | head -n 1)"
+    export GIT_DIFF_OPTS=--unified=3
+    export GIT_CONFIG_KEY_5=diff.suppressBlankEmpty GIT_CONFIG_VALUE_5=true GIT_CONFIG_COUNT=6
+    [ "$(git -C "$REPO" diff-tree -p -U0 "$first" | grep -c '^$')" -ge 1 ]             # the premise: the key reaches diff-tree through the environment
+    push_main_through_hook_with_shim
+    export GIT_CONFIG_COUNT=5
+    unset GIT_CONFIG_KEY_5 GIT_CONFIG_VALUE_5
+    r10a_passes
+    r12l_again
+    export GIT_CONFIG_PARAMETERS="'diff.suppressblankempty'='true'"
+    [ "$(git -C "$REPO" diff-tree -p -U0 "$first" | grep -c '^$')" -ge 1 ]
+    push_main_through_hook_with_shim
+    unset GIT_CONFIG_PARAMETERS
+    r10a_passes
+    r12l_again
+    git -C "$REPO" config diff.suppressBlankEmpty true
+    export GIT_DIFF_OPTS=-u5
+    [ "$(git -C "$REPO" diff-tree -p -U0 "$first" | grep -c '^$')" -ge 1 ]
+    push_main_through_hook_with_shim
+    unset GIT_DIFF_OPTS
+    r10a_passes
+}
+
+@test "round 12n (round 12m's audit A2, the fold owner's call: byte_counts keeps its count's status): an awk that prints byte_counts' two counts and then exits 3, and an od that converts the bytes and then exits 3, each a wrapper on the hook's PATH over the real tool, through a real push of a middle commit adding a binary file (a NUL in its first 8000 bytes) gone at the tip, are each refused naming the BYTE COUNTS read and the status 3 (both pushes PASSED at 1e827e62d, whose group returned the drain's status, so the counts the failed stage printed read the file as binary); the control, the same push with no wrapper, passes, as at 1e827e62d" {
+    local tool real
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'ab\0cd\n' > "$REPO/bin.dat"
+    git -C "$REPO" add bin.dat
+    git -C "$REPO" commit -qm "a binary file"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file bin.dat "remove it"
+    mkdir -p "$TEST_DIR/shim"
+    push_main_through_hook_with_shim                                 # the control: binary by its bytes, it passes as binaries always have
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    for tool in awk od; do
+        real="$(command -v "$tool")"
+        [ -x "$real" ]
+        if [ "$tool" = awk ]; then       # byte_counts' program alone (its NUL count), the real awk for every other program
+            printf '#!/usr/bin/env bash\ncase "$*" in *%s*) %q "$@"; exit 3 ;; esac\nexec %q "$@"\n' "'if (\$i == 0) z++'" "$real" "$real" > "$TEST_DIR/shim/awk"
+        else
+            printf '#!/usr/bin/env bash\n%q "$@"\nexit 3\n' "$real" > "$TEST_DIR/shim/od"
+        fi
+        chmod 755 "$TEST_DIR/shim/$tool"
+        git -C "$TEST_DIR/remote.git" update-ref refs/heads/main "$BASE"
+        git -C "$REPO" update-ref refs/remotes/origin/main "$BASE"
+        push_main_through_hook_with_shim
+        rm -f "$TEST_DIR/shim/$tool"
+        [ "$status" -ne 0 ]
+        [[ "$output" == *"romp pre-push: the CONTENT of bin.dat in commit ${leak:0:10}, which git calls binary and the identifier scan therefore skipped, could not be read (a stage of git cat-file, head, od, awk and cat exited 3)"* ]]
+        [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+        at_base
+    done
 }

@@ -1126,10 +1126,9 @@
 # most such pushes unscanned, a credential in a submodule's added lines among
 # them, and the refusal is a false one only for a clean push in a run where
 # main's scan went on under the value git kept and passed it (round 12m, round
-# 12l's audit A2, both scanners). Under diff, a
-# GIT_DIFF_OPTS that gives a context (--unified=<n> or -u<n>) refuses by name,
-# since it reaches the submodule's diff under main's git log while the feed
-# reads with it unset (a false refusal on a clean push); an external diff that
+# 12l's audit A2, both scanners). Under diff, GIT_DIFF_OPTS reaches that diff
+# for main's git log and the feed alike, and both frame its hunks with the
+# count of context lines it gives (below); an external diff that
 # reaches that diff (diff.external or a driver's command in the configuration
 # git diff reads there, or GIT_EXTERNAL_DIFF) prints lines the feed refuses as
 # foreign, where main's hook reads nothing of the change (a false refusal on a
@@ -1176,19 +1175,29 @@
 # safe side. The census of git's diff keys behind the
 # three (git 2.43.0 and 2.55.0), each key passed, read by diff-tree as git
 # log reads it, pinned by the feed's own options, refused, or inert for the
-# added lines' hunks, by execution, is named at diff_settings. Three inputs
+# added lines' hunks, by execution, is named at diff_settings. Two inputs
 # that reach diff-tree from outside its options are pinned on its command
-# line: GIT_DIFF_OPTS unset for the read (env -u), since its --unified=<n>
-# replaces the -U0 given for a one-parent diff; diff.suppressBlankEmpty=false
-# (git -c), since that basic key, which diff-tree reads, prints a blank
-# context line as an empty one (until round 11c the two together refused a
-# clean push; the round 10 rulings' extra5-1, 2026-09-26, and the population
-# behind them, the rulings check's dated record, is listed at
-# credential_feed); and core.quotePath=true (git -c), so a path comes in
-# git's quoted form whatever the clone sets (under false a name with a byte
-# over 127 printed raw, and one gitleaks' allowlist case-folds to a name it
-# skips, pnpm-loc<U+212A>.yaml with the Kelvin sign, was selected for the
-# path-scoped run below and skipped by gitleaks, refusing a clean push). The
+# line: diff.suppressBlankEmpty=false (git -c), since that basic key, which
+# diff-tree reads, prints a blank context line as an empty one, a line of
+# none of the shapes the feed reads; and core.quotePath=true (git -c), so a
+# path comes in git's quoted form whatever the clone sets (under false a
+# name with a byte over 127 printed raw, and one gitleaks' allowlist
+# case-folds to a name it skips, pnpm-loc<U+212A>.yaml with the Kelvin sign,
+# was selected for the path-scoped run below and skipped by gitleaks,
+# refusing a clean push). A third, GIT_DIFF_OPTS, is read as main's git log
+# reads it: its --unified=<n> or -u<n> replaces the -U0 given for a
+# one-parent diff, a commit's own, a merge's first-parent diff and a
+# submodule's own diff under diff.submodule=diff alike (a merge's combined
+# diff reads none of it), so the feed frames the hunks main's hook frames;
+# the context lines it adds are read and skipped, a blank one printed as a
+# space under the -c pin, and a hunk's added lines stay one piece, as
+# gitleaks' git mode takes them: a PEM private key block beside blank lines,
+# one hunk under GIT_DIFF_OPTS=--unified=3, is refused through the default
+# rule private-key, as main's hook refuses it, and a clean push whose edits
+# sit beside blank lines passes under it with diff.suppressBlankEmpty=true,
+# both scanners (romp-manager's ruling on round 12l's audit A1, 2026-09-27
+# 20:52Z). The population of the inputs that reach the read, the rulings
+# check's dated record, is listed at credential_feed. The
 # read is whole when each commit's name arrives ahead of its diff and again
 # after it (the two lines --always prints for a commit fed as <rev> and again
 # as <rev> <rev>), in the order fed, and the awk's count of commits read whole
@@ -1654,7 +1663,8 @@
 # push under gitleaks 8.30.1 and 8.28.0 (the round 8 refuters, 2026-09-24).
 # The two halves differ in kind: the credential feed is plumbing given each
 # option explicitly, the inputs that reach it from outside its options
-# pinned, and gitleaks reads only the bytes the hook wrote, while
+# pinned or, GIT_DIFF_OPTS, read as main's git log reads it, and gitleaks
+# reads only the bytes the hook wrote, while
 # the identifier half reads a log and diff stream and is config-dependent by
 # construction. What can hide a blob from its two content reads is closed by a
 # derived property rather than key by key (refuse_hidden_paths: git's own
@@ -2286,8 +2296,8 @@ merge_rename_candidates() {   # <gone.nl> <post.nl>: the post-image paths whose 
 unlisted_verdict_path() {   # <listed.nl> <rows.nl> <rows2.nl> <rows3.nl>: the first path a verdict names that the listing did not
     LC_ALL=C awk 'FILENAME == ARGV[1] { listed[$0] = 1; next } { p = substr($0, 4); if (!(p in listed)) { print p; exit } }' "$@"
 }
-byte_counts() {   # <blob-ish>: "<bytes> <NULs>" over the first 8000 bytes, counted with their NULs; the rest is drained so the cat-file is never cut off mid-write (the group's status is the drain's, so the status is the cat-file's)
-    git cat-file blob "$1" | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }
+byte_counts() {   # <blob-ish>: "<bytes> <NULs>" over the first 8000 bytes, counted with their NULs; the rest is drained after a count that passed, so the cat-file is never cut off mid-write by a read that passed (the group's status is the count's when head, od or awk fails, else the drain's, so every stage's failure is the pipeline's status)
+    git cat-file blob "$1" | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }' && cat > /dev/null; }
 }
 
 join_candidates() {   # <rev> <merge> <short file> <count file> <rows.nl> <rows2.nl> <gone.nl> <links.nl> <tpaths.nl> <rows3.nl> <tipblobs> <post.nl>: the candidate entries, one per NUL, their count written to the count file at the end; status 3 or 4 for a short read (refuse_hidden_paths says which)
@@ -2859,20 +2869,23 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         islink=0; case "$place" in *+link) place=${place%+link}; islink=1 ;; esac
         renamed=""; case "$place" in *+rename) place=${place%+rename}; renamed=" (the diff read it as a rename, so the attribute of the path it came from counted too)" ;; esac
         if [ "$place" = tip ]; then at="at the tip of $local_ref (${local_sha:0:10})"; else at="in commit ${place:0:10}"; fi
-        # The first 8000 bytes, counted with their NULs; the rest is drained so
-        # the cat-file is never cut off mid-write (its status is the pipe's).
+        # The first 8000 bytes, counted with their NULs; the rest is drained
+        # after a count that passed, so the cat-file is never cut off mid-write
+        # by a read that passed, and a stage that fails is the read's status
+        # (the group returns the count's status when head, od or awk fails;
+        # round 12n, round 12m's audit A2, the fold owner's call: the group
+        # returned the drain's until then).
         if [ "$place" = tip ]; then
-            judged_read gate="the BYTE COUNTS of a hidden blob" 0 "the CONTENT of $path at the tip of $local_ref (${local_sha:0:10}), which git calls binary and the identifier scan therefore skipped, could not be read (git cat-file exited {rc})" -- byte_counts "$blob" || continue
+            judged_read gate="the BYTE COUNTS of a hidden blob" 0 "the CONTENT of $path at the tip of $local_ref (${local_sha:0:10}), which git calls binary and the identifier scan therefore skipped, could not be read (a stage of git cat-file, head, od, awk and cat exited {rc})" -- byte_counts "$blob" || continue
         else
-            judged_read gate="the BYTE COUNTS of a hidden blob" 0 "the CONTENT of $path in commit ${place:0:10}, which git calls binary and the identifier scan therefore skipped, could not be read (git cat-file exited {rc})" -- byte_counts "$blob" || continue
+            judged_read gate="the BYTE COUNTS of a hidden blob" 0 "the CONTENT of $path in commit ${place:0:10}, which git calls binary and the identifier scan therefore skipped, could not be read (a stage of git cat-file, head, od, awk and cat exited {rc})" -- byte_counts "$blob" || continue
         fi
         counts=$read_out
         # The two counts are runs of digits before -eq reads them, and a count
         # of ZERO bytes is empty content only when the blob is empty (the
-        # header's second class): a cat-file that exits 0 and prints nothing, or
-        # an od that fails inside the group (whose status is the drain's), leaves
-        # awk a count of zero for a blob with bytes, and the blob passed as
-        # empty. The size is read apart (cat-file -s), and a size that is not
+        # header's second class): a cat-file that exits 0 and prints nothing
+        # leaves awk a count of zero for a blob with bytes, and the blob passed
+        # as empty. The size is read apart (cat-file -s), and a size that is not
         # zero, or could not be read, refuses the push as unscanned naming both.
         read -r bytes nuls <<< "$counts"
         if [ -z "$bytes" ] || [ -n "${bytes//[0-9]/}" ] || [ -z "$nuls" ] || [ -n "${nuls//[0-9]/}" ]; then
@@ -4091,8 +4104,10 @@ scan_identifiers() {
 # own parent), so --always prints the commit's name ahead of its diff and
 # again after it, for the empty diff: the head marker and the tail marker.
 # Each option is explicit: -p -U0,
-# the added lines alone; -r, into subtrees; the four from the clone's diff
-# settings (diff_settings, below the piecing): --diff-algorithm,
+# the added lines alone (and the context lines GIT_DIFF_OPTS gives, below,
+# as it gives them to main's git log); -r, into subtrees; the four from
+# the clone's diff settings (diff_settings, below the piecing):
+# --diff-algorithm,
 # --inter-hunk-context, -M (a rename by its edits), --no-renames or -C (a
 # copy by its edits too), as git log reads diff.renames, and --submodule,
 # short, log or diff, as git log reads diff.submodule (a gitlink change as
@@ -4116,20 +4131,24 @@ scan_identifiers() {
 # sign in place of lock's k, a name the path-scoped selection below takes and
 # gitleaks' case-folding allowlist skips, refused a clean push on that run's
 # figure; the round 9d audit, 2026-09-24). Two inputs reach the read from
-# outside its options, and both are pinned. GIT_DIFF_OPTS: its --unified=<n>
-# or -u<n> replaces the -U0 given here for a one-parent diff, plumbing or
-# not, so the read runs under env -u GIT_DIFF_OPTS (unset, not set empty: an
-# empty value is inert only by how git parses one; under diff.submodule=diff
-# one that gives a context refuses the push by name, since main's git log
-# hands it to the submodule's own diff: diff_settings). diff.suppressBlankEmpty,
-# a basic key diff-tree reads, prints a blank context line as an empty line,
-# so the read gives git -c diff.suppressBlankEmpty=false, which beats the
-# key's older spelling diff.suppress-blank-empty too, the command line's
-# value being read last. Until round 11c the read pinned neither, and a
-# clean push under GIT_DIFF_OPTS=--unified=3 with the key true was refused,
-# its empty context line a line of none of the shapes the feed reads (the
-# round 10 rulings' extra5-1, 2026-09-26); either pin alone keeps that push
-# whole, since diff-tree prints context only under GIT_DIFF_OPTS. Since one
+# outside its options. GIT_DIFF_OPTS is read as main's git log reads it: its
+# --unified=<n> or -u<n> replaces the -U0 given here for a one-parent diff,
+# plumbing or not (a merge's combined diff, -c, reads none of it), and the
+# first-parent read of merges (merge_fp_pieces) and a submodule's own diff
+# under diff.submodule=diff read it too, so each hunk is framed as main's
+# hook frames it; the context lines it adds are recognized and skipped
+# (below), and a hunk's added lines stay one piece, its context left out as
+# gitleaks' git mode leaves it out (romp-manager's ruling on round 12l's
+# audit A1, 2026-09-27 20:52Z: a PEM private key block beside blank lines,
+# one hunk under GIT_DIFF_OPTS=--unified=3, is refused as main's hook
+# refuses it). diff.suppressBlankEmpty, a basic key diff-tree reads, prints
+# a blank context line as an empty line, a line of none of the shapes the
+# feed reads, so the read gives git -c diff.suppressBlankEmpty=false, which
+# beats the key's older spelling diff.suppress-blank-empty too, the command
+# line's value being read last, and a clean push whose edits sit beside
+# blank lines passes under GIT_DIFF_OPTS=--unified=3 with the key true, set
+# in the clone or through GIT_CONFIG_COUNT or GIT_CONFIG_PARAMETERS
+# (tests/pre-push-hook.bats, the round 11c witness and round 12n's). Since one
 # hunk is one piece (round 12d), a key that moves where a hunk starts or
 # ends matters as much as one that changes which lines are +, and git log,
 # main's read, frames hunks under porcelain keys diff-tree does not read; so
@@ -4145,7 +4164,8 @@ scan_identifiers() {
 # diff.algorithm, diff.interHunkContext, diff.renames, diff.submodule. Read
 # by diff-tree as git log reads them: diff.indentHeuristic, diff.renameLimit
 # (past git's limit a rename is read as a new file, more bytes, never
-# fewer). Pinned by the read's own options: diff.context (-U0, which main's
+# fewer), and the environment's GIT_DIFF_OPTS (above). Pinned by the read's
+# own options: diff.context (-U0, which main's
 # git log is given too), diff.suppressBlankEmpty (the -c above),
 # diff.ignoreSubmodules and submodule.<name>.ignore (--ignore-submodules=none,
 # which reads a gitlink change either has git log drop: more than git log
@@ -4566,12 +4586,9 @@ CRED_PIECES_AWK='
 # lines among them, so the refusal is fail-closed, and a false refusal only
 # for a clean push in a run where main's scan went on under the value git kept
 # and passed it (round 12m, round 12l's audit A2, both scanners). Under
-# diff.submodule=diff, a
-# GIT_DIFF_OPTS that gives a context (--unified=<n>, or -u<n>, which git reads
-# with strtoul) refuses by name too: git runs a submodule's own diff as git
-# diff inside the submodule, which reads GIT_DIFF_OPTS under main's git log
-# while the feed runs with it unset, so that diff's hunks cannot be framed
-# alike; a false refusal on a clean push (round 12l).
+# diff.submodule=diff, GIT_DIFF_OPTS refuses nothing: git runs a submodule's
+# own diff as git diff inside the submodule, which reads it for main's git
+# log and the feed alike (the feed's comment).
 # And a diff.<driver>.algorithm key, set at all,
 # refuses the push by name: git log applies a driver's algorithm to the paths
 # the diff attribute gives that driver and keeps it for every path it diffs
@@ -4664,11 +4681,6 @@ diff_settings() {   # sets feed_opts and drv_tc, the caller's
     if [ "$marks" -ne 1 ] || [ "$last" != $'romp-pre-push.tail\nend' ]; then
         unscanned "the DIFF SETTINGS of this clone were read short for the credential scan (git config exited 0, and its answer does not end with the one entry its command line adds, romp-pre-push.tail, the tail marker read after every value of the clone's, or holds it more than once; entries read: $n), so a setting the answer lost could frame the pushed lines' hunks otherwise; $fixed"
         return 1
-    fi
-    if [ -z "$bad" ] && [ "$sm" = diff ]; then
-        case "${GIT_DIFF_OPTS-}" in
-            --unified=*|-u*) bad="this clone's diff.submodule is diff and the environment sets GIT_DIFF_OPTS to \"$GIT_DIFF_OPTS\", which gives the diff git log runs inside a submodule for a gitlink change its own count of context lines, while the credential feed reads with GIT_DIFF_OPTS unset (its -U0 pinned), so that diff's hunks cannot be framed as gitleaks' git mode would frame them; unset GIT_DIFF_OPTS for the push, or set diff.submodule to short or log, or set ROMP_NO_GITLEAKS=1 for one push; $fixed" ;;
-        esac
     fi
     if [ -n "$bad" ]; then unscanned "$bad"; return 1; fi
     feed_opts=("--diff-algorithm=$alg" "--inter-hunk-context=$ihc" "$ren" "--submodule=$sm")
@@ -4788,7 +4800,7 @@ name_listing() {   # <list file> <record file> <paths file> <diff-tree option>..
         }'
 }
 credential_feed() {   # <list file> <record file> <piece directory> <index file> <path-scoped index file> <binary paths file> <diff-tree option>...: diff_settings' four
-    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none < "$1" \
+    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" -c --root --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none < "$1" \
     | LC_ALL=C tr '\000' '\001' \
     | LC_ALL=C ROMP_LIST_FILE=$1 ROMP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 ROMP_BINARY_FILE=$6 awk "$CRED_PIECES_AWK"'
         BEGIN {
@@ -4933,7 +4945,7 @@ blob_pieces() {   # <blob> <record file> <piece directory> <index file> <path-sc
 # compares with the count of merges parent_counts recorded. Its status, under
 # pipefail, is diff-tree's, tr's or the awk's.
 merge_fp_pieces() {   # <merges' list file> <record file> <piece directory> <index file> <path-scoped index file> <pieces already written> <diff-tree option>...: diff_settings' four
-    env -u GIT_DIFF_OPTS git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" --diff-merges=first-parent --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none < "$1" \
+    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p -U0 -r "${@:7}" --diff-merges=first-parent --always --text --no-color --no-textconv --no-ext-diff --ignore-submodules=none < "$1" \
     | LC_ALL=C tr '\000' '\001' \
     | LC_ALL=C ROMP_FP_LIST_FILE=$1 ROMP_FP_RECORD_FILE=$2 ROMP_PIECE_DIR=$3 ROMP_INDEX_FILE=$4 ROMP_PATH_INDEX_FILE=$5 ROMP_FP_PIECES=$6 awk "$CRED_PIECES_AWK"'
         BEGIN {
