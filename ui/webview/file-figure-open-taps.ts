@@ -4,16 +4,18 @@
 // link-navigation follow-on of plans/markdown-viewer.md: file-figure-open-browser.test.ts runs them in Chromium, and
 // file-figure-open-engines-browser.test.ts in WebKit and Firefox, a leg of its own that stays off the shared roster of browser
 // legs, since the job that runs the roster installs Chromium alone. The gate (file-view.ts webGestureShown and the recorder above
-// it, keyed on ten events of the window's capture phase: pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown,
-// dragstart, touchend, touchcancel and click) records a press's verdict at the window's pointerdown and fills a one-click slot at
-// the pointerup, and a click by a pointer refuses where a record still stands under its own pointerId, a press whose pointerup
-// the viewer never heard, and with none reads the press the slot handed it, only right after a primary mouseup whose detail is
-// above 0 and only under the slot's own pointerId when the click is typed as the slot's pointerup was; a record ends at its own
-// pointerup, which hands it to the slot, at its own pointercancel and at the next primary press, every record ends at a dragstart
-// and at a mousedown with no pointerdown of a mouse or a pen before it, which empties the slot too unless it is the compatibility
-// mousedown of the one-finger tap, or of the touch-order pen, whose pointerup filled the slot, a mouseup other than a primary one
-// of detail above 0 empties the slot and clears the tap's flag, and a touchend or a touchcancel marks every touch record refused,
-// and the record stands. The engines differ in what a tap's click carries, read off the page as each cell's precondition:
+// it, keyed on eleven events of the window's capture phase: pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown,
+// dragstart, touchend, touchcancel, pointerout and click) records a press's verdict at the window's pointerdown and fills a
+// one-click slot at the pointerup, and a click by a pointer refuses where a record still stands under its own pointerId, a press
+// whose pointerup the viewer never heard, and with none reads the press the slot handed it, only right after a primary mouseup
+// whose detail is above 0 and only under the slot's own pointerId when the click is typed as the slot's pointerup was; a record
+// ends at its own pointerup, which hands it to the slot, at its own pointercancel and at the next primary press, every record
+// ends at a dragstart and at a mousedown with no pointerdown of a mouse or a pen before it, which empties the slot too unless it
+// is the compatibility mousedown of the one-finger tap, or of the touch-order pen, whose pointerup filled the slot, a mouseup
+// other than a primary one of detail above 0 empties the slot and clears the tap's flag, a touchend or a touchcancel marks every
+// touch record refused, and a mouse's or a pen's pointerout with a button down and no relatedTarget, its pointer leaving the
+// viewer's window, marks every mouse and pen record refused, and the record stands. The engines differ in what a tap's click
+// carries, read off the page as each cell's precondition:
 // Chromium gives the click the touch's own pointerId and type, Firefox its press's (0, a mouse's and a touch's alike), and WebKit
 // under Playwright's touch emulation on Linux (a stand-in for WebKitGTK, and presumably WPE, on a touchscreen; no cell claims iOS
 // Safari, whose click WebKit's iOS source gives the touch's own pointerId, read and not run on a device) pointerId 1 of type
@@ -96,8 +98,13 @@
 //   outside the residual, open at 142ade155, at 1a6470e72 and at 09f58bec6 (file-view.ts's gate comment states them): the first,
 //   the cells of a mouse's press whose pointerup the viewer never heard above, whose click read the mouse's record (WebKit 22 of
 //   22, Firefox 7 of 7), is closed by the gate's refusal of a record still standing at a click; the second, in Firefox, after
-//   that release, a mouse click on such an element, whose pointerup hands the mouse's record to the slot (10 of 10), opens, for
-//   the owner with the residual, and no cell drives it; Chromium opened neither. The chain rule's costs, none measured, each a
+//   that release, a mouse click on such an element, whose pointerup handed the mouse's record to the slot and opened (10 of 10,
+//   again at 343ee2eb5), is closed by the gate's refusal of a mouse's or a pen's record whose pointer left the viewer's window
+//   with a button down (0 of 10 under this gate), its cells in Firefox, on the hybrid page, the element hiding at that click's
+//   mousedown or its pointerdown, red at 343ee2eb5 and at 09f58bec6, with its cost cell, the viewer's own press on the control
+//   dragged out of its frame and back, which opens nothing and reveals the control, measured in Firefox alone (8 of 8 in a probe
+//   of these fixes, where 343ee2eb5's gate opened all 8; Chromium and WebKit keep a held left press in the frame it began in and
+//   opened it); Chromium opened neither order. The chain rule's costs, none measured, each a
 //   refusal that reveals the control: on a Firefox touchscreen whose tap's click came typed touch under a pointerId other than
 //   its pointerup's every tap, the tab then opening only from the mouse or the keyboard; every tap of a pen in the touch order
 //   whose click comes typed mouse, as WebKitGTK would type it by analogy with a touch's, the tab still opening from a finger, the
@@ -1044,8 +1051,16 @@ async function otherDocumentTap(browser: any, engine: TapEngine, surface: TapSur
  *    and Firefox's under pointerId 0 typed touch. The mouse's record still stands at that click, which refuses; in WebKit the held
  *    mouse is then released on the top page's bar. Red at 142ade155, at 1a6470e72 and at 09f58bec6, whose click read the mouse's
  *    record and opened.
- *  Red at 142ade155, where each covered click opened, but the cost cell, which reads the same there, and on the chat and the Files
- *  pane under a gate without the rules that close each; the reads of the reds are a private witness kept out of the tree.
+ *  - In Firefox, on the hybrid page: the mouse pressed on the control and released in the other pane, its pointer leaving the
+ *    viewer's frame with the button down, so the viewer hears a pointerout with no relatedTarget and buttons 1 as it leaves; then
+ *    another document's mouse click on an element over the control that hides at that click's mousedown, or at its pointerdown,
+ *    reaches the viewer as a pointerup, a mouseup of detail 1 and a trusted click under pointerId 0 typed mouse. The mouse's
+ *    record, marked refused at that pointerout, goes to the slot at that pointerup, and the click refuses. Red at 343ee2eb5 and at
+ *    09f58bec6, whose pointerup handed the slot the mouse's shown record, so the click opened. And its cost cell: the viewer's own
+ *    press on the control dragged out into the other pane and back, released on the control, whose click opens nothing and reveals
+ *    the control, and the next click opens once, where 343ee2eb5's gate opened that click.
+ *  Red at 142ade155, where each covered click opened, but the cost cells, and on the chat and the Files pane under a gate without
+ *  the rules that close each; the reads of the reds are a private witness kept out of the tree.
  *  file-view-outline.test.ts drives the same orders over the stand-in in CI. */
 async function chainCells(browser: any, engine: TapEngine, device: TapDevice, surface: TapSurface, at: string, cell: CellFn, note: (m: string) => void): Promise<void> {
   await framedScene(browser, engine, surface, COVER_TEXT, "chain", async (s) => {
@@ -1276,6 +1291,63 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
       }
       await mouseupEnds("in Firefox, ");
       await lostUp("in Firefox, ", "control", true);
+      await s.fr.evaluate(() => {
+        const w = window as any; w.__tlv = 0;
+        window.addEventListener("pointerout", (e: any) => { if (e.relatedTarget === null && e.buttons > 0 && e.pointerType === "mouse") w.__tlv++; }, true);
+      });
+      const leaves = (): Promise<number> => s.fr.evaluate(() => { const w = window as any; const k = w.__tlv; w.__tlv = 0; return k; });
+      for (const hideOn of ["mousedown", "pointerdown"]) {
+        const what = "the mouse pressed on the control and released in the other pane, then another document's mouse click on an element over the control that hides at that click's " + hideOn;
+        await settle();
+        const g = await shown(what);
+        const pt = { x: Math.round(g.ctl.x), y: Math.round(g.ctl.y) };
+        await leaves();
+        await s.page.mouse.move(pt.x, pt.y);
+        await s.page.mouse.down();
+        await s.page.mouse.move(1100, 300, { steps: 6 });
+        await s.page.mouse.up();
+        await frames(s.fr, 4);
+        const st = await heard();
+        const left = await leaves();
+        assert.ok(n(st, "pointerdown") === 1 && n(st, "mousedown") === 1 && n(st, "pointerup") === 0 && n(st, "click") === 0 && left > 0, at + what + ": the viewer hears the mouse's pointerdown and mousedown, a pointerout with no relatedTarget and a button down as the press leaves its frame, and no pointerup or click (a precondition): " + word(st) + ", pointerouts " + left);
+        const stepOpens = await s.opens();
+        const over = await element(g.box, [g.ctl, pt], hideOn + ":hide");
+        assert.ok(over[0] && over[1], at + what + ": the element over the control and the click's point (a precondition): " + JSON.stringify(over));
+        await topHeard();
+        await s.page.mouse.click(pt.x, pt.y);
+        await frames(s.fr, 4);
+        const evs = await heard();
+        const top = await topHeard();
+        const el = await drop();
+        rec[what] = { step: word(st), click: word(evs), top, el };
+        const c = evs.find((e) => e.type === "click");
+        assert.ok(c && c.trusted && c.pid === 0 && c.ptype === "mouse" && n(evs, "click") === 1 && n(evs, "pointerup") === 1 && n(evs, "mouseup") === 1 && evs.some((e) => e.type === "mouseup" && e.button === 0 && (e.detail ?? 0) > 0) && n(evs, "pointerdown") + n(evs, "mousedown") === 0, at + what + ": the viewer hears that click's pointerup, its mouseup of detail 1 and its trusted click under pointerId 0 typed mouse, and no pointerdown or mousedown (a precondition): " + word(evs));
+        assert.ok(top.includes(hideOn) && el === "tcover:none", at + what + ": that click's " + hideOn + " went to the top page's element, hidden at it (a precondition): " + JSON.stringify({ top, el }));
+        const clickOpens = await s.opens();
+        cell("in Firefox, " + what + ": [the press's opens, the other document's click's, the next click's]", want3, [stepOpens, clickOpens, await next(what)]);
+      }
+      {
+        const what = "the cost: the viewer's own press on the control dragged out of its frame into the other pane and back, released on the control";
+        await settle();
+        const g = await shown(what);
+        const pt = { x: Math.round(g.ctl.x), y: Math.round(g.ctl.y) };
+        await leaves();
+        await s.page.mouse.move(pt.x, pt.y);
+        await s.page.mouse.down();
+        await s.page.mouse.move(1100, 300, { steps: 6 });
+        await frames(s.fr, 1);
+        await s.page.mouse.move(pt.x, pt.y, { steps: 6 });
+        await frames(s.fr, 1);
+        await s.page.mouse.up();
+        await frames(s.fr, 4);
+        const st = await heard();
+        const left = await leaves();
+        const c = st.find((e) => e.type === "click");
+        assert.ok(n(st, "pointerdown") === 1 && n(st, "mousedown") === 1 && n(st, "pointerup") === 1 && c && c.trusted && c.pid === 0 && c.ptype === "mouse" && left > 0, at + what + ": the viewer hears the press's pointerdown and mousedown, a pointerout with no relatedTarget and a button down as it leaves the frame, and its pointerup, mouseup and trusted click back on the control (a precondition): " + word(st) + ", pointerouts " + left);
+        rec[what] = { step: word(st) };
+        const stepOpens = await s.opens();
+        cell("in Firefox, " + what + ": [that click's opens, the next click's]", [[0, 0], [1, 1]], [stepOpens, await next(what)]);
+      }
     }
     if (engine === "chromium" && device === "hybrid") {
       const touches = async (pts: Array<[number, number, number]>): Promise<void> => { await cdp!.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: pts.map(([x, y, id]) => ({ x, y, id })) }); };
