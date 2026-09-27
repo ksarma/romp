@@ -34,6 +34,9 @@ wrong repository.
 Contracts the tests hold this file to (tests/test_batch_tool.py):
   - plan orders dependents after their bases and excludes drafts, `major-feature` and `hold`; a
     `Depends-on` cycle excludes its members (and their dependents), not the plan;
+  - plan excludes a candidate whose pinned head has no passing sweep result of its own (read through the
+    reader verify uses, its webview decision checked against git), naming the case, and its dependents
+    with it; assemble --repin refuses a re-read head without one;
   - assemble refuses when any other `batch/*` ref exists on origin;
   - provenance fails on an undeclared commit and passes on a `batch:` commit;
   - every merge on the chain (a member's or origin/main's) equals the clean merge of its parents,
@@ -472,6 +475,15 @@ def cmd_plan(args):
         else:
             excluded[n] = "base %s is neither %s nor a candidate's branch" % (b, MAIN)
         del cands[n]
+    # A member owes a passing sweep of its own head before its review and its closing check, so plan reads it
+    # through the reader verify uses: a candidate without one is left out with the case named (and its dependents
+    # with it, through the fixpoint below).
+    sweep = sweep_reader()
+    for n, m in list(cands.items()):
+        why = member_sweep_fault(root, sweep, m, base_sha)
+        if why:
+            excluded[n] = "no passing sweep at its head (%s)" % why
+            del cands[n]
     # A dependency that is not a candidate takes its dependents out too (failure mode 7), unless it
     # already merged into main: then it is satisfied by the base every batch starts from, and the
     # dependent stays (docs tell authors to leave `Depends-on` in the body; it must not strand them).
@@ -1189,12 +1201,18 @@ def cmd_assemble(args):
             raise Fail("stopped at the merge of %s for a hand resolution (see above)" % remote_main(), code=3)
         return
     members = members_by_n(state)
+    sweep = sweep_reader() if args.repin else None
     for n in args.repin or []:
         targets = list(members) if n == "all" else [int(n)]
         for k in targets:
             if k not in members:
                 raise Fail("#%d is not a member of %s" % (k, args.name))
             pr = gh_json("pr", "view", str(k), "--json", "headRefOid,title,body,labels,baseRefName", cwd=root)
+            # The re-read head is taken in like plan's: it owes a passing sweep of its own. Refused before anything
+            # is re-pinned or rebuilt (nothing is saved until the assembly runs).
+            why = member_sweep_fault(root, sweep, dict(members[k], head=pr["headRefOid"]), git("rev-parse", remote_main(), cwd=root))
+            if why:
+                raise Fail("#%d's head %s has no passing sweep of its own (%s); nothing re-pinned" % (k, short(pr["headRefOid"]), why))
             old = members[k]["head"]
             members[k]["head"] = pr["headRefOid"]
             members[k]["title"] = pr["title"]
@@ -1495,11 +1513,12 @@ def check_contains_main(root, name, head, lines):
     return None
 
 
-def webview_contradiction(root, sweep, result, main_seen, head):
+def webview_contradiction(root, sweep, result, main_seen, head, subject="the batch head"):
     """The result's webview decision checked against git, never taken on its word: the webview legs the
     result marks not owed while kernel/kernel.py, ui/ or vscode-extension/ changed between main (as verify
-    read it) and the batch head, as a FAIL line; None when the two agree. The runner decides from the merge
-    base with its own origin/main, which is main or older, so its set of changes is never the smaller."""
+    or plan read it) and the head, as a line naming them; None when the two agree. The runner decides from
+    the merge base with its own origin/main, which is main or older, so its set of changes is never the
+    smaller."""
     excused = [n for n in sweep.WEBVIEW_LEGS if not sweep.is_owed(n, (result.get("legs") or {}).get(n))]
     if not excused:
         return None
@@ -1508,9 +1527,22 @@ def webview_contradiction(root, sweep, result, main_seen, head):
     if not hits:
         return None
     shown = ", ".join(hits[:5]) + (" and %d more" % (len(hits) - 5) if len(hits) > 5 else "")
-    return ("FAIL sweep webview: the result at %s marks %s not owed, but %s changed between %s at %s and the batch head "
+    return ("sweep webview: the result at %s marks %s not owed, but %s changed between %s at %s and %s "
             "(CLAUDE.md's webview rule owes them); sweep again with this checkout's scripts/sweep.py"
-            % (short(head), ", ".join(excused), shown, remote_main(), short(main_seen)))
+            % (short(head), ", ".join(excused), shown, remote_main(), short(main_seen), subject))
+
+
+def member_sweep_fault(root, sweep, m, main_sha):
+    """A member PR owes a passing sweep of its own head before its review round and before its closing check
+    (docs/batching.md), so the steps that take a member in (plan, assemble --repin) read it: None when the result
+    at the member's pinned head is a pass whose webview decision agrees with git, else the reader's line naming
+    the case. The result is read from this machine's state dir; one recorded on another machine is missing here."""
+    subject = "#%d's head" % m["n"]
+    a = sweep.assess(m["head"], subject=subject, branch=m["head_ref"])
+    if a["case"] != "pass":
+        return a["line"]
+    ensure_object(root, m["head"], m["head_ref"])
+    return webview_contradiction(root, sweep, a["result"], main_sha, m["head"], subject=subject)
 
 
 def cmd_verify(args, quiet=False):
@@ -1588,7 +1620,7 @@ def cmd_verify(args, quiet=False):
     if contradiction:
         ok = False
         state["sweep"] = None
-        lines.append(contradiction)
+        lines.append("FAIL " + contradiction)
     elif a["case"] == "pass":
         legs = a["result"]["legs"]
         state["sweep"] = {"head": head, "path": a["path"], "verdict": "pass", "finished": a["result"].get("finished"),
@@ -2439,7 +2471,9 @@ def main(argv=None):
 
     p = sub.add_parser("plan", help="pick and order the members, predict conflicts, write the plan",
                        description="Pick the members: open, non-draft PRs against %s or against another candidate's branch, not labeled "
-                                   "`%s` or `%s`. Order them dependencies first (a base that is another candidate's branch, or "
+                                   "`%s` or `%s`, whose head has a passing sweep result of its own (scripts/sweep.py, read from "
+                                   "this machine's state dir; a candidate without one is left out with the case named). Order "
+                                   "them dependencies first (a base that is another candidate's branch, or "
                                    "`Depends-on: #N` in the body's first lines), then by number; predict conflicts read-only "
                                    "against the accumulating tree; pin every head SHA; write the plan. Nothing is merged."
                                    % (MAIN, LABEL_MAJOR, LABEL_HOLD))
@@ -2460,7 +2494,8 @@ def main(argv=None):
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--without", type=int, action="append", metavar="N", help="leave N (and its dependents) out")
     p.add_argument("--resolve", type=int, action="append", metavar="N", help="stop at N's conflict for a hand resolution")
-    p.add_argument("--repin", action="append", metavar="N|all", help="re-read N's head, title, labels, trailer and base from GitHub before assembling")
+    p.add_argument("--repin", action="append", metavar="N|all", help="re-read N's head, title, labels, trailer and base from GitHub before assembling; "
+                                                                    "refused when the new head has no passing sweep result of its own")
     p.add_argument("--continue", dest="cont", action="store_true", help="commit the resolved merge and go on")
     p.add_argument("--abort", action="store_true", help="abandon the stopped resolution; hold that member back")
     p.add_argument("--reviewed", metavar="NOTE", help="with --continue: who reviewed the resolution and the verdict")

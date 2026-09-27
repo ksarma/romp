@@ -32,22 +32,29 @@ also runs on every push to main).
    (`gh pr edit N --add-label fix`); `tests-only`, the old name for `docs` (upstream renamed the
    label on 2026-09-08 and still accepts the old spelling), is accepted too. A `major-feature` PR is
    discussed before it joins a batch; a `hold` label keeps a PR out of the next batch.
-3. Optionally end the body with a trailer the batch body reads:
+3. Sweep your head before its review round and again before its closing check:
+   `scripts/sweep.py run --tree <your worktree>`. The round and the check read that result
+   (`scripts/sweep.py check --tree <your worktree>`) where they read CI before, and it must pass
+   at the head they read; a push after the sweep needs a new one. `scripts/batch.py plan` leaves out
+   a PR whose head has no passing result, naming the case (missing, stale, red and the rest), and
+   `assemble --repin` refuses a new head without one. Both read the batcher's state dir, so a
+   result recorded on another machine is missing there: say so, and the batcher sweeps your head.
+4. Optionally end the body with a trailer the batch body reads:
    `<!-- romp-pr: {"tier":"fix","rounds":8,"sweep":{"pytest":"8461 passed","bats":528,"npm":3013,"typecheck":"clean"},"sweep_head":"<sha>","flakes":[]} -->`.
    A missing trailer is not a failure; the member is listed under "Read these first" with "not
    stated", which costs the maintainer a look.
-4. For an upstream-worthy change, add the ledger entry file and commit it with the change. Do not
+5. For an upstream-worthy change, add the ledger entry file and commit it with the change. Do not
    edit UPSTREAM.md.
-5. Do not click merge. If a change must land now, say so in the body; the maintainer merges it
+6. Do not click merge. If a change must land now, say so in the body; the maintainer merges it
    alone or asks for it by name.
-6. Once the batcher has commented `in batch <name> at <sha>` on your PR, do not push to the branch.
-   If a review finds something, push the fix and tell the batcher by postal (kind: coordinate); it
-   re-pins your head and rebuilds. A push after the cut leaves your PR open after the batch merges,
+7. Once the batcher has commented `in batch <name> at <sha>` on your PR, do not push to the branch.
+   If a review finds something, push the fix, sweep the new head, and tell the batcher by postal
+   (kind: coordinate); it re-pins your head and rebuilds. A push after the cut leaves your PR open after the batch merges,
    and `finish` reports that rather than hiding it.
-7. When the batch merges, remove your worktree and local branch. `finish` deletes the remote one.
-8. Expect no CI on your PR. Its one check is the tier label, which runs when the PR opens or
-   reopens and when its labels change, not on a push. The tests run in the batch's sweep at the
-   batch head and in the one CI run on the batch branch.
+8. When the batch merges, remove your worktree and local branch. `finish` deletes the remote one.
+9. Expect no CI on your PR. Its one check is the tier label, which runs when the PR opens or
+   reopens and when its labels change, not on a push. The tests run in your own sweep at your head
+   (item 3), in the batch's sweep at the batch head, and in the one CI run on the batch branch.
 
 ## If you are the maintainer
 
@@ -136,7 +143,10 @@ batch and its members. Any change you make outside a merge commit is its own com
 subject; `verify` refuses the branch otherwise.
 
 1. `scripts/batch.py plan`: every ready PR, dependencies first, then by number. `plan --labeled`
-   takes only PRs labeled `land`. Message the authors of missing trailers once.
+   takes only PRs labeled `land`. A PR whose head has no passing sweep result of its own in your
+   state dir is left out with the case named, and its dependents with it (the author owes one;
+   when theirs was recorded on another machine, sweep that head here and plan again). Message the
+   authors of missing trailers once.
 2. `scripts/batch.py assemble <name>`. A conflicting member is held back and its owner told; the
    comment names what it conflicts with: origin/main when the member conflicts with main on its
    own, otherwise the earlier members whose diffs touch the same files (or the batch, when none
@@ -190,7 +200,8 @@ subject; `verify` refuses the branch otherwise.
    `scripts/batch.py pull <name> N` rebuilds without it and says so on the PR.
 6. When a member's owner pushes a fix after the cut (they tell you by postal), run
    `scripts/batch.py assemble <name> --repin N` (re-reads that head and rebuilds the branch;
-   `--repin all` re-reads every member), then repeat steps 3 to 5. Without the re-pin, `verify`
+   `--repin all` re-reads every member; a re-read head without a passing sweep of its own is
+   refused and nothing is re-pinned), then repeat steps 3 to 5. Without the re-pin, `verify`
    fails on the moved head.
 7. When main moves, `verify` refuses the batch as behind (and the batch PR may read conflicting);
    run `scripts/batch.py assemble <name> --merge-main`: it merges origin/main into the assembled batch

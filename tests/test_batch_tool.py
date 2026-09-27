@@ -19,7 +19,9 @@ Plus the conflict paths (hold back and tell the owner once; --resolve/--continue
 resolution; a straggler UPSTREAM.md row is converted inside the merge), land and finish end to end,
 the computed "Read these first" rule, and the landing gate since 2026-09-27: verify and land read the
 result scripts/sweep.py wrote for the batch head's full sha (VerifyReadsTheSweep, LandReadsTheSweep,
-SweepThenVerify) and refuse a batch head that does not contain main (VerifyBehind).
+SweepThenVerify) and refuse a batch head that does not contain main (VerifyBehind); land requires the batch
+head's CI run green (LandReadsTheCI); plan and assemble --repin read each member's own sweep result at its
+head (PlanReadsTheMemberSweep).
 
 Synthetic data only: a demo `notes-api` with invented PR numbers, branch names and titles.
 """
@@ -165,15 +167,17 @@ class Fixture:
             with open(p, "w") as f:
                 f.write(content)
 
-    def branch(self, name, changes, base="origin/main", msg=None):
+    def branch(self, name, changes, base="origin/main", msg=None, swept=True):
         """A new branch on origin, cut from `base`, carrying one commit with `changes`."""
         self._git("fetch", "-q", "origin", cwd=self.author)
         ref = base if ("/" in base or re.fullmatch(r"[0-9a-f]{40}", base)) else "origin/" + base
         self._git("checkout", "-q", "-B", name, ref, cwd=self.author)
-        return self.commit(name, changes, msg or "change on %s" % name, _new=True)
+        return self.commit(name, changes, msg or "change on %s" % name, _new=True, swept=swept)
 
-    def commit(self, name, changes, msg="another commit", _new=False):
-        """One more commit on an existing branch, pushed."""
+    def commit(self, name, changes, msg="another commit", _new=False, swept=True):
+        """One more commit on an existing branch, pushed. The author sweeps what they push: a passing sweep result for
+        the new head is recorded (every leg run and rc 0, the webview legs included), unless `swept` is False; plan
+        and assemble --repin read it for a member's head (pre-round ruling Q7)."""
         if not _new:
             self._git("fetch", "-q", "origin", cwd=self.author)
             self._git("checkout", "-q", "-B", name, "origin/" + name, cwd=self.author)
@@ -181,7 +185,14 @@ class Fixture:
         self._git("add", "-A", cwd=self.author)
         self._git("commit", "-q", "-m", msg, cwd=self.author)
         self._git("push", "-q", "-f", "origin", name, cwd=self.author)
-        return self._git("rev-parse", "HEAD", cwd=self.author)
+        sha = self._git("rev-parse", "HEAD", cwd=self.author)
+        if swept:
+            self.swept(name, sha)
+        return sha
+
+    def swept(self, name, sha=None):
+        """The author's passing sweep of branch `name` at `sha` (default: its head on origin), as commit records it."""
+        return self.result(sha or self.bare_rev(name), name, webview=True, tree=self.author)
 
     def commit_main(self, changes, msg="on main"):
         return self.commit("main", changes, msg)
@@ -284,16 +295,21 @@ class Fixture:
         else not owed; `webview` True or False sets them instead; `over` replaces top-level keys, and the verdict
         is the runner's rule over the result unless given."""
         sha = sha or self.dev_git("rev-parse", "batch/" + name)
+        if webview is None:
+            base = self.dev_git("merge-base", sha, "origin/main")
+            webview = bool(sweep.webview_owed(self.dev_git("diff", "--no-renames", "--name-only", base, sha).splitlines()))
+        return self.result(sha, "batch/" + name, webview=webview, tree=self.wt(name), **over)
+
+    def result(self, sha, branch, webview, tree, **over):
+        """The result the runner would write for `sha`, recorded for `branch`: every leg rc 0 but deps, not owed, and
+        the webview legs owed and rc 0 when `webview`, else not owed; `over` replaces top-level keys."""
         stamp = sweep.now()
         legs = {n: {"owed": True, "rc": 0, "cmd": ["true"], "started": stamp, "finished": stamp} for n in sweep.LEGS}
         for n in sweep.TEST_LEGS:
             legs[n].update(tests=1, failed=0)
-        if webview is None:
-            base = self.dev_git("merge-base", sha, "origin/main")
-            webview = bool(sweep.webview_owed(self.dev_git("diff", "--no-renames", "--name-only", base, sha).splitlines()))
         for n in ("deps",) + (() if webview else sweep.WEBVIEW_LEGS):
             legs[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
-        data = {"schema": sweep.SCHEMA, "sha": sha, "branch": "batch/" + name, "tree": self.wt(name), "started": stamp,
+        data = {"schema": sweep.SCHEMA, "sha": sha, "branch": branch, "tree": tree, "started": stamp,
                 "finished": stamp, "legs": legs, "history": [], "red": [], "invalid": None}
         data.update(over)
         data.setdefault("verdict", sweep.verdict_of(data))
@@ -490,6 +506,72 @@ class Plan(_Base):
         fx.ok("plan", "--name", "b2")
         reasons = {row["n"]: row["reason"] for row in fx.state("b2")["excluded"]}
         self.assertIn("was merged PR #100's branch and now holds other commits with no open PR", reasons[108])
+
+
+class PlanReadsTheMemberSweep(_Base):
+    """A member PR owes a passing sweep of its own head before its review round and before its closing check
+    (pre-round ruling Q7). The steps that take a member in read it through the reader verify uses: plan leaves out
+    a candidate without a passing result at its pinned head, naming the case (and its dependents with it), and
+    assemble --repin refuses a re-read head without one. The Fixture records a passing result for every head an
+    author pushes unless told `swept=False`."""
+
+    def test_a_member_without_a_passing_sweep_at_its_head_is_left_out_and_its_dependents_with_it(self):
+        fx = self.fx
+        fx.branch("a", {"a.txt": "a\n"})
+        fx.branch("c", {"c.txt": "c\n"}, swept=False)
+        fx.branch("d", {"d.txt": "d\n"}, base="c")
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.pr(103, "c", labels=["fix"], body=TRAILER)
+        fx.pr(104, "d", base="c", labels=["fix"], body=TRAILER)
+        p = fx.ok("plan", "--name", "b1")
+        st = fx.state("b1")
+        self.assertEqual(st["order"], [101])
+        excl = {e["n"]: e["reason"] for e in st["excluded"]}
+        self.assertIn("no passing sweep at its head (sweep missing: no result for #103's head %s in %s (the state dir from "
+                      "XDG_STATE_HOME)" % (fx.bare_rev("c"), sweep.sweeps_dir(env=fx.env)), excl[103])
+        self.assertEqual(excl[104], "depends on #103 (%s)" % excl[103], "the dependent goes with it")
+        self.assertIn("excluded #103: no passing sweep at its head (sweep missing", p.stdout)
+
+    def test_a_red_a_stale_and_a_webview_contradicting_result_are_each_named(self):
+        fx = self.fx
+        red_head = fx.branch("e", {"e.txt": "e\n"}, swept=False)
+        with open(fx.swept("e")) as f:
+            legs = json.load(f)["legs"]
+        legs["bats"]["rc"] = 1
+        fx.result(red_head, "e", webview=True, tree=fx.author, legs=legs)
+        old = fx.branch("f", {"f.txt": "f\n"})
+        fx.commit("f", {"f.txt": "f2\n"}, swept=False)
+        ui_head = fx.branch("g", {"ui/pane.js": "export const pane = 1;\n"}, swept=False)
+        fx.result(ui_head, "g", webview=False, tree=fx.author)
+        fx.pr(105, "e", labels=["fix"], body=TRAILER)
+        fx.pr(106, "f", labels=["fix"], body=TRAILER)
+        fx.pr(107, "g", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        st = fx.state("b1")
+        self.assertEqual(st["order"], [])
+        excl = {e["n"]: e["reason"] for e in st["excluded"]}
+        self.assertIn("no passing sweep at its head (sweep red at %s: bats (rc 1)" % red_head[:10], excl[105])
+        self.assertIn("no passing sweep at its head (sweep stale: the newest result for f is at %s" % old[:10], excl[106])
+        self.assertIn("no passing sweep at its head (sweep webview: the result at %s marks typecheck, npm-test, build not owed, "
+                      "but ui/pane.js changed between origin/main at %s and #107's head" % (ui_head[:10], fx.bare_rev("main")[:10]),
+                      excl[107])
+
+    def test_repin_refuses_a_new_head_without_a_passing_sweep(self):
+        fx = self.fx
+        first = fx.branch("a", {"a.txt": "a\n"})
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        new = fx.commit("a", {"a.txt": "a2\n"}, swept=False)
+        p = fx.run("assemble", "b1", "--repin", "101")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("#101's head %s has no passing sweep of its own (sweep stale: the newest result for a is at %s"
+                      % (new[:10], first[:10]), p.stderr)
+        self.assertIn("nothing re-pinned", p.stderr)
+        self.assertEqual(fx.state("b1")["members"]["101"]["head"], first, "the pin did not move")
+        fx.swept("a", new)
+        fx.ok("assemble", "b1", "--repin", "101")
+        self.assertEqual(fx.state("b1")["members"]["101"]["head"], new)
 
 
 class Assemble(_Base):
@@ -1174,6 +1256,7 @@ class Assemble(_Base):
         fx._git("add", "-A", cwd=fx.author)
         fx._git("commit", "-q", "-m", "notes.txt becomes a link", cwd=fx.author)
         fx._git("push", "-q", "-f", "origin", "g", cwd=fx.author)
+        fx.swept("g")
         fx.pr(101, "a", labels=["fix"], body=TRAILER)
         fx.pr(108, "g", title="notes: a link", labels=["fix"], body=TRAILER)
         fx.ok("plan", "--name", "b1")

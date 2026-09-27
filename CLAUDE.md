@@ -213,6 +213,12 @@ broad `git add` will sweep up your work). Conventions:
   does not contain `main`, so the tree that lands is the tree the sweep and CI tested. The
   button and `gh pr merge` make no such check, so a batch merged by hand needs `main` unmoved
   since verify (docs/batching.md, maintainer step 6).
+  A PR owes a passing `scripts/sweep.py` result at its own head before its review round and
+  again before its closing check: the round and the check read that result (`scripts/sweep.py
+  check --tree <worktree>`) where they read CI before, so a push after the sweep needs a new
+  one. `scripts/batch.py plan` leaves out a PR without one, naming the case, and `assemble
+  --repin` refuses a new head without one; both read the batcher's state dir, so a result
+  recorded on another machine is missing there (docs/batching.md, "If you open a PR").
   Anything in the code that reads the canonical repo (the release script's post-merge
   fast-forward and tag push, the kernel's update and drift probes) resolves the remote
   as `upstream` when the clone has one, else `origin` (`_release_remote` in
