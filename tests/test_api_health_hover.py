@@ -105,6 +105,16 @@ def _serve_get(path, headers=None):
     return captured.get("status"), h.wfile.getvalue().decode("utf-8", "replace")
 
 
+def _shell_creds(extra=None):
+    """The shell's fetch shape for a data route (the full class): this kernel's session cookie plus the
+    page key the page-key script adds as X-Romp-Key. A fresh session each call; every one is valid."""
+    sess = km._mint_session()
+    h = {"Cookie": "%s=%s" % (km._SESSION_COOKIE, sess), "X-Romp-Key": km._page_key(sess)}
+    if extra:
+        h.update(extra)
+    return h
+
+
 class _Backend:
     """A stand-in SDK backend over a REAL aggregator on a scratch state dir, one storm in its ring."""
 
@@ -357,7 +367,7 @@ class OneClock(unittest.TestCase):
         saved = km._sdk
         try:
             km._sdk = lambda: be
-            status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
+            status, body = _serve_get("/api-health", _shell_creds())
         finally:
             km._sdk = saved
         self.assertEqual(status, 200, body[:200])
@@ -621,15 +631,16 @@ class Route(unittest.TestCase):
             self.assertIn(k, b, k)
         self.assertEqual(set(b["windows"]), {str(w) for w in out["config"]["windows"]})
 
-    def test_the_cookie_alone_reads_it_with_no_origin_header_the_shell_s_fetch_shape(self):
-        # a same-origin GET fetch sends the romp_token cookie and NO Origin header; _origin_ok accepts an absent
-        # Origin, so this is exactly the credential the shell's fetch('/api-health') carries (kernel.py's own
-        # /usage/fleet read goes the same way). The header form the CLI uses is not what the shell sends.
-        status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
+    def test_the_session_cookie_and_key_read_it_with_no_origin_header_the_shell_s_fetch_shape(self):
+        # a same-origin GET fetch sends the session cookie and NO Origin header, and the page-key script
+        # adds X-Romp-Key; that pair (the full class's credential) is exactly what the shell's
+        # fetch('/api-health') carries (kernel.py's own /usage/fleet read goes the same way). The header
+        # token form the CLI uses is not what the shell sends.
+        status, body = _serve_get("/api-health", _shell_creds())
         self.assertEqual(status, 200, body[:200])
         self.assertIn("buckets", body)
-        status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK,
-                                                  "Origin": "http://evil.example", "Host": "127.0.0.1:%d" % km.PORT})
+        status, body = _serve_get("/api-health", _shell_creds(
+            {"Origin": "http://evil.example", "Host": "127.0.0.1:%d" % km.PORT}))
         self.assertEqual(status, 403, "a cross-site page's cookie is refused")
         self.assertIn("fetchDoc(h?'/remote/'+encodeURIComponent(h)+'/api-health':'/api-health')", JS)
         self.assertIn("fetch(u,{cache:'no-store'})", JS)
@@ -637,7 +648,7 @@ class Route(unittest.TestCase):
 
     def test_a_missing_backend_is_a_loud_503_that_the_section_shows_as_its_failure_line(self):
         km._sdk = lambda: None
-        status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
+        status, body = _serve_get("/api-health", _shell_creds())
         self.assertEqual(status, 503)
         self.assertIn("error", json.loads(body))
         self.assertIn("if(!r.ok){var tp=(typeof r.text==='function')?r.text():Promise.resolve('');", HIST, "a non-2xx is the failure, with its status")
@@ -674,7 +685,7 @@ class FrameUnchanged(unittest.TestCase):
         for k in ("windows", "transitions", "buckets", "history", "overall", "bootAt"):
             self.assertNotIn(k, f1)
         # a hover reads the route in between (the read files a transition: the storm classifies)
-        status, body = _serve_get("/api-health", {"Cookie": "romp_token=" + TOK})
+        status, body = _serve_get("/api-health", _shell_creds())
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["overall"]["state"], "thrashing", "the read observed the storm")
         f2 = km._api_health_frame(11, {})
