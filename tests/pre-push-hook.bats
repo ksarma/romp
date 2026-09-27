@@ -11764,12 +11764,14 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
     at_base
 }
 
-@test "round 11c (C, extra5-2, the commit encoding): a clean push under i18n.commitEncoding=UTF-16, the key the log output falls back to with i18n.logOutputEncoding unset, the denylist armed with strings the push does not hold, passes: --encoding=UTF-8 on the three reads covers it (refused at 93684a4d1)" {
+@test "round 11c (C, extra5-2, the commit encoding, the log-output fallback only): a clean push of two commits made BEFORE i18n.commitEncoding=UTF-16 is set, so neither carries an encoding line, the key then the one the log output falls back to with i18n.logOutputEncoding unset, the denylist armed with strings the push does not hold, passes: --encoding=UTF-8 on the three reads covers the fallback (refused at 93684a4d1); a commit made AFTER the key is set carries an encoding UTF-16 line and is refused by its label, round 12c's case 11880 reordered" {
     r9d_base
     export ROMP_PRIVATE_STRINGS="$STRINGS"
     commit_file a.txt "nothing to see" "a clean commit"
     commit_file b.txt "nothing more" "another clean commit"
     git -C "$REPO" config i18n.commitEncoding UTF-16
+    [ -z "$(git -C "$REPO" cat-file commit HEAD | sed -n '/^$/q; /^encoding /p')" ]                          # the premise: made before the key, the commits carry no label
+    [ -z "$(git -C "$REPO" cat-file commit HEAD^ | sed -n '/^$/q; /^encoding /p')" ]
     [ -z "$(git -C "$REPO" config i18n.logOutputEncoding || true)" ]
     [ "$(git -C "$REPO" log -1 --format=%H | LC_ALL=C grep -c "$(git -C "$REPO" rev-parse HEAD)" || true)" -eq 0 ]   # the premise: the fallback re-encodes a format's output
     push_main_through_hook_with_shim
@@ -14110,4 +14112,376 @@ r12d2_dot_config() {   # <nuget|zz|zzm>: a start-anchored rule under useDefault 
     git -C "$REPO" commit -q --amend -m "ustar at byte 257 behind MZ, and lone offset signatures"
     push_main_through_hook_with_shim
     r10a_passes
+}
+
+# ── round 12c: a commit's encoding label read from the object, and a label off the derived list refused (the round 11 rulings' D, correctness-1, with the coordinator's decision 3) ──
+
+r12c_base() {   # the identifier scan armed with setup's synthetic denylist, the credential scan off (setup), a clean base on the remote (BASE), the shim directory made
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    mkdir -p "$TEST_DIR/shim"
+}
+r12c_commit() {   # <encoding, or - for none> <file> <message, printf %b text> [<author address>]: a commit adding the file, made under -c i18n.commitEncoding=<encoding> (git writes the encoding line and stores the message's bytes as given, converting nothing); sha is its name
+    local -a enc=()
+    printf 'the api session notes for %s\n' "$2" > "$REPO/$2"
+    git -C "$REPO" add "$2"
+    printf '%b\n' "$3" > "$TEST_DIR/r12c-msg"
+    [ "$1" = - ] || enc=(-c "i18n.commitEncoding=$1")
+    if [ -n "${4:-}" ]; then
+        GIT_AUTHOR_EMAIL="$4" git -C "$REPO" "${enc[@]}" commit -q -F "$TEST_DIR/r12c-msg"
+    else
+        git -C "$REPO" "${enc[@]}" commit -q -F "$TEST_DIR/r12c-msg"
+    fi
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+}
+r12c_raw_commit() {   # <header lines after the committer line, printf %b text> <message> <file>: a commit object over HEAD adding the file, written with hash-object (git's own commit writes no encoding line for UTF-8, and never two), main moved to it; sha is its name
+    local tree parent
+    printf 'the api session notes for %s\n' "$3" > "$REPO/$3"
+    git -C "$REPO" add "$3"
+    tree="$(git -C "$REPO" write-tree)"
+    parent="$(git -C "$REPO" rev-parse HEAD)"
+    sha="$(printf 'tree %s\nparent %s\nauthor romp tests <tests@example.invalid> 1700000000 +0000\ncommitter romp tests <tests@example.invalid> 1700000000 +0000\n%b\n\n%s\n' "$tree" "$parent" "$1" "$2" | git -C "$REPO" hash-object -t commit -w --stdin)"
+    git -C "$REPO" update-ref refs/heads/main "$sha"
+}
+r12c_labels_of() {   # <commit>: the text after "encoding " on each header line that starts with it, one per line, read from the object as stored
+    git -C "$REPO" cat-file commit "$1" | sed -n '/^$/q; s/^encoding //p'
+}
+r12c_label_line() {   # <commit> <label>: the label refusal's line, whole
+    printf '%s' "romp pre-push: commit ${1:0:10} is made under the encoding \"$2\" (its header's encoding line), which is not on the hook's list of encodings git converts to UTF-8 with every ASCII byte kept, so the ADDRESSES and the MESSAGE the identifier scan read may not hold what the commit holds; the scan is incomplete, so the push is refused (recommit it under UTF-8, with i18n.commitEncoding unset or UTF-8 when the commit is made, or push with git push --no-verify)"
+}
+r12c_refused_by_label() {   # <label>: the push just made was refused by the label refusal's line for sha and that label, once, and the remote is at its base
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "$(r12c_label_line "$sha" "$1")" <<< "$output")" -eq 1 ]
+    at_base
+}
+r12c_list_check() {   # <hook>: converts under each label of the hook's ASCII_SAFE_LABELS as git's reencode_string_iconv converts, through the platform's iconv (python3's ctypes, one process for every label); prints each failure (at most 40) and one coverage line, status 1 on a failure
+    python3 - "$1" <<'PY'
+import ctypes, ctypes.util, errno, sys
+text = open(sys.argv[1], encoding="latin-1").read()
+head = "\nASCII_SAFE_LABELS='\n"
+if text.count(head) != 1:
+    print("the hook holds %d ASCII_SAFE_LABELS assignments, not one" % text.count(head)); sys.exit(1)
+start = text.index(head) + len(head)
+labels = text[start:text.index("\n'\n", start)].split()
+if not labels:
+    print("the hook's ASCII_SAFE_LABELS holds no label"); sys.exit(1)
+if len({l.upper() for l in labels}) != len(labels):
+    print("a label is listed twice"); sys.exit(1)
+libc = ctypes.CDLL(None, use_errno=True)
+glibc = hasattr(libc, "gnu_get_libc_version")
+lib, name = libc, "iconv"
+if not hasattr(libc, "iconv_open"):
+    path = ctypes.util.find_library("iconv")
+    if not path:
+        print("no iconv_open in the C library and no libiconv: no label covered"); sys.exit(1)
+    lib = ctypes.CDLL(path, use_errno=True)
+    name = "libiconv" if hasattr(lib, "libiconv_open") else "iconv"
+iopen, iconv, iclose = getattr(lib, name + "_open"), getattr(lib, name), getattr(lib, name + "_close")
+P = ctypes.POINTER
+iopen.restype, iopen.argtypes = ctypes.c_void_p, [ctypes.c_char_p, ctypes.c_char_p]
+iconv.restype = ctypes.c_size_t
+iconv.argtypes = [ctypes.c_void_p, P(ctypes.c_char_p), P(ctypes.c_size_t), P(ctypes.c_char_p), P(ctypes.c_size_t)]
+iclose.argtypes = [ctypes.c_void_p]
+FAIL, ERR = ctypes.c_void_p(-1).value, ctypes.c_size_t(-1).value
+outbuf = ctypes.create_string_buffer(1024)
+def conv(cd, data):
+    # git's reencode_string_iconv: one conversion from the initial state and no flush call after it;
+    # any error but E2BIG makes git read the raw bytes (None here, with the errno)
+    iconv(cd, None, None, None, None)
+    inbuf = ctypes.create_string_buffer(data, len(data))
+    ip, il = ctypes.cast(inbuf, ctypes.c_char_p), ctypes.c_size_t(len(data))
+    op, ol = ctypes.cast(outbuf, ctypes.c_char_p), ctypes.c_size_t(len(outbuf))
+    if iconv(cd, ctypes.byref(ip), ctypes.byref(il), ctypes.byref(op), ctypes.byref(ol)) == ERR:
+        e = ctypes.get_errno()
+        if e == errno.E2BIG:
+            raise SystemExit("E2BIG converting %r: the output buffer is too small" % data)
+        return None, e
+    return outbuf.raw[:len(outbuf) - ol.value], 0
+fails, unopened, covered, pairs = [], [], 0, 0
+for label in labels:
+    cd = iopen(b"UTF-8", label.encode())
+    if cd is None or cd == FAIL:
+        unopened.append(label); continue
+    covered += 1
+    leads = []
+    for b in range(256):
+        out, e = conv(cd, bytes([b]))
+        if b < 0x80:
+            if out != bytes([b]):
+                fails.append("%s: the ASCII byte %02x decodes to %s" % (label, b, "a failure" if out is None else out.hex() or "nothing"))
+        elif out is None:
+            if e == errno.EINVAL:
+                leads.append(b)
+        elif out == b"" or min(out) < 0x80:
+            fails.append("%s: the high byte %02x decodes to %s" % (label, b, out.hex() or "nothing"))
+    for b in leads:
+        for a in range(0x80):
+            pairs += 1
+            out, e = conv(cd, bytes([b, a]))
+            if out is not None:
+                fails.append("%s: the lead byte %02x takes the ASCII byte %02x as its trail, decoding to %s" % (label, b, a, out.hex()))
+                break
+    iclose(cd)
+for f in fails[:40]:
+    print(f)
+print("covered %d of %d labels (%s), %d lead and ASCII pairs converted%s" % (covered, len(labels), "glibc" if glibc else "not glibc: " + name, pairs,
+      "; not opened by this iconv, so git reads a commit under them raw: " + " ".join(unopened) if unopened else ""))
+if glibc and unopened:
+    print("glibc, the library the list was derived under, opens every label, and these it did not: " + " ".join(unopened)); sys.exit(1)
+sys.exit(1 if fails else 0)
+PY
+}
+
+@test "round 12c (D, a pin): a commit made under i18n.commitEncoding=CP037 whose message names a banned string, the key set at push time: refused by its label, naming the commit and CP037, the remote at its base (PUBLISHED at 0b6c76916: git log converts the commit from CP037, under which no ASCII letter is itself, so the MESSAGE log reads no banned string; red under the mutant deleting the label check)" {
+    r12c_base
+    r12c_commit CP037 w1.txt 'seen on TESTHOST'
+    git -C "$REPO" config i18n.commitEncoding CP037
+    [ "$(r12c_labels_of "$sha")" = CP037 ]                                                                   # the premise: git wrote the label
+    [ "$(git -C "$REPO" cat-file commit "$sha" | grep -c TESTHOST || true)" -eq 1 ]                          # the commit holds the word as ASCII
+    [ "$(git -C "$REPO" log -1 --format=%B --encoding=UTF-8 "$sha" | grep -ci testhost || true)" -eq 0 ]     # and the log's conversion loses it
+    push_main_through_hook_with_shim
+    r12c_refused_by_label CP037
+    [[ "$output" != *"carries a personal identifier"* ]]
+}
+
+@test "round 12c (D, a pin): a commit made under i18n.commitEncoding=CP037 whose author's address has a banned string in its domain, the key set at push time: refused by its label, naming the commit and CP037, the remote at its base (PUBLISHED at 0b6c76916: the ADDRESSES log reads the address converted from CP037; red under the mutant deleting the label check)" {
+    r12c_base
+    r12c_commit CP037 w2.txt 'a clean change' 'ci@TESTHOST.example.invalid'
+    git -C "$REPO" config i18n.commitEncoding CP037
+    [ "$(r12c_labels_of "$sha")" = CP037 ]
+    [ "$(git -C "$REPO" cat-file commit "$sha" | grep -c '^author .*<ci@TESTHOST.example.invalid>' || true)" -eq 1 ]
+    [ "$(git -C "$REPO" log -1 --format=%ae --encoding=UTF-8 "$sha" | grep -ci testhost || true)" -eq 0 ]
+    push_main_through_hook_with_shim
+    r12c_refused_by_label CP037
+    [[ "$output" != *"whose domain carries a personal identifier"* ]]
+}
+
+@test "round 12c (D, a pin): a commit made under i18n.commitEncoding=UTF-16 whose object length is even and whose message names a banned string, the key set at push time: refused by its label, naming the commit and UTF-16, the remote at its base (PUBLISHED at 0b6c76916: at an even length the conversion from UTF-16 succeeds, pairing ASCII bytes into other characters; red under the mutant deleting the label check)" {
+    r12c_base
+    r12c_commit UTF-16 w3.txt 'seen on TESTHOST'
+    if [ $(( $(git -C "$REPO" cat-file -s "$sha") % 2 )) -ne 0 ]; then
+        printf 'seen on TESTHOST!\n' > "$TEST_DIR/r12c-msg"
+        git -C "$REPO" -c i18n.commitEncoding=UTF-16 commit -q --amend -F "$TEST_DIR/r12c-msg"
+        sha="$(git -C "$REPO" rev-parse HEAD)"
+    fi
+    git -C "$REPO" config i18n.commitEncoding UTF-16
+    [ $(( $(git -C "$REPO" cat-file -s "$sha") % 2 )) -eq 0 ]
+    [ "$(r12c_labels_of "$sha")" = UTF-16 ]
+    [ "$(git -C "$REPO" log -1 --format=%B --encoding=UTF-8 "$sha" | LC_ALL=C grep -aci testhost || true)" -eq 0 ]
+    push_main_through_hook_with_shim
+    r12c_refused_by_label UTF-16
+    [[ "$output" != *"carries a personal identifier"* ]]
+}
+
+@test "round 12c (D, a pin): a commit made under i18n.commitEncoding=SHIFT_JIS whose message puts the lead byte 0x81 before a banned string, the key set at push time: refused by its label, naming the commit and SHIFT_JIS, the remote at its base (PUBLISHED at 0b6c76916: the conversion from SHIFT_JIS takes the word's first letter as the lead byte's trail; red under the mutant deleting the label check)" {
+    r12c_base
+    r12c_commit SHIFT_JIS w4.txt 'seen on \x81TESTHOST'
+    git -C "$REPO" config i18n.commitEncoding SHIFT_JIS
+    [ "$(r12c_labels_of "$sha")" = SHIFT_JIS ]
+    [ "$(git -C "$REPO" cat-file commit "$sha" | LC_ALL=C grep -ac TESTHOST || true)" -eq 1 ]
+    [ "$(git -C "$REPO" log -1 --format=%B --encoding=UTF-8 "$sha" | LC_ALL=C grep -aci testhost || true)" -eq 0 ]
+    push_main_through_hook_with_shim
+    r12c_refused_by_label SHIFT_JIS
+    [[ "$output" != *"carries a personal identifier"* ]]
+}
+
+@test "round 12c (D, a control): a commit whose header carries an explicit encoding line for UTF-8, written with hash-object, passes clean under the spelling utf-8 (the label is compared case-insensitively); one carrying encoding UTF-8 whose message names a banned string is refused as a hit naming its message, not by its label" {
+    r12c_base
+    r12c_raw_commit 'encoding utf-8' 'a clean change' w5.txt
+    [ "$(r12c_labels_of "$sha")" = utf-8 ]
+    push_main_through_hook_with_shim
+    r10a_passes
+    r12c_raw_commit 'encoding UTF-8' 'seen on TESTHOST' w6.txt
+    [ "$(r12c_labels_of "$sha")" = UTF-8 ]
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the MESSAGE of commit ${sha:0:10} carries a personal identifier on line 1 (line 1 is the subject)" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"is made under the encoding"* ]]
+    at_base
+}
+
+@test "round 12c (D, a control): an ordinary commit, made with i18n.commitEncoding unset, so git writes no encoding line (read as UTF-8), passes clean; one whose message names a banned string is refused as a hit naming its message, not by its label" {
+    r12c_base
+    r12c_commit - w7.txt 'a clean change'
+    [ -z "$(r12c_labels_of "$sha")" ]
+    push_main_through_hook_with_shim
+    r10a_passes
+    r12c_commit - w8.txt 'seen on TESTHOST'
+    [ -z "$(r12c_labels_of "$sha")" ]
+    BASE="$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)"
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the MESSAGE of commit ${sha:0:10} carries a personal identifier on line 1 (line 1 is the subject)" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"is made under the encoding"* ]]
+    at_base
+}
+
+@test "round 12c (D, a control): a commit made under i18n.commitEncoding=ISO-8859-1, a label on the list, whose message names a banned string, the key set at push time: refused as a hit naming its message, not by its label, the remote at its base" {
+    r12c_base
+    r12c_commit ISO-8859-1 w9.txt 'seen on TESTHOST'
+    git -C "$REPO" config i18n.commitEncoding ISO-8859-1
+    [ "$(r12c_labels_of "$sha")" = ISO-8859-1 ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the MESSAGE of commit ${sha:0:10} carries a personal identifier on line 1 (line 1 is the subject)" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"is made under the encoding"* ]]
+    [[ "$output" != *"encoding lines in its header"* ]]
+    at_base
+}
+
+@test "round 12c (D, two labels): a clean commit whose header carries two encoding lines, encoding ISO-8859-1 then encoding UTF-8 (both on the list; written with hash-object: git converts by the first and ignores the second), is refused naming the commit and the count, the remote at its base (passed at 0b6c76916; red under the mutant deleting the label check)" {
+    r12c_base
+    r12c_raw_commit 'encoding ISO-8859-1\nencoding UTF-8' 'a clean change' w10.txt
+    [ "$(r12c_labels_of "$sha" | wc -l)" -eq 2 ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: commit ${sha:0:10} carries 2 encoding lines in its header: git converts it from the first and ignores the rest, so the hook does not pick one of them to check; the scan is incomplete, so the push is refused (recommit it under UTF-8, with i18n.commitEncoding unset or UTF-8 when the commit is made, or push with git push --no-verify)" <<< "$output")" -eq 1 ]
+    [ "$(grep -c '^romp pre-push: ' <<< "$output")" -eq 1 ]
+    at_base
+}
+
+@test "round 12c (D, case 11880's shape reordered): a clean commit made AFTER i18n.commitEncoding=UTF-16 is set, so it carries an encoding UTF-16 line, the denylist armed with strings the push does not hold: refused by its label, naming the commit and UTF-16, a false refusal on a clean commit, disclosed in the header's identifier paragraph (passed at 0b6c76916; red under the mutant deleting the label check)" {
+    r12c_base
+    git -C "$REPO" config i18n.commitEncoding UTF-16
+    commit_file w11.txt "nothing to see" "a clean commit"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    [ "$(r12c_labels_of "$sha")" = UTF-16 ]
+    push_main_through_hook_with_shim
+    r12c_refused_by_label UTF-16
+    [ "$(grep -c '^romp pre-push: ' <<< "$output")" -eq 1 ]
+}
+
+@test "round 12c (D, one read per push): a push of two refs, main at a commit made under CP037 and side one commit past it made under IBM500, is read by ONE git cat-file --batch, and each commit is refused by its label once, though both refs list the first, the remote at its base" {
+    r12c_base
+    r12c_commit CP037 w12.txt 'a clean change'
+    first=$sha
+    git -C "$REPO" branch side
+    git -C "$REPO" checkout -q side
+    r12c_commit IBM500 w13.txt 'another clean change'
+    git -C "$REPO" checkout -q main
+    git_shim "$(printf 'if [ "${1:-}" = cat-file ] && [ "${2:-}" = --batch ] && [ "$#" -eq 2 ]; then echo fired >> %q; fi' "$TEST_DIR/calls.encone")"
+    push_refs_through_hook_with_shim main side
+    [ "$status" -ne 0 ]
+    [ "$(wc -l < "$TEST_DIR/calls.encone")" -eq 1 ]
+    [ "$(grep -cxF -- "$(r12c_label_line "$first" CP037)" <<< "$output")" -eq 1 ]
+    [ "$(grep -cxF -- "$(r12c_label_line "$sha" IBM500)" <<< "$output")" -eq 1 ]
+    [ "$(grep -c '^romp pre-push: ' <<< "$output")" -eq 2 ]
+    at_base
+    run git -C "$TEST_DIR/remote.git" rev-parse -q --verify refs/heads/side
+    [ "$status" -ne 0 ]
+}
+
+@test "round 12c (D, the list's deriving case): every label of the hook's ASCII_SAFE_LABELS, read from the hook, is converted to UTF-8 by the platform's iconv as git's reencode_string_iconv converts (python3's ctypes, one process: one conversion from the initial state, no flush, any error but E2BIG counting as git reading the raw bytes): every ASCII byte decodes to itself, each high byte that converts decodes to bytes none of them ASCII, and each lead byte followed by every ASCII byte fails to convert; the list's size is the header's two class counts summed; on glibc every label opens, elsewhere the case prints what it covered and the labels that iconv could not open (under which git reads a commit raw); red on a copy of the hook whose list adds SHIFT_JIS, BIG5, CP1258 or CP1255" {
+    local n hdr single multi l
+    n=$(sed -n "/^ASCII_SAFE_LABELS='\$/,/^'\$/p" "$HOOK" | sed '1d;$d' | wc -w)
+    [ "$n" -gt 0 ]
+    hdr=$(sed -n '2,200p' "$HOOK" | sed 's/^# \{0,1\}//' | tr '\n' ' ')
+    [[ "$hdr" =~ It\ holds\ the\ ([0-9]+)\ single-byte\ labels ]]
+    single=${BASH_REMATCH[1]}
+    [[ "$hdr" =~ and\ the\ ([0-9]+)\ multi-byte\ labels ]]
+    multi=${BASH_REMATCH[1]}
+    [ "$n" -eq $((single + multi)) ]
+    run r12c_list_check "$HOOK"
+    [ "$status" -eq 0 ]
+    [ "${#lines[@]}" -eq 1 ]
+    [[ "${lines[0]}" == "covered "* ]]
+    if [[ "${lines[0]}" == *" labels (glibc), "* ]]; then
+        [[ "${lines[0]}" == "covered $n of $n labels (glibc), "*" lead and ASCII pairs converted" ]]
+    else
+        echo "# the list's deriving case, on an iconv that is not glibc's: ${lines[0]}" >&3
+    fi
+    local -A want=([SHIFT_JIS]="SHIFT_JIS: the ASCII byte 5c decodes to c2a5"
+        [BIG5]="BIG5: the lead byte a1 takes the ASCII byte 40 as its trail, decoding to e38080"
+        [CP1258]="CP1258: the ASCII byte 41 decodes to nothing"
+        [CP1255]="CP1255: the high byte d4 decodes to nothing")
+    for l in SHIFT_JIS BIG5 CP1258 CP1255; do
+        sed "/^ASCII_SAFE_LABELS='\$/a\\    $l" "$HOOK" > "$TEST_DIR/list-$l"
+        [ "$(sed -n "/^ASCII_SAFE_LABELS='\$/,/^'\$/p" "$TEST_DIR/list-$l" | sed '1d;$d' | wc -w)" -eq $((n + 1)) ]   # the label landed in the list
+        run r12c_list_check "$TEST_DIR/list-$l"
+        if [[ "${lines[-1]}" == *"not opened by this iconv"*" $l"* ]] && [[ "${lines[-1]}" != *" labels (glibc), "* ]]; then
+            echo "# the list's deriving case: this iconv cannot open $l, so its mutant is not converted here" >&3
+            continue
+        fi
+        [ "$status" -ne 0 ]
+        if [[ "${lines[-1]}" == *" labels (glibc), "* ]]; then
+            [ "${lines[0]}" = "${want[$l]}" ]
+        else
+            [[ "${lines[0]}" == "$l: "* ]]
+        fi
+    done
+}
+
+@test "round 12c table case: the ENCODING LABELS of the pushed commits: a git silent on cat-file --batch alone (exit 0, nothing printed), through a real push of a clean commit, is refused naming the commits it answered against the commits asked, and the remote stays at its base" {
+    r12c_base
+    r12c_commit - w14.txt 'a clean change'
+    calls_silent_on git enclabels '[ "${1:-}" = cat-file ] && [ "${2:-}" = --batch ] && [ "$#" -eq 2 ]'
+    push_main_through_hook_with_shim
+    fired enclabels "cat-file --batch"
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the ENCODING LABELS of the pushed commits were read short for the identifier scan (git cat-file --batch exited 0 and answered 0 of the 1 commits asked); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+}
+
+@test "round 12c short case: the ENCODING LABELS of the pushed commits: a git whose cat-file --batch answers all but its last five bytes (exit 0, the message's end and cat-file's newline cut), through a real push of a clean commit, is refused naming the commit it ended inside, and the remote stays at its base" {
+    r12c_base
+    r12c_commit - w15.txt 'a clean change'
+    calls_short_on git enclabels '[ "${1:-}" = cat-file ] && [ "${2:-}" = --batch ] && [ "$#" -eq 2 ]' less:5
+    push_main_through_hook_with_shim
+    fired_short enclabels "cat-file --batch"
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the ENCODING LABELS of the pushed commits were read short for the identifier scan (git cat-file --batch exited 0 and ended inside commit 1 of the 1 asked, short of its size and the newline cat-file appends); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    at_base
+}
+
+@test "round 12c (the ENCODING LABELS read, its arms): through real pushes of a commit made under CP037, each refused with the remote at its base and no label line: a cat-file --batch naming the commit a tree in its answer's header (the foreign arm), one giving its size as 1 (the over arm), an awk silent on the label program (not two counts), an awk whose answer loses its label line (the printed count against the recorded one) and one whose label line names no kind (the line of no kind); each red under the mutant deleting its arm" {
+    local line
+    r12c_base
+    r12c_commit CP037 w16.txt 'a clean change'
+    git_shim "$(printf 'if [ "${1:-}" = cat-file ] && [ "${2:-}" = --batch ] && [ "$#" -eq 2 ]; then echo fired >> %q; "$real_git" "$@" | sed "1s/ commit / tree /"; exit "${PIPESTATUS[0]}"; fi' "$TEST_DIR/calls.encforeign")"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.encforeign")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the ENCODING LABELS of the pushed commits could not be read for the identifier scan (git cat-file --batch exited 0 and answered commit 1 of the 1 asked with a header line that is not that commit, its type commit and its size); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"is made under the encoding"* ]]
+    at_base
+    git_shim "$(printf 'if [ "${1:-}" = cat-file ] && [ "${2:-}" = --batch ] && [ "$#" -eq 2 ]; then echo fired >> %q; "$real_git" "$@" | sed "1s/ [0-9]*\\$/ 1/"; exit "${PIPESTATUS[0]}"; fi' "$TEST_DIR/calls.encover")"
+    push_main_through_hook_with_shim
+    [ "$(wc -l < "$TEST_DIR/calls.encover")" -eq 1 ]
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the ENCODING LABELS of the pushed commits could not be read for the identifier scan (git cat-file --batch exited 0 and answered commit 1 of the 1 asked with more bytes than its size); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"is made under the encoding"* ]]
+    at_base
+    rm -f "$TEST_DIR/shim/git"
+    calls_silent_on_text awk encsilent 'ROMP_ENC_LABELS'
+    push_main_through_hook_with_shim
+    fired encsilent "ROMP_ENC_LABELS"
+    [ "$status" -ne 0 ]
+    [ "$(grep -cxF -- "romp pre-push: the ENCODING LABELS of the pushed commits could not be read for the identifier scan (its awk exited 0 and recorded \"\", not two counts); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+    [[ "$output" != *"is made under the encoding"* ]]
+    at_base
+    for line in drop kind; do
+        local real_awk real_sed script
+        real_awk="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v awk)"
+        real_sed="$(PATH=${PATH//"$TEST_DIR/shim:"/} command -v sed)"
+        if [ "$line" = drop ]; then script='/\tlabel\t/d'; else script='s/\tlabel\t/\tlabelx\t/'; fi
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'case "$*" in *ROMP_ENC_LABELS*) echo fired >> %q; %q "$@" | %q %q; exit 0 ;; esac\n' "$TEST_DIR/calls.enc$line" "$real_awk" "$real_sed" "$script"
+            printf 'exec %q "$@"\n' "$real_awk"
+        } > "$TEST_DIR/shim/awk"
+        chmod 755 "$TEST_DIR/shim/awk"
+        push_main_through_hook_with_shim
+        [ "$(wc -l < "$TEST_DIR/calls.enc$line")" -eq 1 ]
+        [ "$status" -ne 0 ]
+        if [ "$line" = drop ]; then
+            [ "$(grep -cxF -- "romp pre-push: the ENCODING LABELS of the pushed commits were read short for the identifier scan (its awk recorded 1 commits refused by their encoding and printed 0); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+        else
+            [ "$(grep -cxF -- "romp pre-push: the ENCODING LABELS of the pushed commits could not be read for the identifier scan (its awk exited 0 and printed \"$sha labelx CP037\", a line of no kind); the scan is incomplete, so the push is refused" <<< "$output")" -eq 1 ]
+        fi
+        [[ "$output" != *"is made under the encoding"* ]]
+        at_base
+    done
 }

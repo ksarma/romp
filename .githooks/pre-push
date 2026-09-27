@@ -84,6 +84,59 @@
 #                     at another sha is receiving a new object. A tag of a tag
 #                     is peeled one object at a time.
 #
+# The ADDRESSES and the MESSAGE are read through git log, which converts a
+# commit from the encoding its header names (an encoding line, which git
+# writes when a commit is made under an i18n.commitEncoding other than UTF-8)
+# into the UTF-8 the two reads ask for. Under a label whose conversion does
+# not keep every ASCII byte (CP037 and the other EBCDIC labels, UTF-16 when
+# the commit's length is even, SHIFT_JIS, whose lead byte takes the ASCII byte
+# after it), the text the two reads get no longer holds a banned string the
+# commit holds, and a banned word in the message and a banned domain in the
+# author's address each published through a real push (the round 11 rulings'
+# D, correctness-1, 2026-09-26; main's hook published them too). So, as part
+# of this scan and only when it is armed (and its denylist names a string: a
+# denylist of comments alone reads no commit, so no label), every pushed
+# commit's label is read from the object itself by plumbing that converts
+# nothing (one git cat-file --batch over the push's commits,
+# refuse_commit_encodings): the text after "encoding " on a header line that
+# starts with it, the header ending at the first empty line, compared whole
+# and case-insensitively with the list this file holds (ASCII_SAFE_LABELS).
+# A commit with no encoding line is UTF-8 and passes. A commit whose label is not on the list, or whose header carries
+# two or more encoding lines (git converts by the first and ignores the rest,
+# so a reader of any one line could disagree with git about which applies),
+# is refused by name, with the label and the remedy: recommit it under UTF-8,
+# or push with --no-verify. The list is DERIVED by execution (2026-09-27, git
+# 2.43.0 and glibc 2.39's iconv, the library git calls): each of the 1,180
+# labels iconv -l prints, converted to UTF-8 as git's reencode_string_iconv
+# converts (a fresh state per commit, no flush at the end, and any error but
+# E2BIG making git read the raw bytes, so a byte that fails to convert is
+# safe). It holds the 449 single-byte labels under which every ASCII byte
+# decodes to itself, no other byte decodes into ASCII or to nothing, and
+# every pair of bytes and 3,000 random strings decode as their bytes do alone
+# (no state), and the 28 multi-byte labels (UTF-8 and the EUC family) under
+# which an ASCII byte after a lead byte, or after any incomplete sequence of
+# up to four high bytes, fails to convert, and no complete sequence decodes
+# into ASCII. The case in tests/pre-push-hook.bats titled "the list's
+# deriving case" reads the list from this file and converts, under each
+# label, every ASCII byte, each high byte and each lead byte followed by
+# every ASCII byte as git does, so a label added by hand is converted before
+# it is trusted. Among the labels left out: SHIFT_JIS, CP932, BIG5 and GBK (a
+# lead byte takes the ASCII byte after it), CP1258 (an ASCII letter composes
+# with a mark after it), ISO_6937 (a diacritic byte takes the letter after
+# it), ISO-2022-JP (an escape changes what the bytes after it mean), and
+# CP1255. The cost, disclosed: a clean commit under a label off the list is
+# refused, a false refusal wherever the label's conversion would have kept
+# that commit's bytes: under CP1255, which keeps every ASCII byte but holds
+# some Hebrew letters back until the byte after them, a state the derivation
+# does not admit; under any other label outside the two derived classes; and
+# under a spelling glibc opens that the list does not hold (glibc drops a
+# space, among other bytes, from a label, so "UTF-8 " opens UTF-8 and is
+# refused here). With the scan armed, a commit made under a UTF-16 or UTF-32
+# commit encoding is refused by its label, clean or not. The formatted reads
+# stay as they are for the scan itself: their --encoding=UTF-8 pins the
+# OUTPUT encoding (the clone's i18n.logOutputEncoding), and the label refusal
+# covers the COMMIT encoding.
+#
 # A read the hook cannot COMPLETE is not an empty result. The tip's content scan,
 # its symlink listing, each link's target, an object's type, a tag's fields and
 # each new commit's parent count, added lines, addresses and message are git
@@ -358,6 +411,27 @@
 #       a digit run compared with the object's size: a non-count refuses
 #       naming both answers. Its end: a cut count is a prefix of its digits,
 #       another number than the size
+#   the ENCODING LABELS of the pushed commits
+#       each answer's header, the commit asked in the order of the list file
+#       (every commit the identifier scan listed, for every ref, in one read
+#       per push), commit and its size, then its size in bytes and the newline
+#       cat-file appends, counted by the awk (commit_encodings, round 12c: git
+#       log converts a commit from the label of its encoding line into the
+#       UTF-8 its two reads ask for, and under CP037, an even-length UTF-16 or
+#       SHIFT_JIS a banned word in the message or a banned domain in the
+#       author's address published through a real push; the round 11 rulings'
+#       D, correctness-1, 2026-09-26): an answer that is not the commit asked,
+#       or holds more bytes than its size, is refused naming the read, and the
+#       count of commits read whole is compared with the commits asked, fewer
+#       refused as read short; each commit whose header carries two or more
+#       encoding lines, or one whose label is not in ASCII_SAFE_LABELS, is
+#       refused by name, the awk's count of those compared with the lines it
+#       printed, and a line of neither kind refused naming it; its record, two
+#       counts or the word that says where the read fell short, refused when
+#       it is neither. Its end: each commit's size, so an answer cut inside a
+#       commit leaves it short of its size and its newline, and one cut
+#       between commits leaves fewer commits than asked, each refused as read
+#       short
 #   the -z listing of the tip
 #       the symlink pass's entry count and the grep's read list: a listing
 #       that counts differently, or lacks a file the grep read, is refused
@@ -1397,7 +1471,9 @@
 # (colour on its grep, the signature report and, since round 11c, the output
 # encoding on its logs, each by the option that outranks the key). Reading
 # the identifier half's input from the objects is the long fix, not taken in
-# this fold.
+# this fold; one fact is read from the objects since round 12c, each pushed
+# commit's encoding label, which the output encoding's pin cannot vouch for
+# (the identifier paragraph at the top: a label off the derived list refuses).
 #
 # Both scans read the objects at the pushed shas, on the premise that what they
 # read is what the push transfers. A replace ref (git replace) breaks it: every
@@ -2951,11 +3027,202 @@ list_commits() {   # <local_ref> <local_sha> <remote_sha> <scan: identifier or c
     fi
     [ "$unscanned_n" -eq "$before" ]
 }
+# The encoding labels a pushed commit may carry (the header's identifier
+# paragraph, which states their derivation; the deriving case in
+# tests/pre-push-hook.bats reads them from here and converts under each):
+# one label per word, as iconv -l spells it, compared with a commit's label
+# whole and case-insensitively (commit_encodings).
+ASCII_SAFE_LABELS='
+    437 850 851 852 855 857 858 860 861 862 863 865 866 866NAV 869 874 904
+    1046 8859_1 8859_2 8859_3 8859_4 8859_5 8859_6 8859_7 8859_8 8859_9
+    ANSI_X3.4-1968 ANSI_X3.4-1986 ANSI_X3.4 ARABIC ASCII ASMO-708 BALTIC CN-GB
+    CP-AR CP-GR CP-HU CP367 CP437 CP737 CP770 CP771 CP772 CP773 CP774 CP775
+    CP813 CP819 CP850 CP851 CP852 CP855 CP857 CP858 CP860 CP861 CP862 CP863
+    CP865 CP866 CP866NAV CP868 CP869 CP874 CP891 CP901 CP902 CP903 CP904 CP912
+    CP915 CP916 CP920 CP921 CP922 CP1004 CP1008 CP1046 CP1089 CP1124 CP1125
+    CP1129 CP1162 CP1163 CP1167 CP1250 CP1251 CP1252 CP1253 CP1254 CP1256
+    CP1257 CP1282 CP4909 CP5347 CP9448 CP10007 CPIBM861 CSASCII CSDECMCS
+    CSEUCKR CSEUCPKDFMTJAPANESE CSGB2312 CSHPROMAN8 CSIBM851 CSIBM855 CSIBM857
+    CSIBM860 CSIBM863 CSIBM865 CSIBM866 CSIBM868 CSIBM869 CSIBM891 CSIBM901
+    CSIBM902 CSIBM903 CSIBM904 CSIBM921 CSIBM922 CSIBM1008 CSIBM1124 CSIBM1129
+    CSIBM1163 CSIBM1167 CSIBM4909 CSIBM5347 CSIBM9448 CSIBM11621162
+    CSISO111ECMACYRILLIC CSISO143IECP271 CSISO153GOST1976874 CSISO10367BOX
+    CSISOLATIN1 CSISOLATIN2 CSISOLATIN3 CSISOLATIN4 CSISOLATIN5 CSISOLATIN6
+    CSISOLATINARABIC CSISOLATINCYRILLIC CSISOLATINGREEK CSISOLATINHEBREW
+    CSKOI8R CSMACINTOSH CSPC8CODEPAGE437 CSPC775BALTIC CSPC850MULTILINGUAL
+    CSPC858MULTILINGUAL CSPC862LATINHEBREW CSPCP852 CWI-2 CWI CYRILLIC DEC-MCS
+    DEC DECMCS ECMA-114 ECMA-118 ECMA-128 ECMA-CYRILLIC ECMACYRILLIC ELOT_928
+    EUC-CN EUC-JISX0213 EUC-JP-MS EUC-JP EUC-KR EUC-TW EUCCN EUCJP-MS
+    EUCJP-OPEN EUCJP-WIN EUCJP EUCKR EUCTW GB2312 GEORGIAN-ACADEMY GEORGIAN-PS
+    GOST_19768-74 GOST_19768 GOST_1976874 GREEK GREEK8 HEBREW HP-GREEK8
+    HP-ROMAN8 HP-ROMAN9 HP-THAI8 HP-TURKISH8 HPGREEK8 HPROMAN8 HPROMAN9
+    HPTHAI8 HPTURKISH8 IBM-901 IBM-902 IBM-921 IBM-922 IBM-1008 IBM-1046
+    IBM-1124 IBM-1129 IBM-1162 IBM-1163 IBM-1167 IBM-4909 IBM-5347 IBM-9448
+    IBM367 IBM437 IBM775 IBM813 IBM819 IBM848 IBM850 IBM851 IBM852 IBM855
+    IBM857 IBM858 IBM860 IBM861 IBM862 IBM863 IBM865 IBM866 IBM866NAV IBM868
+    IBM869 IBM874 IBM891 IBM901 IBM902 IBM903 IBM904 IBM912 IBM915 IBM916
+    IBM920 IBM921 IBM922 IBM1004 IBM1008 IBM1046 IBM1089 IBM1124 IBM1129
+    IBM1162 IBM1163 IBM1167 IBM4909 IBM5347 IBM9448 IEC_P27-1 IEC_P271
+    ISO-8859-1 ISO-8859-2 ISO-8859-3 ISO-8859-4 ISO-8859-5 ISO-8859-6
+    ISO-8859-7 ISO-8859-8 ISO-8859-9 ISO-8859-9E ISO-8859-10 ISO-8859-11
+    ISO-8859-13 ISO-8859-14 ISO-8859-15 ISO-8859-16 ISO-10646/UTF-8
+    ISO-10646/UTF8 ISO-CELTIC ISO-IR-6 ISO-IR-100 ISO-IR-101 ISO-IR-109
+    ISO-IR-110 ISO-IR-111 ISO-IR-126 ISO-IR-127 ISO-IR-138 ISO-IR-143
+    ISO-IR-144 ISO-IR-148 ISO-IR-153 ISO-IR-155 ISO-IR-157 ISO-IR-166
+    ISO-IR-179 ISO-IR-193 ISO-IR-197 ISO-IR-199 ISO-IR-203 ISO-IR-209
+    ISO-IR-226 ISO646-US ISO8859-1 ISO8859-2 ISO8859-3 ISO8859-4 ISO8859-5
+    ISO8859-6 ISO8859-7 ISO8859-8 ISO8859-9 ISO8859-9E ISO8859-10 ISO8859-11
+    ISO8859-13 ISO8859-14 ISO8859-15 ISO8859-16 ISO88591 ISO88592 ISO88593
+    ISO88594 ISO88595 ISO88596 ISO88597 ISO88598 ISO88599 ISO88599E ISO885910
+    ISO885911 ISO885913 ISO885914 ISO885915 ISO885916 ISO_646.IRV:1991
+    ISO_8859-1 ISO_8859-1:1987 ISO_8859-2 ISO_8859-2:1987 ISO_8859-3
+    ISO_8859-3:1988 ISO_8859-4 ISO_8859-4:1988 ISO_8859-5 ISO_8859-5:1988
+    ISO_8859-6 ISO_8859-6:1987 ISO_8859-7 ISO_8859-7:1987 ISO_8859-7:2003
+    ISO_8859-8 ISO_8859-8:1988 ISO_8859-9 ISO_8859-9:1989 ISO_8859-9E
+    ISO_8859-10 ISO_8859-10:1992 ISO_8859-14 ISO_8859-14:1998 ISO_8859-15
+    ISO_8859-15:1998 ISO_8859-16 ISO_8859-16:2001 ISO_10367-BOX ISO_10367BOX
+    KOI-8 KOI8-R KOI8-RU KOI8-T KOI8-U KOI8 KOI8R KOI8U L1 L2 L3 L4 L5 L6 L7
+    L8 L10 LATIN-9 LATIN1 LATIN2 LATIN3 LATIN4 LATIN5 LATIN6 LATIN7 LATIN8
+    LATIN9 LATIN10 MAC-CENTRALEUROPE MAC-CYRILLIC MAC-IS MAC-SAMI MAC-UK MAC
+    MACCYRILLIC MACINTOSH MACIS MACUK MACUKRAINIAN MIK MS-ANSI MS-ARAB MS-CYRL
+    MS-EE MS-GREEK MS-MAC-CYRILLIC MS-TURK MSMACCYRILLIC OS2LATIN1 OSF00010001
+    OSF00010002 OSF00010003 OSF00010004 OSF00010005 OSF00010006 OSF00010007
+    OSF00010008 OSF00010009 OSF0001000A OSF00010020 OSF00030010 OSF0004000A
+    OSF0005000A OSF05010001 OSF100201B5 OSF1002035D OSF1002035E OSF1002035F
+    OSF1002037B OSF10010001 OSF10010004 OSF10010006 OSF10020352 OSF10020354
+    OSF10020357 OSF10020359 OSF10020364 OSF10020365 OSF10020387 OSF10020388
+    PT154 R8 R9 RK1048 ROMAN8 ROMAN9 RUSCII STRK1048-2002 ST_SEV_358-88 THAI8
+    TIS-620 TIS620-0 TIS620.2529-1 TIS620.2533-0 TIS620 TS-5881 TURKISH8 UJIS
+    US-ASCII US UTF-8 UTF8 WIN-SAMI-2 WINBALTRIM WINDOWS-874 WINDOWS-1250
+    WINDOWS-1251 WINDOWS-1252 WINDOWS-1253 WINDOWS-1254 WINDOWS-1256
+    WINDOWS-1257 WINSAMI2 WS2
+'
+# The encoding label of every commit the identifier scan listed, read from
+# the objects (the header's identifier paragraph): ONE git cat-file --batch
+# over the list file, which prints each commit's header line (its name,
+# commit and its size), then its bytes as stored and a newline, converting
+# nothing. tr maps NUL to 0x01 ahead of the awk, as for the credential feed,
+# so a record never ends at a NUL. The awk reads the list file cat-file reads
+# (through the environment, as parent_counts' awk does), checks each
+# answer's header against the commit asked, in order, comparing names as
+# strings, and counts each commit's bytes against its size, so an answer cut
+# inside a commit or between two is told apart from a whole one. In each
+# commit it reads the header lines up to the first empty line (or the end of
+# the commit) and takes the text after "encoding " on every line that starts
+# with it, as git's find_header_mem reads the key; a commit with more than
+# one such line prints "<commit>\ttwice\t<count>", and one whose label is
+# not in ASCII_SAFE_LABELS (compared whole, both sides upper-cased in the C
+# locale, as glibc upper-cases a label) prints "<commit>\tlabel\t<label>",
+# each commit once however many refs list it. It records one line: a word
+# that says where the read fell short (foreign <n> or over <n>, an answer not
+# for the commit asked or longer than its size; cut <n>, an answer ending
+# inside commit n; short <n>, an answer ending after n commits; or nolist),
+# or two counts (the commits read whole, the lines printed), which
+# refuse_commit_encodings compares with the commits it wrote and the lines it
+# read back. Its status, under pipefail, is cat-file's, tr's or the awk's.
+commit_encodings() {   # <list file: one commit per line> <record file>: prints "<commit>\t<twice|label>\t<count|label>" for each commit whose label refuses
+    git cat-file --batch < "$1" \
+    | LC_ALL=C tr '\000' '\001' \
+    | LC_ALL=C ROMP_ENC_FILE=$1 ROMP_ENC_RECORD=$2 ROMP_ENC_LABELS=$ASCII_SAFE_LABELS awk '
+        BEGIN {
+            list = ENVIRON["ROMP_ENC_FILE"]; rec = ENVIRON["ROMP_ENC_RECORD"]
+            n = split(ENVIRON["ROMP_ENC_LABELS"], lw)
+            for (i = 1; i <= n; i++) safe[toupper(lw[i])] = 1
+            while ((r = (getline l < list)) > 0) want[++nw] = l ""
+            if (r < 0) bad = "nolist"
+            close(list); k = 0; st = 0; out = 0
+        }
+        bad != "" { next }
+        st == 0 {
+            if (++k > nw) { bad = "foreign " k; next }
+            if (NF != 3 || ($1 "") != want[k] || $2 != "commit" || $3 !~ /^[0-9]+$/) { bad = "foreign " k; next }
+            size = $3 + 0; got = 0; st = 1; hdr = 1; ne = 0; lab = ""; next
+        }
+        {
+            got += length($0) + 1
+            if (hdr) {
+                if ($0 == "") hdr = 0
+                else if (substr($0, 1, 9) == "encoding ") { if (++ne == 1) lab = substr($0, 10) }
+            }
+            if (got < size + 1) next
+            if (got > size + 1) { bad = "over " k; next }
+            st = 0
+            if (want[k] in seen) next
+            seen[want[k]] = 1
+            if (ne > 1) { print want[k] "\ttwice\t" ne; out++ }
+            else if (ne == 1 && !(toupper(lab) in safe)) { print want[k] "\tlabel\t" lab; out++ }
+        }
+        END {
+            if (bad != "")     print bad > rec
+            else if (st != 0)  print "cut " k > rec
+            else if (k != nw)  print "short " k > rec
+            else               print k, out > rec
+        }'
+}
+# The label refusal (the header's identifier paragraph): the commits the
+# identifier scan listed for every ref of the push, written once to a list
+# file and read by commit_encodings in ONE process per push. Its record is
+# judged here: a word refuses naming where the read fell short, two counts
+# are compared with the commits written (the awk read the list whole) and
+# with the lines read back (a line printed and lost would pass its commit),
+# and each line refuses its commit by name, with the label (or the count of
+# encoding lines) and the remedy. A line of neither kind refuses too, naming
+# it. The count of commits read is the awk's own k, equal to the list lines it
+# read (short or foreign otherwise), so its comparison with the commits
+# written is reached by no single fault here (a list written short ends the
+# hook under set -e at its writer, and an awk that reads it short meets more
+# answers than it read, the foreign arm); it stays, a cheap guard.
+refuse_commit_encodings() {   # <the commits listed, whitespace-separated>
+    local rev nlist=0 record rdone rout rest fsha kind label nout=0 remedy
+    remedy="recommit it under UTF-8, with i18n.commitEncoding unset or UTF-8 when the commit is made, or push with git push --no-verify"
+    [ -n "${1//[[:space:]]/}" ] || return 0
+    if ! make_scratch; then
+        unscanned "the ENCODING LABELS of the pushed commits could not be read for the identifier scan (no scratch directory for their list: mktemp failed)"
+        return 0
+    fi
+    for rev in $1; do printf '%s\n' "$rev"; nlist=$((nlist + 1)); done > "$scratch/ids.revs"
+    : > "$scratch/ids.labels"
+    judged_read gate="the ENCODING LABELS of the pushed commits" 0 "the ENCODING LABELS of the pushed commits could not be read for the identifier scan (a stage of git cat-file --batch, tr and awk exited {rc})" -- commit_encodings "$scratch/ids.revs" "$scratch/ids.labels" || return 0
+    record=""
+    { IFS= read -r record || :; } < "$scratch/ids.labels"
+    case "$record" in
+        "foreign "*)
+            unscanned "the ENCODING LABELS of the pushed commits could not be read for the identifier scan (git cat-file --batch exited 0 and answered commit ${record#foreign } of the $nlist asked with a header line that is not that commit, its type commit and its size)" ;;
+        "over "*)
+            unscanned "the ENCODING LABELS of the pushed commits could not be read for the identifier scan (git cat-file --batch exited 0 and answered commit ${record#over } of the $nlist asked with more bytes than its size)" ;;
+        "cut "*)
+            unscanned "the ENCODING LABELS of the pushed commits were read short for the identifier scan (git cat-file --batch exited 0 and ended inside commit ${record#cut } of the $nlist asked, short of its size and the newline cat-file appends)" ;;
+        "short "*)
+            unscanned "the ENCODING LABELS of the pushed commits were read short for the identifier scan (git cat-file --batch exited 0 and answered ${record#short } of the $nlist commits asked)" ;;
+        *)
+            rdone=""; rout=""; rest=""
+            read -r rdone rout rest <<< "$record" || :
+            case "$rdone:$rout:${rest:+x}" in
+                *[!0-9:]*|:*|*::*)
+                    unscanned "the ENCODING LABELS of the pushed commits could not be read for the identifier scan (its awk exited 0 and recorded \"$record\", not two counts)" ;;
+                *)
+                    while IFS=$'\t' read -r fsha kind label; do
+                        [ -n "$fsha" ] || continue
+                        nout=$((nout + 1))
+                        case "$kind" in
+                            twice) unscanned "commit ${fsha:0:10} carries $label encoding lines in its header: git converts it from the first and ignores the rest, so the hook does not pick one of them to check" "$remedy" ;;
+                            label) unscanned "commit ${fsha:0:10} is made under the encoding \"$label\" (its header's encoding line), which is not on the hook's list of encodings git converts to UTF-8 with every ASCII byte kept, so the ADDRESSES and the MESSAGE the identifier scan read may not hold what the commit holds" "$remedy" ;;
+                            *) unscanned "the ENCODING LABELS of the pushed commits could not be read for the identifier scan (its awk exited 0 and printed \"$fsha${kind:+ $kind}${label:+ $label}\", a line of no kind)" ;;
+                        esac
+                    done <<< "$read_out"
+                    if [ "$rdone" -ne "$nlist" ]; then
+                        unscanned "the ENCODING LABELS of the pushed commits were read short for the identifier scan (its awk read $rdone of the $nlist commits written to its list)"
+                    elif [ "$nout" -ne "$rout" ]; then
+                        unscanned "the ENCODING LABELS of the pushed commits were read short for the identifier scan (its awk recorded $rout commits refused by their encoding and printed $nout)"
+                    fi ;;
+            esac ;;
+    esac
+}
 scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen chosen_unread
     local rc errs hits listing link blob link_path target size revs rev n msg addrs inner kind tip_listed tip_entries rev_counts
     local peeled peeled_read paths count linecount tag_read hdr
-    local target_bytes read_as whole_what
+    local target_bytes read_as whole_what enc_revs=""
     local -a words
     strings_file="$(private_strings_file)"
     identifier_scan_armed || return 0
@@ -3185,6 +3452,7 @@ scan_identifiers() {
         # The commits this push publishes: list_commits, shared with the
         # credential scan (the listing, its count and its gates, in its comment).
         list_commits "$local_ref" "$local_sha" "$remote_sha" identifier || :
+        enc_revs="$enc_revs$revs"$'\n'      # every ref's commits, for the one label read after the loop (refuse_commit_encodings)
         rev_counts=""           # "<sha> <parent count>" per line, for refuse_hidden_paths: the count read here decides a merge there, not a listing's shape
         for rev in $revs; do
             # The parent count: rev-list --parents -n 1 prints the commit and then
@@ -3305,9 +3573,16 @@ scan_identifiers() {
             # i18n.commitEncoding with that unset), and under a UTF-16 log
             # encoding these two reads refused every push with a new commit,
             # their markers unread, until round 11c (the round 10 rulings'
-            # extra5-2, 2026-09-26); a commit's message is then read as UTF-8
-            # whatever the clone sets, and a banned word in it is still
-            # refused. The log is captured in this shell (never a
+            # extra5-2, 2026-09-26). The pin covers the OUTPUT encoding: the
+            # answer is UTF-8 whatever the clone's keys set. It does not
+            # cover the COMMIT encoding, the label a commit carries from the
+            # i18n.commitEncoding it was made under, from which git converts
+            # the commit before either read sees it: under a label whose
+            # conversion does not keep every ASCII byte (CP037, UTF-16 of an
+            # even length, SHIFT_JIS) the two reads get garbled text, and the
+            # LABEL REFUSAL covers that (refuse_commit_encodings, after the
+            # ref loop: such a commit is refused by its label; the round 11
+            # rulings' D, 2026-09-26). The log is captured in this shell (never a
             # process substitution, which gives the loop no status and loses a
             # counter set inside it) and its answer judged against the format asked
             # for: the two role lines, so an exit-0 answer of any other shape is
@@ -3507,6 +3782,12 @@ scan_identifiers() {
             object_type "$local_ref" "$obj"
         done
     done 5<<< "$refs"
+
+    # The encoding label of every commit listed above, for every ref, in one
+    # read (refuse_commit_encodings; the header's identifier paragraph): a
+    # commit whose label is off the derived list, or that carries two, is
+    # refused by name, since the ADDRESSES and MESSAGE logs read it converted.
+    refuse_commit_encodings "$enc_revs"
 
     if [ "$hidden_paths" -ne 0 ]; then
         # Each remedy prints only where a refused line named its cause (or, for
@@ -4307,7 +4588,11 @@ merge_tail_blobs() {   # <note file> <record file> <piece directory> <bytes writ
 # read as written whatever the clone sets (until round 11c a clean push under
 # a UTF-16 or UTF-32 log encoding, or a UTF-16 commit encoding, was refused
 # as a commit not closed by its tail marker; the round 10 rulings' extra5-2,
-# 2026-09-26).
+# 2026-09-26). Since round 12c, with the identifier scan armed, a commit made
+# under a UTF-16 or UTF-32 commit encoding is refused by its label
+# (refuse_commit_encodings; the round 11 rulings' D), a false refusal on a
+# clean commit, disclosed in the header's identifier paragraph with the
+# list's other false refusals; this read still passes it.
 parent_counts() {   # <list file: one commit per line> <record file>: prints "<commit> <parent count>" for each commit of 64 or more parents
     git rev-list --no-walk=unsorted --stdin --encoding=UTF-8 --format='%P%n%H' < "$1" \
     | LC_ALL=C ROMP_REVS_FILE=$1 ROMP_COUNTS_FILE=$2 awk '
