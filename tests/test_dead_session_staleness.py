@@ -4208,6 +4208,33 @@ step(road, "namedAgainUnderTheDeclaredName", us, nobody=S["nobody"], goss=S["gos
 dial(hub, HUB, f2, F)                              # the hub's next dial to the alias folds it under the alias
 dial(hub, HUB, us, US); dial(us, US, hub, HUB)
 step(road, "afterTheHubsFold", us, nobody=S["nobody"], goss=S["goss"])
+# FILING IS NOT NAMING (round 6 of fork PR #897, the reviewer's verifier at the seventy-third commit, by execution): the
+# first road's world, then a later process of F that runs no session dials the hub first, so the hub files it under the
+# held word's name; a hub gossips a far host only through that host's session rows (presence_payload), so nothing names F
+# there, and the word stays held across the hub's fold back to the alias, F's session named there, and our restart
+road = "olderHonestFarRenamedAsItUpgradesFiledWithNoSession"
+us, f2, hub, c, buses = renamed_upgraded(road)
+LISTINGS["f"] = []                                 # F runs no session now
+f3 = renamed_new_f(road, "f3", buses)
+dial(f3, F_DECL, hub, HUB)                         # a later process's own dial reaches the hub first: filed under F_DECL
+dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+renamed_view(road, "filedWithNoSession", us, hub, buses)
+step(road, "filedWithNoSession", us, nobody=S["nobody"], goss=S["goss"])
+dial(hub, HUB, f3, F)                              # the hub's next dial to the alias folds it back under the alias
+dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+renamed_view(road, "foldedBack", us, hub, buses)
+step(road, "foldedBack", us, nobody=S["nobody"], goss=S["goss"])
+LISTINGS["f"] = [S["goss"]]                        # F runs a session again
+dial(f3, F_DECL, hub, HUB)                         # its own dial: filed under the alias, its bus id known there
+dial(hub, HUB, f3, F)
+dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+renamed_view(road, "aSessionUnderTheAlias", us, hub, buses)
+step(road, "aSessionUnderTheAlias", us, nobody=S["nobody"], goss=S["goss"])
+us = load_bus("us2")                               # our bus restarts over the same root
+notify(us, HUB, True); notify(us, C, True)
+dial(c, C, us, US); dial(hub, HUB, us, US); dial(us, US, c, C); dial(us, US, hub, HUB)
+step(road, "ourBusRestarted", us, nobody=S["nobody"], goss=S["goss"])
 print(json.dumps(out))
 """, HERE, BIN, str(others), json.dumps(ROAD_SIDS), R_US, R_B, R_C, R_HUB, R_F, R_HUB2, R_HUB_DECL, R_G, R_HUB_DECL2],
                                 capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
@@ -6137,9 +6164,15 @@ print(json.dumps(out))
         known there) and, in the road where the hub restarts, across this bus's restart (the via row carried
         unanswered). The hub files F under the held word's name again when F's own dial reaches it before the hub's
         dial has reached F's current process: a later process of F (one road, in this bus's process) or F after
-        the hub restarts (the other, after this bus's restart). The hub's word under that name then replaces the held
-        or carried one, unanswered, since the hub holds that row until its next dial to the alias folds it, and the
-        answer to our dial after that fold releases it: rule 5 for the sid nothing names. The contrast, the word
+        the hub restarts (the other, after this bus's restart). On both roads F runs a session, so the hub names F
+        under that name, and its word there replaces the held or carried one, unanswered, since the hub holds that row
+        until its next dial to the alias folds it, and the answer to our dial after that fold releases it: rule 5 for
+        the sid nothing names. Filing is not naming (the reviewer's verifier at the seventy-third commit, by
+        execution): on a third road a later process of F that runs no session dials the hub first and is filed under
+        the held word's name, and since a hub gossips a far host only through that host's session rows
+        (presence_payload), nothing names F there; the word stays held, the sid nothing names cannot-determine, across
+        the hub's next dial folding F back under the alias, a session of F that the hub then names under the alias
+        alone, and this bus's restart. The contrast, the word
         held under the alias and F's new process's own dial reaching the hub first under the declared name: held while
         the hub names F only under the declared name, released by the answer to our dial after the hub's next dial to
         the alias folds F there. At the forty-ninth commit the first omission released the word, before F upgraded."""
@@ -6248,6 +6281,24 @@ print(json.dumps(out))
                 self.assertEqual((self._road(got, name, "afterTheHubsFold", "nobody"), self._road(got, name, "afterTheHubsFold", "goss")),
                                  (RULE_5, RULE_4), "the restarted hub's dial to the alias folds it, and the answer to our "
                                                    "dial releases it: rule 5 for the sid nothing names")
+            with self.subTest(shape=shape, leg="when the hub renames the host as it upgrades", end="filed with no session"):
+                name = "olderHonestFarRenamedAsItUpgradesFiledWithNoSession"
+                words = got["roads"][name]["words"]
+                self.assertEqual((words["filedWithNoSession"], self._road(got, name, "filedWithNoSession", "nobody")),
+                                 ({"held": [[R_F_DECL, S["other"], "f"]], "hubRows": [[R_F, "f2"], [R_F_DECL, "f3"]],
+                                   "roster": [[R_F, S["goss"], "f2", True]]}, decl),
+                                 "FILING IS NOT NAMING: a later process of F with no session dials the hub first and is filed "
+                                 "under the held word's name, where nothing names F, and the word stays held")
+                self.assertEqual((words["foldedBack"], self._road(got, name, "foldedBack", "nobody")),
+                                 ({"held": [[R_F_DECL, S["other"], "f"]], "hubRows": [[R_F, "f3"]], "roster": []}, decl),
+                                 "the hub's next dial to the alias folds F back there: the word stays held")
+                self.assertEqual((words["aSessionUnderTheAlias"], self._road(got, name, "aSessionUnderTheAlias", "nobody")),
+                                 ({"held": [[R_F_DECL, S["other"], "f"]], "hubRows": [[R_F, "f3"]],
+                                   "roster": [[R_F, S["goss"], "f3", True]]}, decl),
+                                 "F runs a session again, which the hub names under the alias alone: the word stays held")
+                self.assertEqual(self._road(got, name, "ourBusRestarted", "nobody"),
+                                 UNANSWERED(R_VIA_F_UNDER_DECL + " (not heard, listing unanswered)"),
+                                 "this bus's restart ends nothing: the via row is carried unanswered and holds the arm")
             with self.subTest(shape=shape, leg="when the hub renames the host as it upgrades", contrast="held under the alias"):
                 name = "olderHonestFarUpgradesUnderItsDeclaredName"
                 road = got["roads"][name]
