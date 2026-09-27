@@ -15,8 +15,9 @@ printed by the controller as `ERROR at teardown of <the worker's last test>` and
 Pinned by running pytest in a child over synthetic files in a scratch directory outside tests/, with tests/conftest.py
 loaded as a plugin (`-p tests.conftest`), serially and under -n 2 (the shape tests/test_served_tests_require.py and
 tests/test_tempdir_hygiene.py use). The child's environment is built from a rule (PATH, a fresh HOME and TMPDIR, the
-checkout on PYTHONPATH, the locale, PYTHON_GIL and LD_LIBRARY_PATH when this process has them, and the plant's own output
-directory), never this process's environment filtered, since collecting the suite writes hundreds of variables at import.
+checkout on PYTHONPATH with bytecode writing off (PYTHONDONTWRITEBYTECODE), the locale, PYTHON_GIL and LD_LIBRARY_PATH
+when this process has them, and the plant's own output directory), never this process's environment filtered, since
+collecting the suite writes hundreds of variables at import.
 The children run with CI's pytest-timeout flags when pytest-timeout is installed (CI installs it on every cell), so the
 guard's exclusion of that plugin's own timer, alive through every test's teardown, is exercised by the green runs.
 
@@ -57,16 +58,24 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   join refuses the same way, stands in for it). The pin patches the guard's own binding of threading.enumerate, so no
   other thread's call can take its fake reads; and a test's leaked patch of the process-wide threading.enumerate does
   not hide a live thread from the guard.
+- The guard's wait, in this process (JoinRace). Every thread is joined against one shared deadline: on a fake clock,
+  three threads that never end cost the cap once, not three times. The thread list is read again after every pass, so
+  a thread started as another exits (its start tied to the guard's first read) is waited for, and is returned when it
+  runs past the cap. Run off the main thread, the guard waits for neither the main thread nor the thread running the
+  check. A test's leaked patch of the process-wide time.monotonic, a clock that jumps, does not move the deadline.
 - The guard leaves out any thread whose name starts with `pytest_timeout`, or whose target's module, or a Timer's
   function's module, starts with it. The exclusion exists for pytest-timeout's timer for the running test; a prefix and
   not an exact module means a plugin release that moves the function into a submodule still leaves it unwaited
-  (TimeoutTimerMatch, in this process; CI installs the plugin unpinned). Other timers and threads are still waited for.
+  (TimeoutTimerMatch, in this process; CI installs the plugin unpinned). Each of the three matches is pinned alone.
+  Other timers and threads are still waited for, among them near misses that start like the prefix (a thread named
+  pytest-worker, Timers whose functions are in pytest_asyncio and pytest_testmon).
 
 Each child-run pin was run with the guard removed from tests/conftest.py and fails there: the leak and idle-worker runs
 pass (exit 0, no error) and the green runs' witness finds the within-cap threads alive at sessionfinish. Synthetic
 fixtures only; no kernel, no network.
 """
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -75,6 +84,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -438,17 +448,33 @@ class TimeoutTimerMatch(unittest.TestCase):
     """The guard leaves out a thread whose name, or whose callable's module (a Thread's target, a Timer's function),
     starts with `pytest_timeout`. The exclusion exists for pytest-timeout's timer; a PREFIX means a release that moves
     the plugin's function into a submodule (CI installs pytest-timeout unpinned) does not make every cell wait the cap
-    and fail on the timer. The threads here are built and never started: the match reads only their attributes."""
+    and fail on the timer. Each of the three matches is pinned on a thread that only it matches (the name, a Thread's
+    target, a Timer's function), and the prefix's boundary on near misses that start like it and are still waited for.
+    The threads here are built and never started: the match reads only their attributes."""
 
     def test_the_timer_is_not_guarded_when_its_function_moves_into_a_submodule(self):
         cf = sys.modules["tests.conftest"]
         moved = threading.Timer(600, _function_in("pytest_timeout._core"))
         moved.name = "pytest_timeout tests/test_x.py::test_y"          # the name the plugin gives its timer
-        self.assertFalse(cf._guarded_thread(moved), "a submodule's timer, named as the plugin names it, is excluded")
+        self.assertFalse(cf._guarded_thread(moved), "a timer whose function moved into a submodule of pytest_timeout "
+                         "is excluded")
         renamed = threading.Timer(600, _function_in("pytest_timeout._core"))
         self.assertFalse(cf._guarded_thread(renamed), "matched by its function's module alone, whatever its name")
         today = threading.Timer(600, _function_in("pytest_timeout"))
         self.assertFalse(cf._guarded_thread(today), "the plugin's function as it is today")
+
+    def test_a_timer_named_as_the_plugin_names_its_timer_is_not_guarded_whatever_its_function(self):
+        cf = sys.modules["tests.conftest"]
+        named = threading.Timer(600, _function_in("some_other_pkg.core"))
+        named.name = "pytest_timeout tests/test_x.py::test_y"
+        self.assertFalse(cf._guarded_thread(named), "a thread whose name starts with pytest_timeout is excluded by its "
+                         "name alone: its function's module is some_other_pkg.core")
+
+    def test_a_thread_whose_target_is_the_plugins_is_not_guarded_whatever_its_name(self):
+        cf = sys.modules["tests.conftest"]
+        t = threading.Thread(target=_function_in("pytest_timeout._core"), name="plant-timeout-target")
+        self.assertFalse(cf._guarded_thread(t), "a Thread whose target's module starts with pytest_timeout is excluded by "
+                         "its target alone: its name is plant-timeout-target and it has no Timer function")
 
     def test_other_non_daemon_timers_are_still_guarded(self):
         cf = sys.modules["tests.conftest"]
@@ -456,6 +482,19 @@ class TimeoutTimerMatch(unittest.TestCase):
                         "a product timer is waited for")
         self.assertTrue(cf._guarded_thread(threading.Thread(target=_function_in("tests.test_x"), name="plant-timer")),
                         "a plain thread is waited for")
+        # the prefix's boundary: each of these starts like the plugin's name and is not it, so each is waited for. A bare
+        # `pytest` prefix would leave out all three, and so excuse a real leak; a prefix cut to `pytest_t` would leave out
+        # the third.
+        near_misses = (
+            ("a thread named pytest-worker", threading.Thread(target=_function_in("tests.test_x"), name="pytest-worker")),
+            ("a Timer whose function is another plugin's, pytest_asyncio",
+             threading.Timer(600, _function_in("pytest_asyncio.plugin"))),
+            ("a Timer whose function's module shares more of the prefix, pytest_testmon",
+             threading.Timer(600, _function_in("pytest_testmon.testmon_core"))),
+        )
+        for what, t in near_misses:
+            with self.subTest(near_miss=what):
+                self.assertTrue(cf._guarded_thread(t), "%s is waited for: the prefix is pytest_timeout" % what)
 
 
 @unittest.skipUnless("tests.conftest" in sys.modules, "the guard is tests/conftest.py's (pytest-only)")
@@ -487,9 +526,115 @@ class JoinRace(unittest.TestCase):
         reads = [[threading.main_thread(), mid_start], [threading.main_thread()]]
         # the guard's own binding, not threading.enumerate: under xdist other tests' threads are still running, and one of
         # them calling the process-wide function mid-patch would take the fake first read and leave this pin vacuous
-        with mock.patch.object(cf, "_enumerate", side_effect=lambda: reads.pop(0) if len(reads) > 1 else reads[0]):
+        with mock.patch.object(cf, "_enumerate",
+                               side_effect=lambda: reads.pop(0) if len(reads) > 1 else reads[0]) as enumerate_spy:
             self.assertEqual(cf.threads_left_at_session_end(5.0), [])
-        self.assertEqual(reads, [[threading.main_thread()]], "the guard read the list a second time")
+        self.assertGreaterEqual(enumerate_spy.call_count, 2, "the guard read the thread list again after its pass over "
+                                "the thread it could not join")
+
+    def test_every_thread_is_joined_against_one_shared_deadline(self):
+        """The guard gives every thread until ONE deadline, cap_s from the call, joining each for the time left before it,
+        so a process that leaks several threads pays the cap once. On a fake clock: the guard's own clock binding reads
+        it, and three listed threads, never started, each advance it by the whole timeout they are joined for, as a join
+        on a thread that never ends does. Joined for the full cap each, they would spend three times the cap."""
+        cf = sys.modules["tests.conftest"]
+        clock = [0.0]
+
+        class NeverEnds(threading.Thread):
+            def join(self, timeout=None):
+                clock[0] += timeout             # the join times out: its whole timeout passes
+
+        plants = [NeverEnds(name="plant-never-ends-%d" % i) for i in range(3)]
+        cap = 10.0
+        with mock.patch.object(cf, "_enumerate", return_value=[threading.main_thread()] + plants), \
+                mock.patch.object(cf, "_monotonic", new=lambda: clock[0]):
+            left = cf.threads_left_at_session_end(cap)
+        self.assertEqual(left, plants, "the three threads still running at the deadline are returned")
+        self.assertLessEqual(clock[0], cap, "the guard's joins spent %g s of the fake clock against a %g s cap: each join "
+                             "must take only the time left before the one deadline" % (clock[0], cap))
+
+    def _chain(self, cap_s, child_ends_on_second_read):
+        """Runs the guard at cap `cap_s` over a parent thread that starts a non-daemon child as it exits. The child's start
+        is tied to the guard's first read of the thread list: a spy on the guard's own binding reads the real list and
+        only then lets the parent go, so the first list holds the parent and not the child. With
+        `child_ends_on_second_read`, the spy's second read, again once it has read the list, lets the child end;
+        otherwise the child runs on until the test's cleanup. Returns (the guard's result, the parent, the child)."""
+        cf = sys.modules["tests.conftest"]
+        real_enumerate = cf._enumerate
+        first_read, child_may_end = threading.Event(), threading.Event()
+        child = threading.Thread(target=child_may_end.wait, args=(60,), name="plant-chain-child")
+
+        def parent():
+            first_read.wait(60)
+            child.start()                       # start() returns once the child runs, before the parent ends
+
+        par = threading.Thread(target=parent, name="plant-chain-parent")
+        reads = []
+
+        def spy():
+            listed = real_enumerate()
+            reads.append(listed)
+            if len(reads) == 1:
+                first_read.set()
+            elif child_ends_on_second_read:
+                child_may_end.set()
+            return listed
+
+        self.addCleanup(lambda: child.join(60) if child.is_alive() else None)
+        self.addCleanup(par.join, 60)
+        self.addCleanup(child_may_end.set)
+        self.addCleanup(first_read.set)
+        par.start()
+        with mock.patch.object(cf, "_enumerate", side_effect=spy):
+            left = cf.threads_left_at_session_end(cap_s)
+        return left, par, child
+
+    def test_a_thread_started_as_another_exits_is_waited_for(self):
+        """The guard reads the thread list again after every pass, so a thread started by one it was waiting for is
+        waited for too. The child here ends only once the guard has read the list a second time."""
+        left, par, child = self._chain(5.0, child_ends_on_second_read=True)
+        self.assertFalse(child.is_alive(), "the guard returned while the child its parent started as it exited was still "
+                         "running: the guard did not read the thread list again")
+        self.assertNotIn(child, left)
+        self.assertNotIn(par, left)
+
+    def test_a_thread_started_as_another_exits_is_returned_while_it_runs_past_the_cap(self):
+        """The same chain with a child that runs on: at a short cap the guard returns the child, which only a second read
+        of the thread list can find, and not its parent, which has ended."""
+        left, par, child = self._chain(2.0, child_ends_on_second_read=False)
+        self.assertIn(child, left, "the child started as its parent exited is returned: the guard read the list again")
+        self.assertTrue(child.is_alive())
+        self.assertNotIn(par, left)
+
+    def test_off_the_main_thread_neither_the_main_thread_nor_the_checking_thread_is_waited_for(self):
+        """The guard leaves out the main thread and the thread running the check. Every other pin runs the guard on the
+        main thread, where the two are one object; here a NON-daemon helper thread runs it (a daemon one is left out as a
+        daemon before either clause is read) over a thread list of exactly those two. Waiting for either would take the
+        whole cap: the main thread is blocked joining the helper, and a thread's join on itself raises the RuntimeError
+        the guard passes over as a thread caught mid-start."""
+        cf = sys.modules["tests.conftest"]
+        cap = 2.0
+        got = {}
+
+        def check():
+            try:
+                with mock.patch.object(cf, "_enumerate",
+                                       return_value=[threading.main_thread(), threading.current_thread()]):
+                    t0 = time.perf_counter()
+                    got["left"] = cf.threads_left_at_session_end(cap)
+                    got["elapsed"] = time.perf_counter() - t0
+            except BaseException as e:          # reported below, on the test's own thread
+                got["error"] = repr(e)
+
+        helper = threading.Thread(target=check, name="plant-checker", daemon=False)
+        helper.start()
+        helper.join(60)
+        self.assertFalse(helper.is_alive(), "the helper running the guard ended")
+        self.assertNotIn("error", got, got.get("error"))
+        self.assertEqual([t.name for t in got["left"]], [], "neither the main thread nor the thread running the check "
+                         "is returned")
+        self.assertLess(got["elapsed"], cap / 2, "the guard took %.2f s of a %g s cap: it waited for the main thread or "
+                        "for itself" % (got["elapsed"], cap))
 
     def test_a_leaked_patch_of_threading_enumerate_does_not_hide_a_thread_from_the_guard(self):
         """The guard binds threading.enumerate at import, as it binds time.monotonic, so a test that patched the
@@ -503,6 +648,20 @@ class JoinRace(unittest.TestCase):
         with mock.patch.object(threading, "enumerate", return_value=[threading.main_thread()]):
             left = cf.threads_left_at_session_end(0.2)
         self.assertIn(t, left, "the guard still read the live thread list")
+
+    def test_a_leaked_patch_of_time_monotonic_does_not_move_the_guards_deadline(self):
+        """The guard binds time.monotonic at import, so a test that patched the process-wide function with a clock that
+        jumps, and left the patch in place, cannot bring the guard's deadline forward: a thread that ends within the cap
+        is still waited for, and not returned."""
+        cf = sys.modules["tests.conftest"]
+        t = threading.Thread(target=time.sleep, args=(0.3,), name="plant-ends-soon")
+        t.start()
+        self.addCleanup(t.join)
+        with mock.patch.object(time, "monotonic", side_effect=itertools.count(0, 1e6)):
+            left = cf.threads_left_at_session_end(5.0)
+        self.assertNotIn(t, left, "the guard returned a thread that ends within its cap: the patched clock moved its "
+                         "deadline")
+        self.assertFalse(t.is_alive(), "the guard waited for the thread to end")
 
 
 if __name__ == "__main__":
