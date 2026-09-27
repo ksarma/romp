@@ -3429,8 +3429,10 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // in the same probe; whether to accept the residual is the owner's decision. Two more orders of the class outside the residual,
 // found by a check of these fixes, opened in Firefox and WebKit and not in Chromium, at 142ade155, at 1a6470e72 and at 09f58bec6:
 // the first, a mouse's press whose pointerup the viewer never heard and then another document's tap, is closed by the gate's
-// refusal of a record still standing at a click (the engines leg's cells of it), and the second, in Firefox alone, opens, for the
-// owner with the residual (the gate comment and the engines leg state them). The shape whose compatibility mousedown alone the
+// refusal of a record still standing at a click (the engines leg's cells of it), and the second, in Firefox alone, by the gate's
+// refusal of a mouse's or a pen's record whose pointer left the viewer's window with a button down (the engines leg's cells of
+// it, with its cost cell, a press dragged out of the frame and back, refused in Firefox alone; the gate comment and the engines
+// leg state them). The shape whose compatibility mousedown alone the
 // element takes is not in it: there Firefox and WebKit send the viewer that tap's mouseup of detail 0, and a mouseup other than a
 // primary one of detail above 0 empties the slot and clears the tap's flag (the engines leg's cells of it), while Chromium sends
 // the viewer no mouseup and its cell above is the slot's pointerId test's. The gate's cost measured in WebKit, the same at
