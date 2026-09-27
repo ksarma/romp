@@ -3,8 +3,9 @@
 // closing check after those fixes; and the closing check at 142ade155 after the fixes for the file review's round 18), for the
 // link-navigation follow-on of plans/markdown-viewer.md: file-figure-open-browser.test.ts runs them in Chromium, and
 // file-figure-open-engines-browser.test.ts in WebKit and Firefox, a leg of its own that stays off the shared roster of browser legs,
-// since the job that runs the roster installs Chromium alone. The gate (file-view.ts webGestureShown and the recorder above it)
-// records a press's verdict at the window's pointerdown and fills a one-click slot at the pointerup, and a click by a pointer reads
+// since the job that runs the roster installs Chromium alone. The gate (file-view.ts webGestureShown and the recorder above it,
+// keyed on ten events of the window's capture phase: pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown, dragstart,
+// touchend, touchcancel and click) records a press's verdict at the window's pointerdown and fills a one-click slot at the pointerup, and a click by a pointer reads
 // the record under its own pointerId or, with none, the press the slot handed it, either only right after a primary mouseup whose
 // detail is above 0, and the slot only under the slot's own pointerId when the click is typed as the slot's pointerup was; a record
 // ends at its own pointerup, which hands it to the slot, at its own pointercancel and at the next primary press, every record ends at
@@ -60,8 +61,9 @@
 //   before it or without them;
 // - a tap on another document's element, on the hybrid page in the dashboard's shape (the viewer's page in a same-origin frame of a
 //   top page, as the dashboard frames its chat, Files and feed panes): an element of the top page over the control and the picture
-//   beside it, gone at its own pointerup, so the tap's press and release go to the top page and its compatibility mousedown and
-//   click land in the viewer's window alone, a precondition each cell asserts. After nothing, a right click or a middle click on the
+//   beside it, gone at its own pointerup, so the tap's press and release go to the top page and its compatibility mousedown, mouseup
+//   and click land in the viewer's window with no pointerdown or pointerup, the mousedown, the trusted click and that absence a
+//   precondition each cell asserts. After nothing, a right click or a middle click on the
 //   picture with the control shown, and in Chromium a two-finger touch on it, the tap opens nothing and the next click of the mouse
 //   opens once; so does the tap after a right click with the control above the top page's window at the tap's start, the frame
 //   moved back at the element's pointerup; and in Firefox alone, a tap on a hover tooltip of the top page over the control, hidden
@@ -75,9 +77,18 @@
 //   the viewer's own tap with a second finger resting on the bar or in the other pane, or with an element of the top page appearing
 //   over the picture; in WebKit, on the hybrid page and on a phone's pages, another document's tap after the viewer's own tap whose
 //   pointerup that document took, so the viewer heard its touchend and no pointerup, and the cost cell, the viewer's own tap whose
-//   pointerup an element of the top page takes, which opens nothing and reveals the control, a stated cost, and the next tap opens
-//   once. The residual, an element of another document shown over the picture during the viewer's own tap and then a tap on that
-//   element, which opens in Firefox and WebKit, has no cell: no event the viewer hears tells it from the viewer's own tap;
+//   pointerup an element of the top page takes, which opens nothing and reveals the control, the gate's cost, the same at 142ade155,
+//   and the next tap opens once. The residual, an element of another document shown over the picture during the viewer's
+//   own tap and then a tap on that element, which opened in Firefox 16 of 16 times and in WebKit 7 of 7 in the measurements of the
+//   closing check at 142ade155, and in Chromium 0 of 36 under a candidate of this gate with the slot's pointerId test, has no cell:
+//   no event the viewer hears tells it from the viewer's own tap, and whether to accept it is the owner's decision. The chain rule's
+//   costs, none measured, each a refusal that reveals the control: on a Firefox touchscreen whose tap's click came typed touch under
+//   a pointerId other than its pointerup's every tap, the tab then opening only from the mouse or the keyboard; every tap of a pen in
+//   the touch order whose click comes typed mouse, as WebKitGTK would type it by analogy with a touch's, the tab still opening from a
+//   finger, the mouse or the keyboard; a tap during which another finger that touched the viewer lifts, in an engine that clicks
+//   after such a tap; every tap in an engine whose touchend came before its pointerup (none of the three measured); and a pointer's
+//   click with no primary mouseup of detail above 0 before it, an assistive technology's or an eraser's, while Enter or Space on the
+//   control still opens;
 // - the clicks by no pointer: Enter on the control in view opens once, and so does Enter after a refused tap; a press with no click
 //   after it begun with the control out of view, the control then scrolled into view with no pointer or key event, then Enter on it
 //   opens once; the same press begun with the control shown, the flyout then shown over the control with no event, then a script's
@@ -96,8 +107,8 @@
 // beside the mouse are red at ef686b029 and under A18-M, that gate restored; the other-document cells after a right click, a middle
 // click or a two-finger touch are red at 0f998a3b9 in the engines that run them, whose gate left the slot alone at the tap's
 // mousedown, so the tap's click took the slot that pointerup with no click had filled, and the cell after nothing reads the same
-// there, by design; the chain rule's cells are red at 142ade155, where each covered click opened, and on the Files pane under a gate
-// without the rule that closes each (the tail in Firefox, the slot's pointerId test in Chromium, the touch records' refusal in
+// there, by design; the chain rule's cells are red at 142ade155, where each covered click opened, and on the chat and the Files
+// pane under a gate without the rule that closes each (the tail in Firefox, the slot's pointerId test in Chromium, the touch records' refusal in
 // WebKit), while the cost cell reads the same there, by design; the reads of each of these reds are a private witness kept out of the
 // tree. file-view-outline.test.ts drives
 // the same orders over the stand-in in CI, where these legs launch no browser.
@@ -808,9 +819,10 @@ async function framedScene(browser: any, engine: TapEngine, surface: TapSurface,
 /** A tap on another document's element over the picture that goes away during the press (the closing check after the fixes for the
  *  file review's round 18), in the dashboard's shape (framedScene): an element of the top document over the viewer's frame where the
  *  picture's control stands, a menu item or a backdrop of the top page, which hides itself at its own pointerup. The tap's press and
- *  release go to the top document, and its compatibility mousedown and click, which the browser sends after that pointerup, hit-test
- *  into the viewer's frame, whose window hears a mousedown and a click and no pointerdown or pointerup, a precondition each cell
- *  asserts. Before the tap, with the control shown: nothing, a right click on the picture or a middle click on it (a pointerup of the
+ *  release go to the top document, and its compatibility mousedown, mouseup and click, which the browser sends after that pointerup,
+ *  hit-test into the viewer's frame, whose window hears them and no pointerdown or pointerup (in the three engines a road probe
+ *  read a mousedown, a mouseup of detail 1 and a click there), the mousedown, the trusted click and that absence a precondition
+ *  each cell asserts. Before the tap, with the control shown: nothing, a right click on the picture or a middle click on it (a pointerup of the
  *  viewer's window with no click after it), and in Chromium a two-finger touch on it (the same, CDP touch); the tap on the element
  *  over the picture beside the control, which covers the control at the tap's start: it opens nothing, and the next click of the
  *  mouse on the picture, the element gone, opens once. And the control out of view at the tap: after a right click with the control
