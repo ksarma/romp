@@ -59,10 +59,10 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   other thread's call can take its fake reads; and a test's leaked patch of the process-wide threading.enumerate does
   not hide a live thread from the guard.
 - The guard's wait, in this process (JoinRace). Every thread is joined against one shared deadline: on a fake clock,
-  three threads that never end cost the cap once, not three times. The thread list is read again after every pass, so
-  a thread started as another exits (its start tied to the guard's first read) is waited for, and is returned when it
-  runs past the cap. Run off the main thread, the guard waits for neither the main thread nor the thread running the
-  check. A test's leaked patch of the process-wide time.monotonic, a clock that jumps, does not move the deadline.
+  three threads that never end cost at most the cap, not three times it. The thread list is read again after every
+  pass, so a thread started as another exits (its start tied to the guard's first read) is waited for, and is returned
+  when it runs past the cap. Run off the main thread, the guard waits for neither the main thread nor the thread running
+  the check. A test's leaked patch of the process-wide time.monotonic, a clock that jumps, does not move the deadline.
 - The guard leaves out any thread whose name starts with `pytest_timeout`, or whose target's module, or a Timer's
   function's module, starts with it. The exclusion exists for pytest-timeout's timer for the running test; a prefix and
   not an exact module means a plugin release that moves the function into a submodule still leaves it unwaited
@@ -500,10 +500,9 @@ class TimeoutTimerMatch(unittest.TestCase):
 @unittest.skipUnless("tests.conftest" in sys.modules, "the guard is tests/conftest.py's (pytest-only)")
 class ThreadReportLabel(unittest.TestCase):
     """The guard's report labels a ProcessPoolExecutor's manager thread with both of its causes: a pool left without
-    shutdown (the thread idles, and the interpreter wakes it at exit), or one shut down with wait=False while a task still
-    runs. Stood in for by a never-started Thread subclass carrying the manager thread's module and name, so no process is
-    spawned; the label is chosen from the thread's type alone, and the manager thread's stack reads the same idle or busy,
-    so the label's text is what a pin can check."""
+    shutdown, or one shut down with wait=False while a task still runs. Stood in for by a never-started Thread subclass
+    carrying the manager thread's module and name, so no process is spawned; the label is chosen from the thread's type
+    alone, and the manager thread's stack reads the same idle or busy, so the label's text is what a pin can check."""
 
     def test_a_process_pool_manager_thread_is_labelled(self):
         cf = sys.modules["tests.conftest"]
@@ -534,9 +533,11 @@ class JoinRace(unittest.TestCase):
 
     def test_every_thread_is_joined_against_one_shared_deadline(self):
         """The guard gives every thread until ONE deadline, cap_s from the call, joining each for the time left before it,
-        so a process that leaks several threads pays the cap once. On a fake clock: the guard's own clock binding reads
-        it, and three listed threads, never started, each advance it by the whole timeout they are joined for, as a join
-        on a thread that never ends does. Joined for the full cap each, they would spend three times the cap."""
+        so a process that leaks several threads pays at most the cap, not the cap per thread. On a fake clock: the
+        guard's own clock binding reads it, and three listed threads, never started, each advance it by the whole timeout
+        they are joined for, as a join on a thread that never ends does. Joined for the full cap each, they would spend
+        three times the cap. This pin checks the upper bound only: a guard that did not wait at all would pass it. That
+        the guard waits is pinned by other pins, among them the green runs' witness and the monotonic pin below."""
         cf = sys.modules["tests.conftest"]
         clock, clock_reads = [0.0], [0]
 
@@ -572,7 +573,7 @@ class JoinRace(unittest.TestCase):
         first_read, child_may_end = threading.Event(), threading.Event()
 
         def child_body():
-            child_may_end.wait(5)               # ends once let go, or after 5 s, longer than either pin's cap
+            child_may_end.wait(5)               # ends once let go, or after 5 s: past the second pin's 1 s cap
 
         child = threading.Thread(target=child_body, name="plant-chain-child")
 
@@ -603,7 +604,8 @@ class JoinRace(unittest.TestCase):
 
     def test_a_thread_started_as_another_exits_is_waited_for(self):
         """The guard reads the thread list again after every pass, so a thread started by one it was waiting for is
-        waited for too. The child here ends only once the guard has read the list a second time."""
+        waited for too. The child here is let go at the guard's second read of the list; without that read it would run
+        on, for up to 5 s, after the guard returned."""
         left, par, child = self._chain(5.0, child_ends_on_second_read=True)
         self.assertFalse(child.is_alive(), "the guard returned while the child its parent started as it exited was still "
                          "running: the guard did not read the thread list again")
