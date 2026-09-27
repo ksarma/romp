@@ -20444,7 +20444,7 @@ def _serve_counter_blocks():
     return {"recordCache": em.record_cache_stats(), "asmCheckpoint": em.asm_checkpoint_stats(),
             "parses": {"misses": int(parse_misses()), "hits": int(globals().get("parse_hits", lambda: 0)())},
             "goalIo": goal_io_stats(),
-            "tierGate": tier_stats()}                 # the tiers' gate per STAGE (plan, group, close, distill, unblock, consolidate: ran, skipped,
+            "tierGate": tier_stats()}                 # the tiers' gate per STAGE (plan, group, close, distill, unblock, consolidate and index: ran, skipped,
     #                                                    stamped, bypassed, incomplete, due_clock): the
     #                                                    admittance the pass ran under, so a flip's call count per pass is a measured number
     #                                                    (romp_perf's read of 2026-09-18: twice the calls a pass on the child road, no gate
