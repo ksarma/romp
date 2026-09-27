@@ -61,6 +61,9 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   the two hooks are the only ones the standard library registers with threading._register_atexit, derived from its
   source; and a live daemon thread in either table (the busy worker of a pool a daemon thread started, and a stand-in
   for a ProcessPoolExecutor's manager thread) is returned by the guard while a plain daemon thread beside it is not.
+  The tables are read again after every pass: a busy worker started, by a worker of a pool a daemon thread started,
+  after the guard's first read is returned. A read that raises RuntimeError, as iterating a WeakKeyDictionary does on
+  3.10 to 3.13 when another thread inserts into it, is read again (a stand-in table raises on its first read).
 - Threads that END WITHIN THE CAP (each test starts one that sleeps WITHIN_S and exits) and plain DAEMON threads that
   run past the session (one per test, released at unconfigure) leave the run green, serially and under -n 2, at the
   guard's own cap. The guard's wait is WITNESSED, not assumed: the scratch conftest records at pytest_sessionfinish,
@@ -692,8 +695,9 @@ class ExitJoinTables(unittest.TestCase):
     """The guard reads concurrent.futures' exit-join tables (tests/conftest.py's EXIT_JOIN_TABLES) and waits for every
     thread in them, whatever its daemon flag, as the interpreter's exit hooks do. In this process: the two tables exist on
     this Python and are what their modules' exit hooks read; the two hooks are the only ones the standard library
-    registers with threading._register_atexit; and a live daemon thread in either table is returned by the guard while a
-    plain daemon thread beside it is not."""
+    registers with threading._register_atexit; a live daemon thread in either table is returned by the guard while a
+    plain daemon thread beside it is not; the tables are read again after every pass; and a read that meets a concurrent
+    insert is read again."""
 
     TABLES = (("concurrent.futures.thread", "_threads_queues"), ("concurrent.futures.process", "_threads_wakeups"))
 
@@ -781,6 +785,88 @@ class ExitJoinTables(unittest.TestCase):
         self.addCleanup(cfp._threads_wakeups.pop, manager, None)
         self.assertEqual(self._returned_alone(manager, plain), [manager], "the guard returned the daemon thread in "
                          "concurrent.futures.process's table, and not the plain daemon thread")
+
+    def test_the_tables_are_read_again_after_every_pass(self):
+        """The guard reads the exit-join tables again after every pass, as it reads the thread list, so a busy worker
+        that enters a table after the guard's first read is waited for too. A daemon thread starts a pool whose worker
+        W1, a daemon thread in concurrent.futures.thread's table, runs a task that waits for the guard's first read of the
+        thread list, then starts a second pool from W1 with a task that runs on, and ends; W1 ends with it, within the
+        cap. The second pool's worker W2 takes W1's daemon flag and enters the table only after the guard's first read,
+        so a guard that read the tables once would skip it, and at exit the process would wait for it unreported. At a
+        2 s cap the guard returns W2. A spy on the guard's own binding of threading.enumerate hands it only the main
+        thread and the plant's threads."""
+        import concurrent.futures
+        cf = sys.modules["tests.conftest"]
+        real_enumerate = cf._enumerate
+        stop, first_read, ready, box = threading.Event(), threading.Event(), threading.Event(), {}
+
+        def first_task():
+            first_read.wait(60)
+            pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="plant-inproc-reread-w2")
+            pool.submit(stop.wait, 60)
+            pool.shutdown(wait=False)
+            box["w2"] = [t for t in real_enumerate() if t.name.startswith("plant-inproc-reread-w2_")]
+
+        def spawner():
+            pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="plant-inproc-reread-w1")
+            pool.submit(first_task)
+            pool.shutdown(wait=False)
+            box["w1"] = [t for t in real_enumerate() if t.name.startswith("plant-inproc-reread-w1_")]
+            ready.set()
+            stop.wait(60)
+
+        def spy():
+            main = threading.main_thread()
+            listed = [t for t in real_enumerate() if t is main or t.name.startswith("plant-inproc-reread-")]
+            first_read.set()                    # W1's task goes on only once the guard has read the list
+            return listed
+
+        spawn = threading.Thread(target=spawner, name="plant-inproc-reread-spawner", daemon=True)
+        threads = [spawn]                       # the workers join the list once they are known
+        self.addCleanup(join_started, stop, threads, 60)
+        self.addCleanup(first_read.set)
+        spawn.start()
+        self.assertTrue(ready.wait(30))
+        threads.extend(box["w1"])
+        with mock.patch.object(cf, "_enumerate", side_effect=spy):
+            left = cf.threads_left_at_session_end(2.0)
+        threads.extend(box.get("w2", []))
+        w2, = box["w2"]
+        self.assertTrue(w2.daemon, "the second worker took the daemon flag of the worker that created it")
+        self.assertEqual(left, [w2], "the guard did not return the busy worker that entered concurrent.futures.thread's "
+                         "table after its first read (a guard that reads the tables once is one way this happens)")
+
+    def test_a_table_read_that_meets_a_concurrent_insert_is_read_again(self):
+        """On 3.10 to 3.13 iterating a WeakKeyDictionary walks the live dict, so a pool started while the guard reads
+        concurrent.futures.thread's table raises RuntimeError ("dictionary changed size during iteration"), and the guard
+        reads the table again. (On 3.14 the iteration walks a copy and does not raise.) Stood in for, on every Python, by
+        a table whose first iteration raises that error and whose later ones yield a live daemon thread: the guard
+        returns that thread. The stand-in passes any insert on to the real table, so a pool another thread starts while
+        it is in place is still recorded where the exit hook reads."""
+        import concurrent.futures.thread as cft
+        cf = sys.modules["tests.conftest"]
+        real_table = cft._threads_queues
+        stop = threading.Event()
+        worker = threading.Thread(target=stop.wait, args=(60,), name="plant-inproc-retry", daemon=True)
+        self.addCleanup(join_started, stop, (worker,), 60)
+        worker.start()
+        reads = []
+
+        class ChangesOnFirstRead:
+            def __iter__(self):
+                reads.append(len(reads) + 1)
+                if len(reads) == 1:
+                    raise RuntimeError("dictionary changed size during iteration")
+                return iter([worker])
+
+            def __setitem__(self, key, value):
+                real_table[key] = value
+
+        with mock.patch.object(cft, "_threads_queues", ChangesOnFirstRead()), \
+                mock.patch.object(cf, "_enumerate", return_value=[threading.main_thread(), worker]):
+            left = cf.threads_left_at_session_end(0.2)
+        self.assertEqual(left, [worker], "the guard returned the daemon thread its second read of the table found")
+        self.assertGreaterEqual(len(reads), 2, "the guard read the table again after the read that raised")
 
 
 @unittest.skipUnless("tests.conftest" in sys.modules, "the guard is tests/conftest.py's (pytest-only)")
