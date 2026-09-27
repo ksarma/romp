@@ -4797,10 +4797,13 @@ PROBE
 # planted `tipname=$(git rev-parse ...)` left 174 and the whole file green).
 # The census case below reads the hook's text: every line running a reading
 # tool (the vocabulary stated at CENSUS_TOOLS, the census's bound) must be a
-# judged_read call, a line of the LAST statement of a function the helper is
-# handed WHOLE (the functions derived from the call sites: the first word after
-# the call's --; since round 12l no other statement of such a body, and no
-# substitution in it, that runs a reading tool),
+# judged_read call, a line whose every read is a stage of the LAST statement of
+# a function the helper is handed WHOLE (the functions derived from the call
+# sites: the first word after the call's --; since round 12l no other statement
+# of such a body, and no substitution in it, that runs a reading tool; since
+# round 12m the body read into statements, that statement one pipeline in the
+# foreground, so a read sharing its first line after ; or &, or chained to it
+# by && or ||, is not declared),
 # an array-literal assignment (the scanner's argument list) or a line under an
 # `outside judged_read:` marker (a trailing comment, the comment block above
 # the statement or its backslash-continued first line, or the block above the
@@ -5123,27 +5126,112 @@ census_command() {   # reads mw and rw (a record's words), fl, et and touch, and
     done
     return 0
 }
-census_final_start() {   # <function>: the index of the first line of that function's last statement (its final pipeline), from masked, fstart and fend, the caller's: the last body line that is not blank, then up while the line above continues into it (it ends inside a quoted string, by the parity of the quote characters the masked text keeps, a backslash pair dropped first, or it ends with a backslash, |, && or |&); the header line for a one-line function (round 12l)
-    local f=$1 i q=0 t
-    local -a open
-    [ "${fend[$f]}" -gt "${fstart[$f]}" ] || { echo "${fstart[$f]}"; return 0; }
-    for ((i = fstart[$f] + 1; i < fend[$f]; i++)); do
-        t=${masked[i]//\\?/}; t=${t//[!\'\"]/}
-        q=$(( (q + ${#t}) % 2 )); open[i]=$q
-    done
-    i=$((fend[$f] - 1))
-    while [ "$i" -gt $((fstart[$f] + 1)) ] && [ -z "${masked[i]//[[:space:]]/}" ] && [ "${open[i - 1]}" = 0 ]; do i=$((i - 1)); done
-    while [ "$i" -gt $((fstart[$f] + 1)) ]; do
-        t=${masked[i - 1]%"${masked[i - 1]##*[![:space:]]}"}
-        if [ "${open[i - 1]}" = 1 ] || [[ "$t" == *\\ || "$t" == *\| || "$t" == *'&&' || "$t" == *'|&' ]]; then i=$((i - 1)); continue; fi
-        break
-    done
-    echo "$i"
+census_statements() {   # <masked text file> <functions, each "name:first:last" (1-based lines, the header to the closing brace)>: the statement reader of a body passed whole, run over the masked text as the splitter reads it (round 12m, round 12l's audit A3 and A4 under the landing round's extra7-1: the census judges statements, not lines); prints the program's F, X and B lines (its comment)
+    if [ ! -f "$TEST_DIR/stmt.awk" ]; then
+        cat > "$TEST_DIR/stmt.awk" <<'AWK'
+# The statement reader of a body passed whole (round 12m, round 12l's audit A3 and A4 under extra7-1's property). For
+# each function fns names ("name:first:last": 1-based lines, the header to the closing brace) it reads the masked text
+# from the header's { on and splits it where the splitter splits (;, a lone &, &&, ||, | and |&), with the nestings
+# bash opens there: a brace group, a ( ) subshell, $( ), <( ), >( ), a backtick pair, (( )), $(( )), ${ }, [[ ]] and
+# the keyword compounds (if, while, until, for, select and case, each from its word at a command's start to its fi,
+# done or esac). A newline ends a statement unless it falls inside a quote (by the parity of the quote characters the
+# masked text keeps), after a trailing backslash, inside a nesting, or after |, |&, && or ||. It prints
+# "X <line> <from> <to>" for each line of each keyword compound; "F <line> <from> <to>" for each line of each stage of
+# the body's LAST statement, when that statement is one pipeline (no && or || at its top) run in the foreground (not
+# ended by &), neither negated (!) nor a coproc, and the body was read whole (<to> 0: to the line's end); and
+# "B <name> <the last statement's index> <its pipelines> <flags>", the flags u (not read whole: an unbalanced nesting
+# or quote), a (in the background), n (negated or a coproc) and c (chained), or - for none.
+BEGIN { nf = split(fns, fl, " ") }
+{ line[NR] = $0 }
+function top() { return sp > 0 ? typ[sp] : "" }
+function push(t) { typ[++sp] = t; tl[sp] = ln; tc[sp] = i }
+function pop() { if (sp > 0) sp--; else bad = 1 }
+function span(tag, l1, c1, l2, c2,   l) { for (l = l1; l <= l2; l++) print tag, l, (l == l1 ? c1 : 1), (l == l2 ? c2 : 0) }
+function content() { cs_has = 1; pend = 0 }
+function wordchar() { if (!inword) { inword = 1; ws = i; watcmd = atcmd }; content() }
+function newstage(l, c) { cs_l = l; cs_c = c; cs_has = 0 }
+function endstage(l, c) { if (cs_has) { ns++; s_st[ns] = st; s_sl[ns] = cs_l; s_sc[ns] = cs_c; s_el[ns] = l; s_ec[ns] = c; cp_has = 1 }; cs_has = 0 }
+function endpipe() { if (cp_has) { st_npl[st]++; st_has[st] = 1; if (cp_lost) st_lost[st] = 1 }; cp_has = 0; cp_lost = 0 }
+function endstmt(async) { if (st_has[st]) { st_async[st] = async; last = st; st++ } }
+function op(tok, L) {
+    if (sp == 0) {
+        endstage(ln, i - 1)
+        if (tok != "|" && tok != "|&") endpipe()
+        if (tok == ";" || tok == "&") endstmt(tok == "&")
+        newstage(ln, i + L)
+    }
+    pend = (tok == "|" || tok == "|&" || tok == "&&" || tok == "||"); atcmd = 1; i += L
 }
-undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per command line the census finds declared by nothing, "declared: <body|array|marker> <line> <function or ->: <tools>" per command line it finds declared outside a judged_read call, "swallowed: ..." per `|| true` or `|| :` inside a body passed whole whose next byte is no word character, and one "census: ..." line of counts; run under `run`. A body passed whole declares the lines of its LAST statement alone, the pipeline whose status judged_read judges, and none that holds a reading tool inside a command or process substitution (round 12l, the landing round's extra7-1: a read as a statement of its own ahead of that pipeline, or in a ROMP_X=$(git ...) prefix on one of its stages, lost its status and was declared by the body until then)
+function endword(   w) {
+    if (!inword) return
+    inword = 0; w = substr(line[ln], ws, i - ws)
+    if (!watcmd) { atcmd = 0; if (w == "]]" && top() == "D") pop(); return }
+    if (w == "!" || w == "coproc") { if (sp == 0) cp_lost = 1; atcmd = 1; return }
+    if (w == "time" || w == "then" || w == "do" || w == "else" || w == "elif") { atcmd = 1; return }
+    if (w == "if" || w == "while" || w == "until" || w == "for" || w == "select" || w == "case") { push("K"); tc[sp] = ws; atcmd = (w == "if" || w == "while" || w == "until"); return }
+    if (w == "fi" || w == "done" || w == "esac") { if (top() == "K") { span("X", tl[sp], tc[sp], ln, i - 1); pop() } else bad = 1; atcmd = 0; return }
+    if (w == "[[") { push("D"); atcmd = 0; return }
+    atcmd = 0
+}
+function parse(k,   s, e, one, t, n, c, c2, c3, p, fin, j, flags) {
+    s = fb[k]; e = fe[k]; one = (s == e)
+    sp = 0; q = 0; bad = 0; atcmd = 1; inword = 0; pend = 0; ns = 0; st = 1; last = 0; cp_has = 0; cp_lost = 0; fin = 0
+    delete st_npl; delete st_has; delete st_async; delete st_lost
+    for (ln = s; ln <= e && !fin; ln++) {
+        if (!one && ln == e) break
+        t = line[ln]; n = length(t); bs = 0
+        if (ln == s) { p = index(t, "{"); if (!p) { bad = 1; break }; i = p + 1; newstage(ln, i) } else i = 1
+        while (i <= n) {
+            c = substr(t, i, 1); c2 = substr(t, i, 2); c3 = substr(t, i, 3)
+            if (c == " " || c == "\t") { endword(); i++; continue }
+            if (c == "\\") { if (i == n) { endword(); bs = 1; i++; continue }; wordchar(); i += 2; continue }
+            if (c == "'" || c == "\"") { q = 1 - q; wordchar(); i++; continue }
+            if (c3 == "$((") { endword(); content(); push("A"); atcmd = 0; i += 3; continue }
+            if (c2 == "${") { endword(); content(); push("E"); atcmd = 0; i += 2; continue }
+            if (c2 == "$(" || c2 == "<(" || c2 == ">(") { endword(); content(); push("C"); atcmd = 1; i += 2; continue }
+            if (c2 == "((") { endword(); content(); push("A"); atcmd = 0; i += 2; continue }
+            if (c == "(") { endword(); content(); push("P"); atcmd = (substr(t, i - 1, 1) != "="); i++; continue }
+            if (c == ")") {
+                endword(); content()
+                if (top() == "A" && substr(t, i + 1, 1) == ")") { pop(); i += 2 }
+                else if (top() == "C" || top() == "P" || top() == "A") { pop(); i++ }
+                else { bad = 1; i++ }
+                atcmd = 0; continue
+            }
+            if (c == "`") { endword(); content(); if (top() == "B") { pop(); atcmd = 0 } else { push("B"); atcmd = 1 }; i++; continue }
+            if (c == "}" && top() == "E") { pop(); content(); i++; continue }
+            if (c2 == "||" || c2 == "&&" || c2 == "|&") { endword(); op(c2, 2); continue }
+            if (c == "|" || c == ";") { endword(); op(c, 1); continue }
+            if (c == "&" && substr(t, i - 1, 1) !~ /[<>]/ && substr(t, i + 1, 1) != ">") { endword(); op(c, 1); continue }
+            if (c == "\001") { endword(); content(); atcmd = 1; i++; continue }
+            if (!inword && atcmd && c == "{" && (i == n || substr(t, i + 1, 1) ~ /[ \t]/)) { content(); push("G"); atcmd = 1; i++; continue }
+            if (!inword && atcmd && c == "}" && (i == n || substr(t, i + 1, 1) ~ /[ \t;&|)<>]/)) {
+                if (top() == "G") { pop(); content(); atcmd = 0; i++; continue }
+                if (one && sp == 0) { endstage(ln, i - 1); endpipe(); endstmt(0); fin = 1; break }
+                bad = 1; i++; continue
+            }
+            wordchar(); i++
+        }
+        if (fin) break
+        endword()
+        if (q || bs || sp > 0 || pend) { if (sp > 0 && !q && !bs) atcmd = 1; continue }
+        endstage(ln, n); endpipe(); endstmt(0); newstage(ln + 1, 1); atcmd = 1
+    }
+    if (one && !fin) bad = 1
+    if (sp != 0 || q || cs_has || cp_has) bad = 1
+    flags = (bad ? "u" : "") (last && st_async[last] ? "a" : "") (last && st_lost[last] ? "n" : "") (last && st_npl[last] > 1 ? "c" : "")
+    print "B", fname[k], last, (last ? st_npl[last] : 0), (flags == "" ? "-" : flags)
+    if (flags == "" && last) for (j = 1; j <= ns; j++) if (s_st[j] == last) span("F", s_sl[j], s_sc[j], s_el[j], s_ec[j])
+}
+END { for (k = 1; k <= nf; k++) { split(fl[k], pp, ":"); fname[k] = pp[1]; fb[k] = pp[2] + 0; fe[k] = pp[3] + 0; parse(k) } }
+AWK
+    fi
+    LC_ALL=C awk -v fns="$2" -f "$TEST_DIR/stmt.awk" "$1"
+}
+undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per command line the census finds declared by nothing, "declared: <body|array|marker> <line> <function or ->: <tools>" per command line it finds declared outside a judged_read call, "swallowed: ..." per `|| true` or `|| :` inside a body passed whole whose next byte is no word character, and one "census: ..." line of counts; run under `run`. A body passed whole declares a line only when every read on it is a stage of the body's LAST statement, the pipeline whose status judged_read judges, read by census_statements: that statement one pipeline, with no && or || at its top, run in the foreground, neither negated nor a coproc, the read outside every keyword compound and outside every command or process substitution (round 12l, the landing round's extra7-1: a read as a statement of its own ahead of that pipeline, or in a ROMP_X=$(git ...) prefix on one of its stages, lost its status and was declared by the body until then; round 12m, round 12l's audit A3 and A4: the last statement was read by its lines until then, so a read on the pipeline's first line as a statement of its own, after ; or a lone &, and a read chained to the pipeline by || or && were declared)
     local -a orig masked mw rw rec
-    local -A fstart fend passed inpassed found_at subst_at fpstart
-    local i name m rest after w f s found cmd word rword wkind u ln fl et touch calls=0 total=0 body=0 array=0 marker=0 undeclared=0 swallowed=0
+    local -A fstart fend passed inpassed found_at subst_at other_at fspan xspan
+    local i name m rest after w f s found cmd word rword wkind u ln fl et touch sk sl sfrom sto sn d stf fns="" calls=0 total=0 body=0 array=0 marker=0 undeclared=0 swallowed=0
     mapfile -t orig < "$1"
     mapfile -t masked < <(masked_text "$1")
     [ "${#orig[@]}" -eq "${#masked[@]}" ] || { echo "census: the masking changed the line count"; return 1; }
@@ -5159,19 +5247,34 @@ undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per com
         if [ -n "${fstart[$w]:-}" ]; then passed[$w]=1; fi
     done
     for f in "${!passed[@]}"; do
-        fpstart[$f]=$(census_final_start "$f")
+        fns="$fns $f:$((fstart[$f] + 1)):$((fend[$f] + 1))"
         for ((i = fstart[$f]; i <= fend[$f]; i++)); do
             inpassed[$i]=$f
             if [[ "${masked[i]}" =~ \|\|[[:space:]]*(true|:)([^A-Za-z0-9_]|$) ]]; then echo "swallowed: $((i + 1)):${orig[i]}"; swallowed=$((swallowed + 1)); fi
         done
     done
+    # The passed bodies read into statements (census_statements, round 12m): the spans of the last statement's stages,
+    # where that statement is one pipeline in the foreground, and of the keyword compounds.
+    stf=$(mktemp "$TEST_DIR/census.XXXXXX")
+    printf '%s\n' "${masked[@]}" > "$stf"
+    while read -r sk sl sfrom sto; do
+        case "$sk" in F) fspan[$sl]="${fspan[$sl]:-} $sfrom:$sto" ;; X) xspan[$sl]="${xspan[$sl]:-} $sfrom:$sto" ;; esac
+    done < <(census_statements "$stf" "${fns# }")
+    rm -f "$stf"
     # Each simple command the splitter finds with a reading tool's word in its raw words (a call's tagged command, the
-    # read the tags judge, set aside): the tool it runs, by census_command.
+    # read the tags judge, set aside): the tool it runs, by census_command. In a passed body, a read whose start (the
+    # record's column) lies in no stage span of the last statement, or in a keyword compound's span, is another
+    # statement's, a chained pipeline's or a compound's (round 12m).
     while IFS=$'\x1f' read -r -a rec; do
         census_rec "${rec[@]}"
         census_command
         [ -z "$cmd" ] || found_at[$ln]="${found_at[$ln]:-} $cmd"
         [ -z "$cmd" ] || [[ "$fl" != *S* ]] || subst_at[$ln]="${subst_at[$ln]:-} $cmd"
+        [ -n "$cmd" ] && [ -n "${inpassed[$((ln - 1))]:-}" ] || continue
+        d=0
+        for sn in ${fspan[$ln]:-}; do if [ "${rec[1]}" -ge "${sn%:*}" ] && { [ "${sn#*:}" -eq 0 ] || [ "${rec[1]}" -le "${sn#*:}" ]; }; then d=1; fi; done
+        for sn in ${xspan[$ln]:-}; do if [ "${rec[1]}" -ge "${sn%:*}" ] && { [ "${sn#*:}" -eq 0 ] || [ "${rec[1]}" -le "${sn#*:}" ]; }; then d=0; fi; done
+        [ "$d" -eq 1 ] || other_at[$ln]="${other_at[$ln]:-} $cmd"
     done < <(census_records "$1" tools)
     for ((i = 0; i < ${#orig[@]}; i++)); do
         found=${found_at[$((i + 1))]:-}
@@ -5182,7 +5285,7 @@ undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per com
         f=""; for name in "${!fstart[@]}"; do if [ "$i" -ge "${fstart[$name]}" ] && [ "$i" -le "${fend[$name]}" ]; then f=$name; break; fi; done
         if [ -n "${inpassed[$i]:-}" ]; then
             f=${inpassed[$i]}
-            if [ -z "${subst_at[$((i + 1))]:-}" ] && [ "$i" -ge "${fpstart[$f]}" ]; then body=$((body + 1)); echo "declared: body $((i + 1)) $f: $found"; continue; fi
+            if [ -z "${subst_at[$((i + 1))]:-}" ] && [ -z "${other_at[$((i + 1))]:-}" ]; then body=$((body + 1)); echo "declared: body $((i + 1)) $f: $found"; continue; fi
             undeclared=$((undeclared + 1)); echo "undeclared: $((i + 1)):${orig[i]}"; continue
         fi
         if [[ "$m" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*\+?=\( ]]; then array=$((array + 1)); echo "declared: array $((i + 1)) ${f:--}: $found"; continue; fi
@@ -5266,15 +5369,27 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
     [ "$(sed -E 's/.*body=([0-9]+).*/\1/' <<< "$census")" -ge 10 ]
     [ "$(sed -E 's/.*marker=([0-9]+).*/\1/' <<< "$census")" -ge 8 ]
     [ "$(sed -E 's/.*array=([0-9]+).*/\1/' <<< "$census")" -eq 0 ]          # since round 9d no array literal of the hook names a tool (gitleaks_args' list begins with dir); the class stays read, pinned on plant-e below
-    # the bound the passed-whole rule rests on: a body handed to the helper reaches it through pipefail by its LAST
-    # pipeline alone, so the census declares that pipeline's lines only, and names as undeclared any other statement of
-    # the body that runs a reading tool and any command or process substitution that runs one anywhere in the body (a
-    # ROMP_X= prefix on a stage holding one among them), and as swallowed any `|| true` or `|| :` in it whose next byte
-    # is no word character (`|| :)` closing a substitution among them); none is there (round 12l, the landing round's
-    # extra7-1: until then every line of such a body was declared and a swallowed status read only before a blank or
-    # the line's end; the plants inside a passed body are case 562's)
+    # the bound the passed-whole rule rests on: a body handed to the helper returns the status of its LAST statement,
+    # and every stage's status reaches judged_read through pipefail only when that statement is one pipeline (no && or
+    # || at its top), run in the foreground, neither negated nor a coproc. So the census reads each passed body into
+    # its statements over the masked text (census_statements: a statement ends at a newline outside a quote, a
+    # continuation or a nesting, and at ; and a lone &; && and || join pipelines into one statement) and declares a read
+    # only as a stage of that last pipeline, outside every keyword compound and every command or process substitution.
+    # It names as undeclared a read in any other statement (on a line of its own, or sharing the pipeline's first line
+    # after ; or a lone &), every read of a last statement that chains pipelines by && or || (a read on the right of ||
+    # runs only when the left fails, and one on its left loses its failure), and a read in a substitution anywhere in
+    # the body (a ROMP_X= prefix on a stage among them); and as swallowed any `|| true` or `|| :` in the body whose
+    # next byte is no word character (`|| :)` closing a substitution among them). None is there. The stated limit: a
+    # brace group or subshell that is a stage of that pipeline is declared whole, though a read ahead of the group's
+    # own last statement loses its status there; byte_counts' group is the hook's one, its head, od and awk behind the
+    # drain whose status the group returns by design, and the line below pins it declared so the limit is shown by
+    # execution. (Round 12l, the landing round's extra7-1: until then every line of such a body was declared and a
+    # swallowed status read only before a blank or the line's end. Round 12m, round 12l's audit A3 and A4: until then
+    # the last statement was found by its lines, so a read sharing the pipeline's first line and a read chained to it
+    # by || or && were declared. The plants inside a passed body are case 562's.)
     [[ "$output" != *"swallowed: "* ]]
     [[ "$census" == *"swallowed=0 "* ]]
+    [ "$(grep -c '^declared: body [0-9]* byte_counts: git head od awk cat$' <<< "$output")" -eq 1 ]
     # the census's own sensitivity, executed over planted copies (the first line is the shebang; the plant is line 2)
     sed '1a x=$(git rev-parse HEAD 2>/dev/null || true)' "$HOOK" > "$TEST_DIR/plant-a.sh"                    # the plain substitution
     run undeclared_reads "$TEST_DIR/plant-a.sh"
@@ -12401,7 +12516,7 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     at_base
 }
 
-@test "every read of the hook is DECLARED, round 12b split (1 of 2): the census's sensitivity to the shapes it READS, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a redirection operator standing alone ahead of the command word, a quoted command word, a command after a lone & and after |&, a wrapper outside the prefixes, and a command word whose quoting or escaping splits the tool's name, alone and under a wrapper, each planted alone and flagged once by the census and not by the pins; a tilde prefix and a dollar-double-quote planted together, each flagged once by the census and not by the pins; and since round 12l (the landing round's extra7-1) four plants inside path_skips, a body passed whole, each alone: a read as a statement of its own ahead of the body's last pipeline, a read in a substitution whose status || : swallows, and a read in a substitution on a ROMP_X= prefix of a stage of that pipeline, bare and with || true inside, each flagged undeclared once, the two swallowed ones named swallowed too (all four passed the census at 64e1da798)" {
+@test "every read of the hook is DECLARED, round 12b split (1 of 2): the census's sensitivity to the shapes it READS, moved from case 203 in round 12b (ITEM 2) so each case stays well under CI's per-test bound, the plants and assertions unchanged: a redirection operator standing alone ahead of the command word, a quoted command word, a command after a lone & and after |&, a wrapper outside the prefixes, and a command word whose quoting or escaping splits the tool's name, alone and under a wrapper, each planted alone and flagged once by the census and not by the pins; a tilde prefix and a dollar-double-quote planted together, each flagged once by the census and not by the pins; and since round 12l (the landing round's extra7-1) four plants inside path_skips, a body passed whole, each alone: a read as a statement of its own ahead of the body's last pipeline, a read in a substitution whose status || : swallows, and a read in a substitution on a ROMP_X= prefix of a stage of that pipeline, bare and with || true inside, each flagged undeclared once, the two swallowed ones named swallowed too (all four passed the census at 64e1da798); and since round 12m (round 12l's audit A3 and A4, the census reading statements) three more in path_skips, each alone: a read sharing the awk's first line after ;, named once, and a read chained to the awk by || and by &&, each named with the awk's line (all three passed the census at 1e827e62d)" {
     local plant k=0
     # round 9b (the round 8 rulings' F): the shapes the census and its pins read nothing of until then (the round 8
     # refuters' probes: undeclared=0 and no pin line for each at cad898dd2), each planted alone and flagged ONCE, by
@@ -12474,6 +12589,25 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
         [ "$(grep -c '^swallowed: ' <<< "$output")" -eq "${sw[k - 1]}" ]
         [ "${sw[k - 1]}" -eq 0 ] || [ "$(grep '^swallowed: ' <<< "$output")" = "swallowed: $((h + 1)):${want[k - 1]}" ]
         [[ "${output##*$'\n'}" == *" swallowed=${sw[k - 1]} undeclared=1" ]]
+    done
+    # round 12m (round 12l's audit A3 and A4, extra7-1's property): the census reads a passed body into statements, so
+    # three more plants in path_skips, each alone, are named: a read sharing the awk's first line as a statement of its
+    # own after ; (A3); a read chained to the awk by || at the end of the line before (A4: the awk then runs only when
+    # the read fails, and the read's failure is lost when it does); and the same read chained by && (the awk then runs
+    # only when the read passes, so the body returns the status of whichever ran last). A last statement that chains
+    # pipelines has no one pipeline whose status is the body's, so every read in it is named: the chained read's line
+    # and the awk's. Each of the three passed the census at 1e827e62d, which found the last statement by its lines.
+    sed "$((h + 1))s|^    LC_ALL=C awk '\$|    git rev-parse HEAD > /dev/null; LC_ALL=C awk '|" "$HOOK" > "$TEST_DIR/plant-r12m-1.sh"
+    sed "${h}a\\    git rev-parse HEAD > /dev/null ||" "$HOOK" > "$TEST_DIR/plant-r12m-2.sh"
+    sed "${h}a\\    git rev-parse HEAD > /dev/null &&" "$HOOK" > "$TEST_DIR/plant-r12m-3.sh"
+    local -a w12m=("    git rev-parse HEAD > /dev/null; LC_ALL=C awk '" '    git rev-parse HEAD > /dev/null ||' '    git rev-parse HEAD > /dev/null &&')
+    local -a u12m=("undeclared: $((h + 1)):${w12m[0]}" "undeclared: $((h + 1)):${w12m[1]}"$'\n'"undeclared: $((h + 2)):    LC_ALL=C awk '" "undeclared: $((h + 1)):${w12m[2]}"$'\n'"undeclared: $((h + 2)):    LC_ALL=C awk '")
+    for k in 1 2 3; do
+        [ "$(diff "$HOOK" "$TEST_DIR/plant-r12m-$k.sh" | grep -c '^>')" -eq 1 ]
+        [ "$(sed -n "$((h + 1))p" "$TEST_DIR/plant-r12m-$k.sh")" = "${w12m[k - 1]}" ]
+        run undeclared_reads "$TEST_DIR/plant-r12m-$k.sh"
+        [ "$(grep '^undeclared: ' <<< "$output")" = "${u12m[k - 1]}" ]
+        [[ "${output##*$'\n'}" == *" swallowed=0 undeclared=$(grep -c '^undeclared: ' <<< "${u12m[k - 1]}")" ]]
     done
 }
 
@@ -15662,7 +15796,7 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
     r10a_passes
 }
 
-@test "round 12l (fresh-1, a diff.submodule value the hook does not read, refused by name): diff.submodule set with no value, which git log stops on (main's hook published the credential push unscanned: gitleaks scanned no commit, both scanners), and diff.submodule=Diff, which git warns on and ignores, reading short (main's hook scanned and passed the clean push: a disclosed false refusal), each refuse by name with the remedy, the feed unread (red under the mutant taking any value as short)" {
+@test "round 12l (fresh-1, a diff.submodule value the hook does not read, refused by name): diff.submodule set with no value, which git log stops on (main's hook published the credential push unscanned: gitleaks scanned no commit, both scanners), and diff.submodule=Diff, which git warns on and ignores, reading short (main's gitleaks takes that warning on stderr as an error and stops, so main's hook published the clean push unscanned in most runs and scanned and passed it in the rest, both scanners: a fail-closed refusal, and a disclosed false refusal only in those other runs), each refuse by name with the remedy, the feed unread (red under the mutant taking any value as short)" {
     r12l_super
     r12l_bump deploy.env 'DEPLOY_TOKEN=%s\n' "$(probe_token)"
     printf '[diff]\n\tsubmodule\n' >> "$REPO/.git/config"
@@ -15732,4 +15866,58 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
     git config --global --unset diff.external
     push_main_through_hook_with_shim
     r10a_passes
+}
+
+@test "round 12m (round 12l's audit A3 and A4 under extra7-1's property: the census reads a passed body into statements): in one copy of the hook, each plant in a passed body of its own, the census names once each a read joined to probe_check's awk line as a background job of its own (a lone &), a negated last pipeline (!), a coproc, a last pipeline ended by &, and a last statement that is a keyword compound; and three controls stay declared: path_skips' awk after a statement that runs no read on its first line (;), tip_candidates' awk and tr behind a keyword compound that runs no read, and unlisted_verdict_path's awk inside a brace group over three lines (each of the five named shapes passed the census at 1e827e62d)" {
+    # A body passed whole returns its last statement's status, and every stage's status reaches judged_read through
+    # pipefail only when that statement is one pipeline run in the foreground: a read ahead of it after a lone & runs
+    # as a background job whose status nothing waits for; ! inverts the pipeline's status; a coproc and a pipeline
+    # ended by & return 0 at once; and a keyword compound returns its last command's status, never its condition's. The
+    # three controls show the reader splits statements at ; and reads a keyword compound and a group over several lines
+    # as bash does, so none costs a read its declaration (a reader that took that ; for a pipeline's end inside one
+    # statement, the compound's ; for a statement's end, or a newline inside the group for one, names the reads after
+    # it).
+    local f n c="$TEST_DIR/plant-r12m-b.sh" want=""
+    local -A at
+    for f in probe_check tip_unlisted_read_file config_bytes tip_blobs merge_rename_candidates path_skips tip_candidates unlisted_verdict_path; do
+        at[$f]=$(grep -n "^$f() {" "$HOOK" | cut -d: -f1)
+        [ -n "${at[$f]}" ]
+    done
+    sed -e "$((at[probe_check] + 1))"'s/^    LC_ALL=C awk /    git rev-parse HEAD > \/dev\/null \& LC_ALL=C awk /' \
+        -e "$((at[tip_unlisted_read_file] + 1))"'s/^    LC_ALL=C awk /    ! LC_ALL=C awk /' \
+        -e "$((at[config_bytes] + 1))"'s/^    wc -c /    coproc wc -c /' \
+        -e "$((at[tip_blobs] + 1))"'s/ "$1"$/ "$1" \&/' \
+        -e "$((at[merge_rename_candidates] + 1))"'s/^    \(.*\)$/    if :; then \1; fi/' \
+        -e "$((at[path_skips] + 1))"'s/^    LC_ALL=C awk /    :; LC_ALL=C awk /' \
+        -e "${at[tip_candidates]}"'a\    if :; then :; fi' \
+        -e "$((at[unlisted_verdict_path] + 1))"'i\    {' \
+        -e "$((at[unlisted_verdict_path] + 1))"'a\    }' \
+        "$HOOK" > "$c"
+    [ "$(diff "$HOOK" "$c" | grep -c '^>')" -eq 9 ]
+    local -A planted=(
+        [probe_check]="    git rev-parse HEAD > /dev/null & LC_ALL=C awk -F '\\t' '"
+        [tip_unlisted_read_file]='    ! LC_ALL=C awk -v sha="$1" '"'"
+        [config_bytes]='    coproc wc -c < "$1"'
+        [tip_blobs]="$(sed -n "$((at[tip_blobs] + 1))p" "$HOOK") &"
+        [merge_rename_candidates]="    if :; then $(sed -n "$((at[merge_rename_candidates] + 1))p" "$HOOK" | sed 's/^    //'); fi"
+    )
+    for f in "${!planted[@]}"; do
+        n=$(grep -n "^$f() {" "$c" | cut -d: -f1)
+        [ "$(sed -n "$((n + 1))p" "$c")" = "${planted[$f]}" ]
+        want="$want$((n + 1)):${planted[$f]}"$'\n'
+    done
+    want=$(sort -n <<< "$want" | sed '/^$/d; s/^/undeclared: /')
+    run undeclared_reads "$c"
+    [ "$(grep '^undeclared: ' <<< "$output")" = "$want" ]
+    [[ "${output##*$'\n'}" == *" swallowed=0 undeclared=5" ]]
+    n=$(grep -n '^tip_candidates() {' "$c" | cut -d: -f1)
+    [ "$(sed -n "$((n + 1))p" "$c")" = '    if :; then :; fi' ]
+    [[ "$output" == *$'\n'"declared: body $((n + 2)) tip_candidates: awk"$'\n'* ]]
+    [[ "$output" == *$'\n'"declared: body $((n + 5)) tip_candidates: tr"$'\n'* ]]
+    n=$(grep -n '^unlisted_verdict_path() {' "$c" | cut -d: -f1)
+    [ "$(sed -n "$((n + 1))p;$((n + 3))p" "$c")" = $'    {\n    }' ]
+    [[ "$output" == *$'\n'"declared: body $((n + 2)) unlisted_verdict_path: awk"$'\n'* ]]
+    n=$(grep -n '^path_skips() {' "$c" | cut -d: -f1)
+    [ "$(sed -n "$((n + 1))p" "$c")" = "    :; LC_ALL=C awk '" ]
+    [[ "$output" == *$'\n'"declared: body $((n + 1)) path_skips: awk"$'\n'* ]]
 }

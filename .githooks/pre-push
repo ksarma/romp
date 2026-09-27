@@ -575,7 +575,7 @@
 #       (a); since round 12l a fourth key, diff.submodule, read too, under
 #       whose value diff git log reads a gitlink change as the submodule's own
 #       diff, where a credential in a line a submodule commit adds published
-#       at 64e1da798, the landing head, whose feed read the change as its
+#       at 64e1da798, the round 12k head, whose feed read the change as its
 #       Subproject line; the landing round's fresh-1): an answer whose last
 #       entry is not the marker, or that holds it twice, is refused as read
 #       short, an entry for a key it was not asked for as foreign, and a value
@@ -1108,7 +1108,7 @@
 # --submodule (round 12l; romp-manager's ruling on round 12, the landing
 # round, 2026-09-27 18:50Z, fresh-1): under diff, a credential in a line a
 # submodule commit adds was refused by main's hook and published at 64e1da798,
-# the landing head, whose feed read the change as its Subproject line alone,
+# the round 12k head, whose feed read the change as its Subproject line alone,
 # both scanners. gitleaks' git mode reads each section of that diff as a file
 # of the pushed commit, named with the submodule's path ahead of its own, each
 # hunk's added lines one fragment, its context left out, a binary file's
@@ -1119,8 +1119,14 @@
 # driver the submodule's attributes name renders its lines in both reads. A
 # diff.submodule value other than short, log or diff, spelled so, refuses by
 # name, and so does the key set with no value, which git log stops on (main's
-# hook published such a push unscanned); a spelling git warns on and ignores,
-# keeping the value it read before, is a false refusal. Under diff, a
+# hook published such a push unscanned). A spelling git warns on and ignores
+# (Diff, say), keeping the value it read before, short when none, refuses by
+# name as well, fail-closed: main's gitleaks takes git's warning on stderr as
+# an error and stops, racing its read of the diff, so main's hook published
+# most such pushes unscanned, a credential in a submodule's added lines among
+# them, and the refusal is a false one only for a clean push in a run where
+# main's scan went on under the value git kept and passed it (round 12m, round
+# 12l's audit A2, both scanners). Under diff, a
 # GIT_DIFF_OPTS that gives a context (--unified=<n> or -u<n>) refuses by name,
 # since it reaches the submodule's diff under main's git log while the feed
 # reads with it unset (a false refusal on a clean push); an external diff that
@@ -4552,10 +4558,15 @@ CRED_PIECES_AWK='
 # A diff.submodule value other than short, log or diff refuses by name, and so
 # does the key set with no value, which git log stops on (git 2.43.0 ends on a
 # signal, executed; git 2.55.0's source refuses the key as a config error;
-# main's hook published a credential push under it unscanned, both scanners):
-# git warns on any other value and keeps the value it read before, so any
-# other spelling (Diff, say) is a false refusal, main's hook scanning under
-# the value read before it, short when none. Under diff.submodule=diff, a
+# main's hook published a credential push under it unscanned, both scanners).
+# Git warns on any other spelling (Diff, say) and keeps the value it read
+# before, short when none, and main's gitleaks takes that warning on stderr as
+# an error and stops, racing its read of git log's output: main's hook
+# published most such pushes unscanned, a credential in a submodule's added
+# lines among them, so the refusal is fail-closed, and a false refusal only
+# for a clean push in a run where main's scan went on under the value git kept
+# and passed it (round 12m, round 12l's audit A2, both scanners). Under
+# diff.submodule=diff, a
 # GIT_DIFF_OPTS that gives a context (--unified=<n>, or -u<n>, which git reads
 # with strtoul) refuses by name too: git runs a submodule's own diff as git
 # diff inside the submodule, which reads GIT_DIFF_OPTS under main's git log
