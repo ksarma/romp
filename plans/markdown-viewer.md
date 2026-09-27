@@ -9032,8 +9032,8 @@ batch PR 921, and the listing is the branch's whole delta over it; the runs at t
 review's round 18 and the merge of the fork's main after them and at the head that carries the fixes after the closing check at
 142ade155 before the merge of the fork's main at ffab236bd, from the merge-base 4a50a9b71, the fork's main the branch merged after
 the fixes for the file review's round 18, its tip the merge of the fork's batch PR 917, listed 70, before
-ui/webview/file-comments-save-held-composer.test.ts, a module of main where the census entry for PR 915's wait line asserts that
-line's reason on its scene, joined the delta in that merge; the run at the head that carries the bench's variants from the fixes
+ui/webview/file-comments-save-held-composer.test.ts, a module of main whose wait-line test asserts, on its scene, the reason the
+seam test's census entry gives PR 915's wait line, joined the delta in that merge; the run at the head that carries the bench's variants from the fixes
 for the file review's round 18, regression-3, from the merge-base
 fa3ef54b5, the fork's main the branch merged after the painted-contrast ask of 2026-09-23, its tip the merge of the fork's batch
 PR 907, listed the same 70; the run at the head that carries the marquee forbid's records from that round's fixes,
@@ -9129,8 +9129,8 @@ press whose pointerup the viewer never heard, each in Firefox on the hybrid page
 page, and another document's mouse click after a mouse's press whose pointer left the viewer's frame with the button down, with the
 cost cell of the viewer's own press dragged out of its frame and back, in Firefox on the hybrid page, the first cost of the refusal
 of a record whose pointer left the viewer's window with a button down, which refuses such a press once and reveals the control,
-the next click opening, that refusal's second cost, a press held in Chromium while the top page hides the viewer's frame and shows
-it again, then released there, having no cell
+the next click opening, and that refusal's second cost, a press held in Chromium while the top page hides the viewer's frame and
+shows it again, then released there, having no cell
 (the Chromium leg runs the same module's cells of another document's tap whose click carries another touch's pointerId),
 each engine launched through real-viewer-leg.ts's inBrowser with the engine named; the cells are ui/webview/file-figure-open-taps.ts's,
 a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and two cases of WebKit's alone that read window errors, the Files
