@@ -2,8 +2,8 @@
 """scripts/batch.py: land many PRs as one batch PR with one merge commit.
 
 Member PRs stay ordinary PRs against main. This tool merges their heads, in dependency order, into
-a fresh branch `batch/<name>`, the batcher runs one full sweep at the batch head, and one PR to main
-carries a generated digest. When that PR is merged with a merge commit, GitHub marks every member
+a fresh branch `batch/<name>`, the batcher runs the local sweep (scripts/sweep.py) at the batch head,
+and one PR to main carries a generated digest. When that PR is merged with a merge commit, GitHub marks every member
 merged on its own (a PR is marked merged when its head commits become reachable from its base
 branch through another merge: "indirect merges"). No member is ever merged into another PR's
 branch, and nothing here squashes or rebases: a squash or rebase of the batch would rewrite the
@@ -15,7 +15,8 @@ Subcommands, in the order a batch goes through them:
   assemble   <name> [--without N] [--resolve N] [--repin N|all] [--continue|--abort] [--merge-main]
                                       merge the pinned heads into ../romp-batch-<name> (the branch
                                       is the mutex: refuses if another origin/batch/* exists)
-  verify     <name> [--sweep TEXT]    provenance, pinned heads, bases, ledger check, sweep, own CI
+  verify     <name>                   provenance, pinned heads, bases, main contained, ledger check,
+                                      the sweep result at the batch head's full sha
   summarize  <name>                   create or update the batch PR body; comment on each member
   pull       <name> N [--reason ..]   rebuild without N (and N's dependents), push, re-summarize
   land       <name> [--auto]          verify again, then merge the batch PR with a merge commit
@@ -24,8 +25,10 @@ Subcommands, in the order a batch goes through them:
 
 State lives in `<git common dir>/batch/<name>.json` (shared by every worktree of the clone). The
 tool needs git and the GitHub CLI (`gh`, or the binary named by ROMP_GH); it imports nothing beyond
-the standard library. It acts on the clone it lives in (or ROMP_BATCH_REPO), never on the shell's
-cwd, so a misnamed cwd cannot make it assemble the wrong repository.
+the standard library and its sibling scripts/sweep.py, whose reader verify uses for the sweep result
+(`<state dir>/sweeps/<full sha>.json`, written by `scripts/sweep.py run`). It acts on the clone it
+lives in (or ROMP_BATCH_REPO), never on the shell's cwd, so a misnamed cwd cannot make it assemble the
+wrong repository.
 
 Contracts the tests hold this file to (tests/test_batch_tool.py):
   - plan orders dependents after their bases and excludes drafts, `major-feature` and `hold`; a
@@ -39,6 +42,10 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
   - a resolution that took one side wholesale says so, in the digest line and above its diff, which
     runs from the clean merge of the parents to the merge;
   - verify fails when a pinned head moved, and when an assembly did not finish; so does finish;
+  - verify refuses a missing, stale, unfinished, red, invalid, incomplete or unreadable sweep result
+    for the batch head's full sha, and a batch head that does not contain main as origin has it now
+    (CI does not run on the merge to main, so the tree that lands must be the tree the sweep and the
+    batch branch's CI ran on); land re-runs verify and refuses the same;
   - pull N drops N's dependents, unless N already merged into main;
   - the body stays under GitHub's 65,536-character cap, the members table never cut and the
     details fitted to the budget (entries table, then resolutions, then the log).
@@ -46,6 +53,7 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
 import argparse
 import datetime as _dt
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -211,7 +219,7 @@ def short(sha):
 
 # ── PR data ──────────────────────────────────────────────────────────────────
 
-PR_FIELDS = "number,title,body,labels,baseRefName,headRefName,headRefOid,isDraft,mergeable,statusCheckRollup,url,state"
+PR_FIELDS = "number,title,body,labels,baseRefName,headRefName,headRefOid,isDraft,mergeable,url,state"
 
 
 def label_names(pr):
@@ -261,31 +269,6 @@ def parse_depends_on(body):
             nums = re.findall(r"\d+", rest)
         out.update(int(x) for x in nums)
     return sorted(out)
-
-
-def ci_of(pr):
-    """One word for the PR's own CI at its head: success, failure, pending, or none.
-
-    `statusCheckRollup` mixes CheckRun entries (status/conclusion) with StatusContext entries
-    (state); both spellings are read. An empty rollup on a CONFLICTING PR is the plan's "none (was
-    conflicting)": GitHub starts no run for a PR it cannot merge."""
-    rollup = pr.get("statusCheckRollup") or []
-    if not rollup:
-        return "none (was conflicting)" if pr.get("mergeable") == "CONFLICTING" else "none"
-    words = set()
-    for c in rollup:
-        if c.get("__typename") == "StatusContext" or "state" in c:
-            words.add((c.get("state") or "").upper())
-        else:
-            if (c.get("status") or "").upper() != "COMPLETED":
-                words.add("PENDING")
-            else:
-                words.add((c.get("conclusion") or "").upper())
-    if words & {"FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}:
-        return "failure"
-    if words & {"PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED", ""}:
-        return "pending"
-    return "success"
 
 
 def sensitive_paths(paths):
@@ -455,7 +438,7 @@ def cmd_plan(args):
                 "labels": labels, "tier": tier_of(labels),
                 "depends_on": parse_depends_on(pr.get("body")),
                 "trailer": trailer, "trailer_error": terr,
-                "mergeable": pr.get("mergeable"), "ci": ci_of(pr),
+                "mergeable": pr.get("mergeable"),
                 "touches": [], "predicted_conflict": None,
             }
     # A base that is another open PR's branch is a dependency on that PR (and if that PR is not a
@@ -1203,14 +1186,13 @@ def cmd_assemble(args):
         for k in targets:
             if k not in members:
                 raise Fail("#%d is not a member of %s" % (k, args.name))
-            pr = gh_json("pr", "view", str(k), "--json", "headRefOid,title,body,labels,statusCheckRollup,mergeable,baseRefName", cwd=root)
+            pr = gh_json("pr", "view", str(k), "--json", "headRefOid,title,body,labels,baseRefName", cwd=root)
             old = members[k]["head"]
             members[k]["head"] = pr["headRefOid"]
             members[k]["title"] = pr["title"]
             members[k]["labels"] = label_names(pr)
             members[k]["tier"] = tier_of(members[k]["labels"])
             members[k]["trailer"], members[k]["trailer_error"] = parse_trailer(pr.get("body"))
-            members[k]["ci"] = ci_of(pr)
             if pr.get("baseRefName") and pr["baseRefName"] != members[k]["base_ref"]:
                 log(state, "re-pinned #%d: base %s -> %s" % (k, members[k]["base_ref"], pr["baseRefName"]))
                 members[k]["base_ref"] = pr["baseRefName"]
@@ -1457,9 +1439,48 @@ def ledger_check_on_branch(root, br):
         shutil.rmtree(holder, ignore_errors=True)
 
 
+def sweep_reader():
+    """scripts/sweep.py, loaded from beside this file: its reader (assess) is the one place the result's
+    path, its leg roster and the verdict rule live, so the runner and verify cannot disagree about them."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "sweep.py")
+    if not os.path.exists(path):
+        raise Fail("scripts/sweep.py is missing beside batch.py (%s); verify reads sweep results through it" % path)
+    spec = importlib.util.spec_from_file_location("romp_batch_sweep_reader", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def main_on_origin(root):
+    """main's head on origin now, read with ls-remote (never the tracking ref, which --no-fetch or a
+    stale fetch leaves behind); None when origin has no main."""
+    out = git("ls-remote", REMOTE, "refs/heads/" + MAIN, cwd=root).split()
+    return out[0] if out else None
+
+
+def check_contains_main(root, name, head, lines):
+    """The batch head must contain main as origin has it NOW. CI does not run on the merge to main: a
+    batch lands with a merge commit whose tree is the batch head's only when main is already in the
+    head, and that tree is the one the sweep and the batch branch's CI ran on. Returns the main sha it
+    compared with when the head contains it, else None."""
+    live = main_on_origin(root)
+    if not live:
+        lines.append("FAIL behind: %s has no %s branch to compare the batch head with" % (REMOTE, MAIN))
+        return None
+    if is_ancestor(live, head, root):
+        lines.append("ok   main: %s at %s is in the batch head" % (remote_main(), short(live)))
+        return live
+    known = git_ok("cat-file", "-e", live + "^{commit}", cwd=root)
+    lines.append("FAIL behind: %s is at %s%s, which the batch head %s does not contain, so the tree that would land is not "
+                 "the tree the sweep and CI ran on; `scripts/batch.py assemble %s --merge-main`, then sweep and verify again"
+                 % (remote_main(), short(live), "" if known else " (not fetched here)", short(head), name))
+    return None
+
+
 def cmd_verify(args, quiet=False):
     root = repo_root()
     state = load_state(root, args.name)
+    sweep = sweep_reader()
     # The earlier verdict is cleared first: a verify that dies half-way (a gh error) must not leave
     # a green verification behind for summarize to publish.
     if state.get("verified"):
@@ -1489,7 +1510,7 @@ def cmd_verify(args, quiet=False):
     in_batch_refs = {members[e["n"]]["head_ref"] for e in landing}
     for e in landing:
         m = members[e["n"]]
-        pr = gh_json("pr", "view", str(m["n"]), "--json", "headRefOid,state,baseRefName,isDraft,statusCheckRollup,mergeable", cwd=root)
+        pr = gh_json("pr", "view", str(m["n"]), "--json", "headRefOid,state,baseRefName,isDraft", cwd=root)
         if pr["headRefOid"] != m["head"]:
             ok = False
             lines.append("FAIL head moved: #%d pinned %s, now %s (assemble --repin %d, then re-assemble)"
@@ -1510,8 +1531,6 @@ def cmd_verify(args, quiet=False):
             else:
                 ok = False
                 lines.append("FAIL base: #%d is based on %s, which is neither in the batch nor in %s" % (m["n"], b, MAIN))
-        m["ci"] = ci_of(pr)
-        lines.append("ci   #%d: %s" % (m["n"], m["ci"]))
         state["members"][str(m["n"])] = m
     proc = ledger_check_on_branch(root, br)
     if proc is None:
@@ -1524,18 +1543,22 @@ def cmd_verify(args, quiet=False):
         ok = False
         lines.append("FAIL ledger: %s" % (proc.stdout + proc.stderr).strip()[:500])
         state["ledger"] = "failed"
-    if args.sweep:
-        state["sweep"] = {"text": args.sweep, "head": head, "at": now()}
-    sw = state.get("sweep")
-    if not sw:
-        ok = False
-        lines.append("FAIL sweep: none recorded; run the full sweep at %s and pass --sweep '<counts>'" % short(head))
-    elif sw["head"] != head:
-        ok = False
-        lines.append("FAIL sweep: recorded at %s, the batch is at %s; sweep again" % (short(sw["head"]), short(head)))
+    main_seen = check_contains_main(root, args.name, head, lines)
+    ok = bool(main_seen) and ok
+    # The sweep result the runner wrote for this exact sha (scripts/sweep.py), read through its own reader;
+    # every case but a pass names itself (missing, stale, unfinished, red, invalid, incomplete, unreadable).
+    a = sweep.assess(head, subject="the batch head", branch=br, tree_hint=worktree_dir(root, args.name))
+    if a["case"] == "pass":
+        legs = a["result"]["legs"]
+        state["sweep"] = {"head": head, "path": a["path"], "verdict": "pass", "finished": a["result"].get("finished"),
+                          "legs": [[n, legs[n].get("rc") if sweep.is_owed(legs[n]) else "not owed"] for n in sweep.LEGS],
+                          "summary": {n: legs[n]["summary"] for n in sweep.LEGS if sweep.is_owed(legs[n]) and legs[n].get("summary")}}
+        lines.append("ok   " + a["line"])
     else:
-        lines.append("ok   sweep at %s: %s" % (short(head), sw["text"]))
-    state["verified"] = {"head": head, "at": now(), "ok": ok, "lines": lines}
+        ok = False
+        state["sweep"] = None
+        lines.append("FAIL " + a["line"])
+    state["verified"] = {"head": head, "at": now(), "ok": ok, "lines": lines, "main": main_seen}
     save_state(root, state)
     if not quiet:
         print("\n".join(lines))
@@ -1588,8 +1611,8 @@ def read_first_reasons(m, resolved, contained_by=None):
     """The computed rule: a member is listed under "Read these first" when its merge needed a
     resolution, when it was already contained by an earlier member (no merge of its own, so a
     missing `Depends-on`), when its tier is `feature` or unlabeled, when it touches kernel/,
-    .github/, .githooks/, install.sh or uninstall.sh, when its trailer is missing, or when its own
-    CI never ran because it was conflicting."""
+    .github/, .githooks/, install.sh or uninstall.sh, or when its trailer is missing. A member PR
+    runs no CI of its own (the sweep at the batch head gates it), so there is no CI reason."""
     reasons = []
     if resolved:
         reasons.append(resolution_reason(resolved))
@@ -1604,9 +1627,21 @@ def read_first_reasons(m, resolved, contained_by=None):
         reasons.append("touches " + ", ".join(sens))
     if m.get("trailer") is None:
         reasons.append("trailer not stated" if not m.get("trailer_error") else m["trailer_error"])
-    if (m.get("ci") or "").startswith("none"):
-        reasons.append("own CI: %s" % m["ci"])
     return reasons
+
+
+def sweep_phrase(sw):
+    """The first block's words for the sweep verify read: every owed leg with its rc (and the runner's
+    display summary), then the legs not owed. A record from before the result file (free text passed
+    to verify) is shown as it was written."""
+    if not sw:
+        return "sweep not recorded"
+    if sw.get("verdict") == "pass" and isinstance(sw.get("legs"), list):
+        summary = sw.get("summary") or {}
+        ran = ["%s rc %s%s" % (n, rc, (" (%s)" % summary[n]) if summary.get(n) else "") for n, rc in sw["legs"] if rc != "not owed"]
+        skipped = [n for n, rc in sw["legs"] if rc == "not owed"]
+        return "sweep pass: %s%s" % (", ".join(ran), ("; not owed: " + ", ".join(skipped)) if skipped else "")
+    return sw.get("text") or "sweep not recorded"
 
 
 def gather_body_inputs(root, state):
@@ -1710,8 +1745,8 @@ def render_body(state, inputs, cap=BODY_CAP):
     title = "# Batch %s: %d PR%s%s" % (name, len(landing), "" if len(landing) == 1 else "s", (" (%s)" % ", ".join(extra)) if extra else "")
     if v.get("ok") and v.get("head") == head:
         ledger = {"clean": "ledger check clean", "pre-migration": "ledger: pre-migration, not checked", "failed": "ledger check FAILED"}.get(state.get("ledger"), "ledger: not checked")
-        verified = ("Merge with \"Create a merge commit\". Verified at %s: %s; provenance clean; %s. CI on this PR: see checks."
-                    % (short(head), sw.get("text", "sweep not recorded"), ledger))
+        verified = ("Merge with \"Create a merge commit\". Verified at %s: %s; provenance clean; main contained; %s. CI on this PR: see checks."
+                    % (short(head), sweep_phrase(sw), ledger))
     else:
         verified = "Merge with \"Create a merge commit\". NOT VERIFIED at %s: run `scripts/batch.py verify %s` (verification is %s)." % (
             short(head), name, "stale" if v else "missing")
@@ -1730,10 +1765,10 @@ def render_body(state, inputs, cap=BODY_CAP):
             short(d["sha"]), d["subject"], d.get("stat") or "no diffstat",
             ("; touches " + ", ".join(d["files"])) if d.get("files") else ""))
     read_first_block = "\n".join(read_first) if read_first else \
-        "- none: every member is labeled, carries a trailer, touches no sensitive path, merged clean and had its own CI; the batch adds no commit of its own."
+        "- none: every member is labeled, carries a trailer, touches no sensitive path and merged clean; the batch adds no commit of its own."
 
-    rows = ["| # | Title | Tier | Rounds | Sweep at own head | Own CI | Flags | Ledger |",
-            "|---|---|---|---|---|---|---|---|"]
+    rows = ["| # | Title | Tier | Rounds | Sweep at own head | Flags | Ledger |",
+            "|---|---|---|---|---|---|---|"]
     entries = inputs.get("entries") or []
     for e in landing:
         m = members[e["n"]]
@@ -1749,10 +1784,10 @@ def render_body(state, inputs, cap=BODY_CAP):
         if m.get("trailer") is None:
             flags.append("no trailer")
         ledger_n = sum(1 for x in entries if e["n"] in x["members"])
-        rows.append("| #%d | %s | %s | %s | %s | %s | %s | %s |" % (
+        rows.append("| #%d | %s | %s | %s | %s | %s | %s |" % (
             m["n"], _cell(m["title"]), _cell(m.get("tier") or "unlabeled"),
             _cell(t.get("rounds", "not stated")) if t else "not stated",
-            _cell(sweep_cell(m.get("trailer"))), _cell(m.get("ci") or "unknown"),
+            _cell(sweep_cell(m.get("trailer"))),
             _cell(", ".join(flags) or "-"), ("+%d" % ledger_n) if ledger_n else "-"))
     members_table = "\n".join(rows)
 
@@ -2034,7 +2069,7 @@ def retarget_stacked_members(root, state):
 
 def cmd_land(args):
     root = repo_root()
-    state = cmd_verify(argparse.Namespace(name=args.name, sweep=None, no_fetch=args.no_fetch), quiet=False)
+    state = cmd_verify(argparse.Namespace(name=args.name, no_fetch=args.no_fetch), quiet=False)
     b = find_batch_pr(root, state)
     if not b:
         raise Fail("no open batch PR for %s; run summarize first" % branch_of(args.name))
@@ -2065,6 +2100,14 @@ def cmd_land(args):
         print("merging with --auto: auto-merge is allowed and %s" % gating)
         cmd.append("--auto")
     retarget_stacked_members(root, state)
+    # main may have moved since verify read it (a merge by hand, scripts/land.sh): the last read before
+    # the merge call, so the tree that lands is still the batch head's. GitHub's merge pins the head
+    # (--match-head-commit), not the base, so the gap left is the one between this read and that call.
+    main_now = main_on_origin(root)
+    if main_now != state["verified"].get("main"):
+        raise Fail("%s moved on %s to %s after verify read %s; nothing merged. Run land again: its verify reads the new %s "
+                   "and says whether the batch still contains it" % (MAIN, REMOTE, short(main_now) if main_now else "nothing",
+                                                                     short(state["verified"].get("main")), MAIN))
     gh(*cmd, cwd=root)
     poll = float(os.environ.get("ROMP_BATCH_POLL", "3"))
     for _ in range(20):
@@ -2324,15 +2367,18 @@ def main(argv=None):
     p.add_argument("--no-fetch", action="store_true", help=HELP_NO_FETCH)
     p.set_defaults(func=cmd_assemble)
 
-    p = sub.add_parser("verify", help="provenance, pinned heads, bases, ledger, sweep, own CI",
+    p = sub.add_parser("verify", help="provenance, pinned heads, bases, main contained, ledger, sweep result",
                        description="The gate `land` re-runs. Provenance: every commit the batch adds is a member merge, a `batch:` "
                                    "commit or a merge of %s, and every merge equals the clean merge of its parents unless it "
                                    "carries a recorded resolution (then only the resolution's files may differ). Every member's "
                                    "live head still equals the pinned SHA, is OPEN, and has its base in the batch or in %s. "
-                                   "The ledger check runs on the branch's tree. The sweep must be recorded at the current head."
-                                   % (remote_main(), MAIN))
+                                   "The batch head contains %s as %s has it now (CI does not run on the merge, so the tree that "
+                                   "lands must be the tree the sweep and the batch branch's CI ran on); `assemble --merge-main` "
+                                   "catches it up. The ledger check runs on the branch's tree. The sweep result that "
+                                   "`scripts/sweep.py run` wrote for the batch head's full sha must be a pass; a missing, stale, "
+                                   "unfinished, red, invalid, incomplete or unreadable result fails by that name."
+                                   % (remote_main(), MAIN, MAIN, REMOTE))
     p.add_argument("name", help=HELP_NAME)
-    p.add_argument("--sweep", metavar="TEXT", help="record the full sweep's counts at the current batch head")
     p.add_argument("--no-fetch", action="store_true", help=HELP_NO_FETCH)
     p.set_defaults(func=cmd_verify)
 
@@ -2357,7 +2403,8 @@ def main(argv=None):
     p.set_defaults(func=cmd_pull)
 
     p = sub.add_parser("land", help="verify, merge the batch PR with a merge commit, finish",
-                       description="On the maintainer's word for this batch: run verify again (the last drift check), retarget "
+                       description="On the maintainer's word for this batch: run verify again (the last drift check: pinned "
+                                   "heads, main contained, the sweep result at the verified head), retarget "
                                    "stacked members to %s, `gh pr merge --merge --match-head-commit <verified sha>`, then run "
                                    "finish. Never squash or rebase: that would leave every member open." % MAIN)
     p.add_argument("name", help=HELP_NAME)

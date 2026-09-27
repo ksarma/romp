@@ -37,9 +37,9 @@ name: PR tier
 # and still accepts the old spelling, so `docs` is no longer a divergence): this
 # copy also counts `batch`. `batch` marks a batch PR (scripts/batch.py): it merges
 # several already-tiered member PRs at once and carries no tier of its own, and
-# without it every batch PR would show this check red, which batch.py's ci_of
-# folds into "ci: failure". Apart from the second divergence below, the rest of
-# the file is upstream's byte for byte, so the next sync merges cleanly.
+# without it every batch PR would show this check red. Apart from the second
+# divergence below, the rest of the file is upstream's byte for byte, so the next
+# sync merges cleanly.
 #
 # Second fork divergence (2026-09-27): this copy runs on the four events that
 # can change what the check reads (opened, reopened, labeled, unlabeled), not on

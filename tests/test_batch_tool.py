@@ -17,7 +17,9 @@ What the plan holds the tool to (next-batch-process, "What the guard tests check
   - the body stays under 65,536 characters with details truncated first.
 Plus the conflict paths (hold back and tell the owner once; --resolve/--continue records the
 resolution; a straggler UPSTREAM.md row is converted inside the merge), land and finish end to end,
-and the computed "Read these first" rule.
+the computed "Read these first" rule, and the landing gate since 2026-09-27: verify and land read the
+result scripts/sweep.py wrote for the batch head's full sha (VerifyReadsTheSweep, LandReadsTheSweep,
+SweepThenVerify) and refuse a batch head that does not contain main (VerifyBehind).
 
 Synthetic data only: a demo `notes-api` with invented PR numbers, branch names and titles.
 """
@@ -32,8 +34,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# The batch tool reads no state root, but every test module that loads romp code through a loader
-# isolates the state root first (tests/test_state_isolation_order.py enforces the order).
+# The batch tool reads sweep results under the state root (each Fixture points XDG_STATE_HOME at a
+# directory of its own), and every test module that loads romp code through a loader isolates the
+# state root first (tests/test_state_isolation_order.py enforces the order).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 
@@ -76,14 +79,15 @@ else:
 '''
 
 
-def _load_batch_module():
-    spec = importlib.util.spec_from_file_location("batch_tool", SCRIPTS / "batch.py")
+def _load_script(name, filename):
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / filename)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-batch = _load_batch_module()
+batch = _load_script("batch_tool", "batch.py")
+sweep = _load_script("batch_tool_sweep", "sweep.py")
 
 
 class Fixture:
@@ -97,6 +101,9 @@ class Fixture:
         self.bin = os.path.join(self.tmp, "bin")
         self.state_file = os.path.join(self.tmp, "gh-state.json")
         self.log_file = os.path.join(self.tmp, "gh.log")
+        # Sweep results live under the state root, keyed by sha; two fixtures can mint the same sha in
+        # the same second (same content, same author, same stamp), so each gets a root of its own.
+        self.xdg = os.path.join(self.tmp, "xdg")
         os.makedirs(self.bin)
         shutil.copy(FAKE_GH, os.path.join(self.bin, "gh"))
         os.chmod(os.path.join(self.bin, "gh"), 0o755)
@@ -105,7 +112,9 @@ class Fixture:
                         GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
                         GIT_AUTHOR_NAME="romp tests", GIT_AUTHOR_EMAIL="tests@example.invalid",
                         GIT_COMMITTER_NAME="romp tests", GIT_COMMITTER_EMAIL="tests@example.invalid",
-                        FAKE_GH_STATE=self.state_file, FAKE_GH_LOG=self.log_file, ROMP_BATCH_POLL="0")
+                        FAKE_GH_STATE=self.state_file, FAKE_GH_LOG=self.log_file, ROMP_BATCH_POLL="0",
+                        XDG_STATE_HOME=self.xdg)
+        self.env.pop("ROMP_STATE_DIR", None)
         self.env.pop("ROMP_GH", None)
         self.env.pop("FAKE_GH_DELETE_INDIRECT", None)
         self._git("init", "-q", "--bare", self.bare, cwd=self.tmp)
@@ -120,7 +129,7 @@ class Fixture:
         self._git("push", "-q", "-u", "origin", "main", cwd=self.author)
         self._git("clone", "-q", self.bare, self.dev, cwd=self.tmp)
         os.makedirs(os.path.join(self.dev, "scripts"), exist_ok=True)
-        for s in ("batch.py", "pr-orphans.sh"):
+        for s in ("batch.py", "sweep.py", "pr-orphans.sh"):
             shutil.copy(SCRIPTS / s, os.path.join(self.dev, "scripts", s))
         self.gh_state = {"bare": self.bare, "next_number": 900, "prs": {}, "rulesets": [],
                          "repo": {"mergeCommitAllowed": True, "squashMergeAllowed": False,
@@ -255,6 +264,23 @@ class Fixture:
     def push_batch(self, name):
         self.dev_git("push", "-q", "-u", "origin", "batch/" + name)
 
+    def sweep(self, name, sha=None, **over):
+        """A sweep result for batch/<name>'s current head (or `sha`), written through scripts/sweep.py's own
+        writer where the runner writes it: every leg rc 0 but deps and the webview legs, not owed; `over`
+        replaces top-level keys, and the verdict is the runner's rule over the result unless given."""
+        sha = sha or self.dev_git("rev-parse", "batch/" + name)
+        stamp = sweep.now()
+        legs = {n: {"owed": True, "rc": 0, "cmd": ["true"], "started": stamp, "finished": stamp} for n in sweep.LEGS}
+        for n in ("deps",) + sweep.WEBVIEW_LEGS:
+            legs[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
+        data = {"schema": sweep.SCHEMA, "sha": sha, "branch": "batch/" + name, "tree": self.wt(name), "started": stamp,
+                "finished": stamp, "legs": legs, "history": [], "red": [], "invalid": None}
+        data.update(over)
+        data.setdefault("verdict", sweep.verdict_of(data))
+        path = sweep.result_path(sha, env=self.env)
+        sweep.write_result(path, data)
+        return path
+
 
 class _Base(unittest.TestCase):
     def setUp(self):
@@ -296,7 +322,7 @@ class Plan(_Base):
         self.assertIsNone(m["106"]["trailer"])
         self.assertIsNone(m["106"]["tier"])
         self.assertIn("kernel/kernel.py", m["101"]["touches"])
-        self.assertEqual(m["101"]["ci"], "success")
+        self.assertNotIn("ci", m["101"], "a member runs no CI of its own, so plan records none")
         self.assertEqual(st["base"], fx.bare_rev("main"))
 
     def test_docs_and_tests_only_are_tiers_a_member_can_carry(self):
@@ -518,7 +544,8 @@ class Assemble(_Base):
         wt = fx.wt("b1")
         self.assertTrue(os.path.exists(os.path.join(fx.dev, ".git", "worktrees", "romp-batch-b1", "MERGE_HEAD")))
         self.assertEqual(fx.gh()["prs"]["108"]["comments"], [], "a stopped merge is not a hold-back")
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertNotEqual(p.returncode, 0, "verify refuses while a member is stopped")
         with open(os.path.join(wt, "notes.txt"), "w") as f:
             f.write("one\ntwo-a-g\nthree\n")
@@ -534,7 +561,8 @@ class Assemble(_Base):
         self.assertIn("- #108 g: conflict resolved in notes.txt (1 hunk); one review round: subagent: fine. [diff from the clean merge below]", body)
         self.assertIn("### #108", body)
         self.assertIn("two-a-g", body, "the combined diff of the resolved merge is in the details")
-        p = fx.ok("verify", "b1", "--sweep", "pytest 1 passed")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
         self.assertIn("#108 merge carries a recorded resolution", p.stdout)
 
     def test_abort_drops_the_stopped_member_and_goes_on(self):
@@ -573,7 +601,8 @@ class Assemble(_Base):
         self.assertIn("title: row two", entry)
         self.assertIn("status: candidate", entry)
         self.assertEqual(fx.chain("b1"), ["Merge #110: a straggler row"], "the conversion is inside the member's merge commit")
-        p = fx.ok("verify", "b1", "--sweep", "pytest 1 passed")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
         self.assertIn("ok   ledger: check clean", p.stdout)
 
     def test_without_drops_a_member_and_its_dependents(self):
@@ -633,7 +662,8 @@ class Assemble(_Base):
         fx._git("restore", "--source=" + m.group(1), "--staged", "--worktree", "--", "kernel/kernel.py", cwd=wt)
         fx.ok("assemble", "b1", "--continue", "--reviewed", "subagent: fine")
         self.assertEqual(fx.dev_git("show", "batch/b1:kernel/kernel.py"), "VERSION = 1")
-        p = fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
         self.assertIn("#108 merge carries a recorded resolution (resolved by the batcher, per hunk) in notes.txt", p.stdout)
 
     def test_a_stray_staged_path_holding_a_marker_line_is_refused_as_stray_not_as_a_marker(self):
@@ -681,7 +711,8 @@ class Assemble(_Base):
             f.write("VERSION = 1\nSMUGGLED = True\n")
         fx._git("add", "kernel/kernel.py", cwd=wt)
         fx._git("commit", "-q", "--amend", "--no-edit", cwd=wt)
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         self.assertIn("FAIL provenance: #108 merge", p.stdout)
         self.assertIn("changes kernel/kernel.py outside its recorded resolution (notes.txt)", p.stdout)
@@ -743,7 +774,8 @@ class Assemble(_Base):
         fx._git("add", "notes.txt", cwd=wt)
         fx.ok("assemble", "b1", "--continue", "--reviewed", "subagent: fine")
         fx.push_batch("b1")
-        fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
         fx.ok("summarize", "b1")
         fx.ok("pull", "b1", "111")
         st = fx.state("b1")
@@ -794,7 +826,8 @@ class Assemble(_Base):
         self.assertEqual(rec["replayed_files"], ["notes.txt"])
         self.assertEqual(rec["review"], "round two")
         self.assertIn("rerere replayed", rec["how"])
-        p = fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
         self.assertIn("#108 merge carries a recorded resolution", p.stdout)
         body = fx.ok("summarize", "b1", "--print-only").stdout
         self.assertIn("conflict resolved in README.md, notes.txt", body)
@@ -1063,7 +1096,8 @@ class Assemble(_Base):
         self.assertIn("- notes.txt: took #108's version", body)
         self.assertIn("-two-a", body, "the diff shows #101's line going out of the conflict block")
         self.assertIn(" two-g", body)
-        p = fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
         self.assertIn("#108 merge carries a recorded resolution (resolved by the batcher, per hunk) in notes.txt", p.stdout)
 
     def test_a_modify_delete_resolution_that_keeps_the_file_says_so_and_verify_checks_the_conflicted_path(self):
@@ -1085,7 +1119,8 @@ class Assemble(_Base):
         body = fx.ok("summarize", "b1", "--print-only").stdout
         self.assertIn("- #108 g: conflict resolved in notes.txt (took #108's version, which the batch deleted); one review round: keep g's file.", body)
         self.assertIn("- notes.txt: took #108's version, which the batch deleted", body)
-        p = fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
         self.assertIn("ok   provenance: #108 merge carries a recorded resolution (resolved by the batcher, per hunk) in notes.txt", p.stdout)
         self.assertFalse([l for l in p.stdout.splitlines() if "#108" in l and "equals the clean merge" in l],
                          "a resolved merge is not reported as the clean merge")
@@ -1097,7 +1132,8 @@ class Assemble(_Base):
         [e for e in st["assembly"]["merged"] if e["n"] == 108][0]["resolved"]["files"] = ["README.md"]
         with open(path, "w") as f:
             json.dump(st, f)
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         self.assertIn("FAIL provenance: #108 merge", p.stdout)
         self.assertIn("notes.txt", p.stdout)
@@ -1141,7 +1177,8 @@ class Assemble(_Base):
         self.assertNotIn("rerere", rec["how"])
         self.assertNotIn("replayed_files", rec)
         self.assertEqual(fx.dev_git("show", "batch/b1:notes.txt"), "one\ntwo-a\nthree")
-        p = fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
         self.assertIn("#108 merge carries a recorded resolution (resolved by the batcher, per hunk)", p.stdout)
         body = fx.ok("summarize", "b1", "--print-only").stdout
         self.assertNotIn("rerere", body)
@@ -1164,7 +1201,8 @@ class Assemble(_Base):
         self.assertEqual(st["assembly"]["contained"], [{"n": 102, "contained_by": "#101"}])
         self.assertEqual(fx.chain("b1"), ["Merge #101: postal: send two"])
         fx.push_batch("b1")
-        p = fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
         self.assertIn("ok   head: #102 at %s (already contained by #101, no merge of its own)" % st["members"]["102"]["head"][:10], p.stdout)
         self.assertIn("ok   provenance: 1 member merge(s), 0 declared batch: commit(s), nothing else", p.stdout)
         fx.ok("summarize", "b1")
@@ -1182,7 +1220,8 @@ class Assemble(_Base):
         self.assertEqual([c["n"] for c in st["assembly"]["contained"]], [101, 102])
         self.assertEqual(st["assembly"]["contained"][0]["contained_by"], "origin/main")
         self.assertEqual(st["assembly"]["merged"], [])
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1)
         self.assertIn("FAIL state: #101 is MERGED (pull it", p.stdout)
 
@@ -1204,7 +1243,8 @@ class Assemble(_Base):
         self.assertEqual(st["assembly"]["head"], fx.dev_git("rev-parse", "batch/b1"))
         self.assertIsNone(st["verified"])
         self.assertEqual(fx.chain("b1"), ["Merge #101: PR 101 on a", "Merge origin/main into batch/b1"])
-        p = fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
         self.assertIn("ok   provenance: the origin/main merge %s equals the clean merge of its parents" % st["assembly"]["head"][:10], p.stdout)
         self.assertEqual(fx.ok("assemble", "b1", "--merge-main").stdout.strip(), "origin/main (%s) is already in batch/b1" % fx.bare_rev("main")[:10])
         # main now conflicts with #101 in notes.txt: stop, resolve, continue.
@@ -1214,7 +1254,8 @@ class Assemble(_Base):
         self.assertIn("stopped for resolution in notes.txt", p.stdout)
         st = fx.state("b1")
         self.assertEqual(st["assembly"]["cursor"], {"n": None, "main": fx.bare_rev("main"), "files": ["notes.txt"], "replayed": []})
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1)
         self.assertIn("the merge of origin/main is still stopped", p.stderr)
         wt = fx.wt("b1")
@@ -1228,7 +1269,8 @@ class Assemble(_Base):
         self.assertEqual(st["assembly"]["main_merges"][1]["resolved"]["review"], "subagent: ok")
         self.assertEqual(st["assembly"]["head"], fx.dev_git("rev-parse", "batch/b1"))
         self.assertEqual([e["n"] for e in st["assembly"]["merged"]], [101], "no member was merged twice")
-        p = fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
         self.assertIn("ok   provenance: the origin/main merge carries a recorded resolution (resolved by the batcher, per hunk) in notes.txt", p.stdout)
         body = fx.ok("summarize", "b1", "--print-only").stdout
         self.assertIn("- merge of origin/main (%s): conflict resolved in notes.txt (1 hunk); one review round: subagent: ok. [diff from the clean merge below]." % st["assembly"]["head"][:10], body)
@@ -1250,7 +1292,8 @@ class Assemble(_Base):
         self.assertTrue(any("#101 is pulled but already in origin/main; its dependents stay" in l for l in st["assembly"]["log"]))
         self.assertTrue(any("re-pinned #102: base a -> main" in l for l in st["assembly"]["log"]))
         fx.push_batch("b1")
-        fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
 
 
 class Verify(_Base):
@@ -1267,11 +1310,13 @@ class Verify(_Base):
             f.write("t\n")
         fx._git("add", "tweak.txt", cwd=wt)
         fx._git("commit", "-q", "-m", "tweak", cwd=wt)
-        p = fx.run("verify", "b1", "--sweep", "pytest 1 passed")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         self.assertIn("undeclared commit", p.stdout)
         fx._git("commit", "-q", "--amend", "-m", "batch: tweak", cwd=wt)
-        p = fx.ok("verify", "b1", "--sweep", "pytest 1 passed")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
         self.assertIn("ok   provenance: 2 member merge(s), 1 declared batch: commit(s), nothing else", p.stdout)
         self.assertTrue(fx.state("b1")["verified"]["ok"])
 
@@ -1279,7 +1324,8 @@ class Verify(_Base):
         fx = self.fx
         self.assembled()
         fx.commit("a", {"kernel/kernel.py": "VERSION = 3\n"})
-        p = fx.run("verify", "b1", "--sweep", "pytest 1 passed")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         self.assertIn("head moved: #101", p.stdout)
         self.assertIn("--repin 101", p.stdout)
@@ -1293,32 +1339,17 @@ class Verify(_Base):
             f.write("e\n")
         fx._git("add", "evil.txt", cwd=wt)
         fx._git("commit", "-q", "--amend", "--no-edit", cwd=wt)
-        p = fx.run("verify", "b1", "--sweep", "pytest 1 passed")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1)
         self.assertIn("undeclared change", p.stdout)
-
-    def test_the_sweep_must_be_recorded_at_the_batch_head(self):
-        fx = self.fx
-        self.assembled()
-        p = fx.run("verify", "b1")
-        self.assertEqual(p.returncode, 1)
-        self.assertIn("sweep: none recorded", p.stdout)
-        fx.ok("verify", "b1", "--sweep", "pytest 1 passed, bats 2")
-        wt = fx.wt("b1")
-        with open(os.path.join(wt, "t.txt"), "w") as f:
-            f.write("t\n")
-        fx._git("add", "t.txt", cwd=wt)
-        fx._git("commit", "-q", "-m", "batch: t", cwd=wt)
-        p = fx.run("verify", "b1")
-        self.assertEqual(p.returncode, 1)
-        self.assertIn("sweep: recorded at", p.stdout)
-        self.assertIn("sweep again", p.stdout)
 
     def test_a_member_merged_alone_fails_verify(self):
         fx = self.fx
         self.assembled()
         fx.fake_gh("pr", "merge", "101", "--merge")
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1)
         self.assertIn("state: #101 is MERGED", p.stdout)
 
@@ -1335,7 +1366,8 @@ class Verify(_Base):
             f.write("VERSION = 2\nBACKDOOR = True\n")
         fx._git("add", "kernel/kernel.py", cwd=wt)
         fx._git("commit", "-q", "--amend", "--no-edit", cwd=wt)
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         self.assertIn("FAIL provenance: the origin/main merge", p.stdout)
         self.assertIn("differs from the clean merge of its parents (undeclared change in kernel/kernel.py)", p.stdout)
@@ -1350,7 +1382,8 @@ class Verify(_Base):
             f.write("VERSION = 9\n")
         fx._git("add", "kernel/kernel.py", cwd=wt)
         fx._git("commit", "-q", "--no-edit", cwd=wt)
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1)
         self.assertIn("resolved a conflict that is not recorded (in kernel/kernel.py)", p.stdout)
 
@@ -1367,7 +1400,8 @@ class Verify(_Base):
         st["assembly"]["head"] = None
         with open(path, "w") as f:
             json.dump(st, f)
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         self.assertIn("assembly incomplete: #102 never merged; run assemble again", p.stderr)
         self.assertIsNone(fx.state("b1")["verified"])
@@ -1395,7 +1429,8 @@ class Verify(_Base):
         fx._git("add", "notes.txt", cwd=wt)
         fx._git("commit", "-q", "--amend", "--no-edit", cwd=wt)
         self.assertEqual(fx.dev_git("rev-parse", "batch/b1^{tree}"), mt, "the merge now IS the conflicted merge-tree")
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         self.assertIn("FAIL provenance: #108 merge", p.stdout)
         self.assertIn("conflict marker", p.stdout)
@@ -1410,7 +1445,8 @@ class Verify(_Base):
         fx._git("add", "hotfix.py", cwd=wt)
         fx._git("commit", "-q", "-m", "batch: hotfix for the integrated tree", cwd=wt)
         sha = fx._git("rev-parse", "HEAD", cwd=wt)
-        fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
         self.assertEqual(fx.state("b1")["assembly"]["declared"][0]["subject"], "batch: hotfix for the integrated tree")
         body = fx.ok("summarize", "b1", "--print-only").stdout
         self.assertIn("- `batch:` commit %s by the batcher: batch: hotfix for the integrated tree; 1 file changed, 1 insertion(+); touches hotfix.py." % sha[:10], body)
@@ -1419,7 +1455,8 @@ class Verify(_Base):
     def test_a_verify_that_dies_half_way_leaves_no_green_verification(self):
         fx = self.fx
         self.assembled()
-        fx.ok("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
         self.assertTrue(fx.state("b1")["verified"]["ok"])
         p = fx.run("verify", "b1", gh_fail="pr view 102")
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
@@ -1436,16 +1473,305 @@ class Verify(_Base):
         fx.pr(110, "s", title="a straggler row after the migration", labels=["fix"], body=TRAILER)
         fx.ok("plan", "--name", "b1")
         fx.ok("assemble", "b1")
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1)
         self.assertIn("FAIL ledger: UPSTREAM.md:", p.stdout)
         fx.dev_git("worktree", "remove", "--force", fx.wt("b1"))
         self.assertFalse(os.path.isdir(fx.wt("b1")))
-        p = fx.run("verify", "b1", "--sweep", "x")
+        fx.sweep("b1")
+        p = fx.run("verify", "b1")
         self.assertEqual(p.returncode, 1, "a missing worktree does not turn FAIL into OK:\n" + p.stdout + p.stderr)
         self.assertIn("FAIL ledger: UPSTREAM.md:", p.stdout)
         self.assertNotIn("pre-migration", p.stdout)
         self.assertEqual(fx.dev_git("worktree", "list", "--porcelain").count("worktree "), 1, "the temporary checkout is gone")
+
+
+class VerifyReadsTheSweep(_Base):
+    """verify reads the result scripts/sweep.py wrote for the batch head's full sha, through sweep.py's own
+    reader, and names every case but a pass (2026-09-27; before, the batcher passed free text with
+    --sweep and verify checked only that some text had been given at this head). The other checks still
+    print, so one run reports everything; a failing case clears the recorded sweep."""
+
+    def assembled(self):
+        self.fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n"})
+        self.fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+        self.fx.ok("plan", "--name", "b1")
+        self.fx.ok("assemble", "b1")
+        return self.fx.dev_git("rev-parse", "batch/b1")
+
+    def refused(self, needle):
+        p = self.fx.run("verify", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn(needle, p.stdout)
+        self.assertIn("ok   provenance", p.stdout, "the other checks still run and print")
+        st = self.fx.state("b1")
+        self.assertFalse(st["verified"]["ok"])
+        self.assertIsNone(st["sweep"], "a failing case leaves no recorded sweep for the body")
+        return p
+
+    def test_no_result_is_missing_and_names_the_full_sha_and_the_path(self):
+        fx = self.fx
+        head = self.assembled()
+        p = self.refused("FAIL sweep missing: no result for the batch head %s at %s" % (head, sweep.result_path(head, env=fx.env)))
+        self.assertIn("run `scripts/sweep.py run --tree %s`" % fx.wt("b1"), p.stdout)
+
+    def test_a_pass_at_the_head_is_ok_and_recorded(self):
+        fx = self.fx
+        head = self.assembled()
+        path = fx.sweep("b1")
+        p = fx.ok("verify", "b1")
+        self.assertIn("ok   sweep at %s: pass, finished " % head[:10], p.stdout)
+        self.assertIn("(pytest 0, bats 0, manager 0, tools 0, ledger 0; not owed: deps, typecheck, npm-test, build); %s" % path, p.stdout)
+        st = fx.state("b1")
+        self.assertTrue(st["verified"]["ok"])
+        self.assertEqual(st["sweep"]["head"], head)
+        self.assertEqual(st["sweep"]["verdict"], "pass")
+        self.assertEqual(st["sweep"]["legs"][:3], [["deps", "not owed"], ["pytest", 0], ["bats", 0]])
+
+    def test_a_result_at_the_old_head_is_stale_after_a_batch_commit(self):
+        fx = self.fx
+        old = self.assembled()
+        fx.sweep("b1")
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "t.txt"), "w") as f:
+            f.write("t\n")
+        fx._git("add", "t.txt", cwd=wt)
+        fx._git("commit", "-q", "-m", "batch: t", cwd=wt)
+        new = fx.dev_git("rev-parse", "batch/b1")
+        self.refused("FAIL sweep stale: the newest result for batch/b1 is at %s (finished " % old[:10])
+        p = fx.run("verify", "b1")
+        self.assertIn("the batch head is at %s; sweep again at the batch head" % new[:10], p.stdout)
+
+    def test_a_file_that_records_another_sha_is_stale_even_with_the_same_prefix(self):
+        fx = self.fx
+        head = self.assembled()
+        path = fx.sweep("b1")
+        with open(path) as f:
+            data = json.load(f)
+        data["sha"] = head[:10] + "0" * 30       # the file named for the head records another commit
+        sweep.write_result(path, data)
+        self.refused("FAIL sweep stale: %s records sha %s, not the batch head %s" % (sweep.result_path(head, env=fx.env), head[:10], head[:10]))
+
+    def test_a_red_leg_is_named_and_a_recorded_pass_over_it_is_invalid(self):
+        fx = self.fx
+        head = self.assembled()
+        legs = self.legs(bats=1)
+        fx.sweep("b1", legs=legs)
+        self.refused("FAIL sweep red at %s: bats (rc 1); logs under " % head[:10])
+        fx.sweep("b1", legs=legs, verdict="pass")
+        self.refused("FAIL sweep invalid at %s: the recorded verdict pass disagrees with its legs (red)" % head[:10])
+
+    def test_an_unfinished_an_incomplete_and_an_unreadable_result_each_say_so(self):
+        fx = self.fx
+        head = self.assembled()
+        fx.sweep("b1", finished=None)
+        self.refused("FAIL sweep unfinished: the sweep at %s started " % head[:10])
+        legs = self.legs()
+        del legs["bats"]
+        fx.sweep("b1", legs=legs)
+        self.refused("FAIL sweep incomplete at %s: no bats leg in " % head[:10])
+        with open(sweep.result_path(head, env=fx.env), "w") as f:
+            f.write("{")
+        self.refused("FAIL sweep unreadable: %s: " % sweep.result_path(head, env=fx.env))
+
+    def test_without_sweep_py_beside_it_verify_refuses_by_name(self):
+        fx = self.fx
+        self.assembled()
+        fx.sweep("b1")
+        os.remove(os.path.join(fx.dev, "scripts", "sweep.py"))
+        p = fx.run("verify", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("scripts/sweep.py is missing beside batch.py", p.stderr)
+        self.assertNotIn("ok   sweep", p.stdout)
+
+    def test_the_free_text_flag_is_gone(self):
+        fx = self.fx
+        self.assembled()
+        p = fx.run("verify", "b1", "--sweep", "pytest 1 passed")
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("unrecognized arguments: --sweep", p.stderr)
+
+    def legs(self, **rcs):
+        out = {n: {"owed": True, "rc": rcs.get(n, 0), "started": sweep.now(), "finished": sweep.now()} for n in sweep.LEGS}
+        for n in ("deps",) + sweep.WEBVIEW_LEGS:
+            out[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
+        return out
+
+
+class VerifyBehind(_Base):
+    """CI does not run on the merge to main (2026-09-27), so a batch lands only when its head contains main
+    as origin has it at that moment: then the merge commit's tree is the batch head's, the tree the sweep
+    and the batch branch's CI ran on. verify reads main with ls-remote, so a stale tracking ref (land
+    --no-fetch) cannot hide a move, and land, which re-runs verify, refuses before it merges anything."""
+
+    def ready(self, summarize=False):
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n"})
+        fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
+        self.assertIn("ok   main: origin/main at %s is in the batch head" % fx.bare_rev("main")[:10], p.stdout)
+        if summarize:
+            fx.push_batch("b1")
+            fx.ok("summarize", "b1")
+
+    def test_verify_refuses_a_batch_behind_main_until_main_is_merged_in(self):
+        fx = self.fx
+        self.ready()
+        head = fx.dev_git("rev-parse", "batch/b1")
+        moved = fx.commit_main({"README.md": "# notes-api\n\nmoved\n"}, "main moved")
+        p = fx.run("verify", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL behind: origin/main is at %s, which the batch head %s does not contain" % (moved[:10], head[:10]), p.stdout)
+        self.assertIn("`scripts/batch.py assemble b1 --merge-main`, then sweep and verify again", p.stdout)
+        self.assertIn("ok   sweep at %s: pass" % head[:10], p.stdout, "the sweep at the head is fine; main moved")
+        fx.ok("assemble", "b1", "--merge-main")
+        fx.sweep("b1")
+        p = fx.ok("verify", "b1")
+        self.assertIn("ok   main: origin/main at %s is in the batch head" % moved[:10], p.stdout)
+
+    def test_land_refuses_a_batch_behind_main_and_merges_nothing(self):
+        fx = self.fx
+        self.ready(summarize=True)
+        fx.commit_main({"README.md": "# notes-api\n\nmoved\n"}, "main moved")
+        p = fx.run("land", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL behind: origin/main is at", p.stdout)
+        self.assertEqual(fx.calls("pr", "merge"), [], "nothing merged")
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "OPEN")
+
+    def test_land_without_a_fetch_still_reads_main_on_origin(self):
+        fx = self.fx
+        self.ready(summarize=True)
+        moved = fx.commit_main({"README.md": "# notes-api\n\nmoved\n"}, "main moved")
+        self.assertNotEqual(fx.dev_git("rev-parse", "origin/main"), moved, "the dev clone has not fetched the move")
+        p = fx.run("land", "b1", "--no-fetch")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL behind: origin/main is at %s (not fetched here), which the batch head" % moved[:10], p.stdout)
+        self.assertEqual(fx.calls("pr", "merge"), [], "nothing merged")
+
+
+    def test_land_refuses_when_main_moves_after_its_verify(self):
+        """land's verify passes, then main moves (a merge by hand) before the merge call: the last read
+        of main, right before `gh pr merge`, sees it and nothing is merged. The move is made by a gh
+        wrapper on the settings read, which land makes after its verify."""
+        fx = self.fx
+        self.ready(summarize=True)
+        wrapper = os.path.join(fx.tmp, "gh-moves-main")
+        with open(wrapper, "w") as f:
+            f.write(MOVE_MAIN_GH % {"python": sys.executable})
+        os.chmod(wrapper, 0o755)
+        fx.env["ROMP_GH"] = wrapper
+        fx.env["MOVE_MAIN_AUTHOR"] = fx.author
+        fx.env["MOVE_MAIN_FAKE_GH"] = os.path.join(fx.bin, "gh")
+        before = fx.bare_rev("main")
+        p = fx.run("land", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("ok   main: origin/main at %s is in the batch head" % before[:10], p.stdout, "verify passed first")
+        moved = fx.bare_rev("main")
+        self.assertNotEqual(moved, before, "the wrapper moved main")
+        self.assertIn("main moved on origin to %s after verify read %s; nothing merged" % (moved[:10], before[:10]), p.stderr)
+        self.assertEqual(fx.calls("pr", "merge"), [], "nothing merged")
+
+
+# A gh for one test: on the repository-settings read (which land makes after its verify) it pushes one
+# commit to main from the author clone, once, then hands every call to the fake gh.
+MOVE_MAIN_GH = r"""#!%(python)s
+import os, subprocess, sys
+flag = os.environ["MOVE_MAIN_AUTHOR"] + ".moved"
+if sys.argv[1:3] == ["repo", "view"] and not os.path.exists(flag):
+    open(flag, "w").close()
+    a = os.environ["MOVE_MAIN_AUTHOR"]
+    run = lambda *c: subprocess.run(["git", *c], cwd=a, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    run("fetch", "-q", "origin")
+    run("checkout", "-q", "-B", "main", "origin/main")
+    with open(os.path.join(a, "moved.txt"), "w") as f:
+        f.write("moved after verify\n")
+    run("add", "moved.txt")
+    run("commit", "-q", "-m", "a merge by hand after verify")
+    run("push", "-q", "origin", "main")
+os.execv(sys.executable, [sys.executable, os.environ["MOVE_MAIN_FAKE_GH"], *sys.argv[1:]])
+"""
+
+
+class LandReadsTheSweep(_Base):
+    """land re-runs verify, so it refuses on the sweep result at the verified head the way verify does,
+    and merges on a pass with no free text ever given."""
+
+    def ready(self):
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n"})
+        fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        fx.push_batch("b1")
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
+        fx.ok("summarize", "b1")
+
+    def test_a_red_result_at_the_head_stops_land_before_the_merge(self):
+        fx = self.fx
+        self.ready()
+        legs = {n: {"owed": True, "rc": 0} for n in sweep.LEGS}
+        legs["pytest"]["rc"] = 1
+        fx.sweep("b1", legs=legs)
+        p = fx.run("land", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL sweep red at", p.stdout)
+        self.assertIn("pytest (rc 1)", p.stdout)
+        self.assertEqual(fx.calls("pr", "merge"), [])
+
+    def test_a_pass_lands(self):
+        fx = self.fx
+        self.ready()
+        p = fx.ok("land", "b1")
+        self.assertEqual(len(fx.calls("pr", "merge")), 1)
+        self.assertIn("ok   sweep at", p.stdout)
+        self.assertEqual(fx.gh()["prs"]["101"]["state"], "MERGED")
+
+
+FAKE_TOOL = r"""#!%(python)s
+import sys
+# a stand-in for npm, bats, node and the pytest interpreter: the module probe answers, every leg passes
+if sys.argv[1:2] == ["-c"]:
+    print("3.99.0")
+    print("")
+sys.exit(0)
+"""
+
+
+class SweepThenVerify(_Base):
+    """The composition: the real scripts/sweep.py runs in the batch worktree (fakes for the tools it calls),
+    and verify reads what it wrote, with no path handed from one to the other. Both resolve the result
+    from the state root and the full sha; a batch.py that looked anywhere else would say missing."""
+
+    def test_the_runner_writes_what_verify_reads(self):
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n", "tests/a.bats": "@test 'a' { true; }\n",
+                        "tests/manager-a.test.js": "// manager\n", "tools/a.test.mjs": "// tools\n",
+                        "vendor/track-changents/hooks/a.test.mjs": "// hooks\n"})
+        fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        tools = os.path.join(fx.tmp, "tools-bin")
+        os.makedirs(tools)
+        for name in ("fakepython", "npm", "bats", "node"):
+            with open(os.path.join(tools, name), "w") as f:
+                f.write(FAKE_TOOL % {"python": sys.executable})
+            os.chmod(os.path.join(tools, name), 0o755)
+        env = dict(fx.env, PATH=tools + os.pathsep + fx.env["PATH"])
+        p = subprocess.run([sys.executable, os.path.join(fx.dev, "scripts", "sweep.py"), "run", "--tree", fx.wt("b1"),
+                            "--python", os.path.join(tools, "fakepython"), "--workers", "2"],
+                           env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        head = fx.dev_git("rev-parse", "batch/b1")
+        self.assertTrue(os.path.exists(os.path.join(fx.xdg, "romp", "sweeps", head + ".json")))
+        p = fx.ok("verify", "b1")
+        self.assertIn("ok   sweep at %s: pass" % head[:10], p.stdout)
+        self.assertIn("pytest 0, bats 0, manager 0, tools 0; not owed: deps, ledger, typecheck, npm-test, build", p.stdout)
 
 
 class Pull(_Base):
@@ -1457,7 +1783,8 @@ class Pull(_Base):
         fx.ok("plan", "--name", "b1")
         fx.ok("assemble", "b1")
         fx.push_batch("b1")
-        fx.ok("verify", "b1", "--sweep", "pytest 3 passed")
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
         fx.ok("summarize", "b1")
         st = fx.state("b1")
         self.assertEqual(st["pr"]["number"], 900)
@@ -1496,7 +1823,8 @@ class LandAndFinish(_Base):
         fx.ok("plan", "--name", "b1")
         fx.ok("assemble", "b1")
         fx.push_batch("b1")
-        fx.ok("verify", "b1", "--sweep", "pytest 2 passed, bats 1, npm 1, typecheck clean")
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
         fx.ok("summarize", "b1")
 
     def test_land_merges_with_a_merge_commit_and_finish_cleans_up(self):
@@ -1760,12 +2088,12 @@ class Body(unittest.TestCase):
     """The generated body, as a pure function of the state: the cap and the "Read these first" rule."""
 
     @staticmethod
-    def member(n, title="t", tier="fix", touches=("docs/x.md",), trailer="yes", ci="success", head_ref=None):
+    def member(n, title="t", tier="fix", touches=("docs/x.md",), trailer="yes", head_ref=None):
         t = {"tier": tier, "rounds": 2, "sweep": {"pytest": "1 passed", "bats": 1, "npm": 1, "typecheck": "clean"},
              "sweep_head": "abcdef0123456789"} if trailer == "yes" else None
         return {"n": n, "title": title, "url": "", "head": "%040x" % n, "head_ref": head_ref or "br%d" % n, "base_ref": "main",
                 "labels": [tier] if tier else [], "tier": tier, "depends_on": [], "trailer": t, "trailer_error": None,
-                "mergeable": "MERGEABLE", "ci": ci, "touches": list(touches), "predicted_conflict": None}
+                "mergeable": "MERGEABLE", "touches": list(touches), "predicted_conflict": None}
 
     @classmethod
     def state(cls, members, log_lines=0, resolved=(), held=(), pulled=()):
@@ -1776,7 +2104,10 @@ class Body(unittest.TestCase):
                 "members": {str(m["n"]): m for m in members}, "pulled": list(pulled),
                 "assembly": {"merged": merged, "held": list(held), "head": "f" * 40,
                              "log": ["2026-01-01T00:00:00Z line %d" % i for i in range(log_lines)]},
-                "sweep": {"text": "pytest 1 passed", "head": "f" * 40}, "ledger": "clean",
+                "sweep": {"head": "f" * 40, "verdict": "pass", "finished": "2026-01-01T00:00:00Z",
+                          "legs": [["deps", "not owed"], ["pytest", 0], ["bats", 0], ["manager", 0], ["tools", 0], ["ledger", 0],
+                                   ["typecheck", "not owed"], ["npm-test", "not owed"], ["build", "not owed"]],
+                          "summary": {"pytest": "1 passed in 0.1s", "bats": "1 ok, 0 not ok"}}, "ledger": "clean",
                 "verified": {"ok": True, "head": "f" * 40, "lines": []}, "pr": None, "commented": {}}
 
     def test_stays_under_the_cap_with_details_truncated_first(self):
@@ -1814,7 +2145,20 @@ class Body(unittest.TestCase):
         self.assertIn("line 4", body)
         self.assertIn("(none)", body)
         self.assertIn("## To pull a member\nComment `pull #N`.", body)
-        self.assertIn('Merge with "Create a merge commit". Verified at ffffffffff: pytest 1 passed; provenance clean; ledger check clean.', body)
+        self.assertIn('Merge with "Create a merge commit". Verified at ffffffffff: sweep pass: pytest rc 0 (1 passed in 0.1s), '
+                      'bats rc 0 (1 ok, 0 not ok), manager rc 0, tools rc 0, ledger rc 0; not owed: deps, typecheck, npm-test, build; '
+                      'provenance clean; main contained; ledger check clean.', body)
+        self.assertNotIn("sweep not recorded", body)
+        self.assertIn("- none: every member is labeled, carries a trailer, touches no sensitive path and merged clean; "
+                      "the batch adds no commit of its own.", body)
+        self.assertNotIn("own CI", body, "a member runs no CI of its own, so the none line claims none")
+
+    def test_a_record_from_before_the_result_file_shows_its_text(self):
+        # a batch verified by an older batch.py recorded the batcher's free text; the body shows it as written
+        st = self.state([self.member(1)])
+        st["sweep"] = {"text": "pytest 1 passed", "head": "f" * 40, "at": "2026-01-01T00:00:00Z"}
+        body = batch.render_body(st, {"resolutions": [], "entries": []})
+        self.assertIn("Verified at ffffffffff: pytest 1 passed; provenance clean;", body)
 
     def test_an_unverified_batch_says_so_in_the_first_block(self):
         st = self.state([self.member(1)])
@@ -1835,7 +2179,8 @@ class Body(unittest.TestCase):
         self.assertEqual(r(self.member(11, tier="docs"), None), [], "docs is tier 0, like tests-only: not listed")
         self.assertEqual(r(self.member(12, tier="tests-only"), None), [])
         self.assertEqual(r(self.member(6, trailer=None), None), ["trailer not stated"])
-        self.assertEqual(r(self.member(7, ci="none (was conflicting)"), None), ["own CI: none (was conflicting)"])
+        self.assertEqual(r(dict(self.member(7), ci="none (was conflicting)", mergeable="CONFLICTING"), None), [],
+                         "a member runs no CI of its own: an older plan's CI word gives no reason")
         self.assertEqual(r(self.member(8), {"files": ["a.py", "b.py"], "how": "x", "hunks": 3, "review": "one round by a subagent: ok"}),
                          ["conflict resolved in a.py, b.py (3 hunks); one review round: one round by a subagent: ok. [diff from the clean merge below]"])
         self.assertEqual(r(self.member(9), {"files": ["a.py"], "how": "x", "hunks": 1, "review": None}),
@@ -1843,7 +2188,10 @@ class Body(unittest.TestCase):
         st = self.state([self.member(10, tier=None, trailer=None, touches=("kernel/k.py",))])
         body = batch.render_body(st, {"resolutions": [], "entries": []})
         self.assertIn("- #10 br10: unlabeled; touches kernel/; trailer not stated.", body)
-        self.assertIn("| #10 | t | unlabeled | not stated | not stated | success | unlabeled, kernel/, no trailer | - |", body)
+        self.assertIn("| #10 | t | unlabeled | not stated | not stated | unlabeled, kernel/, no trailer | - |", body)
+        self.assertIn("| # | Title | Tier | Rounds | Sweep at own head | Flags | Ledger |", body)
+        self.assertNotIn("Own CI", body)
+        self.assertNotIn("own CI", body)
 
     def test_held_back_lines_follow_the_template(self):
         """Whether the owner was told is what hold_back RECORDED, never assumed."""
@@ -1908,17 +2256,6 @@ class Body(unittest.TestCase):
 
 
 class Helpers(unittest.TestCase):
-    def test_ci_reads_both_rollup_shapes(self):
-        ci = batch.ci_of
-        self.assertEqual(ci({"statusCheckRollup": [], "mergeable": "CONFLICTING"}), "none (was conflicting)")
-        self.assertEqual(ci({"statusCheckRollup": [], "mergeable": "MERGEABLE"}), "none")
-        self.assertEqual(ci({"statusCheckRollup": [{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"}]}), "success")
-        self.assertEqual(ci({"statusCheckRollup": [{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"},
-                                                   {"__typename": "CheckRun", "status": "IN_PROGRESS", "conclusion": None}]}), "pending")
-        self.assertEqual(ci({"statusCheckRollup": [{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "FAILURE"},
-                                                   {"__typename": "StatusContext", "state": "SUCCESS"}]}), "failure")
-        self.assertEqual(ci({"statusCheckRollup": [{"__typename": "StatusContext", "state": "PENDING"}]}), "pending")
-
     def test_trailer_parsing(self):
         t, err = batch.parse_trailer("body\n" + TRAILER)
         self.assertEqual(t["rounds"], 3)
@@ -2000,10 +2337,9 @@ class BisectMessageForms(unittest.TestCase):
 class PrTierWorkflow(unittest.TestCase):
     """The fork's copy of .github/workflows/pr-tier.yml, upstream's check that every PR carries exactly
     one tier label, also counts `batch` and `docs` (2026-09-07 sync). A batch PR carries `batch` and no
-    tier, and ci_of folds a red check into "ci: failure", so upstream's list would hold every batch PR
-    red; `docs` is upstream's name for tier 0 (renamed from tests-only on 2026-09-08, the old spelling
-    still accepted). The workflow's jq filter is run here as the workflow runs it, so the labels it
-    counts and the labels batch.py knows stay in step."""
+    tier, so upstream's list would hold every batch PR red; `docs` is upstream's name for tier 0 (renamed
+    from tests-only on 2026-09-08, the old spelling still accepted). The workflow's jq filter is run here
+    as the workflow runs it, so the labels it counts and the labels batch.py knows stay in step."""
 
     WORKFLOW = ROOT / ".github" / "workflows" / "pr-tier.yml"
 
