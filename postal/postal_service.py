@@ -5141,18 +5141,24 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
            both);
       (r3) the hub's current process names the origin under another name than the parked record carries, in either
            direction (_canon_peer_name). The old process filed the host under the alias it dials, and the new one
-           files the host's own dial under the hostname it declares until its own dial folds it: held until the hub
-           names it under the record's name, which that fold brings
+           files the host's own dial under the hostname it declares until its own dial folds it: held in this bus
+           process until the hub names it under the record's name, which that fold brings
            (test_cost_r3_an_origin_the_restarted_hub_names_under_another_name_stays_held_until_it_names_it_under_the_records_name).
            Or the record carries the declared name, which a hub on this build reaches with or without a restart: the
            host's first dial after its own bus restarts, or after the hub's, declares its hostname, no row at the hub
            carries its bus id, so the hub files that dial, and the mail it carries, under that name, and its own dial
            to the alias folds the name into the alias before its next exchange here. The hub names the host under the
            alias alone from that exchange until the host's first dial after a later restart is filed under that name
-           while the hub exchanges here. The hold on the declared name lasts until the hub gossips that name here
-           again, across this bus's restart too, and every sid nothing names here is cannot-determine meanwhile, the
-           sender too once it ends
-           (test_cost_r3_the_other_direction_a_record_under_the_declared_name_holds_until_the_hub_gossips_that_name_again);
+           while the hub exchanges here. In this bus process the hold on the declared name lasts until the hub
+           gossips that name here again, and every sid nothing names here is cannot-determine meanwhile, the sender
+           too once it ends
+           (test_cost_r3_the_other_direction_a_record_under_the_declared_name_holds_until_the_hub_gossips_that_name_again).
+           In either direction, once this bus restarts, the host's own row here that answers a dial of the new
+           process also ends the carried hold, found as decision 1's end above states: under the record's name, or
+           under another name by a bus id the carried via row carries (the reviewer's re-verifier's roads
+           rv83RenamedFirstDirectionDirectPeer and rv83DeclaredNameDirectPeer, where this bus dials the host under
+           the record's name and that row's answer after this bus's restart ends the hold while the hub still files
+           the host under the other name);
       (r4) an origin this bus also hears directly stays held through its own answered row in this bus process, so a
            sid nothing names stays cannot-determine after this bus's dial reaches the host and its row answers
            (test_cost_r4_an_origin_this_bus_also_hears_directly_stays_held_through_its_own_answered_row_in_this_process).
