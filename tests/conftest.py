@@ -856,14 +856,15 @@ def wait_for_census(before, timeout=5.0):
 # where the check runs, not necessarily the one that started the thread; the thread's target and stack say where it came
 # from.
 # THE CAP, 10 s, from the census of 2026-09-26 on the fork's main (the full suite on 3.12 at -n 2, twice, and at -n 4;
-# every third module serially on 3.12 and on 3.14t with the GIL off). No non-daemon thread but pytest-timeout's timer was
-# alive at any session end, so no exit latency could be measured there. The tests' own joins measured it instead: the
-# longest time from a stop to a thread's end was 5.03 s, a daemon thread's end under the product's 5 s wait for a session
-# host's hello. The longest join of a non-daemon thread, 2.98 s, was not an exit: it was a concurrency test's hammer
-# threads joined as they finished their work, so it bounds no exit latency. The cap is about twice 5.03 s and exactly
-# twice tests/test_thread_stop_census.py's BOUND_S (5 s, the longest wait that census reads as bounded). A run that leaves no thread pays nothing, since a join
-# returns the moment its thread ends; a run that leaks one pays the cap once per process, then fails. A last test whose
-# own teardown fails skips the check (the runner's teardown raised first), in a run that is red already.
+# every third test module, 314 of 940, serially, twice each on 3.12 and on 3.14t with the GIL off). No non-daemon thread
+# but pytest-timeout's timer was alive at any session end, so no exit latency could be measured there. The tests' own
+# joins measured it instead: the longest time from a stop to a thread's end was 5.03 s, a daemon thread's end under the
+# product's 5 s wait for a session host's hello. The longest join of a non-daemon thread, 2.98 s, was not an exit: it
+# was a concurrency test's hammer threads joined as they finished their work, so it bounds no exit latency. The cap is
+# about twice 5.03 s and exactly twice tests/test_thread_stop_census.py's BOUND_S (5 s, the longest wait that census
+# reads as bounded). A run that leaves no thread pays nothing, since a join returns the moment its thread ends; a run
+# that leaks one pays the cap once per process, then fails. A last test whose own teardown fails skips the check (the
+# runner's teardown raised first), in a run that is red already.
 # AFTER THE CHECK, which runs at the last test's teardown. A thread STARTED after it, in a pytest_sessionfinish or
 # pytest_unconfigure hook or an atexit handler, is not checked. A thread STOPPED only after it, by a config.add_cleanup
 # callback, pytest_sessionfinish or pytest_unconfigure, is checked and fails the guard, although the process would exit:
