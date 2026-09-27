@@ -538,16 +538,23 @@ class JoinRace(unittest.TestCase):
         it, and three listed threads, never started, each advance it by the whole timeout they are joined for, as a join
         on a thread that never ends does. Joined for the full cap each, they would spend three times the cap."""
         cf = sys.modules["tests.conftest"]
-        clock = [0.0]
+        clock, clock_reads = [0.0], [0]
 
         class NeverEnds(threading.Thread):
             def join(self, timeout=None):
                 clock[0] += timeout             # the join times out: its whole timeout passes
 
+        def read_clock():
+            clock_reads[0] += 1
+            if clock_reads[0] > 1000:           # ends the call rather than letting it spin to the runner's timeout
+                raise AssertionError("the guard read the fake clock more than 1000 times: only the listed threads' "
+                                     "join moves it, so the guard is waiting some other way")
+            return clock[0]
+
         plants = [NeverEnds(name="plant-never-ends-%d" % i) for i in range(3)]
         cap = 10.0
         with mock.patch.object(cf, "_enumerate", return_value=[threading.main_thread()] + plants), \
-                mock.patch.object(cf, "_monotonic", new=lambda: clock[0]):
+                mock.patch.object(cf, "_monotonic", new=read_clock):
             left = cf.threads_left_at_session_end(cap)
         self.assertEqual(left, plants, "the three threads still running at the deadline are returned")
         self.assertLessEqual(clock[0], cap, "the guard's joins spent %g s of the fake clock against a %g s cap: each join "
@@ -558,11 +565,16 @@ class JoinRace(unittest.TestCase):
         is tied to the guard's first read of the thread list: a spy on the guard's own binding reads the real list and
         only then lets the parent go, so the first list holds the parent and not the child. With
         `child_ends_on_second_read`, the spy's second read, again once it has read the list, lets the child end;
-        otherwise the child runs on until the test's cleanup. Returns (the guard's result, the parent, the child)."""
+        otherwise the child runs on until the test's cleanup lets it go, or for 5 s. Returns (the guard's result, the
+        parent, the child)."""
         cf = sys.modules["tests.conftest"]
         real_enumerate = cf._enumerate
         first_read, child_may_end = threading.Event(), threading.Event()
-        child = threading.Thread(target=child_may_end.wait, args=(60,), name="plant-chain-child")
+
+        def child_body():
+            child_may_end.wait(5)               # ends once let go, or after 5 s, longer than either pin's cap
+
+        child = threading.Thread(target=child_body, name="plant-chain-child")
 
         def parent():
             first_read.wait(60)
@@ -601,7 +613,7 @@ class JoinRace(unittest.TestCase):
     def test_a_thread_started_as_another_exits_is_returned_while_it_runs_past_the_cap(self):
         """The same chain with a child that runs on: at a short cap the guard returns the child, which only a second read
         of the thread list can find, and not its parent, which has ended."""
-        left, par, child = self._chain(2.0, child_ends_on_second_read=False)
+        left, par, child = self._chain(1.0, child_ends_on_second_read=False)
         self.assertIn(child, left, "the child started as its parent exited is returned: the guard read the list again")
         self.assertTrue(child.is_alive())
         self.assertNotIn(par, left)
