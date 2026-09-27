@@ -8727,12 +8727,15 @@ Firefox, after that release, a mouse click on such an element, whose pointerup h
 10 of 10 and 10 of 10 again at 343ee2eb5, closed by the refusal of a mouse's or a pen's record whose pointer left the viewer's
 window with a button down, Firefox sending the viewer's window a pointerout with no relatedTarget as the press left its frame
 (under this gate 0 of 10, the next click opening; its browser cells in Firefox and a node guard, red at 343ee2eb5 and at
-09f58bec6), Chromium opening neither, and a later check finding a third, in WebKit alone, open here and at 142ade155, at 09f58bec6
-and at 343ee2eb5, for the owner: the mouse pressed on the control, any button, and held while the top page hides the viewer's
-frame and shows it again, then a mouse click on another document's element over the control that hides at that click's mousedown
-or its pointerdown, whose pointerup under pointerId 1 hands the held press's record to the slot and whose click takes it, 60 of 60
-in that check's probe, Firefox 0 of 40 and Chromium 0 of 42, no event the gate hears between that press and that click telling it
-from the viewer's own; and in the residual by reading a second finger resting on another
+09f58bec6), Chromium opening neither, and a later check finding a third, in WebKit and in Chromium, open here and, in WebKit, at
+142ade155, at 09f58bec6 and at 343ee2eb5, for the owner: the mouse pressed on the control, any button, and held while the top page
+hides the viewer's frame and shows it again, then a mouse click on another document's element over the control that hides at that
+click's mousedown or its pointerdown, whose pointerup under pointerId 1 hands the held press's record to the slot and whose click
+takes it, WebKit opening it at every timing, 3,700 of 3,700 in a later probe of these fixes and 60 of 60 in that check's probe,
+Chromium whenever the release comes before the first redraw to start after the hide, 1,526 of 3,700 in the later probe, all 222
+releases before that redraw opening and none of the 178 after it in a run of it that stamped the redraw, and Firefox never, 0 of
+2,600 on the Files pane and the chat, no event the gate hears between that press and that click telling it from the viewer's own
+where it opens; and in the residual by reading a second finger resting on another
 document
 during the viewer's tap and a tap whose click the engine withholds, in Firefox and WebKit, and a foreign tap by the same pen under
 the same pointerId; reaching it needs an element that appears over the picture during a tap, while the fact that today the only
@@ -8762,7 +8765,9 @@ released on the control, 8 of 8 in a probe of these fixes, where
 open it, no other gesture of that probe that never leaves the frame changing in any of the three engines, a press held while an
 element of the top page covered its point and went away among them, and its second cost, in Chromium, found by a later check and
 with no cell, a press on the control or the picture held while the top page hides the viewer's frame and shows it again, then
-released there, 11 of 11, where 343ee2eb5's gate opened all 11, Chromium sending that pointerout as the frame hides; the primary
+released there, refused only when the frame's next redraw came while it was hidden, since only such a redraw brings that
+pointerout with the button down, and opened otherwise, 168 of 168 such presses refused and none of the 232 others in a later probe
+of these fixes that stamped that redraw, and all 11 of that check's own probe refused, where 343ee2eb5's gate opened all 11; the primary
 press's clear's cost on a device with a
 mouse and a touchscreen: a contact held on a picture while a primary press of the other pointer type lands elsewhere in the
 viewer's window loses its record, so its click opens nothing and reveals, while one that lands on another document's element
@@ -9130,7 +9135,7 @@ page, and another document's mouse click after a mouse's press whose pointer lef
 cost cell of the viewer's own press dragged out of its frame and back, in Firefox on the hybrid page, the first cost of the refusal
 of a record whose pointer left the viewer's window with a button down, which refuses such a press once and reveals the control,
 the next click opening, and that refusal's second cost, a press held in Chromium while the top page hides the viewer's frame and
-shows it again, then released there, having no cell
+shows it again, then released there, refused only when the frame's next redraw came while it was hidden, having no cell
 (the Chromium leg runs the same module's cells of another document's tap whose click carries another touch's pointerId),
 each engine launched through real-viewer-leg.ts's inBrowser with the engine named; the cells are ui/webview/file-figure-open-taps.ts's,
 a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and two cases of WebKit's alone that read window errors, the Files

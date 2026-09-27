@@ -3435,11 +3435,15 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // with a button down, by the events the viewer heard, is refused once, its click opening nothing and revealing the control, and
 // the next click opens once. Its first cost, measured in Firefox, is a press dragged out of the frame and back (the engines leg's
 // cost cell), and its second, measured in Chromium, found by a later check and with no cell, a press on the control or the
-// picture held while the top page hides the viewer's frame and shows it again, then released there, 11 of 11 where 343ee2eb5's
-// gate opened all 11, Chromium sending that pointerout as the frame hides. The later check
-// found a third order of the class outside the residual, in WebKit alone and not in Chromium, which sends that pointerout: the mouse
-// held on the control while the top page hides the viewer's frame and shows it again, then another document's mouse click on an
-// element over the control that hides at that click's press, open at this head, for the owner (the gate comment states it). The
+// picture held while the top page hides the viewer's frame and shows it again, then released there, refused only when the
+// frame's next redraw came while it was hidden, which alone brings that pointerout with the button down, and opened otherwise,
+// 168 of 168 such presses refused and none of the 232 others in a later probe of these fixes that stamped that redraw, and all 11
+// of that check's own probe refused, where 343ee2eb5's gate opened all 11. The later check
+// found a third order of the class outside the residual, in WebKit and in Chromium: the mouse held on the control while the top
+// page hides the viewer's frame and shows it again, then another document's mouse click on an element over the control that
+// hides at that click's press, open at this head, for the owner (the gate comment states it), WebKit opening it at every timing,
+// 3,700 of 3,700 in a later probe of these fixes, Chromium whenever the release comes before the first redraw to start after the
+// hide, 1,526 of 3,700 in that probe, and Firefox never, 0 of 2,600 on the Files pane and the chat. The
 // shape whose compatibility mousedown alone the
 // element takes is not in the residual: there Firefox and WebKit send the viewer that tap's mouseup of detail 0, and a mouseup other
 // than a

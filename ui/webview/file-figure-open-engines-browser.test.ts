@@ -84,14 +84,18 @@
 // released on the control (its cost cell, where 343ee2eb5's gate opened that click; 8 of 8 in a probe of these fixes), while
 // Chromium and WebKit, which keep a held left press in the frame it began in, opened it. Its second cost, measured in Chromium,
 // found by a later check and with no cell: a press on the control or the picture held while the top page hides the viewer's frame
-// and shows it again, then released there (11 of 11, where 343ee2eb5's gate opened all 11), Chromium sending that pointerout as
-// the frame hides, while WebKit sends none there and opens it. The later check found a third order of the class outside the
+// and shows it again, then released there, refused only when the frame's next redraw came while it was hidden, which alone brings
+// that pointerout with the button down, and opened otherwise (168 of 168 such presses refused and none of the 232 others in a
+// later probe of these fixes that stamped that redraw, and all 11 of that check's own probe refused, where 343ee2eb5's gate opened
+// all 11), while WebKit sends no such pointerout there and opens it. The later check found a third order of the class outside the
 // residual, in
-// WebKit alone, open at this head and at 142ade155, 09f58bec6 and 343ee2eb5, with no cell, for the owner (file-view.ts's gate
-// comment states it): the mouse held on the control while the top page hides the viewer's frame and shows it again, then another
-// document's mouse click on an element over the control that hides at that click's mousedown or its pointerdown, whose pointerup
-// hands the held press's record to the slot (60 of 60 in that check's probe; Firefox 0 of 40 and Chromium 0 of 42). The gate's cost
-// measured in WebKit, the same at 142ade155: WebKit's
+// WebKit and in Chromium, open at this head and, in WebKit, at 142ade155, 09f58bec6 and 343ee2eb5, with no cell, for the owner
+// (file-view.ts's gate comment states it): the mouse held on the control while the top page hides the viewer's frame and shows it
+// again, then another document's mouse click on an element over the control that hides at that click's mousedown or its
+// pointerdown, whose pointerup hands the held press's record to the slot (WebKit opening it at every timing, 3,700 of 3,700 in a
+// later probe of these fixes and 60 of 60 in that check's probe; Chromium whenever the release comes before the first redraw to
+// start after the hide, 1,526 of 3,700 in the later probe; Firefox never, 0 of 2,600 on the Files pane and the chat). The gate's
+// cost measured in WebKit, the same at 142ade155: WebKit's
 // cost cell, the viewer's own tap whose pointerup an
 // element of the top page takes, shown at the tap's pointerdown and hidden at its pointerup, opens nothing and reveals the
 // control, and the next tap opens once, the tap's click carrying pointerId 1 and finding its press only in the slot, which no

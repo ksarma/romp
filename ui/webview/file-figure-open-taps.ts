@@ -107,13 +107,17 @@
 //   cost cell's, measured in Firefox: the viewer's own press on the control dragged out of its frame and back (8 of 8 in a probe of
 //   these fixes, where 343ee2eb5's gate opened all 8; Chromium and WebKit keep a held left press in the frame it began in and
 //   opened it). Its second, measured in Chromium, found by a later check and with no cell: a press on the control or the picture
-//   held while the top page hides the viewer's frame and shows it again, then released there (11 of 11, where 343ee2eb5's gate
-//   opened all 11). The later check found a
-//   third order of the class outside the residual, in WebKit alone, open at this head and at 142ade155, at 09f58bec6 and at
-//   343ee2eb5, with no cell and for the owner (file-view.ts's gate comment states it): the mouse held on the control while the top
-//   page hides the viewer's frame and shows it again, then another document's mouse click on an element over the control that hides
-//   at that click's mousedown or its pointerdown, whose pointerup hands the held press's record to the slot (60 of 60 in that
-//   check's probe). The chain rule's costs, none measured, each a
+//   held while the top page hides the viewer's frame and shows it again, then released there, refused only when the frame's next
+//   redraw came while it was hidden and opened otherwise (168 of 168 such presses refused and none of the 232 others in a later
+//   probe of these fixes that stamped that redraw, and all 11 of that check's own probe refused, where 343ee2eb5's gate opened all
+//   11). The later check found a
+//   third order of the class outside the residual, in WebKit and in Chromium, open at this head and, in WebKit, at 142ade155, at
+//   09f58bec6 and at 343ee2eb5, with no cell and for the owner (file-view.ts's gate comment states it): the mouse held on the
+//   control while the top page hides the viewer's frame and shows it again, then another document's mouse click on an element over
+//   the control that hides at that click's mousedown or its pointerdown, whose pointerup hands the held press's record to the slot
+//   (WebKit opening it at every timing, 3,700 of 3,700 in a later probe of these fixes and 60 of 60 in that check's probe,
+//   Chromium whenever the release comes before the first redraw to start after the hide, 1,526 of 3,700 in the later probe, and
+//   Firefox never, 0 of 2,600 on the Files pane and the chat). The chain rule's costs, none measured, each a
 //   refusal that reveals the control: on a Firefox touchscreen whose tap's click came typed touch under a pointerId other than
 //   its pointerup's every tap, the tab then opening only from the mouse or the keyboard; every tap of a pen in the touch order
 //   whose click comes typed mouse, as WebKitGTK would type it by analogy with a touch's, the tab still opening from a finger, the
