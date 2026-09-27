@@ -45,6 +45,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+# Hermetic state BEFORE the load of scripts/batch.py in BatchCIRun's name pin: only pytest runs conftest's floor (a
+# bare unittest or script run otherwise resolves REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 FAKE_GH = ROOT / "tests" / "fixtures" / "land_fake_gh.py"
