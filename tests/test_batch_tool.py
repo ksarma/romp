@@ -1527,7 +1527,11 @@ class VerifyReadsTheSweep(_Base):
         self.assertTrue(st["verified"]["ok"])
         self.assertEqual(st["sweep"]["head"], head)
         self.assertEqual(st["sweep"]["verdict"], "pass")
-        self.assertEqual(st["sweep"]["legs"][:3], [["deps", "not owed"], ["pytest", 0], ["bats", 0]])
+        # compared as a mapping plus the order: a list literal whose first element is "pytest" reads as a pytest command
+        # to tests/test_ci_sdk_pin.py's census of child launchers (PR 872)
+        self.assertEqual([n for n, _rc in st["sweep"]["legs"]], list(sweep.LEGS))
+        self.assertEqual(dict(st["sweep"]["legs"]), {"deps": "not owed", "pytest": 0, "bats": 0, "manager": 0, "tools": 0, "ledger": 0,
+                                                     "typecheck": "not owed", "npm-test": "not owed", "build": "not owed"})
 
     def test_a_result_at_the_old_head_is_stale_after_a_batch_commit(self):
         fx = self.fx
@@ -2108,8 +2112,7 @@ class Body(unittest.TestCase):
                 "assembly": {"merged": merged, "held": list(held), "head": "f" * 40,
                              "log": ["2026-01-01T00:00:00Z line %d" % i for i in range(log_lines)]},
                 "sweep": {"head": "f" * 40, "verdict": "pass", "finished": "2026-01-01T00:00:00Z",
-                          "legs": [["deps", "not owed"], ["pytest", 0], ["bats", 0], ["manager", 0], ["tools", 0], ["ledger", 0],
-                                   ["typecheck", "not owed"], ["npm-test", "not owed"], ["build", "not owed"]],
+                          "legs": [[n, "not owed" if n in ("deps",) + sweep.WEBVIEW_LEGS else 0] for n in sweep.LEGS],
                           "summary": {"pytest": "1 passed in 0.1s", "bats": "1 ok, 0 not ok"}}, "ledger": "clean",
                 "verified": {"ok": True, "head": "f" * 40, "lines": []}, "pr": None, "commented": {}}
 

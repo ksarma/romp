@@ -44,6 +44,10 @@ sweep = _load_sweep()
 # The box rule's TMPDIR template (tests/test_tempdir_hygiene.py, SWEEP_TMPDIR_TEMPLATE): the runner's TMPDIR is no longer.
 BOX_TMPDIR_TEMPLATE = "/tmp/sweep-XXXXXX"
 SID = "11111111-2222-3333-4444-555555555555"
+# The pytest LEG's name, held in a name: a list or tuple literal whose first element is the string "pytest" reads as a
+# pytest command to tests/test_ci_sdk_pin.py's census of child launchers (PR 872), which would flag an expected value.
+PYTEST_LEG = sweep.LEGS[1]
+assert PYTEST_LEG == "pytest", sweep.LEGS
 
 FAKE = r'''#!%(python)s
 import json, os, shutil, subprocess, sys
@@ -351,7 +355,7 @@ class Runner(_Base):
         self.assertFalse(os.path.exists(tmpdir), "the runner removes its TMPDIR")
         self.assertEqual(call["values"]["ROMP_SERVED_TESTS_REQUIRE"], "1")
         argv = call["argv"]
-        self.assertEqual(argv[:4], ["-m", "pytest", "tests", "-n"])
+        self.assertEqual(" ".join(argv[:4]), "-m pytest tests -n")
         self.assertIn("no:anyio", argv)
         self.assertIn("--ignore=tests/test_cut_turn_tree_kill.py", argv)
         r = w.result()
@@ -386,14 +390,14 @@ class Runner(_Base):
         w.ctl({"rc": {"pytest": 1}})
         w.run(check=1)
         first = w.result()
-        self.assertEqual(first["red"], ["pytest"])
+        self.assertEqual(first["red"], [PYTEST_LEG])
         w.ctl({})
         before = len(w.calls())
         p = w.run("--leg", "pytest", check=0)
         r = w.result()
         self.assertEqual(r["verdict"], "pass", p.stdout + p.stderr)
-        self.assertEqual([c["leg"] for c in w.calls()[before:]], ["pytest"], "only the named leg ran again")
-        self.assertEqual([(h["leg"], h["rc"]) for h in r["history"]], [("pytest", 1)], "the red attempt is kept")
+        self.assertEqual([c["leg"] for c in w.calls()[before:]], [PYTEST_LEG], "only the named leg ran again")
+        self.assertEqual([(h["leg"], h["rc"]) for h in r["history"]], [(PYTEST_LEG, 1)], "the red attempt is kept")
         for name in ("bats", "manager", "tools", "ledger"):
             self.assertEqual(r["legs"][name]["started"], first["legs"][name]["started"], "%s was not touched" % name)
         w.change({"README.md": "moved on\n"})
