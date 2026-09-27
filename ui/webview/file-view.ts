@@ -2833,7 +2833,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   reaches (the node guard of a touch record a touchend ended, red under a gate that deletes it). The pointerup's end of its
   //   own record is what lets a pointer's click take its press, since a record still standing at a click refuses that click:
   //   dropping it alone refuses every click that carries its own press's pointerId, a mouse's in every engine and a tap's in
-  //   Chromium and Firefox (WebKit's tap click, under pointerId 1, still finds the slot), and 13 of the outline suite's 58
+  //   Chromium and Firefox (WebKit's tap click, under pointerId 1, still finds the slot), and 14 of the outline suite's 59
   //   top-level tests are red under it; in Firefox, where another document's element takes the mouse's next press after a lost
   //   pointerup, a mouse click's, this window hears that click's pointerup, its mouseup of detail 1 and its click, and the
   //   pointerup hands the mouse's record to the slot, refused since that press left this window with its button down (the second
