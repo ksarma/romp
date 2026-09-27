@@ -414,17 +414,33 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   property, never on a binary's name: a postal bus, a kernel, a session host and a
   mock ssh's orphaned `sleep` are the same leak (the tunnels module's mocks `exec`
   their trailing sleep since the check found the orphans). One process is passed
-  over, by identity and never by its name: the controller's own `multiprocessing`
-  resource tracker (the pid its `multiprocessing.resource_tracker` records for its
-  tracker, while that pid is the controller's child). The stdlib starts it on
-  demand (a spawn-context `ProcessPoolExecutor` starts it, as
-  `tests/test_session_env.py`'s census pool class does), and it ignores SIGINT and
-  SIGTERM and exits when the last write end of its pipe closes, the controller's at
-  the controller's exit. A process holding a write end (a `multiprocessing` worker
-  inherits one) is judged in its own right, and so is a second tracker a test
-  starts itself. The check never kills;
-  it names the pid. What it does not read, each for the reason in the comment
-  above `LEAK_EXIT_BOUND_S`:
+  over, by identity and never by its name, and only while the premise of the
+  pass-over holds: the controller's own `multiprocessing` resource tracker (the
+  pid its `multiprocessing.resource_tracker` records for its tracker, while that
+  pid is the controller's child). The stdlib starts it on demand (a spawn-context
+  `ProcessPoolExecutor` starts it, as `tests/test_session_env.py`'s census pool
+  class does), and it ignores SIGINT and SIGTERM and exits when the last write end
+  of its pipe closes. The premise is that it exits with the controller, which
+  holds while no live process other than the controller and the tracker holds that
+  pipe. The check reads the pipe from `/proc` (the one the controller's record
+  writes to, when the tracker holds a descriptor on it too) and reads every live
+  process's descriptors for it. A process holding it (a test's forked child
+  inherits a write end, a spawn-context worker is handed one) leaves the tracker
+  judged like any process, so named when it holds a root, as it does in a serial
+  run, with that process's pid on its line; so does a pipe the check cannot read,
+  or a tracker holding no descriptor on it, with the reason on its line. The
+  premise is read before the wait, which then waits for the exit of each process
+  holding the pipe too, and again after it, where it decides. Where the premise
+  cannot be read the check's own scope decides: without procfs the check runs
+  nothing (below), so nothing is passed over or named; with procfs and the pipe
+  unreadable the tracker is named, since the pass-over is an exception to naming a
+  readable holder and applies only where its premise is shown. A process whose
+  descriptors cannot be read is not read for the pipe, as it is not read for a
+  root, and never makes the run red: a non-dumpable child that keeps the pipe
+  leaves the tracker passed over, and is listed as not judged (below). A process
+  holding a write end is judged for a root in its own right, and so is a second
+  tracker a test starts itself. The check never kills; it names the pid. What it
+  does not read, each for the reason in the comment above `LEAK_EXIT_BOUND_S`:
   - a process whose environment, cwd, open files and argv carry no path under a
     root, as one handed a built environment with its cwd elsewhere and no file
     open in the root (the residual probe in the module below is its witness);

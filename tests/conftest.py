@@ -105,17 +105,39 @@ atexit.register(_remove_run_dirs)
 # as that: its phase is unknown, because it was spawned while no phase was set or was given an environment built
 # without the name. Keyed on that PROPERTY and never on a binary's name: a bus, a kernel, a session host, a mock ssh's
 # sleep are all the same leak.
-# One process is passed over, by identity and never by its name (2026-09-27, round 2 of fork PR #894's review): the
-# controller's own multiprocessing resource tracker, the pid the controller's multiprocessing.resource_tracker records
-# for its tracker, while that pid is the controller's child (_own_resource_tracker). The stdlib starts the tracker on
-# demand (a spawn-context ProcessPoolExecutor starts it, as tests/test_session_env.py's census pool class does in its
-# setUpClass); the tracker ignores SIGINT and SIGTERM and exits when the last write end of its pipe closes, the
-# controller's at the controller's exit, so it outlives the tests by design and ends with the controller. In a serial run
-# it holds the run's temp root through the environment it inherited (a serial run of that class was red on it before
-# this); under pytest-xdist it is a worker's and exits with the worker. A process holding a write end of its pipe (a
-# multiprocessing worker inherits one) is judged in its own right, and so is a second tracker a test starts itself.
-# tests/test_run_end_leaked_processes.py pins the pass-over, the second tracker, and a record naming a process that is
-# not the controller's child.
+# One process is passed over, by identity and never by its name, and only while the premise of the pass-over holds
+# (2026-09-27, round 2 of fork PR #894's review, and the reviewer's closing check of it): the controller's own
+# multiprocessing resource tracker, the pid the controller's multiprocessing.resource_tracker records for its tracker,
+# while that pid is the controller's child (_own_resource_tracker). The stdlib starts the tracker on demand (a
+# spawn-context ProcessPoolExecutor starts it, as tests/test_session_env.py's census pool class does in its setUpClass);
+# the tracker ignores SIGINT and SIGTERM and exits when the last write end of its pipe closes. In a serial run it holds
+# the run's temp root through the environment it inherited (a serial run of that class was red on it before the
+# pass-over); under pytest-xdist it is a worker's and exits with the worker. The premise is that it exits with the
+# controller, which holds while no live process other than the controller and the tracker holds its pipe
+# (_tracker_kept). A test's forked child inherits the controller's write end and a spawn-context worker is handed one,
+# so either keeps the tracker running after the controller has gone; with the pass-over by identity alone, a serial run
+# whose test left such a child ended green and silent, since a raw fork's child need hold no path under a root (its
+# environment is the block the controller started with, before the run minted its roots). The pipe is read from /proc:
+# the one whose write end the controller's record holds (its descriptor, read at /proc/<pid>/fd), when the tracker holds
+# a descriptor on it too (the end it reads from); then every live process's descriptors are read for it (_pipe_holders).
+# A process found holding it leaves the tracker judged like any process, so named when it holds a root, as it does in a
+# serial run, with that process's pid on its line; so does a pipe that cannot be read, or a tracker that holds no
+# descriptor on it, with the reason on its line. The premise is read before the wait, which then waits for the exit of
+# each process holding the pipe as it waits for a holder's, and read again after the wait, where it decides, so a child
+# that exits at session end does not get the tracker named. Where the premise cannot be read, the check's own scope
+# decides. Without procfs the check runs nothing (below), so nothing is passed over and nothing is named. With procfs
+# and the pipe unreadable, the tracker is named: within its scope the check names every readable process that holds a
+# root, the pass-over is an exception to that, and an exception applies only where its premise is shown (a red there is
+# a visible false refusal; a pass-over on a premise nobody read would be the silent miss the premise exists to prevent).
+# A process whose descriptors cannot be read (another user's, or one of this user's that made itself non-dumpable) is
+# not read for the pipe, as it is not read for a root, and it never makes the run red: a non-dumpable child that keeps
+# the pipe leaves the tracker passed over, and is itself listed as not judged when it is this user's, started during the
+# run, in its cgroup (below). A process holding a write end is judged for a root in its own right, and so is a second
+# tracker a test starts itself. tests/test_run_end_leaked_processes.py pins the pass-over; the premise (a forked child
+# that keeps the pipe past the run's end, one that exits during the wait, a pipe the check cannot read, a record naming
+# a child of the controller that holds no descriptor on the pipe); the unread class's witness (a non-dumpable forked
+# child that keeps the pipe); a run without procfs that started the tracker; the second tracker; and a record naming a
+# process that is not the controller's child.
 # The roots are the controller's and every root listed in its `romp-tests-children`: since 2026-09-24 a nested process
 # (an xdist worker, a nested pytest, any child of the run that imports the tests package handed a root as its TMPDIR
 # together with the run's ROMP_TESTS_SYSTEM_TMPDIR, as a child given a copy of its parent's environment is) lists itself
@@ -412,33 +434,106 @@ def _pid_present(pid):
 
 
 def _own_resource_tracker():
-    """The pids the run-end check passes over (the comment above LEAK_EXIT_BOUND_S): the controller's own multiprocessing
-    resource tracker, the pid its multiprocessing.resource_tracker records for its tracker, when that pid is this
-    process's child. Empty when this process never imported that module (it started no tracker), when the record holds
-    no pid, or when the pid is not this process's child (a process forked from another can inherit its parent's record)."""
+    """The controller's own multiprocessing resource tracker by identity (the comment above LEAK_EXIT_BOUND_S): (pid, fd),
+    the pid its multiprocessing.resource_tracker records for its tracker, when that pid is this process's child, and the
+    descriptor that record writes to, the write end of the pipe the tracker reads from. None when this process never
+    imported that module (it started no tracker), when the record holds no pid, or when the pid is not this process's
+    child (a process forked from another can inherit its parent's record). Identity alone passes nothing over: the run
+    end passes the tracker over only while the premise of the pass-over holds (_tracker_kept, _run_end_holders)."""
     rt = sys.modules.get("multiprocessing.resource_tracker")
-    pid = getattr(getattr(rt, "_resource_tracker", None), "_pid", None)
+    record = getattr(rt, "_resource_tracker", None)
+    pid = getattr(record, "_pid", None)
     if not isinstance(pid, int):
-        return frozenset()
+        return None
     try:
         ppid = _proc_stat(pid)[1]
     except (OSError, ValueError, IndexError):
-        return frozenset()
-    return frozenset([pid]) if ppid == os.getpid() else frozenset()
+        return None
+    return (pid, getattr(record, "_fd", None)) if ppid == os.getpid() else None
 
 
-def _leaked_run_processes(roots, bound_s=LEAK_EXIT_BOUND_S, pids=None, skip_pids=()):
+def _pipe_holders(link, skip):
+    """The live processes, other than those in `skip`, one of whose open file descriptors reads `link` (a pipe as /proc
+    spells it, pipe:[<inode>]), read from /proc/<pid>/fd as _fds_hold reads a descriptor. Raises OSError where /proc
+    cannot be listed. A process whose descriptors cannot be read (another user's, one of this user's that made itself
+    non-dumpable, a zombie) is not among them: the pipe is read where the check reads (the comment above
+    LEAK_EXIT_BOUND_S names that class)."""
+    out = []
+    for pid in [int(d) for d in os.listdir("/proc") if d.isdigit()]:
+        if pid in skip:
+            continue
+        try:
+            fds = os.listdir("/proc/%d/fd" % pid)
+        except OSError:
+            continue
+        if any(_link("/proc/%d/fd/%s" % (pid, fd)) == link for fd in fds):
+            out.append(pid)
+    return out
+
+
+TRACKER_KEPT_LABEL = "the process the controller's resource tracker record names, not passed over: "
+TRACKER_PIPE_UNREAD = "the pipe it reads from could not be read"
+TRACKER_NOT_ON_PIPE = "it holds no descriptor on the pipe the controller's record writes to"
+
+
+def _tracker_kept(tracker):
+    """(why, others) for the controller's own resource tracker, `tracker` as _own_resource_tracker returns it. `why` is ""
+    when the premise of the pass-over holds: the tracker exits with the controller, which it does while no live process
+    other than the controller and the tracker holds the pipe it reads from. Otherwise `why` is the reason it is not passed
+    over, which its report line carries, and `others` lists the processes found holding that pipe. The pipe is read from
+    /proc: the one the controller's record writes to (its descriptor, read at /proc/<pid>/fd), when the tracker holds a
+    descriptor on it too, the end it reads from; then every live process's descriptors are read for it (_pipe_holders).
+    A pipe that cannot be read, or a tracker holding no descriptor on it, leaves the premise unshown, and the tracker is
+    judged like any process (the comment above LEAK_EXIT_BOUND_S says why)."""
+    pid, fd = tracker
+    me = os.getpid()
+    try:
+        link = os.readlink("/proc/%d/fd/%d" % (me, fd))
+        theirs = {_link("/proc/%d/fd/%s" % (pid, n)) for n in os.listdir("/proc/%d/fd" % pid)}
+        others = _pipe_holders(link, (me, pid)) if link in theirs else None
+    except (OSError, TypeError):                 # TypeError: a record holding no descriptor
+        return TRACKER_PIPE_UNREAD, []
+    if others is None:
+        return TRACKER_NOT_ON_PIPE, []
+    if not others:
+        return "", []
+    who = ("pid %d also holds" % others[0]) if len(others) == 1 else (
+        "pids %s also hold" % ", ".join(str(p) for p in others))
+    return "%s the pipe it reads from, so it does not exit with the controller" % who, others
+
+
+def _run_end_holders(roots, bound_s):
+    """_leaked_run_processes over `roots` for the run end, the controller's own resource tracker (_own_resource_tracker)
+    passed over only while the premise of the pass-over holds (_tracker_kept). The premise is read twice: before the wait,
+    for the processes other than the controller and the tracker that hold its pipe, whose exits the wait then waits for
+    as it waits for a holder's; and after the wait, where it decides. A tracker whose premise does not hold is named,
+    when it holds a root (a scan of it alone), with the reason on its line. The tracker is never waited for: it cannot
+    exit while the controller holds its pipe."""
+    tracker = _own_resource_tracker()
+    if tracker is None:
+        return _leaked_run_processes(roots, bound_s)
+    _why, others = _tracker_kept(tracker)
+    leaked, unjudged, ok = _leaked_run_processes(roots, bound_s, skip_pids=(tracker[0],), wait_for=others)
+    why = _tracker_kept(tracker)[0] if ok else ""
+    if why:
+        leaked = leaked + [dict(h, kept=why) for h in _processes_holding(roots, pids=[tracker[0]])[0]]
+    return leaked, unjudged, ok
+
+
+def _leaked_run_processes(roots, bound_s=LEAK_EXIT_BOUND_S, pids=None, skip_pids=(), wait_for=()):
     """(holders still present, unjudged, procfs read): the processes holding `roots` after every holder seen first, and
     every process first listed as not judged, has been given until `bound_s` to exit (the event waited for is the pid's
-    exit; the wait ends the moment the last one is gone). Nothing waits when nothing holds and nothing is listed.
-    `pids` is _processes_holding's stand-in listing, handed to both scans (tests/test_run_end_leaked_processes.py times
-    the wait over its own children alone: a process another test lists would be waited for too); `skip_pids` is passed
-    over by both scans (the run end hands in _own_resource_tracker's)."""
+    exit; the wait ends the moment the last one is gone). Nothing waits when nothing holds, nothing is listed and
+    `wait_for` is empty. `pids` is _processes_holding's stand-in listing, handed to both scans
+    (tests/test_run_end_leaked_processes.py times the wait over its own children alone: a process another test lists
+    would be waited for too); `skip_pids` is passed over by both scans; `wait_for` names more pids whose exit the wait
+    waits for, holders or not (the run end hands in the controller's resource tracker as `skip_pids` and the processes
+    holding its pipe as `wait_for`, _run_end_holders)."""
     holders, unjudged, ok = _processes_holding(roots, skip_pids=skip_pids, pids=pids)
-    if not ok or not (holders or unjudged["listed"]):
+    if not ok or not (holders or unjudged["listed"] or wait_for):
         return holders, unjudged, ok
     deadline = time.monotonic() + bound_s
-    pending = {h["pid"] for h in holders + unjudged["listed"]}
+    pending = {h["pid"] for h in holders + unjudged["listed"]} | set(wait_for)
     while pending and time.monotonic() < deadline:
         pending = {pid for pid in pending if _pid_present(pid)}
         if pending:
@@ -480,12 +575,13 @@ PHASE_UNKNOWN = ("the phase at its spawn is unknown, since PYTEST_CURRENT_TEST i
 
 def _report_leaked_run_processes(session):
     """The controller's run-end check (the comment above LEAK_EXIT_BOUND_S): join the live non-daemon threads, then name
-    every process of the run that still holds one of its roots, the controller's own resource tracker passed over
-    (_own_resource_tracker), and make the run red; list this user's unreadable processes of the run as not judged, count
-    the other unreadable ones, and name the threads still running."""
+    every process of the run that still holds one of its roots, the controller's own resource tracker passed over only
+    while the premise of the pass-over holds and named with the reason when it does not (_run_end_holders), and make the
+    run red; list this user's unreadable processes of the run as not judged, count the other unreadable ones, and name
+    the threads still running."""
     bound = _leak_exit_bound()
     left = _join_live_threads(bound)
-    leaked, unjudged, ok = _leaked_run_processes(_run_roots(), bound, skip_pids=_own_resource_tracker())
+    leaked, unjudged, ok = _run_end_holders(_run_roots(), bound)
     if not ok:
         _say_at_run_end(session, "[tests] the run-end process check reads /proc and did not run on this platform")
         return
@@ -494,9 +590,10 @@ def _report_leaked_run_processes(session):
         lines.append("[tests] %d process(es) of this run still hold its temp root at run end, %g s after the run finished "
                      "waiting for them to exit: a test started them and did not stop them; the run is red." % (len(leaked), bound))
         for h in leaked:
-            lines.append("[tests]   pid %d (parent %d): %s | holds the root through %s | %s" % (
+            lines.append("[tests]   pid %d (parent %d): %s | holds the root through %s | %s%s" % (
                 h["pid"], h["ppid"], h["cmd"][:240] or "(no command line)", ", ".join(h["via"]),
-                "spawned during %s" % h["test"] if h["test"] else PHASE_UNKNOWN))
+                "spawned during %s" % h["test"] if h["test"] else PHASE_UNKNOWN,
+                " | " + TRACKER_KEPT_LABEL + h["kept"] if h.get("kept") else ""))
     if unjudged["listed"]:
         lines.append("[tests] %d process(es) of this user started during this run, in its cgroup, could not be read and were "
                      "not judged: their environment, cwd and open files are unreadable (a process that made itself "
@@ -528,7 +625,7 @@ def pytest_sessionfinish(session, exitstatus):
     same at interpreter exit; both are idempotent, and pytest_unconfigure below takes the root itself
     afterwards. Then, in the controller alone (a worker's roots are among the controller's), the run-end
     process check above: a process of the run that still holds one of its roots, the controller's own resource
-    tracker aside, makes the run red."""
+    tracker aside while no process but the controller and the tracker holds the tracker's pipe, makes the run red."""
     try:
         from tests import remove_made_dirs
     except Exception:
