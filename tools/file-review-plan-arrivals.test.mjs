@@ -84,7 +84,7 @@ test('the save is as the paragraph states it: the stand-down is recorded as hist
   assert.ok(note.includes('`landSaved` makes the saved card the focus for the layout (`focusOn`)'));
   assert.ok(note.includes('"Saved · the card is above"'));
   const land = panel.slice(panel.indexOf('private landSaved('), panel.indexOf('private cardWhere('));
-  assert.ok(/if \(this\.margin\) this\.focusOn\(key\);\n\s*const side = this\.cardWhere\(key\);\n\s*if \(side === null\) return false;/.test(land), 'the focus, then the side');
+  assert.ok(/if \(this\.margin && \(!this\.composer \|\| this\.composer === c\)\) this\.focusOn\(key\);\n\s*const side = this\.cardWhere\(key\);\n\s*if \(side === null\) return false;/.test(land), 'the focus, then the side (a pin on where the code lives; the focus\'s condition is executed by file-comments-margin-fixes.test.ts "a reply open on its card while another comment\'s reply lands…", red when any landing takes the focus, and "a reply\'s save out, its box cancelled, then the landing…", red when a landing takes it only for the saving composer still open)');
   assert.ok(!/scrollCard|scrollBoth|scrollIntoView|centerOn|showLoose/.test(land), 'nothing in the landing scrolls');
   assert.ok(!/this\.gestures/.test(panel), 'the count went with the scroll it judged');
   assert.ok(panel.includes('fcsavedgo: () => { const out = this.savedOut; this.savedOut = null; if (out) this.scrollCard(out.key); this.reflect(); },'), 'the line\'s click scrolls, and ends the line');

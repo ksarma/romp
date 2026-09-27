@@ -17,7 +17,11 @@ file of its own whose bytes will not decode shows a line saying so with the path
 hoisted from imgFailed's builder to an export for this pin); a file whose only bytes are a byte order mark says so in
 the empty file's place (item 6: `BOM_ONLY_FILE`, keyed on the answer's byte count, since the decoded text is ""); and a
 file without pending changes keeps its CR or CRLF endings through an edit (item 7: `eolCR` beside `eolCRLF` in the save
-door, a source pin, since no constant carries the words). Each sentence is pinned flattened, so a rewrap survives, in
+door, a source pin, since no constant carries the words). And one from the svg picture's second load: an SVG picture
+whose own load fails is read again, and a picture that fails again shows a line naming both causes, a load that failed and
+bytes that will not decode, with the path and Download (`SVG_PICTURE_FAILED`, imgFailed's pane after the re-ask; a reason
+the re-ask's fetch meets is the fetch chain's own pane); the viewer tries again by itself for those two lines, and a
+failed reload's reason shows the same way without that retry. Each sentence is pinned flattened, so a rewrap survives, in
 its place among the sentences around it, and cross-checked against the exported constant that keeps its words: the
 constant's exact export line, the line that shows it, and the phrases the guide's sentence and the constant share, read
 off the source, so a wording change in either fails here beside the other. The clauses other guide pins read in the
@@ -75,6 +79,13 @@ FIGURE_SAYS = ("A figure that cannot be loaded, because its file is missing or i
 DECODE_SAYS = ("A picture opened as a file of its own whose bytes will not decode, because it is still being written or "
                "was cut short, shows a line in its place (**this image failed to decode: it may be mid-write or "
                "truncated**), then the file's path, and **Download**, which saves the file to your device.")
+SVG_SAYS = ("An SVG picture loads from the file's address after the file is read; when that load fails, the viewer reads "
+            "the file again. If the file cannot be read, the reason shows in the picture's place with the file's path; if it "
+            "can and the picture fails again, a line says so (**this image failed to load or decode: the connection may have "
+            "dropped, or the file may be mid-write or truncated**), then the file's path, and **Download**. Either way, the "
+            "viewer then tries again by itself when the connection returns, and on the next few updates it receives. When "
+            "the file is read again for another reason (**Reload**, or the Comments panel after the file changes) and that "
+            "read fails, the reason shows the same way, and the viewer does not try again by itself.")
 BYTES_SAYS = ("With the Comments panel open, the panel itself reads the file again; when that read fails, a line at the "
               "top of its cards says so (**The file could not be read again**), gives the reason in parentheses, and "
               "offers **Reload**.")
@@ -92,6 +103,7 @@ SHARED = {
     "RENDER_FELL": (RENDER_FELL_SAYS, ("shown as rendered Markdown", "shown as written")),
     "FIGURE_FAILED": (FIGURE_SAYS, ("Image failed to load",)),
     "DECODE_FAILED": (DECODE_SAYS, ("failed to decode", "mid-write or truncated")),
+    "SVG_PICTURE_FAILED": (SVG_SAYS, ("failed to load or decode", "the connection may have dropped", "mid-write or truncated")),
     "BYTES_FAILED": (BYTES_SAYS, ("could not be read again",)),
     "EMPTY_FILE": (EMPTY_SAYS, ("This file is empty",)),
     "BOM_ONLY_FILE": (BOM_SAYS, ("only a byte order mark",)),
@@ -104,6 +116,8 @@ EXPORTS = {
     "RENDER_FELL": 'export const RENDER_FELL = "This file could not be shown as rendered Markdown, so its text is shown as written";',
     "FIGURE_FAILED": 'export const FIGURE_FAILED = "Image failed to load:";',
     "DECODE_FAILED": 'export const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";',
+    "SVG_PICTURE_FAILED": ('export const SVG_PICTURE_FAILED = "this image failed to load or decode: the connection may have dropped, '
+                           'or the file may be mid-write or truncated";'),
     "BYTES_FAILED": 'export const BYTES_FAILED = "The file could not be read again";',
     "EMPTY_FILE": 'export const EMPTY_FILE = "This file is empty.";',
     "BOM_ONLY_FILE": 'export const BOM_ONLY_FILE = "This file holds only a byte order mark.";',
@@ -147,8 +161,14 @@ class TheGuideSaysSo(unittest.TestCase):
     def test_a_picture_of_its_own_that_will_not_decode_shows_a_line_with_the_path_and_download(self):
         self.assertIn(DECODE_SAYS, self.figures)
         self.assertLess(self.figures.index(FIGURE_SAYS), self.figures.index(DECODE_SAYS))
-        self.assertTrue(self.figures.endswith(DECODE_SAYS), "the sentence closes the paragraph")
+        # the SVG picture's sentences follow it directly, and they close the paragraph since the svg picture's second load
+        self.assertEqual(self.figures.index(SVG_SAYS), self.figures.index(DECODE_SAYS) + len(DECODE_SAYS) + 1)
         self.assertIn("**Download**", DECODE_SAYS, "the button is named as the guide names buttons")
+
+    def test_an_svg_picture_whose_load_fails_is_read_again_and_a_second_failure_names_both_causes(self):
+        self.assertIn(SVG_SAYS, self.figures)
+        self.assertTrue(self.figures.endswith(SVG_SAYS), "the sentences close the paragraph")
+        self.assertIn("**Download**", SVG_SAYS, "the button is named as the guide names buttons")
 
     def test_an_empty_file_says_so_in_place_of_its_text_and_edit_still_opens_it(self):
         self.assertIn(EMPTY_SAYS, self.place)
@@ -253,11 +273,15 @@ class TheViewerDoesIt(unittest.TestCase):
 
     def test_a_picture_that_will_not_decode_shows_the_exported_sentence_and_error_answers_it(self):
         # imgFailed's pane: the sentence from the export (the build read it off the pane's node; the manager's round 1
-        # hoisted it for this pin), taken as error()'s answer before the hint and the Download button join the pane
-        self.assertIn("why.textContent = DECODE_FAILED;", self.viewer)
+        # hoisted it for this pin), taken as error()'s answer before the hint and the Download button join the pane; an svg's
+        # picture, after its re-ask, takes SVG_PICTURE_FAILED on the same line (source pins; the executed witnesses are
+        # ui/webview/file-view-seam.test.ts, the png's pane and the svg's pane after its re-ask, and the browser leg
+        # ui/webview/file-view-svg-reask-browser.test.ts)
+        self.assertIn("why.textContent = isSvgImage ? SVG_PICTURE_FAILED : DECODE_FAILED;", self.viewer)
         self.assertIn("const words = why.textContent;", self.viewer)
         self.assertIn("viewError = words;", self.viewer)
         self.assertEqual(self.viewer.count("DECODE_FAILED"), 2, "the export and the one line that shows it")
+        self.assertEqual(self.viewer.count("? SVG_PICTURE_FAILED"), 1, "the svg sentence is shown on that one line alone")
 
     def test_an_empty_file_gets_the_line_above_its_empty_root_in_both_viewers_with_edit_shown(self):
         self.assertIn("why.textContent = EMPTY_FILE;", self.viewer)

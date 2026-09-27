@@ -68,14 +68,16 @@ let viewerBundle: string | null = null;
  *  anchor-map's TRIM_STATS too, the trim's own pass counter, which the retrim-events leg reads to count the panel's trim calls;
  *  and preview.ts's heal for markdown-inline pictures, installMdImgHeal with the two retry drivers render.ts calls on a kernel
  *  message and on romp:wsup, so a leg can put the chat page's own retry of a failed figure under the viewer, as the figure
- *  label's leg does; nothing installs it unless a leg calls it; and anchor-map's rawRows and rawRowForOffset, the verified Raw row
+ *  label's leg does; nothing installs it unless a leg calls it; preview.ts's previewFull, the box the chat builds for a
+ *  mentioned picture, so a leg can drive the chat's own preview under the chat page's sheet, as the svg preview's cue leg does;
+ *  and anchor-map's rawRows and rawRowForOffset, the verified Raw row
  *  map the seam's scrollToOffset reads since Slice 7 of plans/markdown-viewer.md, item 7, so the raw-rows leg can ask the map
  *  itself whether the rows it sees match the file's text). */
 export function bundleViewer(): string {
   if (viewerBundle) return viewerBundle;
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS, rawRows, rawRowForOffset } from "./anchor-map"; export { installMdImgHeal, retryFailedPreviews, refreshSettledPreviews } from "./preview";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
+    stdin: { contents: 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS, rawRows, rawRowForOffset } from "./anchor-map"; export { installMdImgHeal, retryFailedPreviews, refreshSettledPreviews, previewFull } from "./preview";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
     bundle: true, write: false, format: "iife", globalName: "FV", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
