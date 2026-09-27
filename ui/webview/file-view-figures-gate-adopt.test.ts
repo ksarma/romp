@@ -105,6 +105,12 @@
 // remote srcset appended under the box, the gated-src write-back): 4 of 6 red each, the property-guard red now naming each
 // element, `img[src]=http://evil.test/x.png -> evil.test` and its like, where before it named the host alone (its guards-2). At
 // that head, 6 of 6 green.
+// The data: road (the fork PR review's round-1 ruling, 2026-09-23): the file kind's paint svg also carries a stroke naming a
+// data: SVG document with its fragment, which in Firefox loads that document and its own @import from another host. The viewer
+// drops it rather than gating it, inside sanitizeMd under the opt-out (paint-refs.ts dropDataDocuments), so the file kind
+// asserts it is neither on the element nor held aside under the placeholder, and that the click on the svg's host brings back
+// the fill alone. Red with b4f9139b8's paint-refs.ts and md-sanitize.ts: the gate held the stroke aside with the fill, and the
+// click restored it.
 // Synthetic values only: the notes-api world, a placeholder sid, .test hosts.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
@@ -523,6 +529,8 @@ const INSIDE = "http://remote.test/inside.png";
 const OK = "http://" + ALLOWED_HOST + "/ok.png";
 const PAINT_URL = "http://remote.test/p.svg#g";
 const PAINT_REF = "url(" + PAINT_URL + ")";
+/** A stroke naming a data: SVG document with its fragment, on the same svg as PAINT_REF: the viewer drops it, never gates it. */
+const DATA_DOC_RIDER = "url(data:image/svg+xml,%3Csvg%2F%3E#p)";
 /** The note as the file holds it: the same figures as the body below, so the dirty string mdBlock hands the sanitizer carries
  *  every URL (marked passes an HTML block through). */
 const NOTE = [
@@ -539,9 +547,9 @@ const NOTE = [
   '<details><summary>More</summary><img src="' + INSIDE + '" alt="inside-details"></details>', "",
   '<img src="fig.png" alt="folder">', "",
   '<img src="' + OK + '" alt="allowed">', "",
-  '<svg width="10" height="10" fill="' + PAINT_REF + '"><rect width="10" height="10"/></svg>', "",
+  '<svg width="10" height="10" fill="' + PAINT_REF + '" stroke="' + DATA_DOC_RIDER + '"><rect width="10" height="10"/></svg>', "",
 ].join("\n");
-const FIXTURE_URLS = [REMOTE, PROTO, SRCSET, BOTH, BOTH_SET, WEBP, SVG_HREF, SVG_XLINK, POSTER, AUDIO, INSIDE, OK, PAINT_REF, "fig.png", "fig2.png", "clip.mp4"];
+const FIXTURE_URLS = [REMOTE, PROTO, SRCSET, BOTH, BOTH_SET, WEBP, SVG_HREF, SVG_XLINK, POSTER, AUDIO, INSIDE, OK, PAINT_REF, DATA_DOC_RIDER, "fig.png", "fig2.png", "clip.mp4"];
 /** The sanitized body for the note, as DOMPurify's svg+html profile would hand it back: a heading, a paragraph of prose and
  *  the thirteen figure blocks, top-level children of the body (the count the adoption assertion reads). */
 function fileBody(): El {
@@ -560,7 +568,7 @@ function fileBody(): El {
     ie("details", {}, ie("summary", {}, it("More")), ie("img", { src: INSIDE, alt: "inside-details" })),
     ie("p", {}, ie("img", { src: "fig.png", alt: "folder" })),
     ie("p", {}, ie("img", { src: OK, alt: "allowed" })),
-    ie("svg", { width: "10", height: "10", fill: PAINT_REF }, ie("rect", { width: "10", height: "10" })),
+    ie("svg", { width: "10", height: "10", fill: PAINT_REF, stroke: DATA_DOC_RIDER }, ie("rect", { width: "10", height: "10" })),
   );
 }
 const FILE_ROOTS = 15;         // the body's top-level children above: the heading, the prose paragraph and the thirteen figure blocks
@@ -816,6 +824,10 @@ test("the file kind: the chain runs before the adoption, so the nodes that enter
   gated(f.audio, "remote.test", "src", AUDIO, "the audio");
   gated(f.inside, "remote.test", "src", INSIDE, "the img inside details");
   gated(f.paintSvg, "remote.test", "fill", PAINT_REF, "the svg's paint reference");
+  // the data: SVG document on the same svg: removed inside sanitizeMd (paint-refs.ts dropDataDocuments, which the viewer's
+  // opt-out still runs), so it is neither live nor held aside for the click on remote.test to bring back
+  assert.equal(f.paintSvg.getAttribute("stroke"), null, "the svg's data: SVG document stroke is not on the element");
+  assert.equal(f.paintSvg.getAttribute("data-fv-gated-stroke"), null, "and not held aside under the placeholder: the viewer drops a data: document, never gates it (a click labelled with the svg's host would load a document that fetches hosts the label never names)");
   // A4, road (d): the folder figure through /file, never page-relative; the allowed host's figure as written; neither under a placeholder
   assert.equal(gateAround(f.folder), null, "the folder figure stands unwrapped");
   assert.equal(f.folder.getAttribute("src"), fileSrc("fig.png"), "the folder figure's src is the /file route");
@@ -853,6 +865,8 @@ test("the file kind: the chain runs before the adoption, so the nodes that enter
   assert.equal(f.video.getAttribute("src"), fileSrc("clip.mp4"), "the video has its /file src back");
   assert.equal(f.video.getAttribute("poster"), POSTER, "and its poster");
   assert.equal(f.pictureImg.getAttribute("data-fv-src"), "fig2.png", "the picture img's authored spelling is back under data-fv-src");
+  assert.equal(f.paintSvg.getAttribute("fill"), PAINT_REF, "the svg's fill is back");
+  assert.equal(f.paintSvg.getAttribute("stroke"), null, "and its data: SVG document is not: the click restores what the gate held and the document was never held");
 });
 
 test("the URL kind: resolveFigureRefs and the gate run on the sanitizer's body, so the nodes that enter the live document carry the document's directory for a relative figure, the document's own host and the gear's list live, and every other host moved aside; no live write of a fetching attribute", async (t) => {

@@ -1849,7 +1849,11 @@ as built departs from the text above, why, and which test holds each rule:
    a comment on one alone paints nothing in Rendered (an inline mark paints no wash over a block box; a block-level
    treatment, a class on the `.katex-display` element with a rule in both sheets, is a panel and CSS change;
    anchor-map-obsidian.test.ts pins the current shape); the chat's markdown fetches an svg paint reference on render
-   as it fetches a chat `<img src>`, the gate being the viewer's (item 9); the callout body's trailing newlines are
+   as it fetches a chat `<img src>`, the gate being the viewer's (item 9), closed by the chat-paint-refs fix
+   (upstream/2026-09-23-chat-paint-refs.md) for a reference to another origin and for a `data:` URL whose type is not
+   a raster image, which the sanitizer's default paint pass removes before the markup reaches the page (paint-refs.ts
+   dropRemoteRefs), while a same-origin paint reference still loads on render and a chat `<img src>` still fetches;
+   the callout body's trailing newlines are
    not trimmed as marked's blockquote trims its text (the pins hold the current output). Open after the review round
    3: block content inside a footnote definition (GitHub's four-space form: a fence, a list, a second paragraph) is
    not adopted and an indented fence renders as a code span (item 4; taking it needs the callout's nested block lex
@@ -7761,8 +7765,9 @@ paragraphs in 1 of 3; the run counts per note are under "Run counts, the svg vec
 **The fix.** `sanitizeMd` (md-sanitize.ts) returns the body of DOMPurify's own parse document (RETURN_DOM; DOMPurify
 parses the markup with DOMParser, or into `implementation.createDocument` when that fails), a document with no browsing
 context, whose `defaultView` is null, in which nothing loads. The whole figure chain now runs over that body and the
-adoption comes after: `const clean = sanitizeMd(dirty, mintHeadingIds)`, then resolveFigureRefs, rewriteFigureSrcs and
-gateRemoteFigures over `clean`, then `box.replaceChildren(...Array.from(clean.childNodes))`. The rule: every pass of
+adoption comes after: `const clean = sanitizeMd(dirty, mintHeadingIds, { remoteRefs: "keep" })`, then resolveFigureRefs,
+rewriteFigureSrcs and gateRemoteFigures over `clean`, then `box.replaceChildren(...Array.from(clean.childNodes))`.
+The rule: every pass of
 mdBlock that sets, repoints, moves or creates a fetching element runs before the adoption. Every pass that writes a
 fetching attribute is in that chain, the fold of an svg image's `xlink:href` into `href` (rewriteFigureSrcs for a file,
 resolveFigureRefs for a URL document) and the gate's move of either spelling aside (figure-gate.ts) included; the fence

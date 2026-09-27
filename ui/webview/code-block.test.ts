@@ -332,7 +332,7 @@ test("mdBlock: the raw text is captured before the highlight rewrite, a named re
   // (file-view-text-size.test.ts's browser leg runs the stamp over marked's own output, sanitized, in a real DOM)
   assert.match(fn, /box\.querySelectorAll\('li > input\[type="checkbox"\]:first-child:disabled, li > p:first-child > input\[type="checkbox"\]:first-child:disabled'\)\.forEach\(\(input\) => \{\n\s*if \(input\.previousSibling\) return;/, "the task stamp's selector, then the first-node check: :first-child counts elements alone, and a checkbox after the item's text is not a task item");
   assert.match(fn, /if \(li\) li\.classList\.add\("task-list-item"\);/);
-  assert.ok(fn.indexOf("sanitizeMd(dirty, mintHeadingIds)") >= 0 && fn.indexOf("sanitizeMd(dirty, mintHeadingIds)") < fn.indexOf('li.classList.add("task-list-item")'), "stamped after the sanitize (the heading ids minted inside the call), so the class is never one the file wrote");
+  assert.ok(fn.indexOf('sanitizeMd(dirty, mintHeadingIds, { remoteRefs: "keep" })') >= 0 && fn.indexOf('sanitizeMd(dirty, mintHeadingIds, { remoteRefs: "keep" })') < fn.indexOf('li.classList.add("task-list-item")'), "stamped after the sanitize (the heading ids minted inside the call), so the class is never one the file wrote");
 });
 
 test("a wrapped fence's rows are lines to the viewer's link pass: `.cl` is a line unit beside the Raw view's `.fv-cl`", () => {

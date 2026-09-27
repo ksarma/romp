@@ -43,9 +43,21 @@ turns, that hold keeps every session from starting a new turn, a side effect no
 subresource load may trigger. A token presented explicitly, as `?token=` or
 `X-Romp-Token`, is accepted from any Origin: federated (cross-machine) calls
 need it, and a cross-site page cannot obtain it: the dashboard drops `?token=`
-from its address as it loads, and every page the kernel serves carries
-`Referrer-Policy: same-origin`, so the token never reaches another origin in a
-`Referer`.
+from its address as it loads (a pane page opened on its own, such as
+`/chat?token=`, keeps it), and every page the kernel serves carries
+`Referrer-Policy: same-origin`, so a request to another origin carries no
+`Referer`. One exception is known: an inline SVG's paint reference to another
+origin in a file the viewer shows, once the viewer loads that figure (its host
+is on the gear's list, or the reader clicked its placeholder). Its request can
+send the page's origin (in Chromium a `mask` does). In one recorded run, before
+the sanitizer removed these references from chat messages, a chat message's
+`fill` sent the full URL of a page opened as `/chat?token=`, token included. No
+later run has reproduced it, the viewer's runs in
+`tests/test_paint_refs_kernel_pages_browser.py` included, so treat any page
+whose own address carries `?token=` (a chat page or a Files pane opened on its
+own) as able to send its token with such a request. Everywhere else the
+sanitizer removes these references, and an `.svg` opened in its own tab loads
+nothing from another host (see Output sanitization below).
 The token-exempt routes are the no-side-effect liveness probes (`/healthz`,
 `/version` and `/busy` on the kernel, `/ping` on the bus) and the install files:
 `/manifest.webmanifest` and the three home-screen icons under `/media/`
@@ -95,8 +107,60 @@ UID can read.
   `<style>`, no form controls, no image map, ids and names prefixed
   `user-content-`, an inline `style` reduced to its color declarations, no
   `background` attribute; unlike GitHub it keeps that color-only inline `style`
-  and inline SVG. One renderer writes into that sanitized DOM after DOMPurify
-  has run: KaTeX. The sanitizer keeps only color in an inline `style`, and
+  and inline SVG. An inline SVG's paint and CSS image references to another
+  origin (a `url()` in a `fill`, `stroke`, `mask`, `clip-path`, `filter` or
+  `marker-*` attribute, or in an inline `style` declaration) are removed from
+  the sanitized markup before any node reaches the page, by the sanitizer and
+  again by the strip that the file preview card and the feed's notice cards run,
+  so none of them makes a request to another host when a chat message, a
+  previewed file or a notice card renders. In a chat message and a previewed
+  file, a same-document `url(#id)` and this origin's own stay (in an editor
+  webview the sanitizer also keeps the kernel's origin). A notice card keeps a
+  `url(#id)` and an absolute reference to this origin but removes a relative
+  one, since its strip gets no base URL to resolve it against (a known gap: the
+  reference is lost, and no request is made). A `data:` URL stays only when its
+  media type is a raster image (PNG, JPEG, GIF, WebP, AVIF, BMP or an icon), and
+  every other one is removed: in Firefox, a paint attribute that names a `data:`
+  SVG, XHTML or XML document loads that document, and the document fetches its
+  own `@import` from another host. Chromium and WebKit load no such document.
+  The browser checks run in Firefox only where it is installed and
+  `ROMP_BROWSER_ENGINES` names it, since CI installs Chromium alone. CI's
+  `npm test` runs before the job installs Chromium, so the chat's browser check
+  (`ui/webview/chat-paint-refs-browser.test.ts`, with its census of the derived
+  names) skips there until it is rostered as a browser leg, and its passes come
+  from runs outside CI. The file viewer gates a reference to another
+  origin behind a click instead. It removes a `data:` reference whose type is not
+  a raster image, as the other surfaces do, because a click labeled `data:` would
+  load a document that fetches hosts the label never names
+  (`ui/webview/paint-refs.ts`, checked against the code by
+  `ui/webview/paint-refs-census.test.ts` and, in the browser, by
+  `ui/webview/chat-paint-refs-browser.test.ts`,
+  `tests/test_file_preview_browser.py` and
+  `tests/test_paint_refs_kernel_pages_browser.py`). Once the reader clicks, or
+  when the host is on the gear's list, a gated reference loads, and such a
+  request can send the page's origin: the exception to the `Referer` rule in the trust
+  model above. An `.svg` opened in its own tab (on the web dashboard, a Cmd,
+  Ctrl or middle click on a path link to it in a viewed file) does not become
+  a document. The kernel's `/file` route and its `/remote/<host>/file` relay
+  answer the tab, and a frame, an object or an embed, with a small page that
+  shows the file in an `<img>`. An SVG drawn as an image runs no script and
+  loads nothing its markup names, while its embedded `data:` images and inline
+  styles still render. This has a cost: in that tab the SVG's own links do not
+  open and its text cannot be selected. The SVG bytes that every other request
+  gets (the page's `<img>`, the viewer, the chat's thumbnails) still carry a
+  `Content-Security-Policy` of `sandbox` and four fetch directives
+  (`default-src 'none'`, `img-src data: blob:`, `style-src 'unsafe-inline'` and
+  `font-src data:`), a second layer for anything that still loads them as a
+  document. That policy alone was not enough: in Firefox a paint reference to a
+  `data:` SVG document fetched that document's `@import`, and in WebKit a
+  `preconnect` link opened a connection to its host.
+  `tests/test_svg_tab_policy_browser.py` opens the tab in Chromium, Firefox and
+  WebKit (Playwright's builds, not Safari) and finds no request and no
+  connection to another host; a `dns-prefetch` lookup is not visible to it. CI
+  runs its Chromium leg only, and the Firefox and WebKit legs run where those
+  engines are installed, under `ROMP_BROWSER_ENGINES`. One renderer writes into that
+  sanitized DOM after DOMPurify has run: KaTeX. The sanitizer keeps only color
+  in an inline `style`, and
   KaTeX's layout is inline style, so a formula's TeX passes through DOMPurify
   as the text of an inert placeholder and KaTeX renders it there afterwards,
   under `trust: false` (KaTeX's own safety model: no TeX command writes a link,

@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import DOMPurify from "dompurify";   // the module-global instance md-sanitize.ts imports: under node the bare factory (the seam test below)
-import { MD_FORBID_TAGS, MD_FORBID_ATTR, MD_PURIFY, USER_CONTENT_PREFIX, colorOnlyStyle, isLiteralColor, styleAttributeHook, dropCommentChildren, dropBodyTitle, installMdSanitizeHooks, setMdSanitizer, sanitizeMd } from "./md-sanitize";
+import { MD_FORBID_TAGS, MD_FORBID_ATTR, MD_PURIFY, USER_CONTENT_PREFIX, colorOnlyStyle, isLiteralColor, styleAttributeHook, dropCommentChildren, dropBodyTitle, installMdSanitizeHooks, setMdSanitizer, sanitizeMd, ownOrigins } from "./md-sanitize";
 import { hideEdges, sameNodes } from "../test-dom-shim";
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
@@ -283,6 +283,110 @@ test("setMdSanitizer (the node suites' seam, Slice 7 of plans/markdown-viewer.md
   assert.throws(() => sanitizeMd("<p>x</p>"), TypeError, "with no stand-in the module-global instance is what sanitizes, and under node it cannot: the throw mdBlock's catch swallowed in every node suite before the seam");
 });
 
+// ── the paint pass (paint-refs.ts dropRemoteRefs, run inside sanitizeMd) ────────────────────────────────
+// A stand-in body for sanitizeMd's own passes over the node seam: what keepOnlyInertCheckboxes and dropRemoteRefs read
+// (querySelectorAll by tag or "*", getAttribute, hasAttribute) and write (setAttribute, removeAttribute). Through the shim, so a
+// failing assertion over one dumps its serial and tag; the tests read `attrs` directly.
+type PaintEl = { tagName: string; attrs: Record<string, string>; children: PaintEl[];
+  getAttribute(n: string): string | null; hasAttribute(n: string): boolean; setAttribute(n: string, v: string): void; removeAttribute(n: string): void;
+  querySelectorAll(sel: string): PaintEl[] };
+function paintEl(tag: string, attrs: Record<string, string> = {}, kids: PaintEl[] = []): PaintEl {
+  const e: PaintEl = {
+    tagName: tag.toUpperCase(), attrs: { ...attrs }, children: kids,
+    getAttribute(n) { return Object.prototype.hasOwnProperty.call(e.attrs, n) ? e.attrs[n] : null; },
+    hasAttribute(n) { return Object.prototype.hasOwnProperty.call(e.attrs, n); },
+    setAttribute(n, v) { e.attrs[n] = v; },
+    removeAttribute(n) { delete e.attrs[n]; },
+    querySelectorAll(sel) { const out: PaintEl[] = []; const walk = (x: PaintEl) => { for (const k of x.children) { if (sel === "*" || k.tagName.toLowerCase() === sel) out.push(k); walk(k); } }; walk(e); return out; },
+  };
+  return hideEdges(e);
+}
+/** The eight presentation attributes DOMPurify keeps whose url() fetches (figure-gate.ts PAINT_ATTRS, spelled out here so the
+ *  test does not read the list it checks). */
+const PAINT_EIGHT = ["fill", "stroke", "filter", "clip-path", "mask", "marker-start", "marker-mid", "marker-end"];
+const remoteRef = (a: string) => a === "mask" ? 'image-set("https://remote.invalid/' + a + '.png" 1x)' : a === "filter" ? "blur(2px) url(https://remote.invalid/" + a + ".svg#f)" : "url(https://remote.invalid/" + a + ".svg#p)";
+/** A chat body as DOMPurify hands it back: a paragraph holding an svg whose rects carry one remote paint attribute each, a
+ *  rect with the two references that stay under node (a same-document one and a raster data: URL), and a rect naming a data:
+ *  SVG document, which goes (paint-refs.ts DATA_RASTER_TYPES: only a raster data: URL stays). */
+const DATA_DOC = "url(data:image/svg+xml,%3Csvg%2F%3E#p)";
+function paintBody(): { body: PaintEl; rects: PaintEl[]; local: PaintEl; doc: PaintEl } {
+  const rects = PAINT_EIGHT.map((a) => paintEl("rect", { width: "4", height: "4", [a]: remoteRef(a) }));
+  const local = paintEl("rect", { fill: "url(#g)", stroke: "url(data:image/png;base64,iVBORw0KGgo=)" });
+  const doc = paintEl("rect", { width: "4", fill: DATA_DOC });
+  return { body: paintEl("body", {}, [paintEl("p", {}, [paintEl("svg", {}, [...rects, local, doc])])]), rects, local, doc };
+}
+
+test("the paint pass runs inside sanitizeMd BY DEFAULT: a chat body whose svg carries each of the eight paint attributes with a url() to another origin comes back without any of them, the rects kept and their other attributes untouched, a same-document url(#g) and a raster data: URL kept, a data: SVG document removed; it runs before the caller's own pass; `remoteRefs: \"keep\"` hands the eight back as DOMPurify left them and still removes the data: SVG document (the viewer drops it, never gates it)", () => {
+  // guards the fix's default: every sanitizeMd caller but the viewer's mdBlock is covered without asking (the chat's md() and
+  // userMd(), the preview card, the feed's notices); a removed call, or a default flipped to keep, fetches on render again
+  const seen: string[] = [];
+  let answer: PaintEl | null = null;
+  setMdSanitizer({ addHook: () => { /* the hooks are DOMPurify's */ }, sanitize: (dirty: string) => { seen.push(dirty); return answer; } } as unknown as Parameters<typeof setMdSanitizer>[0]);
+  try {
+    const chat = paintBody();
+    answer = chat.body;
+    assert.equal(sanitizeMd("<svg></svg>"), chat.body as unknown as HTMLElement, "the stand-in's body is the one handed back");
+    for (const [i, a] of PAINT_EIGHT.entries()) {
+      assert.equal(chat.rects[i].getAttribute(a), null, a + ": a url() naming another origin is removed by default (the chat's call passes no options)");
+      assert.deepEqual(chat.rects[i].attrs, { width: "4", height: "4" }, a + ": the attribute alone goes; the rect stays with the rest of its attributes");
+    }
+    assert.deepEqual(chat.local.attrs, { fill: "url(#g)", stroke: "url(data:image/png;base64,iVBORw0KGgo=)" }, "a same-document reference and a raster data: URL stay (under node there is no page origin, so these two are what stays)");
+    assert.deepEqual(chat.doc.attrs, { width: "4" }, "a data: SVG document is removed by default: its type is not a raster (Firefox loads it as a resource document, which fetches its own @import)");
+    const explicit = paintBody();
+    answer = explicit.body;
+    sanitizeMd("<svg></svg>", undefined, { remoteRefs: "drop" });
+    assert.deepEqual(explicit.rects.map((r) => Object.keys(r.attrs).length), PAINT_EIGHT.map(() => 2), "remoteRefs: \"drop\" is the default spelled out");
+    const ordered = paintBody();
+    answer = ordered.body;
+    let atOwn: string | null | undefined;
+    sanitizeMd("<svg></svg>", () => { atOwn = ordered.rects[0].getAttribute("fill"); });
+    assert.equal(atOwn, null, "the caller's own pass reads the body after the paint pass (the order the source pin below holds)");
+    const viewer = paintBody();
+    answer = viewer.body;
+    sanitizeMd("<svg></svg>", undefined, { remoteRefs: "keep" });
+    for (const [i, a] of PAINT_EIGHT.entries()) assert.equal(viewer.rects[i].getAttribute(a), remoteRef(a), a + ": kept under remoteRefs: \"keep\", the viewer's opt-out (its gate moves the reference behind a click instead)");
+    assert.deepEqual(viewer.doc.attrs, { width: "4" }, "the data: SVG document is removed under remoteRefs: \"keep\" too: the opt-out keeps references to another origin alone, and the viewer drops a data: document as every other surface does (a placeholder could name only data:, and its click would load a document that fetches other hosts)");
+    assert.deepEqual(viewer.local.attrs, { fill: "url(#g)", stroke: "url(data:image/png;base64,iVBORw0KGgo=)" }, "under keep a same-document reference and a raster data: URL stay as well");
+    assert.equal(seen.length, 4, "one sanitize per call");
+  } finally { setMdSanitizer(null); }
+});
+
+test("ownOrigins and the base: the page's origin and the kernel's (window.__rompKernelBase, an editor webview's) are own, an opaque `null` origin never is, none under node; sanitizeMd resolves a relative url() against document.baseURI, so a same-origin reference, a relative one and one to the kernel stay while another port and another host go", () => {
+  // guards the STAYS rule's inputs on the chat path: with the page's origin missing every same-origin paint would go, and with
+  // an opaque origin admitted a javascript: or about: reference (origin null) would stay
+  assert.deepEqual(ownOrigins(), [], "under node: no location, no window, no origin of the page's own");
+  const g = globalThis as unknown as Record<string, unknown>;
+  const had = { location: g.location, window: g.window, document: g.document };
+  g.location = { origin: "http://127.0.0.1:7777", href: "http://127.0.0.1:7777/chat?x=1" };
+  g.window = { __rompKernelBase: "http://127.0.0.1:8888/" };
+  g.document = { baseURI: "http://127.0.0.1:7777/chat?x=1" };
+  let answer: PaintEl | null = null;
+  setMdSanitizer({ addHook: () => { /* the hooks are DOMPurify's */ }, sanitize: () => answer } as unknown as Parameters<typeof setMdSanitizer>[0]);
+  try {
+    assert.deepEqual(ownOrigins(), ["http://127.0.0.1:7777", "http://127.0.0.1:8888"], "the page's origin, then the kernel's");
+    const own = paintEl("rect", { fill: "url(http://127.0.0.1:7777/own.svg#p)" }), rel = paintEl("rect", { fill: "url(plots/p.svg#p)" });
+    const kernel = paintEl("rect", { fill: "url(http://127.0.0.1:8888/file?path=p.svg#p)" });
+    const port = paintEl("rect", { fill: "url(http://127.0.0.1:9999/p.svg#p)" }), host = paintEl("rect", { stroke: "url(//remote.invalid/p.svg#p)" });
+    const js = paintEl("rect", { fill: "url(javascript:alert)" });
+    answer = paintEl("body", {}, [paintEl("svg", {}, [own, rel, kernel, port, host, js])]);
+    sanitizeMd("<svg></svg>");
+    assert.equal(own.getAttribute("fill"), "url(http://127.0.0.1:7777/own.svg#p)", "the page's own origin stays");
+    assert.equal(rel.getAttribute("fill"), "url(plots/p.svg#p)", "a relative url() resolves against document.baseURI to the page's origin and stays");
+    assert.equal(kernel.getAttribute("fill"), "url(http://127.0.0.1:8888/file?path=p.svg#p)", "the kernel's origin stays");
+    assert.equal(port.getAttribute("fill"), null, "another port on the same host is another origin: removed");
+    assert.equal(host.getAttribute("stroke"), null, "a protocol-relative reference to another host: removed");
+    assert.equal(js.getAttribute("fill"), null, "javascript: has an opaque origin: removed");
+    g.location = { origin: "null", href: "about:srcdoc" };
+    g.window = {};
+    assert.deepEqual(ownOrigins(), [], "an opaque page origin is not own, and a window with no kernel base adds none");
+    g.window = { __rompKernelBase: "not a url" };
+    assert.deepEqual(ownOrigins(), [], "a kernel base that is not a URL adds none");
+  } finally {
+    setMdSanitizer(null);
+    for (const k of ["location", "window", "document"] as const) { if (had[k] === undefined) delete g[k]; else g[k] = had[k]; }
+  }
+});
+
 // ── the profile ─────────────────────────────────────────────────────────────────────────────────────
 
 test("the profile: html + svg, data: on img, no data-*, the forbidden tags, prefixed ids and names; input stays for the task checkbox", () => {
@@ -310,8 +414,8 @@ test("md-sanitize.ts holds the dashboard's ONLY call into DOMPurify's sanitize, 
   const SAN = read("md-sanitize.ts");
   assert.equal((SAN.match(/\.sanitize\(/g) || []).length, 1);
   assert.equal((SAN.match(/DOMPurify\.sanitize\(/g) || []).length, 0, "never the import directly: the seam would be bypassed");
-  assert.match(SAN, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void\): HTMLElement \{\n\s*installMdSanitizeHooks\(\);\n\s*const clean = purifier\(\)\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\) as HTMLElement;/,
-    "the hook is installed before the first sanitize, and the profile is spread with RETURN_DOM; the caller's own pass is optional (the chat's md() and userMd() pass none)");
+  assert.match(SAN, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void, opts\?: \{ remoteRefs\?: "drop" \| "keep" \}\): HTMLElement \{\n\s*installMdSanitizeHooks\(\);\n\s*const clean = purifier\(\)\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\) as HTMLElement;/,
+    "the hook is installed before the first sanitize, and the profile is spread with RETURN_DOM; the caller's own pass and the options are optional (the chat's md() and userMd() pass neither)");
   assert.match(SAN, /export function setMdSanitizer\(p: MdSanitizer \| null\): void \{ installedSanitizer = p; \}\n(?:\/\*\*[^\n]*\*\/\n)?const purifier = \(\): MdSanitizer => installedSanitizer \?\? DOMPurify;/,
     "the seam: the installed stand-in, else the module-global instance");
   // The seam is the one export that can put something other than DOMPurify behind sanitizeMd, so the claim that no
@@ -324,8 +428,8 @@ test("md-sanitize.ts holds the dashboard's ONLY call into DOMPurify's sanitize, 
   assert.deepEqual(seamCallers, ["md-sanitize.ts"], "setMdSanitizer is named by no production module: the seam is the node suites' alone");
   assert.match(SAN, /\nlet installedSanitizer: MdSanitizer \| null = null;\n/, "the installed instance is module-private: setMdSanitizer is the seam's one door, and the sweep above covers it");
   assert.match(SAN, /export function installMdSanitizeHooks\(purify: Pick<DOMPurifyInstance, "addHook"> = purifier\(\)\): void \{/, "the hooks install reads the same instance");
-  assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*if \(own\) own\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/,
-    "the input post-pass, then the caller's own pass (the viewer's heading ids, read from the text as written), then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");
+  assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*const base = typeof document !== "undefined" \? document\.baseURI \|\| "" : "";\n\s*if \(opts\?\.remoteRefs === "keep"\) dropDataDocuments\(clean, base\);\n\s*else dropRemoteRefs\(clean, ownOrigins\(\), base\);\n\s*if \(own\) own\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/,
+    "the input post-pass, then the paint pass (a url() to another origin and a data: document removed; under the viewer's opt-out the data: documents alone; before the registered passes, so it never reads the math fill's styles), then the caller's own pass (the viewer's heading ids, read from the text as written), then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");
   assert.match(SAN, /export function registerMdPostPass\(pass: \(root: ParentNode\) => void\): void \{\n\s*if \(!postPasses\.includes\(pass\)\) postPasses\.push\(pass\);\n\}/, "the registry: idempotent, a pass registered twice runs once (md-sanitize-katex-browser.test.ts executes it)");
   assert.match(SAN, /const postPasses: Array<\(root: ParentNode\) => void> = \[\];/, "the registry is a module array of passes over the sanitized body, empty until a grammar module registers one");
   const importers = sources.filter((f) => /from "dompurify"/.test(read(f)));
