@@ -4873,9 +4873,8 @@ def _in_the_tree(name, root, file_names, literals):
 
 
 def _files_outside_the_tree(text, in_tree):
-    """Every file name text carries, as _RECORD_FILE_NAME reads it (a run of the pattern's characters that ends in one
-    of the extensions it lists, read whole with any dot inside it; a path or a glob), that in_tree refuses, each once,
-    sorted."""
+    """Every file name text carries, as _RECORD_FILE_NAME reads it (a path or a glob included; THE LIMITS of
+    TheRecordsNameInRepoPins below state how the pattern reads a name), that in_tree refuses, each once, sorted."""
     return sorted({m.group(0) for m in _RECORD_FILE_NAME.finditer(text) if not in_tree(m.group(0))})
 
 
@@ -4887,29 +4886,28 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
     and kernel/judge.py carry, the writer's and the judge's docstrings among them, names a test that exists in tests/, or
     stands in a history clause with a pointer to the test's current name: a ledger paragraph keeps the name its commit
     knew, followed by where the test went (regression-2, the refuter's shape). Both scans read text, so they pin what
-    the records name, not what the tests assert. The plants pin the scans: a scan that loses a rule turns a plant red,
-    for every rule the helpers above state and every extension the file pattern lists. That covers each stop of
-    _history_clause, each history word read as a whole word, and each population a helper reads (the helper plants,
-    test_the_scans_helpers_read_the_populations_they_state_by_name, run _defined_test_names, _is_test_module and
-    _tree_file_names over a scratch directory, and the file plants hand _product_literals two sources, each holding a
-    constant a plant reads). The constants of kernel/ and of postal/ that THE LIMITS name are pinned by
+    the records name, not what the tests assert. The plants test the scans and their helpers by example, each a subtest
+    labelled with its case (the helper plants, test_the_scans_helpers_read_the_populations_they_state_by_name, run
+    _defined_test_names, _is_test_module and _tree_file_names over a scratch directory, and the file plants hand
+    _product_literals two sources, each holding a constant a plant reads). They pin a rule of the scans only where a
+    plant's answer depends on it: a scan that loses a rule no plant's answer depends on turns no plant red. The
+    plant every extension the pattern lists names each extension the pattern lists, and its test fails when the pattern
+    lists one that the plant does not name. The constants of kernel/ and of postal/ that THE LIMITS name are pinned by
     test_the_writer_docstring_and_the_ledger_name_no_file_outside_the_tree: for each of the two directories apart, every
     file name that one of its string constants is or ends in after a slash reads as in the tree, leaving out a glob, a
     name that begins with ~ or $, and a name a file in the tree carries, so that constants read from one directory alone
-    turn it red. Over the two real homes, dropping the ~ or the $ from the home-path test changes nothing the scan
-    returns, as measured at this head: no file or directory under the root has a name that begins with either, so no
-    path, glob or bare name read against the tree finds one; and no string constant of kernel/ or postal/ is, or ends
-    after a slash in, a file name that begins with either, so the constant branch finds none (some constants begin with
-    one, a home path the product reads among them, but none is such a name). The plant a home-named directory under the
-    root, over a scratch root, pins both.
+    turn it red.
     THE LIMITS: the history rule reads the words renamed, split or named ... until and a current test name in the
     clause, not whether the pointer names the right successor, which a reader checks against the commit it cites. The
     file scan reads names with one of the extensions its pattern lists, so a record named without one, or with another
     and no listed one before it (the plant an extension the pattern does not list), is not seen. The pattern reads a
-    name as a run of letters, digits and _ . * ~ / $ -, up to the last listed extension in the run that no letter, digit
-    or underscore follows, so a name that holds any other character (a space, a plus) is read from after that character,
-    and a name with more after a listed extension is read up to that extension (the plant a name read in part, over a
-    scratch root). The tree is the files on disk under the root, so an untracked file there counts on the machine that
+    name in each maximal run of ASCII letters and digits and _ . * ~ / $ -: from the run's first character to the end of
+    the run's last listed extension that follows a dot, the dot right after a character of the run other than a dot or a
+    slash, and that has no alphanumeric character (str.isalnum()) or underscore right after it; a run with no such
+    extension gives no name. So docs/a+b.md is read as b.md and docs/c.md.orig as docs/c.md (the plant a name read in
+    part, over a scratch root), r4.log..py as r4.log, and r4-x-probe..log and notes/.log not at all, so a record naming
+    either of those two notes files is not refused (the plant a listed extension after a second dot or a slash).
+    The tree is the files on disk under the root, so an untracked file there counts on the machine that
     holds it and not in CI's checkout (the plant a path under the root, over a scratch root that is no git checkout). A
     name the tree also carries reads as in the tree even when the record means a notes-directory file of that name,
     since a text scan cannot tell the two apart: a bare name that a file in the tree carries outside dot directories,
@@ -5065,6 +5063,8 @@ class TheRecordsNameInRepoPins(unittest.TestCase):
             ("every extension the pattern lists", " ".join(every), sorted(every)),
             ("an extension the pattern does not list", "its figure r4-x-notes.png and its cache r4-x-notes.pyc", []),
             ("a file name with a dot inside is read whole", "r4-x.kernel.py", ["r4-x.kernel.py"]),
+            ("a listed extension after a second dot or a slash", "r4-x-probe..log, notes/.log and r4.log..py",
+             ["r4.log"]),
             ("a name named twice is listed once", "r4-x-probe-summary.log and r4-x-probe-summary.log",
              ["r4-x-probe-summary.log"]),
             ("a bare glob over the tree's root", "READ*.md", []),
