@@ -403,7 +403,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   inside it). The wait starts only when a holder is seen or a process is listed
   as not judged (below): a run with neither pays nothing for it, and a run that
   leaves only a listed process waits for its exit, up to the whole bound, and
-  stays green. If any
+  stays green. The controller's own resource tracker is never waited for, listed
+  or not: it cannot exit while the controller holds its pipe (below). If any
   still hold a root the run is RED and each is named: pid, parent, command line,
   what it holds the root through (the environment names, `cwd`, `fd`, `argv`),
   and the test phase current at its spawn (`PYTEST_CURRENT_TEST` in the
@@ -438,7 +439,12 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   applies only where its premise is shown. A tracker whose own `/proc` entries
   refuse reads (a non-dumpable process's environment, cwd and descriptors refuse
   them together, so its pipe is unread too) is listed by pid as not judged, with
-  the reason on its line, and leaves the exit status alone. A process whose
+  the reason on its line, and leaves the exit status alone, when it meets the
+  condition under which any unreadable process is listed: this user's, started
+  after the controller, in its cgroup (below). Outside that condition, as when it
+  has moved into another cgroup, it is neither listed nor counted: the check
+  keeps no count from its scan of the tracker alone, and its main scan passes
+  over the tracker. A process whose
   descriptors cannot be read is not read for the pipe, as it is not read for a
   root, and never makes the run red: a non-dumpable child that keeps the pipe
   leaves the tracker passed over, and is listed as not judged (below). A process
@@ -466,7 +472,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
     run's in the same cgroup (a sibling test's child run under pytest-xdist, a
     second run started from the same shell), which is listed too; other users'
     processes, and this user's started before the run or in another cgroup, are a
-    count of unreadable processes printed with any report;
+    count of unreadable processes printed with any report. The controller's own
+    resource tracker is the exception to that count: outside the condition it is
+    neither listed nor counted (above);
   - a process started after the scan: by a non-daemon thread still running when
     the join's bound ran out, by a daemon thread, or by any process outside this
     one. The threads of the first two kinds are reported by count and name, with
