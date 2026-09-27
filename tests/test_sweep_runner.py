@@ -434,7 +434,12 @@ class Runner(_Base):
         w3.run(check=0)
         self.assertEqual(w3.result()["legs"]["tools"]["tests"], 6)
 
-    def test_a_leg_rerun_keeps_history_and_rereads_the_verdict(self):
+    FLAKE = "tests/test_notes.py::test_order (a known flake, recorded in the flake census)"
+
+    def test_a_leg_rerun_after_a_named_flake_keeps_both_runs(self):
+        """A --leg re-run counts only over the first run's recorded failure, named as a known flake, at the same full
+        sha (pre-round ruling Q11): the leg's record holds the re-run's attempt and, under `rerun`, the first failure,
+        the flake and the sha each ran at; the history keeps the first attempt too, and the pass line names both."""
         w = self.w
         w.ctl({"rc": {"pytest": 1}})
         w.run(check=1)
@@ -442,16 +447,60 @@ class Runner(_Base):
         self.assertEqual(first["red"], [PYTEST_LEG])
         w.ctl({})
         before = len(w.calls())
-        p = w.run("--leg", "pytest", check=0)
+        p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=0)
         r = w.result()
         self.assertEqual(r["verdict"], "pass", p.stdout + p.stderr)
         self.assertEqual([c["leg"] for c in w.calls()[before:]], [PYTEST_LEG], "only the named leg ran again")
         self.assertEqual([(h["leg"], h["rc"]) for h in r["history"]], [(PYTEST_LEG, 1)], "the red attempt is kept")
+        leg = r["legs"]["pytest"]
+        self.assertEqual(leg["rc"], 0)
+        self.assertEqual(leg["rerun"]["flake"], self.FLAKE)
+        self.assertEqual(leg["rerun"]["sha"], w.head())
+        self.assertEqual(leg["rerun"]["first"]["sha"], w.head())
+        self.assertEqual((leg["rerun"]["first"]["rc"], leg["rerun"]["first"]["started"]),
+                         (1, first["legs"]["pytest"]["started"]), "the first failure is the first run's own attempt")
         for name in ("bats", "manager", "tools", "ledger"):
             self.assertEqual(r["legs"][name]["started"], first["legs"][name]["started"], "%s was not touched" % name)
+        a = sweep.assess(w.head(), env=w.env)
+        self.assertEqual(a["case"], "pass", a["line"])
+        self.assertIn("pytest re-run after a known flake (first run rc 1; flake: %s)" % self.FLAKE, a["line"])
+        self.assertIn("pytest re-run after a known flake", p.stdout)
         w.change({"README.md": "moved on\n"})
-        p = w.run("--leg", "pytest", check=2)
+        p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
         self.assertIn("no result at %s to re-run a leg in; run the full sweep" % w.head()[:10], p.stderr)
+
+    def test_a_leg_rerun_is_refused_without_a_flake_over_a_pass_twice_or_before_the_sweep_finished(self):
+        w = self.w
+        w.ctl({"rc": {"pytest": 1}})
+        w.run(check=1)
+        path = w.result_path()
+        with open(path) as f:
+            red = f.read()
+        w.ctl({})
+        before = len(w.calls())
+        for extra, named in ((("--leg", "pytest"), "--leg re-runs a leg only after a known flake: name it with --flake"),
+                             (("--leg", "pytest", "--flake", "  "), "--leg re-runs a leg only after a known flake"),
+                             (("--flake", self.FLAKE), "--flake names the flake a --leg re-run is for; it takes --leg"),
+                             (("--leg", "bats", "--flake", self.FLAKE), "bats passed at %s; there is no failure to re-run" % w.head()[:10])):
+            with self.subTest(extra=extra):
+                p = w.run(*extra, check=2)
+                self.assertIn(named, p.stderr)
+                with open(path) as f:
+                    self.assertEqual(f.read(), red, "a refused re-run leaves the result as it was")
+        self.assertEqual(len(w.calls()), before, "nothing ran")
+        w.run("--leg", "pytest", "--flake", self.FLAKE, check=0)
+        p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
+        self.assertIn("pytest was already re-run at %s, and a re-run counts once; run the full sweep" % w.head()[:10], p.stderr)
+        data = json.loads(red)
+        data.update(finished=None, verdict="running")
+        sweep.write_result(path, data)
+        p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
+        self.assertIn("the sweep at %s has not finished" % w.head()[:10], p.stderr)
+        data = json.loads(red)
+        data["legs"]["pytest"]["finished"] = None
+        sweep.write_result(path, data)
+        p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
+        self.assertIn("pytest has no finished first run at %s to re-run" % w.head()[:10], p.stderr)
 
     def test_an_empty_glob_is_a_red_leg_not_a_bare_run(self):
         seed = dict(SEED)
@@ -622,6 +671,64 @@ class Reader(unittest.TestCase):
                 self.assertEqual(case, "invalid", line)
                 self.assertIn(named, line)
                 self.assertEqual(sweep.verdict_of(self.result(legs=legs)), "red", "the verdict rule owes such a leg too")
+
+    def rerun(self, **mark):
+        """A result whose pytest leg the runner re-ran after a known flake: the re-run passed, the first run failed with
+        rc 1, both at SHA; `mark` replaces keys of the rerun record (None deletes one)."""
+        data = self.result()
+        first = {"rc": 1, "started": "2026-01-01T00:00:01Z", "finished": "2026-01-01T00:00:02Z", "tests": 3, "failed": 1}
+        data["history"] = [dict(first, leg="pytest")]
+        rec = {"flake": "tests/test_notes.py::test_order (known)", "sha": self.SHA, "first": dict(first, sha=self.SHA)}
+        for k, v in mark.items():
+            if v is None:
+                rec.pop(k, None)
+            else:
+                rec[k] = v
+        data["legs"]["pytest"]["rerun"] = rec
+        return data
+
+    def test_a_counted_rerun_passes_and_the_line_names_both_runs(self):
+        self.write(self.rerun())
+        case, line = self.case()
+        self.assertEqual(case, "pass", line)
+        self.assertIn("pytest re-run after a known flake (first run rc 1; flake: tests/test_notes.py::test_order (known))", line)
+
+    def test_a_rerun_the_runner_never_writes_is_invalid(self):
+        """The reader refuses a re-run that lacks the recorded first failure, names no flake, or ran at another sha
+        (pre-round ruling Q11), each by name; a leg counts as re-run when its record carries `rerun` or the history
+        holds an earlier attempt of it."""
+        passing_first = {"rc": 0, "started": "s", "finished": "f", "tests": 3, "failed": 0, "sha": self.SHA}
+        unfinished_first = {"rc": 1, "started": "s", "finished": None, "tests": 3, "failed": 1, "sha": self.SHA}
+        no_mark = self.rerun()
+        del no_mark["legs"]["pytest"]["rerun"]
+        twice = self.rerun()
+        twice["history"].append(dict(twice["history"][0]))
+        cases = (
+            ("history with no mark", no_mark, "pytest was re-run with no first failure recorded and no flake named"),
+            ("an empty mark", self.rerun(first=None, flake=None, sha=None), "pytest's re-run records no first failure"),
+            ("no first failure", self.rerun(first=None), "pytest's re-run records no first failure"),
+            ("a first run that passed", self.rerun(first=passing_first), "pytest's re-run records no first failure"),
+            ("a first run that never finished", self.rerun(first=unfinished_first), "pytest's re-run records no first failure"),
+            ("no flake", self.rerun(flake=None), "pytest's re-run names no known flake"),
+            ("a blank flake", self.rerun(flake="  "), "pytest's re-run names no known flake"),
+            ("the re-run at another sha", self.rerun(sha=self.OTHER), "pytest: the re-run ran at %s, not at %s" % (self.OTHER, self.SHA)),
+            ("the first run at another sha", self.rerun(first=dict(self.rerun()["legs"]["pytest"]["rerun"]["first"], sha=self.OTHER)),
+             "pytest: the first run ran at %s, not at %s" % (self.OTHER, self.SHA)),
+            ("the re-run at no sha", self.rerun(sha=None), "pytest: the re-run ran at None, not at %s" % self.SHA),
+            ("re-run twice", twice, "pytest was re-run 2 times, and a re-run counts once"),
+        )
+        for label, data, named in cases:
+            with self.subTest(label):
+                self.write(data)
+                case, line = self.case()
+                self.assertEqual(case, "invalid", line)
+                self.assertIn(named, line)
+                self.assertIn("a --leg re-run counts only over a recorded first failure named as a known flake, at the same "
+                              "full sha", line)
+        bare = self.rerun()
+        bare["legs"]["pytest"]["rerun"] = "yes"
+        self.write(bare)
+        self.assertEqual(self.case()[0], "invalid", "a rerun key whose value is not a record is refused too")
 
     def test_the_schema_must_be_the_integer(self):
         self.write(self.result(schema=True))

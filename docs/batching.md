@@ -158,9 +158,14 @@ subject; `verify` refuses the branch otherwise.
    `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and `batch.py` with the
    same environment. It refuses a dirty tree and records the run invalid if HEAD or the tree changes
    while it runs. When one leg fails on a known flake,
-   `scripts/sweep.py run --tree ../romp-batch-<name> --leg <leg>` re-runs that leg alone at the same
-   head and keeps the failed attempt in the result's history. `scripts/sweep.py check --tree
-   ../romp-batch-<name>` prints what `verify` will read.
+   `scripts/sweep.py run --tree ../romp-batch-<name> --leg <leg> --flake '<the flake>'` re-runs that
+   leg alone at the same head; `--flake` names the failing test and where it is recorded as a known
+   flake. The runner refuses a re-run without `--flake`, of a leg that did not fail, or of a leg
+   already re-run once. The leg's record keeps both runs: the re-run, and the first failure with the
+   flake and the sha each ran at. `verify` counts a re-run only when all three are there and name the
+   batch head's sha, and the body's first block names the first failure and the flake. Any other
+   failure means a full sweep again. `scripts/sweep.py check --tree ../romp-batch-<name>` prints what
+   `verify` will read.
 4. `scripts/batch.py verify <name>`. It reads the sweep result for the batch head's full sha and
    fails by name when it is missing, stale (recorded at another commit), unfinished, red, invalid,
    incomplete or unreadable. A missing result names the directory verify read and the variable it

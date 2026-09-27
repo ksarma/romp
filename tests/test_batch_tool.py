@@ -1623,6 +1623,27 @@ class VerifyReadsTheSweep(_Base):
         self.assertIn("ok   sweep at %s: pass" % head[:10], p.stdout)
         self.assertNotIn("sweep webview", p.stdout)
 
+    def test_a_leg_rerun_counts_only_with_its_first_failure_and_flake_and_the_body_names_both(self):
+        """A leg the runner re-ran after a known flake (pre-round ruling Q11): verify accepts it through the reader,
+        records both runs, and the body's first block names the first failure and the flake; a re-run that names no
+        flake is refused as invalid."""
+        fx = self.fx
+        head = self.assembled()
+        legs = self.legs()
+        first = {"rc": 1, "started": sweep.now(), "finished": sweep.now(), "tests": 3, "failed": 1}
+        legs["pytest"]["rerun"] = {"flake": "tests/test_notes.py::test_order (known)", "sha": head, "first": dict(first, sha=head)}
+        fx.sweep("b1", legs=legs, history=[dict(first, leg="pytest")])
+        p = fx.ok("verify", "b1")
+        note = "pytest re-run after a known flake (first run rc 1; flake: tests/test_notes.py::test_order (known))"
+        self.assertIn(note, p.stdout)
+        self.assertEqual(fx.state("b1")["sweep"]["reruns"], [note])
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        first_block = next(b for b in body.split("\n\n") if "Verified at %s" % head[:10] in b)
+        self.assertIn(note, first_block, "the first block names both runs")
+        legs["pytest"]["rerun"]["flake"] = ""
+        fx.sweep("b1", legs=legs, history=[dict(first, leg="pytest")])
+        self.refused("FAIL sweep invalid at %s: pytest's re-run names no known flake" % head[:10])
+
     def test_the_free_text_flag_is_gone(self):
         fx = self.fx
         self.assembled()

@@ -1586,7 +1586,9 @@ def cmd_verify(args, quiet=False):
         legs = a["result"]["legs"]
         state["sweep"] = {"head": head, "path": a["path"], "verdict": "pass", "finished": a["result"].get("finished"),
                           "legs": [[n, legs[n].get("rc") if sweep.is_owed(n, legs[n]) else "not owed"] for n in sweep.LEGS],
-                          "summary": {n: legs[n]["summary"] for n in sweep.LEGS if sweep.is_owed(n, legs[n]) and legs[n].get("summary")}}
+                          "summary": {n: legs[n]["summary"] for n in sweep.LEGS if sweep.is_owed(n, legs[n]) and legs[n].get("summary")},
+                          # a leg re-run after a known flake: both runs, as the reader counted them (sweep.rerun_note)
+                          "reruns": [sweep.rerun_note(n, legs[n]) for n in sweep.LEGS if "rerun" in legs[n]]}
         lines.append("ok   " + a["line"])
     else:
         ok = False
@@ -1666,15 +1668,18 @@ def read_first_reasons(m, resolved, contained_by=None):
 
 def sweep_phrase(sw):
     """The first block's words for the sweep verify read: every owed leg with its rc (and the runner's
-    display summary), then the legs not owed. A record from before the result file (free text passed
-    to verify) is shown as it was written."""
+    display summary), then the legs not owed, then any leg re-run after a known flake, with its first
+    failure and the flake. A record from before the result file (free text passed to verify) is shown as
+    it was written."""
     if not sw:
         return "sweep not recorded"
     if sw.get("verdict") == "pass" and isinstance(sw.get("legs"), list):
         summary = sw.get("summary") or {}
         ran = ["%s rc %s%s" % (n, rc, (" (%s)" % summary[n]) if summary.get(n) else "") for n, rc in sw["legs"] if rc != "not owed"]
         skipped = [n for n, rc in sw["legs"] if rc == "not owed"]
-        return "sweep pass: %s%s" % (", ".join(ran), ("; not owed: " + ", ".join(skipped)) if skipped else "")
+        reruns = sw.get("reruns") or []
+        return "sweep pass: %s%s%s" % (", ".join(ran), ("; not owed: " + ", ".join(skipped)) if skipped else "",
+                                       ("; " + "; ".join(reruns)) if reruns else "")
     return sw.get("text") or "sweep not recorded"
 
 
