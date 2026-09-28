@@ -1038,22 +1038,25 @@ class HeldPairRule(unittest.TestCase):
         # is CAUGHT, in feed-delta.ts's tryApplyFeedDelta (the one wrapper both roads call, so both are covered by construction),
         # and each road refuses it with its own recovery and bound (refuseRemoteApply, refuseLocalApply): the pair still stands
         # (nothing was written), one bare needFullFeed goes per stall, and the asking stops after the answering full. A bare
-        # applyFeedDelta call anywhere in federation.ts, a second catch, or a throw of the gate's own moves the reading and reds here
-        self.assertEqual(m2.group(1).count("const r = tryApplyFeedDelta(raw, d);"), 1, "the checked apply, once, before the pair write")
+        # applyFeedDelta call anywhere in federation.ts, a second catch, or a throw of the gate's own moves the reading and reds here.
+        # The two call censuses count the wrapper's name at a word boundary before its parenthesis over comment-stripped code
+        # (_ts_code), never the substring, which a comment naming the call also holds
+        remote_code = _ts_code(m2.group(1))
+        self.assertEqual(len(re.findall(r"\btryApplyFeedDelta\(", remote_code)), 1, "the checked apply, one call in applyRemoteFeedDelta's code, before the pair write")
+        self.assertRegex(remote_code, r"\bconst r = tryApplyFeedDelta\(raw, d\);", "that one call's statement: its result is the r the refusal below reads")
         self.assertEqual(m2.group(1).count("if (!r.ok) { this.refuseRemoteApply(c, host, d, r.error); return; }"), 1, "a throw is the remote road's refusal, before any write")
         self.assertEqual(len(re.findall(r"[^A-Za-z]applyFeedDelta\(", fed)), 0, "federation.ts calls the bare apply nowhere (the local arm and the remote road both go through tryApplyFeedDelta)")
-        self.assertEqual(fed.count("tryApplyFeedDelta("), 2, "the two roads, one call each: the local feedDelta arm and applyRemoteFeedDelta")
+        self.assertEqual(len(re.findall(r"\btryApplyFeedDelta\(", _ts_code(fed))), 2, "the two roads, one call each in federation.ts's code: the local feedDelta arm and applyRemoteFeedDelta")
         # the try census by the keyword over comment-stripped code (_try_statements), never the substring, which the checked apply's
         # name above and a comment word such as entry or retry also hold
-        self.assertEqual(_try_statements(_ts_code(m2.group(1))), 0, "no try statement in applyRemoteFeedDelta's code: the checked apply's throw is caught in feed-delta.ts's tryApplyFeedDelta, and a catch of the road's own reds here until classified")
-        self.assertEqual(m2.group(1).count("throw "), 0, "and the gate itself throws nothing: its refusals are the asks and the rows above")
+        self.assertEqual(_try_statements(remote_code), 0, "no try statement in applyRemoteFeedDelta's code: the checked apply's throw is caught in feed-delta.ts's tryApplyFeedDelta, and a catch of the road's own reds here until classified")
         # the roads' EXITS by the property (refusal-2): every `return` in the comment-stripped body of applyRemoteFeedDelta is one
         # of the three refusals (nobase, the gate, the checked apply), each pinned by its statement, so a refusal that neither
         # asks nor files (an early return) reds here until classified; the same over the local feedDelta arm's four exits (the
         # remote hand-off, nobase, the checked apply, the end) and the two refusal helpers' one early return each
-        remote_code = _ts_code(m2.group(1))
         self.assertEqual(len(re.findall(r"\breturn\b", remote_code)), 3, "applyRemoteFeedDelta's exits: nobase, the gate, the checked apply (a fourth is a refusal this census has not classified)")
-        self.assertEqual(len(re.findall(r"\bthrow\b", remote_code)), 0, "and no throw in its code")
+        # the throw census by the keyword over comment-stripped code, never the substring, which a comment word also holds
+        self.assertEqual(len(re.findall(r"\bthrow\b", remote_code)), 0, "and no throw in its code: the gate itself throws nothing, its refusals are the asks and the rows above")
         self.assertRegex(remote_code, r'this\.sendRemote\(host, \{ type: "needFullFeed" \}\);\n\s*return;', "the nobase exit follows its bare ask")
         self.assertRegex(remote_code, r'this\.sendRemote\(host, held \? \{ type: "needFullFeed", gen: held\.gen, rev: held\.rev \} : \{ type: "needFullFeed" \}\);\n\s*return;', "the gate's exit follows its ask with the held pair")
         arm_m = re.search(r'^    if \(m && m\.type === "feedDelta"\) \{\n(.*?)\n    \}\n', fed, re.S | re.M)
