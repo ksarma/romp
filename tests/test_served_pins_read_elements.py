@@ -2021,8 +2021,9 @@ class T(unittest.TestCase):
         # name is no text now, and each position the helper reads a response at is, by a constant index from either end (`resp[1]`,
         # `resp[-2]`), bound to a name (`body = resp[1]`) or unpacked after (`status, page, heads = resp`), in a method and in a
         # setUp's self.<attr> alike; the status and headers positions are none. A helper whose return is no tuple binds the name
-        # whole, and so does a helper the module does not define. The textual census reads no subscript and no unpack of a name, so
-        # those rows are declined forms. The rows of both derivations are named, never inferred.
+        # whole, and so does a helper the module does not define. A returned tuple with a starred element has positions the source
+        # does not show, so it gives "unknown" and its call binds every name (_spread). The textual census reads no subscript and no
+        # unpack of a name, so those rows are declined forms. The rows of both derivations are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import re, unittest
 def _text(path):
@@ -2050,6 +2051,10 @@ class T(unittest.TestCase):
         self.assertIn("c7", whole)
         other = elsewhere("/?token=x")
         self.assertIn("c8", other)
+        sp1, sp2 = _spread("/sw.js")
+        self.assertIn("c9", sp1)
+def _spread(path):
+    return (r.status, *extra, r.read())
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -2059,12 +2064,13 @@ class T(unittest.TestCase):
         finally:
             os.unlink(f.name)
         self.assertEqual([r[:5] for r in rows], [(13, "c1", "_landing", "in", False), (17, "c4", "_landing", "in", False), (19, "c5", "_landing", "in", False),
-                                                 (21, "c6", "_chat_page", "in", False), (24, "c7", "_sw_js", "in", True), (26, "c8", "_landing", "in", True)])
+                                                 (21, "c6", "_chat_page", "in", False), (24, "c7", "_sw_js", "in", True), (26, "c8", "_landing", "in", True),
+                                                 (28, "c9", "_sw_js", "in", True)])
         self.assertEqual([r[:3] for r in readers], [(13, "assert", "_landing"), (15, "regex", "_landing"), (17, "assert", "_landing"), (19, "assert", "_landing"),
-                                                    (21, "assert", "_chat_page"), (24, "assert", "_sw_js"), (26, "assert", "_landing")],
+                                                    (21, "assert", "_chat_page"), (24, "assert", "_sw_js"), (26, "assert", "_landing"), (28, "assert", "_sw_js")],
                          "a body position read as the text itself, and no read of a status or of the response headers a read of the page")
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
-                         {"_text": ["whole"], "setUp": [], "_req": [-2, 1], "test_a": []})
+                         {"_text": ["whole"], "setUp": [], "_req": [-2, 1], "test_a": [], "_spread": ["unknown"]})
 
     def test_a_returned_name_is_followed_to_its_binding_in_the_helper(self):
         # the rulings on the census pass (2026-09-28): a helper whose return holds a Name bound to the read (`body = r.read();
