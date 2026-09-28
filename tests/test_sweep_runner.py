@@ -9,7 +9,8 @@ credential variables, and nothing is written in the working tree.
 
 Every test builds its own world: a bare origin, a clone holding a tiny tree, and fakes for npm, bats, node
 and the pytest interpreter (one script, told apart by its name) that record their argv, cwd and environment
-variable NAMES and exit with the code the test sets. The real suite never runs. Synthetic data only.
+variable NAMES and exit with the code the test sets. Each fake carries its world's control and log paths in its
+own text, since no variable a test sets is sure to reach a leg. The real suite never runs. Synthetic data only.
 """
 import fcntl
 import importlib.util
@@ -53,8 +54,10 @@ FAKE = r'''#!%(python)s
 import json, os, shutil, subprocess, sys
 name = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
-ctl_path = os.environ.get("SWEEP_FAKE_CTL")
-ctl = json.load(open(ctl_path)) if ctl_path else {}
+# The control and log paths are written into this file when the World makes it, never read from the environment:
+# the runner's leg environment is an allowlist that drops every name a test would set.
+CTL, LOG = %(ctl)r, %(log)r
+ctl = json.load(open(CTL)) if os.path.exists(CTL) else {}
 if name == "python" and args[:1] == ["-c"]:
     print(ctl.get("probe_version", "3.99.0"))
     print(" ".join(ctl.get("missing", [])))
@@ -70,7 +73,7 @@ elif name == "upstream-ledger.py":
 else:
     leg = name
 keep = ("TMPDIR", "SWEEP_WRAPPED", "ROMP_SERVED_TESTS_REQUIRE", "ROMP_GITLEAKS_REQUIRE", "BATS_TEST_TIMEOUT")
-with open(os.environ["SWEEP_FAKE_LOG"], "a") as f:
+with open(LOG, "a") as f:
     f.write(json.dumps({"leg": leg, "argv": args, "cwd": os.getcwd(), "names": sorted(os.environ),
                         "values": {k: os.environ[k] for k in keep if k in os.environ}}) + "\n")
 act = ctl.get("action", {}).get(leg)
@@ -116,7 +119,7 @@ class World:
         self.ctl_path = os.path.join(self.tmp, "ctl.json")
         self.log_path = os.path.join(self.tmp, "fake.log")
         os.makedirs(self.bin)
-        fake = FAKE % {"python": sys.executable}
+        fake = FAKE % {"python": sys.executable, "ctl": self.ctl_path, "log": self.log_path}
         for name in ("python", "npm", "node", "bats"):
             with open(os.path.join(self.bin, name), "w") as f:
                 f.write(fake)
@@ -125,8 +128,7 @@ class World:
         self.env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ.get("PATH", ""), XDG_STATE_HOME=self.xdg,
                         GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
                         GIT_AUTHOR_NAME="romp tests", GIT_AUTHOR_EMAIL="tests@example.invalid",
-                        GIT_COMMITTER_NAME="romp tests", GIT_COMMITTER_EMAIL="tests@example.invalid",
-                        SWEEP_FAKE_CTL=self.ctl_path, SWEEP_FAKE_LOG=self.log_path)
+                        GIT_COMMITTER_NAME="romp tests", GIT_COMMITTER_EMAIL="tests@example.invalid")
         self.env.pop("ROMP_STATE_DIR", None)
         self.ctl({})
         self.git("init", "-q", "--bare", self.bare, cwd=self.tmp)
