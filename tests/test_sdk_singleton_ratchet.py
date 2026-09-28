@@ -17,12 +17,13 @@ The population, measured at this branch's base: six classes in five modules leak
 CostWeighting, BuildSessionDiffRows, FeedWarmResolveBumpsTheLedgerRevision, SharedViewInBuilds and
 PushSurvivesOneFailedChatBuild), each fixed in a commit of its own with ViewBuilder's shape: ViewBuilder's before the
 ratchet, the other four after it, one per module, found by the review round that ran the modules alone. The count
-comes from running every module ALONE with the ratchet on, on the missing road, which is CI's: the test venv's
-interpreter has no claude_agent_sdk, and a module run alone does not import tests/test_host_transport.py (that module is
-the one exception in the union, since it puts the venv on sys.path itself). The population is a union, every set saved
+comes from running every module with the ratchet on, on the missing road, each module alone on a box venv without the
+SDK: the test venv's interpreter has no claude_agent_sdk, and a module run alone does not import
+tests/test_host_transport.py (that module is the one exception in the union, since it puts the venv on sys.path itself).
+The population is a union, every set saved
 beside the list with the script that derives it: the 237 modules a census plugin (a scratch pytest plugin over two full
 -n 4 runs, on the SDK-importable road: tests/test_host_transport.py puts the box's SDK venv on sys.path at import, and
-every xdist worker imports every collected module, so a full run here takes that road, which CI never does) saw
+every xdist worker imports every collected module, so a full run here takes that road) saw
 take a road to a root change (a jd.STATE assignment, a jd._rebind_state call, a singleton construction, or a singleton
 that changed), the 94 that load the kernel under its shared name, the 272 whose text assigns jd.STATE or calls
 _rebind_state in process (the private-kernel modules among them included: a private name isolates the kernel's
@@ -40,16 +41,17 @@ module alone on the missing road; 364 modules in all. The first sweep, over its 
 missing road, found the 4 red on these leaks and 1 red for an
 unrelated pre-existing reason (tests/test_sdk_rate_limit_usage.py, an unrestored ROMP_SERVE_TOKEN setdefault the judge
 fixture's environment check names; identical with the ratchet off);
-the sweep repeated over all 364 after the fixes was green alone (the missing road, CI's) except that one. The full-suite
-census, on the importable road, saw none of the five, because an earlier first builder in every worker made their builds cache
-hits: a green suite run is no evidence a module is clean, and the module-alone sweep is the measurement; a green CI
-run of the suite is the missing-road full-suite datum (TheMissingRoadDatumIsWorded holds that sentence here, in the
-conftest's design comment and in the ledger entry).
+the sweep repeated over all 364 after the fixes was green alone (the missing road, on the box) except that one. The
+full-suite census, on the importable road, saw none of the five, because an earlier first builder in every worker made
+their builds cache hits: a green suite run is no evidence a module is clean, and the module-alone sweep is the
+measurement. CI's Python cells take the importable road since #872 installed the SDK in each, so no CI run of the suite
+is a missing-road datum (TheMissingRoadDatumIsWorded holds these road sentences here, in the conftest's design comment
+and in the ledger entry).
 
 The residual that leaves, a stated limit: a green run under the ratchet proves no leak occurred in that run and not that no
 test would leak alone, because a first builder that leaves its build masks a later sandboxed test's reach as a cache hit
 (no build, no transition, the ratchet silent). Measured as a pair and module alone on the missing road,
-which is CI's (the test venv's interpreter has no claude_agent_sdk and neither run collects
+on a box venv without the SDK (the test venv's interpreter has no claude_agent_sdk and neither run collects
 tests/test_host_transport.py), tests/test_kernel_fleet_cache.py then
 tests/test_token_usage.py with CostWeighting's fix reverted gave 77 passed and 0 verdicts, while the module alone gave 65
 passed and 1 error. An arm keyed on the build event inherits the masking, since a cache hit is no build, so the
@@ -121,13 +123,14 @@ jd.STATE as the reload re-bound it: None or False pass, the lazy build over the 
 anywhere else is named with the re-execution wording; the kernel's FIRST load inside a test (no marker before) is
 the same road, never an exemption.
 
-The SDK road is forced in every scratch head, never inherited from the interpreter: claude_agent_sdk is absent from
-CI's install and from the test venv's interpreter here, present on a box that installed it, AND a run here that
-collects tests/test_host_transport.py takes the importable road (that module puts the box's SDK venv on sys.path at
-import, and every xdist worker imports every collected module), so a full run here is the importable road while a
-module-alone run is CI's; SdkBackend constructs either way (the probe at construction, importlib.util.find_spec, only
-sets _sdk_missing and prints the not-found notices on the missing road), so the transition the ratchet judges is the
-same on both roads, and the figures from this module's own runs carry no inherited road. SCRATCH_HEAD sets None in
+The SDK road is forced in every scratch head, never inherited from the interpreter: claude_agent_sdk is absent from the
+test venv's interpreter here, present in CI's Python cells since #872 and on a box that installed it, AND a run here
+that collects tests/test_host_transport.py takes the importable road (that module puts the box's SDK venv on sys.path at
+import, and every xdist worker imports every collected module), so a full run here is the importable road, as CI's is,
+while a module-alone run here is the missing road; SdkBackend constructs either way (the probe at construction,
+importlib.util.find_spec, only sets _sdk_missing and prints the not-found notices on the missing road), so the
+transition the ratchet judges is the same on both roads, and the figures from this module's own runs carry no inherited
+road. SCRATCH_HEAD sets None in
 sys.modules
 for the name, which makes find_spec answer None and the import fail, so every run over it takes the missing road
 wherever it runs (A's outer test reads the notices); Q takes the importable road over a head without that line and a
@@ -813,14 +816,17 @@ def derive_deselect_targets(nodes=None):
 
 def derive_command(nodes=None):
     """The argv derive runs in the worktree: this module under the interpreter running it, `-B -m pytest -p
-    no:cacheprovider -q -rf` (-rf prints the FAILED lines derive_red_lines reads), one --deselect per node id of
+    no:cacheprovider -p no:anyio -q -rf` (-rf prints the FAILED lines derive_red_lines reads; -p no:anyio keeps
+    anyio's pytest plugin, which CI's SDK install brings, from auto-loading in the child, as on every pytest the
+    suite starts in a form the launcher census reads: tests/test_ci_sdk_pin.py's ChildPytestLaunchers, whose read and
+    residual _launchers_in's docstring states), one --deselect per node id of
     DERIVE_DESELECT (or `nodes`) in the tuple's order, and MODULE_PATH last. The node ids are resolved first
     (derive_deselect_targets), so no command is built over a node id that names no test of this module.
     TheDerivationIsRunnable holds the shape, and holds through derive over a faked subprocess.run that derive runs
     exactly this argv."""
     nodes = DERIVE_DESELECT if nodes is None else tuple(nodes)
     derive_deselect_targets(nodes)
-    cmd = [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf"]
+    cmd = [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:anyio", "-q", "-rf"]
     for node in nodes:
         cmd += ["--deselect", node]
     cmd.append(MODULE_PATH)
@@ -951,8 +957,8 @@ SCRATCH_HEAD = textwrap.dedent('''\
     # that builds over this root) build over THIS one, so the switch is written here, before any build, as sandbox() does.
     os.makedirs(os.path.join(os.environ["XDG_STATE_HOME"], "romp"))
     Path(os.environ["XDG_STATE_HOME"], "romp", "session-hosts").write_text("off\\n")
-    # The SDK road is forced, not inherited from the interpreter: CI's install and the test venv have no
-    # claude_agent_sdk, a box that installed it has one, and SdkBackend constructs either way (the probe at construction,
+    # The SDK road is forced, not inherited from the interpreter: the test venv has no claude_agent_sdk, CI's install
+    # (since #872) and a box that installed it have one, and SdkBackend constructs either way (the probe at construction,
     # importlib.util.find_spec, only sets _sdk_missing and prints the not-found notice on the missing road). None in
     # sys.modules for the name makes find_spec answer None and the import fail, so a run over this head with the line
     # below takes the missing road wherever it runs; Q's head (SCRATCH_HEAD_SDK_STUB) replaces the line with a comment
@@ -2243,7 +2249,7 @@ def nested_run(text, follower=None, sdk_stub=False, conftest=None):
     for var in NESTED_RUN_POPS:                        # the one copy; derive's environment is built from the same name
         env.pop(var, None)
     r = subprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider",
-                        "-vv", "-rA", "--tb=short", "--color=no", case],
+                        "-p", "no:anyio", "-vv", "-rA", "--tb=short", "--color=no", case],
                        cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
     return r.returncode, r.stdout + r.stderr
 
@@ -3103,7 +3109,10 @@ RESIDUAL_OPENER = "Measured as a pair and module alone"
 RESIDUAL_MEASURED = ("77 passed and 0 verdicts", "65 passed and 1 error")
 RESIDUAL_INSTRUMENT = "the order-independent instrument is the module-alone sweep"
 RESIDUAL_FOLLOWUP = "a follow-up item, its own PR after this one"
-CI_DATUM = "a green CI run of the suite is the missing-road full-suite datum"
+ROAD_FIGURES = "module alone on a box venv without the SDK"
+ROAD_CI = "CI's Python cells take the importable road since #872"
+ROAD_NO_DATUM = "no CI run of the suite is a missing-road datum"
+ROAD_RETIRED = "is the missing-road full-suite datum"     # the claim #872 made false: every Python cell installs the SDK
 LEDGER_ENTRY = os.path.join(ROOT, "upstream", "2026-09-19-sdk-singleton-ratchet.md")
 
 
@@ -3145,18 +3154,23 @@ class TheResidualIsWorded(unittest.TestCase):
 
 
 class TheMissingRoadDatumIsWorded(unittest.TestCase):
-    """The missing-road full-suite datum is worded alike in the three copies of the road paragraph, this module's
-    docstring, the ratchet's design comment in tests/conftest.py and the ledger entry: a green CI run of the suite is
-    the missing-road full-suite datum, since CI's install has no SDK and every full run on the box takes the other
-    road. Keyed on one needle, CI_DATUM, held verbatim in each copy with whitespace collapsed; a copy that names a
-    run at a head instead of the suite's CI run, the ledger entry's form before the round-7 review, reds here naming
-    the copy."""
+    """The road sentences are worded alike in the three copies of the road paragraph, this module's docstring, the
+    ratchet's design comment in tests/conftest.py and the ledger entry: the module-alone figures were taken on the
+    missing road, each module alone on a box venv without the SDK (ROAD_FIGURES); CI's Python cells take the importable
+    road since #872 installed the SDK in each (ROAD_CI), so no CI run of the suite is a missing-road datum
+    (ROAD_NO_DATUM). Keyed on those three needles, each held verbatim in each copy with whitespace collapsed (their
+    order is not read), and on the absence of the sentence they replaced (ROAD_RETIRED): before #872 each copy said a
+    green CI run of the suite was the missing-road full-suite datum, false once every Python cell installs the SDK. A
+    copy that drops a needle, or still carries the retired sentence, reds here naming the copy and the sentence."""
 
-    def test_the_three_copies_say_a_green_ci_run_of_the_suite_is_the_datum(self):
+    def test_the_three_copies_say_no_ci_run_of_the_suite_is_a_missing_road_datum(self):
         for text, where in ((re.sub(r"\s+", " ", __doc__), "the module docstring"),
                             (ratchet_comment_text(), "the design comment"),
                             (ledger_entry_body(), "the ledger entry")):
-            self.assertTrue(CI_DATUM in text, "%s does not say: %s" % (where, CI_DATUM))
+            for needle in (ROAD_FIGURES, ROAD_CI, ROAD_NO_DATUM):
+                self.assertTrue(needle in text, "%s does not say: %s" % (where, needle))
+            self.assertFalse(ROAD_RETIRED in text, "%s still says a CI run of the suite %s, which #872 made false: every "
+                             "Python cell installs the SDK" % (where, ROAD_RETIRED))
 
 
 PROTECT_READS = "The PROTECTION is the structured reads above: none of them counts occurrences"
@@ -4170,14 +4184,14 @@ class TheDerivationIsRunnable(unittest.TestCase):
         cmd = derive_command()
         self.assertEqual(cmd[0], sys.executable,
                          "the command does not open on this interpreter (derive_command's first element)")
-        self.assertEqual(cmd[1:8], ["-B", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rf"],
-                         "the command's pytest arguments before the --deselect pairs differ (derive_command's elements 1 to 7)")
-        self.assertEqual(cmd[8:-1], [arg for node in DERIVE_DESELECT for arg in ("--deselect", node)],
+        self.assertEqual(cmd[1:10], ["-B", "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:anyio", "-q", "-rf"],
+                         "the command's pytest arguments before the --deselect pairs differ (derive_command's elements 1 to 9)")
+        self.assertEqual(cmd[10:-1], [arg for node in DERIVE_DESELECT for arg in ("--deselect", node)],
                          "the command does not pair every node id of DERIVE_DESELECT with its own --deselect, in the "
                          "tuple's order: %r" % (cmd,))
         self.assertEqual(cmd[-1], MODULE_PATH,
                          "the command does not end in this module's path (derive_command's last element, MODULE_PATH)")
-        self.assertEqual(derive_command(DERIVE_DESELECT[:1])[8:], ["--deselect", DERIVE_DESELECT[0], MODULE_PATH],
+        self.assertEqual(derive_command(DERIVE_DESELECT[:1])[10:], ["--deselect", DERIVE_DESELECT[0], MODULE_PATH],
                          "a one-node tuple does not give one --deselect pair and then MODULE_PATH (derive_command over "
                          "DERIVE_DESELECT[:1])")
         with self.assertRaisesRegex(SystemExit, "names no test of this module: " + re.escape(MODULE_PATH + "::NoSuchClass")):

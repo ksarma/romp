@@ -340,7 +340,7 @@ class ApiHealthCell(unittest.TestCase):
         # broadcast and every open dashboard's chat would switch (_reveal_chat_for)
         js = km._LANDING_MOBILE_JS
         helper = "function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){return '';}}"
-        connect = "var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid()));"
+        connect = "var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid())+(window.__rompKeyQ?window.__rompKeyQ():''));"
         self.assertIn(helper, js)
         self.assertIn(connect, js)
         self.assertLess(js.index(helper), js.index(connect), "the helper is defined before the connect reads it")

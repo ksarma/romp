@@ -286,7 +286,9 @@ ROWS = [
 # and #909 added ten functions, named on the functions entry: functions 3251 to 3261, and no other entry moved;
 # re-derived at fold 3's merge of fork main at batch 921, where the fold's side (the upstream code the fold brings in,
 # plus _ensure_road from the fold's first review round) added 21 kernel/kernel.py functions and removed 2, named on the
-# functions entry: functions 3261 to 3280, and no other entry moved). Until round 8 these were FLOORS, and a floor
+# functions entry: functions 3261 to 3280, and no other entry moved; re-derived in batch 2026-09-27a (fork PR #925), where
+# fork PR #919 added 18 functions and removed 1, named on the functions entry: functions 3261 to 3278; re-derived at fold
+# 3's merge of fork main at batch 925, both sides' functions kept: 3280 and 3278 to 3297, and no other entry moved). Until round 8 these were FLOORS, and a floor
 # is silent slack: twice a merge of main grew the population under floors that stayed green (38 doors of slack at round
 # 6's head; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
 # head a walk blinded to one param-kind door call passed every floor. The rule as enforced now: any growth or shrinkage
@@ -319,7 +321,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3280,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3297,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -336,6 +338,13 @@ COUNTS = {
     #                                _parked_fold_step, _postal_sid_revs, _postal_sid_revs_of and _subagent_tree_sample to
     #                                kernel/kernel.py and removes _chat_postal_key and the one lambda of _feed_session_key
     #                                (kernel.py 2499 to 2518); sdk_backend.py and credentials.py did not move, and no other
+    #                                entry moved; and in batch 2026-09-27a as 3278: fork
+    #                                PR #919 adds _hmac_b64, _mint_session, _migration_session, _session_ok, _page_key, _cap_input,
+    #                                _file_cap, _one_file_term_each, _ws_head_allowlist, _peer_header_value_ok, _static_route and,
+    #                                on Handler, handle_one_request, parse_request, _clears_legacy_cookie, end_headers, _cookie,
+    #                                _browser_session and _need to kernel/kernel.py, and removes Handler._cookie_token; no lambda
+    #                                and no other entry moved; then at fold 3's merge of fork main at batch 925 as 3297, the fold's
+    #                                19 and the batch's 17 over 3261, the census's own derivation on the merged tree; no other
     #                                entry moved
 }
 CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 36, "alias": 5}   # the 359's derivation, an equality each
