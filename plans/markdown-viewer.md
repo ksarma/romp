@@ -8756,15 +8756,17 @@ document's tap on an element over the control that hides at that tap's compatibi
 detail 1 and a click alone, which read the mouse's record; each opened the tab with the sign covered at the tap's start; and the
 mouseout's rule is pinned as a whole by a node guard, red at ddb446fae and under a gate without that rule, and by browser cells
 in Firefox, red at ddb446fae and under a gate without that rule and without the blur's rule, which refuses them too where the
-viewer's window held the focus, as it does in them, its two clears each defensive given the other wherever that tap's
+viewer's window held the focus, as it does in them, and by the same cells with an element that cancels its mousedown, where no
+blur comes, red under a gate without that rule alone, its two clears each defensive given the other wherever that tap's
 compatibility mousedown reaches the viewer's window (with
 the slot's clear dropped alone the flag's clear lets that mousedown empty the slot, and no test is red): in Firefox, after the
 viewer's own tap whose compatibility events another document's element took and which started in the viewer, the element first
 hit at the compatibility mousedown or a mouse resting in the viewer, the viewer's window heard a mouseout to no element, and a tap
 on that element over the control, which goes away during the press, took that tap's slot and opened the tab with the sign covered
 at its start, the rule ending at the tap's own mousedown, so the mouseout Firefox sends 20 to 35 ms after the viewer's own tap's
-click finds the flag clear (the file review's round 19, extra8-2); the blur's rule is pinned by a node guard alone, no cell in
-the tree moving the focus during a press, its rows of a mouse's and a pen's held press, of Firefox's and WebKit's tap and of the
+click finds the flag clear (the file review's round 19, extra8-2); the blur's rule is pinned by a node guard alone, every cell
+of the legs where the focus leaves the viewer's window during a press or while a tap's compatibility mousedown is due being
+refused by another rule too, its rows of a mouse's and a pen's held press, of Firefox's and WebKit's tap and of the
 two costs red at d61eb027d and under a gate without the blur listener, the row of a press begun with the control covered red
 under a gate whose blur marks the records accepted, and its test of the target, its test of the pointer type, its condition on
 the flag, its clear of the slot and its marking in place of deleting each pinned by a row red under a gate without that part;

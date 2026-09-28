@@ -3077,8 +3077,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   tap filled and opened the tab with the sign covered at that tap's start (Firefox's cells of both shapes, red at ddb446fae
   //   and under a gate without that rule and without the blur's rule, the shape with a mouse resting in the viewer also under
   //   one whose mouseout needs a button down and that reads no blur, since the blur's rule refuses those cells too where the
-  //   viewer's window held the focus, as it does in them, while the node guard's rows red under a gate without that rule alone;
-  //   each of its two clears defensive given the other, below); the rule ends at the tap's own mousedown, which
+  //   viewer's window held the focus, as it does in them, while the node guard's rows and Firefox's cells of the same shapes
+  //   with an element that cancels its mousedown, where no blur comes, red under a gate without that rule alone, the shape with
+  //   a mouse resting in the viewer also under one whose mouseout needs a button down; each of its two clears defensive given
+  //   the other, below); the rule ends at the tap's own mousedown, which
   //   clears the flag, so the mouseout Firefox sends 20 to 35 ms after the viewer's own tap's click finds it clear. A blur of
   //   this window while a tap's compatibility mousedown is due empties the slot and clears that flag too (the same round's
   //   extra5-1, extra8-1 and extra8-2, with the coordinator's decisions on them): where the viewer's window held the focus, the
@@ -3127,9 +3129,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // rows of that mouseout with the button down and with none are red, and so are Firefox's cells of a tap whose compatibility
   // events went to another document once the blur's rule is dropped too, since the blur refuses them as well where the viewer's
   // window held the focus, as it does in those cells (at this head they read the same under a gate without the mouseout's rule
-  // alone and opened under one without both); where no blur comes the mouseout's rule closes those shapes by itself (the
-  // round's probe under this gate's rules but the blur's read them 0 of 48, where the gate at ddb446fae opened 48 of 48,
-  // below). Its two clears are each defensive given the other wherever that tap's compatibility mousedown reaches this window:
+  // alone and opened under one without both); where no blur comes the mouseout's rule closes those shapes by itself, and
+  // Firefox's cells of the same shapes with an element that cancels its mousedown, which takes no focus, are red under a gate
+  // without it alone (the round's probe under this gate's rules but the blur's read them 0 of 48, where the gate at ddb446fae
+  // opened 48 of 48, below). Its two clears are each defensive given the other wherever that tap's compatibility mousedown reaches this window:
   // with its clear of the slot dropped alone, its clear of the flag lets that mousedown empty the slot, so no test is red and
   // no Firefox or WebKit cell changes, and its clear of the flag is defensive, above; the slot's clear alone
   // decides only where no mousedown comes between that mouseout and a mouseup of detail 1 with its click, an order no engine was
@@ -3159,14 +3162,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // those cells too where the viewer's window held the focus, as it does in them (at this head the three cells read the same
   // under a gate without that arm alone and opened under one without both; where the element cancels its mousedown no blur
   // comes and the arm alone closes those shapes, Chromium's grid 0 of 1,850 with and without the blur's rule in its
-  // measurement);
+  // measurement, and the same three shapes with an element that cancels its mousedown are cells too, red under a gate without
+  // that arm alone, the pen's also under one whose arm marks the mouse's records alone);
   // the autoscroll's order, WebKit's touch ending in a touchcancel and a pen in the touch order have node guards alone, since no
   // cell in the tree drives them: no browser here drives a pen in the touch order, no cell a touchcancel, and the autoscroll's
   // order needs Firefox's autoscroll preference set at the browser's launch, which the legs' shared launcher (real-viewer-leg.ts
   // inBrowser) does not set; a probe kept out of the tree that set it read that order opening the tab with the sign covered at
   // 142ade155 and refused here, the next click opening.
-  // The blur's rule has the node guard of a blur of this window alone, since no cell in the tree moves the focus during a press
-  // (the measurement of the file review's round 19 drove it in the browser in a probe kept out of the tree, below): its rows of
+  // The blur's rule has the node guard of a blur of this window alone, since no cell of the legs is refused by it alone: every
+  // cell where the focus leaves the viewer's window during a press, or while a tap's compatibility mousedown is due, round 19's
+  // cells of the leave's arm for no button and of the mouseout's rule among them, is refused by another rule too, so a gate
+  // without the blur listener changes no cell (the measurement of the file review's round 19 drove it in the browser in a probe
+  // kept out of the tree, below): its rows of
   // the mouse's and a pen's held press, of Firefox's and WebKit's tap and of the two costs are red at d61eb027d, which read no
   // blur, and under a gate without the blur listener; a gate whose blur marks the records accepted opens the row of a press
   // begun with the control covered; its test of the target is pinned by the row of an element's blur, its test of the pointer
