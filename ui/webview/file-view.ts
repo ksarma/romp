@@ -5050,9 +5050,9 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
   // again). The chat's persistScrollForReload (render.ts) keeps its own place the same way.
   window.addEventListener("pagehide", () => { if (leaveLive) leaveLive(); });
   watchInputKind();   // the kind of the document's last press, for a hand-over of the keyboard with no holder to read the ring from (ringWithNoHolder)
-  // Every sender of these messages is this document, its embedder (the shell's viewFile relay), a window on its origin
-  // (the VS Code webview host) or its own dispatch of a kernel reply; a message from a foreign sender (window-sender.ts)
-  // opens nothing and settles no save or GitHub ask.
+  // Every sender of these messages is this document, its embedder (the shell's viewFile relay), the VS Code webview host
+  // (a window on this page's location.origin) or its own dispatch of a kernel reply; a message from a foreign sender
+  // (window-sender.ts) opens nothing and settles no save or GitHub ask.
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;

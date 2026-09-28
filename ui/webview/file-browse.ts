@@ -451,9 +451,9 @@ export function initFileBrowse(poster: (m: Record<string, unknown>) => void, hos
   post = poster;
   shellRestore = host.shellRestore !== false;
   openPick = host.openFile ?? null;
-  // Every sender of these messages is this document (the viewer's directory link), its embedder (the shell's relay), a
-  // window on its origin (the VS Code webview host) or its own dispatch of a kernel reply; a message from a foreign
-  // sender (window-sender.ts) lists no directory and paints no listing.
+  // Every sender of these messages is this document (the viewer's directory link), its embedder (the shell's relay), the
+  // VS Code webview host (a window on this page's location.origin) or its own dispatch of a kernel reply; a message from
+  // a foreign sender (window-sender.ts) lists no directory and paints no listing.
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;

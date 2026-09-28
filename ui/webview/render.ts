@@ -20728,7 +20728,7 @@ const fedMissing = federationMissing(window as any);
 listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
   const m = e.data;
   if (!m) return;
-  if (windowSender(e) === "foreign") return;   // a message from any window but this one, its embedder or one on its origin is ignored (window-sender.ts)
+  if (windowSender(e) === "foreign") return;   // a message from any window but this one, its embedder or one on this page's location.origin is ignored (window-sender.ts)
   // the shell's palette: "Fork this session…" → the fork modal for the ACTIVE session, from the tip
   if (m.romp === "forkSession") {
     if (activeId && !isProvisionalId(activeId) && sessions.get(activeId)) showForkPrompt(activeId, "");

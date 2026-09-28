@@ -9,13 +9,13 @@
 //   self      this window posted it: a same-document post, such as the file viewer mounted in the chat's document.
 //   embedder  this window's parent posted it: the romp shell (same origin, since the kernel serves its pages with
 //             frame-ancestors 'self').
-//   peer      another window on this document's own origin, such as a second chat column, or the VS Code webview host.
-//             VS Code's script in the webview's frame replaces window.parent with the frame itself (older releases
-//             delete it), so window.parent never refers to the host that forwards the extension's messages; the host
-//             posts from its own window on the webview's origin. A same-origin window can already reach this
-//             document's script directly, so its posts carry no authority it lacks.
+//   peer      another window on this page's location.origin, the origin of its URL: a second chat column, or the
+//             VS Code webview host, which is never window.parent (VS Code's script in the webview's frame replaces it
+//             with the frame itself; older releases delete it) and posts from its own window on the webview's origin.
+//             Such a window can reach this document's script, so its posts carry no authority it lacks; on a sandboxed
+//             page served over http it cannot (the document's origin is opaque, location.origin still the URL's).
 //   foreign   anything else, such as a sandboxed iframe (its origin is "null", which never matches, even when this
-//             document's own origin is "null").
+//             page's location.origin is "null", as for a URL whose origin is opaque, such as about:srcdoc or data:).
 // A listener that acts on a message from a foreign sender acts for a page romp does not control; see the chat's frame
 // handler in render.ts, which ignores every message from a foreign sender.
 export type WindowSender = "self" | "embedder" | "dispatch" | "peer" | "foreign";

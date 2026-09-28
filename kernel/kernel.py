@@ -66886,9 +66886,10 @@ if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // backstop poll below). Only ends an await with no socket; stamps linkUpMs (foreground->link-up) onto the pending
 // return-fresh.
 // [fork] Both of the shell's words are heard from the shell alone (2026-09-25): fromShell admits a message only when its
-// source is this frame's parent on this page's origin, the one window that posts them (_LANDING_COLLAPSE_JS tell). A
-// window that opened this page, a frame inside it, a sandboxed frame (origin "null") and a pane page open on its own
-// (its parent is itself) are not the shell, and their words are ignored. tests/test_pane_shim_return.py runs both.
+// source is this frame's parent and its origin is this page's location.origin (the origin of the page's URL): the
+// shell, the one window that posts them (_LANDING_COLLAPSE_JS tell). A window that opened this page, a frame inside
+// it, a sandboxed frame (origin "null") and a pane page open on its own (its parent is itself) are not the shell, and
+// their words are ignored. tests/test_pane_shim_return.py runs both.
 // A const, so nothing later in this scope can put a laxer check in its place (2026-09-26): an assignment to it throws,
 // even one an eval builds from a computed name, so does an eval that declares the name again, and a second declaration
 // written in this scope is a syntax error.
@@ -67556,9 +67557,10 @@ if(!P.createSpan)P.createSpan=function(o){return this.createEl('span',o);};})();
 function post(m){api.postMessage(m);}
 // [fork] (2026-09-25) a window message counts only from the senders ui/webview/window-sender.ts's windowSender hears: this
 // page's own dispatch (the shim's and federation.js's frames, a MessageEvent with no source and no origin), this window,
-// its parent (the shell), or a window on this page's origin. Any other sender is foreign and its message is dropped at
-// the window listener below, ahead of the performance collector, so it is neither drawn nor counted: a page on another
-// origin that opened this one, a sandboxed frame (origin "null"). tests/test_timeline_boot_shim.py runs it, and
+// its parent (the shell), or a window on this page's location.origin (the origin of the page's URL). Any other sender
+// is foreign and its message is dropped at the window listener below, ahead of the performance collector, so it is
+// neither drawn nor counted: a page on another origin that opened this one, a sandboxed frame (origin "null").
+// tests/test_timeline_boot_shim.py runs it, and
 // ui/webview/timeline-boot-senders.test.ts runs this boot against windowSender itself over every window, sender and
 // origin, with and without a collector.
 function heardSender(e){if(!e)return false;var s=e.source;
@@ -67886,7 +67888,8 @@ else window.__rompPaneToggle('fleet');});})();
 # sha256, and every fork adjustment sits outside them. A later fold of the project's shell resolves them as IDENTICAL
 # (take the project's side of this constant; it carries these lines under six comment lines of its own, left out
 # here because they name a plan and a test file the fork does not have). The check: a message counts only when its
-# IMMEDIATE source is a same-origin iframe of this document, so the shell's own window, a window this document does
+# IMMEDIATE source is an iframe of this document and its origin is this page's location.origin (the origin of the
+# page's URL), so the shell's own window, a window this document does
 # not hold (a page on another origin that opened the dashboard, a popup), a sandboxed frame (origin "null") and a
 # frame nested inside a pane all fail. Its data-protocol=none clause is the project's URL-pane marking, which no
 # iframe on the fork carries, so it refuses nothing here. Defined by this script, which runs ahead of every shell

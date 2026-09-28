@@ -1171,8 +1171,8 @@ export function droppedRequestText(text: unknown): string | null {
 function ensureListener(): void {
   if (listening) return;
   listening = true;
-  // the replies are the kernel's, dispatched in this document or forwarded by the VS Code webview host (a window on its
-  // origin); a message from a foreign sender (window-sender.ts) settles and fails nothing
+  // the replies are the kernel's, dispatched in this document or forwarded by the VS Code webview host (a window on this
+  // page's location.origin); a message from a foreign sender (window-sender.ts) settles and fails nothing
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m || !live) return;

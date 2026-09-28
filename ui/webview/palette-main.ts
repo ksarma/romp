@@ -281,7 +281,8 @@ installMenuEcho();
   registerCommand({ id: "keys.open", title: "Keyboard shortcuts", run: () => keys.open() });
   w.__rompKeysOpen = () => keys.open();
   w.__rompKeysClose = () => keys.close();   // false when not open — the Escape chain moves on
-  // the ask comes from a pane in this shell (a same-origin window, window-sender.ts); a foreign sender opens nothing
+  // the ask comes from a pane in this shell (a window on this page's location.origin, window-sender.ts); a foreign
+  // sender opens nothing
   window.addEventListener("message", (e) => { if (windowSender(e) === "foreign") return; if (e.data && e.data.romp === "openKeys") keys.open(); });
   // Sessions in the set with no chord bound leave it — never while the dialog is up (the one being recorded
   // has none yet), so the solo dialog's own close runs it too.
@@ -303,8 +304,8 @@ installMenuEcho();
       try { back!.focus(); back!.postMessage({ type: "focusComposer" }, "*"); } catch (e) { /* the asking pane is gone */ }
     });
   }
-  // the ask comes from a chat column's tab menu, a pane in this shell (a same-origin window, window-sender.ts); a foreign
-  // sender binds no hot key and is never handed the focus back
+  // the ask comes from a chat column's tab menu, a pane in this shell (a window on this page's location.origin,
+  // window-sender.ts); a foreign sender binds no hot key and is never handed the focus back
   window.addEventListener("message", (e) => {
     if (windowSender(e) === "foreign") return;
     const m = e.data;

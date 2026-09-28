@@ -29,9 +29,9 @@ var TW = require('./tab-widgets.ts');   // the tab-title widgets (T379): the reg
 var SC = require('./status-controls.ts');   // the status line's controls (T415 part two): the preview draws them through the line's own renderer, over a demo status
 var LS = require('./landing-settle.ts');   // gestureEvidence: the chat's rule for telling the user's scroll from the browser's own (the section ask ends only on input, T379 follow-up)
 // Who posted a window message (window-sender.ts). Every window listener below returns first on a foreign sender: its
-// messages come from the kernel (dispatched in this document, or forwarded by the VS Code webview host from a window on
-// its origin), the shell (this document's embedder) or this document itself, never from a sandboxed frame or a page on
-// another origin.
+// messages come from the kernel (dispatched in this document, or forwarded by the VS Code webview host, a window on this
+// page's location.origin), the shell (this document's embedder) or this document itself, never from a sandboxed frame
+// or a page on another origin.
 var windowSender = require('./window-sender.ts').windowSender;
 function kb() { return (typeof window !== 'undefined' && window.__rompKernelBase) || ''; }
 function ku(path) {
