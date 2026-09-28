@@ -48,8 +48,8 @@
 // neither (a method of the window, of the body element or of a prototype read by a computed name, a function run with
 // the window as its `this`, an onmessage handler set other than by an assignment the fourth accepts, a handler or a
 // message listener on a window other than this page's own, code run from a string, a `with` statement, and the name
-// WebSocket anywhere but a `new`). What those cannot see is listed at the fourth. Synthetic world only: the notes-api
-// demo, placeholder ids.
+// WebSocket anywhere but as the constructor a `new` calls, or in a type). What those cannot see is listed at the fourth.
+// Synthetic world only: the notes-api demo, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -112,11 +112,12 @@ const SHELL = hideEdges({ name: "the romp shell" });
 /** A fresh receiving window of each kind: a pane in the romp shell (its parent and its top are the shell), the shell's
  *  own top-level page (its parent and its top are itself), and VS Code's webview frame, whose script sets window.parent
  *  to the frame itself (1.103 on) or deletes it (1.88 to 1.102). The pane holds two frames, each sharing its top: a
- *  sandboxed one (frameIn 0) and one on its origin (frameIn 1); the shell's page holds a sandboxed frame (frameIn 0). */
+ *  sandboxed one (frameIn 0) and one on its location.origin (frameIn 1); the shell's page holds a sandboxed frame
+ *  (frameIn 0). */
 function receiver(ctx: Ctx): Receiver {
   if (ctx === "pane") {
     const w = new Receiver("a pane in the romp shell", SHELL, ORIGIN, SHELL);
-    w.holdFrames([sandboxed(w, SHELL), hideEdges({ name: "a frame on the pane's origin", parent: w, top: SHELL })]);
+    w.holdFrames([sandboxed(w, SHELL), hideEdges({ name: "a frame on the pane's location.origin", parent: w, top: SHELL })]);
     return w;
   }
   if (ctx === "shell") {
@@ -140,14 +141,14 @@ type Row = { who: string; ctx: Ctx; source: (w: Receiver) => unknown; origin: st
 const HEARD: Row[] = [
   { who: "this document", ctx: "pane", source: (w) => w, origin: ORIGIN },
   { who: "its embedder, the romp shell", ctx: "pane", source: (w) => w.parent, origin: ORIGIN },
-  { who: "a second chat column on this origin", ctx: "pane", source: () => SECOND_COLUMN, origin: ORIGIN },
+  { who: "a second chat column on this page's location.origin", ctx: "pane", source: () => SECOND_COLUMN, origin: ORIGIN },
   { who: "a pane posting up to the shell's page", ctx: "shell", source: () => CHILD_PANE, origin: ORIGIN },
   { who: "the shell's page itself", ctx: "shell", source: (w) => w, origin: ORIGIN },
   { who: "the VS Code webview host (the frame's window.parent replaced)", ctx: "vscode", source: () => VSCODE_HOST, origin: VSCODE_ORIGIN },
   { who: "the VS Code webview host (the frame's window.parent deleted)", ctx: "vscode, older", source: () => VSCODE_HOST, origin: VSCODE_ORIGIN },
   { who: "this document's own dispatch of a kernel frame (no source, no origin)", ctx: "pane", source: () => null, origin: "" },
   { who: "a sourceless post on this page's location.origin", ctx: "pane", source: () => null, origin: ORIGIN },
-  { who: "a frame inside the pane on its origin, sharing its top and listed in its frames", ctx: "pane", source: (w) => frameIn(w, 1), origin: ORIGIN },
+  { who: "a frame inside the pane on its location.origin, sharing its top and listed in its frames", ctx: "pane", source: (w) => frameIn(w, 1), origin: ORIGIN },
 ];
 const FOREIGN: Row[] = [
   { who: "a sandboxed frame beside the pane in the shell (opaque origin)", ctx: "pane", source: (w) => sandboxed(w.parent), origin: "null" },
@@ -245,7 +246,9 @@ type Site = { file: string; line: number; receiver: string; fn: any; text: strin
 const parsed = new Map<string, Site[]>();
 /** The names a script reaches its own window by: window, self and globalThis, unshadowed. With the bare global they are
  *  where refKind (at the road census below) starts this page's own window; a receiver it resolves to a window other than
- *  this page's own, or cannot resolve, is no census site, and the road census refuses the handler set on it. */
+ *  this page's own, or cannot resolve, is no census site. The road census refuses a handler assigned on another window
+ *  whatever its value, and one assigned on a receiver refKind cannot resolve unless the value sets no handler (null, an
+ *  unshadowed undefined) or the receiver is a binding that only ever holds a WebSocket (socketBinding). */
 const WINDOW_NAMES = new Set(["window", "self", "globalThis"]);
 /** The events a window listener hears a sender's post as: a message, and a messageerror, which carries the sender's origin
  *  and source too and which a sender causes by posting what the page cannot deserialize. */
@@ -472,8 +475,9 @@ test("the legs of a listener declared in ARMS tell its arms apart: in each leg's
  *  .cjs) in any directory, the files every census here reads; and the files no census reads, each class named:
  *  stylesheets, the anchor map's fixtures (its directory's data: markdown, json, a python file, an html page with no
  *  script, a csv, an svg, a .gitattributes) and the markdown at ui/'s own top (its README and CLAUDE.md). A file no class
- *  takes reds uiPartition, named with its suffix, so a file of a kind no class names is loud, never dropped. A directory
- *  named node_modules or dist is not walked: installed packages and build output, no source. */
+ *  takes reds uiPartition, named with its suffix, so a file of a kind no class names is loud, never dropped. Every
+ *  directory is walked, one named node_modules or dist included: a module there is one a ui/ module can import and esbuild
+ *  bundles, so it is read like any other, and any other file there has no class. */
 const UI_CLASSES: Array<[string, RegExp]> = [
   ["tests and types", /\.test\.([mc]?[tj]s|[tj]sx)$|\.d\.([mc]?ts|tsx)$/],
   ["modules", /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/],
@@ -484,8 +488,8 @@ const UI_CLASSES: Array<[string, RegExp]> = [
 /** The class of the file at `rel` (relative to ui/): the first of UI_CLASSES whose test matches it, or null. */
 const uiClassOf = (rel: string): string | null => { const c = UI_CLASSES.find(([, re]) => re.test(rel)); return c ? c[0] : null; };
 let uiParts: Record<string, string[]> | null = null;
-/** Every file under `root` (ui/ unless a test hands another; a directory named node_modules or dist aside), relative to it,
- *  partitioned into UI_CLASSES by uiClassOf; a file no class takes is a red naming it. ui/ is walked once per run. */
+/** Every file under `root` (ui/ unless a test hands another), in every directory, relative to it, partitioned into
+ *  UI_CLASSES by uiClassOf; a file no class takes is a red naming it. ui/ is walked once per run. */
 function uiPartition(root: string = UI): Record<string, string[]> {
   if (root === UI && uiParts) return uiParts;
   const out: Record<string, string[]> = {};
@@ -494,7 +498,7 @@ function uiPartition(root: string = UI): Record<string, string[]> {
   const walk = (rel: string): void => {
     for (const d of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
       const r = rel ? rel + "/" + d.name : d.name;
-      if (d.isDirectory()) { if (d.name !== "node_modules" && d.name !== "dist") walk(r); continue; }
+      if (d.isDirectory()) { walk(r); continue; }
       const c = uiClassOf(r);
       if (c) out[c].push(r); else rest.push(r);
     }
@@ -1176,17 +1180,23 @@ test("the file classes read what they claim: a module of every suffix esbuild re
   assert.deepEqual(wrong, [], "each synthetic name's class (UI_CLASSES, tried in order)");
 });
 
-test("the partition fails on a file no class takes, naming it, and walks every directory but node_modules and dist", () => {
+test("the partition fails on a file no class takes, naming it, and walks every directory, node_modules and dist included", () => {
   // a synthetic tree in a temporary root outside ui/ (uiPartition reads the root it is handed)
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsl-partition-"));
   try {
-    for (const d of ["webview/deep", "node_modules/pkg", "dist"]) fs.mkdirSync(path.join(root, d), { recursive: true });
-    for (const f of ["README.md", "webview/a.ts", "webview/deep/b.tsx", "webview/a.test.ts", "webview/s.css", "node_modules/pkg/x.vue", "dist/y.html"]) {
+    for (const d of ["webview/deep", "webview/node_modules/pkg", "webview/dist", "dist"]) fs.mkdirSync(path.join(root, d), { recursive: true });
+    for (const f of ["README.md", "webview/a.ts", "webview/deep/b.tsx", "webview/a.test.ts", "webview/s.css",
+      "webview/node_modules/pkg/x.js", "webview/dist/zz.ts", "dist/y.mjs"]) {
       fs.writeFileSync(path.join(root, f), "");
     }
-    assert.deepEqual(uiPartition(root)["modules"], ["webview/a.ts", "webview/deep/b.tsx"], "the modules, at any depth; node_modules and dist not walked");
-    fs.writeFileSync(path.join(root, "webview", "stray.vue"), "");
-    assert.throws(() => uiPartition(root), /every file under ui\/ is in one of the named classes[^]*webview\/stray\.vue \(\.vue\)/);
+    assert.deepEqual(uiPartition(root)["modules"], ["dist/y.mjs", "webview/a.ts", "webview/deep/b.tsx", "webview/dist/zz.ts", "webview/node_modules/pkg/x.js"],
+      "the modules, at any depth, under a directory named node_modules or dist too");
+    for (const stray of ["webview/stray.vue", "webview/node_modules/pkg/package.json", "dist/y.html"]) {
+      fs.writeFileSync(path.join(root, stray), "");
+      const esc = stray.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+      assert.throws(() => uiPartition(root), new RegExp("every file under ui\\/ is in one of the named classes[^]*" + esc), stray + " has no class, and reds");
+      fs.rmSync(path.join(root, stray));
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1265,9 +1275,9 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     parameter, a catch clause's name or a for...in or for...of head's) whose initialiser, every plain assignment to it
 //     and every other `var` of its name in its var scope is `new WebSocket(...)`, the constructor unshadowed, with no
 //     other write to it (a compound assignment, ++ or --, destructuring, a for...in or for...of head). A window other than
-//     this page's own is refused whatever the value, and so is every receiver the census resolves to neither this page's
-//     window nor a socket: the body element, a parameter, a call's result, an object's property, a MessagePort, a
-//     worker, a channel;
+//     this page's own is refused whatever the value. On every other receiver the census resolves to neither this page's
+//     window nor a socket (the body element, a parameter, a call's result, an object's property, a MessagePort, a
+//     worker, a channel), a value that sets a handler is refused;
 //   - a message or messageerror listener added to a window other than this page's own (parent.addEventListener(...)),
 //     where a check at its head could not be about this page's senders;
 //   - code run from a string: eval, the Function constructor (by name, or reached through a function's .constructor),
@@ -1730,25 +1740,32 @@ test("the road census reads what it claims: every road around the spelled regist
   for (const [src, file] of accepted) assert.deepEqual(roads(src, file), [], "accepted: " + src);
   // an onmessage or onmessageerror handler is accepted on this page's own window (a census site the census above holds),
   // with a value that sets no handler, or on a binding that only ever holds a WebSocket; a message listener on this page's
-  // own window is a census site, no road
-  const handlerOk: Array<[string, string?]> = [
-    ["const ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };"],
-    ["let ws: WebSocket; ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };"],
-    ["let ws = new WebSocket(u); ws = new WebSocket(u2); ws.onmessage = f;"],
-    ["const ws = new window.WebSocket(u); ws.onmessage = f;"],
-    ["const ws = new WebSocket(u); ws.onmessage = f; function g() { var ws = window; return ws; }"],
-    ["var ws = new WebSocket(u); var ws = new WebSocket(u2); ws.onmessage = f;", "webview/probe.js"],
-    ["const dead = c.ws; dead.onopen = dead.onmessage = dead.onclose = dead.onerror = null;"],
-    ["document.body.onmessage = null; x.onmessage = undefined; y.onmessageerror = z.onmessage = null;"],
-    ["window.onmessageerror = f; document.defaultView.onmessage = g; const w = window; w.onmessage = h;"],
-    ["if (port.onmessage) go(); const has = \"onmessage\" in window; type T = { onmessage: ((e: unknown) => void) | null };"],
-    ["let t: WebSocket | null = null; type K = typeof WebSocket; const label = \"WebSocket closed\";"],
-    ["window.addEventListener(\"messageerror\", f); self.addEventListener(\"message\", g);"],
+  // own window is a census site, no road. Each row's last column is how many onmessage census sites it holds: a handler
+  // on this page's own window is one, and every other accepted handler (a socket, a detach, a tested read) is none
+  const handlerOk: Array<[string, string | undefined, number]> = [
+    ["const ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };", undefined, 0],
+    ["let ws: WebSocket; ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };", undefined, 0],
+    ["let ws = new WebSocket(u); ws = new WebSocket(u2); ws.onmessage = f;", undefined, 0],
+    ["const ws = new window.WebSocket(u); ws.onmessage = f;", undefined, 0],
+    ["const ws = new WebSocket(u); ws.onmessage = f; function g() { var ws = window; return ws; }", undefined, 0],
+    ["var ws = new WebSocket(u); var ws = new WebSocket(u2); ws.onmessage = f;", "webview/probe.js", 0],
+    ["const dead = c.ws; dead.onopen = dead.onmessage = dead.onclose = dead.onerror = null;", undefined, 0],
+    ["document.body.onmessage = null; x.onmessage = undefined; y.onmessageerror = z.onmessage = null;", undefined, 0],
+    ["window.onmessageerror = f; document.defaultView.onmessage = g; const w = window; w.onmessage = h;", undefined, 3],
+    ["if (port.onmessage) go(); const has = \"onmessage\" in window; type T = { onmessage: ((e: unknown) => void) | null };", undefined, 0],
+    ["let t: WebSocket | null = null; type K = typeof WebSocket; const label = \"WebSocket closed\";", undefined, 0],
+    ["window.addEventListener(\"messageerror\", f); self.addEventListener(\"message\", g);", undefined, 0],
   ];
   const missed: string[] = [];
-  for (const [src, file] of handlerOk) { const got = roads(src, file); if (got.length) missed.push("not accepted: " + src + " (refused for: " + JSON.stringify(got) + ")"); }
-  // every other road, each refused for the reason named. A handler on a window other than this page's own, or on a
-  // receiver the census resolves to neither this page's window nor a socket, is refused and is no census site
+  for (const [src, file, sites] of handlerOk) {
+    const got = roads(src, file);
+    if (got.length) missed.push("not accepted: " + src + " (refused for: " + JSON.stringify(got) + ")");
+    const n = sitesIn(file || "webview/probe.ts", src).filter((x) => x.kind === "onmessage").length;
+    if (n !== sites) missed.push("onmessage census sites " + n + ", not " + sites + ": " + src);
+  }
+  // every other road, each refused for the reason named. A handler assigned on a window other than this page's own,
+  // whatever its value, or a value that sets a handler on a receiver the census resolves to neither this page's window
+  // nor a socket, is refused and is no census site
   const OTHER_WINDOW = /handler on a window other than this page's own/;
   const UNRESOLVED = /handler on a receiver the census cannot resolve to this page's window or to a socket/;
   const COMPUTED = /reached by a computed name|destructured by a computed key|with a computed key|from an object with a computed key|run with the window as its this/;
