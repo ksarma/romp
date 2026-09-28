@@ -50,7 +50,9 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     runs from the clean merge of the parents to the merge;
   - verify fails when a pinned head moved, and when an assembly did not finish; so does finish;
   - verify refuses a missing, stale, unfinished, red, invalid, incomplete or unreadable sweep result
-    for the batch head's full sha, and a batch head that does not contain main as origin has it now
+    for the batch head's full sha, one that marks a leg not owed for having no vscode-extension/package.json
+    while the head's tree holds one (plan and --repin refuse the same at a member's head), and a batch head
+    that does not contain main as origin has it now
     (CI does not run on the merge to main, so the tree that lands must be the tree the sweep and the
     batch branch's CI ran on), and a result that marks a webview leg not owed while the diff from main
     to the head owes it; land re-runs verify and refuses the same. The reader reads the result's whole
@@ -1553,6 +1555,23 @@ def webview_contradiction(root, sweep, result, main_seen, head, subject="the bat
             % (short(head), ", ".join(excused), shown, remote_main(), short(main_seen), subject))
 
 
+def excuse_contradiction(root, sweep, result, head, subject="the batch head"):
+    """The legs a result marks not owed for having no vscode-extension/package.json (the one reason the runner gives
+    for deps, round 1's excuse rule) while the sha's tree does hold that file, as a line naming them; None when none
+    is so marked or the tree really has no such file. Read with the runner's own git hygiene (no inherited GIT_*, no
+    global or system config, refs/replace ignored)."""
+    legs = (result or {}).get("legs") or {}
+    excused = [n for n in sweep.LEGS if not sweep.is_owed(n, legs.get(n)) and (legs.get(n) or {}).get("why") == sweep.NO_PACKAGE_JSON]
+    if not excused:
+        return None
+    p = subprocess.run(["git", "-C", root, "cat-file", "-e", "%s:vscode-extension/package.json" % head], env=sweep._git_env(),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if p.returncode != 0:
+        return None
+    return ("sweep invalid at %s: the result marks %s not owed for having %s, but %s's tree holds vscode-extension/package.json; "
+            "sweep again with this checkout's scripts/sweep.py" % (short(head), ", ".join(excused), sweep.NO_PACKAGE_JSON, subject))
+
+
 def member_sweep_fault(root, sweep, m, main_sha):
     """A member PR owes a passing sweep of its own head before its review round and before its closing check
     (docs/batching.md), so the steps that take a member in (plan, assemble --repin) read it: None when the result
@@ -1563,7 +1582,8 @@ def member_sweep_fault(root, sweep, m, main_sha):
     if a["case"] != "pass":
         return a["line"]
     ensure_object(root, m["head"], m["head_ref"])
-    return webview_contradiction(root, sweep, a["result"], main_sha, m["head"], subject=subject)
+    return (excuse_contradiction(root, sweep, a["result"], m["head"], subject=subject)
+            or webview_contradiction(root, sweep, a["result"], main_sha, m["head"], subject=subject))
 
 
 def cmd_verify(args, quiet=False):
@@ -1637,7 +1657,10 @@ def cmd_verify(args, quiet=False):
     # The sweep result the runner wrote for this exact sha (scripts/sweep.py), read through its own reader;
     # every case but a pass names itself (missing, stale, unfinished, red, invalid, incomplete, unreadable).
     a = sweep.assess(head, subject="the batch head", branch=br, tree_hint=worktree_dir(root, args.name))
-    contradiction = webview_contradiction(root, sweep, a["result"], main_seen, head) if a["case"] == "pass" and main_seen else None
+    contradiction = None
+    if a["case"] == "pass":
+        contradiction = excuse_contradiction(root, sweep, a["result"], head) or (
+            webview_contradiction(root, sweep, a["result"], main_seen, head) if main_seen else None)
     if contradiction:
         ok = False
         state["sweep"] = None

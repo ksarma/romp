@@ -2,15 +2,18 @@
 """scripts/sweep.py, the local sweep runner whose result file is the landing gate (2026-09-27).
 
 scripts/batch.py verify and land read a result keyed by the batch head's full sha (tests/test_batch_tool.py
-holds that side). This module holds the writer: every leg's rc is recorded under the full sha of a clean
-tree, every leg runs after a red one, the webview legs follow CLAUDE.md's rule, a dirty tree is refused and a
-tree that changes during the run is recorded invalid, the leg environment carries no session, hook or
-credential variables, and nothing is written in the working tree.
+holds that side). This module holds the writer and the reader: the legs run in a private clone of the exact sha,
+verified before any leg and re-read after every leg (a leg that changes it makes the run invalid), whatever the
+batcher's tree holds or does meanwhile; every leg's rc is recorded, every leg runs after a red one, the webview
+legs follow CLAUDE.md's rule; the leg environment is an allowlist (no credential, session, hook or narrowing
+variable, no dotfile of the batcher's HOME); the result keeps every run at the sha (a later green counts over a
+red one only with --flake naming the leg); and nothing is written in the batcher's tree.
 
 Every test builds its own world: a bare origin, a clone holding a tiny tree, and fakes for npm, bats, node
-and the pytest interpreter (one script, told apart by its name) that record their argv, cwd and environment
-variable NAMES and exit with the code the test sets. Each fake carries its world's control and log paths in its
-own text, since no variable a test sets is sure to reach a leg. The real suite never runs. Synthetic data only.
+and the pytest interpreter (one script, told apart by its name) that record their argv, cwd, environment
+variable names and every file they can see in their checkout, and exit with the code the test sets. Each fake
+carries its world's control and log paths in its own text, since no variable a test sets is sure to reach a
+leg. The real suite never runs. Synthetic data only.
 """
 import fcntl
 import importlib.util
@@ -22,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -52,7 +56,7 @@ PYTEST_LEG = sweep.LEGS[1]
 assert PYTEST_LEG == "pytest", sweep.LEGS
 
 FAKE = r'''#!%(python)s
-import glob, json, os, shutil, subprocess, sys
+import glob, json, os, shutil, subprocess, sys, time
 name = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 # The control and log paths are written into this file when the World makes it, never read from the environment:
@@ -83,8 +87,38 @@ keep = ("TMPDIR", "HOME", "PATH", "SHELL", "LANG", "CI", "USER", "LOGNAME", "XDG
 marker = ctl.get("marker")
 home = os.path.expanduser("~")
 hosts = os.path.join(os.environ.get("XDG_STATE_HOME", "/nonexistent"), "romp", "session-hosts")
+
+
+def checkout_root(d):
+    while not os.path.exists(os.path.join(d, ".git")):
+        if os.path.dirname(d) == d:
+            return None
+        d = os.path.dirname(d)
+    return d
+
+
+def tree_of(root):
+    """Every file and symlink the leg can see in its checkout ({path: [kind, digest or target, executable]})."""
+    import hashlib
+    out = {}
+    for d, dirs, files in os.walk(root):
+        rel = os.path.relpath(d, root)
+        dirs[:] = [x for x in dirs if not (rel == "." and x == ".git") and x != "node_modules"]
+        for x in [x for x in dirs if os.path.islink(os.path.join(d, x))] + files:
+            full = os.path.join(d, x)
+            key = os.path.normpath(os.path.join(rel, x))
+            if os.path.islink(full):
+                out[key] = ["link", os.readlink(full)]
+            else:
+                with open(full, "rb") as fh:
+                    out[key] = ["file", hashlib.sha256(fh.read()).hexdigest(), bool(os.stat(full).st_mode & 0o100)]
+    return out
+
+
+root = checkout_root(os.getcwd())
 with open(LOG, "a") as f:
-    f.write(json.dumps({"leg": leg, "argv": args, "cwd": os.getcwd(), "names": sorted(os.environ),
+    f.write(json.dumps({"leg": leg, "argv": args, "cwd": os.getcwd(), "names": sorted(os.environ), "root": root,
+                        "tree": tree_of(root) if root else None,
                         "values": {k: os.environ[k] for k in keep if k in os.environ},
                         # the names whose value carries the test's marker, and what the batcher's HOME would hand a leg
                         "marked": sorted(k for k, v in os.environ.items() if marker and marker in v),
@@ -98,9 +132,44 @@ if act == "commit":
                    env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1"))
 elif act == "copy-result":
     shutil.copy(ctl["result"], ctl["copy_to"])
-elif act == "leak":
-    with open(os.path.join(ctl["tree"], "leaked.txt"), "w") as f:
+elif act == "leak":                              # an untracked, unignored file left in the leg's own checkout
+    with open(os.path.join(root, "leaked.txt"), "w") as f:
         f.write("a test that wrote into the tree\n")
+elif act == "edit":                              # a tracked file changed in the leg's own checkout
+    with open(os.path.join(root, "README.md"), "a") as f:
+        f.write("edited by a leg\n")
+elif act == "delete":                            # a tracked file removed from the leg's own checkout
+    os.remove(os.path.join(root, "kernel", "other.py"))
+elif act == "ignored":                           # an ignored build product left in the checkout
+    os.makedirs(os.path.join(root, "vscode-extension", "node_modules"), exist_ok=True)
+    with open(os.path.join(root, "vscode-extension", "node_modules", "left.txt"), "w") as f:
+        f.write("a build product\n")
+elif act == "tree-edit":                         # a tracked file changed in the BATCHER's tree, not the checkout
+    with open(os.path.join(ctl["tree"], "README.md"), "w") as f:
+        f.write("changed in the batcher's tree during the sweep\n")
+elif act == "tree-restore":
+    subprocess.run(["git", "-C", ctl["tree"], "checkout", "-q", "--", "README.md"], check=True,
+                   env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1"))
+elif act == "spawn":                             # two writers into TMPDIR, one in the leg's group, one under setsid
+    writer = ("import os, signal, sys, time\n"
+              "tmp, mark, tag = sys.argv[1:4]\n"
+              "def term(*_):\n"
+              "    open(mark + '.term', 'w').write(str(os.getpid()))\n"
+              "    os._exit(0)\n"
+              "signal.signal(signal.SIGTERM, term if tag == 'group' else signal.SIG_IGN)\n"
+              "open(mark, 'w').write(str(os.getpid()))\n"
+              "while True:\n"
+              "    try:\n"
+              "        os.makedirs(os.path.join(tmp, 'writer-' + tag), exist_ok=True)\n"
+              "        open(os.path.join(tmp, 'writer-' + tag, 'x'), 'a').write('x')\n"
+              "    except OSError:\n"
+              "        pass\n"
+              "    time.sleep(0.05)\n")
+    tmp = os.environ["TMPDIR"]
+    subprocess.Popen([sys.executable, "-c", writer, tmp, os.path.join(ctl["marks"], "group.pid"), "group"])
+    subprocess.Popen([sys.executable, "-c", writer, tmp, os.path.join(ctl["marks"], "setsid.pid"), "setsid"], start_new_session=True)
+    open(os.path.join(ctl["marks"], "ready"), "w").write(str(os.getpid()))
+    time.sleep(120)
 elif act == "home":
     with open(os.path.join(home, ".leftover"), "w") as f:
         f.write("a test that wrote into HOME\n")
@@ -267,6 +336,23 @@ class World:
         return dict(data["runs"][-1], schema=data["schema"], runs=data["runs"])
 
 
+def expected_tree(w, sha):
+    """What a leg must see in its checkout: every tracked entry of `sha` as FAKE's tree_of records it, read from git
+    (before any road changes what the batcher's repository would check out)."""
+    import hashlib
+    out = {}
+    env = dict(w.env, GIT_NO_REPLACE_OBJECTS="1")
+    listing = subprocess.run(["git", "ls-tree", "-r", "-z", sha], cwd=w.tree, env=env, stdout=subprocess.PIPE, check=True).stdout
+    for rec in listing.split(b"\0"):
+        if not rec:
+            continue
+        meta, path = rec.split(b"\t", 1)
+        mode, _typ, oid = meta.decode().split()
+        data = subprocess.run(["git", "cat-file", "blob", oid], cwd=w.tree, env=env, stdout=subprocess.PIPE, check=True).stdout
+        out[path.decode()] = ["link", data.decode()] if mode == "120000" else ["file", hashlib.sha256(data).hexdigest(), mode == "100755"]
+    return out
+
+
 class _Base(unittest.TestCase):
     seed = None
 
@@ -341,18 +427,23 @@ class Runner(_Base):
         self.assertIn("no origin/main", r["owed"]["webview"]["why"])
         self.assertIsNone(r["base"])
 
-    def test_a_dirty_tree_is_refused_and_nothing_is_written(self):
+    def test_a_dirty_tree_is_swept_at_its_sha_and_the_edits_named_as_not_swept(self):
+        """Round 1, A3 and decision 17 (replacing the dirty-tree refusal): the batcher's tree is read for its HEAD sha
+        and branch only, so it need not be clean. The runner prints one line naming how many uncommitted edits it holds
+        and that they are not swept, and the legs read the sha's bytes, not the edits."""
         w = self.w
-        for label, files in (("modified", {"README.md": "# edited\n"}), ("untracked", {"notes/new.txt": "new\n"})):
-            with self.subTest(label):
-                w.write(files)
-                p = w.run(check=2)
-                self.assertIn("is not clean", p.stderr)
-                self.assertIn(list(files)[0], p.stderr, "the refusal names the path")
-                self.assertFalse(os.path.exists(w.result_path()), "no result for a dirty tree")
-                self.assertEqual(w.calls(), [])
-                w.git("checkout", "-q", "--", ".")
-                w.git("clean", "-q", "-fd")
+        sha = w.head()
+        expected = expected_tree(w, sha)
+        w.write({"README.md": "# edited, not committed\n", "notes/new.txt": "new\n"})
+        p = w.run(check=0)
+        self.assertIn("sweep %s: %s has 2 uncommitted edits (git status); they are not swept: the legs run in a private "
+                      "checkout of %s" % (sha[:10], w.tree, sha[:10]), p.stdout)
+        self.assertEqual(w.result()["verdict"], "pass")
+        for c in w.calls():
+            self.assertEqual(c["tree"], expected, "%s saw the sha's tree" % c["leg"])
+        w.git("checkout", "-q", "--", ".")
+        w.git("clean", "-q", "-fd")
+        self.assertNotIn("uncommitted", w.run(check=0).stdout, "a clean tree prints no notice")
 
     def test_the_runner_writes_nothing_in_the_tree(self):
         w = self.w
@@ -362,25 +453,44 @@ class Runner(_Base):
         self.assertTrue(w.result()["legs"]["pytest"]["log"].startswith(os.path.join(w.xdg, "romp", "sweeps", "logs", w.head())),
                         "logs live under the state dir")
 
-    def test_head_moving_during_the_run_is_invalid(self):
+    def test_what_a_leg_does_in_the_batchers_tree_reaches_no_leg(self):
+        """Round 1, A3 (replacing the end comparison of HEAD and status): nothing done in the batcher's tree after the
+        sha is read reaches a leg. A leg that commits there (HEAD moves) and legs that edit and restore a tracked file
+        there leave the run passing, and every leg reads the sha's bytes."""
         w = self.w
         start = w.head()
-        w.ctl({"action": {"bats": "commit"}})
-        p = w.run(check=3)
+        expected = expected_tree(w, start)
+        w.ctl({"action": {"bats": "commit", "pytest": "tree-edit", "tools": "tree-restore"}})
+        p = w.run(check=0)
+        self.assertNotEqual(w.head(), start, "HEAD moved in the batcher's tree during the run")
         r = w.result(start)
-        self.assertEqual(r["verdict"], "invalid")
-        self.assertIn(start[:10], r["invalid"])
-        self.assertIn(w.head()[:10], r["invalid"], "the reason names where HEAD went")
-        self.assertNotEqual(w.head(), start)
-        self.assertIn("sweep invalid at %s" % start[:10], p.stdout)
+        self.assertEqual((r["verdict"], r["invalid"]), ("pass", None), p.stdout + p.stderr)
+        for c in w.calls():
+            self.assertEqual(c["tree"], expected, "%s saw the sha's tree" % c["leg"])
+            self.assertTrue(c["root"].startswith(os.path.join(w.xdg, "romp", "sweeps", "trees", start[:12] + "-")), c["root"])
 
-    def test_a_file_a_leg_leaves_in_the_tree_is_invalid(self):
-        w = self.w
-        w.ctl({"action": {"manager": "leak"}})
-        w.run(check=3)
-        r = w.result()
-        self.assertEqual(r["verdict"], "invalid")
-        self.assertIn("leaked.txt", r["invalid"])
+    def test_a_leg_that_changes_its_checkout_makes_the_run_invalid(self):
+        """Round 1, A4, the runner's one producer of invalid: after every leg the checkout is read again, and a tracked
+        file changed or deleted, or an untracked file the tracked .gitignore does not ignore, records the run invalid
+        naming the paths and the leg; the legs after it do not run. An ignored build product is allowed."""
+        cases = (("edit", "content 1 (README.md)"), ("delete", "missing 1 (kernel/other.py)"), ("leak", "untracked 1 (leaked.txt)"))
+        for act, named in cases:
+            with self.subTest(act=act):
+                w = World()
+                self.addCleanup(w.close)
+                w.ctl({"action": {"manager": act}})
+                p = w.run(check=3)
+                r = w.result()
+                self.assertEqual(r["verdict"], "invalid")
+                self.assertIn("after the manager leg the checkout is not the sha's tree: %s" % named, r["invalid"])
+                self.assertIn("the legs after it did not run", r["invalid"])
+                self.assertEqual(w.legs_called(), ["deps", PYTEST_LEG, "bats", "manager"])
+                self.assertIn("sweep invalid at %s: after the manager leg" % w.head()[:10], p.stdout)
+        w = World()
+        self.addCleanup(w.close)
+        w.ctl({"action": {"manager": "ignored"}})
+        w.run(check=0)
+        self.assertEqual(w.result()["invalid"], None, "an ignored build product left in the checkout is allowed")
 
     def test_the_file_says_running_until_the_end(self):
         w = self.w
@@ -510,7 +620,8 @@ class Runner(_Base):
         self.assertEqual((rerun["kind"], sorted(rerun["legs"]), rerun["flakes"], rerun["sha"], rerun["verdict"]),
                          ("leg", [PYTEST_LEG], {PYTEST_LEG: self.FLAKE}, w.head(), "pass"))
         self.assertEqual(rerun["legs"]["pytest"]["rc"], 0)
-        self.assertEqual([c["leg"] for c in w.calls()[before:]], [PYTEST_LEG], "only the named leg ran again")
+        self.assertEqual([c["leg"] for c in w.calls()[before:]], ["deps", PYTEST_LEG],
+                         "only the named leg ran again, after the fresh checkout's npm ci")
         a = sweep.assess(w.head(), env=w.env)
         self.assertEqual(a["case"], "pass", a["line"])
         self.assertIn("pytest re-run after a known flake (first run rc 1; flake: %s)" % self.FLAKE, a["line"])
@@ -630,7 +741,6 @@ class Runner(_Base):
         self.assertTrue(m, p.stdout)
         reason = m.group(1)
         self.assertIn("leaked.txt", reason)
-        os.remove(os.path.join(w.tree, "leaked.txt"))
         w.ctl({})
         p = w.run(check=0)
         self.assertIn("an earlier run 1 (started ", p.stdout)
@@ -667,16 +777,23 @@ class Runner(_Base):
         self.assertIn("no files matched tests/*.bats", r["legs"]["bats"]["error"])
         self.assertNotIn("bats", w.legs_called(), "bats was never run with no file arguments")
 
-    def test_deps_never_runs_npm_ci_through_a_symlinked_node_modules(self):
+    def test_deps_runs_npm_ci_in_the_fresh_checkout_whatever_the_batchers_tree_holds(self):
+        """A fresh checkout never holds node_modules, so deps (npm ci from the sha's lockfile) is owed in every checkout,
+        and a node_modules in the batcher's tree (a symlink to shared deps, which npm ci would have emptied) is neither
+        read nor touched."""
         w = self.w
         shared = os.path.join(w.tmp, "shared-node_modules")
         os.makedirs(shared)
+        with open(os.path.join(shared, "kept.txt"), "w") as f:
+            f.write("shared\n")
         os.symlink(shared, os.path.join(w.tree, "vscode-extension", "node_modules"))
         w.run(check=0)
-        r = w.result()
-        self.assertIs(r["legs"]["deps"]["owed"], False)
-        self.assertIn("a symlink", r["legs"]["deps"]["why"])
-        self.assertNotIn("deps", w.legs_called())
+        deps = w.result()["legs"]["deps"]
+        self.assertEqual((deps["owed"], deps["cmd"], deps["why"]), (True, list(sweep.DEPS_CMD), "a fresh checkout has no vscode-extension/node_modules"))
+        call = [c for c in w.calls() if c["leg"] == "deps"][0]
+        self.assertEqual(call["cwd"], os.path.join(call["root"], "vscode-extension"))
+        self.assertNotEqual(os.path.realpath(call["root"]), os.path.realpath(w.tree))
+        self.assertEqual(os.listdir(shared), ["kept.txt"], "the batcher's shared deps are untouched")
 
     def test_a_pytest_interpreter_without_the_plugins_is_refused(self):
         w = self.w
@@ -695,6 +812,282 @@ class Runner(_Base):
         p = subprocess.run(cmd, env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("ok   sweep at %s: pass" % w.head()[:10], p.stdout)
+
+
+def _kill_quietly(pid):
+    """Cleanup for a writer pid a test recorded itself, in case the runner under test did not stop it."""
+    try:
+        os.kill(pid, 9)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _alive(pid):
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except OSError:
+        return False
+
+
+class Checkout(_Base):
+    """Round 1, Class A: the legs run in a private clone of the exact sha under the state dir, verified before any leg
+    (A2), re-read after every leg (A4), and removed on every exit path with TMPDIR (A5); stale checkouts of runs that
+    are gone are removed; a --leg re-run installs the deps first; the result records the checkout."""
+
+    def trees(self):
+        return os.path.join(self.w.xdg, "romp", "sweeps", "trees")
+
+    def test_the_legs_run_in_a_private_clone_of_the_sha_that_is_gone_afterwards(self):
+        w = self.w
+        sha = w.head()
+        expected = expected_tree(w, sha)
+        p = w.run(check=0)
+        r = w.result()
+        co = r["runner"]["checkout"]
+        self.assertEqual((co["form"], co["files"], co["setup"]), ("clone", len(expected), None))
+        self.assertTrue(co["path"].startswith(os.path.join(self.trees(), sha[:12] + "-")), co["path"])
+        for key in ("create_s", "verify_s"):
+            self.assertIsInstance(co[key], (int, float))
+        for c in w.calls():
+            self.assertEqual(c["root"], co["path"], "%s ran in the checkout" % c["leg"])
+            self.assertEqual(c["tree"], expected)
+        self.assertFalse(os.path.exists(co["path"]), "the checkout is removed at the end")
+        self.assertEqual(os.listdir(self.trees()), [], "and its sha marker with it")
+        self.assertFalse(os.path.exists(r["runner"]["tmpdir"]))
+        # the clone is the checkout's own repository: a leg's git writes land there, not in the batcher's
+        self.assertEqual(w.git("worktree", "list", "--porcelain").count("worktree "), 1)
+        self.assertIn("ok   sweep at %s: pass" % sha[:10], p.stdout)
+
+    def test_a_checkout_that_is_not_the_shas_tree_is_refused_by_class(self):
+        """A2: the five refusal classes, each planted between the checkout's creation and its verification (the
+        SWEEP_TEST_PLANT seam): refused, exit 2, naming the class, count and path; nothing run or recorded, the checkout
+        removed."""
+        seed = dict(SEED)
+        seed["bin/run.sh"] = "#!/bin/sh\nexit 0\n"
+        cases = (("byte", "README.md", "content 1 (README.md)"), ("extra", "conftest.py", "extra 1 (conftest.py)"),
+                 ("missing", "kernel/other.py", "missing 1 (kernel/other.py)"), ("mode", "bin/run.sh", "mode 1 (bin/run.sh)"),
+                 ("symlink-to-file", "bin/kernel-link", "symlink 1 (bin/kernel-link)"))
+        for op, rel, named in cases:
+            with self.subTest(op=op):
+                w = World(seed)
+                self.addCleanup(w.close)
+                os.chmod(os.path.join(w.tree, "bin", "run.sh"), 0o755)
+                os.symlink("../kernel/kernel.py", os.path.join(w.tree, "bin", "kernel-link"))
+                w.change({})
+                p = w.run(env=dict(w.env, SWEEP_TEST_PLANT=json.dumps([[op, rel]])), check=2)
+                self.assertIn("the checkout of %s is not the sha's tree (%s); it is removed, and nothing was run or recorded"
+                              % (w.head()[:10], named), p.stderr)
+                self.assertEqual(w.calls(), [])
+                self.assertFalse(os.path.exists(w.result_path()))
+                self.assertEqual(os.listdir(os.path.join(w.xdg, "romp", "sweeps", "trees")), [])
+
+    def test_node_modules_in_an_ancestor_of_the_checkout_is_refused(self):
+        """A2: node's require() and tsc's typeRoots read node_modules (and node_modules/@types) in every ancestor
+        directory, so one above the checkout would reach the webview legs from outside the sha."""
+        w = self.w
+        planted = os.path.join(w.xdg, "node_modules")
+        os.makedirs(os.path.join(planted, "@types", "planted"))
+        p = w.run(check=2)
+        self.assertIn("has node_modules in an ancestor directory (ancestor 1: %s)" % planted, p.stderr)
+        self.assertEqual(w.calls(), [])
+        self.assertFalse(os.path.exists(w.result_path()))
+        self.assertEqual(os.listdir(self.trees()), [])
+
+    def test_sigterm_stops_the_leg_its_descendants_and_removes_tmpdir_and_the_checkout(self):
+        """A5: SIGTERM during a leg whose children write into TMPDIR, one in the leg's process group and one under
+        setsid. The group gets SIGTERM first (the group writer records it), the subreaper kills the setsid writer, and
+        TMPDIR and the checkout are gone afterwards and stay gone."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("the subreaper and /proc are Linux's")
+        w = self.w
+        marks = os.path.join(w.tmp, "marks")
+        os.makedirs(marks)
+        w.ctl({"action": {"bats": "spawn"}, "marks": marks})
+        proc = subprocess.Popen([sys.executable, str(SWEEP), "run", "--tree", w.tree, "--python", w.python, "--workers", "2"],
+                                env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        files = [os.path.join(marks, n) for n in ("ready", "group.pid", "setsid.pid")]
+        deadline = time.monotonic() + 60
+        while not all(os.path.exists(f) and open(f).read() for f in files):
+            if proc.poll() is not None:
+                self.fail("the runner ended before the leg was ready: %s" % (proc.communicate(),))
+            if time.monotonic() > deadline:
+                self.fail("the leg never became ready: %s" % sorted(os.listdir(marks)))
+            time.sleep(0.05)
+        pids = [int(open(f).read()) for f in files[1:]]
+        for pid in pids:
+            self.addCleanup(_kill_quietly, pid)
+        call = [c for c in w.calls() if c["leg"] == "bats"][0]
+        tmpdir, checkout = call["values"]["TMPDIR"], call["root"]
+        proc.send_signal(15)
+        out, err = proc.communicate(timeout=90)
+        self.assertEqual(proc.returncode, 128 + 15, out + err)
+        self.assertIn("stopped by signal 15", err)
+        time.sleep(0.5)
+        self.assertFalse(os.path.exists(tmpdir), "TMPDIR is gone and no writer made it again")
+        self.assertFalse(os.path.exists(checkout), "the checkout is gone")
+        self.assertEqual([pid for pid in pids if _alive(pid)], [], "both writers are gone")
+        self.assertTrue(os.path.exists(os.path.join(marks, "group.pid.term")), "the leg's process group got SIGTERM first")
+        self.assertEqual(w.result()["finished"], None, "the stopped run stays unfinished")
+
+    def test_a_stale_checkout_of_a_run_that_is_gone_is_removed_and_named(self):
+        """A5: every run removes the checkouts under <state dir>/sweeps/trees whose sha's lock no run holds, whatever
+        the sha, and names each; one whose run still holds its lock is kept."""
+        w = self.w
+        trees = self.trees()
+        os.makedirs(trees)
+        made = {}
+        for label, sha in (("stale", "ab" * 20), ("held", "cd" * 20)):
+            d = os.path.join(trees, "%s-%s" % (sha[:12], label))
+            os.makedirs(os.path.join(d, "tests"))
+            with open(os.path.join(d, "tests", "left.txt"), "w") as f:
+                f.write("a killed run's checkout\n")
+            with open(d + ".sha", "w") as f:
+                f.write(sha + "\n")
+            made[label] = (d, sha)
+        with open(os.path.join(w.xdg, "romp", "sweeps", made["held"][1] + ".lock"), "a+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            p = w.run(check=0)
+            self.assertIn("removed a stale checkout %s (%s), left by a run that is no longer running"
+                          % (made["stale"][0], made["stale"][1][:10]), p.stdout)
+            self.assertFalse(os.path.exists(made["stale"][0]))
+            self.assertFalse(os.path.exists(made["stale"][0] + ".sha"))
+            self.assertTrue(os.path.exists(made["held"][0]), "a checkout whose run holds its lock is kept")
+            self.assertEqual(sorted(os.listdir(trees)), sorted([os.path.basename(made["held"][0]), os.path.basename(made["held"][0]) + ".sha"]))
+
+    def test_a_leg_rerun_runs_npm_ci_first_and_records_it_as_setup(self):
+        """A fresh checkout has no node_modules, so a --leg re-run installs them from the sha's lockfile before its leg
+        and records the install as the checkout's setup; a setup that fails refuses the re-run and records nothing."""
+        w = self.w
+        w.ctl({"rc": {"tools": 1}})
+        w.run(check=1)
+        w.ctl({})
+        before = len(w.calls())
+        w.run("--leg", "tools", "--flake", Runner.FLAKE, check=0)
+        calls = w.calls()[before:]
+        self.assertEqual([c["leg"] for c in calls], ["deps", "tools"])
+        self.assertEqual(calls[0]["cwd"], os.path.join(calls[1]["root"], "vscode-extension"), "in the re-run's own checkout")
+        setup = w.result()["runner"]["checkout"]["setup"]
+        self.assertEqual((setup["cmd"], setup["cwd"], setup["rc"]), (list(sweep.DEPS_CMD), "vscode-extension", 0))
+        w2 = World()
+        self.addCleanup(w2.close)
+        w2.ctl({"rc": {"tools": 1}})
+        w2.run(check=1)
+        with open(w2.result_path()) as f:
+            red = f.read()
+        w2.ctl({"rc": {"deps": 1}})
+        p = w2.run("--leg", "tools", "--flake", Runner.FLAKE, check=2)
+        self.assertIn("the setup of the checkout of %s (npm ci) rc 1" % w2.head()[:10], p.stderr)
+        with open(w2.result_path()) as f:
+            self.assertEqual(f.read(), red, "a refused re-run records nothing")
+
+
+# Each road sets one way a batcher's repository, git configuration or environment could make a checkout differ from
+# the sha, in the batcher's own tree; under the private clone every road checks out exact.
+ROADS = (
+    ("skip-worktree and an edit", lambda w, env: (w.git("update-index", "--skip-worktree", "README.md"),
+                                                 w.write({"README.md": "hidden edit\n"}))),
+    ("assume-unchanged and an edit", lambda w, env: (w.git("update-index", "--assume-unchanged", "kernel/other.py"),
+                                                    w.write({"kernel/other.py": "OTHER = 2\n"}))),
+    ("a non-cone sparse checkout", lambda w, env: w.git("sparse-checkout", "set", "--no-cone", "/*", "!/tools/")),
+    ("a conftest.py hidden by info/exclude", lambda w, env: (_append(os.path.join(w.tree, ".git", "info", "exclude"), "conftest.py\n"),
+                                                           w.write({"conftest.py": "collect_ignore = ['tests']\n"}))),
+    ("a smudge filter from info/attributes", lambda w, env: (_append(os.path.join(w.tree, ".git", "info", "attributes"), "*.md filter=road\n"),
+                                                            w.git("config", "filter.road.smudge", "sed s/notes/SMUDGED/"),
+                                                            w.git("config", "filter.road.clean", "cat"), _recheckout(w, "README.md"))),
+    ("core.autocrlf and core.eol", lambda w, env: (w.git("config", "core.autocrlf", "true"), w.git("config", "core.eol", "crlf"),
+                                                  _recheckout(w, "README.md"))),
+    ("a post-checkout hook in the repository", lambda w, env: _hook(os.path.join(w.tree, ".git", "hooks"))),
+    ("GIT_CONFIG_* in the runner's environment", lambda w, env: env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.autocrlf",
+                                                                          GIT_CONFIG_VALUE_0="true")),
+    ("refs/replace of the head by its parent", lambda w, env: w.git("replace", "HEAD", "HEAD~1")),
+    ("core.symlinks=false", lambda w, env: (w.git("config", "core.symlinks", "false"), _recheckout(w, "bin/kernel-link"))),
+    ("a core.fsmonitor hook that reports nothing", lambda w, env: (_script(os.path.join(w.tmp, "fsmonitor"), "#!/bin/sh\nexit 0\n"),
+                                                                 w.git("config", "core.fsmonitor", os.path.join(w.tmp, "fsmonitor")),
+                                                                 w.write({"README.md": "unreported edit\n"}))),
+    ("core.fileMode=false hiding an exec bit", lambda w, env: (w.git("config", "core.fileMode", "false"),
+                                                             os.chmod(os.path.join(w.tree, "README.md"), 0o755))),
+    ("a file hidden by core.excludesFile", lambda w, env: (_append(os.path.join(w.tmp, "excludes"), "conftest.py\n"),
+                                                         w.git("config", "core.excludesFile", os.path.join(w.tmp, "excludes")),
+                                                         w.write({"conftest.py": "collect_ignore = ['tests']\n"}))),
+    ("a self-hiding untracked .gitignore", lambda w, env: w.write({"tests/.gitignore": "*\n", "tests/conftest.py": "x = 1\n"})),
+    ("a global config with core.autocrlf and a hooksPath", lambda w, env: env.update(GIT_CONFIG_GLOBAL=_global_config(w))),
+    ("a global config through HOME", lambda w, env: (env.pop("GIT_CONFIG_GLOBAL", None), env.update(HOME=_home_config(w)))),
+    ("per-user git attributes and excludes under XDG_CONFIG_HOME", lambda w, env: env.update(XDG_CONFIG_HOME=_xdg_config(w))),
+)
+
+
+def _append(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a") as f:
+        f.write(text)
+
+
+def _script(path, text):
+    _append(path, text)
+    os.chmod(path, 0o755)
+
+
+def _recheckout(w, rel):
+    os.remove(os.path.join(w.tree, rel))
+    w.git("checkout", "--", rel)
+
+
+def _hook(hooks):
+    _script(os.path.join(hooks, "post-checkout"), "#!/bin/sh\necho hooked > hooked.txt\n")
+
+
+def _global_config(w):
+    hooks = os.path.join(w.tmp, "global-hooks")
+    _hook(hooks)
+    path = os.path.join(w.tmp, "global.gitconfig")
+    _append(path, "[core]\n\tautocrlf = true\n\thooksPath = %s\n" % hooks)
+    return path
+
+
+def _home_config(w):
+    home = os.path.join(w.tmp, "road-home")
+    _hook(os.path.join(home, "hooks"))
+    _append(os.path.join(home, ".gitconfig"), "[core]\n\tautocrlf = true\n\thooksPath = %s\n" % os.path.join(home, "hooks"))
+    return home
+
+
+def _xdg_config(w):
+    d = os.path.join(w.tmp, "road-xdg")
+    _append(os.path.join(d, "git", "attributes"), "* text eol=crlf\n")
+    _append(os.path.join(d, "git", "ignore"), "conftest.py\n")
+    return d
+
+
+class CheckoutRoads(unittest.TestCase):
+    """Round 1, Class A's roads: each sets one way the batcher's repository, git configuration or environment could
+    make what the legs read differ from the sha, and each must check out EXACT: the fake legs record every file they
+    can see in their checkout, and the pin compares that with the sha's tree read from git (never "exact or refused":
+    a road moved from exact to refused would pass an either-or pin)."""
+
+    def test_every_road_checks_out_the_shas_tree(self):
+        seed = dict(SEED)
+        seed["bin/run.sh"] = "#!/bin/sh\nexit 0\n"
+        for label, road in ROADS:
+            with self.subTest(road=label):
+                w = World(seed)
+                self.addCleanup(w.close)
+                os.chmod(os.path.join(w.tree, "bin", "run.sh"), 0o755)
+                os.symlink("../kernel/kernel.py", os.path.join(w.tree, "bin", "kernel-link"))
+                w.change({"kernel/other.py": "OTHER = 3\n"})
+                sha = w.head()
+                expected = expected_tree(w, sha)
+                env = dict(w.env)
+                road(w, env)
+                p = w.run(env=env)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                calls = w.calls()
+                self.assertEqual(len(calls), 6)
+                for c in calls:
+                    self.assertEqual(c["tree"], expected, "%s did not see the sha's tree" % c["leg"])
+                self.assertEqual(w.data()["sha"], sha)
+
 
 
 # The keys of leg_context, with placeholder values: leg_sets' NAMES do not depend on them.
@@ -1096,8 +1489,9 @@ class Reader(unittest.TestCase):
                     "log": "logs/%s.log" % n} for n in sweep.LEGS}
         for n in sweep.TEST_LEGS:
             legs[n].update(tests=1, failed=1 if rcs.get(n) else 0)
-        for n in sweep.WEBVIEW_LEGS + ("deps",):
+        for n in sweep.WEBVIEW_LEGS:
             legs[n] = {"owed": False, "rc": None, "why": "not owed here"}
+        legs["deps"] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
         return legs
 
     def run_rec(self, kind="full", **over):
@@ -1219,6 +1613,11 @@ class Reader(unittest.TestCase):
         legs = self.legs()
         legs["build"] = {"owed": False, "rc": None, "why": "  "}
         cases.append(("a blank reason", legs, "build marked not owed with no reason"))
+        legs = self.legs()
+        legs["deps"] = {"owed": False, "rc": None, "why": "vscode-extension/node_modules present"}
+        cases.append(("deps for a reason the runner no longer gives", legs,
+                      "deps marked not owed for a reason other than 'no vscode-extension/package.json' "
+                      "('vscode-extension/node_modules present')"))
         for label, legs, named in cases:
             with self.subTest(label):
                 self.write(self.result(legs=legs))
@@ -1361,6 +1760,7 @@ class Rules(unittest.TestCase):
 
         def result(finished="2026-01-01T00:00:00Z", invalid=None, **legs):
             base = {n: {"owed": False, "rc": None, "why": "not owed here"} for n in sweep.LEGS}
+            base["deps"] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
             for n in sweep.ALWAYS_OWED:
                 base[n] = {"owed": True, "rc": 0, "tests": 1}
             base.update(legs)

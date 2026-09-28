@@ -3,24 +3,41 @@
 that commit's full sha. scripts/batch.py verify and land read the record: a batch lands only on a passing
 sweep of its exact head (docs/batching.md).
 
-  run    [--tree DIR] [--python PATH] [--workers N] [--wrap LEG=PREFIX]... [--leg NAME... --flake TEXT]
-         sweep the tree's HEAD; exit 0 pass, 1 red, 2 refused to start, 3 invalid
+  run    [--tree DIR] [--python PATH] [--workers N] [--wrap LEG=PREFIX]... [--leg NAME...] [--flake [LEG=]TEXT]...
+         sweep the commit the tree's HEAD names, in a private checkout of it; exit 0 pass, 1 red, 2 refused
+         to start, 3 invalid
   check  [SHA|HEAD] [--tree DIR] [--branch BR]
          read the result for a commit, as batch.py does; exit 0 on a pass, 1 otherwise
 
 The result is `<state dir>/sweeps/<full sha>.json`, the state dir resolved as bin/romp resolves it
 (ROMP_STATE_DIR, else XDG_STATE_HOME/romp, else ~/.local/state/romp); leg logs go under
-`<state dir>/sweeps/logs/<full sha>/`. Nothing is written in the working tree, and a result names no
+`<state dir>/sweeps/logs/<full sha>/`. Nothing is written in the batcher's tree, and a result names no
 secret: of the leg environment it records the names it dropped and the values it set itself, never an
 inherited value, and a leg log's header shows each variable by its name only.
 
-The legs, in order (LEGS): deps (`npm ci` when vscode-extension/node_modules is absent), pytest, bats,
-manager and tools (node --test), ledger (scripts/upstream-ledger.py check), and the three webview legs
-(typecheck, npm-test, build), owed when kernel/kernel.py, ui/ or vscode-extension/ changed since the
-merge base with origin/main (CLAUDE.md's webview rule; with no origin/main they are owed). Every leg runs
-even after an earlier one is red, so the result carries every leg's status. A result claims a sha only
-when the tree was clean at the start and HEAD and the tree were unchanged at the end; otherwise the run
-is refused (dirty at the start) or recorded invalid.
+The legs run in a private checkout of the exact sha, never in the batcher's tree: a `git clone --shared
+--no-checkout` of the batcher's repository under <state dir>/sweeps/trees, checked out at the sha with hooks
+off, every runner git call made with GIT_* removed, git's global and system configuration off and
+refs/replace ignored. A clone copies none of the batcher's repository config, attributes, excludes, hooks,
+sparse patterns, index flags or replace refs, so the legs see the sha's tree plus the tool installs, and
+nothing from the checkout's parents. Before any leg the runner verifies the checkout against `git ls-tree -r
+<sha>` (every path, executable bit, symlink target and blob), and refuses (exit 2, nothing recorded) on a
+difference or on node_modules in any ancestor directory, which node and tsc would read. After every leg it
+reads the checkout again, and a tracked path changed or gone, or an untracked path the tracked .gitignore
+does not ignore, records the run invalid naming the paths and the leg (the runner's one producer of invalid;
+the legs after it do not run). The batcher's tree is read for its HEAD sha and branch only, so it need not
+be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
+during a run reaches a leg. TMPDIR and the checkout are removed on every exit path: SIGTERM and SIGHUP stop
+each leg's process group, and on Linux the runner is a child subreaper that kills whatever a leg left
+running, a descendant that left the group included; each checkout records its sha beside it, and every run
+removes the checkouts of runs that are no longer running.
+
+The legs, in order (LEGS): deps (`npm ci` from the sha's lockfile, in every checkout, since a fresh one has
+no node_modules; a --leg re-run runs it first as its setup), pytest, bats, manager and tools (node --test),
+ledger (scripts/upstream-ledger.py check), and the three webview legs (typecheck, npm-test, build), owed when
+kernel/kernel.py, ui/ or vscode-extension/ changed since the merge base with origin/main (CLAUDE.md's webview
+rule; with no origin/main they are owed). Every leg runs even after an earlier one is red, so the result
+carries every leg's status.
 
 The leg environment is an allowlist (LEG_ALLOW, leg_sets): USER and LOGNAME pass when set, and the runner
 sets everything else. PATH is the pytest interpreter's directory and those of node, npm, bats, git and
@@ -66,19 +83,27 @@ import random
 import re
 import shlex
 import shutil
+import signal
+import stat
 import string
 import subprocess
 import sys
 import tempfile
+import time
 
 SCHEMA = 2
 LEGS = ("deps", "pytest", "bats", "manager", "tools", "ledger", "typecheck", "npm-test", "build")
 WEBVIEW_LEGS = ("typecheck", "npm-test", "build")
 TEST_LEGS = ("pytest", "bats", "manager", "tools", "npm-test")
-# The legs the runner owes at every head; the others (deps, ledger, the webview legs) it marks not owed only
-# with a reason (`why`).
+# The legs the runner owes at every head; the others it marks not owed only with a reason (`why`): deps only when
+# the sha has no vscode-extension/package.json (NO_PACKAGE_JSON), the ledger only when it has no ledger script, and
+# the webview legs by the webview rule or for having no extension.
 ALWAYS_OWED = ("pytest", "bats", "manager", "tools")
 VERDICTS = ("pass", "red", "running", "invalid")
+# The reason the runner gives for deps (and the webview legs) not owed: the sha's tree has no extension. A result that
+# marks deps not owed for any other reason did not come from this runner (every checkout is fresh, so it never holds
+# node_modules), and batch.py accepts this one only when the sha's tree really has no such file.
+NO_PACKAGE_JSON = "no vscode-extension/package.json"
 EXIT_PASS, EXIT_RED, EXIT_REFUSED, EXIT_INVALID = 0, 1, 2, 3
 
 # The webview rule (CLAUDE.md, "Any kernel/kernel.py change runs the webview tests"): a head owes the three
@@ -223,7 +248,8 @@ def webview_owed(paths):
 
 def excuse_fault(name, leg):
     """Why a leg's not-owed mark is one the runner never writes, or None: a leg of ALWAYS_OWED marked not
-    owed, or another leg marked not owed with no reason."""
+    owed, another leg marked not owed with no reason, or deps marked not owed for any reason but NO_PACKAGE_JSON
+    (every checkout is fresh, so deps is owed wherever the sha has vscode-extension/package.json)."""
     if not (isinstance(leg, dict) and leg.get("owed") is False):
         return None
     if name in ALWAYS_OWED:
@@ -231,6 +257,8 @@ def excuse_fault(name, leg):
     why = leg.get("why")
     if not (isinstance(why, str) and why.strip()):
         return "%s marked not owed with no reason" % name
+    if name == "deps" and why != NO_PACKAGE_JSON:
+        return "deps marked not owed for a reason other than %r (%r)" % (NO_PACKAGE_JSON, why)
     return None
 
 
@@ -555,8 +583,24 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
 
 # ── the runner ────────────────────────────────────────────────────────────────
 
+# Every git call the runner makes (the sha read, the clone, the checkout, the verification) runs with every GIT_*
+# variable of its environment removed and git's global and system configuration off, so no inherited GIT_DIR,
+# GIT_CONFIG_*, GIT_TEMPLATE_DIR or config file changes what it reads; refs/replace is ignored; and the per-user
+# attributes and excludes files git reads by default (~/.config/git/attributes and ignore) are pointed at an empty
+# file, since a global `* text eol=crlf` there would change what a checkout writes. fsmonitor and the untracked cache
+# are off, so `git status` in the private clone lists what is on disk.
+GIT_NEUTRAL = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_NO_REPLACE_OBJECTS": "1"}
+GIT_NEUTRAL_CONFIG = (("core.attributesFile", os.devnull), ("core.excludesFile", os.devnull), ("core.fsmonitor", "false"),
+                      ("core.untrackedCache", "false"))
+
+
 def _git_env():
-    return {k: v for k, v in os.environ.items() if k not in GIT_LOCATION}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_NEUTRAL)
+    env["GIT_CONFIG_COUNT"] = str(len(GIT_NEUTRAL_CONFIG))
+    for i, (key, value) in enumerate(GIT_NEUTRAL_CONFIG):
+        env["GIT_CONFIG_KEY_%d" % i], env["GIT_CONFIG_VALUE_%d" % i] = key, value
+    return env
 
 
 def git(tree, *args, check=True):
@@ -566,13 +610,382 @@ def git(tree, *args, check=True):
     return p.stdout.strip() if check else p
 
 
-def dirty_paths(tree):
-    """What `git status --porcelain=v1 --untracked-files=all` lists: tracked changes and untracked, unignored
-    files. Ignored build products (node_modules, out/, bytecode) do not count."""
-    out = git(tree, "status", "--porcelain=v1", "--untracked-files=all", check=False)
-    if out.returncode != 0:
-        raise Refused("git status failed in %s: %s" % (tree, (out.stderr or out.stdout).strip()))
-    return [line[3:] for line in out.stdout.splitlines() if line.strip()]
+def uncommitted_count(tree):
+    """How many entries `git status --porcelain=v1 --untracked-files=all` lists in the batcher's tree, as the batcher's
+    own git sees it (their configuration and excludes), or None when git status fails. Only a notice reads it: the
+    legs run in a private checkout of the sha, so these edits are not swept."""
+    env = {k: v for k, v in os.environ.items() if k not in GIT_LOCATION}
+    p = subprocess.run(["git", "-C", tree, "status", "--porcelain=v1", "-z", "--untracked-files=all"], env=env,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if p.returncode != 0:
+        return None
+    return len(_status_entries(p.stdout))
+
+
+def _status_entries(out):
+    """[(XY, path bytes)] of `git status --porcelain=v1 -z` output; a rename's or copy's source path is skipped."""
+    parts, entries, i = out.split(b"\0"), [], 0
+    while i < len(parts):
+        chunk = parts[i]
+        i += 1
+        if len(chunk) < 4:
+            continue
+        xy = chunk[:2].decode("ascii", "replace")
+        entries.append((xy, chunk[3:]))
+        if xy[0] in "RC":
+            i += 1
+    return entries
+
+
+# -- the checkout: a private clone of the exact sha (round 1, Class A) --
+
+def trees_dir(env=None):
+    return os.path.join(sweeps_dir(env), "trees")
+
+
+def _random_tail(n=8):
+    rng = random.SystemRandom()
+    return "".join(rng.choice(string.ascii_lowercase + string.digits) for _ in range(n))
+
+
+def make_checkout(tree, sha):
+    """(path, marker, seconds): `git clone -q --shared --no-checkout` of the batcher's repository (its common dir) into
+    <state dir>/sweeps/trees/<sha12>-<random>, then `checkout -q --detach <sha>` there with hooks off. A clone copies
+    none of the batcher's repository config, info/attributes, info/exclude, hooks, sparse patterns, index flags or
+    refs/replace, and a leg's git writes land in the clone. The marker beside it, written first, holds the full sha,
+    so a later run can tell whether that sha's lock is held (sweep_stale_checkouts)."""
+    parent = trees_dir()
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    common = git(tree, "rev-parse", "--git-common-dir")
+    common = common if os.path.isabs(common) else os.path.abspath(os.path.join(tree, common))
+    t0 = time.monotonic()
+    for _ in range(100):
+        name = "%s-%s" % (sha[:12], _random_tail())
+        marker = os.path.join(parent, name + ".sha")
+        try:
+            fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w") as f:
+            f.write(sha + "\n")
+        break
+    else:
+        raise Refused("could not name a checkout under %s" % parent)
+    path = os.path.join(parent, name)
+    p = subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", common, path], env=_git_env(), text=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if p.returncode == 0:
+        p = git(path, "-c", "core.hooksPath=" + os.devnull, "checkout", "-q", "--detach", sha, check=False)
+    if p.returncode != 0:
+        remove_checkout(path, marker)
+        raise Refused("could not check %s out into a private clone: %s" % (short(sha), (p.stderr or p.stdout).strip()))
+    return path, marker, round(time.monotonic() - t0, 2)
+
+
+def remove_checkout(path, marker):
+    if path:
+        shutil.rmtree(path, ignore_errors=True)
+    if marker:
+        try:
+            os.remove(marker)
+        except OSError:
+            pass
+
+
+def _lock_held(sha, own_sha):
+    """Whether a run of `sha` holds its per-sha lock now. This run holds its own, so an earlier checkout of the same sha
+    is a dead run's."""
+    if sha == own_sha:
+        return False
+    path = os.path.join(sweeps_dir(), sha + ".lock")
+    if not os.path.exists(path):
+        return False
+    with open(path) as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(f, fcntl.LOCK_UN)
+    return False
+
+
+def sweep_stale_checkouts(own_sha):
+    """Remove every checkout under <state dir>/sweeps/trees whose sha's lock no run holds, whatever its sha (a killed
+    run's checkout is several hundred MB), and name each one; [(path, sha)] removed. A checkout with no readable
+    marker is judged by the locks of every sha its 12-character prefix names."""
+    parent = trees_dir()
+    try:
+        names = sorted(os.listdir(parent))
+    except OSError:
+        return []
+    removed = []
+    for name in names:
+        full = os.path.join(parent, name)
+        if name.endswith(".sha"):
+            if not os.path.isdir(full[:-len(".sha")]) and not _lock_held(_read_marker(full) or "", own_sha):
+                remove_checkout(None, full)
+            continue
+        if os.path.islink(full) or not os.path.isdir(full):
+            continue
+        sha = _read_marker(full + ".sha")
+        if sha:
+            held = _lock_held(sha, own_sha)
+        else:
+            prefix = name.split("-", 1)[0]
+            locks = [n[:-len(".lock")] for n in _listdir(sweeps_dir()) if n.endswith(".lock") and n.startswith(prefix)]
+            held = any(_lock_held(s, own_sha) for s in locks)
+        if held:
+            continue
+        remove_checkout(full, full + ".sha")
+        removed.append((full, sha))
+        print("sweep: removed a stale checkout %s (%s), left by a run that is no longer running"
+              % (full, short(sha) if sha else "no sha recorded"), flush=True)
+    return removed
+
+
+def _listdir(d):
+    try:
+        return os.listdir(d)
+    except OSError:
+        return []
+
+
+def _read_marker(path):
+    try:
+        with open(path) as f:
+            text = f.read().strip()
+    except OSError:
+        return None
+    return text if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", text) else None
+
+
+def tree_entries(path, sha):
+    """{path bytes: (mode, oid)} of every entry `git ls-tree -r -z <sha>` lists (files, symlinks, gitlinks)."""
+    p = subprocess.run(["git", "-C", path, "ls-tree", "-r", "-z", sha], env=_git_env(), stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE)
+    if p.returncode != 0:
+        raise Refused("git ls-tree failed in the checkout of %s: %s" % (short(sha), p.stderr.decode("utf-8", "replace").strip()))
+    entries = {}
+    for rec in p.stdout.split(b"\0"):
+        if rec:
+            meta, name = rec.split(b"\t", 1)
+            mode, _typ, oid = meta.split()
+            entries[name] = (mode, oid.decode("ascii"))
+    return entries
+
+
+def _blob_id(data, oid):
+    """The git blob id of `data` in the object format `oid` is written in (40 hex digits sha1, 64 sha256): what
+    `git hash-object --no-filters` gives for a file holding those bytes."""
+    h = hashlib.new("sha1" if len(oid) == 40 else "sha256")
+    h.update(b"blob %d\0" % len(data))
+    h.update(data)
+    return h.hexdigest()
+
+
+def _entry_faults(path, entries):
+    """{class: [paths]} for the tracked entries: missing (absent, or a gitlink that is not a directory), content (a
+    regular file whose bytes are not the blob's, or a path that is no longer a file), mode (the executable bit), symlink
+    (a symlink whose target differs, or one checked out as anything else, or a file that became a symlink)."""
+    root = os.fsencode(path)
+    out = {"missing": [], "content": [], "mode": [], "symlink": []}
+    for name, (mode, oid) in entries.items():
+        full = os.path.join(root, name)
+        try:
+            st = os.lstat(full)
+        except OSError:
+            out["missing"].append(name)
+            continue
+        if mode == b"160000":
+            if not stat.S_ISDIR(st.st_mode):
+                out["missing"].append(name)
+            continue
+        if mode == b"120000":
+            if not stat.S_ISLNK(st.st_mode) or _blob_id(os.readlink(full), oid) != oid:
+                out["symlink"].append(name)
+            continue
+        if not stat.S_ISREG(st.st_mode):
+            out["symlink" if stat.S_ISLNK(st.st_mode) else "content"].append(name)
+            continue
+        if bool(st.st_mode & 0o100) != (mode == b"100755"):
+            out["mode"].append(name)
+        with open(full, "rb") as f:
+            if _blob_id(f.read(), oid) != oid:
+                out["content"].append(name)
+    return out
+
+
+def _disk_paths(path):
+    """Every file and symlink under the checkout (the clone's own .git excluded), as path bytes relative to it."""
+    root = os.fsencode(path)
+    found = set()
+    for d, dirs, files in os.walk(root):
+        rel = os.path.relpath(d, root)
+        if rel == b".":
+            dirs[:] = [x for x in dirs if x != b".git"]
+            files = [x for x in files if x != b".git"]
+        for x in list(dirs):
+            if os.path.islink(os.path.join(d, x)):
+                files.append(x)
+                dirs.remove(x)
+        for x in files:
+            found.add(os.path.normpath(os.path.join(rel, x)))
+    return found
+
+
+def verify_checkout(path, sha, entries):
+    """[(class, [paths])] where the fresh checkout differs from the sha's tree: every tracked entry as _entry_faults
+    reads it, and any file on disk that is not a tracked entry (extra). Empty: the checkout is the sha's tree."""
+    faults = _entry_faults(path, entries)
+    faults["extra"] = sorted(_disk_paths(path) - {n for n, (mode, _oid) in entries.items() if mode != b"160000"})
+    return [(k, sorted(faults[k])) for k in ("missing", "extra", "content", "mode", "symlink") if faults[k]]
+
+
+def recheck_checkout(path, sha, entries):
+    """[(class, [paths])] where the checkout differs from the sha's tree after a leg: every tracked entry as
+    _entry_faults reads it, what `git status` in the private clone calls changed, and every untracked path the tracked
+    .gitignore does not ignore (untracked). Ignored build products (node_modules, dist/, out-tests/, bytecode) are
+    allowed; an unignored file one leg leaves could be read by a later one (a root conftest.py, which pytest loads)."""
+    faults = _entry_faults(path, entries)
+    p = subprocess.run(["git", "-C", path, "status", "--porcelain=v1", "-z", "--untracked-files=all"], env=_git_env(),
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if p.returncode != 0:
+        faults["changed"] = [b"(git status failed: %s)" % p.stderr.strip()]
+    else:
+        seen = {n for k in faults for n in faults[k]}
+        faults["untracked"] = sorted(n for xy, n in _status_entries(p.stdout) if xy == "??")
+        faults["changed"] = sorted(n for xy, n in _status_entries(p.stdout) if xy != "??" and n not in seen)
+    return [(k, sorted(faults[k])) for k in ("missing", "content", "mode", "symlink", "changed", "untracked") if faults.get(k)]
+
+
+def describe_faults(faults, shown=3):
+    return "; ".join("%s %d (%s%s)" % (k, len(v), ", ".join(os.fsdecode(x) for x in v[:shown]),
+                                       ", ..." if len(v) > shown else "") for k, v in faults)
+
+
+def ancestor_node_modules(path):
+    """Each ancestor directory of `path` (its real path, up to /) that holds node_modules: node's require() and tsc's
+    default typeRoots search every ancestor for node_modules and node_modules/@types, so one there would reach the
+    webview legs from outside the sha."""
+    hits, d = [], os.path.dirname(os.path.realpath(path))
+    while True:
+        if os.path.lexists(os.path.join(d, "node_modules")):
+            hits.append(os.path.join(d, "node_modules"))
+        up = os.path.dirname(d)
+        if up == d:
+            return hits
+        d = up
+
+
+def _plant_for_tests(path):
+    """The test seam round 1 rules for the verification's refusal classes: SWEEP_TEST_PLANT, a JSON list of
+    [op, relative path], changes the fresh checkout between its creation and its verification (op: byte, extra,
+    missing, mode, symlink-to-file). Whatever it plants, the verification that follows refuses."""
+    spec = os.environ.get("SWEEP_TEST_PLANT")
+    if not spec:
+        return
+    for op, rel in json.loads(spec):
+        full = os.path.join(path, rel)
+        if op == "byte":
+            with open(full, "ab") as f:
+                f.write(b"!")
+        elif op == "extra":
+            with open(full, "w") as f:
+                f.write("planted\n")
+        elif op == "missing":
+            os.remove(full)
+        elif op == "mode":
+            os.chmod(full, os.stat(full).st_mode ^ 0o111)
+        elif op == "symlink-to-file":
+            target = os.readlink(full)
+            os.remove(full)
+            with open(full, "w") as f:
+                f.write(target)
+
+
+# -- stopping: signals, process groups and the subreaper (round 1, A5) --
+
+class Stopped(BaseException):
+    """SIGTERM or SIGHUP reached the runner: its legs are stopped and TMPDIR and the checkout removed on the way out."""
+
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def _on_stop(signum, _frame):
+    for s in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, signal.SIG_IGN)
+    raise Stopped(signum)
+
+
+def install_stop_handlers():
+    """SIGTERM and SIGHUP raise Stopped, so every exit path runs the cleanup; and on Linux the runner becomes a child
+    subreaper (PR_SET_CHILD_SUBREAPER), so a leg's descendant that left its process group (setsid: Playwright's
+    browsers, the kernel's session scopes) is reparented to the runner, which kills it, instead of to init."""
+    for s in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, _on_stop)
+    if sys.platform.startswith("linux"):
+        try:
+            import ctypes
+            ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)
+        except (OSError, AttributeError):
+            pass
+
+
+def _children():
+    """The pids whose parent is this process now, read from /proc (Linux); [] where there is none."""
+    me, out = os.getpid(), []
+    for name in _listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            with open("/proc/%s/stat" % name, "rb") as f:
+                data = f.read()
+        except OSError:
+            continue
+        rest = data[data.rfind(b")") + 2:].split()
+        if len(rest) > 1 and rest[1] == str(me).encode():
+            out.append(int(name))
+    return out
+
+
+def reap_descendants(timeout=30.0):
+    """Kill and reap every child this runner has now (a leg's leftover, or a descendant the subreaper reparented here),
+    again and again until none is left or `timeout` passes; the number killed."""
+    killed, end = set(), time.monotonic() + timeout
+    while True:
+        kids = _children()
+        for pid in kids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                killed.add(pid)
+            except ProcessLookupError:
+                pass
+        while True:
+            try:
+                pid, _status = os.waitpid(-1, os.WNOHANG)
+            except ChildProcessError:
+                pid = 0
+            if not pid:
+                break
+        if not kids or time.monotonic() > end:
+            return len(killed)
+        time.sleep(0.05)
+
+
+def stop_leg(p):
+    """A leg's process group gets SIGTERM, five seconds, then SIGKILL; then its reparented descendants are killed."""
+    for sig, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, None)):
+        try:
+            os.killpg(p.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            p.wait(timeout=wait)
+        except subprocess.TimeoutExpired:
+            pass
+    reap_descendants()
 
 
 def npm_cache(env):
@@ -785,20 +1198,18 @@ def pytest_cmd(python, workers):
 
 
 def plan_legs(tree, python, workers, webview):
-    """{leg: record} with each leg's owed decision, command and cwd; nothing runs here."""
+    """{leg: record} with each leg's owed decision, command and cwd, planned over the fresh checkout; nothing runs
+    here. deps (npm ci from the sha's lockfile) is owed whenever the sha has vscode-extension/package.json: a fresh
+    checkout never holds node_modules."""
     legs = {}
-    node_modules = os.path.join(tree, "vscode-extension", "node_modules")
-    package = os.path.join(tree, "vscode-extension", "package.json")
+    package = os.path.exists(os.path.join(tree, "vscode-extension", "package.json"))
     for name in LEGS:
         rec = {"owed": True, "rc": None}
         if name == "deps":
-            if not os.path.exists(package):
-                rec.update(owed=False, why="no vscode-extension/package.json")
-            elif os.path.lexists(node_modules):
-                rec.update(owed=False, why="vscode-extension/node_modules present%s" % (" (a symlink)" if os.path.islink(node_modules) else ""))
+            if not package:
+                rec.update(owed=False, why=NO_PACKAGE_JSON)
             else:
-                rec.update(cmd=list(DEPS_CMD), cwd="vscode-extension",
-                           why="vscode-extension/node_modules absent")
+                rec.update(cmd=list(DEPS_CMD), cwd="vscode-extension", why="a fresh checkout has no vscode-extension/node_modules")
         elif name == "pytest":
             rec.update(cmd=pytest_cmd(python, workers), cwd=".", ignored=dict(PYTEST_IGNORED))
         elif name in GLOBS:
@@ -814,7 +1225,9 @@ def plan_legs(tree, python, workers, webview):
                 rec.update(owed=False, why="no scripts/upstream-ledger.py in the tree")
         else:
             npm = list(NPM_CMDS[name])
-            if webview["owed"]:
+            if not package:
+                rec.update(owed=False, why=NO_PACKAGE_JSON)
+            elif webview["owed"]:
                 rec.update(cmd=npm, cwd="vscode-extension", why=webview["why"])
             else:
                 rec.update(owed=False, why=webview["why"])
@@ -824,7 +1237,8 @@ def plan_legs(tree, python, workers, webview):
 
 # What a leg's record holds from its plan (plan_legs); the rest is the attempt, which a --leg re-run replaces.
 PLAN_KEYS = ("owed", "why", "cmd", "cwd", "ignored", "globs", "empty_glob")
-ATTEMPT_KEYS = ("rc", "error", "started", "finished", "log", "summary", "tests", "failed", "wrap", "env_dropped", "env_set")
+ATTEMPT_KEYS = ("rc", "error", "started", "finished", "log", "summary", "tests", "failed", "wrap", "env_dropped", "env_set",
+                "left_running")
 
 PYTEST_SUMMARY = re.compile(r"^=*\s*(\d+ (?:failed|passed|skipped|errors?|deselected|xfailed|xpassed)\b[^\n]* in [0-9.]+s\b[^\n]*?)\s*=*$", re.M)
 # node --test's closing counts: `# pass N` from the TAP reporter (the default when stdout is not a terminal on
@@ -901,8 +1315,6 @@ def run_leg(tree, name, rec, wraps, ctx, logdir):
     cwd = os.path.join(tree, rec.get("cwd") or ".")
     if rec.get("empty_glob"):
         rec["error"] = "no files matched %s" % rec["empty_glob"]
-    elif name == "deps" and os.path.islink(os.path.join(tree, "vscode-extension", "node_modules")):
-        rec["error"] = "vscode-extension/node_modules is a symlink, and npm ci through it would empty the deps it points at"
     elif not os.path.isdir(cwd):
         rec["error"] = "no directory %s in the tree" % rec.get("cwd")
     else:
@@ -912,9 +1324,17 @@ def run_leg(tree, name, rec, wraps, ctx, logdir):
                 out.write("# leg: %s\n# cwd: %s\n# argv: %s\n" % (
                     name, rec.get("cwd") or ".", " ".join(shlex.quote(a) for a in leg_argv(wrap, env, rec["cmd"], shown=True))))
                 out.flush()
-                # The wrap (or env itself) runs with the runner's environment; the leg gets exactly `env`.
-                p = subprocess.run(argv, cwd=cwd, env=dict(os.environ), stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
-            rec["rc"] = p.returncode
+                # The wrap (or env itself) runs with the runner's environment; the leg gets exactly `env`. The leg is
+                # its own process group, so a stop reaches all of it (stop_leg).
+                p = subprocess.Popen(argv, cwd=cwd, env=dict(os.environ), stdin=subprocess.DEVNULL, stdout=out,
+                                     stderr=subprocess.STDOUT, start_new_session=True)
+                try:
+                    rec["rc"] = p.wait()
+                except BaseException:
+                    stop_leg(p)
+                    raise
+            # Whatever the leg left running (a daemon a test started, a detached browser) is killed before the next leg.
+            rec["left_running"] = reap_descendants()
         except OSError as e:
             rec["error"] = "could not start: %s" % e
         rec["summary"] = summarize_log(name, log)
@@ -972,6 +1392,8 @@ def parse_flakes(values, only):
 
 
 def cmd_run(args):
+    # Before TMPDIR or the checkout exists, so every exit path removes both (A5).
+    install_stop_handlers()
     tree = os.path.realpath(args.tree or git(os.getcwd(), "rev-parse", "--show-toplevel"))
     if git(tree, "rev-parse", "--is-inside-work-tree", check=False).stdout.strip() != "true":
         raise Refused("%s is not a git working tree" % tree)
@@ -989,10 +1411,12 @@ def cmd_run(args):
                       "as a known flake); anything else is a failure, and the full sweep runs again")
     if only and set(flakes) - set(only):
         raise Refused("--flake names %s, which this --leg re-run does not run" % ", ".join(sorted(set(flakes) - set(only))))
-    dirty = dirty_paths(tree)
+    # The batcher's tree is read for its HEAD sha and its branch only: the legs run in a private checkout of the sha,
+    # so uncommitted edits there are not swept, and the batcher is told so.
+    dirty = uncommitted_count(tree)
     if dirty:
-        raise Refused("the tree %s is not clean, so a run would not be a run of %s: %s%s"
-                      % (tree, short(sha), ", ".join(dirty[:5]), " and %d more" % (len(dirty) - 5) if len(dirty) > 5 else ""))
+        print("sweep %s: %s has %d uncommitted edit%s (git status); they are not swept: the legs run in a private "
+              "checkout of %s" % (short(sha), tree, dirty, "" if dirty == 1 else "s", short(sha)), flush=True)
     python = args.python or sys.executable
     version, missing = ("", [])
     if not only or "pytest" in only:
@@ -1088,58 +1512,95 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
             run["legs"][name] = new
     else:
         workers = args.workers or default_workers()
-        webview = webview_state(tree)
-        run["legs"] = plan_legs(tree, python, workers, webview)
-        run.update(base=webview["base"], owed={"webview": webview}, order=list(LEGS))
-        need = (history or {}).get("need") or {}
-        owed = [n for n in LEGS if is_owed(n, run["legs"][n])]
-        unrun = sorted(set(need) - set(owed))
-        if unrun:
-            raise Refused("%s failed at %s and this run would not run %s (%s); fix it and sweep the new head"
-                          % (", ".join(unrun), short(sha), "it" if len(unrun) == 1 else "them",
-                             "; ".join("%s: %s" % (n, run["legs"][n].get("why")) for n in unrun)))
-        stray = sorted(set(flakes) - set(need))
-        if stray:
-            raise Refused("--flake names %s, which %s no failed run at %s to excuse" % (", ".join(stray),
-                          "has" if len(stray) == 1 else "have", short(sha)))
-        unnamed = [n for n in LEGS if n in need and n not in flakes]
-        if unnamed:
-            raise Refused("the run at %s failed %s; a later run counts over a failed leg only with --flake LEG=TEXT naming each "
-                          "(the test, and where it is recorded as a known flake); for anything else, fix it and sweep the new "
-                          "head (logs: %s)" % (short(sha), ", ".join("%s in run %d (%s)" % (n, need[n][0], _rc_text(n, need[n][1]))
-                                                                     for n in unnamed),
-                                               ", ".join(str(need[n][1].get("log")) for n in unnamed)))
     run["runner"]["workers"] = workers
-    data = data or {"schema": SCHEMA, "sha": sha, "runs": []}
-    data.update(branch=branch, tree=tree)
-    data["runs"].append(run)
-    os.makedirs(logdir, mode=0o700, exist_ok=True)
-    tmpdir = make_tmpdir()
-    run["runner"]["tmpdir"] = tmpdir
+    # The legs run in a private clone of the exact sha under the state dir (A1), verified against the sha's tree before
+    # any leg (A2) and re-read after every leg (A4); it and TMPDIR are removed on every exit path (A5).
+    sweep_stale_checkouts(sha)
+    checkout = marker = tmpdir = None
     try:
+        checkout, marker, create_s = make_checkout(tree, sha)
+        _plant_for_tests(checkout)
+        t0 = time.monotonic()
+        entries = tree_entries(checkout, sha)
+        faults = verify_checkout(checkout, sha, entries)
+        if faults:
+            raise Refused("the checkout of %s is not the sha's tree (%s); it is removed, and nothing was run or recorded"
+                          % (short(sha), describe_faults(faults)))
+        above = ancestor_node_modules(checkout)
+        if above:
+            raise Refused("the checkout of %s has node_modules in an ancestor directory (ancestor %d: %s), which node's "
+                          "require() and tsc's typeRoots would read from outside the sha; remove it and sweep again"
+                          % (short(sha), len(above), ", ".join(above[:3])))
+        run["runner"]["checkout"] = {"form": "clone", "path": checkout, "create_s": create_s,
+                                     "verify_s": round(time.monotonic() - t0, 2), "files": len(entries), "setup": None}
+        if not only:
+            webview = webview_state(tree)
+            run["legs"] = plan_legs(checkout, python, workers, webview)
+            run.update(base=webview["base"], owed={"webview": webview}, order=list(LEGS))
+            need = (history or {}).get("need") or {}
+            owed = [n for n in LEGS if is_owed(n, run["legs"][n])]
+            unrun = sorted(set(need) - set(owed))
+            if unrun:
+                raise Refused("%s failed at %s and this run would not run %s (%s); fix it and sweep the new head"
+                              % (", ".join(unrun), short(sha), "it" if len(unrun) == 1 else "them",
+                                 "; ".join("%s: %s" % (n, run["legs"][n].get("why")) for n in unrun)))
+            stray = sorted(set(flakes) - set(need))
+            if stray:
+                raise Refused("--flake names %s, which %s no failed run at %s to excuse" % (", ".join(stray),
+                              "has" if len(stray) == 1 else "have", short(sha)))
+            unnamed = [n for n in LEGS if n in need and n not in flakes]
+            if unnamed:
+                raise Refused("the run at %s failed %s; a later run counts over a failed leg only with --flake LEG=TEXT naming "
+                              "each (the test, and where it is recorded as a known flake); for anything else, fix it and sweep "
+                              "the new head (logs: %s)" % (short(sha), ", ".join("%s in run %d (%s)" % (n, need[n][0], _rc_text(n, need[n][1]))
+                                                                                 for n in unnamed),
+                                                           ", ".join(str(need[n][1].get("log")) for n in unnamed)))
+        os.makedirs(logdir, mode=0o700, exist_ok=True)
+        tmpdir = make_tmpdir()
+        run["runner"]["tmpdir"] = tmpdir
         ctx = leg_context(tmpdir, python)
         prepare_home(ctx)
         run["runner"]["leg_env"] = {"allow": list(LEG_ALLOW), "hash": leg_env_hash(ctx)}
         run["runner"]["tools"] = tool_versions(ctx)
+        if only and "deps" not in only and os.path.exists(os.path.join(checkout, "vscode-extension", "package.json")):
+            # A fresh checkout has no node_modules, so a --leg re-run installs them from the sha's lockfile first, as CI
+            # does; without them the tools leg and the served tests run narrowed and can pass.
+            setup = {"owed": True, "cmd": list(DEPS_CMD), "cwd": "vscode-extension", "rc": None}
+            print("sweep %s: setup (npm ci) ..." % short(sha), flush=True)
+            run_leg(checkout, "deps", setup, wraps, ctx, logdir)
+            run["runner"]["checkout"]["setup"] = setup
+            after = recheck_checkout(checkout, sha, entries)
+            if not passed("deps", setup) or after:
+                raise Refused("the setup of the checkout of %s (npm ci) %s, so the re-run would not run on the sha's tree with "
+                              "its dependencies; nothing was recorded (log %s)" % (short(sha), _rc_text("deps", setup) if not
+                              passed("deps", setup) else "changed it: " + describe_faults(after), setup.get("log")))
+        data = data or {"schema": SCHEMA, "sha": sha, "runs": []}
+        data.update(branch=branch, tree=tree)
+        data["runs"].append(run)
         write_result(path, data)
         for name in LEGS:
             rec = run["legs"].get(name)
             if rec is None or not is_owed(name, rec):
                 continue
             print("sweep %s: %s ..." % (short(sha), name), flush=True)
-            run_leg(tree, name, rec, wraps, ctx, logdir)
+            run_leg(checkout, name, rec, wraps, ctx, logdir)
             print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
+            changed = recheck_checkout(checkout, sha, entries)
+            if changed:
+                # A4, the runner's one producer of invalid: a leg changed the checkout, so later legs would not run on
+                # the sha's tree.
+                run["invalid"] = ("after the %s leg the checkout is not the sha's tree: %s; the legs after it did not run"
+                                  % (name, describe_faults(changed)))
+                write_result(path, data)
+                break
             write_result(path, data)
         left = home_left(ctx)
         run["runner"].update(home_empty=not left, home_left=left[:20])
     finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-    head = git(tree, "rev-parse", "HEAD")
-    dirty = dirty_paths(tree)
-    if head != sha:
-        run["invalid"] = "HEAD moved to %s during the run (it started at %s)" % (short(head), short(sha))
-    elif dirty:
-        run["invalid"] = "the tree changed during the run: %s" % ", ".join(dirty[:10])
+        reap_descendants()
+        if tmpdir:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        remove_checkout(checkout, marker)
     run["finished"] = now()
     run["verdict"] = run_verdict(run)
     run["red"] = [n for n in red_legs(run) if run["kind"] == "full" or n in run["legs"]] if run["verdict"] == "red" else []
@@ -1163,10 +1624,13 @@ def main(argv=None):
                                  epilog="\n\n".join(doc[1:]))
     sub = ap.add_subparsers(dest="subcommand", required=True, metavar="<subcommand>")
     p = sub.add_parser("run", help="sweep the tree's HEAD and record every leg's exit status",
-                       description="Sweep the tree's HEAD: refuse a dirty tree, run every owed leg in order (%s), write the "
-                                   "result under the state dir after every leg, and mark it invalid if HEAD or the tree "
-                                   "changed during the run. Exit 0 pass, 1 red, 2 refused to start, 3 invalid." % ", ".join(LEGS))
-    p.add_argument("--tree", metavar="DIR", help="the worktree to sweep (default: the one holding the current directory)")
+                       description="Sweep the commit the tree's HEAD names: check it out into a private clone under the "
+                                   "state dir and verify it against the sha's tree, run every owed leg there in order (%s), "
+                                   "append the run to the sha's result after every leg, and record it invalid if a leg "
+                                   "changed the checkout. The tree need not be clean; its uncommitted edits are not swept. "
+                                   "Exit 0 pass, 1 red, 2 refused to start, 3 invalid." % ", ".join(LEGS))
+    p.add_argument("--tree", metavar="DIR", help="the repository whose HEAD is swept (default: the one holding the current "
+                                                 "directory); read for its HEAD sha and branch only")
     p.add_argument("--python", metavar="PATH", help="the interpreter for the pytest leg (default: the one running this script); "
                                                     "it must import %s" % ", ".join(PYTEST_MODULES))
     p.add_argument("--workers", type=int, metavar="N", help="pytest -n (default: the idle cores at launch, clamped to %d..%d)"
@@ -1199,6 +1663,9 @@ def main(argv=None):
     except Refused as e:
         print("sweep: %s" % e, file=sys.stderr)
         return EXIT_REFUSED
+    except Stopped as e:
+        print("sweep: stopped by signal %d; the legs were stopped and TMPDIR and the checkout removed" % e.signum, file=sys.stderr)
+        return 128 + e.signum
 
 
 if __name__ == "__main__":

@@ -310,8 +310,10 @@ class Fixture:
             legs = {n: {"owed": True, "rc": 0, "cmd": ["true"], "started": stamp, "finished": stamp} for n in sweep.LEGS}
             for n in sweep.TEST_LEGS:
                 legs[n].update(tests=1, failed=0)
-            for n in ("deps",) + (() if webview else sweep.WEBVIEW_LEGS):
+            for n in () if webview else sweep.WEBVIEW_LEGS:
                 legs[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
+            # the fixture's worlds have no vscode-extension/, and this is the one reason the runner gives for deps
+            legs["deps"] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
             run = {"kind": "full", "sha": sha, "branch": branch, "tree": tree, "started": stamp, "finished": stamp,
                    "flakes": {}, "legs": legs, "red": [], "invalid": None}
             run.update(over)
@@ -585,6 +587,18 @@ class PlanReadsTheMemberSweep(_Base):
                       "XDG_STATE_HOME)" % (fx.bare_rev("c"), sweep.sweeps_dir(env=fx.env)), excl[103])
         self.assertEqual(excl[104], "depends on #103 (%s)" % excl[103], "the dependent goes with it")
         self.assertIn("excluded #103: no passing sweep at its head (sweep missing", p.stdout)
+
+    def test_a_member_whose_result_excuses_deps_for_a_package_json_its_head_holds_is_left_out(self):
+        """Round 1's excuse rule: the runner marks deps not owed only for having no vscode-extension/package.json, and
+        plan accepts that reason only when the member's head really has no such file."""
+        fx = self.fx
+        head = fx.branch("x", {"vscode-extension/package.json": "{}\n"}, swept=False)
+        fx.result(head, "x", webview=True, tree=fx.author)        # deps marked not owed for having no package.json
+        fx.pr(112, "x", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        excl = {e["n"]: e["reason"] for e in fx.state("b1")["excluded"]}
+        self.assertIn("no passing sweep at its head (sweep invalid at %s: the result marks deps not owed for having no "
+                      "vscode-extension/package.json, but #112's head's tree holds vscode-extension/package.json" % head[:10], excl[112])
 
     def test_a_red_a_stale_and_a_webview_contradicting_result_are_each_named(self):
         fx = self.fx
@@ -1741,6 +1755,26 @@ class VerifyReadsTheSweep(_Base):
             f.write("{")
         self.refused("FAIL sweep unreadable: %s: " % sweep.result_path(head, env=fx.env))
 
+    def test_a_result_that_excuses_deps_for_a_package_json_the_head_holds_fails(self):
+        """Round 1's excuse rule at the batch head: a result marking deps not owed for having no
+        vscode-extension/package.json fails verify when the head's tree holds one, and passes once deps ran."""
+        fx = self.fx
+        head = fx.branch("a", {"vscode-extension/package.json": "{}\n"}, swept=False)
+        legs = self.legs()
+        legs["deps"] = {"owed": True, "rc": 0, "started": sweep.now(), "finished": sweep.now()}
+        for n in sweep.WEBVIEW_LEGS:
+            legs[n] = {"owed": True, "rc": 0, "tests": 1, "failed": 0, "started": sweep.now(), "finished": sweep.now()}
+        fx.result(head, "a", webview=True, tree=fx.author, legs=legs)
+        fx.pr(101, "a", title="the extension's manifest", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        bhead = fx.dev_git("rev-parse", "batch/b1")
+        fx.sweep("b1", webview=True)                  # deps not owed for having no package.json: false at this head
+        self.refused("FAIL sweep invalid at %s: the result marks deps not owed for having no vscode-extension/package.json, but "
+                     "the batch head's tree holds vscode-extension/package.json" % bhead[:10])
+        fx.sweep("b1", legs=legs)
+        fx.ok("verify", "b1")
+
     def test_a_result_recorded_under_another_leg_environment_fails(self):
         """The allowlist hash is verified (round 1, decision 10): a result recorded under another leg environment policy
         is not the same gate, so verify fails it by name, as it fails one with no hash at all."""
@@ -1860,8 +1894,9 @@ class VerifyReadsTheSweep(_Base):
         out = {n: {"owed": True, "rc": rcs.get(n, 0), "started": sweep.now(), "finished": sweep.now()} for n in sweep.LEGS}
         for n in sweep.TEST_LEGS:
             out[n].update(tests=1, failed=0)
-        for n in ("deps",) + sweep.WEBVIEW_LEGS:
+        for n in sweep.WEBVIEW_LEGS:
             out[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
+        out["deps"] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
         return out
 
 
