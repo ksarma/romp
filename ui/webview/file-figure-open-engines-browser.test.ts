@@ -154,8 +154,8 @@
 // another tab brought to the front or a modal dialog moves it, refuses that press once, visibly, and the next click opens,
 // measured in the three engines in a probe kept out of the tree (file-view.ts's gate comment states the figures), and no tap or
 // chain cell of this leg changed under it.
-// This leg stays off the shared roster of browser legs that PR 887 brings: that roster's job installs Chromium alone, so a WebKit or
-// Firefox test in a rostered file would not run there.
+// This leg stays off the shared roster of browser legs that PR 887 landed (vscode-extension/ci-browser-legs.txt): that roster's job
+// installs Chromium alone, so a WebKit or Firefox test in a rostered file would not run there.
 // Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, and no job installs Firefox
 // or WebKit, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper); file-view-outline.test.ts
 // drives WebKit's order, the stale records and the clicks by no pointer over the stand-in in CI. Synthetic values only: the

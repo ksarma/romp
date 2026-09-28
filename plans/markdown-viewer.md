@@ -7939,10 +7939,10 @@ module those name in an import the compiler parses (an import declaration under 
 specifier, an import-equals, and a require() or import() of a string literal), transitively, under any quote and any
 line break, a type-only import and a path outside ui/webview included, a specifier that is not a string literal
 refused with its line, so file-view.ts itself re-enters through file-comments.ts's type import of the
-viewer's action type and brings every module it imports along: forty-six modules
-(../../vendor/track-changents/engine.js, actions.ts, anchor-map.ts, backend-names.ts, capped-read.ts, card-layout.ts,
-code-block.ts, commands.ts, comments.ts, ctx-color.ts, docreview.ts, fence-source.ts, figure-gate.ts,
-file-comments-model.ts, file-comments-regions.ts, file-comments.ts, file-trail.ts, file-view-links.ts, file-view.ts,
+viewer's action type and brings every module it imports along: forty-eight modules
+(../../vendor/track-changents/engine.js, actions.ts, anchor-map.ts, authored-file-caps.ts, backend-names.ts, capped-read.ts,
+card-layout.ts, code-block.ts, commands.ts, comments.ts, ctx-color.ts, docreview.ts, fence-source.ts, figure-gate.ts,
+file-cap.ts, file-comments-model.ts, file-comments-regions.ts, file-comments.ts, file-trail.ts, file-view-links.ts, file-view.ts,
 gesture-clock.js, host-prefix.ts, icons.ts, keybindings.ts, link-opener.ts, math.ts, md-block-start.ts, md-config.ts,
 md-links.ts, md-literal-tags.ts, md-sanitize.ts, media.ts, path-links.ts, pdf-cap.ts, pick-held.ts, pinch.ts,
 preview.ts, reader-place.ts, region-geometry.ts, session-badge.ts, settings.ts, status-widgets.ts, tab-state.ts,
@@ -9348,16 +9348,22 @@ scenario inside a node module, ui/webview/file-view-text-size.test.ts's bar case
 Reload case, skips there as the legs do), and the pytest modules it added
 or re-aimed, tests/test_guide_trail_chords_and_figure_button.py and tests/test_guide_files_failures.py, in the pytest job,
 and the road that runs the legs with a browser where landing is gated is the shared roster of browser legs,
-vscode-extension/ci-browser-legs.txt, one compiled bundle path per line, read by a step of that job after its Chromium
-install, a change of its own that this branch does not carry, so this follow-on's legs join the roster once both are in
-the tree, all but ui/webview/file-figure-open-engines-browser.test.ts, which launches WebKit and Firefox and so stays off the
-roster, since the roster's job installs Chromium alone; tools/markdown-viewer-plan-linknav.test.mjs derives the legs BY NAME, the modules under ui/webview whose file name
+vscode-extension/ci-browser-legs.txt, one compiled bundle path per line, run by the step "Browser legs (node --test over
+ci-browser-legs.txt)" of that job after its Chromium install under the switch ROMP_BROWSER_LEGS_REQUIRE, which inBrowser
+reads itself, the three on main since PR 887 landed, and none of this follow-on's legs is a roster line yet: the open leg,
+ui/webview/file-figure-open-browser.test.ts, outlasts both of the step's bounds, its five minutes and node's 240 s per
+file, several legs spell timeout values that reach the per-file bound, and whether those bounds rise (the step's sits in
+the workflow file) or the open leg stays off the roster while the others join it waits on the owner's choice (the PR's
+body gives each leg's measured seconds; rewritten at the landing merge with main at 1d591384e, as PR 887's section on who
+owes what at the landing asks), and the legs join the roster then, all but
+ui/webview/file-figure-open-engines-browser.test.ts, which launches WebKit and Firefox and so stays off the roster in any
+case, since the roster's job installs Chromium alone; tools/markdown-viewer-plan-linknav.test.mjs derives the legs BY NAME, the modules under ui/webview whose file name
 carries the suffix -browser before .test.ts and whose own text names this follow-on, a name and not the property that makes a module a browser leg
-(that property, a call of the shared launcher's inBrowser through any binding or a playwright package named, is what the
-census of browser legs PR 887 brings reads off each module's tree with the compiler,
-vscode-extension/scripts/browser-legs-census.mjs executed by the census test beside it under ui/webview in the
-vscode-extension job, and that census is the one definition of a browser leg once it lands: the compiler is installed
-in that job alone, and a spelling read in the Shell job would be a second definition; the modules of this follow-on's
+(that property, a call of the shared launcher's inBrowser through any binding or a playwright package named, is what a
+census of browser legs would read off each module's tree with the compiler, and PR 887 landed without the census of
+browser legs it had carried, which is kept on the fork's branch ci-browser-legs-census for a follow-up whose design note
+comes first, so no check in the tree reads that property: the compiler is installed in the vscode-extension job alone,
+and a spelling read in the Shell job would be a second definition; the modules of this follow-on's
 diff that the property reaches and the name does not, which this pin therefore holds to nothing, are
 ui/webview/file-trail.test.ts, whose Reload case launches through the shared helper, and
 ui/webview/file-view-text-size.test.ts, whose bar case launches through a harness of its own; the file review's round
@@ -9381,19 +9387,19 @@ read of spellings closes, the method bound to a name of its own and called by th
 throws under node:test and fails the leg loudly, and the family is live through .bind(t) or an aliased test.skip, each
 skipping with the body never run and passing the pin; the file review's round 10, extra6-3), every form named here
 planted in the pin's own cases; what refuses that class is execution and not a read of the source: the step PR 887
-brings to that job, directly after its Chromium install, runs the rostered legs with a browser and reads the run's
+landed in that job, directly after its Chromium install, runs the rostered legs with a browser and reads the run's
 record, and a test skipped there is red naming the test, its reason and the switch's state, whatever spelled the skip,
-its census named above reading a leg's skip or todo from the compiler's tree beside it, so until that step is in the
-tree the interim here is this stated scope and not a wider regex (the maintainer's reading of the author's closing pass
+which reaches a leg only once it is a roster line, so while none of this follow-on's legs is, the interim here is this
+stated scope and not a wider regex (the maintainer's reading of the author's closing pass
 after the file review's round 10: both halves of the guard were keyed on spellings, and a reader who saw its green took
-no leg to stand down privately), and reads
-the tree for the roster, its exclusions file (vscode-extension/ci-browser-legs-excluded.txt),
-that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE, reached by inBrowser through
-ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
-four it holds every leg to a roster line outside the exclusions, the leg that launches WebKit and Firefox to an exclusions
-line and no roster line (the module's own model of the convention, which PR 887's section on who owes what at the landing
-revises), and the roster's own tree test to exist, and a tree with
-some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
+no leg to stand down privately), and reads the tree for the three parts of the convention PR 887 landed, the roster,
+that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE, read by inBrowser itself), refusing a
+tree without all three and naming what is absent, and holds the roster's own tree test to exist: where none of the legs
+is a roster line it holds this sentence, where every leg but the one that launches WebKit and Firefox is a roster line it
+holds this sentence gone, the leg that launches WebKit and Firefox is no roster line in either, and a roster carrying some
+of the legs and not all it refuses, naming them (rewritten at the landing merge with main at 1d591384e, where PR 887 had
+landed with no exclusions file and no census, as PR 887's section on who owes what at the landing asks; the file review's
+round 8, extra8-2: the legs were the feature's evidence and none of them ran where
 landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-eight standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
