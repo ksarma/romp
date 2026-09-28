@@ -617,11 +617,14 @@ class OpenerIsolation(unittest.TestCase):
     is seen, and each carries it exactly once: a second copy, even of the same value, leaves a browser with a header it
     cannot parse and so with no policy. The /remote/<host>/file relay's shapes are
     tests/test_kernel_remote_file_relay.py's, read the same way. The one reply without it is one in HTTP/0.9's shape,
-    which Python 3.10 to 3.14 (the interpreters CI runs) give a request line of at most 65536 bytes, its line terminator
-    included, whose version is missing, malformed, HTTP/0.9 itself, or HTTP/2.0 or later, which no browser sends: it has
-    no status line and no headers at all (test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all). A
-    longer line gets the full 414 with the policy whatever its version
-    (test_a_request_line_over_65536_bytes_gets_the_full_414_whatever_its_version)."""
+    with no status line and no headers at all, and only a request line no browser sends, of at most 65536 bytes with its
+    line terminator, gets one. On Python 3.10 to 3.12, and on 3.13 and 3.14 before 3.13.15 and 3.14.7, every reply to a
+    line whose version is missing, malformed, HTTP/0.9 itself, or HTTP/2.0 or later has that shape. From 3.13.15 and
+    3.14.7 (CPython's gh-54930), http.server's 400 or 505 refusing such a line has a status line and the policy once, and
+    the shape is left to a line of two words whose first is GET and one of three whose version is HTTP/0.9 itself. The
+    test judges each reply by the shape it has, never by the interpreter's version
+    (test_a_request_line_no_browser_sends_gets_no_headers_at_all_or_the_policy_once). A longer line gets the full 414
+    with the policy whatever its version (test_a_request_line_over_65536_bytes_gets_the_full_414_whatever_its_version)."""
 
     @classmethod
     def setUpClass(cls):
@@ -693,72 +696,97 @@ class OpenerIsolation(unittest.TestCase):
                 self.assertEqual(status, code, what)
                 self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], what + ": one header, same-origin")
 
-    def test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all(self):
-        # The one reply without the policy (Handler.send_error's comment names it): on Python 3.10 to 3.14, a request line
-        # of at most 65536 bytes, its line terminator included, whose version is missing, malformed (a word after the
-        # version makes it so), HTTP/0.9 itself, or HTTP/2.0 or later gets every reply in HTTP/0.9's shape, the body
-        # alone, so no header can ride it. No browser sends one. Each case names the body it gets, so a case whose reply
-        # is not written fails: http.server's refusal (its error page, with its code), the sign-in page for a bare
-        # `GET /`, the page itself, as _send writes it, for an authorized GET, and the gate's refusal for `GET /chat`
-        # with no credential. /login and /healthz, which the gate exempts, answer a GET with no credential with their
-        # own bodies, the sign-in page and `ok`, so only a gated path gets the gate's refusal. The second loop reads
-        # http.server's 431 and 501 and the kernel's own reply to a POST on a request line ending in HTTP/0.9 itself,
-        # whose headers http.server reads, so the 431 is written; after a line of two words, 3.13 and later read no
-        # headers and answer a GET with the page for its path. Any other version below HTTP/2.0 gets a full reply with
-        # the policy once (the last case).
+    def test_a_request_line_no_browser_sends_gets_no_headers_at_all_or_the_policy_once(self):
+        # The one reply without the policy (Handler.send_error's comment names it) is a reply in HTTP/0.9's shape, the body
+        # alone, with no status line and no headers, so no header can ride it. Which of these request lines, none of which a
+        # browser sends, get one depends on the interpreter's http.server. On Python 3.10 to 3.12, and on 3.13 and 3.14
+        # before 3.13.15 and 3.14.7, every case below gets every reply in that shape (each is a line of at most 65536 bytes,
+        # its line terminator included, whose version is missing, malformed, HTTP/0.9 itself, or HTTP/2.0 or later). 3.13.15
+        # and 3.14.7, the first 3.13 and 3.14 releases with CPython's gh-54930, answer such a line's own refusal, its 400 or
+        # 505 (the first six cases), with a status line and headers, and the send_error override puts the policy among
+        # them. The other cases, a line of two words whose first is GET or of three whose version is HTTP/0.9 itself, get
+        # replies in HTTP/0.9's shape on all of them. So each case takes the branch its reply's shape decides, never the
+        # interpreter's version, since a patch release of any branch can change the shape: with no status line, _wire_raw
+        # hands back the whole reply as the body, and it must be the body the case names from its first byte, so a header
+        # written ahead of it fails; with a status line, the status must be the one that body goes with and
+        # Cross-Origin-Opener-Policy must be there exactly once. Anything else fails. The bodies: http.server's error page
+        # with the case's code (this interpreter's own error_message_format, up to the message), the sign-in page for a
+        # bare `GET /`, the page itself, as _send writes it, for an authorized GET, and the gate's refusal for `GET /chat`
+        # with no credential. /login and /healthz, which the gate exempts, answer a GET with no credential with their own
+        # bodies, the sign-in page and `ok`, so only a gated path gets the gate's refusal. The last three cases are
+        # http.server's 431 and 501 and the kernel's own reply to a POST, each on a line ending in HTTP/0.9 itself, whose
+        # headers http.server reads, so the 431 is written; after a line of two words, 3.13.10, 3.14.1 and later (CPython's
+        # gh-70765) read no headers. The last subtests read the gated and exempt paths on HTTP/0.5, a version below HTTP/2.0
+        # other than HTTP/0.9, which gets a full reply, through the same check, so the status each of those bodies goes with
+        # is read off the wire, not assumed.
         chat = km._chat_page()
         head = chat.index("<head>") + len("<head>")
-        for what, line, want in (
-                ("a word after the version", "GET /chat HTTP/1.1 extra", 400), ("a malformed version", "GET / HTTP/x.y", 400),
-                ("HTTP/2.0", "GET / HTTP/2.0", 505), ("two words, not a GET", "PUT /", 400), ("one word", "GET", 400),
-                ("a bare GET", "GET /", "sign-in"), ("a GET with HTTP/0.9 itself", "GET / HTTP/0.9", "sign-in"),
-                ("a bare GET's line of 65536 bytes, its CRLF included", "GET /?x=" + "a" * (65534 - len("GET /?x=")),
+        fmt = km.Handler.error_message_format
+        up_to_message = fmt[:fmt.index("%", fmt.index("%") + 1)]      # the error page up to its message; its one % is the code
+        statuses = {"sign-in": 200, "page": 200, "gate": 403, "ok": 200}
+
+        def check(what, reply, want):
+            status, msg, body = reply
+            if status is not None:
+                self.assertEqual(status, statuses.get(want, want), what + ": a status line, so the status its body goes with")
+                self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"],
+                                 what + ": a status line, so the policy once, same-origin")
+            shape = "after its headers" if status is not None else "alone, with no status line and no headers"
+            text = body.decode("utf-8")
+            if want == "sign-in":
+                self.assertEqual(text, km._TOKEN_LOGIN_HTML, what + ": the sign-in page, " + shape)
+            elif want == "page":
+                self.assertTrue(text.startswith(chat[:head]) and text.endswith(chat[head:]) and km._PAGE_KEY_JS in text,
+                                what + ": the chat page as _send writes it, %s: %r" % (shape, body[:60]))
+            elif want == "gate":
+                self.assertTrue(body.startswith(b"forbidden: token required"),
+                                what + ": the gate's refusal, %s: %r" % (shape, body[:60]))
+            elif want == "ok":
+                self.assertEqual(body, b"ok", what + ": the liveness probe's body, " + shape)
+            else:
+                self.assertTrue(body.startswith((up_to_message % {"code": want}).encode("utf-8")),
+                                what + ": http.server's %d page, %s: %r" % (want, shape, body[:60]))
+
+        def line(text):
+            return (text + "\r\n\r\n").encode()
+        for what, request, want in (
+                ("a word after the version", line("GET /chat HTTP/1.1 extra"), 400),
+                ("a malformed version", line("GET / HTTP/x.y"), 400), ("HTTP/2.0", line("GET / HTTP/2.0"), 505),
+                ("four words, the last HTTP/0.9 itself", line("GET /a b HTTP/0.9"), 400),
+                ("two words, not a GET", line("PUT /"), 400), ("one word", line("GET"), 400),
+                ("a bare GET", line("GET /"), "sign-in"), ("a GET with HTTP/0.9 itself", line("GET / HTTP/0.9"), "sign-in"),
+                ("a bare GET's line of 65536 bytes, its CRLF included", line("GET /?x=" + "a" * (65534 - len("GET /?x="))),
                  "sign-in"),
-                ("an authorized GET", "GET /chat?token=" + TOK, "page"),
-                ("an authorized GET with HTTP/0.9 itself", "GET /chat?token=%s HTTP/0.9" % TOK, "page"),
-                ("GET /chat with no credential, a gated path", "GET /chat", "gate"),
-                ("GET /login with no credential, a path the gate exempts", "GET /login", "sign-in"),
-                ("GET /healthz with no credential, a path the gate exempts", "GET /healthz", "ok")):
-            with self.subTest(what=what):
-                status, msg, body = _wire_raw(self.port, (line + "\r\n\r\n").encode())
-                self.assertIsNone(status, what + ": no status line")
-                self.assertIsNone(msg, what + ": no headers")
-                text = body.decode("utf-8")
-                if want == "sign-in":
-                    self.assertEqual(text, km._TOKEN_LOGIN_HTML, what + ": the sign-in page, served with no headers")
-                elif want == "page":
-                    self.assertTrue(text.startswith(chat[:head]) and text.endswith(chat[head:]) and km._PAGE_KEY_JS in text,
-                                    what + ": the chat page as _send writes it: %r" % body[:60])
-                elif want == "gate":
-                    self.assertTrue(body.startswith(b"forbidden: token required"),
-                                    what + ": the gate's refusal: %r" % body[:60])
-                elif want == "ok":
-                    self.assertEqual(body, b"ok", what + ": the liveness probe's body, served with no headers")
-                else:
-                    self.assertIn(b"Error code: %d" % want, body, what + ": http.server's %d page: %r" % (want, body[:60]))
-        for what, req, want in (
+                ("an authorized GET", line("GET /chat?token=" + TOK), "page"),
+                ("an authorized GET with HTTP/0.9 itself", line("GET /chat?token=%s HTTP/0.9" % TOK), "page"),
+                ("GET /chat with no credential, a gated path", line("GET /chat"), "gate"),
+                ("GET /login with no credential, a path the gate exempts", line("GET /login"), "sign-in"),
+                ("GET /healthz with no credential, a path the gate exempts", line("GET /healthz"), "ok"),
                 ("a 431 to a header line over 65536 bytes, on HTTP/0.9 itself",
-                 b"GET / HTTP/0.9\r\nX-Big: " + b"b" * 70000 + b"\r\n\r\n", b"Error code: 431"),
-                ("a 501 to a method no do_ handler takes, on HTTP/0.9 itself", b"FOO / HTTP/0.9\r\n\r\n", b"Error code: 501"),
-                ("the kernel's own reply to a POST on HTTP/0.9 itself", b"POST /nope HTTP/0.9\r\n\r\n",
-                 b"forbidden: token required")):
+                 b"GET / HTTP/0.9\r\nX-Big: " + b"b" * 70000 + b"\r\n\r\n", 431),
+                ("a 501 to a method no do_ handler takes, on HTTP/0.9 itself", line("FOO / HTTP/0.9"), 501),
+                ("the kernel's own reply to a POST on HTTP/0.9 itself", line("POST /nope HTTP/0.9"), "gate")):
             with self.subTest(what=what):
-                status, msg, body = _wire_raw(self.port, req)
-                self.assertIsNone(status, what + ": no status line")
-                self.assertIsNone(msg, what + ": no headers")
-                self.assertIn(want, body, what + ": the body alone, that reply's: %r" % body[:60])
-        with self.subTest(what="HTTP/0.5, another version below HTTP/2.0"):
-            status, msg, body = _wire_raw(self.port, b"GET / HTTP/0.5\r\n\r\n")
-            self.assertEqual(status, 200, "a full reply: %r" % body[:60])
-            self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], "one header, same-origin")
+                check(what, _wire_raw(self.port, request), want)
+        for what, request, want in (
+                ("a bare GET's path", "GET / HTTP/0.5", "sign-in"),
+                ("an authorized GET's path", "GET /chat?token=%s HTTP/0.5" % TOK, "page"),
+                ("GET /chat with no credential", "GET /chat HTTP/0.5", "gate"),
+                ("GET /login with no credential", "GET /login HTTP/0.5", "sign-in"),
+                ("GET /healthz with no credential", "GET /healthz HTTP/0.5", "ok"),
+                ("a POST with no credential", "POST /nope HTTP/0.5", "gate")):
+            with self.subTest(what="HTTP/0.5, another version below HTTP/2.0: " + what):
+                reply = _wire_raw(self.port, line(request))
+                self.assertIsNotNone(reply[0], what + ", on HTTP/0.5: a full reply, with a status line: %r" % reply[2][:60])
+                check(what + ", on HTTP/0.5", reply, want)
 
     def test_a_request_line_over_65536_bytes_gets_the_full_414_whatever_its_version(self):
         # http.server reads at most 65537 bytes of the request line and refuses a line over 65536 bytes, its line terminator
         # included, before it parses the line, so the version the line names never shapes the reply: each form the test
-        # above answers with no headers at all gets the full 414 here, with the policy once, as a line ending in HTTP/1.1
-        # does. The first case is the shortest line ending in CRLF that is refused: 65535 bytes of text and its CRLF, 65537
-        # bytes in all, one more than the test above's line of 65534 bytes of text and its CRLF, which gets its page with
-        # no headers
+        # above sends, which on a shorter line gets replies in HTTP/0.9's shape on every interpreter or on some (that test's
+        # comment says which), gets the full 414 here, with the policy once, as a line ending in HTTP/1.1 does. The first
+        # case is the shortest line ending in CRLF that is refused: 65535 bytes of text and its CRLF, 65537 bytes in all,
+        # one more than the test above's line of 65534 bytes of text and its CRLF, which gets the sign-in page
         long = "GET /chat?x=" + "a" * 70000
         edge = "GET /chat?x=" + "a" * (65535 - len("GET /chat?x="))
         for what, line in (("no version, 65535 bytes of text and its CRLF", edge), ("no version", long),

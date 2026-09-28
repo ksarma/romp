@@ -73860,17 +73860,21 @@ class Handler(BaseHTTPRequestHandler):
     # http.server writes its own refusals with send_error, outside _send: a request line over 65536 bytes, its line
     # terminator included (414), a header line over 65536 bytes or more than 100 headers (431), a method no do_ handler
     # takes (501), and a request line of four or more words whose last is a well-formed version below HTTP/2.0 other than
-    # HTTP/0.9 itself (400). A page on another origin can open the 414 as a top-level document (a long URL is enough), so
-    # these carry the opener policy _send's comment describes. send_error writes its headers in end_headers, so the
-    # header is added there, and only while send_error runs: _send writes its own copy, and a second copy leaves a
-    # browser with no policy. http.server writes the 414 before it parses the request line, so a line that long gets the
-    # full 414 with the policy whatever version it names. On Python 3.10 to 3.14, a shorter request line whose version is
-    # missing, malformed (a word after the version makes it so), HTTP/0.9 itself, or HTTP/2.0 or later, none of which a
-    # browser sends, gets every reply in HTTP/0.9's shape, a body with no status line and no headers: http.server's
-    # refusals (its 400 and 505 for the line, and its 431s and 501 for a line that gets past those) and the kernel's own
-    # reply to the request alike, so an authorized GET (`GET /chat?token=<token>`, say) gets the page itself, a bare
-    # `GET /` the sign-in page, and `GET /chat` with no credential the gate's refusal, each with no headers. No header
-    # can ride those replies, so the 431s and the 501 carry the policy only on a request line whose version is below
+    # HTTP/0.9 itself (400); from Python 3.13.15 and 3.14.7, the first 3.13 and 3.14 releases with CPython's gh-54930,
+    # also the 400 or 505 for any other request line it refuses as malformed. A page on another origin can open the 414
+    # as a top-level document (a long URL is enough), so these carry the opener policy _send's comment describes.
+    # send_error writes its headers in end_headers, so the header is added there, and only while send_error runs: _send
+    # writes its own copy, and a second copy leaves a browser with no policy. http.server writes the 414 before it parses
+    # the request line, so a line that long gets the full 414 with the policy whatever version it names. A reply in
+    # HTTP/0.9's shape, a body with no status line and no headers, can carry no policy, and only a shorter request line
+    # no browser sends gets one. On Python 3.10 to 3.12, and on 3.13 and 3.14 before 3.13.15 and 3.14.7, a line whose
+    # version is missing, malformed (a word after the version makes it so), HTTP/0.9 itself, or HTTP/2.0 or later gets
+    # every reply in that shape: http.server's refusals (its 400 and 505 for the line, and its 431s and 501 for a line
+    # that gets past those) and the kernel's own reply to the request alike. From 3.13.15 and 3.14.7, the 400 and 505 for
+    # the line have a status line and the policy, and the shape is left to a line of two words whose first is GET and a
+    # line of three whose version is HTTP/0.9 itself. On all of them, then, an authorized GET (`GET /chat?token=<token>`,
+    # say) gets the page itself, a bare `GET /` the sign-in page, and `GET /chat` with no credential the gate's refusal,
+    # each with no headers, and the 431s and the 501 carry the policy only on a request line whose version is below
     # HTTP/2.0 and not HTTP/0.9, which gets a full reply (HTTP/0.5, say).
     def send_error(self, code, message=None, explain=None):
         self._in_send_error = True
