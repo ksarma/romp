@@ -3001,7 +3001,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   reaches (the node guard of a touch record a touchend ended, red under a gate that deletes it). The pointerup's end of its
   //   own record is what lets a pointer's click take its press, since a record still standing at a click refuses that click:
   //   dropping it alone refuses every click that carries its own press's pointerId, a mouse's in every engine and a tap's in
-  //   Chromium and Firefox (WebKit's tap click, under pointerId 1, still finds the slot), and 14 of the outline suite's 59
+  //   Chromium and Firefox (WebKit's tap click, under pointerId 1, still finds the slot), and 17 of the outline suite's 62
   //   top-level tests are red under it; in Firefox, where another document's element takes the mouse's next press after a lost
   //   pointerup, a mouse click's, this window hears that click's pointerup, its mouseup of detail 1 and its click, and the
   //   pointerup hands the mouse's record to the slot, refused since that press left this window with its button down (the second
@@ -3189,9 +3189,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // blur, and under a gate without the blur listener; a gate whose blur marks the records accepted opens the row of a press
   // begun with the control covered; its test of the target is pinned by the row of an element's blur, its test of the pointer
   // type by the row of a finger held, its condition on the flag by the row of a blur between a mouse click's pointerup and its
-  // click, its clear of the slot by the three tap rows and its marking in place of deleting by the row of a record marked, and
-  // the rows after a blur are red under a gate that refuses every press until the window's next focus; its clear of the flag is
-  // defensive, above.
+  // click and its marking in place of deleting by the row of a record marked, and the rows after a blur are red under a gate
+  // that refuses every press until the window's next focus; its clear of the slot and its clear of the flag are pinned together,
+  // the three tap rows red under a gate whose blur leaves the slot and the flag alone, and each is defensive given the other:
+  // with the slot's clear dropped alone the flag's clear lets the next mousedown empty the slot and no test is red, and the
+  // flag's clear is defensive, above.
   // The residual, which no input or focus event this window hears tells from the viewer's own tap: an element of another
   // same-origin document shown over the picture during the viewer's own tap takes that tap's compatibility events and click,
   // and then a tap on that element over the control, which goes away during the press, reaches this window as a mousedown, a
@@ -3240,9 +3242,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // coordinates would cost Chromium's taps, whose touch adjustment moves a tap's click away from its pointerup. In it by
   // reading, not drivable here: a second finger resting on another document during the viewer's tap, in Firefox and WebKit; a
   // tap whose click the engine withholds (a long press's context menu, a tap past the click slop without a pointercancel), in
-  // Firefox and WebKit; and a foreign tap by the same pen under the same pointerId. Today the only element of the dashboard's
-  // top page that cancels a pointerdown is the update banner's drag handle, and it stays put during a press; the residual needs
-  // an element that appears over the picture during a tap. Whether to accept it is the owner's decision.
+  // Firefox and WebKit; and a foreign tap by the same pen under the same pointerId. The residual needs an element that appears
+  // over the picture during a tap, and where the viewer's window held the focus, a cover that cancels its mousedown and appears
+  // over the picture during a tap. The elements of the dashboard's top page that cancel a press are the pane gutters, which
+  // cancel their mousedown and stay put during a press, and the update banner's drag handle, which cancels its pointerdown, a
+  // cover that opened nothing in WebKit when the blur's rule was measured (0 of 36), and which, by reading, captures the pointer
+  // at its press, so its release and its click stay on it (a census of every pointerdown and mousedown handler of the top
+  // page's scripts, kernel.py's shell page and the bundles it loads): no element of the dashboard is a road today. Whether to
+  // accept the residual is the owner's decision.
   // Two orders of the class outside the residual opened the tab with the sign covered at the start of another document's gesture,
   // at 142ade155, at 1a6470e72 and at 09f58bec6 (a check of these fixes, the closing check at 142ade155 after the fixes for the
   // file review's round 18), and both are closed here. First, this window

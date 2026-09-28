@@ -167,8 +167,8 @@
 //   none measured, no tap or chain cell of either leg and no own gesture of the probes changing under them; and the blur's
 //   rule, one class of press: a focus move out of the viewer's window during the viewer's own press, or between a tap's
 //   pointerup and its compatibility mousedown, whether the page, a peer frame, a nested frame of the viewer's own document,
-//   another tab brought to the front or a modal dialog moves it, refuses that press once, measured in the three engines in a
-//   probe kept out of the tree, no tap or chain cell of either leg changing under it (file-view.ts's gate comment states them);
+//   another tab brought to the front or a modal dialog moves it, refuses that press once, measured in the three engines, the
+//   other tab in Firefox alone, in a probe kept out of the tree, no tap or chain cell of either leg changing under it (file-view.ts's gate comment states them);
 // - the cells of a release the viewer did not hear and of a tap whose compatibility events went to another document (the file
 //   review's round 19, extra5-1, extra8-1 and extra8-2), in chainCells's shape, each covered click wanted opening nothing and the
 //   next click opening once: in Chromium, on the hybrid page's Files pane, a press on the control held while the top page hides the

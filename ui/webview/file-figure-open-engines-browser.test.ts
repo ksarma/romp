@@ -165,7 +165,8 @@
 // blur's rule costs one class of press: a focus move out of the viewer's window during the viewer's own press, or between a
 // tap's pointerup and its compatibility mousedown, whether the page, a peer frame, a nested frame of the viewer's own document,
 // another tab brought to the front or a modal dialog moves it, refuses that press once, visibly, and the next click opens,
-// measured in the three engines in a probe kept out of the tree (file-view.ts's gate comment states the figures), and no tap or
+// measured in the three engines, the other tab in Firefox alone, in a probe kept out of the tree (file-view.ts's gate comment
+// states the figures), and no tap or
 // chain cell of this leg changed under it.
 // The cells of a figure at this origin's /file route (the coordinator's ruling on the same-origin figure after the file review's
 // round 19) run in Chromium, Firefox and WebKit, each form in a page of its own under a page key, on the chat modal: a figure

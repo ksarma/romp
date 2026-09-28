@@ -3490,8 +3490,9 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // held right press 4 of 4; the file review's round 19, extra7-1); the leave's arm for no button and the mouseout's clear, two
 // rules of the file review's round 19, none measured, no cell of this leg changing under them; and the blur's rule, one class
 // of press, a focus move out of the viewer's window during the viewer's own press, or between a tap's pointerup and its
-// compatibility mousedown, whatever moves it, refused once, measured in a probe kept out of the tree, no cell of this leg
-// changing under it (file-view.ts's gate comment states each).
+// compatibility mousedown, whether the page, a peer frame, a nested frame of the viewer's own document, another tab brought to
+// the front or a modal dialog moves it, refused once, measured in a probe kept out of the tree, the other tab in Firefox
+// alone, no cell of this leg changing under it (file-view.ts's gate comment states each).
 // The frame-hide cells (the file review's round 19, extra5-1 and extra8-1), on the hybrid page's Files pane in the same shape:
 // a press on the control held while the top page hides the viewer's frame, released at once on the top page, the frame shown
 // again at once or 300 ms later, then another document's click on an element over the control that hides at that click's
