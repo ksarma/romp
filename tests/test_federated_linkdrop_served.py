@@ -280,10 +280,16 @@ def _pair(sid, cwd, prompt, reply, parent, now=None):
 
 class LinkProxy:
     """A TCP splice on one fixed port to the remote kernel's port, in the test process: the lab's stand-in for the hub's
-    ssh -L forward, so the link can be dropped and restored while both kernels stay up. start() listens and splices each
+    ssh -L forward, so the link can be dropped and restored while both kernels stay up. listen() listens and splices each
     accepted connection to the target; drop() closes the listener (a dial is refused, as at a dead -L listener) and
     shuts every spliced pair (both ends read EOF: the hub's upstream, the remote's client); resume() listens again on
-    the same port. Every transition is stamped for the record."""
+    the same port; stop() drops the link and joins every thread the splice started. Every transition is stamped for the
+    record.
+
+    The splice owns its threads and ends them in stop(), which tearDownClass calls on every exit path (main's
+    tests/test_thread_stop_census.py reads each start here as object-owned through stop()). The opener is named listen()
+    and not start() because that census reads every `.start()` call as a thread start and cannot resolve an instance of
+    this class, which is not a Thread."""
 
     def __init__(self, target_port):
         self.target = int(target_port)
@@ -292,9 +298,10 @@ class LinkProxy:
         self._down = True
         self._pairs = set()
         self._lock = threading.Lock()
+        self._threads = []   # every accept and pump thread started, for stop() to join
         self.events = []
 
-    def start(self):
+    def listen(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("127.0.0.1", self.port))
@@ -302,7 +309,10 @@ class LinkProxy:
         s.setblocking(False)
         self._lsock = s
         self._down = False
-        threading.Thread(target=self._accept, args=(s,), daemon=True, name="linkproxy-accept").start()
+        t = threading.Thread(target=self._accept, args=(s,), daemon=True, name="linkproxy-accept")
+        with self._lock:
+            self._threads.append(t)
+        t.start()
         self.events.append({"ev": "up", "t": time.time()})
         return {"port": self.port}
 
@@ -340,7 +350,10 @@ class LinkProxy:
             with self._lock:
                 self._pairs.add(pair)
             for a, b in ((c, u), (u, c)):
-                threading.Thread(target=self._pump, args=(a, b, pair), daemon=True, name="linkproxy-pump").start()
+                t = threading.Thread(target=self._pump, args=(a, b, pair), daemon=True, name="linkproxy-pump")
+                with self._lock:
+                    self._threads.append(t)
+                t.start()
 
     def _pump(self, a, b, pair):
         try:
@@ -386,10 +399,19 @@ class LinkProxy:
         return {"port": self.port, "spliced": len(pairs)}
 
     def resume(self):
-        return self.start()
+        return self.listen()
 
     def stop(self):
+        """End the splice for good. drop() closes the listener, so the accept loop returns at its next select, and shuts
+        every spliced pair down, so both pumps of each read EOF and return; then every thread started is joined, all of
+        them within one 10 s bound, so a pump a late accept left running cannot hold the teardown past it (the threads
+        are daemons, and the kernels killed after this end any such pump's peer)."""
         self.drop()
+        with self._lock:
+            threads = list(self._threads)
+        deadline = time.time() + 10.0
+        for t in threads:
+            t.join(max(0.0, deadline - time.time()))
 
 
 class _Control(threading.Thread):
@@ -811,7 +833,7 @@ class _LinkDrop(unittest.TestCase):
                                      bin_dir=os.path.join(cls.remote_root or ROOT, "bin"))
         cls.procs.append(rp)
         cls.proxy = LinkProxy(cls.rport)
-        cls.proxy.start()
+        cls.proxy.listen()
         cls.hub_proc, cls.hlog = _dial._kernel(cls.lab, "hub", cls.hport, cls.htoken, [], bin_dir=os.path.join(cls.hub_root or ROOT, "bin"))
         cls.procs.append(cls.hub_proc)
         cls.hub_restarts = []
