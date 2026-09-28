@@ -64,7 +64,11 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   net reaches stderr the same way: a pytest.fail raised with a traceback inside the guard's call (a Thread subclass's
   join) carries a credential-shaped token, in no environment, on a `- <token>` line; the report prints the message
   under pytest's `E` marker, where the net's diff-line rule masks it, and stderr, which prints it bare, masks it too
-  (serially).
+  (serially). The stderr copy samples the environment itself before it scrubs: a value written past tests/conftest.py's
+  write hook after the last function-scoped sample (a session fixture's teardown, which also puts it in the leaked
+  thread's name) is masked on both channels (serially). A value that enters the environment after the guard's check
+  and before the report is built is masked in the report only; tests/conftest.py's _guard_failure_to_stderr discloses
+  that window, and no pin reads it.
 - IDLE EXECUTOR WORKERS ALONE (the pool left open and the loop never closed, no other guarded thread) fail the run,
   serially and under -n 2, and the process exits: every process that ran tests writes its atexit marker. The message's
   wording, that such a worker lets the process exit, is pinned by its text; the markers are the executed evidence.
@@ -432,6 +436,29 @@ def test_leak_with_an_env_value_in_its_id(n):
 # report after the cleanup's error, and is redacted there too
 TWO_ERRORS_ENV_NAMED_TEST = TWO_ERRORS_TEST.replace('name="plant-leaked"',
                                                     'name="plant-leaked-" + os.environ[%r]' % ENV_NAMED_VAR)
+
+# a leaked thread renamed, after every function-scoped sample of the environment, with a value written into the
+# environment by a route tests/conftest.py's write hook does not see (the mapping's own store): a session fixture's
+# teardown does both, just before the guard runs. The value is built in the plant at run time, so it is in no
+# environment until then
+LATE_ENV_VALUE_TEST = '''
+import pytest
+
+LATE = []
+
+
+@pytest.fixture(scope="session")
+def late_env_value():
+    yield
+    value = "plantlate" + "-" + "r" * 14
+    os.environ._data[os.environ.encodekey("PLANT_LATE_TOKEN")] = os.environ.encodevalue(value)
+    LATE[0].name = "plant-leaked-" + value
+
+
+def test_leak_named_by_a_late_env_value(late_env_value):
+    LATE.append(threading.Thread(target=_leaked, name="plant-leaked"))
+    _start("late-env", LATE)
+'''
 
 # a leaked thread whose join, which the guard calls, fails through pytest.fail with a traceback and a line shaped as a
 # failed comparison's diff line, a sign and then a credential-shaped token that is in no environment: the report prints
@@ -831,6 +858,26 @@ class SessionEndThreadGuard(unittest.TestCase):
         report, _err = self._channels(out)
         self.assertLess(report.index("RuntimeError: plant: the cleanup failed"), report.index("thread 'plant-leaked-"),
                         "the masked name is in the guard's text, added after the cleanup's error:\n" + out)
+
+    @unittest.skipUnless("tests.conftest" in sys.modules, "reads the redaction's marker from tests/conftest.py")
+    def test_a_value_that_enters_the_environment_after_the_last_sample_is_masked_on_stderr(self):
+        """The stderr copy samples the environment itself before it scrubs (_note_env_values, as the report step
+        does): a value written past the write hook after the last function-scoped sample, by a session fixture's
+        teardown that also puts it in the leaked thread's name, is on neither channel, and stderr names the thread by
+        the masked name the report prints."""
+        value = "plantlate" + "-" + "r" * 14
+        rc, out, started, _ended, _finish, _marks = self._run(LATE_ENV_VALUE_TEST, cap=LEAK_CAP_S)
+        report, err = self._channels(out)
+        self.assertIn("plant-leaked", {n for names in started.values() for n, _daemon in names}, "the plant ran:\n" + out)
+        self.assertEqual(rc, 1, "the leaked thread fails the run:\n" + out)
+        self.assertNotIn(value, report, "the premise: the report masks the value:\n" + out)
+        self.assertNotIn(value, err, "stderr carries the raw value the report masks:\n" + out)
+        names = re.findall(r"thread '(plant-leaked-[^'\n]*)' \(ident ", report)
+        self.assertEqual(len(names), 1, "the report names the renamed thread once:\n" + out)
+        self.assertIn(sys.modules["tests.conftest"].ENV_VALUE_REDACTED, names[0], "the report masks the value in the "
+                      "thread's name:\n" + out)
+        self.assertEqual(err.count("thread '%s' (ident " % names[0]), 1, "stderr names the thread with the masked name "
+                         "the report prints:\n" + out)
 
     @unittest.skipUnless("tests.conftest" in sys.modules, "reads the redaction's marker from tests/conftest.py")
     def test_a_token_the_report_masks_on_its_marked_diff_line_is_masked_on_stderr_too(self):

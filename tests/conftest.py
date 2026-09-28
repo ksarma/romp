@@ -1825,7 +1825,9 @@ def _guard_failure_to_stderr(item, failure):
     raised with a traceback (a pytest.fail inside the guard's call, from a Thread subclass's join, say) under that
     marker, where the pattern net's rules for a failed comparison's diff lines apply, and stderr prints it bare. CI's
     logs are public, and a value the report masks (a thread named with an environment value, say) must not reach them
-    raw here."""
+    raw here. One window is left: this copy is scrubbed with the values noted at the guard's check, and the report
+    later, at report time, so a value that enters the environment between the two (written by a thread still running
+    then, say, which is a thread the guard names) is masked in the report and printed raw here."""
     worker = os.environ.get("PYTEST_XDIST_WORKER")
     text = ("\n[tests/conftest.py, the session-end thread guard] the teardown of %s, this process's last test%s, fails "
             "with the error below. It is written to stderr as well as to that teardown's report, as a second channel "
