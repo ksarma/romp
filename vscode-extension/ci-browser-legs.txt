@@ -49,3 +49,12 @@
 # children under the switch fail and the one without it skips: that is its test of the switch, not a browser driven
 # from a child process, and its own first test opens a page through inBrowser.
 out-tests/ui/webview/real-viewer-leg-switch.test.js
+out-tests/ui/webview/file-trail-browser.test.js
+out-tests/ui/webview/md-sanitize-browser.test.js
+out-tests/ui/webview/file-view-figure-cap-spelling-browser.test.js
+out-tests/ui/webview/file-view-figure-chosen-browser.test.js
+out-tests/ui/webview/file-view-figure-error-browser.test.js
+out-tests/ui/webview/file-view-figure-floor-browser.test.js
+out-tests/ui/webview/file-view-figure-recent-browser.test.js
+out-tests/ui/webview/file-view-figure-shapes-browser.test.js
+out-tests/ui/webview/file-view-figure-state-browser.test.js

@@ -18,7 +18,7 @@
 // KEEPS its control, after the picture inside the dead anchor, since linkAbove reads the click's own link set (figureLinkOf over
 // FIGURE_LINK_SET; the file review's round 12, correctness-1 with ui-1: read as any anchor since its round 2, the control was
 // withheld from a shape whose click no link owns); its plain click, with no link the links listener or the browser will act
-// on, opens the picture. Skipped LOUDLY where playwright has no browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the
+// on, opens the picture. Skipped LOUDLY where playwright has no browser (in CI the Test step runs before the job's Chromium install, so the leg skips there, and the Browser legs step after that install runs it from the shared roster of browser legs, vscode-extension/ci-browser-legs.txt, where a launch the helper cannot make fails the leg in place of the skip; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the
 // notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

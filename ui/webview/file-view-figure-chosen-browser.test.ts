@@ -23,7 +23,7 @@
 // owns window.fetch and the route never sees a fetch; and the route reads each request's Cookie header, with three cookies
 // seated on the host before the open (SameSite=Lax, SameSite=Strict, and SameSite=None with Secure, the class a third-party
 // host sets), so which classes ride the image request and which ride the tab's document request is measured here and not
-// stated (this leg's table is Chromium's; the record says so). Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper).
+// stated (this leg's table is Chromium's; the record says so). Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there, and the Browser legs step after that install runs it from the shared roster of browser legs, vscode-extension/ci-browser-legs.txt, where a launch the helper cannot make fails the leg in place of the skip; the launch is real-viewer-leg.ts's inBrowser, the shared helper).
 // Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

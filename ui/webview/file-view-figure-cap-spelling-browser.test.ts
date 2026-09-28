@@ -16,8 +16,10 @@
 // writes back in its own query form keeps the spelling the rewrite stamped; a srcset of scheme URLs gets its authored
 // candidates stamped; a srcset mixing a path candidate and a scheme candidate keeps the rewrite's stamp, the author's spelling
 // of both. With no page key nothing is capped and nothing is stamped, and the scheme figure pairs by its src.
-// Skips LOUDLY without a playwright browser (CI installs none), as the other legs do. Synthetic values only: the notes-api
-// world, /repo/notes-api paths, the placeholder sid, a page key minted at run time.
+// Skips LOUDLY without a playwright browser, as the other legs do (in CI the Test step runs before the job's Chromium install,
+// so the leg skips there, and the Browser legs step after that install runs it from the shared roster of browser legs,
+// vscode-extension/ci-browser-legs.txt, where a launch the helper cannot make fails the leg in place of the skip). Synthetic
+// values only: the notes-api world, /repo/notes-api paths, the placeholder sid, a page key minted at run time.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as path from "node:path";

@@ -37,7 +37,7 @@
 // control returns at the wide width: the mark's removal executed, where before a sentence pin alone held dressFigureMark's else
 // branch (the file review's round 13, tests-1 with regression-2; a mutation red: that branch made a no-op keeps the mark and the
 // outline reads dashed beside the standing control, the double dress).
-// Skipped LOUDLY where playwright has no browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic
+// Skipped LOUDLY where playwright has no browser (in CI the Test step runs before the job's Chromium install, so the leg skips there, and the Browser legs step after that install runs it from the shared roster of browser legs, vscode-extension/ci-browser-legs.txt, where a launch the helper cannot make fails the leg in place of the skip; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic
 // values only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

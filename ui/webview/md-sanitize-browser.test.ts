@@ -16,10 +16,12 @@
 // the note after render, read where the body scrolled to as well. That test also reads at run time that no page class the
 // viewer keeps on a file document's author markup makes an element fixed, over every sheet a page of either host loads
 // (ui/webview/host-sheets.mjs). The leg launches through real-viewer-leg.ts's inBrowser, as every browser leg of that follow-on
-// does, and the helper skips with a stated reason when no playwright browser is installed (CI installs none;
-// tests/test_spend_modal_headless_served.py is the precedent, skipping without a playwright install). Synthetic values
-// only: an invented note under a TESTHOST path, a placeholder sid. The design is plans/markdown-viewer.md, Slice 1
-// (sanitize as GitHub does); the first two fixtures are the audit's two High defects.
+// does, and the helper skips with a stated reason when no playwright browser is installed (in CI the Test step runs before
+// the job's Chromium install, so the leg skips there, and the Browser legs step after that install runs it from the shared
+// roster of browser legs, vscode-extension/ci-browser-legs.txt, where a launch the helper cannot make fails the leg in place
+// of the skip; tests/test_spend_modal_headless_served.py is the precedent for the skip, skipping without a playwright
+// install). Synthetic values only: an invented note under a TESTHOST path, a placeholder sid. The design is
+// plans/markdown-viewer.md, Slice 1 (sanitize as GitHub does); the first two fixtures are the audit's two High defects.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";

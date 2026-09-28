@@ -11,7 +11,7 @@
 // exception L2 states is driven too (the file review's round 2, extra8-1): a Forward step to the picture is a Back or Forward
 // open, which the Files pane records as any open there (openFromViewer through the host's opener), so it DOES mint the
 // picture's row, one per step, where the figure's own open did not; open point 12 states it beside the default.
-// Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder
+// Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there, and the Browser legs step after that install runs it from the shared roster of browser legs, vscode-extension/ci-browser-legs.txt, where a launch the helper cannot make fails the leg in place of the skip; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder
 // session id, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

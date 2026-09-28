@@ -9168,11 +9168,14 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests, and SECURITY.md, alone (73 files, the ledger entry's where line; run 2026-09-28 at the head that carries the
-landing merge of the fork's main at 1d591384e after the fixes for the file review's round 19, over 1d591384e, the listing the
-branch's whole delta over it, where the one file added to the delta is ui/webview/file-view-figure-cap-spelling-browser.test.ts,
-a leg that merge brought whose label assertion the follow-on's label rule changed; the run 2026-09-28 at the head that carries the
-fixes for the file review's round 19, over ffab236bd, listed 72; the run 2026-09-27 at the
+upstream or tests, SECURITY.md and vscode-extension/ci-browser-legs.txt, alone (75 files, the ledger entry's where line; run
+2026-09-28 at the head where the legs joined the roster PR 887 landed, after the landing merge of the fork's main at 1d591384e
+(the coordinator's ruling on the roster after the file review's round 19), over 1d591384e, the listing the branch's whole delta
+over it, where the two files added to the delta are that roster, vscode-extension/ci-browser-legs.txt, which gained the legs'
+lines, and PR 887's tree test, tools/ci-browser-legs.test.mjs, a docstring of which had called the switch test the roster's one
+leg; the run 2026-09-28 at the head that carries that landing merge listed 73, the one file the merge added to the delta
+ui/webview/file-view-figure-cap-spelling-browser.test.ts, a leg it brought whose label assertion the follow-on's label rule
+changed; the run 2026-09-28 at the head that carries the fixes for the file review's round 19, over ffab236bd, listed 72; the run 2026-09-27 at the
 head that carries the fixes after the closing check at 142ade155 after the fixes for the file review's round 18 and the merge of
 the fork's main after them, where the merge-base is ffab236bd, the fork's main the branch merged after those fixes, its tip the
 merge of the fork's batch PR 921, listed 71, before tests/test_guide_files_place_and_outline.py, whose pins hold the open's
@@ -9347,25 +9350,24 @@ opens the source's file, and since its round 2 a failed local figure with a box 
 nothing) and ui/webview/file-view-figure-recent-browser.test.ts (Chromium over the real Files page: a picture
 opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the
 reader's block, a Forward step onto the picture mints its row, and a link's open still takes its row).
-The browser legs named here skip at launch in the Test step of the job that gates a landing, which runs before that job
-installs Chromium (the gate-before-adoption section's Tests paragraph states that job's shape and
-tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), so none of their browser scenarios runs where landing is gated
-(a source pin in a leg runs there without a browser); what gates the
-follow-on there is its source pins, the node modules beside each leg in that Test step (their node cases; a browser
-scenario inside a node module, ui/webview/file-view-text-size.test.ts's bar case and ui/webview/file-trail.test.ts's
-Reload case, skips there as the legs do), and the pytest modules it added
-or re-aimed, tests/test_guide_trail_chords_and_figure_button.py and tests/test_guide_files_failures.py, in the pytest job,
-and the road that runs the legs with a browser where landing is gated is the shared roster of browser legs,
-vscode-extension/ci-browser-legs.txt, one compiled bundle path per line, run by the step "Browser legs (node --test over
-ci-browser-legs.txt)" of that job after its Chromium install under the switch ROMP_BROWSER_LEGS_REQUIRE, which inBrowser
-reads itself, the three on main since PR 887 landed, and none of this follow-on's legs is a roster line yet: the open leg,
-ui/webview/file-figure-open-browser.test.ts, outlasts both of the step's bounds, its five minutes and node's 240 s per
-file, several legs spell timeout values that reach the per-file bound, and whether those bounds rise (the step's sits in
-the workflow file) or the open leg stays off the roster while the others join it waits on the owner's choice (the PR's
-body gives each leg's measured seconds; rewritten at the landing merge with main at 1d591384e, as PR 887's section on who
-owes what at the landing asks), and the legs join the roster then, all but
-ui/webview/file-figure-open-engines-browser.test.ts, which launches WebKit and Firefox and so stays off the roster in any
-case, since the roster's job installs Chromium alone; tools/markdown-viewer-plan-linknav.test.mjs derives the legs BY NAME, the modules under ui/webview whose file name
+The browser legs named here run with a browser in the job that gates a landing, all but the legs kept off the roster
+named below: each is a line of the shared roster of browser legs, vscode-extension/ci-browser-legs.txt, one compiled bundle
+path per line, run by the step "Browser legs (node --test over ci-browser-legs.txt)" of that job after its Chromium install
+under the switch ROMP_BROWSER_LEGS_REQUIRE, which inBrowser reads itself, the three on main since PR 887 landed (the legs
+joined the roster after the landing merge with main at 1d591384e, as PR 887's section on who owes what at the landing asks,
+their timeout values that reached node's 240 s per-file bound lowered under it, and the PR's body gives each rostered leg's
+measured seconds); in the Test step before that install each leg skips at launch (the gate-before-adoption section's Tests
+paragraph states that job's shape and tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), and a source pin in a leg
+runs there without a browser; the legs kept off the roster are ui/webview/file-figure-open-engines-browser.test.ts, which
+launches WebKit and Firefox, since the roster's job installs Chromium alone, and ui/webview/file-figure-open-browser.test.ts,
+whose whole run outlasts both of the step's bounds, its five minutes and node's 240 s per file, so it runs locally alone,
+and raising the step's bound, which sits in the workflow file, is the owner's choice (the coordinator's ruling on the roster
+after the file review's round 19); what gates the follow-on where landing is gated is the rostered legs' browser scenarios,
+its source pins, the node modules beside each leg in the Test step (their node cases; a browser scenario inside a node
+module, ui/webview/file-view-text-size.test.ts's bar case and ui/webview/file-trail.test.ts's Reload case, skips there as
+the legs do, and neither module is a roster line), and the pytest modules it added or re-aimed,
+tests/test_guide_trail_chords_and_figure_button.py and tests/test_guide_files_failures.py, in the pytest job;
+tools/markdown-viewer-plan-linknav.test.mjs derives the legs BY NAME, the modules under ui/webview whose file name
 carries the suffix -browser before .test.ts and whose own text names this follow-on, a name and not the property that makes a module a browser leg
 (that property, a call of the shared launcher's inBrowser through any binding or a playwright package named, is what a
 census of browser legs would read off each module's tree with the compiler, and PR 887 landed without the census of
@@ -9397,18 +9399,20 @@ skipping with the body never run and passing the pin; the file review's round 10
 planted in the pin's own cases; what refuses that class is execution and not a read of the source: the step PR 887
 landed in that job, directly after its Chromium install, runs the rostered legs with a browser and reads the run's
 record, and a test skipped there is red naming the test, its reason and the switch's state, whatever spelled the skip,
-which reaches a leg only once it is a roster line, so while none of this follow-on's legs is, the interim here is this
-stated scope and not a wider regex (the maintainer's reading of the author's closing pass
+which reaches every leg on the roster, so for the legs kept off it the interim here is this stated scope and not a wider
+regex (the maintainer's reading of the author's closing pass
 after the file review's round 10: both halves of the guard were keyed on spellings, and a reader who saw its green took
 no leg to stand down privately), and reads the tree for the three parts of the convention PR 887 landed, the roster,
 that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE, read by inBrowser itself), refusing a
-tree without all three and naming what is absent, and holds the roster's own tree test to exist: where none of the legs
-is a roster line it holds this sentence, where every leg but the one that launches WebKit and Firefox is a roster line it
-holds this sentence gone, the leg that launches WebKit and Firefox is no roster line in either, and a roster carrying some
-of the legs and not all it refuses, naming them (rewritten at the landing merge with main at 1d591384e, where PR 887 had
-landed with no exclusions file and no census, as PR 887's section on who owes what at the landing asks; the file review's
-round 8, extra8-2: the legs were the feature's evidence and none of them ran where
-landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-nine standing suites were re-aimed, not undone:
+tree without all three and naming what is absent, and holds the roster's own tree test to exist: where every leg but the
+ones kept off the roster is a roster line it holds this sentence, with each leg kept off named and why, and none of the
+clauses of the disclosure it replaced that the roster made false, where none of the legs is a roster line it holds that
+disclosure, that the legs skip where landing is gated and why none is a roster line, a leg kept off the roster is no
+roster line in either, and a roster carrying some of the legs and not all it refuses, naming them (rewritten at the
+landing merge with main at 1d591384e, where PR 887 had landed with no exclusions file and no census, as PR 887's section on
+who owes what at the landing asks, and again when the legs joined the roster, the coordinator's ruling on the roster after
+the file review's round 19; the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Thirty standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -9494,7 +9498,10 @@ button of that direction, and it holds the guide's key-step sentence after the k
 keeps it), and since the landing merge of the fork's main at 1d591384e, whose batch PR 925 brought it with PR 919's
 cap pass, ui/webview/file-view-figure-cap-spelling-browser.test.ts (its failure label's assertion reads the label as this
 follow-on shows a source written with a scheme, its origin alone with no cap, where it had asked for the whole authored URL,
-its pairing assertions unchanged). The guide's Links in a file
+its pairing assertions unchanged), and since the legs joined the roster PR 887 landed (the coordinator's ruling on the
+roster after the file review's round 19), tools/ci-browser-legs.test.mjs (PR 887's tree test: its docstring of stepFiles
+no longer calls the switch test the roster's one leg; its census of the switch's lines and its bound check read the
+rostered legs' sources as they stand). The guide's Links in a file
 paragraph gained two sentences, the trail's and
 the figure control's, its paragraph on a file's own HTML one on the marquee's removal (the file review's round 18,
 regression-2), its Your place in the file paragraph one on the key step (the file review's round 19, ui-1), and the browser
@@ -9506,7 +9513,7 @@ guide are the sources' literals; the sheets carry L3's rules under `screen` in b
 control nowhere; no history API call stands in the trail or the viewer; L6's two verifications are run from the
 merge-base with `origin/main` behind a two-part gate read off git, the merge-base not `origin/main` itself and the
 diff since it adding the module (the file review's round 4, extra8-1: the kernel stat empty, every changed file under
-the six directories, and the count L6 gives the listing's, on the open PR branch in a clone where `origin/main` has
+the six directories or one of the two files L6 names beside them, and the count L6 gives the listing's, on the open PR branch in a clone where `origin/main` has
 moved past the branch's last merge of it; on main, on a batch head cut from main's tip, on this branch right after
 merging `origin/main` and on any later branch once the follow-on has landed the checks stand down and the diagnostic
 names the part of the gate that held them, and without the ref the prose alone holds; a batch head that main has moved

@@ -736,19 +736,22 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
     assert.ok(!/fetch-depth:\s*0\b/.test(block), block.split('\n')[0].trim() + ' checks out at the default depth, with no origin/main, so the merge-base gate holds L6\'s verifications off there; a job that fetches history now runs them, and the plan\'s sentence that they run in no checkout that gates landing is to be reworded');
   }
   assert.ok(section.includes('`git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty'), 'L6 names the kernel stat from the merge-base');
-  assert.ok(section.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools, upstream or tests, and SECURITY.md, alone'), 'and the listing from the merge-base (ui, not ui/webview, since the case fixes ruled in the file review\'s round 13, extra7-1, brought ui/test-code-only.ts into the delta, and SECURITY.md, the one file at the repository\'s root, since the fixes for its round 18, regression-2, named the marquee in its profile list)');
+  assert.ok(section.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools, upstream or tests, SECURITY.md and vscode-extension/ci-browser-legs.txt, alone'), 'and the listing from the merge-base (ui, not ui/webview, since the case fixes ruled in the file review\'s round 13, extra7-1, brought ui/test-code-only.ts into the delta, SECURITY.md, the one file at the repository\'s root, since the fixes for its round 18, regression-2, named the marquee in its profile list, and the roster PR 887 landed since the legs joined it, the coordinator\'s ruling on the roster after its round 19)');
   assert.ok(!section.includes('git diff --stat 34142c262') && !section.includes('git diff --name-only 34142c262'), 'no verification against the branch point remains');
-  const count = /upstream or tests, and SECURITY\.md, alone[^()]*\((\d+) files, the ledger entry's where line/.exec(section);
+  const count = /upstream or tests, SECURITY\.md and vscode-extension\/ci-browser-legs\.txt, alone[^()]*\((\d+) files, the ledger entry's where line/.exec(section);
   assert.ok(count, 'L6 counts the listing beside the command');
   assert.ok(exists('upstream', '2026-09-19-linknav-trail-back-forward.md'), 'the ledger entry the section names');
   assert.ok(exists(...THIS_MODULE.split('/')), 'THIS_MODULE names a file in the tree: ' + THIS_MODULE + ' (a misspelt path would hold the verifications off for good behind a green diagnostic; the file review\'s round 5, tests-7)');
   gated(t, L6_CHECK, (d) => {
     assert.equal(d.kernel, '', 'no kernel change since the merge-base ' + d.base);
     const DIRS = ['ui/', 'docs/', 'plans/', 'tools/', 'upstream/', 'tests/'];   // ui, not ui/webview: ui/test-code-only.ts is in the delta since the file review's round 13, extra7-1
-    const ROOT_FILES = ['SECURITY.md'];   // the one root file L6 names, in the delta since the fixes for the file review's round 18, regression-2
-    for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)) || ROOT_FILES.includes(f), f + ' lies under one of the six directories L6 names, or is the root file it names');
+    // the files L6 names outside those directories: SECURITY.md, the one root file, in the delta since the fixes for the file review's
+    // round 18, regression-2, and the roster PR 887 landed, since the legs joined it (the coordinator's ruling on the roster after the
+    // file review's round 19)
+    const NAMED_FILES = ['SECURITY.md', 'vscode-extension/ci-browser-legs.txt'];
+    for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)) || NAMED_FILES.includes(f), f + ' lies under one of the six directories L6 names, or is one of the two files it names beside them');
     assert.equal(d.files.length, Number(count[1]), 'L6 says the listing since the merge-base has ' + count[1] + ' files; it has ' + d.files.length + ': ' + d.files.join(', '));
-    t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories L6 names or the root file it names');
+    t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories L6 names or one of the two files it names beside them');
   });
 });
 
@@ -802,7 +805,10 @@ test('the guide\'s Links in a file paragraph ends with the two sentences, whole,
 
 // ── the tests the section names, two-way ───────────────────────────────────────────────────────────
 
-const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20 };
+/** The number words the section's counts are read in: one to twenty, and thirty, a compound past twenty (twenty-nine) read as
+ *  its tens and its unit where a reader takes one (thirty since the re-aimed count reached it, PR 887's tree test joining its
+ *  list when the legs joined the roster, the coordinator's ruling on the roster after the file review's round 19). */
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30 };
 /** A test module's text with its comment wraps joined (a `//` or ` * ` line continues the sentence before it), so a
  *  claim wrapped across two comment lines is read as one. */
 const claimText = (...parts) => flat(read(...parts).replace(/\r?\n[ \t]*(?:\/\/|\*(?!\/)) ?/g, ' '));
@@ -929,8 +935,9 @@ const codeLines = (src) => {
  *  the test below). What refuses that class is execution, not a read of the source: the step PR 887 landed in the
  *  vscode-extension job, directly after its Chromium install, runs the rostered legs with a browser and reads the run's
  *  record, and a test skipped there is red naming the test, its reason and the switch's state, whatever spelled the skip.
- *  That refusal reaches a leg once it is a roster line, and while none of the follow-on's legs is (the plan's Tests paragraph
- *  says why), the interim here is this stated scope, not a wider regex. The helper is the road a browser-legs roster's switch
+ *  That refusal reaches a leg once it is a roster line, as every leg of the follow-on is but the ones OFF_ROSTER keeps off the
+ *  roster (the plan's Tests paragraph says why each stays off), and for those the interim here is this stated scope, not a
+ *  wider regex. The helper is the road a browser-legs roster's switch
  *  reaches (ci-browser-legs.txt's header names it): a leg with a launch or a stand-down of its own never reaches the switch,
  *  and it is the step's read of the record that turns its skip red there. */
 /** The stand-down half's spellings, one entry per spelling as the docstring above and the plan's disclosure enumerate them: a
@@ -968,14 +975,25 @@ const offRoute = (code) => {
 /** The browser legs among `files` (paths from the repo root, the delta's) that `legs` (the derived legs, basenames) does not hold:
  *  a leg the branch touched that names no follow-on, so no derivation above reaches it and no record names it. */
 const legsOffRoster = (files, legs) => files.filter((f) => /^ui\/webview\/[\w-]+-browser\.test\.ts$/.test(f)).map((f) => f.replace(/^ui\/webview\//, '')).filter((f) => !legs.includes(f)).sort();
-/** The follow-on's legs that stay off the shared roster, each with the words its own header gives for it: a leg that launches an
- *  engine the roster's job does not install, where a test in a rostered file would not run (the file review's round 17, tests-1 with
- *  regression-1, and the coordinator's decision 2 on it: the one gate's tap cells and stacking cells in WebKit and Firefox). Each is
- *  a derived leg whose header carries those words, the plan's disclosure names it, a leg whose code names Firefox or WebKit as a
- *  string literal is among them, and it is no roster line in either state of the pin below. PR 887 landed with no exclusions
- *  file, so a leg is kept off the roster by this list and its header's words alone (rewritten at the landing merge with main at
- *  1d591384e, as PR 887's section on who owes what at the landing asks: this pin had modelled an exclusions line for it). */
-const OFF_ROSTER = [['file-figure-open-engines-browser.test.ts', 'that roster\'s job installs Chromium alone']];
+/** The follow-on's legs that stay off the shared roster, each with the words its own header gives for it and the words the plan's
+ *  Tests paragraph names it with, for one of two reasons. ENGINES_OFF: a leg that launches an engine the roster's job does not
+ *  install, where a test in a rostered file would not run (the file review's round 17, tests-1 with regression-1, and the
+ *  coordinator's decision 2 on it: the one gate's tap cells and stacking cells in WebKit and Firefox). BOUNDS_OFF: a leg whose whole
+ *  run outlasts both of the step's bounds, its five minutes and node's 240 s per file, so it runs locally alone and raising the
+ *  step's bound is the owner's change to the workflow file (the coordinator's ruling on the roster after the file review's round
+ *  19: the open leg, nearly ten minutes through the step's own command). Each is a derived leg whose header carries its words,
+ *  the plan names it with its own, and it is no roster line in either state of the pin below. The legs whose code names Firefox
+ *  or WebKit as a string literal are exactly the entries of ENGINES_OFF. BOUNDS_OFF's reason is a measurement, which the PR's
+ *  body records and no check in the tree reads, so its entry is held by its header's words and the plan's alone. PR 887 landed
+ *  with no exclusions file, so a leg is kept off the roster by this list and its header's words alone (rewritten at the landing
+ *  merge with main at 1d591384e, as PR 887's section on who owes what at the landing asks: this pin had modelled an exclusions
+ *  line for it). */
+const ENGINES_OFF = 'that roster\'s job installs Chromium alone';
+const BOUNDS_OFF = 'outlasts both of that roster\'s step bounds';
+const OFF_ROSTER = [
+  ['file-figure-open-engines-browser.test.ts', ENGINES_OFF, 'which launches WebKit and Firefox'],
+  ['file-figure-open-browser.test.ts', BOUNDS_OFF, 'whose whole run outlasts both of the step\'s bounds'],
+];
 /** The legs among `legs` whose comment-stripped code names Firefox or WebKit as a whole string literal, the engine a launch names. */
 const otherEngineLegs = (legs, codeOf) => legs.filter((f) => /(["'`])(?:firefox|webkit)\1/.test(codeOf(f))).sort();
 
@@ -1149,10 +1167,29 @@ const DISCLOSURE_CLAUSES = [
   ...NAME_CLAUSES,
   ...STAND_DOWN_CLAUSES,
 ];
-/** The clauses of DISCLOSURE_CLAUSES a disclosure sentence lacks, each with what it says. */
-const missingClauses = (sentence) => DISCLOSURE_CLAUSES.filter(([clause]) => !sentence.includes(clause));
+/** The Tests paragraph's sentence in the rostered state, which replaces the disclosure (the coordinator's ruling on the roster after
+ *  the file review's round 19: every leg that fits the step's bounds joined the roster): its opening words, and the clauses it
+ *  must carry, the derivation's and the stand-down half's among them, so those stay held in either state. Each leg OFF_ROSTER keeps
+ *  off the roster is named in it with the plan's words for that leg. */
+const ROSTERED = 'The browser legs named here run with a browser in the job that gates a landing';
+const ROSTERED_CLAUSES = [
+  ['the shared roster of browser legs, ' + ROSTER.join('/'), 'the roster that runs them, by its file name'],
+  ['after its Chromium install under the switch ' + SWITCH, 'that the step runs them with Chromium under the switch'],
+  ['on main since PR 887 landed', 'that the roster, the step and the switch are on main'],
+  ['the PR\'s body gives each rostered leg\'s measured seconds', 'where each rostered leg\'s whole-file seconds are'],
+  ['in the Test step before that install each leg skips at launch', 'that the legs still skip in the Test step, which runs before the install'],
+  ['is the owner\'s choice', 'that raising the step\'s bound for the leg that outlasts it is the owner\'s choice'],
+  ['which reaches every leg on the roster', 'that the executed guard reaches the rostered legs, the stated scope the interim for the legs kept off it'],
+  ...NAME_CLAUSES,
+  ...STAND_DOWN_CLAUSES,
+];
+/** The pending state's clauses the roster makes false: in the rostered state the Tests paragraph carries none of them. */
+const PENDING_ONLY = ['so none of their browser scenarios runs where landing is gated', 'none of this follow-on\'s legs is a roster line yet', 'waits on the owner\'s choice', 'reaches a leg only once it is a roster line'].map((c) => DISCLOSURE_CLAUSES.find(([clause]) => clause === c));
+assert.ok(PENDING_ONLY.every(Boolean), 'each clause the roster makes false is a clause of the pending state\'s disclosure');
+/** The clauses of `clauses` (the pending state's by default) a sentence lacks, each with what it says. */
+const missingClauses = (sentence, clauses = DISCLOSURE_CLAUSES) => clauses.filter(([clause]) => !sentence.includes(clause));
 
-test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention as PR 887 landed it: the legs are derived by name from the tree (the -browser.test.ts modules whose own text names the follow-on; no check in the tree reads the property that makes a module a browser leg, since PR 887 landed without its census) and each launches through real-viewer-leg.ts\'s inBrowser, the helper the roster\'s switch reaches, read comment-stripped under any launch spelling, with no launch and no stand-down (a skip or todo call, option or option assignment, read as \' + STAND_DOWN_COUNT + \' spellings of the leg\'s own source and not as the property) of its own; the tree carries the convention\'s three parts, the roster, the step directly after the Chromium install in the vscode-extension job and the helper\'s switch, or is refused naming what is absent, and the roster\'s tree test exists; where every leg is a roster line but a leg that launches Firefox or WebKit, which is no roster line (rostered), the Tests paragraph no longer says none of their browser scenarios runs where landing is gated; where no leg is (pending), the Tests paragraph discloses that the legs skip in the gating job\'s Test step, that none is a roster line yet and why, what gates the follow-on there and the roster by name as the road, with no count of the legs in any wording; a roster with some of the legs is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
+test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention as PR 887 landed it: the legs are derived by name from the tree (the -browser.test.ts modules whose own text names the follow-on; no check in the tree reads the property that makes a module a browser leg, since PR 887 landed without its census) and each launches through real-viewer-leg.ts\'s inBrowser, the helper the roster\'s switch reaches, read comment-stripped under any launch spelling, with no launch and no stand-down (a skip or todo call, option or option assignment, read as \' + STAND_DOWN_COUNT + \' spellings of the leg\'s own source and not as the property) of its own; the tree carries the convention\'s three parts, the roster, the step directly after the Chromium install in the vscode-extension job and the helper\'s switch, or is refused naming what is absent, and the roster\'s tree test exists; where every leg is a roster line but the ones kept off it, a leg that launches Firefox or WebKit and a leg whose whole run outlasts the step\'s bounds, neither a roster line (rostered), the Tests paragraph says the roster runs them, carries the derivation\'s and the stand-down half\'s clauses, names each leg kept off it and why, and carries none of the pending state\'s clauses the roster made false; where no leg is (pending), the Tests paragraph discloses that the legs skip in the gating job\'s Test step, that none is a roster line yet and why, what gates the follow-on there and the roster by name as the road, with no count of the legs in any wording; a roster with some of the legs is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
   const legs = browserLegs();
   assert.ok(legs.length > 0, 'browser legs naming the follow-on are on disk');
   const tests = section.slice(section.indexOf('**Tests.**'));
@@ -1236,7 +1273,9 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
     assert.ok(legs.includes(f), f + ' is a derived leg of the follow-on (a leg kept off the roster is still held to the helper and to the Tests paragraph)');
     assert.ok(read('ui', 'webview', f).includes(why), f + '\'s own header says why it stays off the roster: ' + JSON.stringify(why));
   }
-  assert.deepEqual(otherEngineLegs(legs, (f) => codeLines(read('ui', 'webview', f))), offNames, 'the legs whose code names Firefox or WebKit as a literal are the legs kept off the roster, OFF_ROSTER, and no other (a leg launching another engine inside the roster would not run in its job)');
+  const engineOff = OFF_ROSTER.filter(([, why]) => why === ENGINES_OFF).map(([f]) => f).sort();
+  assert.ok(OFF_ROSTER.every(([, why]) => why === ENGINES_OFF || why === BOUNDS_OFF), 'each leg kept off the roster is kept off for one of the two reasons OFF_ROSTER\'s docstring states');
+  assert.deepEqual(otherEngineLegs(legs, (f) => codeLines(read('ui', 'webview', f))), engineOff, 'the legs whose code names Firefox or WebKit as a literal are the legs OFF_ROSTER keeps off the roster because its job installs Chromium alone, and no other (a leg launching another engine inside the roster would not run in its job)');
   // the step's state, driven on synthetic workflows before the tree's is read
   const job = (name, steps) => '  ' + name + ':\n    steps:\n' + steps.map(([n, run]) => '      - name: ' + n + '\n' + (run ? '        run: ' + run + '\n' : '')).join('');
   const wf = (steps, ...more) => 'jobs:\n' + job(JOB, steps) + more.map(([name, steps]) => job(name, steps)).join('');
@@ -1284,6 +1323,14 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
   // the alias-family clauses; its property clause stands, since that wording carried it
   const round10 = DISCLOSURE + ', ' + DISCLOSURE_CLAUSES.filter((c) => !STAND_DOWN_CLAUSES.includes(c)).map(([clause]) => clause).join(', ') + ', the stand-down read as seven spellings of the leg\'s own comment-stripped source and not as the property of standing itself down, so its green says that no leg carries one of the seven and not that no leg stands itself down, and three forms are outside it, the method bound to a name of its own and called by that name, a computed member with a name that is not a literal, and a skip inside a helper module the leg calls as SKIP).';
   assert.deepEqual(missingClauses(round10), [STAND_DOWN_CLAUSES[0], STAND_DOWN_CLAUSES[2], STAND_DOWN_CLAUSES[3], STAND_DOWN_CLAUSES[4]], 'the file review\'s round 10\'s wording of the stand-down half lacks exactly the count, the class, the executed guard and the alias family\'s two halves');
+  // the rostered state's clause read, driven: a synthetic rostered sentence carrying every clause lacks none, and the pending
+  // disclosure under the rostered opening lacks exactly the rostered state's own clauses and carries the four the roster made false
+  const syntheticRostered = ROSTERED + ', ' + ROSTERED_CLAUSES.map(([clause]) => clause).join(', ') + ' as SKIP).';
+  assert.deepEqual(missingClauses(syntheticRostered, ROSTERED_CLAUSES), [], 'a rostered sentence carrying every clause lacks none');
+  const pendingAsRostered = synthetic.replace(DISCLOSURE, ROSTERED);
+  assert.deepEqual(missingClauses(pendingAsRostered, ROSTERED_CLAUSES), ROSTERED_CLAUSES.filter(([c]) => !DISCLOSURE_CLAUSES.some(([clause]) => clause === c)), 'the pending disclosure under the rostered opening lacks exactly the rostered state\'s own clauses');
+  assert.equal(PENDING_ONLY.filter(([clause]) => pendingAsRostered.includes(clause)).length, 4, 'and carries the four clauses the roster made false, which the rostered state refuses');
+  assert.equal(PENDING_ONLY.filter(([clause]) => syntheticRostered.includes(clause)).length, 0, 'the rostered sentence carries none of them');
   assert.deepEqual(rosterLines('# a comment\n\nout-tests/ui/webview/a-browser.test.js\n  # indented comment\nout-tests/ui/webview/b-browser.test.js\n'), ['out-tests/ui/webview/a-browser.test.js', 'out-tests/ui/webview/b-browser.test.js'], 'roster lines: comments and blanks dropped, lines as written');
   // the tree's state: the convention's three parts, then the legs over the roster
   const st = conventionStateOf(exists(...ROSTER), stepStateOf(read('.github', 'workflows', 'ci.yml')), helperSwitchStateOf(codeLines(read(...HELPER))));
@@ -1295,6 +1342,15 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
   const disclosureAt = tests.indexOf(DISCLOSURE);
   if (lst.state === 'rostered') {
     assert.equal(disclosureAt, -1, 'the Tests paragraph no longer says the legs skip in the gating job and none of their browser scenarios runs where landing is gated: with the legs roster lines, that sentence is false and is reworded to say the roster runs them');
+    const stale = PENDING_ONLY.filter(([clause]) => tests.includes(clause));
+    assert.deepEqual(stale.map(([clause, what]) => what + ' (' + JSON.stringify(clause) + ')'), [], 'with the legs roster lines, the Tests paragraph carries none of the pending state\'s clauses the roster made false; the ones it carries say what is no longer so');
+    const rosteredAt = tests.indexOf(ROSTERED);
+    assert.ok(rosteredAt >= 0, 'the Tests paragraph says the roster runs the legs (every leg is a roster line but the ones kept off it); the sentence opens ' + JSON.stringify(ROSTERED));
+    const sentence = tests.slice(rosteredAt, tests.indexOf('as SKIP). ', rosteredAt) + 'as SKIP).'.length);
+    assert.ok(sentence.length > ROSTERED.length && sentence.endsWith('as SKIP).'), 'the sentence runs to its closing citation of the gating run\'s log from before the roster: ' + sentence.slice(-120));
+    assert.deepEqual(missingClauses(sentence, ROSTERED_CLAUSES).map(([clause, what]) => what + ' (' + JSON.stringify(clause) + ')'), [], 'the sentence carries every clause of the rostered state; the ones it lacks say: ' + sentence);
+    for (const [f, , words] of OFF_ROSTER) assert.ok(sentence.includes('ui/webview/' + f + ', ' + words), 'the sentence names ' + f + ' as a leg kept off the roster, and why, in the words OFF_ROSTER gives: ' + JSON.stringify(words));
+    assert.equal(legsCount(sentence), null, 'the sentence counts no legs (the legs are derived here, never typed there): ' + legsCount(sentence) + ' in: ' + sentence);
     t.diagnostic('rostered: ' + (legs.length - offNames.length) + ' legs are roster lines, and ' + offNames.length + ' kept off the roster');
   } else {
     assert.ok(disclosureAt >= 0, 'the Tests paragraph discloses that the legs skip in the gating job\'s Test step (the convention is in the tree and none of the legs is a roster line); the sentence opens ' + JSON.stringify(DISCLOSURE));
@@ -1302,10 +1358,10 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
     assert.ok(sentence.length > DISCLOSURE.length && sentence.endsWith('as SKIP).'), 'the disclosure runs to its closing citation of the gating run\'s log: ' + sentence.slice(-120));
     assert.deepEqual(missingClauses(sentence).map(([clause, what]) => what + ' (' + JSON.stringify(clause) + ')'), [], 'the disclosure carries every clause; the ones it lacks say: ' + sentence);
     assert.equal(legsCount(sentence), null, 'the sentence counts no legs (the legs are derived here, never typed there): ' + legsCount(sentence) + ' in: ' + sentence);
-    for (const f of offNames) assert.ok(sentence.includes('all but ui/webview/' + f + ', which launches WebKit and Firefox'), 'the disclosure names ' + f + ' as the leg that stays off the roster, and why');
-    assert.equal((tests.match(new RegExp(ROSTER.join('\\/'), 'g')) || []).length, 1, 'the roster is named once in the Tests paragraph, as the road');
+    for (const f of engineOff) assert.ok(sentence.includes('all but ui/webview/' + f + ', which launches WebKit and Firefox'), 'the disclosure names ' + f + ' as the leg that stays off the roster in any case, and why');
     t.diagnostic('pending: the convention is in the tree and none of the follow-on\'s legs is a roster line; the Tests paragraph discloses the skip, why none is on the roster, and names the roster as the road');
   }
+  assert.equal((tests.match(new RegExp(ROSTER.join('\\/'), 'g')) || []).length, 1, 'the roster is named once in the Tests paragraph, as the road in the pending state and as what runs the legs in the rostered state');
   // the derived legs against the delta, behind L6's gate: a browser leg the branch adds or modifies whose text names no follow-on
   // is reached by no derivation above and named in no record while the two text-keyed derivations agree (the author's closing
   // pass after the file review's round 8: a committed quiet leg left this test green and only L6's count red)
