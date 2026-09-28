@@ -1626,13 +1626,15 @@ EXIT_JOIN_TABLES = (("concurrent.futures.thread", "_threads_queues"),      # Thr
                     ("concurrent.futures.process", "_threads_wakeups"))    # ProcessPoolExecutor manager threads
 
 
-def _exit_joined_threads():
+def _exit_joined_threads(deadline):
     """The threads concurrent.futures' exit hooks will join, whatever their daemon flags: every thread in the table of
     each EXIT_JOIN_TABLES module that is loaded. This file imports concurrent.futures.thread, so its table is always
     read; a process that never loaded concurrent.futures.process has no ProcessPoolExecutor. A loaded module without its
     table fails the guard, naming the attribute, rather than leaving unguarded the daemon threads that table would list.
-    A table keeps a thread that has ended until the thread object is collected; the guard asks it only about listed
-    threads, which are alive."""
+    A read that raises RuntimeError (another thread added to the table while it was read) is retried at once, until a
+    read succeeds or `deadline`, a time on the guard's clock (_monotonic), passes; a read that raises after that fails
+    the guard, naming the table, so no read runs past the guard's one deadline. A table keeps a thread that has ended
+    until the thread object is collected; the guard asks it only about listed threads, which are alive."""
     joined = set()
     for module, attr in EXIT_JOIN_TABLES:
         mod = sys.modules.get(module)
@@ -1649,8 +1651,15 @@ def _exit_joined_threads():
             try:
                 joined.update(table)    # a WeakKeyDictionary: iterating it yields its threads
                 break
-            except RuntimeError:        # another thread added to the table while it was read: read it again
-                pass
+            except RuntimeError:        # another thread added to the table while it was read: read it again,
+                if _monotonic() >= deadline:    # up to the deadline
+                    pytest.fail("tests/conftest.py's session-end thread guard could not read %s.%s before its "
+                                "deadline: every read of it on the guard's last pass raised RuntimeError, as iterating "
+                                "the table does when another thread adds to it mid-read, until the deadline passed. "
+                                "Without the table the guard cannot tell which daemon threads hold the process at "
+                                "exit. Something in this process was still adding to the table, starting "
+                                "concurrent.futures threads, at the end of its session." % (module, attr),
+                                pytrace=False)
     return joined
 
 
@@ -1667,14 +1676,16 @@ def _pytest_timeout_timer(t):
 
 def _guarded_thread(t, joined_at_exit=None):
     """Whether the session-end guard waits for `t`: a non-daemon thread, or a daemon thread in `joined_at_exit` (the
-    threads concurrent.futures' exit hooks join; _exit_joined_threads() is read here when it is not given), other than
-    the main thread and the thread running the check, and not one _pytest_timeout_timer matches (a `pytest_timeout`
-    prefix of its name or of its callable's module)."""
+    threads concurrent.futures' exit hooks join; when it is not given, _exit_joined_threads is read here, its deadline
+    THREAD_GUARD_CAP_S from the call), other than the main thread and the thread running the check, and not one
+    _pytest_timeout_timer matches (a `pytest_timeout` prefix of its name or of its callable's module)."""
     if t is threading.main_thread() or t is threading.current_thread() or _pytest_timeout_timer(t):
         return False
     if not t.daemon:
         return True
-    return t in (_exit_joined_threads() if joined_at_exit is None else joined_at_exit)
+    if joined_at_exit is None:
+        joined_at_exit = _exit_joined_threads(_monotonic() + THREAD_GUARD_CAP_S)
+    return t in joined_at_exit
 
 
 def threads_left_at_session_end(cap_s):
@@ -1682,14 +1693,18 @@ def threads_left_at_session_end(cap_s):
     join whatever its daemon flag) still alive once each has had until one deadline, cap_s from the call, to end. Each
     is joined in turn for the time remaining, and the thread list and the exit-join tables are read again after every
     pass, so a thread that starts another as it exits is waited for too. Starts no thread. Every wait is a join, which
-    returns when its thread ends, except for a thread caught mid-start, which join refuses: the list is then read again
-    at once, in a busy loop that ends when that start() returns or at the deadline. The loop spins only while every
-    listed guarded thread is mid-start, since a live one's join blocks the pass instead. Returns [] when none is left.
-    A loaded concurrent.futures module without its exit-join table fails the guard (_exit_joined_threads)."""
+    returns when its thread ends, except for two busy loops, each of which ends at the deadline at the latest. For a
+    thread caught mid-start, which join refuses, the list is read again at once until that start() returns; that loop
+    spins only while every listed guarded thread is mid-start, since a live one's join blocks the pass instead. For a
+    read of an exit-join table that raises RuntimeError (another thread added to the table mid-read), the table is read
+    again at once until a read succeeds; a read that raises at the deadline fails the guard, naming the table
+    (_exit_joined_threads). Returns [] when none is left. A loaded concurrent.futures module without its exit-join table
+    fails the guard (_exit_joined_threads)."""
     deadline = _monotonic() + cap_s
     while True:
         listed = _enumerate()
-        joined = _exit_joined_threads()     # after the list: a listed worker whose pool's submit returned is in it
+        # after the list: a listed worker whose pool's submit returned is in the table
+        joined = _exit_joined_threads(deadline)
         left = [t for t in listed if _guarded_thread(t, joined)]
         if not left or _monotonic() >= deadline:
             return left

@@ -63,7 +63,10 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   for a ProcessPoolExecutor's manager thread) is returned by the guard while a plain daemon thread beside it is not.
   The tables are read again after every pass: a busy worker started, by a worker of a pool a daemon thread started,
   after the guard's first read is returned. A read that raises RuntimeError, as iterating a WeakKeyDictionary does on
-  3.10 to 3.13 when another thread inserts into it, is read again (a stand-in table raises on its first read).
+  3.10 to 3.13 when another thread inserts into it, is read again (a stand-in table raises on its first read), up to
+  the guard's one deadline: a table that changes during every read ends the guard at its deadline, failing it by the
+  table's name (a stand-in that adds to itself during every read, the guard run under a backstop whose firing is the
+  defect of a retry with no bound).
 - Threads that END WITHIN THE CAP (each test starts one that sleeps WITHIN_S and exits) and plain DAEMON threads that
   run past the session (one per test, released at unconfigure) leave the run green, serially and under -n 2, at the
   guard's own cap. The guard's wait is WITNESSED, not assumed: the scratch conftest records at pytest_sessionfinish,
@@ -697,7 +700,8 @@ class ExitJoinTables(unittest.TestCase):
     this Python and are what their modules' exit hooks read; the two hooks are the only ones the standard library
     registers with threading._register_atexit; a live daemon thread in either table is returned by the guard while a
     plain daemon thread beside it is not; the tables are read again after every pass; and a read that meets a concurrent
-    insert is read again."""
+    insert is read again, up to the guard's one deadline, where a table that changed during every read fails the guard
+    by name."""
 
     TABLES = (("concurrent.futures.thread", "_threads_queues"), ("concurrent.futures.process", "_threads_wakeups"))
 
@@ -867,6 +871,71 @@ class ExitJoinTables(unittest.TestCase):
             left = cf.threads_left_at_session_end(0.2)
         self.assertEqual(left, [worker], "the guard returned the daemon thread its second read of the table found")
         self.assertGreaterEqual(len(reads), 2, "the guard read the table again after the read that raised")
+
+    def test_a_table_that_changes_during_every_read_ends_the_guard_at_its_deadline_naming_the_table(self):
+        """A table another thread adds to without pause changes during every read, so every read raises RuntimeError.
+        The guard reads it again only until its one deadline and then fails naming the table: it never reads on past
+        the deadline. Stood in for, on every Python, by a table whose every iteration walks a real dict and adds to it
+        mid-walk, as another thread inserting forever would, so each read raises the error a real concurrent insert
+        raises. The guard runs on a helper thread under a BACKSTOP: a guard whose retry has no bound never ends here,
+        so the pin fails when the helper is still running backstop_s (20 s) after the call, and that backstop firing IS
+        the defect, not a timing flake. Once the backstop has fired the stand-in holds still, so such a guard ends and
+        leaves no thread spinning. The stand-in passes any insert on to the real table, as the retry pin's does."""
+        import concurrent.futures.thread as cft
+        cf = sys.modules["tests.conftest"]
+        real_table = cft._threads_queues
+        cap, backstop_s = 1.0, 20.0
+        holds_still = threading.Event()     # set once the backstop has fired, and at cleanup
+        reads = [0]
+        got = {}
+
+        class ChangesDuringEveryRead:
+            def __iter__(self):
+                reads[0] += 1
+                if holds_still.is_set():
+                    return iter(())
+                walked = {object(): None}
+                it = iter(walked)
+                next(it)
+                walked[object()] = None     # an insert mid-walk, as another thread's would be
+                return it                   # its next step raises RuntimeError (the dict changed size mid-walk)
+
+            def __setitem__(self, key, value):
+                real_table[key] = value
+
+        def run_guard():
+            t0 = time.perf_counter()
+            try:
+                got["left"] = cf.threads_left_at_session_end(cap)
+            except BaseException as e:      # pytest.fail raises a BaseException; reported below, on the test's thread
+                got["error"] = e
+            got["elapsed"] = time.perf_counter() - t0
+
+        helper = threading.Thread(target=run_guard, name="plant-inproc-changing-guard", daemon=True)
+        self.addCleanup(join_started, holds_still, (helper,), 30)
+        with mock.patch.object(cft, "_threads_queues", ChangesDuringEveryRead()), \
+                mock.patch.object(cf, "_enumerate", return_value=[threading.main_thread()]):
+            helper.start()
+            helper.join(backstop_s)
+            ended = not helper.is_alive()
+            holds_still.set()               # a guard still reading now reads a table that holds still, and ends
+            helper.join(30)
+        self.assertTrue(ended, "BACKSTOP: the guard had not ended %g s after the call, at a %g s cap: it went on "
+                        "reading a table that changed during every read (%d reads) past its deadline. This backstop "
+                        "firing is the defect the pin exists for" % (backstop_s, cap, reads[0]))
+        err = got.get("error")
+        self.assertIsNotNone(err, "the guard returned %r instead of failing on a table it could not read by its "
+                             "deadline" % (got.get("left"),))
+        self.assertEqual(type(err).__name__, "Failed", "the guard failed through pytest.fail: %r" % (err,))
+        self.assertIn("could not read concurrent.futures.thread._threads_queues before its deadline", str(err),
+                      "the failure names the table")
+        self.assertIn("every read of it on the guard's last pass raised RuntimeError", str(err),
+                      "the failure says the table changed during every read")
+        self.assertGreaterEqual(got["elapsed"], cap * 0.9, "the guard failed %.2f s into a %g s cap: it gave up before "
+                                "its deadline" % (got["elapsed"], cap))
+        self.assertLess(got["elapsed"], cap + 3.0, "the guard failed %.2f s into a %g s cap: it read on past its "
+                        "deadline" % (got["elapsed"], cap))
+        self.assertGreaterEqual(reads[0], 2, "the guard read the table again after a read that raised")
 
 
 @unittest.skipUnless("tests.conftest" in sys.modules, "the guard is tests/conftest.py's (pytest-only)")
