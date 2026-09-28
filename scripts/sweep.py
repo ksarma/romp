@@ -2063,12 +2063,12 @@ def served_environment(checkout, sha, python, tmpdir, served):
     """The served leg's interpreter, checked, and its record for the result (runner.served). The leg runs as --python
     itself: CI's served step runs its tests in an interpreter without the SDK, so the runner refuses a --python that has
     the SDK the python job's SDK step installs (read_install_plan: its distribution installed, or its module
-    importable), one missing a module the leg needs (PYTEST_MODULES: pytest, xdist for -n, pytest-timeout), and one
+    importable), one missing a module the leg needs (PYTEST_MODULES: pytest, xdist for -n, pytest-timeout), one
     missing a distribution the served step's pip lines install (pip aside, the installer itself), and one whose
     directory does not hold python3 as the same file: the served tests' kernels run the first python3 on the leg's
-    PATH, which leads with that directory. The probe runs under build_env, as the SDK build's probes do. The record: job, step, env and globs as read_served_step read them, python
-    (its absolute path), python_version (its whole sys.version) and packages ({distribution: version} of the ones the
-    served step installs)."""
+    PATH, which leads with that directory. The probe runs under build_env, as the SDK build's probes do. The record:
+    job, step, env and globs as read_served_step read them, python (its absolute path), python_version (its whole
+    sys.version) and packages ({distribution: version} of the ones the served step installs)."""
     python = os.path.abspath(python) if os.sep in python else (shutil.which(python) or python)
     plan = read_install_plan(checkout, sha)
     wanted = [d for d in served["requirements"] if _dist_key(d) != "pip"]

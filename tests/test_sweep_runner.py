@@ -503,7 +503,7 @@ class World:
                 f.write(fake)
             os.chmod(os.path.join(self.bin, name), 0o755)
         # a python3 beside --python that is the same file, as in a venv's bin: the served tests' kernels run the first
-        # python3 on the served leg's PATH (bin/romp-kernel's #!/usr/bin/env python3), and the runner refuses a --python
+        # python3 on the served leg's PATH (the kernel launcher's #!/usr/bin/env python3), and the runner refuses a --python
         # whose directory holds none, or another file
         os.symlink("python", os.path.join(self.bin, "python3"))
         self.wrapper = os.path.join(self.bin, "wrapper")
@@ -2641,10 +2641,10 @@ class ServedLeg(_Base):
         w.run(check=0)
 
     def test_a_python_whose_directory_holds_no_python3_of_its_own_is_refused(self):
-        """The served tests' kernels start as bin/romp-kernel (#!/usr/bin/env python3), so they run the first python3 on
-        the served leg's PATH, not --python: a --python whose directory holds another python3 file, or none (the next
-        one on the PATH then answers), is refused before anything is recorded, since the SDK check read an interpreter
-        the kernels do not run."""
+        """The served tests start their kernels by the launcher in bin/ (#!/usr/bin/env python3), so they run the first
+        python3 on the served leg's PATH, not --python: a --python whose directory holds another python3 file, or none
+        (the next one on the PATH then answers), is refused before anything is recorded, since the SDK check read an
+        interpreter the kernels do not run."""
         w = self.w
         p3 = os.path.join(w.bin, "python3")
         other = os.path.join(w.tmp, "other-python3")
