@@ -9163,8 +9163,11 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests, and SECURITY.md, alone (72 files, the ledger entry's where line; run 2026-09-28 at the head that carries the
-fixes for the file review's round 19, over ffab236bd, the listing the branch's whole delta over it; the run 2026-09-27 at the
+upstream or tests, and SECURITY.md, alone (73 files, the ledger entry's where line; run 2026-09-28 at the head that carries the
+landing merge of the fork's main at 1d591384e after the fixes for the file review's round 19, over 1d591384e, the listing the
+branch's whole delta over it, where the one file added to the delta is ui/webview/file-view-figure-cap-spelling-browser.test.ts,
+a leg that merge brought whose label assertion the follow-on's label rule changed; the run 2026-09-28 at the head that carries the
+fixes for the file review's round 19, over ffab236bd, listed 72; the run 2026-09-27 at the
 head that carries the fixes after the closing check at 142ade155 after the fixes for the file review's round 18 and the merge of
 the fork's main after them, where the merge-base is ffab236bd, the fork's main the branch merged after those fixes, its tip the
 merge of the fork's batch PR 921, listed 71, before tests/test_guide_files_place_and_outline.py, whose pins hold the open's
@@ -9400,7 +9403,7 @@ holds this sentence gone, the leg that launches WebKit and Firefox is no roster 
 of the legs and not all it refuses, naming them (rewritten at the landing merge with main at 1d591384e, where PR 887 had
 landed with no exclusions file and no census, as PR 887's section on who owes what at the landing asks; the file review's
 round 8, extra8-2: the legs were the feature's evidence and none of them ran where
-landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-eight standing suites were re-aimed, not undone:
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-nine standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -9483,7 +9486,10 @@ Comments panel's parent is the viewer's main row, and the viewer's body does not
 file review's round 19, ui-1, tests/test_guide_files_place_and_outline.py (its pins of takeKeyboard's gate and of the open's
 first landing read the holder, the body unless the landing of a step from a key on Back or Forward names the new bar's
 button of that direction, and it holds the guide's key-step sentence after the keyboard sentence, with the source that
-keeps it). The guide's Links in a file
+keeps it), and since the landing merge of the fork's main at 1d591384e, whose batch PR 925 brought it with PR 919's
+cap pass, ui/webview/file-view-figure-cap-spelling-browser.test.ts (its failure label's assertion reads the label as this
+follow-on shows a source written with a scheme, its origin alone with no cap, where it had asked for the whole authored URL,
+its pairing assertions unchanged). The guide's Links in a file
 paragraph gained two sentences, the trail's and
 the figure control's, its paragraph on a file's own HTML one on the marquee's removal (the file review's round 18,
 regression-2), its Your place in the file paragraph one on the key step (the file review's round 19, ui-1), and the browser
