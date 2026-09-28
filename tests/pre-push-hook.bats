@@ -4917,6 +4917,16 @@ CENSUS_TOOLS='git|grep|egrep|fgrep|awk|gawk|mawk|sed|tr|wc|od|cat|cut|sort|uniq|
 # derived, while brace expansion, pathname expansion and a backslash-newline in a command word passed both as well;
 # its three exceptions held by their spelling anywhere; and a pinned word split or wrapped by its quoting (ev''al,
 # "bash" -c) and an alias definition passed the pins (the round 9 rulings' J).
+# Which awk: the census's awk programs (the masker, the splitter, the statement reader and the loop census, each
+# written to TEST_DIR, and its one-line readers) run under the awk first on PATH, in the C locale, and assume a POSIX
+# awk and no extension of one: their output is the same under gawk and mawk, shown byte for byte in round 12r over the
+# hook, its historical texts and every text a case of this file hands the census, and pinned by the census awk case at
+# the end of the file, which runs the splitter under each of the two that is on PATH (round 12r, round 12q's audit F2,
+# the fold owner's call). Until round 12r the splitter pushed a ( with stk[++sp] = ... top() ..., which the two awks
+# evaluate in different orders: gawk read the right side first, the old top, and mawk moved sp first and read the slot
+# above it, left by an earlier push, so under mawk a ( at a statement's start after an arithmetic expansion flagged
+# the records after it arithmetic (three vars records of one hook line dropped, census_command's fail-closed rule
+# skipped for them) and a ( inside arithmetic lost that flag.
 CENSUS_PREFIX='^(if|then|else|elif|fi|while|until|do|done|case|esac|in|for|select|function|!|time|coproc|exec|env|nice|command|builtin)$'
 CENSUS_BUILTIN='^(read|printf|echo|eval|trap|wait|true|false|:|return|exit|break|continue|shift|set|unset|test|\[|\[\[|local|export|readonly|declare|typeset|shopt|mapfile|readarray|cd|pwd|let|type|hash|getopts|kill|ulimit|umask|alias|unalias|caller|jobs|disown|times|dirs|pushd|popd|help|history)$'
 CENSUS_LOOKUP='^(which)$'
@@ -5035,7 +5045,7 @@ function emit(k,   s, L, ms, rs, j, ws, w, x, y, out, tool, dol, fn, touch) {
         else if (c2 == "||" || c2 == "&&" || c2 == "|&") { tok = c2; L = 2 }
         else if (c == "|" || c == ";" || c == "`") { tok = c; L = 1; if (c == "`") bq = !bq }
         else if (c == "&") { if (substr(m, i - 1, 1) !~ /[<>]/ && substr(m, i + 1, 1) != ">") { tok = c; L = 1 } }
-        else if (c == "(") { tok = c; L = 1; stk[++sp] = (substr(m, i - 1, 1) == "=") ? "R" : ((top() == "A" || top() == "a") ? "a" : "P"); xs[++xsp] = "o" }
+        else if (c == "(") { tok = c; L = 1; pv = (substr(m, i - 1, 1) == "=") ? "R" : ((top() == "A" || top() == "a") ? "a" : "P"); sp++; stk[sp] = pv; xs[++xsp] = "o" }   # the value read off the stack before sp moves (round 12r: in stk[++sp] = ... top() ... gawk read the old top, mawk the stale slot above it)
         else if (c == ")") { tok = c; L = 1; if (top() == "A" && substr(m, i + 1, 1) == ")") L = 2; if (sp > 0) sp--; if (xsp > 0) xsp-- }
         else if (c == "\001") { tok = "pat"; L = 1 }
         else if ((c == "{" || c == "}") && substr(m, i - 1, 1) != "$") { tok = c; L = 1 }
@@ -5500,7 +5510,14 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
 # plant and no stale entry is read. An entry is written whole under a temporary name and then renamed, so a case running
 # beside another under --jobs reads a whole entry or none. The cases hand it the unchanged hook (reads_table_check hands
 # it every hook it is given, a planted hook keyed on its own bytes); every other plant runs its helper itself.
-census_memo() {   # <census helper> <bash file> [<arguments>...]: prints what the helper prints over the file (its stdout and stderr, as run captures them) and returns its status
+# The helper's stderr is kept apart from its stdout (round 12r, round 12q's audit F1): a run is stored only when it wrote
+# nothing to stderr, and a run that wrote to stderr passes its stdout on, then its stderr on stderr, stored nowhere, so
+# a census diagnostic reaches reads_table_check's output and every case's output check on every call, as it did when
+# the cases ran the helper themselves (under run the stderr lines come after the stdout's, where the helper's own run
+# interleaved them, so case 203, which reads the census's count line as the output's last, is red on a diagnostic
+# written anywhere). Until round 12r an entry held the two streams folded together, and reads_table_check's census
+# file took a diagnostic case 227's empty-output check read before round 12q.
+census_memo() {   # <census helper> <bash file> [<arguments>...]: prints what the helper prints over the file, its stdout on stdout and its stderr on stderr, and returns its status
     local key dir entry tmp rc
     if [ -z "${BATS_FILE_TMPDIR:-}" ]; then "$@"; return; fi   # no per-file directory (a bats before 1.4): the helper itself
     key=$({ declare -f "$1" masked_text census_records census_rec census_unquote census_functions census_definition_shapes census_command census_is census_word_kind census_statements undeclared_reads census_block_above_has_marker census_unread_shapes stdin_loops_running_tools loop_kinds r11c_git_calls r11c_pins_check; declare -p CENSUS_PREFIX CENSUS_BUILTIN CENSUS_LOOKUP CENSUS_TOOLS CENSUS_LOOKUP_KEPT; printf '%s\n' "$@"; cat -- "$2"; } 2>&1 | sha256sum)
@@ -5512,10 +5529,12 @@ census_memo() {   # <census helper> <bash file> [<arguments>...]: prints what th
         return "$rc"
     fi
     tmp=$(mktemp "$dir/.tmp.XXXXXX")
-    "$@" > "$tmp.out" 2>&1; rc=$?
-    { echo "$rc"; cat "$tmp.out"; } > "$tmp"
+    "$@" > "$tmp.out" 2> "$tmp.err"; rc=$?
     cat "$tmp.out"
-    rm -f "$tmp.out"
+    cat "$tmp.err" >&2
+    if [ -s "$tmp.err" ]; then rm -f "$tmp" "$tmp.out" "$tmp.err"; return "$rc"; fi   # a run that wrote to stderr is not stored: the next call runs the helper again
+    { echo "$rc"; cat "$tmp.out"; } > "$tmp"
+    rm -f "$tmp.out" "$tmp.err"
     mv -f "$tmp" "$entry"
     return "$rc"
 }
@@ -16354,4 +16373,69 @@ r12o_fp_side() {   # keys/g.txt at its base on the remote (top, u1, end); a side
     [[ "$output" == *"scanned ~591 bytes"* ]]
     push_main_through_hook_with_shim
     r10a_passes
+}
+
+# ── round 12r: the census's awk programs read the same under gawk and mawk (round 12q's audit F2, the fold owner's call) ──
+# Round 12q's cost round found, and its audit confirmed, that split.awk pushed a ( with stk[++sp] = ... top() ...,
+# reading the stack in the statement that moves its index: gawk evaluates the right side first and reads the old top,
+# mawk moves sp first and reads the slot above it, left over from an earlier push. Under mawk a ( at a statement's
+# start after an arithmetic expansion was read as a ( inside arithmetic, so the records after it were flagged A, three
+# vars records of one hook line were dropped and census_command's fail-closed rule was skipped for them; a ( inside
+# arithmetic lost its A instead. The push reads the stack first now, then moves sp. The case below runs the splitter
+# over a probe text holding each shape that statement decides (a ( at a statement's start after an arithmetic
+# expansion, a ( inside an arithmetic expansion, inside an arithmetic command and inside another such (, an array
+# literal's ( and a subshell inside a command substitution) under the awk first on PATH and under gawk and mawk, each
+# through a symlink named awk in a directory of the case's own put first on PATH, and asserts that the records equal
+# the list committed here, which gawk printed before the fix and both awks print after it.
+
+@test "census awk (round 12r, round 12q's audit F2): the census splitter's records over a probe text holding a ( at a statement's start after an arithmetic expansion, a ( inside an arithmetic expansion, inside an arithmetic command and inside another such (, an array literal's ( and a subshell inside a command substitution equal the committed list in the calls and vars modes, under the awk first on PATH and under gawk and mawk when each is on PATH (one not on PATH is reported in the output, never a skip of the case); red under mawk with the push restored to stk[++sp] = ... top() ..." {
+    local probe="$TEST_DIR/awk-probe.sh" want="$TEST_DIR/awk-want" a d
+    cat > "$probe" <<'SH'
+n=$((1 + 2))
+( git rev-parse "$n" )
+m=$(( (n + 1) * 2 ))
+(( (m + 1) > 2 )) && git log -1 "$m"
+a=( "$n" "$m" )
+x=$( (git show "$a") | cat )
+k=$(( (n * (m + 1)) - 1 ))
+SH
+    # the records, the unit separator shown as |: every record with a word (calls, names .), then the vars mode's
+    cat > "$want" <<'WANT'
+1|1||$((|1|n=|n=
+1|6|A|)|1|1|1|+|+|2|2
+2|2||)|0|git|git|rev-parse|rev-parse|".."|"$n"
+3|1||$((|1|m=|m=
+3|8|A|)|1|n|n|+|+|1|1
+3|14|A|)|0|*|*|2|2
+4|5|A|)|1|m|m|+|+|1|1
+4|11|A|)|0|>|>|2|2
+4|21||eol|1|git|git|log|log|-1|-1|".."|"$m"
+5|1||(|1|a=|a=
+5|4|R|)|0|".."|"$n"|".."|"$m"
+6|1||$(|1|x=|x=
+6|7|S|)|1|git|git|show|show|".."|"$a"
+6|23|S|)|0|cat|cat
+7|1||$((|1|k=|k=
+7|8|A|(|0|n|n|*|*
+7|13|A|)|1|m|m|+|+|1|1
+7|20|A|)|0|-|-|1|1
+--
+2|2||)|0|git|git|rev-parse|rev-parse|".."|"$n"
+4|21||eol|1|git|git|log|log|-1|-1|".."|"$m"
+6|1||$(|1|x=|x=
+6|7|S|)|1|git|git|show|show|".."|"$a"
+WANT
+    for a in awk gawk mawk; do
+        if [ "$a" = awk ]; then
+            d=""
+        elif command -v "$a" > /dev/null 2>&1; then
+            d="$TEST_DIR/awk-$a"; mkdir -p "$d"; ln -sf "$(command -v "$a")" "$d/awk"
+        else
+            echo "census awk: $a is not on PATH, so the splitter was not run under it"
+            echo "# census awk: $a is not on PATH, so the splitter was not run under it" >&3
+            continue
+        fi
+        ( if [ -n "$d" ]; then PATH="$d:$PATH"; fi; echo "census awk: $a is $(readlink -f "$(command -v awk)")" >&2; census_records "$probe" calls '.'; echo "--"; census_records "$probe" vars ) | tr '\037' '|' > "$TEST_DIR/awk-got-$a"
+        diff -u "$want" "$TEST_DIR/awk-got-$a"
+    done
 }
