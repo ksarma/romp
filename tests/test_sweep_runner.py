@@ -2443,7 +2443,7 @@ class PytestEnvironment(_Base):
         # a finished venv of the first key put where the second key's venv is: its marker names another key, so it is
         # built again, although its tree matches its own marker and its probe finds the pin and the plugins
         shutil.rmtree(second["path"])
-        shutil.copytree(first["path"], second["path"], symlinks=True)
+        subprocess.run(["cp", "-a", first["path"], second["path"]], check=True)
         w.change({"README.md": "# notes-api, again\n"})
         p = w.run(check=0)
         self.assertIn("rebuilding the pytest leg's environment %s (its marker names another key)" % second["key"], p.stdout)
