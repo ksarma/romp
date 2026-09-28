@@ -2008,8 +2008,8 @@ def _route_table_renderers(tree, scopes):
     membership test (`p in _PAGE_RENDERERS`, Handler._need's auth class) or a one-argument `.get(...)`. Anything else is loud: any other
     binding of the name anywhere in the file (an assignment or deletion, a parameter, a def or class, an except-as, an import, a match
     capture: `scopes`' binders, so a `.get` read under that name elsewhere could be some other object's), a subscript store or deletion
-    (`_PAGE_RENDERERS[p] = page` reads the name and writes the table), another method, the table passed on, a `**` entry or a renderer
-    that is not a plain name. Returns (renderer names, ids of the `.get` calls)."""
+    (`_PAGE_RENDERERS[p] = page` reads the name and writes the table), another method, the table or its `.get` passed on, a `**` entry
+    or a renderer that is not a plain name. Returns (renderer names, ids of the `.get` calls)."""
     defs = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == _ROUTE_TABLE for t in n.targets)]
     if len(defs) != 1 or len(defs[0].targets) != 1 or not isinstance(defs[0].value, ast.Dict):
         raise AssertionError("kernel.py: %s is not one module-level dict literal (%d bindings); classify it here" % (_ROUTE_TABLE, len(defs)))
@@ -2032,7 +2032,7 @@ def _route_table_renderers(tree, scopes):
                 and len(call.args) == 1 and not call.keywords):
             gets.add(id(call))
             continue
-        raise AssertionError("kernel.py line %d: a use of %s this census does not read (a subscript store or deletion, another method, a .get with a default, or the table passed on); classify it here" % (node.lineno, _ROUTE_TABLE))
+        raise AssertionError("kernel.py line %d: a use of %s this census does not read (a subscript store or deletion, another method, a .get with a default, the table passed on, or its .get passed on); classify it here" % (node.lineno, _ROUTE_TABLE))
     return {v.id for v in table.values}, gets
 
 
@@ -2465,7 +2465,7 @@ class StampCensusResolvesByBinding(unittest.TestCase):
         # Subscript that writes), so it is no binder of the name and reaches this refusal like another method or the table passed on
         uses = (("_PAGE_RENDERERS['/x'] = _x_page", "a subscript store or deletion"), ("del _PAGE_RENDERERS['/chat']", "a subscript store or deletion"),
                 ("_PAGE_RENDERERS.update({'/x': _x_page})", "another method"), ("_PAGE_RENDERERS.get(self.path, _x_page)", "a .get with a default"),
-                ("print(_PAGE_RENDERERS)", "the table passed on"))
+                ("print(_PAGE_RENDERERS)", "the table passed on"), ("_pick(_PAGE_RENDERERS.get)", "its .get passed on"))
         for use, shape in uses:
             with self.subTest(use=use):
                 with self.assertRaisesRegex(AssertionError, r"a use of _PAGE_RENDERERS this census does not read \([^)]*" + re.escape(shape)):
