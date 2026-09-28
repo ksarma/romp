@@ -894,10 +894,12 @@ test("the picker-open state, the one the panel leg did not enter (the maintainer
     assert.equal(c1.focusVisible, true, "the rig: a Tab is :focus-visible");
     assert.equal((await pickerRow("rs-cmap-list")).hovered, true, "the rig: the pointer still rests on the colormap row");
     assert.deepEqual(c1.shown, ["rs-pal-btn"], "exactly one description, the focused palette row's");
-    // (d) a pick closes the list through the same writer: the class goes. The row's hover is not read here: the pick leaves the
-    // pointer where the option was, a few pixels under the row's bottom edge (the list hangs below the row), and Chromium moves
-    // :hover at its next frame, so a read right after the click races that update (measured: true at once, false two animation
-    // frames later; a run of the browser-legs step's command at a load average of about 38 read false and failed)
+    // (d) a pick closes the list through the same writer: the class goes. This step claims the list's state alone (hidden, no
+    // rs-picking); the row's hover is not part of the claim, so it is not read. The pick leaves the pointer where the option
+    // was, under the row's bottom edge (the list hangs below the row), so once the list hides the row is no longer under the
+    // pointer: in the built bundle the row reads :hover true in the click's own frame and false after one
+    // requestAnimationFrame. The hovered true this step once read was Chromium's state before that frame, not a property of
+    // the pick.
     await page.click("#rs-cmap-list .rs-cmap-opt");
     const picked = await pickerRow("rs-cmap-list");
     assert.deepEqual({ open: picked.open, picking: picked.picking }, { open: false, picking: false }, "closed by a pick: hidden and no class");
