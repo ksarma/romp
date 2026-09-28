@@ -97,7 +97,8 @@ of them satisfiable by three comments of the timeline page); a method call on an
 A fetched value unpacked into a tuple binds only the position the helper's own return statements read a response at (`status,
 body, headers = self._req("/")` binds `body` where `_req` returns `r.status, r.read(), r.headers`), and no name where its
 returns read none; a helper the module does not define binds every name (the rulings at the merge of main's login cookie
-split, 2026-09-28; _bind).
+split, 2026-09-28; _bind). A call to a helper the module defines is a fetch only where the helper's returns read a response
+(`_pathconf("/", "PC_PATH_MAX", 4096)` is none; _fetched).
 
 Bound: a url built otherwise than as a bare or `%`-formatted literal or a concatenation led by the whole path (a `Request`
 object, an f-string, `.format`, `"/chat" + rest`), a formatted
@@ -443,26 +444,36 @@ def _callee(call):
     return None
 
 
-def _fetched(node, names, routes):
+def _fetched(node, names, routes, reads=None):
     """The served text a fetched value stands for (the author's pass 8, 2026-09-20): a call to a Name or a self.<method> whose first argument
     is a string literal beginning with `/` that, without its ?query, is a route in `routes` (`_serve_get("/sw.js", ...)`,
     `self._get_text("/")`), or a concatenation led by such a literal holding the whole path (_fetch_path); a call to an attribute named `urlopen` whose first argument is a string literal, bare or `%`-formatted,
     naming such a route with the token in its query (_url_route; the fixer pass of the author's pass 8); or the `.read(...)` or `.decode(...)`
     of such a value or of a Name bound to one, through any chain of the two (`body.decode()`, `fetch("/chat").read().decode()`);
-    else None. A bare Name is not followed (as _text does not)."""
+    else None. A bare Name is not followed (as _text does not). A call to a Name or a self.<method> the module defines counts as a
+    fetch only where that callee returns a response it reads (`reads`, the module's _response_reads, holds a position for it; the
+    rulings at the merge of main's login cookie split, 2026-09-28): `_pathconf("/", "PC_PATH_MAX", 4096)`, a helper returning
+    os.pathconf's answer, had read as a fetch of the landing and its caller's helper as an unclassified reader of the page. A callee
+    the module does not define keeps the reading before the ruling (a fetch). Bound: a helper the module defines that returns an
+    unread response for its caller to read is not a fetch here; none is in the suite, and where such a call is assigned to names
+    (`body = self._open("/").read()`) the textual census binds them (_FETCH_DEF), so a literal pin over one reds the floor rather
+    than leave the population unseen."""
     if not isinstance(node, ast.Call):
         return None
     f = node.func
     if isinstance(f, ast.Attribute) and f.attr in ("read", "decode"):
         inner = f.value
-        return names.get(inner.id) if isinstance(inner, ast.Name) else _fetched(inner, names, routes)
+        return names.get(inner.id) if isinstance(inner, ast.Name) else _fetched(inner, names, routes, reads)
     if isinstance(f, ast.Attribute) and f.attr == "urlopen" and node.args:
         a = node.args[0]
         fmt = a.left if isinstance(a, ast.BinOp) and isinstance(a.op, ast.Mod) else a
         route = _url_route(fmt.value) if isinstance(fmt, ast.Constant) and isinstance(fmt.value, str) else None
         return routes.get(route) if route else None
     path = _fetch_path(node.args[0]) if node.args else None
-    if path and (isinstance(f, ast.Name) or (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self")):
+    callee = _callee(node)
+    if path and callee is not None:
+        if reads is not None and callee in reads and not reads[callee]:
+            return None   # the module's own helper, whose returns read no response: no fetch
         return routes.get(path.split("?")[0])
     return None
 
@@ -519,7 +530,7 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
             g = _resolve(v, names, attrs, getters, constants)
             via_slice = isinstance(v, ast.Name) and sliced is not None and v.id in sliced
         if not g and routes:
-            g = _fetched(v, names, routes)
+            g = _fetched(v, names, routes, reads)
             fetched = bool(g)
         if not g:
             continue
@@ -972,7 +983,7 @@ def readers_of(path, getters, constants, routes=None):
         """Bind a Name to the text a view, a copy, a slice or an alias derives from (after _bind has bound the plain forms)."""
         if len(targets) == 1 and isinstance(targets[0], ast.Name) and not _text(value, getters, constants):
             base = text_of(value, names, attrs, derived)
-            if base and not (routes and _fetched(value, names, routes)):
+            if base and not (routes and _fetched(value, names, routes, reads)):
                 names[targets[0].id] = base
                 basis = basis_of(value, names, attrs, derived)
                 if basis:
@@ -1733,6 +1744,50 @@ class T(unittest.TestCase):
                          "no read of a status or of the response headers is a read of the page")
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
                          {"_serve": [1], "_heads": [], "_req": [1], "test_a": []})
+
+    def test_a_call_is_a_fetch_only_where_its_callee_reads_a_response(self):
+        # the rulings at the merge of main's login cookie split (2026-09-28), P2: a call to a Name or a self.<method> whose first
+        # argument is a route literal had counted as a fetch whatever the callee, so `_pathconf("/", "PC_PATH_MAX", 4096)` read as a
+        # fetch of the landing, and the module's helper it was handed to (`case.assertGreaterEqual(ceiling - 1, 0)`) as an
+        # unclassified reader of the page. A synthetic module pins the rule: the module's own helper whose returns read no response
+        # (os.pathconf's answer) is no fetch, in an assignment of its own or inside a tuple assignment; one whose return reads a
+        # response (`urlopen(path).read().decode()`) is; and a callee the module does not define keeps the reading before the
+        # ruling, a fetch. The rows of both derivations are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import unittest
+def _pathconf(path, name, default):
+    try:
+        return os.pathconf(path, name)
+    except OSError:
+        return default
+def _get(path):
+    return urlopen(path).read().decode()
+class T(unittest.TestCase):
+    def test_a(self):
+        path_max = _pathconf("/", "PC_PATH_MAX", 4096)
+        _fits(self, path_max)
+        page = _get("/")
+        self.assertIn("q1", page)
+        other = elsewhere("/chat?token=x")
+        self.assertIn("q2", other)
+        a, b = _pathconf("/", "PC_NAME_MAX", 255), _get("/sw.js")
+        self.assertIn("q3", b)
+        self.assertIn("q4", a)
+def _fits(case, ceiling):
+    case.assertGreaterEqual(ceiling - 1, 0)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = rows_of(f.name, getters, constants, routes)
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual([r[:3] for r in readers], [(14, "assert", "_landing"), (16, "assert", "_chat_page"), (18, "assert", "_sw_js")],
+                         "os.pathconf's answer is no read of the page, and no helper handed it is followed")
+        self.assertEqual([r[:4] for r in rows], [(14, "q1", "_landing", "in"), (16, "q2", "_chat_page", "in"), (18, "q3", "_sw_js", "in")])
+        self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
+                         {"_pathconf": [], "_get": ["whole"], "test_a": [], "_fits": []})
 
     def test_the_route_walk_reads_equality_and_membership(self):
         # the author's pass 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A
