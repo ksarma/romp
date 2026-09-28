@@ -6,8 +6,10 @@
 # the hook looks like when gitleaks really runs, which a stub cannot check).
 #
 # Skipped when gitleaks is not installed, so a clone that never wanted the
-# scanner still runs a green suite; CI installs it and is the arbiter.
-# ROMP_GITLEAKS names a binary that is not on PATH, as it does for the hook.
+# scanner still runs a green suite; CI installs it and is the arbiter, and
+# sets ROMP_GITLEAKS_REQUIRE=1 so that an absence there fails with the reason
+# instead of skipping (see setup). ROMP_GITLEAKS names a binary that is not on
+# PATH, as it does for the hook.
 #
 # Nothing in this file may contain a credential-shaped literal: gitleaks scans
 # this repo, and a fixture secret written out longhand would flag the very test
@@ -21,7 +23,26 @@ load git-hermetic
 setup() {
     git_hermetic
     GL="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"
-    if [ -z "$GL" ] || [ ! -x "$GL" ]; then skip "gitleaks not installed"; fi
+    if [ -z "$GL" ] || [ ! -x "$GL" ]; then
+        # ROMP_GITLEAKS_REQUIRE=1 makes the absence a failure naming the reason, not a skip:
+        # CI's Linux Shell job installs the pinned gitleaks in the step before it runs bats
+        # and sets the switch, so a skip there would report a broken install as ten green
+        # skips (the stance ROMP_SERVED_TESTS_REQUIRE takes in tests/conftest.py). Without
+        # the switch the file skips, and a clone that never wanted the scanner stays green.
+        # The reason names the property the test above keyed on: [ ! -x ] is true for a path
+        # that is absent as well as for one that exists without the execute bit, and the two
+        # have different remedies (a typo in ROMP_GITLEAKS, a chmod), so they are told apart.
+        if [ -z "$GL" ]; then why="gitleaks is not on PATH and ROMP_GITLEAKS is unset or empty"
+        elif [ ! -e "$GL" ]; then why="ROMP_GITLEAKS names $GL, which does not exist"
+        else why="ROMP_GITLEAKS names $GL, which is not executable"; fi
+        if [ "${ROMP_GITLEAKS_REQUIRE:-}" = "1" ]; then
+            echo "ROMP_GITLEAKS_REQUIRE=1: $why, and this runner must have it: the arbiter runner" \
+                "installs the pinned gitleaks before bats, so its absence here is a broken install," \
+                "not a missing tool" >&2
+            return 1
+        fi
+        skip "gitleaks not installed"
+    fi
     TEST_DIR="$(mktemp -d)"
     CFG="$ROMP_DIR/.gitleaks.toml"
 }
@@ -84,6 +105,51 @@ probe_token() { printf 'gh%s_%s%s' p "$(printf '0123456789%.0s' 1 2 3)" abcdef; 
     run "$GL" git "$R" --no-banner --redact --exit-code 2 --config "$CFG" \
         --log-opts="--all --diff-merges=first-parent"
     [ "$status" -eq 2 ]
+}
+
+@test "a credential in a path a committed .gitattributes marks -diff is caught by CI's configured history scan" {
+    # `gitleaks git` runs `git log -p`, and git reads the checkout's .gitattributes for it: a path
+    # marked -diff prints a `Binary files ... differ` line with no hunk, so a credential committed
+    # there and removed in a later commit is text the history scan never sees, while the tree scan
+    # reads HEAD, where the file is gone. CI's line carries an option for this. What is asserted is
+    # that CI's CONFIGURED invocation, whatever its spelling, surfaces the secret: the arguments are
+    # read from .github/workflows/ci.yml itself, not copied here, since a copied string stays green
+    # while CI drifts.
+    R="$TEST_DIR/repo"; mkdir -p "$R"
+    git -C "$R" init -q
+    git -C "$R" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says
+    printf '*.cfg -diff\n' > "$R/.gitattributes"
+    git -C "$R" add -A && git -C "$R" commit -qm "attributes"
+    # the secret, assembled at run time, in a path the attribute covers
+    printf 'token = "%s"\n' "$(probe_token)" > "$R/app.cfg"
+    git -C "$R" add -A && git -C "$R" commit -qm "add app.cfg"
+    git -C "$R" rm -q app.cfg && git -C "$R" commit -qm "remove app.cfg"
+    # The premise, against this git: with the attribute at HEAD, the plain log shows no hunk for
+    # the file, so a scanner reading that log has nothing to match.
+    run git -C "$R" log -p --all
+    [[ "$output" == *"Binary files"* ]]
+
+    # CI's line, from the workflow's own text: exactly one `run: gitleaks git .` line is expected,
+    # the credential-scan job's history step. Zero or two and the premise is gone, so say so. grep -c
+    # prints 0 and exits 1 on no match, and bats runs under errexit, so without `|| true` the zero
+    # case would stop at this assignment and never reach the message below.
+    ci="$ROMP_DIR/.github/workflows/ci.yml"
+    n=$(grep -cE '^[[:space:]]*run: gitleaks git \. ' "$ci" || true)
+    [ "$n" -eq 1 ] || { echo "expected exactly one 'run: gitleaks git .' line in ci.yml, found $n"; false; }
+    line=$(grep -E '^[[:space:]]*run: gitleaks git \. ' "$ci")
+    # The arguments after `gitleaks git .`, split the way the runner's bash splits the run line:
+    # `eval` into an array honours the quotes around the --log-opts value, so its several words stay
+    # one argument, as they are in CI. Two positions belong to the checkout rather than the scanner:
+    # `.` is the repository (the scratch one here) and `.gitleaks.toml` its config.
+    eval "ci_args=(${line#*run: gitleaks git . })"
+    for i in "${!ci_args[@]}"; do [ "${ci_args[$i]}" = ".gitleaks.toml" ] && ci_args[$i]="$CFG"; done
+    # --exit-code 2 as in every case here: CI's line lets a finding and a scanner failure share exit
+    # 1 (the step is red either way), and this test has to tell them apart.
+    run "$GL" git "$R" "${ci_args[@]}" --exit-code 2
+    [ "$status" -eq 2 ] || {
+        echo "CI's history scan did not report the credential (exit $status):"; echo "$output"; false; }
+    [[ "$output" == *"app.cfg"* ]]               # -v: the file to fix
+    [[ "$output" != *"$(probe_token)"* ]]        # --redact: the value stays out of the log
 }
 
 @test "RFC 6455's example WebSocket key is excused" {

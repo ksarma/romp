@@ -182,6 +182,8 @@ class OneLockAroundEveryMutation(_Drain):
         buf = io.StringIO()
         with redirect_stderr(buf):
             walker = threading.Thread(target=km._apply_pending_ops, name="drain-under-test", daemon=True)
+            self.addCleanup(lambda: (release.set(), walker.join(5)))   # the walker ends on every exit path (T282): the fake's
+            #                                                             release, then a bounded join, wherever the body fails
             walker.start()
             self.assertTrue(entered.wait(5))               # the backend has the head; the lock is free
             err_head = km._cancel_parked(SID, 0, km._parked_md(head))
@@ -390,6 +392,8 @@ class OneLockAroundEveryMutation(_Drain):
         first, behind = ("send", "first", None), ("model", "opus")
         km._pending_ops[SID] = [first, behind]
         walker = threading.Thread(target=km._apply_pending_ops, name="drain-under-test", daemon=True)
+        self.addCleanup(lambda: (release.set(), walker.join(5)))   # the walker ends on every exit path (T282): the fake's
+        #                                                             release, then a bounded join, wherever the body fails
         with redirect_stderr(io.StringIO()):
             walker.start()
             self.assertTrue(in_send.wait(5))               # the head is popped and with the backend; the lock is free
@@ -508,6 +512,8 @@ class OneLockAroundEveryMutation(_Drain):
         self.be.send = send
         km._pending_ops[SID] = [("send", "first", "human")]
         walker = threading.Thread(target=km._apply_pending_ops, name="drain-under-test", daemon=True)
+        self.addCleanup(lambda: (release.set(), walker.join(5)))   # the walker ends on every exit path (T282): the fake's
+        #                                                             release, then a bounded join, wherever the body fails
         walker.start()
         self.assertTrue(in_send.wait(5))                   # the backend has the send; the lock is released
         parker = threading.Thread(target=lambda: km._send_or_park(self.be, SID, "second", echo="human"),

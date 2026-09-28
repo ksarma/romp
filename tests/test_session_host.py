@@ -5,9 +5,13 @@ the fake CLI (tests/fixtures/fake_claude.py) while this test plays the kernel ov
 (HostProcess's pick case) lets the REAL backend loop play the kernel instead, for a settings pick on the hosted road.
 
 Hermetic: a temp state root per test, the fake CLI on a temp path, no scopes (the host is a plain child
-here), every process killed by the test, synthetic ids. The host runs on its built-in pipe transport when
-the SDK is not importable (CI, the plain test venv); one test runs the SDK transport when the machine has
-the SDK venv, and skips otherwise.
+here), every process killed by the test, synthetic ids. A spawned host runs the SDK transport when its own
+interpreter imports the SDK (CI, which installs the pinned SDK in every Python cell since 2026-09-20) and its
+built-in pipe transport otherwise (the plain test venv); two tests ask for the SDK transport by name, over the
+machine's SDK venv when there is one and over the host interpreter's own SDK otherwise, and skip only when
+neither exists (HOST_SDK below); one control hides the SDK from its host and asserts the pipe transport, so
+that road stays tested where the interpreter has the SDK. One road reds this module run ALONE, an interpreter
+with the SDK on 3.10 to 3.13: SpawnSecrets' docstring records it.
 """
 import ast
 import asyncio
@@ -31,6 +35,8 @@ from importlib.machinery import ModuleSpec
 from pathlib import Path
 from unittest import mock
 from romp_load import load_source
+from tests.conftest import env_sparing_texts, redact_env_values
+import sdk_blocker   # noqa: E402  the shared test helper, registered by name in tests/__init__.py like romp_load
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -39,9 +45,57 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE the loads
 os.environ.pop("ROMP_STATE_DIR", None)
 sh = load_source("romp_session_host", os.path.join(ROOT, "kernel", "session_host.py"))
 sb = load_source("romp_sdk_backend_host", os.path.join(BIN, "romp_sdk_backend.py"))
+def orphan_journal(d, offset=0):
+    """The orphan reader over a bare journal directory, as a list: host_transport.read_journal_dir takes the read
+    descent's HostDirs (the fork PR that follows #814, 2026-09-21; through #814 sh.read_journal_dir took the directory's
+    PATH), and a test's journal lives outside hosts/, so the directory descriptor is opened here and closed after. The
+    kernel's module is loaded HERE, at the call, never at this module's import: a module-level load bound HostTransport
+    on the SDK-less fallback base in every process that collects this module before tests/test_host_transport.py (which
+    puts the SDK venv on sys.path at its import), and that module's six-methods pin then read issubclass False under
+    xdist while every alone run stayed green."""
+    ht = sb._ht()
+    with ht.HostDirs(None, os.open(d, os.O_RDONLY | os.O_DIRECTORY), Path(d)) as dirs:
+        return list(ht.read_journal_dir(dirs, offset))
 FAKE = os.path.join(HERE, "fixtures", "fake_claude.py")
 SDK_SITE = next(iter(sorted(Path(os.path.expanduser("~/.local/state/romp/sdkvenv/lib")).glob(
     "python%d.%d/site-packages" % sys.version_info[:2]))), None) if os.path.isdir(os.path.expanduser("~/.local/state/romp/sdkvenv")) else None
+
+
+def _host_env(host_env=None) -> dict:
+    """The environment HostProcess._start hands a spawned host, short of its ROMP_SDK_SITE decision: this process's,
+    PYTHONUNBUFFERED set, ROMP_SDK_SITE and the credential names removed (a host carries a credential only when a test
+    hands one), `host_env` on top. PYTHONPATH is inherited. One builder for the spawn and for the gate's probe below,
+    so a key the spawn keeps is one the probe cannot drop; HostProcess's drift case captures both by execution."""
+    env = dict(os.environ, PYTHONUNBUFFERED="1")
+    env.pop("ROMP_SDK_SITE", None)
+    for name in sb.AUTH_ENV_NAMES:
+        env.pop(name, None)
+    env.update(host_env or {})
+    return env
+
+
+def _host_imports_sdk() -> bool:
+    """The GATE question: whether a host started the way HostProcess._start starts one (sys.executable, the environment
+    _host_env builds, PYTHONPATH included, no ROMP_SDK_SITE) imports claude_agent_sdk on its own: CI's road since
+    2026-09-20, when the workflow began installing the pinned SDK into every Python cell's interpreter. Asked of a
+    CHILD, once at import, because this process's own find_spec is the wrong witness: tests/test_host_transport.py
+    puts the machine's SDK venv on THIS process's sys.path, which no child inherits, so an in-process probe would say
+    yes on a box where the spawned host would run the pipe transport. The probe's child runs under the spawn's own
+    environment (sdk_blocker.interpreter_imports_sdk with strip_pythonpath=False): until review round 3 (2026-09-20)
+    it asked the WITNESS question, which drops PYTHONPATH, so where the SDK reached the host through the parent's
+    PYTHONPATH alone (no sdkvenv for its minor) the gate read "no SDK", the switch case below failed under
+    ROMP_SDK_REQUIRE=1 and the two SDK-transport cases skipped, for a host that did take the SDK transport. The
+    witness question stays the no-SDK control's, which replaces its host's PYTHONPATH with the blocker's site.
+    bin/romp-session-host's _sdk_on_path takes its interpreter's SDK before it reads ROMP_SDK_SITE, so a positive
+    here means every host these tests spawn runs the SDK transport, whatever site _start hands it."""
+    return sdk_blocker.interpreter_imports_sdk(_host_env(), strip_pythonpath=False)
+
+
+# The gate of the two SDK-transport cases (2026-09-20): the machine's SDK venv, the box's road, or the host interpreter's
+# own SDK, CI's road. Until then the gate was the venv DIRECTORY alone, so on an interpreter that had the SDK and no
+# venv for its minor (every CI cell after the install; 3.14t on this box) the two cases skipped, reporting green for a
+# reason that no longer applied while checking nothing.
+HOST_SDK = SDK_SITE is not None or _host_imports_sdk()
 SID = "11111111-2222-3333-4444-0000000000a1"          # the romp sid the lease is filed under
 FSID = "11111111-2222-3333-4444-0000000000f1"         # the fake CLI's own conversation id (distinct on purpose)
 CLI_PID = 4194305       # the stand-in CLI's pid in the in-process classes: above Linux's pid_max (2^22), so it names no
@@ -51,7 +105,8 @@ CLI_PID = 4194305       # the stand-in CLI's pid in the in-process classes: abov
 def system_tmp() -> str:
     """The temp dir this RUN was handed, before tests/conftest.py redirected TMPDIR into the run's private root
     (ROMP_TESTS_SYSTEM_TMPDIR, recorded by tests/__init__.py with setdefault, so an xdist worker keeps the controller's
-    record rather than its own, one level deeper): the sanctioned way out of the root, for an AF_UNIX path that has to
+    record; since 2026-09-21 a worker's own root sits beside the controller's in that dir, one level under it like every
+    process's): the sanctioned way out of the root, for an AF_UNIX path that has to
     fit sun_path or be built to an exact length (tests/test_host_transport.py's two socket dirs take the same road)."""
     return os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir()
 
@@ -61,7 +116,8 @@ def padded_root(case, total, tail):
     `total` BYTES (os.fsencode: the measure the host's budget check and the bind take, and not the character count, which
     a multibyte component separates from it), made under the system temp dir (system_tmp) and removed with the case.
     NEVER A SKIP (the review of the socket-mode fix, round 2, 2026-09-19): round 1's padded cases were rooted in the run's
-    private temp root and skipped once that root was deep (the sweep's xdist nesting, a long TMPDIR), so the module
+    private temp root and skipped once that root was deep (a long TMPDIR; the sweep's xdist nesting too, until
+    2026-09-21), so the module
     reported green with the high they pin unpinned. A system temp dir too deep for the pad is a FAILURE naming the remedy,
     so a green module means the padded cases ran (PaddedRoots pins both directions)."""
     base = tempfile.mkdtemp(prefix="pad-", dir=system_tmp())
@@ -103,7 +159,16 @@ class SpawnSecrets(unittest.TestCase):
     """A key or login token lives in the process environment only, never in a file (the fork's rule, 2026-09-05):
     a stored login's CLAUDE_CODE_OAUTH_TOKEN leaves the spawn spec before hosts/<sid>/spawn.json is written and
     rides bin/romp-session-host's process environment instead (the pull-in review's item 1, 2026-09-16). Every
-    assertion here is a presence check: no test output ever carries a token's value."""
+    assertion here is a presence check: no test output ever carries a token's value.
+
+    Residual (2026-09-20, recorded with the workflow's SDK step comment and the ledger entry): run ALONE on an
+    interpreter that imports claude_agent_sdk and evaluates annotations at class definition, 3.10 to 3.13 (since
+    CI installs the SDK, the four Linux cells 3.10 through 3.13 and the two macOS cells; not the 3.14t cell, which
+    defers annotations and is green alone), 8 of these 11 tests fail: _spawn's Popen patch is live when _ht()
+    first imports the SDK through kernel/host_transport.py, and mcp's win32 utilities evaluate
+    subprocess.Popen[bytes] at class definition, which the patched-in function does not support. Green whenever
+    a module that imports the SDK is collected first, as the suite and CI's one pytest invocation do; it predates
+    the install step (the same 8 fail at the base on such an interpreter) and is a follow-up, not fixed here."""
 
     def setUp(self):
         self.state = tempfile.mkdtemp()
@@ -201,7 +266,8 @@ class SpawnSecrets(unittest.TestCase):
     def test_every_credential_shaped_name_leaves_the_spec_env_not_only_the_three(self):
         """The box admin's hazard review of the pull-in (2026-09-16): the first cut moved AUTH_ENV_NAMES alone, so a
         credential-shaped variable of any OTHER name in the overlay was written to spawn.json. Every name
-        env_credential_names would flag over the overlay itself leaves it now (spawn_env_secret_names): the two
+        credentials.credential_env_names would flag over the overlay itself leaves it now (spawn_env_secret_names, the
+        rule with no exclusion; the boot notice's wrapper env_credential_names leaves the control token unnamed): the two
         suffixes and 1Password's names. Synthetic names, values built at run time (never a real key's shape)."""
         val = "synthetic-notes-token-" + uuid.uuid4().hex
         key = "synthetic-notes-key-" + uuid.uuid4().hex
@@ -360,7 +426,9 @@ class SpawnSecrets(unittest.TestCase):
     def test_a_lowercase_credential_shaped_name_leaves_the_spec_env_too(self):
         """Review round 1 (2026-09-18): the shape rule was an exact, case-sensitive suffix, so notes_api_token was never
         moved and would have been written to spawn.json with its value. The suffixes are compared on the upper-cased
-        name now (in env_credential_names, so the boot notice folds case too); an empty value still stays whatever
+        name now (in credentials.is_credential_env_name, the predicate credentials.credential_env_names applies for the
+        writer and the boot notice's wrapper env_credential_names inherits, so the boot notice folds case too); an empty
+        value still stays whatever
         its case, and a name whose suffix only begins with the shape stays."""
         val = "synthetic-notes-token-" + uuid.uuid4().hex
         key = "synthetic-notes-key-" + uuid.uuid4().hex
@@ -377,6 +445,45 @@ class SpawnSecrets(unittest.TestCase):
 
 
 class JournalRules(unittest.TestCase):
+    def test_the_host_reads_its_own_journal_off_its_index_and_never_lists_its_directory(self):
+        """THE HOST SIDE of the journal reads by descriptor (the fork PR that follows #814, 2026-09-21): the orphan reader
+        moved to the kernel's module and takes the read descent's descriptor there; the host has no caller of it to
+        convert, because the host reads its own journal through Journal.read_from, off the in-memory index of the
+        segments it wrote itself under a directory owner_only_dir verified (0700, its own uid; Journal.__init__), and
+        lists its directory for nothing. By execution: a segment planted beside the journal's own (journal-100.jsonl,
+        three tagged records, the shape a peer's plant would take) is not read by read_from, which yields the index's
+        records alone, and no directory is listed by the host's reader (os.scandir and os.listdir spied: no call). By
+        structure (ast over kernel/session_host.py): no function of the host's module calls read_journal_dir, and the
+        Journal class makes no directory listing (no glob, rglob, iterdir, scandir or listdir), so the host's reads stay
+        the index's and the owner question is the kernel's alone. The precondition the host relies on instead of an
+        owner question, that no peer can create an entry in its directory, is the directory's 0700 mode, which
+        Journal.__init__ verifies (HostsDir and SocketMode pin it)."""
+        import ast
+        d = tempfile.mkdtemp(); j = sh.Journal(d)
+        self.addCleanup(shutil.rmtree, d, True)
+        for i in range(3):
+            j.append({"type": "assistant", "n": i})
+        with open(Path(d) / "journal-100.jsonl", "w") as f:
+            for i in range(100, 103):
+                f.write(json.dumps({"type": "assistant", "n": i, "peer": True}) + "\n")
+        listed, real_scandir, real_listdir = [], os.scandir, os.listdir
+        with mock.patch.object(os, "scandir", lambda *a, **k: listed.append(("scandir", a)) or real_scandir(*a, **k)), \
+             mock.patch.object(os, "listdir", lambda *a, **k: listed.append(("listdir", a)) or real_listdir(*a, **k)):
+            got = [(o, r["n"], r.get("peer")) for o, r in j.read_from(0)]
+        self.assertEqual(got, [(0, 0, None), (1, 1, None), (2, 2, None)], "the index's records alone: the planted segment is not read")
+        self.assertEqual(listed, [], "the host's reader lists no directory")
+        self.assertEqual(stat.S_IMODE(os.lstat(d).st_mode), 0o700, "the directory the host reads under is owner-only, its constructor's guard")
+        j.close()
+        tree = ast.parse(open(os.path.join(ROOT, "kernel", "session_host.py")).read())
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+        self.assertEqual([ast.unparse(c) for c in calls if (isinstance(c.func, ast.Attribute) and c.func.attr == "read_journal_dir")
+                          or (isinstance(c.func, ast.Name) and c.func.id == "read_journal_dir")], [],
+                         "the host's module calls the orphan reader nowhere")
+        journal = [n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Journal"][0]
+        listing = [ast.unparse(c) for c in ast.walk(journal) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                   and c.func.attr in ("glob", "rglob", "iterdir", "scandir", "listdir")]
+        self.assertEqual(listing, [], "the Journal class lists no directory: its reads are the index's")
+
     def test_offsets_are_ordinals_and_reads_start_anywhere(self):
         d = tempfile.mkdtemp(); j = sh.Journal(d)
         for i in range(5):
@@ -384,7 +491,7 @@ class JournalRules(unittest.TestCase):
         self.assertEqual([o for o, _ in j.read_from(0)], [0, 1, 2, 3, 4])
         self.assertEqual([r["n"] for _, r in j.read_from(3)], [3, 4])
         self.assertEqual(list(j.read_from(5)), [])
-        self.assertEqual([r["n"] for _, r in sh.read_journal_dir(d, 2)], [2, 3, 4], "the orphan reader agrees")
+        self.assertEqual([r["n"] for _, r in orphan_journal(d, 2)], [2, 3, 4], "the orphan reader agrees")
 
     def test_segments_rotate_at_a_turn_boundary_and_acked_ones_are_dropped(self):
         d = tempfile.mkdtemp(); j = sh.Journal(d, segment_bytes=200)
@@ -403,8 +510,8 @@ class JournalRules(unittest.TestCase):
         self.assertEqual([r["n"] for _, r in j.read_from(0)], [7, 8, 9, 10], "a read below the dropped segment skips it")
         # the ORPHAN reader numbers records from the surviving segment's first offset, not from zero (the
         # review's finding 1: an orphan replay after a deletion used to misnumber the very records it exists for)
-        self.assertEqual([(o, r["n"]) for o, r in sh.read_journal_dir(d, 0)], [(7, 7), (8, 8), (9, 9), (10, 10)])
-        self.assertEqual([o for o, _ in sh.read_journal_dir(d, 9)], [9, 10])
+        self.assertEqual([(o, r["n"]) for o, r in orphan_journal(d, 0)], [(7, 7), (8, 8), (9, 9), (10, 10)])
+        self.assertEqual([o for o, _ in orphan_journal(d, 9)], [9, 10])
 
     def test_a_failed_raw_write_leaves_nothing_behind_and_the_numbering_holds(self):
         # the commit-5 review's finding a: a buffered handle kept a failed write's bytes and landed them later at a
@@ -431,14 +538,14 @@ class JournalRules(unittest.TestCase):
         j.append({"type": sh.GAP_TYPE, "offset": 1})          # the writer's gap marker takes offset 1
         j.append({"type": "assistant", "n": 2})
         self.assertEqual([(o, r["n"]) for o, r in j.read_from(0)], [(0, 0), (2, 2)], "the marker is skipped, the numbering holds")
-        self.assertEqual([(o, r["n"]) for o, r in sh.read_journal_dir(d, 0)], [(0, 0), (2, 2)], "the orphan reader agrees")
+        self.assertEqual([(o, r["n"]) for o, r in orphan_journal(d, 0)], [(0, 0), (2, 2)], "the orphan reader agrees")
         # finding b: a marker that fails too becomes a zero-length index entry; index and offsets stay in lockstep
         j.note_gap(3)
         j.append({"type": "result", "n": 4})
         self.assertEqual(j.next_offset, 5); self.assertEqual(len(j._index), 5)
         self.assertEqual([(o, r["n"]) for o, r in j.read_from(2)], [(2, 2), (4, 4)])
         self.assertEqual([(o, r["n"]) for o, r in j.read_from(3, 5)], [(4, 4)], "a replay spanning the hole reads past it")
-        self.assertEqual([(o, r["n"]) for o, r in sh.read_journal_dir(d, 0)], [(0, 0), (2, 2), (4, 4)],
+        self.assertEqual([(o, r["n"]) for o, r in orphan_journal(d, 0)], [(0, 0), (2, 2), (4, 4)],
                          "the orphan reader, with no index, numbers past the unrecorded gap from gaps.json")
 
     def test_a_write_that_will_not_truncate_leaves_the_segment_behind_for_a_fresh_one(self):
@@ -469,7 +576,7 @@ class JournalRules(unittest.TestCase):
         j.append({"type": sh.GAP_TYPE, "offset": 1})
         j.append({"type": "result", "n": 2})
         self.assertEqual([(o, r["n"]) for o, r in j.read_from(0)], [(0, 0), (2, 2)], "the old segment still serves record 0; the new one the rest")
-        self.assertEqual([(o, r["n"]) for o, r in sh.read_journal_dir(d, 0)], [(0, 0), (2, 2)], "the orphan reader numbers across both")
+        self.assertEqual([(o, r["n"]) for o, r in orphan_journal(d, 0)], [(0, 0), (2, 2)], "the orphan reader numbers across both")
 
     def test_the_gap_record_on_disk_survives_a_rewrite_that_fails(self):
         # item 2 (medium): gaps.json was rewritten in place; on the full disk that made the gap the truncation
@@ -1087,8 +1194,9 @@ class SocketMode(unittest.TestCase):
 
     def test_the_temp_name_is_writer_unique_and_the_published_names_length(self):
         """The length proof and the identity proof (the review of this fix, 2026-09-18 and 2026-09-19): the socket path
-        budget is sun_path (SOCK_PATH_MAX, 107 usable bytes on Linux), the published path IS that budget on the sweep's
-        deepest xdist root, so the temp is never longer than the published name; and the temp embeds this process's pid
+        budget is sun_path (SOCK_PATH_MAX, 107 usable bytes on Linux), the published path is what that budget is spent on
+        (the harness's deepest hosts-on root puts it at TMPDIR + 70 bytes; 107 exactly at a 17-byte TMPDIR under the xdist
+        nesting before 2026-09-21), so the temp is never longer than the published name; and the temp embeds this process's pid
         and random digits, so two hosts never share a temp name and a rename can only publish the socket its own host
         bound. Two earlier shapes were longer (a temp inside hosts/<sid>/, then a 0700 directory beside the socket) and
         failed the bind at the budget; the first cut's fixed `<sid8>.tmp` was the shared name."""
@@ -1267,7 +1375,8 @@ class SocketMode(unittest.TestCase):
         self.assertEqual(rc.errno, errno.ENAMETOOLONG)
 
     def test_a_published_path_at_exactly_the_budget_is_served_and_a_client_connects(self):
-        """The other direction of the same pin, in-process: at SOCK_PATH_MAX bytes exactly (the sweep's deepest root) the
+        """The other direction of the same pin, in-process: at SOCK_PATH_MAX bytes exactly (where a long TMPDIR puts the
+        harness's deepest hosts-on root) the
         host binds its temp (which is the same length), publishes 0600, logs socket-ready with both names, and a client
         connect through the published path completes."""
         self._reroot(sh.SOCK_PATH_MAX)
@@ -1630,11 +1739,12 @@ class SocketMode(unittest.TestCase):
         main() so the host-crashed row is the one main writes, over a root whose path carries a marker, with a non-empty
         directory planted at the published path so the rename is the leg that fails (the prelude's unlink cannot remove a
         directory, and asyncio's own bind removes only a socket)."""
-        marker = "m4rk3r" + uuid.uuid4().hex[:6]
         # under the system temp dir (system_tmp), not the run's private root: the case exists to force the RENAME leg, and
         # a published path over the budget (a deep run root plus this marker) is refused at the budget check before it,
-        # so the leg never ran on a long-temp runner (the review's round 2, 2026-09-19)
-        root = tempfile.mkdtemp(prefix=marker + "-", dir=system_tmp())
+        # so the leg never ran on a long-temp runner (the review's round 2, 2026-09-19). The marker is the minted basename
+        # (the prefix a literal, so tests/test_tempdir_hygiene.py's directory scan can read it; the tail makes it unique)
+        root = tempfile.mkdtemp(prefix="m4rk3r-", dir=system_tmp())
+        marker = os.path.basename(root)
         self.addCleanup(shutil.rmtree, root, True)
         self._spec_at(root)
         self.assertLessEqual(len(os.fsencode(str(self.pub))), sh.SOCK_PATH_MAX,
@@ -3415,17 +3525,22 @@ class PreludeRefusalRead(unittest.TestCase):
         the launcher's call site caught HostDirRefused alone, so an OSError from its descent, its host.stderr open, the
         fchmod after it or Popen itself propagated bare to _record_launch_error, whose text prefers the session's stale
         stderr tail, and the card read a PREVIOUS CLI's line with no row and no errno. Four arms, each on a session whose
-        CLI once wrote a stderr line: a real directory standing at hosts/<sid>/host.stderr (EISDIR from the open, no stub);
-        ENOSPC interposed at ht.host_stderr_open; EPERM interposed at os.fchmod inside the launcher alone, with os.open and
+        CLI once wrote a stderr line: a regular file of ours at hosts/<sid>/host.stderr with no write bit (EACCES from the
+        open, no stub; through #814 this arm planted a DIRECTORY and read EISDIR, and since the fork PR that follows #814
+        a directory of ours at the name is refused by kind before any open, the write side's shape question, pinned as a
+        refusal by the next case and in tests/test_host_transport.py WriteOpens; root ignores the write bit, so the arm
+        skips there); ENOSPC interposed at ht.host_stderr_open; EPERM interposed at os.fchmod inside the launcher alone, with os.open and
         os.close recorded to hold host_stderr_open's close-and-reraise on the road (tests-3); and Popen itself raising
         (a launcher that cannot be started, folded in on purpose). Each: CLIConnectionErrorLike with the errno, the error's
         own text, no host.directory-refused row, no process, the error-centre line naming the launcher's arm, and
         _record_launch_error persisting the errno text and not the stale tail. Red at the round-6 head: a bare OSError
         out of the road and the stale tail persisted, on every arm."""
         ht = sb._ht()
-        for arm, code in (("directory-at-host.stderr", errno.EISDIR), ("enospc-at-open", errno.ENOSPC),
+        for arm, code in (("unwritable-file-at-host.stderr", errno.EACCES), ("enospc-at-open", errno.ENOSPC),
                           ("eperm-at-fchmod", errno.EPERM), ("popen-raises", errno.ENOENT)):
             with self.subTest(arm=arm):
+                if arm == "unwritable-file-at-host.stderr" and os.geteuid() == 0:
+                    self.skipTest("root bypasses the write bit")
                 self.setUp()
                 state = tempfile.mkdtemp()
                 self.addCleanup(shutil.rmtree, state, True)
@@ -3441,8 +3556,9 @@ class PreludeRefusalRead(unittest.TestCase):
                 real_open, real_close, real_fchmod = os.open, os.close, os.fchmod
 
                 def launch(sess, spec_path, secret_env=None, arm=arm):
-                    if arm == "directory-at-host.stderr":
-                        (sdir / "host.stderr").mkdir(mode=0o700)
+                    if arm == "unwritable-file-at-host.stderr":
+                        (sdir / "host.stderr").write_text("a previous launch's bytes")
+                        os.chmod(sdir / "host.stderr", 0o400)
                         return real_spawn(sess, spec_path, secret_env)
                     if arm == "enospc-at-open":
                         def full(dirs):
@@ -3485,6 +3601,66 @@ class PreludeRefusalRead(unittest.TestCase):
                 rec = (sb.read_reg(Path(state), SID) or {}).get("launchError") or {}
                 self.assertIn("[Errno %d]" % code, rec.get("text", ""), "the card reads the error, not the stale tail: %r" % (rec,))
                 self.assertNotIn("STALE", rec.get("text", ""))
+
+    def test_a_fifo_or_a_directory_of_ours_at_host_stderr_refuses_the_launch_naming_the_kind_and_nothing_blocks(self):
+        """THE WRITE SIDE at host.stderr on the production road (the fork PR that follows #814, 2026-09-21, building the
+        small-asks item on the two O_WRONLY opens): a FIFO, then a directory, of ours standing at hosts/<sid>/host.stderr
+        under the 0700 directory the helpers leave (a stale kernel-held lease keeps it across launches), planted inside
+        the launcher's stand-in so the spec write has passed. The launcher's own descent and host_stderr_open meet it:
+        the shape question before any open refuses by kind, the launch error names the file and the kind with the
+        kind's remedy, one host.directory-refused row (`file` host.stderr, `fileKind`, no uid, no errno), no process, the
+        CLI never started, the entry standing, and the road back within the bound. RED BEFORE at #814's head: the FIFO
+        arm BLOCKED at the O_WRONLY open inside the road until the watchdog opened a reader end at 5 s, then Popen ran
+        with the FIFO as the host's stderr; the directory arm was EISDIR, a launch error with errno 21 and no row (the
+        previous case's arm through #814)."""
+        ht = sb._ht()
+        for arm, plant, kind in (("fifo", os.mkfifo, "FIFO"), ("directory", lambda p: os.mkdir(p, 0o700), "directory")):
+            with self.subTest(arm=arm):
+                self.setUp()
+                state = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, state, True)
+                self._harness(state)
+                sdir = Path(state) / "hosts" / SID
+                sdir.mkdir(parents=True, mode=0o700)
+                sdir.parent.chmod(0o700)
+                sb.write_lease(state, dict(SpawnWaitMessageArms._STALE_LEASE, sid=SID))    # keeps the directory across the launch
+                real_spawn = self.be._spawn_host
+                released = []
+
+                def launch(sess, spec_path, secret_env=None):
+                    plant(sdir / "host.stderr")
+                    return real_spawn(sess, spec_path, secret_env)
+
+                def release():                                        # the base's road blocks on the FIFO: a reader end lets the case end
+                    try:
+                        released.append(os.open(sdir / "host.stderr", os.O_RDONLY | os.O_NONBLOCK))
+                    except OSError:
+                        pass
+                self.be._spawn_host = launch
+                watchdog = threading.Timer(5.0, release)
+                watchdog.daemon = True
+                watchdog.start()
+                t0 = time.time()
+                try:
+                    msg = self._connect()
+                finally:
+                    watchdog.cancel()
+                    for fd in released:
+                        os.close(fd)
+                self.assertLess(time.time() - t0, 4.0, "the road returned without a reader end: nothing blocked")
+                self.assertEqual(released, [], "the watchdog never fired")
+                self.assertIsInstance(self.last_exc, sb.CLIConnectionErrorLike)
+                self.assertIsNone(getattr(self.last_exc, "errno", None), "a refusal, not a filesystem failure")
+                self.assertEqual(msg, "the session host was not started: host.stderr in host directory %s is a %s, not a regular file. "
+                                      "A host.stderr under hosts/<sid>/ that is a %s, not a regular file, is refused; remove it, or point the "
+                                      "state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)" % (sdir, kind, kind))
+                rows = self._events()
+                self.assertEqual([(r["kind"], r.get("file"), r.get("uid"), r.get("fileKind")) for r in rows],
+                                 [("host.directory-refused", "host.stderr", None, kind)], "one row, naming the file and the kind")
+                self.assertEqual(self.hosts, [], "no host process was started")
+                self.assertFalse(os.path.exists(self.marker), "the CLI never started")
+                st = os.lstat(sdir / "host.stderr").st_mode
+                self.assertTrue(stat.S_ISFIFO(st) if arm == "fifo" else stat.S_ISDIR(st), "the entry stands, untouched")
 
     def test_each_arm_of_the_spawn_road_names_itself_in_the_error_centre_line(self):
         """correctness-4 and kernel-3 (round 6 of the review, 2026-09-20): the handler's one line said the specification
@@ -4029,13 +4205,10 @@ class HostProcess(unittest.TestCase):
 
     def _start(self, sdk=False, host_env=None, **over):
         spec_path, spec = self._spec(**over)
-        env = dict(os.environ, PYTHONUNBUFFERED="1")
-        env.pop("ROMP_SDK_SITE", None)
-        for name in sb.AUTH_ENV_NAMES:          # the host's environment carries a credential only when a test hands one
-            env.pop(name, None)
-        env.update(host_env or {})
+        env = _host_env(host_env)               # the builder the SDK gate's probe runs under too (_host_imports_sdk)
         if sdk:
-            env["ROMP_SDK_SITE"] = str(SDK_SITE)
+            if SDK_SITE is not None:        # the machine venv's site; with none, the host's own interpreter imports the SDK (HOST_SDK)
+                env["ROMP_SDK_SITE"] = str(SDK_SITE)
         else:
             env["ROMP_SDK_SITE"] = os.path.join(self.state, "no-sdk-here")
         host = subprocess.Popen([sys.executable, os.path.join(BIN, "romp-session-host"), spec_path],
@@ -4093,10 +4266,10 @@ class HostProcess(unittest.TestCase):
         Shared by the turn test, the lagging-writer test and the journal-fault test, whose deadlines now fail this way."""
         d = os.path.join(self.state, "hosts", SID)
         deadline = time.time() + timeout
-        journal = list(sh.read_journal_dir(d))
+        journal = list(orphan_journal(d))
         while time.time() < deadline and len(journal) < n:                # loop-ok: the event is the writer's n-th record on disk
             time.sleep(0.005)
-            journal = list(sh.read_journal_dir(d))
+            journal = list(orphan_journal(d))
         if len(journal) < n:
             self.fail("the journal writer never landed %d records within %g s: %d found, at offsets %r"
                       % (n, timeout, len(journal), [o for o, _ in journal]))
@@ -4152,7 +4325,8 @@ class HostProcess(unittest.TestCase):
 
     def test_the_socket_is_served_where_the_published_path_is_exactly_the_budget(self):
         """The real host under a state root padded so hosts/<sid8>.sock is exactly sun_path's usable length (107 bytes on
-        Linux, 103 on macOS): the sweep's xdist nesting puts a served state root there (2026-09-18), and the bind must
+        Linux, 103 on macOS): a served state root sits there at a 37-byte TMPDIR (2026-09-18; at a 17-byte one under the
+        xdist nesting before 2026-09-21), and the bind must
         succeed with the socket 0600 and the kernel side attaching. This is the length bound on the temp name, tested by
         execution; SocketMode's unit case computes it."""
         budget = sh.SOCK_PATH_MAX
@@ -4368,7 +4542,7 @@ class HostProcess(unittest.TestCase):
         k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result", timeout=15)
         kinds = [f["data"]["type"] for f in k.outs()]
         self.assertEqual(kinds[-1], "result")
-        at_the_frame = list(sh.read_journal_dir(os.path.join(self.state, "hosts", SID)))
+        at_the_frame = list(orphan_journal(os.path.join(self.state, "hosts", SID)))
         self.assertLess(len(at_the_frame), len(kinds), "with the writer lagging, the disk trails the socket at the frame (the shape the assertion must not read)")
         journal = self._journal_landed(len(kinds), timeout=20)
         self.assertEqual([r["type"] for _, r in journal], kinds, "and holds every record, in the socket's order, once the writer landed them")
@@ -4723,7 +4897,7 @@ class HostProcess(unittest.TestCase):
         self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", json.dumps(spec), "the spec the host read carries no token")
         k = self._one_turn(sock)
         self.assertEqual(open(seen).read(), "present", "the CLI inherited the token from the host's environment")
-        journal = list(sh.read_journal_dir(os.path.join(self.state, "hosts", SID)))
+        journal = list(orphan_journal(os.path.join(self.state, "hosts", SID)))
         blob = json.dumps(self._hostlog()) + json.dumps([r for _, r in journal]) + json.dumps(k.frames)
         blob += (Path(self.state) / "hosts" / SID / "spawn.json").read_text() + sb.read_lease(self.state, SID).__repr__()
         self.assertNotIn(tok, blob, "the token's value is in no file the host writes, no frame, no lease")
@@ -4768,7 +4942,7 @@ class HostProcess(unittest.TestCase):
         self.assertEqual(open(seen).read(), "absent", "no token anywhere: the probe reads the CLI's real environment")
         k.close()
 
-    @unittest.skipUnless(SDK_SITE, "the SDK venv is not on this machine; the pipe transport covered the host")
+    @unittest.skipUnless(HOST_SDK, "the host's interpreter does not import the SDK and this machine has no SDK venv; the pipe transport covered the host")
     def test_the_sdk_transport_hands_the_hosts_environment_to_the_cli_too(self):
         """The road a real install takes: the SDK's SubprocessCLITransport merges the host's environment under the
         spec's overlay, so the token rides there as well."""
@@ -4782,7 +4956,179 @@ class HostProcess(unittest.TestCase):
         k.recv_until(lambda f: f.get("t") == "exit")
         k.close()
 
-    @unittest.skipUnless(SDK_SITE, "the SDK venv is not on this machine; the pipe transport covered the host")
+    def test_a_host_hidden_from_the_sdk_drives_the_fake_cli_over_the_pipe_transport(self):
+        """The control for the switch above (2026-09-20). Under an interpreter that has the SDK (every CI cell since the
+        workflow installs it), every host these tests spawn takes the SDK transport, whatever ROMP_SDK_SITE says, so the
+        pipe transport, the road a plain venv's host runs, would have no test in CI. This host is hidden from the SDK the
+        way tests/test_session_host_sdk_pin.py's no-SDK control hides it: a site on PYTHONPATH whose sitecustomize.py sets
+        sys.modules["claude_agent_sdk"] = None before the host imports anything, so its find_spec answers None and the
+        launcher falls through to ROMP_SDK_SITE, which _start(sdk=False) points at a path that does not exist. The
+        blocker witnesses its own run (tests/sdk_blocker.py) and the control asserts the witness: without it, an
+        interpreter with no SDK passed this control with the blocker never loaded, the pipe transport being its only road."""
+        site = os.path.join(self.state, "no-sdk-site")
+        os.makedirs(site)
+        with open(os.path.join(site, "sitecustomize.py"), "w") as f:
+            f.write(sdk_blocker.SITECUSTOMIZE)
+        witness = os.path.join(self.state, "blocker-witness")
+        host, sock, spec = self._start(host_env={"PYTHONPATH": site, sdk_blocker.WITNESS_ENV: witness})
+        # the witness question, not the gate's: this host's PYTHONPATH is the blocker's site, so what the blocker hid is
+        # what the interpreter has on its own (tests/test_session_host_sdk_pin.py's no-SDK control asks the same)
+        sdk_blocker.assert_witnessed(self, witness, sdk_blocker.interpreter_imports_sdk())
+        k, hello = self._attach(sock)
+        k.send({"t": "in", "data": self._user("hi sleep=0.1")})
+        k.recv_until(lambda f: f.get("t") == "out" and f["data"].get("type") == "result")
+        self.assertEqual([r["transport"] for r in self._hostlog() if r["kind"] == "cli-spawned"], ["pipe-fallback"],
+                         "the host's built-in pipe transport spawned the CLI: its interpreter saw no SDK")
+        k.send({"t": "end", "grace": 10})
+        k.recv_until(lambda f: f.get("t") == "exit")
+        k.close()
+
+    @unittest.skipUnless(os.environ.get("ROMP_SDK_REQUIRE") == "1",
+                         "the run does not require the SDK (ROMP_SDK_REQUIRE unset): a box's host may run without it")
+    def test_where_the_run_requires_the_sdk_the_hosts_interpreter_imports_it(self):
+        """Under ROMP_SDK_REQUIRE=1, which the workflow's Run pytest step sets after every Python cell installs the pinned
+        SDK (.github/workflows/ci.yml; tests/test_ci_sdk_pin.py pins the line), the host a test spawns imports it and the
+        two SDK-transport cases run. Without this pin a cell whose interpreter lost the SDK (an install that did not
+        reach the interpreter pytest runs, a PYTHONPATH leak in the runner) read green: the two cases skipped, both
+        no-SDK controls passed on the pipe transport, and nothing was red (2026-09-20). Keyed on the switch the run
+        sets, not on GITHUB_ACTIONS: the switch declares the requirement, a platform variable only infers it. Off the
+        switch, a box's host may run without the SDK and this case skips, saying so."""
+        self.assertTrue(HOST_SDK, "ROMP_SDK_REQUIRE=1: this run requires the SDK, and a child of %s does not import "
+                        "claude_agent_sdk, and this runner has no SDK venv: the SDK-transport cases are skipping in this run"
+                        % sys.executable)
+
+    # The gate's probe measures the process that runs (review round 3, 2026-09-20): a host _start spawns inherits this
+    # process's PYTHONPATH, so the probe's child must too. Until this round the probe asked sdk_blocker's witness question,
+    # which drops PYTHONPATH, and gated "no SDK" for a host whose SDK came from PYTHONPATH alone (no sdkvenv for its minor):
+    # under ROMP_SDK_REQUIRE=1 the switch case failed and the two SDK-transport cases skipped. The three cases below are
+    # hermetic, a scratch package standing in for an SDK on PYTHONPATH and the blocker for one hidden there; against the
+    # stripping probe the package case red where the interpreter lacks the SDK (the probe found nothing), the blocker
+    # case where it has one (the probe found the venv's SDK) and the drift case on both, as each docstring states, so
+    # together they red on a box with or without an SDK; the fourth runs the switch case against its refusing input.
+    def test_the_sdk_gate_sees_a_package_the_parents_pythonpath_carries(self):
+        """A claude_agent_sdk package reachable through this process's PYTHONPATH alone (an empty __init__.py in a scratch
+        directory: find_spec is the probe's question, and bin/romp-session-host's _sdk_on_path asks the same one) gates
+        True, since the host _start spawns inherits that PYTHONPATH and finds it. Red before the fix on a venv without the
+        SDK: the probe dropped PYTHONPATH and answered False for a host that would have taken the SDK transport."""
+        stub = os.path.join(self.state, "stub-site")
+        os.makedirs(os.path.join(stub, "claude_agent_sdk"))
+        open(os.path.join(stub, "claude_agent_sdk", "__init__.py"), "w").close()
+        with mock.patch.dict(os.environ, {"PYTHONPATH": stub}):
+            self.assertTrue(_host_imports_sdk(), "the gate's probe must find the package this process's PYTHONPATH carries, "
+                            "as the host it stands for would")
+
+    def test_the_sdk_gate_sees_a_blocker_the_parents_pythonpath_carries(self):
+        """The mirror: tests/sdk_blocker.py's sitecustomize in a directory on this process's PYTHONPATH gates False, since a
+        host spawned with it cannot import the SDK whatever its interpreter has installed. Red before the fix on a venv WITH
+        the SDK: the probe dropped PYTHONPATH and answered True for a host that would have run the pipe transport."""
+        site = os.path.join(self.state, "blocker-site")
+        os.makedirs(site)
+        with open(os.path.join(site, "sitecustomize.py"), "w") as f:
+            f.write(sdk_blocker.SITECUSTOMIZE)
+        with mock.patch.dict(os.environ, {"PYTHONPATH": site}):
+            self.assertFalse(_host_imports_sdk(), "the gate's probe must run under the blocker this process's PYTHONPATH "
+                             "carries, as the host it stands for would")
+
+    # The variables that decide where a child's import resolves, each given a marker value inside the drift case below so
+    # that a drop of one the test's own environment leaves unset shows in its comparison (review round 4, 2026-09-23: on
+    # a non-venv 3.12, dropping PYTHONUSERBASE from the probe flipped the gate from True to False with the one-way check
+    # green). The set was checked against CPython's sys.path initialisation on 2026-09-23, one child per variable reading
+    # sys.path, on a 3.12 venv, the base 3.12 and a 3.14t venv: PYTHONPATH, PYTHONHOME, PYTHONSAFEPATH and
+    # PYTHONPLATLIBDIR changed it on all three; PYTHONEXECUTABLE and __PYVENV_LAUNCHER__ on the two venvs (they move the
+    # executable getpath starts from, and the venv's site-packages dropped out); PYTHONUSERBASE, PYTHONNOUSERSITE and
+    # HOME (the user base where PYTHONUSERBASE is unset) on the base interpreter, where a user site directory exists.
+    # Not marked, each unchanged on all three: PYTHONSTARTUP (read by interactive sessions only), PYTHONCASEOK (how a
+    # name matches on a case-insensitive filesystem, not where the search runs) and VIRTUAL_ENV (CPython does not read
+    # it). Nor APPDATA, the user base on Windows, which no job in ci.yml runs.
+    IMPORT_PATH_VARS = ("PYTHONPATH", "PYTHONHOME", "PYTHONSAFEPATH", "PYTHONPLATLIBDIR", "PYTHONEXECUTABLE",
+                        "__PYVENV_LAUNCHER__", "PYTHONUSERBASE", "PYTHONNOUSERSITE", "HOME")
+
+    def test_the_sdk_probes_child_runs_under_the_environment_start_hands_a_host(self):
+        """The probe's environment and the spawn's are the same keys with the same values, ROMP_SDK_SITE aside, in both
+        directions: the environment the probe's child receives (captured at sdk_blocker's subprocess.run) equals the one
+        _start hands the host (captured at its Popen) with ROMP_SDK_SITE removed, since that key is _start's decision on
+        the host's side alone, taken after _host_env (removed, not required: _start(sdk=True) with no SDK venv, CI's
+        road, adds nothing, and the call here, sdk=False, points it at a path that does not exist). One equality, so a
+        key the probe drops and the spawn keeps is red, and so is a key the spawn alone adds (review round 4, 2026-09-23:
+        the case compared the probe's keys alone, and a probe that dropped HOME, or a spawn that added PYTHONSAFEPATH,
+        read green). Inside the case, every variable in IMPORT_PATH_VARS carries a marker value, so a drop of one that
+        the test's own environment leaves unset is a difference and not two absent keys reading as equal; the markers
+        are asserted to reach both sides, so a builder that dropped one on both sides is red too. Both captures raise
+        before a child starts: _host_imports_sdk builds its dict and calls subprocess.run, and _start writes its spec
+        and builds its dict before its Popen, neither spawning anything earlier, so no process runs under a marker
+        PYTHONHOME. The failure names the keys and never their values: the environment can carry a credential. Keyed
+        on the captured values by execution, never on the two callers sharing a builder."""
+        markers = {name: os.path.join(self.state, "marker-" + name.strip("_").lower()) for name in self.IMPORT_PATH_VARS}
+        seen = {}
+
+        class Captured(Exception):
+            pass
+
+        def capture(slot):
+            def side_effect(*args, **kwargs):
+                seen[slot] = dict(kwargs["env"])
+                raise Captured()
+            return side_effect
+
+        with mock.patch.dict(os.environ, markers):
+            with mock.patch.object(sdk_blocker.subprocess, "run", side_effect=capture("probe")):
+                with self.assertRaises(Captured):
+                    _host_imports_sdk()
+            with mock.patch.object(subprocess, "Popen", side_effect=capture("spawn")):
+                with self.assertRaises(Captured):
+                    self._start()
+        self.assertNotIn("ROMP_SDK_SITE", seen["probe"], "the probe asks what the interpreter and PYTHONPATH give, with no site")
+        for slot in ("probe", "spawn"):
+            lost = sorted(name for name, value in markers.items() if seen[slot].get(name) != value)
+            self.assertEqual(lost, [], "the %s's environment does not carry this process's value of %s: a child started "
+                             "with it may resolve its imports elsewhere" % (slot, ", ".join(lost)))
+        spawn = {k: v for k, v in seen["spawn"].items() if k != "ROMP_SDK_SITE"}
+        probe = seen["probe"]
+        self.assertTrue(spawn == probe, "the probe's child and the host run under different environments (ROMP_SDK_SITE "
+                        "aside; keys named, values withheld): only the host has %r, only the probe's child has %r, the two "
+                        "differ in the value of %r" % (sorted(set(spawn) - set(probe)), sorted(set(probe) - set(spawn)),
+                                                       sorted(k for k in set(spawn) & set(probe) if spawn[k] != probe[k])))
+
+    def test_the_switch_case_fails_a_run_that_requires_the_sdk_when_its_host_cannot_import_it(self):
+        """The switch case above run against ITS refusing input: pytest in a child over that case's node id, HOME at an
+        empty directory (so SDK_SITE is None: no sdkvenv for the child to gate on), tests/sdk_blocker.py's sitecustomize
+        PREPENDED to the PYTHONPATH the child inherits (so no host the child could spawn imports the SDK, whichever venv
+        runs this module) and ROMP_SDK_REQUIRE=1. The child exits non-zero, its FAILED line names the case and its output
+        carries the case's own message. On a venv with the SDK this reds only once the gate's probe reads the spawn's
+        PYTHONPATH (the cases above): with the probe dropping it, the child's gate saw the venv's SDK, HOST_SDK read True
+        and the switch case passed while every host that run spawned took the pipe transport. -p no:anyio as every pytest
+        child the suite spawns passes it, -p no:cacheprovider so the child writes no cache into the tree. The child's
+        environment is the inherited one less every variable whose value the child's env-value redaction would rewrite
+        the case's message with (tests/conftest.py's env_sparing_texts; round 6's ruling B, 2026-09-25): sudo's
+        SUDO_COMMAND for `sudo env ROMP_SDK_REQUIRE=1 python -m pytest ...`, like GNU make's MAKEFLAGS for `make -s test
+        ROMP_SDK_REQUIRE=1`, holds the switch's assignment as a chunk of 16 or more characters, and the child's report
+        read [REDACTED-ENV-VALUE] in place of it, red on a correct verdict. The drop comes before HOME, the switch and
+        the blocker's PYTHONPATH are set, which decide the child's road; the case hands down sudo's shape, and never
+        writes it into this process's environment, whose write hook would note it for every later report here."""
+        message = "ROMP_SDK_REQUIRE=1: this run requires the SDK"
+        sudo = "/usr/bin/env ROMP_SDK_REQUIRE=1 python -m pytest -q tests/test_session_host.py"
+        self.assertNotEqual(redact_env_values(message, (sudo,)), message, "the planted SUDO_COMMAND no longer reaches the "
+                            "redaction: re-shape it")
+        site = os.path.join(self.state, "blocker-site")
+        os.makedirs(site)
+        with open(os.path.join(site, "sitecustomize.py"), "w") as f:
+            f.write(sdk_blocker.SITECUSTOMIZE)
+        home = os.path.join(self.state, "empty-home")
+        os.makedirs(home)
+        node = "%s::%s::%s" % (os.path.relpath(os.path.realpath(__file__), ROOT), type(self).__name__,
+                               self.test_where_the_run_requires_the_sdk_the_hosts_interpreter_imports_it.__name__)
+        env = dict(env_sparing_texts(dict(os.environ, SUDO_COMMAND=sudo), (message,)), HOME=home, ROMP_SDK_REQUIRE="1")
+        env["PYTHONPATH"] = os.pathsep.join([site] + [p for p in (env.get("PYTHONPATH", ""),) if p])
+        p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio", node],
+                           cwd=ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=240)
+        out = p.stdout + p.stderr
+        self.assertNotEqual(p.returncode, 0, "ROMP_SDK_REQUIRE=1 where no host the run spawns imports the SDK must fail the "
+                            "run, not skip or pass: " + out[-3000:])
+        self.assertIn("FAILED %s" % node, out, "the red must be the switch case itself: " + out[-3000:])
+        self.assertIn(message, out, "the red must carry the case's own message: " + out[-3000:])
+        self.assertIn("1 failed", out, "one test, failed, nothing skipped: " + out[-3000:])
+
+    @unittest.skipUnless(HOST_SDK, "the host's interpreter does not import the SDK and this machine has no SDK venv; the pipe transport covered the host")
     def test_the_sdk_transport_drives_the_fake_cli_the_same_way(self):
         host, sock, spec = self._start(sdk=True)
         k, hello = self._attach(sock)
@@ -4806,7 +5152,8 @@ class HostProcess(unittest.TestCase):
         ended by the test and killed by its cleanup if it is not."""
         sid = "7c0e5d1a-3b2f-4e6d-9a8b-000000000315"
         saved_site = os.environ.get("ROMP_SDK_SITE")
-        os.environ["ROMP_SDK_SITE"] = os.path.join(self.state, "no-sdk-here")   # the spawned host inherits it: the pipe transport
+        os.environ["ROMP_SDK_SITE"] = os.path.join(self.state, "no-sdk-here")   # the spawned host inherits it: the pipe transport where
+        # its interpreter has no SDK of its own; where it has one (CI since 2026-09-20) the host runs the SDK transport and the hold is the same
 
         def restore_site():
             if saved_site is None:

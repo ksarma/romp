@@ -1,13 +1,16 @@
 """TABS-FIRST (the user 2026-06-26): the tabOrder push carries name+color per tab so the client can paint the
 WHOLE strip as placeholders up front (no one-by-one pop-in). Every strip sender (_push, on its cycle and as
 the connect push a `ready` triggers; _push_session_now; _confirm_close_now) hands a `tabs` list of {id, name,
-color} alongside the sid `order` to _send_tab_order, the one frame builder's caller. The `ready` handler
+color, emoji, userTodos} alongside the sid `order` to _send_tab_order, the one frame builder's caller. The rows
+come from ONE builder, _tab_meta (2026-09-22); `userTodos` is the count of the session's open user todos, so a tab a
+page holds as a skeleton paints its flag from the strip (tests/test_user_todos_roster.py proves the rows by execution). The `ready` handler
 sends no strip of its own, whichever app's renderer posted it.
 Each sender hands the builder the cycle's liveness map (_live_map(); the fork's per-sender collapse guard left
 with the tmux backend 2026-09-11), and the frame carries the `live` sids that map affirms (T258: the
 pane keeps a live sid the order omits).
 
 """
+import ast
 import inspect
 import json
 import os
@@ -28,11 +31,87 @@ km = load_source("romp_kernel", KPATH)
 
 
 class TabsFirst(unittest.TestCase):
+    # The three strip senders, as the frame builder's docstring names them (_tab_order_frame): the pusher's tabs-first
+    # send (the connect push a `ready` triggers included), the off-cycle session push and the close confirmation. The
+    # tuple is the EXPECTED set; the actual set is DERIVED from the kernel's calls to _send_tab_order by AST
+    # (_strip_senders: every def in the module, methods included), and the census asserts the two equal before it walks
+    # the senders, so a fourth sender that calls the name directly, one that builds its own rows included, is named in
+    # that red (tests-2 and extra6-2, 2026-09-22). A caller through some OTHER road, an alias bound to the name, a
+    # partial, a callback handed the function, is what the derivation cannot attribute to a def, so the same walk
+    # refuses every load of the name outside a call's callee position, naming where it stands (round 1's closing
+    # verifiers, 2026-09-22). The whole-text count on the canonical call spelling further down is a second pin, for
+    # that spelling alone.
+    SENDERS = ("_push", "_push_session_now", "_confirm_close_now")
+
+    @staticmethod
+    def _strip_senders(text):
+        """Every function whose body calls _send_tab_order, by AST over the whole module: the innermost enclosing def (a
+        FunctionDef or an AsyncFunctionDef, a method included) of each call whose callee is the bare name. The second
+        set is every OTHER load of the name (an alias assignment, a partial, a callback argument, a bare reference), as
+        (innermost def, line): a road the caller derivation cannot follow, so the census refuses it rather than miss the
+        sender at its end."""
+        out, indirect = set(), set()
+
+        def visit(node, enclosing):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                enclosing = node.name
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_send_tab_order":
+                out.add(enclosing or "<module>")
+            for ch in ast.iter_child_nodes(node):
+                if isinstance(ch, ast.Name) and ch.id == "_send_tab_order" and isinstance(ch.ctx, ast.Load) \
+                        and not (isinstance(node, ast.Call) and node.func is ch):
+                    indirect.add((enclosing or "<module>", ch.lineno))
+                visit(ch, enclosing)
+        visit(ast.parse(text), None)
+        return out, indirect
+
+    @staticmethod
+    def _tab_meta_bindings(fn):
+        """Every `tab_meta = ...` binding in `fn`, by AST rather than by spelling: per binding, (calls to _tab_meta in
+        the bound value, row literals in it: a dict display or a list comprehension)."""
+        out = []
+        for n in ast.walk(ast.parse(inspect.getsource(fn))):
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) \
+                    and n.targets[0].id == "tab_meta":
+                calls = [x for x in ast.walk(n.value) if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)
+                         and x.func.id == "_tab_meta"]
+                literals = [x for x in ast.walk(n.value) if isinstance(x, (ast.Dict, ast.ListComp))]
+                out.append((len(calls), len(literals)))
+        return out
+
     def test_push_taborder_carries_name_and_color_per_tab(self):
+        # 2026-09-22: the rows moved into _tab_meta, the ONE row builder (name, colour, emoji and the count of the
+        # session's open user todos, so a tab a page holds as a skeleton paints its flag from the strip;
+        # tests/test_user_todos_roster.py proves the rows by execution over all three senders). The census here is over
+        # the SENDERS, derived from _send_tab_order's callers first: each binds its tab_meta from the helper exactly once
+        # and builds no row literal of its own, and the kernel has no other binding of that name (a fourth inline dict
+        # would drop a field again).
+        text = open(KPATH).read()
+        senders, indirect = self._strip_senders(text)
+        self.assertEqual(senders, set(self.SENDERS),
+                         "the strip's senders are _send_tab_order's callers, derived: a fourth caller is named here")
+        self.assertEqual(indirect, set(),
+                         "every load of _send_tab_order is a call's callee: an alias, a partial or a callback would carry a sender "
+                         "this derivation cannot attribute, so it is refused where it stands (innermost def, line)")
+        planted = text + ('\n\ndef _probe_fourth_sender(c, order, live):\n'
+                          '    _send_tab_order(c, order, [{"id": s} for s in order], live)\n'
+                          '\n\nclass _Probe:\n    def sender_method(self, c, order, live):\n'
+                          '        _send_tab_order(c, order, [], live)\n')
+        self.assertEqual(self._strip_senders(planted)[0] - set(self.SENDERS), {"_probe_fourth_sender", "sender_method"},
+                         "the walk names a planted sender, a method included (the census lists a plant, by execution)")
+        # ...and a planted alias (the round-1 verifiers' shape: `_st = _send_tab_order` at module level, then `_st(...)` in a
+        # def) is refused at the alias, named by the def around it and its line, since its caller is invisible to the walk
+        aliased = text + '\n\n_st = _send_tab_order\n\n\ndef _probe_alias_sender(c, order, live):\n    _st(c, order, [{"id": s} for s in order], live)\n'
+        a_senders, a_indirect = self._strip_senders(aliased)
+        self.assertEqual(a_senders, set(self.SENDERS), "the alias's caller is not a caller the walk sees: what the refusal exists for")
+        self.assertEqual(a_indirect, {("<module>", text.count("\n") + 3)}, "the alias is refused where it stands, by def and line")
+        for name in self.SENDERS:
+            self.assertEqual(self._tab_meta_bindings(getattr(km, name)), [(1, 0)],
+                             "%s binds tab_meta once, from _tab_meta, with no row literal of its own" % name)
+        self.assertEqual(text.count("tab_meta = _tab_meta(chat_list)"), len(self.SENDERS),
+                         "the helper's callers are the senders and nothing else")
+        self.assertEqual(text.count("tab_meta = [{"), 0, "no inline tab_meta rows anywhere in the kernel")
         src = inspect.getsource(km._push)
-        self.assertIn('tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),\n'
-                      '                             "emoji": _name_emoji(s["sid"])} for s in chat_list]', src,
-                      "the periodic push builds a name+color+emoji list per tab")
         # 2026-09-07: the frame itself moved into _tab_order_frame — the ONE builder (T258: it carries the
         # affirmed-live sids; and a reconnecting client's skeleton list) — so the pusher hands its order + meta
         # + liveness to _send_tab_order, which builds the frame per client

@@ -767,11 +767,11 @@ test("recordFrames connects as the page does, sends only the ready handshake, an
     assert.equal(u.searchParams.get("delta"), "1");
     assert.equal(u.searchParams.get("caps"), "feedDelta,readyGate", "the feed page's capabilities (APP_CAPS), as the shim's query announces them");
     assert.match(u.searchParams.get("iid"), /^[0-9a-f-]{36}$/);
-    assert.equal(u.searchParams.get("token"), null, "no token in the query");
+    assert.equal(u.searchParams.get("token"), token, "a non-browser client dials with the serve token in the query");
     const h = k.seen.requests[0].headers;
-    assert.equal(h.cookie, `romp_token=${token}`, "the browser's credential: the cookie");
+    assert.equal(h.cookie, undefined, "no cookie: the bench holds no browser session");
     assert.equal(h.origin, `http://127.0.0.1:${k.port}`, "with a same-origin Origin");
-    assert.equal(h["x-romp-token"], undefined, "and no header token");
+    assert.equal(h["x-romp-token"], undefined, "and no header token (the query form is what the dial carries)");
     assert.deepEqual(k.seen.messages.map((m) => JSON.parse(m)), [{ type: "ready" }], "the ready handshake and nothing else");
     const back = loadFrames(out);
     assert.equal(back.meta.mode, "record");

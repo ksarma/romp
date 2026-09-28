@@ -268,7 +268,7 @@ const store = new Map<string, string>();
 // ── the viewer stand-in: a Raw body, the seam as closures, a file whose mtime the view tracks ──────
 type World = {
   ctx: FileViewActionCtx; posted: any[]; main: El; body: El;
-  hooks: { rendered: Array<() => void>; close: Array<() => void> };
+  hooks: { rendered: Array<() => void>; close: Array<() => void>; landed: Array<() => void> };   // landed: the seam's onLanded (an svg picture's landing, before or after its paint)
   disk: string; diskMtime: string; viewMtime: string; reloads: number; scrolls: number[]; modes: string[];
   mtimes: Record<string, string>;
   /** The held reload's landing (deferReload): the bytes and mtime now on disk, repainted, onRendered fired. */
@@ -322,7 +322,7 @@ function world(over: WorldOpts = {}): World {
   rows(code, text);
   const w = {
     posted: [] as any[], main, body,
-    hooks: { rendered: [] as Array<() => void>, close: [] as Array<() => void> },
+    hooks: { rendered: [] as Array<() => void>, close: [] as Array<() => void>, landed: [] as Array<() => void> },
     disk: text, diskMtime: F1, viewMtime: F1, reloads: 0, scrolls: [] as number[], modes: [] as string[], mtimes: {} as Record<string, string>,
     landReload: null as (() => void) | null, failReload: null as ((words: string) => void) | null, viewError: null as string | null, hookErrors: [] as unknown[],
     editing: false,
@@ -345,7 +345,7 @@ function world(over: WorldOpts = {}): World {
     path: ABS, sid: SID, todoId: null,
     body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, error: () => w.viewError, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
-    onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
+    onRendered: (cb) => { w.hooks.rendered.push(cb); }, onLanded: (cb) => { w.hooks.landed.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
     post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
@@ -801,6 +801,76 @@ test("between a reject's reply and its reload the cards wear the romp loader at 
 });
 
 // ── the bytes row over a pane whose mtime is the status's, and over the earlier text (Slice 7 item 3, the review's round 1) ──
+
+test("an svg picture's landing (the seam's onLanded, fired while the picture's own load is still out) ends the panel's wait for a reload's bytes only when the view's mtime is the status's: a landing of older bytes leaves the loader up, and the landing of the status's bytes takes it down, with no row at the deadline", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const w = world({ deferReload: true }); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ hunks: [h1, h3, h5] }));
+  assert.equal(w.hooks.landed.length, 1, "the panel listens at the seam's onLanded");
+  act(card(aside, "chg:h1")!, "fcreject", "h1")!.click(); await flush();
+  w.disk = DOC.replace("cut", "reduced"); w.diskMtime = F11;
+  const after = status({ fileMtimeNs: F11, storeMtimeNs: S12, hunks: [shifted(h3, 4), shifted(h5, 4)],
+    store: { ...NO_COMMENTS, suggestions: [SUGG[1]], comments: [passage] }, unsent: { comments: [passage.id], replies: [], accepted: 0, rejected: 1, watermark: null } });
+  answer(w, after, lastOf(w, "fileComments", "reject"), { rejected: ["h1"] }); await flush(); await flush();
+  assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the wait for the reload's bytes is up");
+  const landed = (mt: string): void => { w.viewMtime = mt; for (const cb of w.hooks.landed) cb(); };
+  landed("1757145600000000007");                        // bytes older than the status's land (mtimeNs() moves, to another mtime)
+  await flush();
+  assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "a landing of older bytes leaves the wait up: the loader stays");
+  landed(F11);                                          // the status's bytes land
+  await flush();
+  assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the landing of the status's bytes ends the wait: the loader goes, the picture's own load still out");
+  t.mock.timers.tick(15000); await flush();
+  assert.equal(aside.querySelectorAll('.fc-err[data-slot="bytes"]').length, 0, "and the deadline files no row");
+});
+
+test("the change cards read the text the body shows: from an svg picture's landing (the seam's onLanded) to the paint of its bytes, each card keeps the tags and buttons it had before the landing, the loader gone at the landing and no row at the deadline, and moves at the paint; when the paint comes first (a picture the page still holds), the landing after it changes nothing", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const after = status({ fileMtimeNs: F11, storeMtimeNs: S12, hunks: [shifted(h3, 4), shifted(h5, 4)],
+    store: { ...NO_COMMENTS, suggestions: [SUGG[1]], comments: [passage] }, unsent: { comments: [passage.id], replies: [], accepted: 0, rejected: 1, watermark: null } });
+  const shows = (aside: El): Record<string, { tags: string[]; buttons: string[]; reveal: string | null }> => {
+    const out: Record<string, { tags: string[]; buttons: string[]; reveal: string | null }> = {};
+    for (const key of ["chg:h3", "chg:h5"]) {
+      const c = card(aside, key);
+      assert.ok(c, key + ": the card is up");
+      const rv = act(c!, "fcreveal");
+      out[key] = { tags: tags(c!), buttons: texts(c!.querySelectorAll(".fc-actions button")), reveal: rv ? rv.title : null };
+    }
+    return out;
+  };
+  for (const order of ["the landing, then the paint", "the paint, then the landing"]) {
+    const w = world({ deferReload: true }); t.after(() => w.close());
+    const { aside } = await openPanel(w, status({ hunks: [h1, h3, h5] }));
+    assert.equal(w.hooks.landed.length, 1, order + ": the panel listens at the seam's onLanded");
+    act(card(aside, "chg:h1")!, "fcreject", "h1")!.click(); await flush();
+    w.disk = DOC.replace("cut", "reduced"); w.diskMtime = F11;
+    answer(w, after, lastOf(w, "fileComments", "reject"), { rejected: ["h1"] }); await flush(); await flush();
+    assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), order + ": the wait for the reload's bytes is up");
+    const before = shows(aside);
+    assert.deepEqual(before["chg:h5"], { tags: [], buttons: ["Accept", "Reject"], reveal: null }, order + ": the premise: the view's bytes are not the status's, so the insertion's card claims no tag, no Reveal and no Comment on this change");
+    const landed = (): void => { w.viewMtime = F11; for (const cb of w.hooks.landed) cb(); };   // mtimeNs() the landed mtime; the body still shows the text before
+    if (order === "the landing, then the paint") {
+      landed(); await flush();
+      assert.equal(aside.querySelectorAll(".fc-load").length, 0, order + ": the landing ends the wait: the loader goes");
+      assert.deepEqual(shows(aside), before, order + ": between the landing and the paint each card keeps its tags and buttons (the insertion gains no not shown tag, no Reveal and no Comment on this change, and the deletion's Reveal no line of the text before, all of which the paint would take back)");
+      t.mock.timers.tick(15000); await flush();
+      assert.equal(aside.querySelectorAll('.fc-err[data-slot="bytes"]').length, 0, order + ": the deadline files no row");
+      assert.deepEqual(shows(aside), before, order + ": and the cards still stand as before the landing");
+      w.landReload!(); await flush(); await flush();   // the paint of the landed bytes
+    } else {
+      w.landReload!(); await flush(); await flush();   // the paint first, its onRendered with the landed mtime
+      const painted = shows(aside);
+      landed(); await flush();
+      assert.deepEqual(shows(aside), painted, order + ": a landing told after its paint changes no card");
+    }
+    const now = shows(aside);
+    assert.deepEqual(now["chg:h5"], { tags: [], buttons: ["Accept", "Reject", "Comment on this change"], reveal: null }, order + ": after the paint the insertion's mark is painted over the new text, so its card offers Comment on this change and no Reveal");
+    assert.ok(now["chg:h3"].reveal !== null && /\(line \d+\)/.test(now["chg:h3"].reveal!), order + ": the deletion's Reveal names its line in the new text; got " + now["chg:h3"].reveal);
+    assert.equal(marksOf(w, "h5").length, 1, order + ": the insertion's mark over the new text");
+    assert.equal(aside.querySelectorAll(".fc-load").length, 0, order + ": no loader");
+    assert.deepEqual(w.hookErrors, []);
+  }
+});
 
 test("a picture's landing moves mtimeNs() to the status's mtime BEFORE its bytes decode (file-view.ts assigns the mtime ahead of the Blob branch; the img's error fires imgFailed later), so the pane has the status's mtime under it: the row bytesFailed files at that paint stands, with the pane's sentence and Reload, the loader gone, through a status over the pane and the deadline's tick; a Reload whose bytes decode takes it away", async (t: TestContext) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });

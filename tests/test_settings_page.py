@@ -123,8 +123,11 @@ class Page(unittest.TestCase):
         _lacks(self, "id=pane-spin", page, "nothing loads to wait for")
         _lacks(self, "/dist/feed.js", page, "the feed bundle is not this page's")
         _lacks(self, "rel=manifest", page, "a page, not an install target")
-        _has(self, 'if p == "/settings":', SRC)
-        _has(self, "_settings_page()", SRC)
+        # the page is dispatched off the shared route table (_PAGE_RENDERERS) do_GET reads, which the
+        # auth classifier reads too, so the route maps to its renderer and do_GET serves it from there
+        self.assertIs(km._PAGE_RENDERERS.get("/settings"), km._settings_page,
+                      "the /settings route maps to _settings_page in the shared route table")
+        _has(self, "_PAGE_RENDERERS.get(p)", SRC)
 
     def test_the_page_is_served_on_its_route(self):
         import threading

@@ -14,7 +14,9 @@ test, as they stand since 2026-09-08:
     the session picker's exact fallback: an explicit pick wins; otherwise the key when Claude Code's
     settings for this process's cwd carry an apiKeyHelper (_key_available: read, never run), else login.
   * _judge_env strips ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN and the 1Password
-    CLI's own names from EVERY child env. A key-billed call injects nothing back: the child resolves the
+    CLI's own names, as 1Password spells them (the boot check's exact classifier, not the case-folding
+    shape rule the env doors judge by: a lowercase op_* and every other *_TOKEN name ride), from EVERY
+    child env. A key-billed call injects nothing back: the child resolves the
     helper itself. A login-billed call gets the claimed login tokens back (_LOGIN_AUTH_ENV_FN, wired by the
     kernel to sdk_backend.startup_auth_env; the environment standalone).
   * _judge_cmd appends `--settings {"apiKeyHelper": ""}` for a login-billed call only: the helper
@@ -64,7 +66,10 @@ HELPER_OFF = ["--settings", '{"apiKeyHelper": ""}']   # the login-billed call's 
 
 
 def _op_names():
-    """Every 1Password CLI name the judge boundary strips: the fixed names plus one under the prefix."""
+    """The 1Password CLI names the judge boundary strips, as 1Password spells them: the fixed names plus one under
+    the prefix. Exact-case, like the boot check's classifier (credentials.is_op_env_name), not the case-folding
+    shape rule the env doors judge by (review round 2 of the env-pick door, 2026-09-19: a lowercase op_* spelling
+    rides a judge child, as it boots)."""
     return tuple(jd._cred.OP_ENV_NAMES) + (jd._cred.OP_ENV_PREFIX + "acct",)
 
 
@@ -290,6 +295,23 @@ class JudgeEnvBilling(_JudgeAuthBase):
                     continue
                 self.assertNotIn(name, env, "%s rode a %s-billed child" % (name, auth))
             self.assertEqual(env.get("ROMP_SUMMARIZING"), "1", "the rest of the env contract is untouched")
+
+    def test_the_op_scrub_is_exact_so_a_lowercase_op_name_and_every_other_token_name_ride(self):
+        """The judge child's scrub is the boot check's exact classifier (credentials.is_op_env_name's spelling), not
+        the case-folding shape rule the env doors judge by (review round 2 of the env-pick door, 2026-09-19): folding
+        case would strip a lowercase op_* the boot check lets ride, and the shape rule would strip every *_TOKEN, the
+        control token the hooks read among them. Pinned by value on what rides and by absence on what goes (the
+        mutation pass of review round 3, 2026-09-19: both wider scrubs stayed green under the stripped-names pins)."""
+        rides = {"op_session_acct": AMBIENT, "op_account": AMBIENT, "NOTES_API_TOKEN": AMBIENT,
+                 "ROMP_SERVE_TOKEN": "synthetic-control-value"}
+        goes = _op_names()
+        for auth in ("key", "login"):
+            with patch.dict(os.environ, dict(rides, **{name: AMBIENT for name in goes})):
+                env = jd._judge_env("triage", auth)
+            for name in goes:
+                self.assertNotIn(name, env, "%s, as 1Password spells it, rode a %s-billed child" % (name, auth))
+            for name, value in rides.items():
+                self.assertEqual(env.get(name), value, "%s is not the scrub's: it rides a %s-billed child" % (name, auth))
 
     def test_a_key_billed_child_gets_nothing_back_even_when_the_wire_has_login_tokens(self):
         # before 2026-09-08 an unkeyed key-billed child was handed the login tokens as a fallback

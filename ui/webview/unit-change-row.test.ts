@@ -67,6 +67,54 @@ test("the tail unit's own change files the existing tailchange row and not this 
   assert.deepEqual(mixed.map((x) => [x.cls, x.dh, x.fromTail]), [["turn turn-assistant", 10, 1]]);
 });
 
+test("a hover's rail band as the thread's last child is not the tail when the unit index is given: the real tail unit still files nothing, a unit above it counts units to the real tail, and the rail's label names the real tail (PR E, the maintainer's round 2 ruling)", () => {
+  // drawRailBand appends the band to the thread with no data-unit; under the old spacer rule it became the tail, so the tail unit filed
+  // unitchange rows it is meant to skip, fromTail fell back from units to child distance, and the tailchange row named the band
+  const w = window();
+  const band: U = { className: "rail-band rail-band-local" };
+  const children = [w.top, w.a, w.b, w.c, band, w.bot];
+  w.heights.set(band, 4);
+  assert.deepEqual(unitChanges([{ target: w.c, height: 350 }], children, w.heights, unitOf), [], "the tail unit is still the rail's, band or no band");
+  const above = unitChanges([{ target: w.b, height: 260 }], children, w.heights, unitOf);
+  assert.deepEqual(above.map((x) => [x.cls, x.dh, x.fromTail]), [["turn turn-assistant", 60, 1]], "one unit above the real tail, whatever stands after it");
+  assert.equal(tailLabel(children, (c) => unitOf(c) != null), "turn turn-tool", "the rail's label names the real tail (render.ts passes unitOfNode's predicate)");
+  assert.equal(tailLabel(children), "rail-band rail-band-local", "…where the spacer rule alone names the band");
+  // with no unit index the old rule stands: the band is the last non-spacer child, and the tool row above it files by child distance
+  const byChild = unitChanges([{ target: w.c, height: 380 }], children, w.heights);
+  assert.deepEqual(byChild.map((x) => [x.cls, x.dh, x.fromTail]), [["turn turn-tool", 30, 1]], "no unit index: the spacer rule, the band the tail (kept for callers that pass none)");
+});
+
+test("a view with no unit-carrying child files nothing when the unit index is given, as the spacer rule did: the empty transcript's placeholder alone, and the deferred build's loading hint alone (the maintainer's round 3 ruling A: the unit-aware scan left tail at -1 and the pane's unitOf threw on children[-1])", () => {
+  // the pane's unitOf reaches into dataset (render.ts ensureView: `(n as HTMLElement).dataset?.unit`, the `?.` guarding dataset and not n), so
+  // an undefined child THROWS rather than answering undefined: the predicate here has the same shape on purpose, and says so, so a scan that
+  // reads children[tail] with tail at -1 is a red here and not a quiet undefined
+  type N = { className: string; dataset: { unit?: string } };
+  const paneUnitOf = (n: N) => { const u = n.dataset?.unit; return u != null && u !== "" ? Number(u) : undefined; };
+  assert.throws(() => paneUnitOf(undefined as unknown as N), TypeError, "the predicate is production-shaped: an undefined child throws");
+  const placeholder: N = { className: "tx-empty", dataset: {} };   // syncViewInner's placeholder for a zero-event session; its swirl removes itself on error, a height change
+  const h1 = new Map<N, number>([[placeholder, 120]]);
+  assert.deepEqual(unitChanges([{ target: placeholder, height: 96 }], [placeholder], h1, paneUnitOf), [], "the placeholder shrinking: no unit-carrying child, so no tail unit and nothing filed (the rail's row names the change)");
+  assert.equal(h1.get(placeholder), 96, "…and its baseline moved on, as for every observed child");
+  const loader: N = { className: "tx-loading", dataset: {} };   // showActive's loading hint: appended to an EMPTY view (render.ts appends it under childNodes.length === 0), so it is the view's only child, never under a spacer, for the frame its heavy build is deferred (the author's fixer pass over pass 4: the pinned world had it under a spacer, a shape the pane never draws)
+  const h2 = new Map<N, number>([[loader, 40]]);
+  assert.deepEqual(unitChanges([{ target: loader, height: 64 }], [loader], h2, paneUnitOf), [], "the loading hint alone, growing: no unit-carrying child, so no tail unit and nothing filed");
+  assert.deepEqual(unitChanges([{ target: loader, height: 80 }], [loader], h2), [], "…and with no predicate the loader is the tail under the spacer rule, whose own change is the rail's: nothing filed either way");
+});
+
+test("a foreign child below the tail as the ENTRY (a hover's band re-sized by the rail's repaint): no row and never a negative fromTail, where the spacer rule skipped it and the unit-aware scan filed it at tail minus index (the maintainer's round 3 ruling A, the second face)", () => {
+  const w = window();
+  const band: U = { className: "rail-band rail-band-local" };
+  const children = [w.top, w.a, w.b, w.c, band, w.bot];
+  w.heights.set(band, 4);
+  assert.deepEqual(unitChanges([{ target: band, height: 8 }], children, w.heights, unitOf), [], "the band is neither a unit nor the tail: no row (at the head the row carried fromTail -1, the value BOX_FROM_TAIL reserves for a box outside the thread)");
+  assert.equal(w.heights.get(band), 8, "its baseline moves on");
+  // the sign, over the units: a unit above the tail counts units (positive), the tail's own divider 0 (the case above), and no thread child is
+  // ever below 0, since the units are in order and the tail is the last of them
+  const rows = unitChanges([{ target: w.a, height: 90 }, { target: w.b, height: 210 }, { target: band, height: 12 }], children, w.heights, unitOf);
+  assert.deepEqual(rows.map((x) => [x.cls, x.fromTail]), [["turn turn-user", 2], ["turn turn-assistant", 1]], "the units file, the band does not");
+  assert.ok(rows.every((x) => x.fromTail >= 0), "fromTail is how many units above the tail a unit sits: never negative");
+});
+
 test("spacers, units that left the window and a window with no tail file nothing", () => {
   const w = window();
   assert.deepEqual(unitChanges([{ target: w.top, height: 4483 }], w.children, w.heights), [], "a spacer re-estimate has its own spacer row");
@@ -111,24 +159,30 @@ test("render.ts watches #content's non-thread boxes: appear, change in place and
 test("render.ts wires one observer per view over every unit, through the mutation observer, into the capped diag path", () => {
   const ev = RENDER.split("function ensureView(id: string): View {")[1].split("\n}")[0];
   assert.match(RENDER, /import \{[^}]*\bunitChangeRow\b[^}]*\bunitChanges\b[^}]*\} from "\.\/scroll-write";/);
-  assert.match(RENDER, /function scrollDiagRow\(kind: "scrollwrite" \| "scrollgesture" \| "tailchange" \| "spacer" \| "tailmut" \| "unitchange" \| "regionask" \| "landmiss", data: any\): void \{/);
+  assert.match(RENDER, /function scrollDiagRow\(kind: "scrollwrite" \| "scrollgesture" \| "tailchange" \| "spacer" \| "spacer-dropped" \| "tailmut" \| "unitchange" \| "regionask" \| "landmiss", data: any\): void \{/);
   assert.match(RENDER, /uo\?: ResizeObserver; uh\?: WeakMap<Element, number>; ro\?: ResizeObserver; mo\?: MutationObserver; \}/, "the View carries the unit observer and its heights");
   // a hidden view's units measure 0x0 on hide and their full height on re-show: neither is a change (the review's
   // find: one switch back would have filed a row per unit and burnt the minute's cap). The hide forgets baselines
   // and files nothing; a width change (every unit reflows) refreshes them and files nothing; then the fold, BEFORE
   // the active gate, so an inactive view's baselines stay current
   const uo = ev.split("v.uo = new ResizeObserver((entries) => {")[1].split("\n      });")[0];
-  assert.match(uo, /^[\s\S]*?if \(view3\.el\.style\.display === "none"\) \{ for \(const e of entries\) unitHeights\.delete\(e\.target\); return; \}/, "the hide guard is the first statement");
-  assert.match(uo, /const w = view3\.el\.clientWidth;\s*\n\s*if \(w !== unitW\) \{ unitW = w; for \(const e of entries\) unitHeights\.set\(e\.target, e\.contentRect\?\.height \?\? 0\); return; \}/, "a reflow refreshes baselines and files nothing");
+  // the hide guard is the first statement after the width read, and a ZERO width is the hide (an ancestor's display:none: the view's own
+  // display is still "" and every unit arrives at 0; PR E, the author's pass 0, high): the baselines are forgotten and nothing is measured
+  const code = uo.replace(/\/\/[^\n]*/g, "").trim();
+  assert.match(code, /^const w = view3\.el\.clientWidth;\s*\n\s*if \(view3\.el\.style\.display === "none" \|\| w === 0\) \{ for \(const e of entries\) unitHeights\.delete\(e\.target\); return; \}/, "the hide guard (own display, or no width) is the first statement");
+  // the heights recorded are border boxes (entryBoxHeight: the height offsetHeight reports, so the window's per-turn figure stands for rows as
+  // they lay out), and a reflow re-measures the window's figures (PR E; spacer-measure.test.ts drives the measure)
+  assert.match(uo, /if \(w !== unitW\) \{ unitW = w; for \(const e of entries\) unitHeights\.set\(e\.target, entryBoxHeight\(e\)\); view3\.measureDue = true; measureUnits\(view3\); takeMeasureAtBottom\(view3\); return; \}/, "a reflow refreshes baselines, re-measures (a bottom reader's paint is asked for) and files nothing");
   assert.ok(uo.indexOf('display === "none"') < uo.indexOf("w !== unitW") && uo.indexOf("w !== unitW") < uo.indexOf("const changes = unitChanges("), "hide, then reflow, then the fold");
-  assert.match(uo, /const changes = unitChanges\(entries\.map\(\(e\) => \(\{ target: e\.target, height: e\.contentRect\?\.height \?\? 0 \}\)\), view3\.el\.children, unitHeights, unitOf\);\s*\n\s*const content = document\.getElementById\("content"\);\s*\n\s*if \(!content \|\| activeId !== id \|\| !view3\.shown\) return;/,
-    "the fold runs BEFORE the active/shown gate, so an inactive view's baselines stay current");
+  assert.match(uo, /const changes = unitChanges\(entries\.map\(\(e\) => \(\{ target: e\.target, height: entryBoxHeight\(e\) \}\)\), view3\.el\.children, unitHeights, unitOf\);\s*\n\s*measureUnits\(view3\); takeMeasureAtBottom\(view3\);\s*\n\s*const content = document\.getElementById\("content"\);\s*\n\s*if \(!content \|\| activeId !== id \|\| !view3\.shown\) return;/,
+    "the fold and the measure run BEFORE the active/shown gate, so an inactive view's baselines and figures stay current");
   assert.match(ev, /const unitOf = \(n: Element\) => \{ const u = \(n as HTMLElement\)\.dataset\?\.unit; return u != null && u !== "" \? Number\(u\) : undefined; \};/, "fromTail counts the pane's data-unit");
   assert.match(ev, /scrollDiagRow\("unitchange", unitChangeRow\(id, c\.dh, c\.cls, c\.fromTail, view3\.stick, atBottom\(content\), content\.scrollHeight, content\.clientHeight\)\)/);
   assert.match(ev, /rec\.addedNodes\.forEach\(\(n\) => \{ if \(n instanceof Element\) view2\.uo\?\.observe\(n\); \}\);/, "units entering the window are observed");
   assert.match(ev, /rec\.removedNodes\.forEach\(\(n\) => \{ if \(n instanceof Element\) \{ view2\.uo\?\.unobserve\(n\); unitHeights\.delete\(n\); \} \}\);/, "units leaving are dropped");
-  // the rail's own filing is untouched: the tail's change still files tailchange from the view observer
-  assert.match(ev, /if \(content && lastH >= 0 && activeId === id && view\.shown && h !== lastH\)\s*\n\s*scrollDiagRow\("tailchange", tailChangeRow\(id, h - lastH, tailLabel\(view\.el\.children\)/);
+  // the rail's own filing is untouched: the tail's change still files tailchange from the view observer, the tail read by the one unit
+  // predicate (unitOfNode, PR E, the maintainer's round 2 ruling: a hover's band is not the tail)
+  assert.match(ev, /if \(content && lastH >= 0 && activeId === id && view\.shown && h !== lastH\)\s*\n\s*scrollDiagRow\("tailchange", tailChangeRow\(id, h - lastH, tailLabel\(view\.el\.children, \(c\) => unitOfNode\(c\) >= 0\)/);
   assert.equal((RENDER.match(/v\.uo\?\.disconnect\(\); v\.ro\?\.disconnect\(\); v\.mo\?\.disconnect\(\); v\.el\.remove\(\);/g) || []).length, 2, "both view-removal sites disconnect it");
   assert.equal((RENDER.match(/"unitchange"/g) || []).length, 3, "the kind in the router's union, the unit filing and the box filing");
   assert.doesNotMatch(ev.split("v.uo = new ResizeObserver")[1].split("v.mo = new MutationObserver")[0], /writeScroll|scrollTop =/, "a row only: the unit observer never writes");
