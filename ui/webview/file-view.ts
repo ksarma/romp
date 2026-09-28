@@ -673,6 +673,15 @@ function openFromViewer(how: TrailHow, path: string, sid: string | null, at: At 
   trailNext = how;
   try { openLinkedFile(path, sid, at); } finally { trailNext = null; }
 }
+// A step from a KEY on Back or Forward (Enter or Space on the focused button: the browser's synthesized click carries detail 0,
+// a pointer's click its count) keeps the keyboard on the step's button, so the next press steps again (the file review's round
+// 19, ui-1: the new file's body took it, and a keyboard user reached Back again with about ten Shift+Tab presses per step, in a
+// dashboard pane on Linux and Windows the only keyboard way to step, the shell taking Alt+Left and Alt+Right). The button's
+// click sets this tag around its call to the door, as the door sets trailNext, and clears it whatever happened; openFileView
+// reads and clears it beside trailNext, and its first landing hands the keyboard to the new bar's button of the step's
+// direction in place of the body (keyboardOnLanding). The chords (onNavKey), shortcuts tied to no focused button, and a
+// pointer's click never set it: they land in the new file's body as every open does.
+let keyStepNext = false;
 /** The figure's open in THIS viewer (openFigure, L3 of the link-navigation follow-on): openFileView itself, not the host's
  *  opener the door above calls, with the tag set and cleared as the door sets and clears it, so the open is the trail's push
  *  (Back returns to the report at the figure's place) and the picture enters no Recent list. The host's opener (files.ts
@@ -1195,6 +1204,7 @@ export function openFileClick(ev: MouseEvent | KeyboardEvent | null | undefined,
  *  own memory of the path is read too, and the later of the two wins. An `at` lands where it points and ignores both. */
 export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; at?: At | null; place?: RememberedPlace | null }): boolean {
   const how = trailNext; trailNext = null;             // the trail's word on this open (openFromViewer, openFigureInViewer and the conflict Reload set it; every other caller leaves it null: an open from outside), taken before the guard so a vetoed open leaves no stale tag
+  const keyStep = keyStepNext && (how === "back" || how === "forward"); keyStepNext = false;   // a step from a key on Back or Forward (the button's click sets it around the door): the first landing puts the keyboard on the new bar's button of that direction (keyboardOnLanding)
   // The replace path bypasses closeFileView, so it needs the same dirty ask: opening file B over an
   // edited-but-unsaved file A must not silently eat A's buffer.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
@@ -1236,13 +1246,25 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // buttons in the icon family, the bar's first group: an arrow left and an arrow right, the words in the title and
   // aria-label with the target's file name ("Back to report.md"), and the word alone with aria-disabled when the trail
   // has nothing that way (the bar's precedent, the text-size ends: never `disabled`, so a focused button keeps the
-  // keyboard); the GROUP hidden when the trail has nothing EITHER way, the ordinary open from outside (T367, the user
+  // keyboard, the end a key step lands on included, below); the GROUP hidden when the trail has nothing EITHER way, the
+  // ordinary open from outside (T367, the user
   // 2026-09-12: a control with nothing to do is not rowed, as the greyed GitHub link was removed rather than dimmed; the
   // file review's round 2, extra8-2, which found the rule the round-1 record said did not exist). Built once per open from
   // the trail as this open left it (moveTrail ran above), never rebuilt: every step
   // is an open that builds a new bar, so the state cannot go stale. The click's acknowledgement is the replace itself,
   // in the same tick; a step re-opens its entry through openFromViewer with NO target, so the remembered place re-seats
   // the file where it was left (pendingPlace) and the entry's recorded view is the view for that open (trailView).
+  // A KEY on either button (Enter or Space: the synthesized click's detail is 0) keeps the keyboard on the button of the
+  // step's direction, as a text-size step from a key keeps it on its button (the file review's round 19, ui-1): the click
+  // tags the open (keyStepNext), and the open's first landing hands the keyboard to the new bar's button of that direction
+  // (keyHolder below, spent by keyboardOnLanding through takeKeyboard's gate, with the ring of the old button, priorRing) in
+  // place of the body, so a second Enter steps again; a step onto the trail's end lands on that end's aria-disabled button,
+  // which keeps the keyboard and steps nothing. A pointer's click and the chords (onNavKey: shortcuts tied to no focused
+  // button) land in the new file's body as any open does, and so would a key step whose group is hidden (defensive: moveTrail
+  // falls to a root, leaving nothing either way, only when the trail's target is not the file opened, and the buttons pass
+  // their entry's own path, so by reading no press reaches it). A key step whose read fails paints the
+  // failure pane, which takes the keyboard nowhere, as after any open whose read fails: the document's body keeps it, where
+  // the old card's removal left it.
   const trailNow = liveTrail();
   const nav = el("span", "fileview-group fileview-nav");
   const navBtn = (dir: "back" | "forward"): HTMLButtonElement => {
@@ -1252,11 +1274,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const words = navTitle(dir, target);
     b.title = words; b.setAttribute("aria-label", words);
     if (!target) b.setAttribute("aria-disabled", "true");
-    b.addEventListener("click", () => { if (target) openFromViewer(dir, target.path, target.sid, null); });
+    b.addEventListener("click", (e) => {
+      if (!target) return;
+      keyStepNext = e.detail === 0;                    // a key on the focused button (Enter, Space) and not a pointer's click: the landing keeps the keyboard on the new bar's button of this direction
+      try { openFromViewer(dir, target.path, target.sid, null); } finally { keyStepNext = false; }
+    });
     return b;
   };
-  nav.appendChild(navBtn("back")); nav.appendChild(navBtn("forward"));
+  const backBtn = navBtn("back"), forwardBtn = navBtn("forward");
+  nav.appendChild(backBtn); nav.appendChild(forwardBtn);
   nav.hidden = !trailBackTarget(trailNow) && !trailForwardTarget(trailNow);   // nothing to step to either way: the group is out of the row and takes no gap (the sheets' .fileview-group[hidden]), the rule T367 set for the bar with the greyed GitHub link; with a target one way the group shows and the other button wears aria-disabled alone
+  const keyHolder: HTMLButtonElement | null = keyStep && !nav.hidden ? (how === "back" ? backBtn : forwardBtn) : null;   // a key step's holder at the first landing: the new bar's button of the step's direction; none when the group is hidden (the body takes the keyboard then)
   bar.appendChild(nav);
   // BACK to the listing (the user 2026-08-24): a file opened FROM the browser overlays it with the
   // listing intact beneath (the one-directional stack above) — closing just the viewer IS the back.
@@ -1843,7 +1871,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const hold = pressHold(box);
   // ── the keyboard (plans/markdown-viewer.md Slice 6, item 1) ── The body takes the keyboard after a paint the reader did
   // not type through: the open's first landing (keyboardOnLanding, text or media, spent once) and a paint the reader asked
-  // for from the viewer's own chrome (the Rendered/Raw toggle, a text-size step, the SVG Source toggle). The gate is who
+  // for from the viewer's own chrome (the Rendered/Raw toggle, a text-size step, the SVG Source toggle). One holder other than
+  // the body: the first landing of a step from a key on Back or Forward hands the keyboard to the new bar's button of the
+  // step's direction (`to`, keyHolder; L2 of the link-navigation follow-on, and the bar's Back and Forward above), through the
+  // same gate and with the same ring. The gate is who
   // holds the keyboard at that moment, read from document.activeElement and never from a flag: nothing, the document's body,
   // or a control in the viewer's own bar (the button whose click caused the paint) yields to the body; anything else keeps
   // it: the chat's composer, the Comments panel's boxes and controls in the aside, the editor's textarea or CodeMirror (the
@@ -1881,14 +1912,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // (file-view-focus-ring-browser.test.ts and file-view-focus-ring-openers-browser.test.ts measure the ring over real presses
   // on every surface; file-view.test.ts pins the call's shape).
   let takingKeyboard = false;
-  const takeKeyboard = (ring?: boolean): void => {
+  const takeKeyboard = (ring?: boolean, to: HTMLElement = body): void => {
     if (editing || !wrap.isConnected) return;
     const a = document.activeElement;
     if (a && a !== document.body && !bar.contains(a)) return;
     if (typingInPeerFrame()) return;
     takingKeyboard = true;
     const opts: FocusOptions & { focusVisible: boolean } = { preventScroll: true, focusVisible: ring ?? (a === null || a === document.body ? ringWithNoHolder() : ringOf(a)) };
-    try { body.focus(opts); } finally { takingKeyboard = false; }
+    try { to.focus(opts); } finally { takingKeyboard = false; }
   };
   keyboardTakers.set(body, takeKeyboard);   // for a figure control removed while it holds the keyboard (removeFigureControl, module level): this open's hand-over, found through the control's body
   closeHooks.push(() => { keyboardTakers.delete(body); });
@@ -1912,7 +1943,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
    *  in (the disable's drop and a click elsewhere both land the focus on a document's body; the bar's re-armed Reload reads this). */
   const keyboardIdle = (): boolean => { const a = document.activeElement; return (a === null || a === document.body) && !typingInPeerFrame(); };
   let keyboardPending = true;                          // the open's first landing takes the keyboard; a reload's does not
-  const keyboardOnLanding = (): void => { if (!keyboardPending) return; keyboardPending = false; takeKeyboard(priorRing ?? undefined); };   // with the ring of the holder the replace path removed, when it had one
+  const keyboardOnLanding = (): void => { if (!keyboardPending) return; keyboardPending = false; takeKeyboard(priorRing ?? undefined, keyHolder ?? body); };   // with the ring of the holder the replace path removed, when it had one; after a key step on Back or Forward to the new bar's button of that direction, the old button's ring with it (keyHolder, L2)
   // A rendered document's RELATIVE links (`[notes](./notes.md)`, `[fig](plots/a.png)`) open the sibling file in
   // this same viewer, and its `[top](#evidence)` links land on their heading: mdBlock's file kind sorts every anchor
   // through file-view-links.ts (a path link with the joined path, a section link, a dead link that says why), and

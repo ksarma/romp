@@ -657,7 +657,9 @@ to, and stays through a switch of view and a reload until the next notice replac
 you open the editor. A notice raised while you edit (a save that failed) goes when you
 leave the editor; a warning about the comments log stays when the save that raised it
 closes the editor. The file takes the keyboard when it opens, so the arrow keys, PageDown
-and Space scroll it at once; a box you were typing in keeps the keyboard. When a file
+and Space scroll it at once; a box you were typing in keeps the keyboard. After Enter or
+Space on **Back** or **Forward**, the keyboard stays on that button, so the next press steps
+again; after Cmd+[, Cmd+], Alt+Left or Alt+Right, the file takes it as usual. When a file
 changes on disk while you read it with the Comments panel closed, a line above the text says
 so the next time you return to the dashboard, and **Reload** reads it again with your place
 kept.

@@ -185,7 +185,7 @@ test("the two glyph buttons stand first in the bar with the icon family's drawin
   assert.match(VIEW, /import \{ ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS, ICON_BACK, ICON_FORWARD, ICON_EXPAND, ICON_OUTBOUND \} from "\.\/icons";/, "the import line's spelling (a sentence pin): the two arrows beside the bar's glyphs, the figure control's corner arrows since L3 and its outbound glyph since the file review's round 11, ui-1");
   assert.match(VIEW, /const nav = el\("span", "fileview-group fileview-nav"\);/);
   assert.match(VIEW, /b\.innerHTML = dir === "back" \? ICON_BACK : ICON_FORWARD; b\.dataset\.icon = "1";/);
-  assert.match(VIEW, /if \(!target\) b\.setAttribute\("aria-disabled", "true"\);/, "the bar's precedent (the text-size ends): aria-disabled, never disabled, so the keyboard focus stays");
+  assert.match(VIEW, /if \(!target\) b\.setAttribute\("aria-disabled", "true"\);/, "the bar's precedent (the text-size ends): aria-disabled, never disabled, so a focused button keeps the keyboard, the end a key step lands on included (the file review's round 19, ui-1; file-trail-browser.test.ts presses Enter on that end and reads the keyboard still on it)");
   // T367 (the greyed GitHub link removed rather than dimmed; the file review's round 2, extra8-2): the GROUP is hidden when neither
   // direction has a target, so an open with nothing to step to rows no dimmed pair and takes no gap; the one of the pair without a
   // target keeps aria-disabled when the other has one
@@ -199,6 +199,30 @@ test("the two glyph buttons stand first in the bar with the icon family's drawin
   assert.ok(nav.includes("const dir = navChord(e, IS_MAC);"), "the chord table decides");
   assert.ok(nav.includes("if (a && a !== document.body && isTypingTarget(a)) return;"), "a text field keeps its own Alt+Left (the caret) and Cmd+[");
   assert.ok(nav.includes("e.preventDefault();"), "the browser's history step is taken over while the viewer is open, target or none");
+});
+
+test("a key on Back or Forward (Enter or Space: detail 0) tags its open around the door and the first landing's holder is the new bar's button of that direction; the chords and a pointer's click never tag it (the file review's round 19, ui-1)", () => {
+  // source pins of WHERE the rule's parts stand; the behaviour is executed in file-trail-browser.test.ts, which presses Enter and
+  // Space on a Tab-focused Back over a three-file trail on the Files page and the chat modal and reads the keyboard on Back with
+  // its ring, and a pointer's click and Alt+Left landing it in the body
+  assert.match(VIEW, /^let keyStepNext = false;$/m, "the key step's tag: module-level, beside trailNext");
+  const navBtn = VIEW.slice(VIEW.indexOf('const navBtn = (dir: "back" | "forward"): HTMLButtonElement => {'), VIEW.indexOf("const backBtn = navBtn(\"back\"), forwardBtn = navBtn(\"forward\");"));
+  assert.ok(navBtn.includes('b.addEventListener("click", (e) => {\n      if (!target) return;\n      keyStepNext = e.detail === 0;'), "the button's click tags a key's activation (the synthesized click's detail is 0, a pointer's its count), and an end with no target tags nothing");
+  assert.ok(navBtn.includes("try { openFromViewer(dir, target.path, target.sid, null); } finally { keyStepNext = false; }"), "set around the door's call and cleared whatever happened, as the door clears trailNext");
+  const open = VIEW.slice(VIEW.indexOf("export function openFileView("), VIEW.indexOf("  const wrap = el(\"div\");\n  wrap.id = \"romp-fileview\";"));
+  assert.ok(open.includes('const keyStep = keyStepNext && (how === "back" || how === "forward"); keyStepNext = false;'), "openFileView reads and clears it beside trailNext, honouring it for a Back or Forward open alone");
+  assert.ok(open.indexOf("const how = trailNext; trailNext = null;") < open.indexOf("const keyStep = keyStepNext"), "after the trail's tag, whose direction it reads");
+  const KEY_SITES: Array<[string, string]> = [
+    ["let keyStepNext = false;", "the declaration"],
+    ["keyStepNext = e.detail === 0;", "the button's set"],
+    ["} finally { keyStepNext = false; }", "the button's clear"],
+    ["(how === \"back\" || how === \"forward\"); keyStepNext = false;", "openFileView's read-and-clear"],
+  ];
+  assert.equal((VIEW.match(/keyStepNext = /g) || []).length, KEY_SITES.length, "keyStepNext assignments in file-view.ts: " + KEY_SITES.map((k) => k[1]).join("; ") + "; a new one says here what it tags");
+  for (const [site, what] of KEY_SITES) assert.ok(VIEW.includes(site), what + " stands as named: " + site);
+  const chord = VIEW.slice(VIEW.indexOf("const onNavKey = (e: KeyboardEvent) => {"), VIEW.indexOf("document.addEventListener(\"keydown\", onNavKey, true);"));
+  assert.ok(chord.includes("openFromViewer(dir, target.path, target.sid, null);") && !chord.includes("keyStepNext"), "a chord steps through the door untagged: a shortcut tied to no focused button lands in the body, as any open does (the file review's round 19, ui-1, as ruled)");
+  assert.match(VIEW, /const keyHolder: HTMLButtonElement \| null = keyStep && !nav\.hidden \? \(how === "back" \? backBtn : forwardBtn\) : null;/, "the holder: the new bar's button of the step's direction, none when the group is hidden (a step whose trail fell to a root), when the body takes the keyboard");
 });
 
 // ── the conflict Reload, driven in Chromium ────────────────────────────────────────────────────────

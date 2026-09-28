@@ -410,6 +410,84 @@ test("in a browser, the Files page: Alt+Left and Alt+Right step the trail while 
   });
 });
 
+// A key on Back or Forward keeps the keyboard on the step's button (the file review's round 19, ui-1). Over a three-file trail
+// (report, notes, guide) the keyboard is put on Back the way a keyboard user puts it there, Shift+Tab from the body; Enter steps
+// back twice, each landing leaving the keyboard on the new bar's Back with the ring, so the second Enter steps again, and a third
+// Enter on the aria-disabled end keeps the keyboard and opens nothing; Tab and Space then do the same with Forward and, once more,
+// Space with Back. The two roads that land in the new file's body as any open does are read too: Alt+Left, a shortcut tied to no
+// focused button, from the keyboard on Back, and a pointer's click on Forward. Red at ddb446fae at the first Enter's read (the
+// keyboard went to the new file's body, and a keyboard user reached Back again with about ten Shift+Tab presses per step). Last,
+// the stated boundary: a key step whose read fails leaves the keyboard on the document's body, as any failed open does.
+test("in a browser, the Files page and the chat modal: Enter on a Tab-focused Back steps back and leaves the keyboard on the new bar's Back with its ring, so a second Enter steps again and a third on the aria-disabled end keeps it and opens nothing; Space does the same on Forward and on Back; Alt+Left and a pointer's click land the keyboard in the new file's body (the file review's round 19, ui-1)", async (t) => {
+  for (const host of ["files", "chat"] as const) {
+    await inViewer(t, host, async (h) => {
+      // the keyboard's holder, read off the live DOM: which nav button (or the body), its title, its ring, and the shown file
+      const held = (): Promise<{ on: string; title: string | null; ring: boolean }> => h.page.evaluate(() => {
+        const a = document.activeElement as HTMLElement | null;
+        const on = !a || a === document.body ? "page" : a.classList.contains("fileview-nav-back") ? "back" : a.classList.contains("fileview-nav-forward") ? "forward" : a.classList.contains("fileview-body") ? "body" : a.tagName + "." + a.className;
+        let ring = false; try { ring = !!a && a.matches(":focus-visible"); } catch { ring = false; }
+        return { on, title: a && a.getAttribute("title"), ring };
+      });
+      const tabTo = async (dir: "back" | "forward", key: "Tab" | "Shift+Tab"): Promise<number> => {
+        for (let n = 1; n <= 40; n++) { await h.page.keyboard.press(key); if ((await held()).on === dir) return n; }
+        return -1;
+      };
+      await h.open(REPORT);
+      await h.follow("the notes", "notes.md");
+      await h.follow("the guide", "guide.md");
+      assert.deepEqual(await h.shape(), { back: ["report.md@rendered", "notes.md@rendered"], current: "guide.md", forward: [] }, host + ": the three-file trail");
+      assert.ok(await tabTo("back", "Shift+Tab") > 0, host + ": Shift+Tab from the body reaches Back");
+      assert.deepEqual(await held(), { on: "back", title: "Back to notes.md", ring: true }, host + ": the keyboard on Back, with its ring");
+      // FAILS BEFORE (ddb446fae): the first Enter's landing gave the keyboard to the new file's body
+      await h.page.keyboard.press("Enter");
+      await h.painted("notes.md");
+      assert.deepEqual(await held(), { on: "back", title: "Back to report.md", ring: true }, host + ": after Enter on Back the keyboard is on the new bar's Back, with its ring");
+      await h.page.keyboard.press("Enter");
+      await h.painted("report.md");
+      assert.deepEqual(await held(), { on: "back", title: "Back", ring: true }, host + ": the second Enter stepped again, and the keyboard is on Back at the trail's end (aria-disabled)");
+      assert.deepEqual(await h.shape(), { back: [], current: "report.md@rendered", forward: ["notes.md@rendered", "guide.md@rendered"] }, host + ": two steps back");
+      disabled((await h.nav()).back, host + ": the end");
+      await h.page.keyboard.press("Enter");
+      await h.frames(3);
+      assert.equal(await h.base(), "report.md", host + ": Enter on the aria-disabled end opens nothing");
+      assert.deepEqual(await held(), { on: "back", title: "Back", ring: true }, host + ": and the end keeps the keyboard");
+      // Space, on Forward and then on Back
+      assert.equal(await tabTo("forward", "Tab"), 1, host + ": Tab moves from Back to Forward");
+      await h.page.keyboard.press("Space");
+      await h.painted("notes.md");
+      assert.deepEqual(await held(), { on: "forward", title: "Forward to guide.md", ring: true }, host + ": after Space on Forward the keyboard is on the new bar's Forward, with its ring");
+      await h.page.keyboard.press("Space");
+      await h.painted("guide.md");
+      assert.deepEqual(await held(), { on: "forward", title: "Forward", ring: true }, host + ": the second Space stepped again, the keyboard on Forward at the trail's end");
+      assert.equal(await tabTo("back", "Shift+Tab"), 1, host + ": Shift+Tab moves from Forward to Back");
+      await h.page.keyboard.press("Space");
+      await h.painted("notes.md");
+      assert.deepEqual(await held(), { on: "back", title: "Back to report.md", ring: true }, host + ": after Space on Back the keyboard is on the new bar's Back, with its ring");
+      // the chord, pressed with the keyboard on Back: a shortcut tied to no focused button lands in the new file's body, as any open does
+      await h.page.keyboard.press("Alt+ArrowLeft");
+      await h.painted("report.md");
+      assert.equal((await held()).on, "body", host + ": Alt+Left, pressed from Back, lands the keyboard in the new file's body");
+      // a pointer's click on Forward: the new file's body, no ring
+      await h.page.click("#romp-fileview .fileview-nav-forward");
+      await h.painted("notes.md");
+      assert.deepEqual(await held(), { on: "body", title: null, ring: false }, host + ": a pointer's click on Forward lands the keyboard in the new file's body, with no ring");
+      assert.deepEqual(await h.shape(), { back: ["report.md@rendered"], current: "notes.md@rendered", forward: ["guide.md@rendered"] }, host + ": the trail after the steps");
+      // a key step whose read fails: the failure pane takes the keyboard nowhere, as after any open whose read fails, so it stays
+      // on the document's body, where the old card's removal left it (the stated boundary, read so a change to it is seen)
+      assert.ok(await tabTo("forward", "Shift+Tab") > 0, host + ": Shift+Tab from the body reaches Forward");
+      const guide = DOCS[GUIDE];
+      delete DOCS[GUIDE];
+      try {
+        await h.page.keyboard.press("Enter");
+        await h.page.locator("#romp-fileview .fileview-base", { hasText: "guide.md" }).waitFor({ timeout: 10000 });
+        await h.page.locator("#romp-fileview .fileview-body .fileview-err").waitFor({ timeout: 10000 });
+        await h.frames(3);
+      } finally { DOCS[GUIDE] = guide; }
+      assert.equal((await held()).on, "page", host + ": a key step whose read fails leaves the keyboard on the document's body");
+    });
+  }
+});
+
 test("in a browser, the Files page: a section link scrolls and pushes nothing, a web address opens a tab and pushes nothing, and a same-file line target replaces the card without pushing", async (t) => {
   await inViewer(t, "files", async (h) => {
     await h.open(REPORT);

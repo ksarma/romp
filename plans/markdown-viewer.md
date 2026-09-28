@@ -3807,7 +3807,9 @@ which test holds each rule:
    call-site list, forced by an existing pin: a text-size step from a KEY on the focused button (Enter or Space; the
    synthesized click's `detail` is 0) keeps the keyboard on the button, so the next press steps again
    (file-view-text-size.test.ts's third press from a focused A- had gone red under the unconditional hand-over); a
-   pointer's step and a wheel step hand it to the body. Both sheets carry `.fileview-body:focus { outline: none; }` (a
+   pointer's step and a wheel step hand it to the body. The link-navigation follow-on's Back and Forward keep it the same
+   way: the first landing of a step from a key on either button hands the keyboard to the new bar's button of that
+   direction, through the same gate (L2 of that follow-on, which says when and why). Both sheets carry `.fileview-body:focus { outline: none; }` (a
    ring around the whole scroll box on every open would read as an error frame) and `.fileview-body:focus-visible`
    with a 1 px inset `var(--accent)` ring for the keyboard user (open question 6, the default), byte-equal and in
    fileview-parity's list. Two edges the units recorded were closed by the consolidation pass. In the chat modal the
@@ -8332,7 +8334,20 @@ sheets' one disabled dress applies, no new rule). Built once per open from the t
 rebuilt: every step is an open that builds a new bar. A press re-opens the entry through `openFromViewer` with NO target
 (`at` null), so the remembered place re-seats the file where it was left (pendingPlace), and the entry's recorded view
 is the view for that open (this open's `fmt.md` copy, unsaved, as a line target's Raw is); the replace in the same tick
-is the acknowledgement. The chords: Alt+Left and Alt+Right, and on a Mac Cmd+[ and Cmd+] as well (`navChord`, pure over
+is the acknowledgement. A key on either button (Enter or Space: the synthesized click's `detail` is 0) keeps the keyboard
+on the button of the step's direction, so the next press steps again, as a text-size step from a key keeps it on its
+button (Slice 6, item 1). The button's click sets `keyStepNext` around its call to `openFromViewer` and clears it whatever
+happens; openFileView reads and clears it beside `trailNext`, and the open's first landing (`keyboardOnLanding`) hands the
+keyboard to the new bar's button of that direction (`keyHolder`) in place of the body, through takeKeyboard's gate and with
+the ring the old button wore (`priorRing`). A step onto the trail's end lands on that end's `aria-disabled` button, which
+keeps the keyboard and steps nothing, so the text-size ends are the precedent for every button of the pair. A pointer's
+click and the chords (shortcuts tied to no focused button) land in the new file's body as any open does. A key step whose
+read fails paints the failure pane, which takes the keyboard nowhere, as after any open whose read fails, so the
+document's body keeps it; a key step onto a hidden group would land in the body too, which by reading no press reaches
+(moveTrail falls to a root only when the trail's target is not the file opened). The file review's round 19 (ui-1): a key
+step had handed the keyboard to the new file's body, and a keyboard user reached Back again with about ten Shift+Tab
+presses per step, in a dashboard pane on Linux and Windows the only keyboard way to step the trail, the shell taking
+Alt+Left and Alt+Right. The chords: Alt+Left and Alt+Right, and on a Mac Cmd+[ and Cmd+] as well (`navChord`, pure over
 the event's fields), through ONE document keydown listener in the capture phase, installed per open and removed through
 the viewer's close hooks by both exits; it stands down when the key was already prevented, when a text field holds the
 keyboard (`isTypingTarget`: a text input, a textarea, a select, a contenteditable), while the editor is open (`editing`,
@@ -8381,8 +8396,12 @@ pins that held the dimmed pair (file-trail.test.ts, tools/markdown-viewer-plan-l
 and file-trail-browser.test.ts and file-view-text-size.test.ts's bar case read the hidden group's attribute and its
 empty client rects off the bar on a fresh open, then the group showing after a link is followed, Back live and Forward
 dimmed. Whether the contract's dimmed pair should come back instead is the owner's (open point 13). Held by file-trail.test.ts (the titles, the chord table, the bar and listener
-pins) and file-trail-browser.test.ts (Back at the block, the scrollTop and the view; Forward; the chords with and
-without a text field and under a prevented key; the default taken with and without a target).
+pins, and the key step's tag and holder) and file-trail-browser.test.ts (Back at the block, the scrollTop and the view; Forward; the chords with and
+without a text field and under a prevented key; the default taken with and without a target; and since the file review's
+round 19, ui-1, Enter and Space on a Tab-focused Back and Forward over a three-file trail on the Files page and the chat
+modal, the keyboard on the new bar's button with its ring after each step, a second press stepping again and Enter on the
+`aria-disabled` end opening nothing, with Alt+Left and a pointer's click landing it in the body and a failed read leaving
+it on the document's body; red at ddb446fae at the first Enter).
 
 L3. **A figure opens in detail.** Every picture a rendered file embeds (`![]()`, an `<img>`, an image wikilink embed),
 with the exceptions this decision names (a picture with nothing to open, a gated placeholder until its load, a figure
@@ -9032,10 +9051,12 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word, given on 2026-09-22
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui, docs, plans, tools,
-upstream or tests, and SECURITY.md, alone (71 files, the ledger entry's where line; run 2026-09-27 at the head that carries the
-fixes after the closing check at 142ade155 after the fixes for the file review's round 18 and the merge of the fork's main after
-them, where the merge-base is ffab236bd, the fork's main the branch merged after those fixes, its tip the merge of the fork's
-batch PR 921, and the listing is the branch's whole delta over it; the runs at the head that carries the fixes for the file
+upstream or tests, and SECURITY.md, alone (72 files, the ledger entry's where line; run 2026-09-28 at the head that carries the
+fixes for the file review's round 19, over ffab236bd, the listing the branch's whole delta over it; the run 2026-09-27 at the
+head that carries the fixes after the closing check at 142ade155 after the fixes for the file review's round 18 and the merge of
+the fork's main after them, where the merge-base is ffab236bd, the fork's main the branch merged after those fixes, its tip the
+merge of the fork's batch PR 921, listed 71, before tests/test_guide_files_place_and_outline.py, whose pins hold the open's
+keyboard landing and the guide's key-step sentence, joined the delta in the fixes for the file review's round 19, ui-1; the runs at the head that carries the fixes for the file
 review's round 18 and the merge of the fork's main after them and at the head that carries the fixes after the closing check at
 142ade155 before the merge of the fork's main at ffab236bd, from the merge-base 4a50a9b71, the fork's main the branch merged after
 the fixes for the file review's round 18, its tip the merge of the fork's batch PR 917, listed 70, before
@@ -9257,7 +9278,7 @@ four it holds every leg to a roster line outside the exclusions, the leg that la
 line and no roster line (the module's own model of the convention, which PR 887's section on who owes what at the landing
 revises), and the roster's own tree test to exist, and a tree with
 some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
-landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-seven standing suites were re-aimed, not undone:
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Twenty-eight standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -9336,10 +9357,15 @@ ui/webview/md-config-block-boxes.test.ts (the marquee joins the forbid list's in
 of the tags a note keeps inline drops it, regression-2), and since the merge of the fork's main at ffab236bd, whose batch PR 921
 brought it, ui/webview/file-comments-save-held-composer.test.ts (its wait-line test asserts, on its scene, the reason the seam
 test's re-parse census gives PR 915's wait line for its constant markup: the line's parent is the composer's button row, the
-Comments panel's parent is the viewer's main row, and the viewer's body does not hold the line). The guide's Links in a file
+Comments panel's parent is the viewer's main row, and the viewer's body does not hold the line), and since the fixes for the
+file review's round 19, ui-1, tests/test_guide_files_place_and_outline.py (its pins of takeKeyboard's gate and of the open's
+first landing read the holder, the body unless the landing of a step from a key on Back or Forward names the new bar's
+button of that direction, and it holds the guide's key-step sentence after the keyboard sentence, with the source that
+keeps it). The guide's Links in a file
 paragraph gained two sentences, the trail's and
 the figure control's, its paragraph on a file's own HTML one on the marquee's removal (the file review's round 18,
-regression-2), and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
+regression-2), its Your place in the file paragraph one on the key step (the file review's round 19, ui-1), and the browser
+plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
 scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail
 module exists with the functions L1 names and the viewer calls it where L1 and L2 say; the words quoted here and in the

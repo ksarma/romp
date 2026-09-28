@@ -790,7 +790,7 @@ test('the guide\'s Links in a file paragraph ends with the two sentences, whole,
   assert.equal((flat(guide).match(/once there is a file to step back or forward to \(after you follow a link or open a picture; there are none before that\)/g) || []).length, 1, 'the condition is stated once');
   assert.equal((flat(guide).match(/keeps a trail of the files you reach/g) || []).length, 1, 'the trail is described once in the guide');
   assert.ok(para.includes('A file path opens that file in the viewer, in place of the one you were reading'), 'the replace sentence stands: a link still opens in place, and now there is a way back');
-  assert.ok(section.includes('The guide\'s Links in a file paragraph gained two sentences, the trail\'s and the figure control\'s, its paragraph on a file\'s own HTML one on the marquee\'s removal (the file review\'s round 18, regression-2), and the browser plan\'s navigation-stack section (plans/file-browser.md) a pointer sentence.'), 'the section says what the guide and the browser plan gained');
+  assert.ok(section.includes('The guide\'s Links in a file paragraph gained two sentences, the trail\'s and the figure control\'s, its paragraph on a file\'s own HTML one on the marquee\'s removal (the file review\'s round 18, regression-2), its Your place in the file paragraph one on the key step (the file review\'s round 19, ui-1), and the browser plan\'s navigation-stack section (plans/file-browser.md) a pointer sentence.'), 'the section says what the guide and the browser plan gained');
   // the browser plan: one sentence between the navigation-stack heading and the next
   const bp = flat(browserPlan);
   const stack = between(bp, '### Browser ↔ viewer: the navigation stack', '### Waiting, staleness, click-safety');
