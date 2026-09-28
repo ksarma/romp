@@ -4923,12 +4923,16 @@ CENSUS_LOOKUP='^(which)$'
 masked_text() {   # <bash file>: the text with quoted bytes and comments masked quote-aware (the section comment), one output line per input line, byte for byte (LC_ALL=C), a case pattern's closing ) written as the byte 001
     if [ ! -f "$TEST_DIR/mask.awk" ]; then
         cat > "$TEST_DIR/mask.awk" <<'AWK'
-BEGIN { depth = 0; st[0] = "code"; par[0] = 0 }
+# A run of bytes no branch of the current state reads is copied whole (code) or masked whole (a quote), and prev takes
+# the run's last byte, as the byte-at-a-time loop left it (round 12q, the cost round: the same output, in fewer steps).
+function dotsof(k) { while (length(dots) < k) dots = dots dots; return substr(dots, 1, k) }
+BEGIN { depth = 0; st[0] = "code"; par[0] = 0; dots = "." }
 {
     line = $0; out = ""; n = length(line); i = 1; prev = " "
     while (i <= n) {
         c = substr(line, i, 1); c2 = substr(line, i, 2); s = st[depth]
         if (s == "code" || s == "bq") {
+            if (!index("\\#`$'\"()", c)) { skipto = match(substr(line, i + 1), /[\\#`$'"()]/); skipto = skipto ? i + skipto : n + 1; out = out substr(line, i, skipto - i); prev = substr(line, skipto - 1, 1); i = skipto; continue }
             if (c == "\\") { out = out c substr(line, i + 1, 1); i += 2; prev = "x"; continue }
             if (c == "#" && (i == 1 || prev ~ /[ \t;]/)) { out = out sprintf("%" (n - i + 1) "s", ""); break }
             if (c == "`") { if (s == "bq") depth--; else { depth++; st[depth] = "bq"; par[depth] = 0 }; out = out c; i++; prev = c; continue }
@@ -4945,13 +4949,18 @@ BEGIN { depth = 0; st[0] = "code"; par[0] = 0 }
             }
             out = out c; prev = c; i++; continue
         }
-        if (s == "sq") { if (c == "'") { depth--; out = out c } else out = out "."; i++; prev = c; continue }
+        if (s == "sq") {
+            if (c != "'") { skipto = index(substr(line, i + 1), "'"); skipto = skipto ? i + skipto : n + 1; out = out dotsof(skipto - i); prev = substr(line, skipto - 1, 1); i = skipto; continue }
+            if (c == "'") { depth--; out = out c } else out = out "."; i++; prev = c; continue
+        }
         if (s == "ansi") {
+            if (c != "\\" && c != "'") { skipto = match(substr(line, i + 1), /[\\']/); skipto = skipto ? i + skipto : n + 1; out = out dotsof(skipto - i); prev = substr(line, skipto - 1, 1); i = skipto; continue }
             if (c == "\\") { out = out ".."; i += 2; continue }
             if (c == "'") { depth--; out = out c } else out = out "."
             i++; prev = c; continue
         }
         if (s == "dq") {
+            if (!index("\\\"$`", c)) { skipto = match(substr(line, i + 1), /[\\"$`]/); skipto = skipto ? i + skipto : n + 1; out = out dotsof(skipto - i); prev = substr(line, skipto - 1, 1); i = skipto; continue }
             if (c == "\\") { out = out ".."; i += 2; continue }
             if (c == "\"") { depth--; out = out c; i++; prev = c; continue }
             if (c2 == "$(") { depth++; st[depth] = "code"; par[depth] = 0; out = out c2; i += 2; prev = "("; continue }
@@ -4965,7 +4974,7 @@ AWK
     fi
     LC_ALL=C awk -f "$TEST_DIR/mask.awk" "$1"
 }
-census_records() {   # <bash file> <mode: tools, vars or calls> [<word regex, for calls>]: the file's simple commands as records, one per line (the splitter below reads the masked text and the raw text side by side)
+census_records() {   # <bash file> <mode: tools, vars or calls> [<word regex, for calls>] [<that file's masked text, masked_text's output, when the caller holds it>]: the file's simple commands as records, one per line (the splitter below reads the masked text and the raw text side by side)
     local tmp
     if [ ! -f "$TEST_DIR/split.awk" ]; then
         cat > "$TEST_DIR/split.awk" <<'AWK'
@@ -4980,7 +4989,7 @@ census_records() {   # <bash file> <mode: tools, vars or calls> [<word regex, fo
 # word tested unquoted (a copy with its quote and backslash characters removed, so a word whose quoting or escaping
 # splits the tool's name, gi\t, g''it or "g"it, is kept), not T; vars one with a $ in its raw words or ending at a
 # substitution, not P, A, R or T; calls one with a tool's word (tested the same way) or a word matching names.
-BEGIN { US = sprintf("%c", 31); toolre = "(^|[^A-Za-z0-9_.-])(" tools ")([^A-Za-z0-9_.-]|$)" }
+BEGIN { US = sprintf("%c", 31); toolre = "(^|[^A-Za-z0-9_.-])(" tools ")([^A-Za-z0-9_.-]|$)"; SPLITSET = "\\$(<>|&;`){}" sprintf("%c", 1); SPLITRE = "[\\\\$(<>|&;`){}" sprintf("%c", 1) "]" }
 function top() { return sp > 0 ? stk[sp] : "" }
 function ctxflag(   t) { t = top(); return (t == "A" || t == "a") ? "A" : (t == "R" ? "R" : "") }
 function subflag(   k) { if (bq) return "S"; for (k = 1; k <= xsp; k++) if (xs[k] == "C") return "S"; return "" }
@@ -5013,7 +5022,11 @@ function emit(k,   s, L, ms, rs, j, ws, w, x, y, out, tool, dol, fn, touch) {
     if (m ~ /(^|[ \t!&|;(])judged_read[ \t]/) jd = index(m, " -- ")
     i = 1
     while (i <= n) {
-        c = substr(m, i, 1); c2 = substr(m, i, 2); L = 0
+        c = substr(m, i, 1)
+        # a run of bytes no branch below reads (none of SPLITSET) is passed over whole, stopping at a call's " -- " (round
+        # 12q, the cost round: the same records, in fewer steps)
+        if (i != jd && !index(SPLITSET, c)) { skipto = match(substr(m, i + 1), SPLITRE); skipto = skipto ? i + skipto : n + 1; if (jd > i && jd < skipto) skipto = jd; i = skipto; continue }
+        c2 = substr(m, i, 2); L = 0
         if (jd && i == jd) { endseg(i, "--"); i += 4; start = i; cur = ctxflag() "T" subflag(); continue }
         if (c == "\\") { i += 2; continue }
         if (substr(m, i, 3) == "$((") { tok = "$(("; L = 3; stk[++sp] = "A"; xs[++xsp] = "o" }
@@ -5034,6 +5047,10 @@ function emit(k,   s, L, ms, rs, j, ws, w, x, y, out, tool, dol, fn, touch) {
 }
 AWK
     fi
+    if [ -n "${4:-}" ]; then                                    # the masked text in hand (round 12q, the cost round): masked once per census
+        LC_ALL=C awk -v rawf="$1" -v tools="$CENSUS_TOOLS" -v mode="$2" -v names="${3:-}" -f "$TEST_DIR/split.awk" "$4"
+        return 0
+    fi
     tmp=$(mktemp "$TEST_DIR/census.XXXXXX")
     masked_text "$1" > "$tmp"
     LC_ALL=C awk -v rawf="$1" -v tools="$CENSUS_TOOLS" -v mode="$2" -v names="${3:-}" -f "$TEST_DIR/split.awk" "$tmp"
@@ -5049,24 +5066,36 @@ census_unquote() {   # <raw word>: sets u, the caller's, to the word with its qu
     u=${1//\$\'/\'}; u=${u//\$\"/\"}; u=${u//[\"\'\\]/}
 }
 census_functions() {   # fills fstart and fend, the caller's, from orig and masked, the caller's: each function's header line to the first line after it that is exactly }, or the header line alone when the header's masked text closes the brace it opens (a one-line function, round 10c)
-    local i j name hm o c
-    for ((i = 0; i < ${#orig[@]}; i++)); do
+    local i j p=0 name hm o c
+    local -a heads=() closes=()
+    # The lines the header test can match (each holds "() {") and the lines that are exactly }, found in one pass over
+    # the text, in line order; the tests below are the ones a walk over every line made (round 12q, the cost round)
+    while read -r i; do
+        case "$i" in h*) heads+=("${i#h}") ;; c*) closes+=("${i#c}") ;; esac
+    done < <(printf '%s\n' "${orig[@]}" | LC_ALL=C awk 'index($0, "() {") { print "h" NR } $0 == "}" { print "c" NR }')
+    for i in "${heads[@]}"; do
+        i=$((i - 1))
         if [[ "${orig[i]}" =~ ^([a-zA-Z_][a-zA-Z0-9_]*)\(\)\ \{ ]]; then
             name=${BASH_REMATCH[1]}; fstart[$name]=$i; fend[$name]=$i
             hm=${masked[i]#*\{}; o=${hm//[^\{]/}; c=${hm//[^\}]/}
             [ $((1 + ${#o} - ${#c})) -gt 0 ] || continue
-            for ((j = i + 1; j < ${#orig[@]}; j++)); do if [ "${orig[j]}" = "}" ]; then fend[$name]=$j; break; fi; done
+            while [ "$p" -lt "${#closes[@]}" ] && [ "$((closes[p] - 1))" -le "$i" ]; do p=$((p + 1)); done
+            if [ "$p" -lt "${#closes[@]}" ]; then fend[$name]=$((closes[p] - 1)); fi
         fi
     done
 }
 census_definition_shapes() {   # <bash file>: prints "<line>:<text>" once for each line of the MASKED text holding a function definition census_functions does not read as a multi-line column-0 name() { closed by a lone } (the function keyword, a space or another name character before the parentheses, an indented header, another body, a one-line function, a close that is not a lone } or no close at all); the caller asserts none in the hook (round 10c)
     local -a orig masked
     local -A fstart fend
-    local i j d o c name hm
+    local i j d o c name hm mf
     mapfile -t orig < "$1"
-    mapfile -t masked < <(masked_text "$1")
+    mf=$(mktemp "$TEST_DIR/census.XXXXXX")                     # read from a file, not a pipe, which bash's mapfile reads a byte at a time (round 12q)
+    masked_text "$1" > "$mf" || :
+    mapfile -t masked < "$mf"
+    rm -f "$mf"
     census_functions
-    for ((i = 0; i < ${#masked[@]}; i++)); do
+    for i in $(printf '%s\n' "${masked[@]}" | LC_ALL=C grep -a -n -e function -e '(.*)' | cut -d: -f1); do   # the lines either test below can match (each holds function, or a ( and a ) after it), in order (round 12q)
+        i=$((i - 1))
         [[ "${masked[i]}" =~ (^|[^A-Za-z0-9_.-])function([[:space:]]|$) || "${masked[i]}" =~ (^|[[:space:]\;\&\|\(\!\{])[^[:space:]\;\&\|\(\)\<\>\$\`\"\'=]+[[:space:]]*\([[:space:]]*\) ]] || continue
         if [[ "${masked[i]}" =~ ^([a-zA-Z_][a-zA-Z0-9_]*)\(\)\ \{ ]] && [ "${fstart[${BASH_REMATCH[1]}]:-}" = "$i" ]; then
             name=${BASH_REMATCH[1]}; d=0; j=$i
@@ -5081,12 +5110,34 @@ census_definition_shapes() {   # <bash file>: prints "<line>:<text>" once for ea
     done
     return 0
 }
+declare -gA CENSUS_IS=()
+census_is() {   # <regex> <word>: [[ word =~ regex ]], each answer kept per regex and word for the shell's life (round 12q, the cost round: bash compiles a regex at every test, about 150 microseconds for the tool list, and census_command made several a record over the four word lists)
+    local k="$1"$'\x1f'"$2"
+    case "${CENSUS_IS[$k]:-}" in 1) return 0 ;; 0) return 1 ;; esac
+    if [[ "$2" =~ $1 ]]; then CENSUS_IS[$k]=1; return 0; fi
+    CENSUS_IS[$k]=0
+    return 1
+}
+declare -gA CENSUS_KIND=()
+census_word_kind() {   # <masked word>: sets wk, the caller's, to prefix, assign, redir2 (a redirection operator standing alone, its operand the next word), redir1 (a redirection with its operand attached) or word, by census_command's tests in its order (round 12q, the cost round: each answer kept per word; a word a redirection test matches is neither a prefix nor an assignment, so the loop that tests redirections alone reads the same answer)
+    if [ -z "$1" ]; then wk=word; return 0; fi
+    wk=${CENSUS_KIND[$1]:-}
+    [ -z "$wk" ] || return 0
+    if census_is "$CENSUS_PREFIX" "$1"; then wk=prefix
+    elif [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?= ]]; then wk=assign
+    elif [[ "$1" =~ ^([0-9]*(\<|\>|\>\>|\<\<\<|\<\<-?|\<\>|\>\||\<\&|\>\&)|\&\>\>?)$ ]]; then wk=redir2
+    elif [[ "$1" =~ ^[0-9]*[\<\>] ]] || [[ "$1" =~ ^\&\> ]]; then wk=redir1
+    else wk=word
+    fi
+    CENSUS_KIND[$1]=$wk
+}
 census_command() {   # reads mw and rw (a record's words), fl, et and touch, and fstart, the caller's; sets cmd (the reading tool the simple command runs, one of CENSUS_TOOLS, or empty), word (its command word read back RAW and unquoted, or $( for a substitution), rword (that word raw) and wkind (none, lookup, builtin, tool, judged, function, var or unknown)
-    local k=0 n=${#mw[@]} t p o b j u
+    local k=0 n=${#mw[@]} t p o b j u wk
     cmd=""; word=""; rword=""; wkind=none
     while [ "$k" -lt "$n" ]; do                                 # past the keywords, the command prefixes and their option words, the assignments and the redirections
         t=${mw[k]}
-        if [[ "$t" =~ $CENSUS_PREFIX ]]; then
+        census_word_kind "$t"
+        if [ "$wk" = prefix ]; then
             p=$t; k=$((k + 1))
             case "$p" in case|for|select) return 0 ;; esac     # a case subject, a loop's variable and list: no command
             if [ "$p" = command ] && [[ "${mw[k]:-}" =~ ^-[pvV]*[vV][pvV]*$ ]]; then wkind=lookup; return 0; fi   # command -v or -V: a lookup that runs nothing
@@ -5096,9 +5147,9 @@ census_command() {   # reads mw and rw (a record's words), fl, et and touch, and
             done
             continue
         fi
-        if [[ "$t" =~ ^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?= ]]; then k=$((k + 1)); continue; fi
-        if [[ "$t" =~ ^([0-9]*(\<|\>|\>\>|\<\<\<|\<\<-?|\<\>|\>\||\<\&|\>\&)|\&\>\>?)$ ]]; then k=$((k + 2)); continue; fi   # a redirection operator standing alone: its operand is the next word
-        if [[ "$t" =~ ^[0-9]*[\<\>] ]] || [[ "$t" =~ ^\&\> ]]; then k=$((k + 1)); continue; fi
+        if [ "$wk" = assign ]; then k=$((k + 1)); continue; fi
+        if [ "$wk" = redir2 ]; then k=$((k + 2)); continue; fi  # a redirection operator standing alone: its operand is the next word
+        if [ "$wk" = redir1 ]; then k=$((k + 1)); continue; fi
         break
     done
     if [ "$k" -ge "$n" ]; then                                  # no word left: a substitution the command ends at stands as its command word when nothing touches it
@@ -5114,9 +5165,9 @@ census_command() {   # reads mw and rw (a record's words), fl, et and touch, and
     fi
     word=$u; b=${u##*/}                                         # by its basename: /usr/bin/git runs git
     [[ "$u" != \$* ]] || wkind=var                              # a parameter expansion or a substitution
-    if [[ "$b" =~ $CENSUS_BUILTIN ]]; then [ "$wkind" = var ] || wkind=builtin; return 0; fi   # a builtin's arguments are not commands
-    if [[ "$b" =~ $CENSUS_LOOKUP ]]; then [ "$wkind" = var ] || wkind=lookup; return 0; fi
-    if [[ "$b" =~ ^($CENSUS_TOOLS)$ ]]; then cmd=$b; [ "$wkind" = var ] || wkind=tool; return 0; fi
+    if census_is "$CENSUS_BUILTIN" "$b"; then [ "$wkind" = var ] || wkind=builtin; return 0; fi   # a builtin's arguments are not commands
+    if census_is "$CENSUS_LOOKUP" "$b"; then [ "$wkind" = var ] || wkind=lookup; return 0; fi
+    if census_is "^($CENSUS_TOOLS)\$" "$b"; then cmd=$b; [ "$wkind" = var ] || wkind=tool; return 0; fi
     if [ "$wkind" != var ] && [ "$b" = judged_read ]; then wkind=judged; return 0; fi
     if [ "$wkind" != var ] && [ -n "$b" ] && [ -n "${fstart[$b]:-}" ]; then wkind=function; return 0; fi
     [ "$wkind" = var ] || wkind=unknown
@@ -5126,11 +5177,12 @@ census_command() {   # reads mw and rw (a record's words), fl, et and touch, and
     case "$fl" in *[APR]*) return 0 ;; esac
     for ((j = k + 1; j < n; j++)); do
         t=${mw[j]}
-        if [[ "$t" =~ ^([0-9]*(\<|\>|\>\>|\<\<\<|\<\<-?|\<\>|\>\||\<\&|\>\&)|\&\>\>?)$ ]]; then j=$((j + 1)); continue; fi
-        if [[ "$t" =~ ^[0-9]*[\<\>] ]] || [[ "$t" =~ ^\&\> ]]; then continue; fi
+        census_word_kind "$t"
+        if [ "$wk" = redir2 ]; then j=$((j + 1)); continue; fi
+        if [ "$wk" = redir1 ]; then continue; fi
         if [ "${t:0:1}" = . ] && [ "${rw[j]:0:1}" != . ]; then continue; fi
         census_unquote "${rw[j]}"; b=${u##*/}
-        if [[ "$b" =~ ^($CENSUS_TOOLS)$ ]]; then cmd=$b; return 0; fi
+        if census_is "^($CENSUS_TOOLS)\$" "$b"; then cmd=$b; return 0; fi
     done
     return 0
 }
@@ -5302,12 +5354,15 @@ AWK
 undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per command line the census finds declared by nothing, "declared: <body|array|marker> <line> <function or ->: <tools>" per command line it finds declared outside a judged_read call, "swallowed: ..." per `|| true` or `|| :` inside a body passed whole whose next byte is no word character, and one "census: ..." line of counts; run under `run`. A body passed whole declares a line only when every read on it is a stage of the body's LAST statement, whose status judged_read judges, read by census_statements: that statement one pipeline or pipelines joined by &&, with no || at its top, run in the foreground, no pipeline negated or a coproc, the read outside every keyword compound and outside every command or process substitution, and a stage that is a brace group or a subshell read by the same rule, its own last statement declared when it keeps its status; and it names as undeclared, too, a line of such a body holding a statement that turns pipefail off, the premise the rule rests on (round 12l, the landing round's extra7-1: a read as a statement of its own ahead of that pipeline, or in a ROMP_X=$(git ...) prefix on one of its stages, lost its status and was declared by the body until then; round 12m, round 12l's audit A3 and A4: the last statement was read by its lines until then, so a read on the pipeline's first line as a statement of its own, after ; or a lone &, and a read chained to the pipeline by || were declared; round 12n, round 12m's audit A2 and A3, the fold owner's calls: until then a group stage was declared whole, a read ahead of its own last statement among it, a read joined by && was named, and a pipefail toggle was read by nothing)
     local -a orig masked mw rw rec
     local -A fstart fend passed inpassed found_at subst_at other_at fspan xspan tog
-    local i name m rest after w f s found cmd word rword wkind u ln fl et touch sk sl sfrom sto sn d stf fns="" calls=0 total=0 body=0 array=0 marker=0 undeclared=0 swallowed=0
+    local i name m rest after w f s found cmd word rword wkind u ln fl et touch sk sl sfrom sto sn d stf mf rf fns="" calls=0 total=0 body=0 array=0 marker=0 undeclared=0 swallowed=0
     mapfile -t orig < "$1"
-    mapfile -t masked < <(masked_text "$1")
-    [ "${#orig[@]}" -eq "${#masked[@]}" ] || { echo "census: the masking changed the line count"; return 1; }
+    mf=$(mktemp "$TEST_DIR/census.XXXXXX")                     # the masked text in a file: mapfile and read take a pipe a byte at a time, and census_records reads it again (round 12q, the cost round)
+    masked_text "$1" > "$mf" || :
+    mapfile -t masked < "$mf"
+    [ "${#orig[@]}" -eq "${#masked[@]}" ] || { rm -f "$mf"; echo "census: the masking changed the line count"; return 1; }
     census_functions
-    for ((i = 0; i < ${#orig[@]}; i++)); do                    # the functions passed whole: the first word after the -- of a call, when a function defined here
+    for i in $(LC_ALL=C grep -a -n -F -- judged_read "$mf" | cut -d: -f1); do   # the functions passed whole: the first word after the -- of a call, when a function defined here (the lines holding judged_read, in order, round 12q)
+        i=$((i - 1))
         m=${masked[i]}
         [[ "$m" =~ (^|[[:space:]!\&\|\;\(])judged_read[[:space:]] ]] || continue
         calls=$((calls + 1))
@@ -5338,6 +5393,8 @@ undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per com
     # record's column) lies in no stage span of the last statement, or in a keyword compound's span, is another
     # statement's, one in a statement that loses its status (a || at its top, a negation, a coproc, the background),
     # a compound's, or one inside a group ahead of the group's own last statement (round 12m; groups since round 12n).
+    rf=$(mktemp "$TEST_DIR/census.XXXXXX")
+    census_records "$1" tools '' "$mf" > "$rf"
     while IFS=$'\x1f' read -r -a rec; do
         census_rec "${rec[@]}"
         census_command
@@ -5348,8 +5405,11 @@ undeclared_reads() {   # <hook text>: prints "undeclared: <line>:<text>" per com
         for sn in ${fspan[$ln]:-}; do if [ "${rec[1]}" -ge "${sn%:*}" ] && { [ "${sn#*:}" -eq 0 ] || [ "${rec[1]}" -le "${sn#*:}" ]; }; then d=1; fi; done
         for sn in ${xspan[$ln]:-}; do if [ "${rec[1]}" -ge "${sn%:*}" ] && { [ "${sn#*:}" -eq 0 ] || [ "${rec[1]}" -le "${sn#*:}" ]; }; then d=0; fi; done
         [ "$d" -eq 1 ] || other_at[$ln]="${other_at[$ln]:-} $cmd"
-    done < <(census_records "$1" tools)
-    for ((i = 0; i < ${#orig[@]}; i++)); do
+    done < "$rf"
+    rm -f "$mf" "$rf"
+    for i in $(printf '%s\n' "${!found_at[@]}" "${!tog[@]}" | sort -n -u); do   # the lines holding a read or a pipefail toggle, in order (round 12q: no other line prints or counts)
+        [ "$i" -ge 1 ] && [ "$i" -le "${#orig[@]}" ] || continue
+        i=$((i - 1))
         found=${found_at[$((i + 1))]:-}
         if [ -n "${tog[$((i + 1))]:-}" ]; then                 # a statement turning pipefail off in a passed body (round 12n): named whatever it reads
             [ -z "$found" ] || total=$((total + 1))
@@ -5389,10 +5449,13 @@ CENSUS_LOOKUP_KEPT='gl="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"'
 census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each line of the comment-stripped RAW text holding a shape the census cannot read (the bound above), and a line "0:..." for an owner of an exception whose extent is missing
     local -a orig stripped masked mw rw rec
     local -A fstart fend hit
-    local n text t ln fl et touch cmd word rword wkind u re wre f owner
+    local n text t ln fl et touch cmd word rword wkind u re wre f owner mf rf
     mapfile -t orig < "$1"
-    mapfile -t masked < <(masked_text "$1")
-    mapfile -t stripped < <(sed -E 's/[[:space:]]+#.*$//' "$1")
+    mf=$(mktemp "$TEST_DIR/census.XXXXXX"); rf=$(mktemp "$TEST_DIR/census.XXXXXX")   # files, not pipes, which mapfile and read take a byte at a time (round 12q)
+    masked_text "$1" > "$mf" || :
+    mapfile -t masked < "$mf"
+    sed -E 's/[[:space:]]+#.*$//' "$1" > "$rf" || :
+    mapfile -t stripped < "$rf"
     census_functions
     for f in judged_read scanner_run; do                        # the functions the exceptions are keyed on (round 10c): one missing, a rename say, is named here, and its exceptions then except nothing
         [ -n "${fstart[$f]:-}" ] || echo "0:the extent of $f, which an exception of the bound is keyed on, is missing"
@@ -5414,6 +5477,7 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
         [ "${text#"${text%%[![:space:]]*}"}" = "$CENSUS_LOOKUP_KEPT" ] || hit[$n]=1
     done < <(printf '%s\n' "${stripped[@]}" | sed -E 's/^[[:space:]]*#.*$//' | grep -nE -- "$re" || true)
     while IFS= read -r t; do hit[${t%%:*}]=1; done < <(printf '%s\n' "${stripped[@]}" | sed -E 's/^[[:space:]]*#.*$//' | sed -E "s/[\"'\\\\]//g" | grep -nE -- "$wre" || true)
+    census_records "$1" vars '' "$mf" > "$rf"
     while IFS=$'\x1f' read -r -a rec; do                        # a command word that begins with a parameter expansion or a substitution: one of the three the bound names, inside the function it is keyed on
         census_rec "${rec[@]}"
         census_command
@@ -5424,13 +5488,40 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
         done
         case "$owner:$rword" in 'judged_read:"$@"'|'judged_read:"$detail"'|'scanner_run:"$gl"') continue ;; esac
         hit[$ln]=1
-    done < <(census_records "$1" vars)
+    done < "$rf"
+    rm -f "$mf" "$rf"
     for n in $(printf '%s\n' "${!hit[@]}" | sort -n); do echo "$n:${stripped[n - 1]}"; done
     return 0
 }
+# round 12q (the cost round): the census over the hook itself runs once per file. A census helper's output over a text
+# is a function of that text's bytes and of the census code alone, so census_memo keys an entry under BATS_FILE_TMPDIR on
+# both: the helper's own code and every census helper's, the census's word lists, the arguments and the file's bytes. A
+# planted copy, a stub of a helper or a changed helper has another key and runs afresh, so no case reads another case's
+# plant and no stale entry is read. An entry is written whole under a temporary name and then renamed, so a case running
+# beside another under --jobs reads a whole entry or none. The cases hand it the unchanged hook (reads_table_check hands
+# it every hook it is given, a planted hook keyed on its own bytes); every other plant runs its helper itself.
+census_memo() {   # <census helper> <bash file> [<arguments>...]: prints what the helper prints over the file (its stdout and stderr, as run captures them) and returns its status
+    local key dir entry tmp rc
+    if [ -z "${BATS_FILE_TMPDIR:-}" ]; then "$@"; return; fi   # no per-file directory (a bats before 1.4): the helper itself
+    key=$({ declare -f "$1" masked_text census_records census_rec census_unquote census_functions census_definition_shapes census_command census_is census_word_kind census_statements undeclared_reads census_block_above_has_marker census_unread_shapes stdin_loops_running_tools loop_kinds r11c_git_calls r11c_pins_check; declare -p CENSUS_PREFIX CENSUS_BUILTIN CENSUS_LOOKUP CENSUS_TOOLS CENSUS_LOOKUP_KEPT; printf '%s\n' "$@"; cat -- "$2"; } 2>&1 | sha256sum)
+    key=${key%% *}
+    dir="$BATS_FILE_TMPDIR/census-memo"; entry="$dir/$key"
+    mkdir -p "$dir"
+    if [ -f "$entry" ]; then
+        { read -r rc; cat; } < "$entry"
+        return "$rc"
+    fi
+    tmp=$(mktemp "$dir/.tmp.XXXXXX")
+    "$@" > "$tmp.out" 2>&1; rc=$?
+    { echo "$rc"; cat "$tmp.out"; } > "$tmp"
+    cat "$tmp.out"
+    rm -f "$tmp.out"
+    mv -f "$tmp" "$entry"
+    return "$rc"
+}
 
 @test "every read of the hook is DECLARED (the population half of case 174's guarantee): a census over the hook's text finds no command line running a reading tool that is not a judged_read call, inside a function the helper is handed whole, an array literal or under an outside-judged_read marker; the census flags a planted read in a copy, the double-quoted substitution spelling and a grep over captured content included, and passes a planted marker, an array literal and tool words inside a string" {
-    run undeclared_reads "$HOOK"
+    run census_memo undeclared_reads "$HOOK"
     [ "$status" -eq 0 ]
     [[ "$output" != *"undeclared: "* ]]
     # the census read the hook: the call sites are many, and the functions the helper is handed whole are derived from them
@@ -5532,7 +5623,7 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
     [[ "$output" != *"undeclared: "* ]]
     # the shapes the census cannot read, pinned ABSENT from the hook's comment-stripped raw text: none in the hook,
     # and each spelling found in a planted copy, so the pin is shown to red
-    run census_unread_shapes "$HOOK"
+    run census_memo census_unread_shapes "$HOOK"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     for plant in 'x=$(${GIT:-git} rev-parse HEAD)' 'r=${ROMP_GIT-git}' 'GIT=git; "$GIT" rev-parse HEAD' "tool='grep'" 'eval "git rev-parse HEAD"' 'x=$(eval "$probe")'; do
@@ -6174,11 +6265,15 @@ two_refs_second_leaking() {   # a base on the remote (BASE); main one clean comm
 stdin_loops_running_tools() {   # <bash file>: prints "<first line>-<last line>: <tools>" for each select loop that runs a tool in its body, each for loop in either form that runs one and is fed its list by an input redirection on its done or a pipe while a read in its body takes that stdin (round 11c; the awk's comment), and each while or until loop that runs a tool in its body (a reading tool, a judged_read call, or a call to a function the file defines whose body runs one, resolved transitively over the function extents undeclared_reads derives, a one-line function's header its body) and either reads on stdin at some read of its condition (from the keyword through its do, across lines: a read with no -u from a descriptor 1 to 9) or has no read in its condition while that condition is true or : or the loop is an until loop (such a loop reads its list, if it has one, where this census does not look, so it is refused whatever it reads); reads the census's helpers
     local -a orig masked mw rw rec segln segwhat
     local -A fstart fend runs
-    local i r tools cmd word rword wkind u ln fl et touch f g changed names kl el flag
+    local i r tools cmd word rword wkind u ln fl et touch f g changed names kl el flag mf rf
+    local -A owners
     mapfile -t orig < "$1"
-    mapfile -t masked < <(masked_text "$1")
+    mf=$(mktemp "$TEST_DIR/census.XXXXXX"); rf=$(mktemp "$TEST_DIR/census.XXXXXX")   # files, not pipes, which mapfile and read take a byte at a time (round 12q)
+    masked_text "$1" > "$mf" || :
+    mapfile -t masked < "$mf"
     census_functions
     names="(^|[^A-Za-z0-9_])(judged_read$(printf '|%s' "${!fstart[@]}"))([^A-Za-z0-9_]|\$)"
+    census_records "$1" calls "$names" "$mf" > "$rf"
     while IFS=$'\x1f' read -r -a rec; do                        # every simple command that runs something, with its line: a reading tool, judged_read or a function of the file
         census_rec "${rec[@]}"
         census_command
@@ -6186,15 +6281,19 @@ stdin_loops_running_tools() {   # <bash file>: prints "<first line>-<last line>:
         elif [ "$wkind" = judged ]; then segln+=("$ln"); segwhat+=(judged_read)
         elif [ "$wkind" = function ]; then segln+=("$ln"); segwhat+=("call:$word")
         fi
-    done < <(census_records "$1" calls "$names")
+    done < "$rf"
+    rm -f "$mf" "$rf"
+    for f in "${!fstart[@]}"; do                                # the functions whose extent holds each line, read once (round 12q: the same test as the fixed point below made on every pass)
+        for ((i = fstart[$f]; i <= fend[$f]; i++)); do owners[$i]="${owners[$i]:-} $f"; done
+    done
     changed=1
     while [ "$changed" -ne 0 ]; do                              # the functions whose body runs a tool, directly, through judged_read or through such a function, to a fixed point
         changed=0
         for ((r = 0; r < ${#segln[@]}; r++)); do
             case "${segwhat[r]}" in call:*) g=${segwhat[r]#call:}; [ -n "${runs[$g]:-}" ] || continue ;; esac
             i=$((segln[r] - 1))
-            for f in "${!fstart[@]}"; do
-                if [ -z "${runs[$f]:-}" ] && [ "$i" -ge "${fstart[$f]}" ] && [ "$i" -le "${fend[$f]}" ]; then runs[$f]=1; changed=1; fi
+            for f in ${owners[$i]:-}; do
+                if [ -z "${runs[$f]:-}" ]; then runs[$f]=1; changed=1; fi
             done
         done
     done
@@ -6314,7 +6413,7 @@ loop_kinds() {   # <bash file>: the loop census's own list, one line per loop th
     (
         set +ET
         trap - DEBUG
-        stdin_loops_running_tools "$1" > /dev/null
+        stdin_loops_running_tools /dev/null > /dev/null         # over an empty text, for the awk program it writes (round 12q: over "$1" it ran the whole census for that alone)
         masked_text "$1" | LC_ALL=C awk -f "$TEST_DIR/loops.awk"
     )
 }
@@ -6323,7 +6422,7 @@ descriptor_loops() {   # <bash file>: the count of while-read loops that read th
 }
 
 @test "no loop that runs a tool reads its list on stdin (round 8b, widened in rounds 9b and 10c): every while or until loop whose body runs a reading tool, a judged_read call or a function of the hook whose body runs one (resolved transitively, a one-line function's header its body) reads with -u from a descriptor 1 to 9 at every read of its condition, across the condition's lines, and no while-true, while-colon or until loop with no read in its condition runs one, so a tool that reads its stdin empties no list; the census flags each loop round 8b moved reverted to stdin, loops running a tool through judged_read, through hook functions, through a function that reaches one only transitively and through a one-line function, a -u 0 loop, a second read on stdin, a continued condition, a body read on a descriptor, an until loop and while-true and while-colon loops, and passes the same loop on a descriptor and loops of builtins and of functions that run no tool; every function definition of the hook is a multi-line column-0 name() { closed by a lone }; a loop whose condition is a test and reads its list in its body is disclosed" {
-    run stdin_loops_running_tools "$HOOK"
+    run census_memo stdin_loops_running_tools "$HOOK"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     # the loops that run tools read on a descriptor 1 to 9: seven in the hook (the two ref loops, the symlink loop, the
@@ -6498,7 +6597,7 @@ descriptor_loops() {   # <bash file>: the count of while-read loops that read th
     # function keyword, a space or a character outside [A-Za-z0-9_] before the parentheses, an indented header, a body
     # other than a brace group opened on the header's line, a one-line function, and a close that is not a lone }; each
     # planted alone and pinned once
-    run census_definition_shapes "$HOOK"
+    run census_memo census_definition_shapes "$HOOK"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     [ "$(grep -cE '^[[:space:]]+function [A-Za-z_]+\(' "$HOOK")" -gt 0 ]   # the raw text holds awk function definitions, inside single quotes the masked text hides
@@ -6564,14 +6663,38 @@ hook_with_block_of() {   # <hook file> <tsv> <out>: the hook with its generated 
     bash "$READS_HEADER_GEN" "$2" > "$TEST_DIR/block-of.txt"
     awk -v b="$READS_BEGIN" -v e="$READS_END" -v f="$TEST_DIR/block-of.txt" '$0 == b { print; while ((getline l < f) > 0) print l; skip = 1; next } $0 == e { skip = 0 } !skip { print }' "$1" > "$3"
 }
+rtc_file() {   # <bats file>: loads the file for reads_table_check, into the caller's lines, off, len and candl: its lines, and the numbers of its lines holding any substring the caller's $work/subs lists (one grep -F -f pass), in order (round 12q, the cost round)
+    local -a l
+    [ -z "${off[$1]:-}" ] || return 0
+    mapfile -t l < "$1"
+    off[$1]=${#lines[@]}; len[$1]=${#l[@]}
+    lines+=("${l[@]}")
+    candl[$1]=$(grep -a -n -F -f "$work/subs" -- "$1" | cut -d: -f1 | tr '\n' ' ')
+}
+rtc_match() {   # <bats file> <substring>: sets hn (the count of the file's lines holding the substring, the lines grep -c -F counts), hat (the number of the last of them) and htext (its text), the caller's; every such line is one of candl's (round 12q)
+    local L t
+    hn=0; hat=""; htext=""
+    for L in ${candl[$1]}; do
+        t=${lines[$((${off[$1]} + L - 1))]}
+        if [[ "$t" == *"$2"* ]]; then hn=$((hn + 1)); hat=$L; htext=$t; fi
+    done
+}
+rtc_body() {   # <bats file> <line>: sets body, the caller's, to the file's lines from that line to the first line after it that is exactly }, or to its end, as $(...) of the awk over a case's title line held them: each line and its newline, the trailing newlines dropped (round 12q)
+    local i=$((${off[$1]} + $2 - 1)) e=$((${off[$1]} + ${len[$1]})) j
+    body=""
+    for ((j = i; j < e; j++)); do body+="${lines[j]}"$'\n'; [ "${lines[j]}" != "}" ] || break; done
+    while [[ "$body" == *$'\n' ]]; do body=${body%$'\n'}; done
+}
 reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats files>: prints the first disagreement and returns 1; returns 0 when the table and the hook agree
-    local hook=$1 tsv=$2 gen=$3 dir=$4 work line n kind read fact caseref key class file sub body text hits k title
+    local hook=$1 tsv=$2 gen=$3 dir=$4 work line n kind read fact caseref key class file sub body text hits k title tabs hn hat htext
+    local -a hooklines lines
+    local -A off len candl
     work=$(mktemp -d "$TEST_DIR/table.XXXXXX")
     # the rows: printable ASCII and TAB alone (the generator folds by bytes), a prose row of three fields, a read row of six
     if LC_ALL=C grep -q $'[^\t -~]' "$tsv"; then echo "the table holds a byte outside printable ASCII and TAB"; return 1; fi
     while IFS= read -r line; do
         case "$line" in '#'*|'') continue ;; esac
-        n=$(awk -F'\t' '{ print NF }' <<< "$line")
+        tabs=${line//[^$'\t']/}; n=$((${#tabs} + 1))                # the fields a TAB separates, as awk -F'\t' counts them on a line that is not empty (round 12q: an awk per row until then)
         case "${line%%$'\t'*}" in
             prose) [ "$n" -eq 3 ] || { echo "a prose row of $n fields: $line"; return 1; } ;;
             gate|own|outside) [ "$n" -eq 8 ] || { echo "a read row of $n fields: $line"; return 1; } ;;
@@ -6600,17 +6723,25 @@ reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats f
     # case's title, and the short case's, carries the row's read as ": <read>:", the titles' own convention (the
     # trailing colon refuses a read whose name is a prefix of a neighbour's): until then rows naming each other's
     # cases passed, the defect the round 8b audit found in 27 rows (the round 8 refuters, 2026-09-24)
+    # A row's substring is matched in bash (rtc_match) over the bats file's lines holding ANY row's case or short
+    # substring, which hold every line holding it: its count, its one line's @test, that line's title and the body
+    # from it (rtc_body), each what grep -c -F, grep -F and the awk over the file printed (round 12q, the cost round: a
+    # process a read and eight reads a row, over a 1.2 MB file, cost more than the rest of this check)
+    while IFS=$'\t' read -r kind read fact caseref key class short end; do
+        case "$kind" in gate|own|outside) printf '%s\n%s\n' "${caseref#*:}" "${short#*:}" ;; esac
+    done < "$tsv" > "$work/subs"
     while IFS=$'\t' read -r kind read fact caseref key class short end; do
         case "$kind" in gate|own|outside) ;; *) continue ;; esac
         file=${caseref%%:*}; sub=${caseref#*:}
         if [ "$file" = "$caseref" ] || [ ! -f "$dir/pre-push-$file.bats" ]; then echo "the case of $read names no bats file: $caseref"; return 1; fi
-        n=$(grep -c -F -- "$sub" "$dir/pre-push-$file.bats" || true)
+        rtc_file "$dir/pre-push-$file.bats"
+        rtc_match "$dir/pre-push-$file.bats" "$sub"; n=$hn
         [ "$n" -eq 1 ] || { echo "the case of $read matches $n lines: $sub"; return 1; }
-        grep -F -- "$sub" "$dir/pre-push-$file.bats" | grep -q '^@test ' || { echo "the case of $read names no case: $sub"; return 1; }
-        body=$(SUB=$sub awk 'index($0, ENVIRON["SUB"]) && /^@test / { p = 1 } p { print } p && /^}$/ { exit }' "$dir/pre-push-$file.bats")
+        [[ "$htext" == "@test "* ]] || { echo "the case of $read names no case: $sub"; return 1; }
+        rtc_body "$dir/pre-push-$file.bats" "$hat"
         [[ "$body" == *"_through_hook_with_shim"* ]] || { echo "the case of $read pushes through no hook: $sub"; return 1; }
         [[ "$body" == *$'\n    fired '* ]] || { echo "the case of $read checks no calls file: $sub"; return 1; }
-        title=$(grep -F -- "$sub" "$dir/pre-push-$file.bats" | sed -E 's/^@test "//; s/" \{$//')
+        title=${htext#'@test "'}; title=${title%'" {'}
         [[ "$title" == *": $read:"* ]] || { echo "the case of $read names another read: $title"; return 1; }
         [[ "$fact" == *"Its end: "?* ]] || { echo "the row of $read states no end"; return 1; }
         case "$end" in
@@ -6623,13 +6754,14 @@ reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats f
             *)
                 file=${short%%:*}; sub=${short#*:}
                 if [ "$file" = "$short" ] || [ ! -f "$dir/pre-push-$file.bats" ]; then echo "the short case of $read names no bats file: $short"; return 1; fi
-                n=$(grep -c -F -- "$sub" "$dir/pre-push-$file.bats" || true)
+                rtc_file "$dir/pre-push-$file.bats"
+                rtc_match "$dir/pre-push-$file.bats" "$sub"; n=$hn
                 [ "$n" -eq 1 ] || { echo "the short case of $read matches $n lines: $sub"; return 1; }
-                grep -F -- "$sub" "$dir/pre-push-$file.bats" | grep -q '^@test ' || { echo "the short case of $read names no case: $sub"; return 1; }
-                body=$(SUB=$sub awk 'index($0, ENVIRON["SUB"]) && /^@test / { p = 1 } p { print } p && /^}$/ { exit }' "$dir/pre-push-$file.bats")
+                [[ "$htext" == "@test "* ]] || { echo "the short case of $read names no case: $sub"; return 1; }
+                rtc_body "$dir/pre-push-$file.bats" "$hat"
                 [[ "$body" == *"_through_hook_with_shim"* ]] || { echo "the short case of $read pushes through no hook: $sub"; return 1; }
                 [[ "$body" == *$'\n    fired_short '* ]] || { echo "the short case of $read checks no cut answer: $sub"; return 1; }
-                title=$(grep -F -- "$sub" "$dir/pre-push-$file.bats" | sed -E 's/^@test "//; s/" \{$//')
+                title=${htext#'@test "'}; title=${title%'" {'}
                 [[ "$title" == *": $read:"* ]] || { echo "the short case of $read names another read: $title"; return 1; }
                 ;;
         esac
@@ -6645,18 +6777,19 @@ reads_table_check() {   # <hook> <tsv> <generator> <dir of the pre-push-*.bats f
     done < "$tsv"
     # the reads outside judged_read: a bijection between the census's marker and array lines and the outside rows'
     # keys, each line matched by exactly one key and each key matching exactly one line (read by read, never a count)
-    undeclared_reads "$hook" > "$work/census" || { echo "the census failed"; return 1; }
+    census_memo undeclared_reads "$hook" > "$work/census" || { echo "the census failed"; return 1; }
     awk '$1 == "declared:" && ($2 == "marker" || $2 == "array") { print $3 }' "$work/census" > "$work/lines"
     [ -s "$work/lines" ] || { echo "the census found no read outside judged_read"; return 1; }
     awk -F'\t' '$1 == "outside" { print $5 }' "$tsv" > "$work/keys"
+    mapfile -t hooklines < "$hook"                              # each line below read from the hook once, where a sed per line and per key read it until round 12q
     while IFS= read -r n; do
-        text=$(sed -n "${n}p" "$hook"); hits=0
+        text=${hooklines[n - 1]}; hits=0
         while IFS= read -r k; do if [[ "$text" == *"$k"* ]]; then hits=$((hits + 1)); fi; done < "$work/keys"
         [ "$hits" -eq 1 ] || { echo "the read outside judged_read at line $n is matched by $hits keys: ${text#"${text%%[![:space:]]*}"}"; return 1; }
     done < "$work/lines"
     while IFS= read -r k; do
         hits=0
-        while IFS= read -r n; do if [[ "$(sed -n "${n}p" "$hook")" == *"$k"* ]]; then hits=$((hits + 1)); fi; done < "$work/lines"
+        while IFS= read -r n; do if [[ "${hooklines[n - 1]}" == *"$k"* ]]; then hits=$((hits + 1)); fi; done < "$work/lines"
         [ "$hits" -eq 1 ] || { echo "the key $k matches $hits reads outside judged_read"; return 1; }
     done < "$work/keys"
     return 0
@@ -11886,10 +12019,13 @@ r11c_blank_context_push() {   # the push of main under GIT_DIFF_OPTS=--unified=3
 r11c_git_calls() {   # <bash file> [<census_records' calls records of that file, when the caller holds them>]: one line per git command the census finds (a judged_read call's tagged command among them): its line, the words ahead of its command word and its words from git on, raw, the three fields separated by the byte 037 (a tab, which read takes as whitespace, would drop an empty field)
     local -a orig masked mw rw rec
     local -A fstart fend
-    local ln fl et touch cmd word rword wkind u k
+    local ln fl et touch cmd word rword wkind u k mf rf
     mapfile -t orig < "$1"
-    mapfile -t masked < <(masked_text "$1")
+    mf=$(mktemp "$TEST_DIR/census.XXXXXX"); rf=$(mktemp "$TEST_DIR/census.XXXXXX")   # files, not pipes, which mapfile and read take a byte at a time (round 12q)
+    masked_text "$1" > "$mf" || :
+    mapfile -t masked < "$mf"
     census_functions
+    if [ "$#" -gt 1 ]; then printf '%s\n' "$2" > "$rf"; else census_records "$1" calls '' "$mf" > "$rf"; fi
     while IFS=$'\x1f' read -r -a rec; do
         census_rec "${rec[@]}"
         census_command
@@ -11897,7 +12033,8 @@ r11c_git_calls() {   # <bash file> [<census_records' calls records of that file,
         k=0
         while [ "$k" -lt "${#rw[@]}" ]; do census_unquote "${rw[k]}"; [ "${u##*/}" = git ] && break; k=$((k + 1)); done
         printf '%s\037%s\037%s\n' "$ln" "${rw[*]:0:k}" "${rw[*]:k}"
-    done < <(if [ "$#" -gt 1 ]; then printf '%s\n' "$2"; else census_records "$1" calls; fi)
+    done < "$rf"
+    rm -f "$mf" "$rf"
 }
 r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin and returns 1, 0 when every pin is carried: no git read the census finds unsets GIT_DIFF_OPTS or runs under an environment that lacks it (an env -u or --unset of it, an assignment of it ahead of git, env -i or a lone -), and no statement of the text names GIT_DIFF_OPTS, so none unsets, sets or exports it for the reads after it (round 12n, romp-manager's ruling P on round 12l's audit A1: the feed reads the variable as main's git log does); the feed's diff-tree reads (the git reads given diff-tree, --stdin and --text: the feed and, since round 12e, the merges' first-parent read) carry -c diff.suppressBlankEmpty=false among git's own options; every git log or rev-list given --format or --pretty carries --encoding=UTF-8, or -c i18n.logOutputEncoding=UTF-8 among git's own options; any other git read given a format is a for-each-ref whose format is %(refname) alone, the stated exemption (ref names are not re-encoded); and the reads given a format number as many as the lines of the text that run git log or git rev-list with one, a second derivation
     local ln pre args sub g n i x fmt enc feed=0 formats=0 lines calls named recs
@@ -11965,12 +12102,12 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
 }
 
 @test "round 11c (C, the census of the pins), re-aimed in round 12n (romp-manager's ruling P on round 12l's audit A1, its condition 3): over the hook's git calls, no git read runs with GIT_DIFF_OPTS taken from it (an env -u or --unset of it, an assignment of it ahead of git, env -i), and no statement of the hook names GIT_DIFF_OPTS, so the feed and the first-parent read see it as main's git log does; the feed's diff-tree and the merges' first-parent diff-tree (the git diff-tree reads given --stdin and --text) carry -c diff.suppressBlankEmpty=false, and every git log or rev-list read given a format pins its output encoding (--encoding=UTF-8), the list of reads derived from the hook's git calls and equal to the lines that run one, the for-each-ref %(refname) reads the stated exemption; each pin removed in a copy, one at a time, reds the check, and so do env -u GIT_DIFF_OPTS put back on either read, an unset of it at the top of the text, and a new format read of either kind; and the prefix rule's other arms (an assignment of it ahead of git, env -i, env's --unset in both spellings, -u joined to the name, a lone -), each on a text of one git read, red it naming the word (until round 12n the check required env -u GIT_DIFF_OPTS on both reads)" {
-    run r11c_pins_check "$HOOK"
+    run census_memo r11c_pins_check "$HOOK"
     [ "$output" = "" ]
     [ "$status" -eq 0 ]
     # the list read once under run (a substitution in the case's own shell runs its loop under bats' traps, about ten
     # times slower): the logs are judged_read's tagged commands, read, not assumed, and the two feed reads are found
-    run r11c_git_calls "$HOOK"
+    run census_memo r11c_git_calls "$HOOK"
     [ "$status" -eq 0 ]
     [ "$(awk -F $'\037' '$3 ~ /(^| )(log|rev-list) / && $3 ~ /--(format|pretty)/' <<< "$output" | wc -l)" -ge 3 ]
     [ "$(awk -F $'\037' '$3 ~ /(^| )diff-tree / && $3 ~ / --stdin / && $3 ~ / --text /' <<< "$output" | wc -l)" -eq 2 ]
@@ -12688,7 +12825,7 @@ r12b_secret_checks() {   # after a push under r12b_log_watcher: the token reache
     h=$(grep -n '^path_skips() {' "$HOOK" | cut -d: -f1)
     [ -n "$h" ]
     [ "$(sed -n "$((h + 1))p" "$HOOK")" = "    LC_ALL=C awk '" ]
-    run undeclared_reads "$HOOK"
+    run census_memo undeclared_reads "$HOOK"
     [[ "$output" == *"declared: body $((h + 1)) path_skips: awk"* ]]
     sed "${h}a\\    git rev-parse HEAD > /dev/null" "$HOOK" > "$TEST_DIR/plant-r12l-1.sh"
     sed "${h}a\\    x=\$(git rev-parse HEAD || :)" "$HOOK" > "$TEST_DIR/plant-r12l-2.sh"
