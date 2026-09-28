@@ -3377,40 +3377,60 @@ def _step_span(lines, job, label):
     return hits[0], i
 
 
+def _step_in(lines, job, label):
+    """Whether `job` holds a step named `label` (a job the file lacks holds none)."""
+    if "  %s:" % job not in lines:
+        return False
+    start, end = _job_span(lines, job)
+    return any(lines[i] == "      - name: %s" % label for i in range(start, end))
+
+
 def served_job_of_its_own(src):
     """ci.yml as fork PR 928 leaves it, built from `src` (this tree's ci.yml) as 928's round-1 rulings describe it: the
     served step moves out of the extension job, with the setup-python step before it, into a job of its own with its own
     setup (the checkout, node, npm ci, the build, and the extension job's Playwright cache and Chromium install, copied)
     and fail-fast off; and the vendored tooling step moves out of the Shell job into a job of its own. Each block is cut
     from the real file by its anchors, each held to one occurrence, so a change to ci.yml that this construction no
-    longer reads reds here by name."""
+    longer reads reds here by name. Each move is made only while its step still stands in its old job: once 928 has
+    landed, ci.yml already has that shape and comes back as it is, and CiParityServedJobOfItsOwn reads the real file."""
     lines = src.split("\n")
-    ext_start, ext_end = _job_span(lines, "vscode-extension")
-    s_start, s_end = _step_span(lines, "vscode-extension", SERVED_LABEL)
-    if s_end != ext_end:
-        raise AssertionError("the served step is not the extension job's last step: re-anchor served_job_of_its_own")
-    py = [i for i in range(ext_start, s_start) if lines[i] == "      - uses: actions/setup-python@v5"]
-    if len(py) != 1 or any(lines[i].startswith("      - ") for i in range(py[0] + 1, s_start)):
-        raise AssertionError("the extension job's setup-python step does not come right before the served step: re-anchor "
-                             "served_job_of_its_own")
-    cache = lines[slice(*_step_span(lines, "vscode-extension", "Cache Playwright's browsers"))]
-    chromium = lines[slice(*_step_span(lines, "vscode-extension", "Install the pinned Playwright Chromium"))]
-    v_start, v_end = _step_span(lines, "shell", VENDORED_LABEL)
-    if v_end != _job_span(lines, "shell")[1] or not v_end < py[0]:
-        raise AssertionError("the vendored tooling step is not the Shell job's last step, before the extension job: re-anchor "
-                             "served_job_of_its_own")
-    moved_vendored, moved_served = lines[v_start:v_end], lines[py[0]:s_end]
-    out = lines[:v_start] + lines[v_end:py[0]] + lines[s_end:]
+    cut, vendored, served, setup = [], None, None, []
+    if _step_in(lines, "shell", VENDORED_LABEL):
+        v_start, v_end = _step_span(lines, "shell", VENDORED_LABEL)
+        if v_end != _job_span(lines, "shell")[1]:
+            raise AssertionError("the vendored tooling step is not the Shell job's last step: re-anchor served_job_of_its_own")
+        vendored = lines[v_start:v_end]
+        cut.append((v_start, v_end))
+    if _step_in(lines, "vscode-extension", SERVED_LABEL):
+        ext_start, ext_end = _job_span(lines, "vscode-extension")
+        s_start, s_end = _step_span(lines, "vscode-extension", SERVED_LABEL)
+        if s_end != ext_end:
+            raise AssertionError("the served step is not the extension job's last step: re-anchor served_job_of_its_own")
+        py = [i for i in range(ext_start, s_start) if lines[i] == "      - uses: actions/setup-python@v5"]
+        if len(py) != 1 or any(lines[i].startswith("      - ") for i in range(py[0] + 1, s_start)):
+            raise AssertionError("the extension job's setup-python step does not come right before the served step: "
+                                 "re-anchor served_job_of_its_own")
+        setup = (lines[slice(*_step_span(lines, "vscode-extension", "Cache Playwright's browsers"))] +
+                 lines[slice(*_step_span(lines, "vscode-extension", "Install the pinned Playwright Chromium"))])
+        served = lines[py[0]:s_end]
+        cut.append((py[0], s_end))
+    out, at = [], 0
+    for start, end in sorted(cut):
+        out += lines[at:start]
+        at = end
+    out += lines[at:]
     while out and out[-1] == "":
         out.pop()
-    out += ["", "  vendored-tooling:", "    name: Vendored tooling (node --test)", "    runs-on: ubuntu-latest",
-            "    timeout-minutes: 30", "    steps:", "      - uses: actions/checkout@v4", "      - uses: actions/setup-node@v4",
-            "        with:", "          node-version: '22'"] + moved_vendored
-    out += ["", "  served-pages:", "    name: Browser-backed served-page tests", "    runs-on: ubuntu-latest",
-            "    timeout-minutes: 40", "    strategy:", "      fail-fast: false", "    defaults:", "      run:",
-            "        working-directory: vscode-extension", "    steps:", "      - uses: actions/checkout@v4",
-            "      - uses: actions/setup-node@v4", "        with:", "          node-version: '22'", "      - name: Install deps",
-            "        run: npm ci", "      - name: Build", "        run: npm run build"] + cache + chromium + moved_served
+    if vendored:
+        out += ["", "  vendored-tooling:", "    name: Vendored tooling (node --test)", "    runs-on: ubuntu-latest",
+                "    timeout-minutes: 30", "    steps:", "      - uses: actions/checkout@v4", "      - uses: actions/setup-node@v4",
+                "        with:", "          node-version: '22'"] + vendored
+    if served:
+        out += ["", "  served-pages:", "    name: Browser-backed served-page tests", "    runs-on: ubuntu-latest",
+                "    timeout-minutes: 40", "    strategy:", "      fail-fast: false", "    defaults:", "      run:",
+                "        working-directory: vscode-extension", "    steps:", "      - uses: actions/checkout@v4",
+                "      - uses: actions/setup-node@v4", "        with:", "          node-version: '22'", "      - name: Install deps",
+                "        run: npm ci", "      - name: Build", "        run: npm run build"] + setup + served
     return "\n".join(out) + "\n"
 
 
@@ -3423,13 +3443,17 @@ class CiParityServedJobOfItsOwn(CiParity):
         return served_job_of_its_own(CI_YML.read_text(encoding="utf-8"))
 
     def test_the_construction_moves_both_steps(self):
-        self.assertEqual(self.step(SERVED_LABEL)[0], "served-pages")
-        self.assertEqual(self.step(VENDORED_LABEL)[0], "vendored-tooling")
-        self.assertEqual(self.served["job"], "served-pages", "the runner read the step in its new job")
-        self.assertNotIn(SERVED_LABEL, self.jobs["vscode-extension"])
-        self.assertNotIn(VENDORED_LABEL, self.jobs["shell"])
-        self.assertEqual(ci_jobs(self.text), ci_jobs() + ["vendored-tooling", "served-pages"])
-        self.assertEqual([j for j, _e, _r in self.found("Install deps")], ["vscode-extension", "served-pages"])
+        """The served step and the vendored tooling step each stand in a job of their own, not in their old ones, and
+        the runner read the served step in its job. Before 928 lands the construction moved them (the jobs it names);
+        after, the real file already stands so, and the construction changes nothing."""
+        served_job, vendored_job = self.step(SERVED_LABEL)[0], self.step(VENDORED_LABEL)[0]
+        self.assertNotIn(served_job, ("vscode-extension", "python", "shell", "secrets"))
+        self.assertNotIn(vendored_job, ("vscode-extension", "python", "shell", "secrets", served_job))
+        self.assertEqual(self.served["job"], served_job, "the runner read the step in its new job")
+        self.assertEqual(served_job_of_its_own(self.text), self.text, "a file already in 928's shape comes back as it is")
+        real = CI_YML.read_text(encoding="utf-8")
+        if _step_in(real.split("\n"), "vscode-extension", SERVED_LABEL):
+            self.assertEqual((served_job, vendored_job), ("served-pages", "vendored-tooling"), "the construction moved both")
 
 
 # The private-checkout record every run of the runner carries (runner.checkout); a reader refuses a run without one.
