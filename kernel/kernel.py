@@ -73869,9 +73869,9 @@ class Handler(BaseHTTPRequestHandler):
     # browser sends, gets every reply in HTTP/0.9's shape, a body with no status line and no headers: http.server's
     # refusals (its 400 and 505 for the line, and its 431s and 501 for a line that gets past those) and the kernel's own
     # reply to the request alike, so an authorized GET (`GET /chat?token=<token>`, say) gets the page itself, a bare
-    # `GET /` the sign-in page, and a GET with no credential the gate's refusal, each with no headers. No header can
-    # ride those replies, so the 431s and the 501 carry the policy only on a request line whose version is below HTTP/2.0
-    # and not HTTP/0.9, which gets a full reply (HTTP/0.5, say).
+    # `GET /` the sign-in page, and `GET /chat` with no credential the gate's refusal, each with no headers. No header
+    # can ride those replies, so the 431s and the 501 carry the policy only on a request line whose version is below
+    # HTTP/2.0 and not HTTP/0.9, which gets a full reply (HTTP/0.5, say).
     def send_error(self, code, message=None, explain=None):
         self._in_send_error = True
         try:

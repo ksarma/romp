@@ -699,11 +699,13 @@ class OpenerIsolation(unittest.TestCase):
         # version makes it so), HTTP/0.9 itself, or HTTP/2.0 or later gets every reply in HTTP/0.9's shape, the body
         # alone, so no header can ride it. No browser sends one. Each case names the body it gets, so a case whose reply
         # is not written fails: http.server's refusal (its error page, with its code), the sign-in page for a bare
-        # `GET /`, the page itself, as _send writes it, for an authorized GET, and the gate's refusal for a GET with no
-        # credential. The second loop reads http.server's 431 and 501 and the kernel's own reply to a POST on a request
-        # line ending in HTTP/0.9 itself, whose headers http.server reads, so the 431 is written; after a line of two
-        # words, 3.13 and later read no headers and answer a GET with the page for its path. Any other version below
-        # HTTP/2.0 gets a full reply with the policy once (the last case).
+        # `GET /`, the page itself, as _send writes it, for an authorized GET, and the gate's refusal for `GET /chat`
+        # with no credential. /login and /healthz, which the gate exempts, answer a GET with no credential with their
+        # own bodies, the sign-in page and `ok`, so only a gated path gets the gate's refusal. The second loop reads
+        # http.server's 431 and 501 and the kernel's own reply to a POST on a request line ending in HTTP/0.9 itself,
+        # whose headers http.server reads, so the 431 is written; after a line of two words, 3.13 and later read no
+        # headers and answer a GET with the page for its path. Any other version below HTTP/2.0 gets a full reply with
+        # the policy once (the last case).
         chat = km._chat_page()
         head = chat.index("<head>") + len("<head>")
         for what, line, want in (
@@ -714,7 +716,9 @@ class OpenerIsolation(unittest.TestCase):
                  "sign-in"),
                 ("an authorized GET", "GET /chat?token=" + TOK, "page"),
                 ("an authorized GET with HTTP/0.9 itself", "GET /chat?token=%s HTTP/0.9" % TOK, "page"),
-                ("a GET with no credential", "GET /chat", "gate")):
+                ("GET /chat with no credential, a gated path", "GET /chat", "gate"),
+                ("GET /login with no credential, a path the gate exempts", "GET /login", "sign-in"),
+                ("GET /healthz with no credential, a path the gate exempts", "GET /healthz", "ok")):
             with self.subTest(what=what):
                 status, msg, body = _wire_raw(self.port, (line + "\r\n\r\n").encode())
                 self.assertIsNone(status, what + ": no status line")
@@ -728,6 +732,8 @@ class OpenerIsolation(unittest.TestCase):
                 elif want == "gate":
                     self.assertTrue(body.startswith(b"forbidden: token required"),
                                     what + ": the gate's refusal: %r" % body[:60])
+                elif want == "ok":
+                    self.assertEqual(body, b"ok", what + ": the liveness probe's body, served with no headers")
                 else:
                     self.assertIn(b"Error code: %d" % want, body, what + ": http.server's %d page: %r" % (want, body[:60]))
         for what, req, want in (
