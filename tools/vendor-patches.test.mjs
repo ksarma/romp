@@ -228,6 +228,63 @@ test('P7 the skill asks the agent to include the .trackchanges/ folder in a comm
   assert.ok(notes.includes('it holds the user\'s comments on your files and the record of your tracked changes'));
 });
 
+// ── P9: the skill says a shell write whose target is not a literal path is refused in a project that tracks files ──
+//
+// Prose (patch 0009): the refusal romp's Bash-side guard emits since 2026-09-18 for a write target it cannot
+// read (a research session's report of a `cp "$SRC" "$DST"` that landed raw; hooks/romp-track-bash-guard.mjs).
+// Each phrase is absent from the pristine skill and present with the patch.
+
+test('P9 the skill says a shell write whose target is not a literal path is refused in a project that tracks files, and to spell the path out', () => {
+  const section = SKILL.slice(SKILL.indexOf('## When tracking is ON'), SKILL.indexOf('## Messages from the editor'));
+  assert.ok(section.includes('a shell write whose target is not a literal path'));
+  for (const form of ['`"$DST"`', '`$(...)`', 'glob or brace list']) assert.ok(section.includes(form), `the rule names ${form}`);
+  assert.ok(section.includes('so the refusal holds whatever the word would expand to'), 'the guard does not resolve the word');
+  // the round-1 review (2026-09-18): the guard reads HOME (for `~` and a leading `$HOME`), so the skill says
+  // "variables", not "environment", and names the one exception, a process-id-only target where no tracked file could land
+  assert.ok(section.includes('does not read your variables to find out'));
+  assert.ok(section.includes('`$HOME/` is read as `~/` is'));
+  // round 3 of that review (2026-09-19): the exception is the process id alone, in every shell, stated exactly as the
+  // code allows it (rounds 1 and 2 promised `$RANDOM` and `$SECONDS`, which a command can unset or shadow), with the
+  // reason and each remedy a session can take; the stale promise is gone
+  assert.ok(section.includes('whose only expansions are `$$` or `${$}`, the shell\'s process id, at an absolute path where no tracked file could land'), 'the exception, exactly as the code allows it');
+  assert.ok(section.includes('Nothing else is: `$RANDOM`, `$SECONDS` and every other name can be unset or shadowed and then hold a path'), 'why nothing else is');
+  assert.ok(section.includes('`log.$RANDOM` inside a tracked project is refused, in every shell'), 'what a session experiences');
+  assert.ok(!section.includes('at an absolute path outside the project, is allowed') && !section.includes('`$$`, `$RANDOM` or `$SECONDS`') && !section.includes('$BASHPID'), 'the round-2 promise is gone');
+  assert.ok(section.includes('a relative path after a `cd` the guard cannot follow'), 'the round-3 refusal class');
+  assert.ok(section.includes('Spell the path out') && section.includes('name a temp file with `$$`') && section.includes('give a folder a literal name of your own, or write outside the tracked project'), 'what to do');
+  // round 5 of that review (2026-09-20, its rules-1): the two deliberate false refusals escalated with the change are named here
+  // as on the hook header, hooks/README.md and decision 47 (round 3 ruled the skill the surface to land them on first, and it was
+  // the one surface that still lacked them), so this surface cannot drift from the other three in silence again
+  const flatAll = section.replace(/\s+/g, ' ');
+  assert.ok(flatAll.includes('Two deliberate false refusals of this exception, escalated with the change and stated in decision 47 of plans/file-review.md'), 'the escalated classes are introduced as such');
+  assert.ok(flatAll.includes('a `$$` name whose folder is one where a tracked file could land (`<root>/x-$$/y.md`, `<root>/docs/build-$$.log`) is refused from any working directory while its literal spelling may pass, the refusal naming the folder'), 'the unknown-folder class');
+  assert.ok(flatAll.includes('a `$$` name in a folder of more than 2000 entries inside a tracked project is refused without a scan of that folder (`LANDING_SCAN_CAP`)'), 'the landing-scan cap class');
+  // round 4 (2026-09-19): the skill states the wrapper set, env -C, the unknown-option refusal, the HOME
+  // reassignment and the parent/under-root rule, and the best-effort contract with the unmodelled-writer list
+  assert.ok(section.includes('`setsid`, `flock`, `taskset`, `chrt` and') && section.includes('`numactl`'), 'the wrapper set');
+  assert.ok(section.includes('runs `env -C DIR` and `sudo -D DIR` in DIR') && section.includes('reassigns HOME'), 'env -C and the HOME reassignment');
+  assert.ok(section.includes('best-effort against known write forms') && section.includes('allows anything it does not recognise'), 'the contract, stated');
+  // round 6's second commit (2026-09-21): the closing hand list is THE RESIDUAL PROPERTY, one paragraph whose classes are the ones the
+  // residual table in tools/romp-track-bash-guard.test.mjs measures; since round 7 of fork PR #780 review, thirty-fifth commit (the reviewer's
+  // extra7-3), the paragraph stands identical on the developer surfaces (tools/file-review-plan-bash-guard.test.mjs, which derives their count) and the skill states its
+  // classes in its reader's words instead, held to RESIDUAL_CLASSES by name in tools/romp-track-bash-guard.test.mjs; patch 0009 was regenerated
+  assert.ok(section.includes('The guard refuses a write only when it recognises the command as a writer it knows') && section.includes('- **a producer outside the output model**: '), "the reader's statement of the residual classes, in place of the unmodelled-writer list");
+  assert.ok(!section.includes('THE RESIDUAL PROPERTY') && !section.includes("extract's switch") && !section.includes('B2 as ruled'), "the developer paragraph, with the hook's internal names and the review's provenance, is not the skill's");
+  // round 7 of fork PR #780 review, thirty-sixth commit (the reviewer's verifier): the writers named are examples (the guard knows dd, truncate and sort -o
+  // too, and a list with no 'such as' read as the whole set), and a piped script stands beside a name and a script among the texts it cannot read
+  const flatReader = section.replace(/\s+/g, ' ');
+  assert.ok(flatReader.includes('as a writer it knows (such as a copy, a move,') && flatReader.includes('a command whose name, script or piped script it cannot read names a tracked file as a literal operand'), "the reader's statement names its writers as examples and the texts the guard may not read (a name, a script, a piped script)");
+  // the walk-around lens third pass (2026-09-19): the six rules re-keyed on what the guard can see, each named so a
+  // session knows the refusal it meets, and the contract paragraph's two sentences the other surfaces carry
+  const flat = section.replace(/\s+/g, ' ');   // the skill hard-wraps its paragraphs
+  assert.ok(flat.includes('on what the guard can see, not on a list of spellings'), 'the third pass\'s principle');
+  for (const phrase of ['any mention of HOME outside an expansion', 'an option it does not parse in full', '`env -S` is refused outright', 'a link whose source is not literal', 'a shell option it does not know to be inert for paths', 'at any depth beneath it', '`cp --targ`']) {
+    assert.ok(flat.includes(phrase), `the skill states the third-pass rule: ${phrase}`);
+  }
+  assert.ok(flat.includes('The allow-by-default for an unmodelled writer is deliberately not flipped') && flat.includes('What it does refuse, while a tracked project is in play'), 'the contract paragraph in full');
+  const ours = section.slice(section.indexOf('In a project that tracks files, a shell write'), section.indexOf('For ANY change to the file'));
+  assert.ok(ours.length > 0 && !/\u2014/.test(ours), 'no em dash in the paragraphs the patch writes (the skill\'s own text below them keeps its own)');
+});
 
 // ── P8: one writer per sidecar: the CLIs take store-io's lock around their load-to-rename ──
 //

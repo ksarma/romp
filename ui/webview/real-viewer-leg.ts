@@ -158,19 +158,32 @@ window.putAtTop = function (text) {
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
+/** Whether the playwright module resolved from the extension's package.json: the one read the launch below guards on, exported so
+ *  a leg's self-test derives the reason a skip names from the same read and never from a second one. */
+export const playwrightInstalled = (): boolean => pw !== null;
 
-/** Launch a headless browser and run `body` with it, or skip LOUDLY (CI installs no browsers), as the other legs do: Chromium
+/** Launch a headless browser and run `body` with it, or skip LOUDLY naming the reason, as the other legs do: Chromium
  *  unless `launch.engine` names Firefox or WebKit, which the one gate's tap cells and stacking cells launch from a leg of their own
  *  (file-figure-open-engines-browser.test.ts, off the shared roster of browser legs, whose job installs Chromium alone; the file
  *  review's round 17, tests-1 with regression-1). `launch.args` is handed to playwright's launch: a case that needs Chromium's own
  *  device settings (the touchscreen laptop, a `--blink-settings` flag, since CDP's touch emulation flips the primary pointer and
- *  cannot build it; tab-hide-browser.test.ts's precedent) passes `{ args }`. */
+ *  cannot build it; tab-hide-browser.test.ts's precedent) passes `{ args }`. Under
+ *  ROMP_BROWSER_LEGS_REQUIRE (CI's browser-legs step sets it to 1 after the job installs Chromium; any non-empty value counts, so
+ *  a misspelt value never turns the requirement off in silence) a leg that cannot launch FAILS naming the switch and the reason
+ *  instead: the one CI run of a browser leg must not read green on a runner that lost its browser. Without the switch a skip
+ *  stays a skip: CI's Test step runs before the install, so every browser leg skips there and that step reads the source pins
+ *  beside them. The switch is read here, in the one launch the legs share, so a leg that launches through this helper carries
+ *  no read of its own. */
 export async function inBrowser(t: any, body: (browser: any) => Promise<void>, launch: { args?: string[]; engine?: "chromium" | "firefox" | "webkit" } = {}): Promise<void> {
-  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it (CI installs no browsers)"); return; }
+  const cannot = (why: string) => {
+    if (process.env.ROMP_BROWSER_LEGS_REQUIRE) assert.fail("ROMP_BROWSER_LEGS_REQUIRE is set and this leg cannot run: " + why);
+    t.skip(why);
+  };
+  if (!pw) { cannot("playwright is not installed under vscode-extension; the browser leg needs it"); return; }
   let browser: any;
   const { engine, ...opts } = launch;
   try { browser = await pw[engine || "chromium"].launch(opts); }
-  catch (e) { t.skip("no playwright browser on this box; the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+  catch (e) { cannot("no playwright browser on this box; the browser leg needs one: " + String((e as Error).message).split("\n")[0]); return; }
   try { await body(browser); } finally { await browser.close(); }
 }
 
