@@ -34,7 +34,7 @@ import unittest
 from http.client import HTTPMessage
 from http.server import ThreadingHTTPServer
 from romp_load import load_source
-from tests.document_navigations import NAVIGATIONS, credential   # the navigations each opener-policy shape is served under
+from tests.document_navigations import NAVIGATIONS, credential, navigation_path   # the navigations each opener-policy shape is served under
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -606,13 +606,14 @@ class OpenerIsolation(unittest.TestCase):
     test_each_refusal_http_server_writes_itself_carries_it_once). So every page served to a request line a browser sends
     carries it, and so do the dashboard's own tabs: a /file image or PDF it opens with window.open is a same-origin
     document with the same policy, so window.open still returns a handle (ui/webview/preview.ts openFileTab reads only
-    that). Executed on the shell, every pane page, the sign-in page, a static asset, and each document shape the /file
+    that). Executed on the shell, every pane page, the sign-in page (on / and on /login), a static asset, and each
+    document shape the /file
     route builds: an image, every shape that hands _send extra headers of its own (an SVG, with its sandbox policy; a
     PDF, with its name; a text file, with its mtimes; a 404, with its reason), the 413 page a PDF's own tab shows, and
     both 415 refusals (a file no view shows, a text-named file that is not text). Each shape is served once per entry of
     NAVIGATIONS (tests/document_navigations.py): bare, and with the headers a browser sends on a navigation typed,
     opened by the dashboard, and opened by another origin, which is where a browser reads the policy, signed in by the
-    romp_token cookie as a browser's navigation is. Read off a live socket (_wire_get), so a header written anywhere, a
+    session cookie as a browser's navigation is, a /file shape with the cap its URL carries. Read off a live socket (_wire_get), so a header written anywhere, a
     send_response or end_headers override included, is seen, and each carries it exactly once: a second copy, even of
     the same value, leaves a browser with a header it cannot parse and so with no policy. The /remote/<host>/file
     relay's shapes are tests/test_kernel_remote_file_relay.py's, read the same way. The one reply without it is one in
@@ -625,6 +626,7 @@ class OpenerIsolation(unittest.TestCase):
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
         cls.port = cls.srv.server_address[1]
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.sess = km._mint_session()                 # the session a signed-in browser's cookie holds
 
     @classmethod
     def tearDownClass(cls):
@@ -632,12 +634,17 @@ class OpenerIsolation(unittest.TestCase):
         cls.srv.server_close()
 
     def _coop(self, path, want_status, signed_in=True):
-        """GET `path` once per NAVIGATIONS entry, with that entry's credential when `signed_in` (a navigation's cookie, a
-        bare request's header: credential); assert the status and exactly one Cross-Origin-Opener-Policy header,
-        same-origin, each time. Returns {entry: (header message, body)}."""
+        """GET `path` once per NAVIGATIONS entry, with that entry's credential when `signed_in` (a navigation's session
+        cookie and, on /file, the cap its URL carries; a bare request's header: credential, navigation_path); assert the
+        status and exactly one Cross-Origin-Opener-Policy header, same-origin, each time. Returns {entry: (header
+        message, body)}."""
         seen = {}
         for how, nav in NAVIGATIONS:
-            status, msg, body = _wire_get(self.port, path, dict(nav, **(credential(nav, TOK) if signed_in else {})))
+            asked, cred = path, {}
+            if signed_in:
+                asked = navigation_path(nav, path, lambda host, p, sid: km._file_cap(self.sess, host, p, sid))
+                cred = credential(nav, TOK, _session_cookie(self.sess))
+            status, msg, body = _wire_get(self.port, asked, dict(nav, **cred))
             self.assertEqual(status, want_status, "%s, %s: %r" % (path[:60], how, body[:120]))
             self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"],
                              "%s, %s: one header, same-origin" % (path[:60], how))
@@ -652,9 +659,12 @@ class OpenerIsolation(unittest.TestCase):
                 self._coop(path, 200)
 
     def test_the_sign_in_page_carries_it_too(self):
-        # an unauthorized browser load of the shell gets the token sign-in page: a top-level document as well
-        for how, (_msg, body) in self._coop("/", 200, signed_in=False).items():
-            self.assertEqual(body.decode("utf-8"), km._TOKEN_LOGIN_HTML, how + ": no credential, the sign-in page, not the dashboard")
+        # an unauthorized browser load of the shell gets the token sign-in page: a top-level document as well, and so is
+        # /login, the same page, served with no credential to a tab the page-key script sends there
+        for path in ("/", "/login"):
+            for how, (_msg, body) in self._coop(path, 200, signed_in=False).items():
+                self.assertEqual(body.decode("utf-8"), km._TOKEN_LOGIN_HTML, path + ", " + how + ": no credential, the sign-in "
+                                 "page, not the dashboard")
 
     def test_each_refusal_http_server_writes_itself_carries_it_once(self):
         # http.server writes these with send_error, outside _send; Handler's send_error override adds the policy. The 414

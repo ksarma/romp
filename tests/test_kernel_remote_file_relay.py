@@ -21,7 +21,7 @@ import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from romp_load import load_source
-from tests.document_navigations import NAVIGATIONS, credential   # the navigations each opener-policy shape is asked under
+from tests.document_navigations import NAVIGATIONS, credential, navigation_path   # the navigations each opener-policy shape is asked under
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -267,18 +267,21 @@ class RemoteFileRelay(unittest.TestCase):
     # policy (a dict of the headers keeps one copy and would hide the second). Each shape is asked once per entry of
     # NAVIGATIONS (tests/document_navigations.py): bare, and with the headers a browser sends on a navigation, typed,
     # opened by the dashboard and opened by another origin, since a browser reads the policy on a navigation only, and
-    # each with that entry's credential (a navigation's romp_token cookie, a bare request's header: credential). The
-    # fake remote sends its own copy on each of its replies, as a real romp kernel does
-    # (_FakeRemoteFileHandler._opener_policy), so a relay that mirrored the remote's header beside its own fails here.
+    # each with that entry's credential (a navigation's session cookie and the cap its URL carries, a bare request's
+    # header: credential, navigation_path). The fake remote sends its own copy on each of its replies, as a real romp
+    # kernel does (_FakeRemoteFileHandler._opener_policy), so a relay that mirrored the remote's header beside its own
+    # fails here.
     # One test per shape, since each one's extra headers (the mirrored mtimes, the SVG sandbox, the PDF's name, the 404's
     # reason, the 413 page) come from its own code, and so do the relay's own refusals: a host that is not attached
     # (detached), an extension the relay will not preview (unviewable), a tunnel that does not answer (502).
     def _coop_each(self, path, want_status):
         """GET `path` once per NAVIGATIONS entry; assert the status and one COOP header, same-origin, each time. Returns
         {entry: (body, header message)}."""
-        seen = {}
+        seen, sess = {}, km._mint_session()           # the session a signed-in browser's cookie holds
         for how, nav in NAVIGATIONS:
-            status, body, msg = self._get_msg(path, headers=dict(nav, **credential(nav, km.TOKEN)), token=False)
+            asked = navigation_path(nav, path, lambda host, p, sid: km._file_cap(sess, host, p, sid))
+            status, body, msg = self._get_msg(asked, headers=dict(nav, **credential(nav, km.TOKEN, "%s=%s" % (
+                km._SESSION_COOKIE, sess))), token=False)
             self.assertEqual(status, want_status, "%s: %r" % (how, body[:80]))
             self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"],
                              how + ": one Cross-Origin-Opener-Policy header on the wire, same-origin")

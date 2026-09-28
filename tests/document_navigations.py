@@ -9,11 +9,14 @@ review's mutants did, 2026-09-26). Each test serves every document shape once pe
   - the dashboard opening a tab of its own, a /file image or PDF (ui/webview/preview.ts openFileTab; same-origin);
   - the case the policy exists for: a page on another origin opening a dashboard page with window.open (cross-site).
 
-A navigation authenticates the way a browser's does, with the romp_token cookie (credential below): a top-level GET
-sends no Origin header, so the cookie authorizes it, and a kernel whose header depended on how a request was
-authorized would pass a test that authorized every request by the X-Romp-Token header.
+A navigation authenticates the way a browser's does (credential and navigation_path below): with the session cookie a
+signed-in browser holds, which a top-level GET carries with no Origin header and which opens the page and static
+classes on its own, and on /file and /remote/<host>/file also with the per-file cap in the URL, as the dashboard's own
+tab's URL carries one (ui/webview/preview.ts fileUrl); the cookie alone opens no file. A kernel whose header depended
+on how a request was authorized would pass a test that authorized every request by the X-Romp-Token header.
 
-Imports nothing, so a test module may import it anywhere, its state preamble included.
+Imports nothing at load (navigation_path imports urllib.parse when it is called), so a test module may import it
+anywhere, its state preamble included.
 """
 
 _NAVIGATE = {
@@ -32,7 +35,27 @@ NAVIGATIONS = (
 )
 
 
-def credential(nav, token):
-    """The credential a request of this kind presents: a navigation (a non-empty entry of NAVIGATIONS) the romp_token
-    cookie, as a browser does; a bare request the X-Romp-Token header, as the CLI and the hooks do."""
-    return {"Cookie": "romp_token=" + token} if nav else {"X-Romp-Token": token}
+def credential(nav, token, session_cookie):
+    """The credential headers a request of this kind presents: a navigation (a non-empty entry of NAVIGATIONS) the
+    browser's session cookie (`session_cookie`, the Cookie header's value: the kernel's cookie name and a session it
+    minted), as a browser does; a bare request the X-Romp-Token header, as the CLI and the hooks do."""
+    return {"Cookie": session_cookie} if nav else {"X-Romp-Token": token}
+
+
+def navigation_path(nav, path, file_cap):
+    """`path` as a request of this kind asks for it: a navigation to /file or /remote/<host>/file adds the cap its URL
+    carries, `file_cap(host, file path, sid)` (the caller binds kernel.py's _file_cap to the session its cookie holds;
+    host is "" for /file, the path and sid are the query's decoded values, "" when absent), as the dashboard's own tab's
+    URL does; every other request asks for `path` as given."""
+    from urllib.parse import parse_qs, unquote, urlsplit
+    u = urlsplit(path)
+    if not nav:
+        return path
+    if u.path == "/file":
+        host = ""
+    elif u.path.startswith("/remote/") and u.path.endswith("/file"):
+        host = unquote(u.path[len("/remote/"):-len("/file")])
+    else:
+        return path
+    q = parse_qs(u.query)
+    return path + ("&" if u.query else "?") + "cap=" + file_cap(host, (q.get("path") or [""])[0], (q.get("sid") or [""])[0])
