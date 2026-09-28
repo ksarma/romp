@@ -2076,8 +2076,8 @@ class _Scopes(object):
                     self.decls.setdefault(name, []).append(n)
 
     def scope_of(self, node):
-        """The scope `node` is evaluated in. A def's decorators, defaults and annotations, a lambda's defaults, a class's bases and
-        keywords and a comprehension's first iterable are evaluated in the scope around it; a parameter binds in its own def or
+        """The scope `node` is evaluated in. A def's decorators, defaults and annotations, a lambda's defaults, a class's decorators,
+        bases and keywords and a comprehension's first iterable are evaluated in the scope around it; a parameter binds in its own def or
         lambda; a walrus target inside a comprehension binds in the first scope around it that is not a comprehension."""
         if isinstance(node, ast.arg):
             return self.parent[self.parent[node]]
@@ -2408,8 +2408,13 @@ class StampCensusResolvesByBinding(unittest.TestCase):
                     return self._send(200, _page(), "text/html")
                 """)
 
-    # Every binder _bound_names reads and every position scope_of places in the scope around a def, a lambda or a class, one case each,
-    # so removing any one of those rules reds a case here (before these cases, removing any of them left every test green).
+    # Below, apart from the route table's own two cases, one case each pins these binders _bound_names reads: a del, an except-as, a
+    # match capture (as, star and a mapping's rest), an import under `as`, a dotted import, a from-import plain and under `as`, and an
+    # async def; these header positions scope_of places in the scope around a def, a lambda or a class: a def's decorators, defaults,
+    # keyword-only defaults, a parameter's annotation and the return annotation, a class's decorators, bases and keywords, and a
+    # lambda's default and keyword-only default; and an async def as a scope of its own. A census that loses any one of them reds its
+    # case (before these cases, losing any of them left every test green). Each case pins its rule on one form: a rule split by kind (an
+    # *args, **kwargs or keyword-only annotation apart from a positional one, an async def's header apart from a def's) has no case.
 
     def test_a_del_of_the_table_read_in_the_calling_scope_is_refused(self):
         # a del binds the name it deletes: a second binding of the variable the call reads
@@ -2448,6 +2453,12 @@ class StampCensusResolvesByBinding(unittest.TestCase):
 
     def test_a_dotted_import_binds_its_first_name_and_is_refused(self):
         self._refused_table_binder("import _PAGE_RENDERERS.pages\n")
+
+    def test_a_from_import_under_the_table_name_is_refused(self):
+        self._refused_table_binder("from _tables import pages as _PAGE_RENDERERS\n")
+
+    def test_an_async_def_of_the_table_name_is_refused(self):
+        self._refused_table_binder("async def _PAGE_RENDERERS():\n    pass\n")
 
     def test_a_use_of_the_table_the_census_does_not_read_is_refused_naming_its_shape(self):
         # the catch-all refusal, and the shape its message names: a subscript store or deletion reads the table's name (a Load under the
@@ -2508,6 +2519,30 @@ class StampCensusResolvesByBinding(unittest.TestCase):
                 return (lambda _page, b=self._send(200, _page(), "text/html"): b)
             """)
         self.assertEqual(calls, {"_chat_page", "_feed_page"}, "the default reads do_GET's variable, the table read, not the lambda's parameter")
+
+    def test_a_class_decorators_call_reads_the_scope_around_the_class(self):
+        self.assertEqual(self._header_send("@self._send(200, _page(), \"text/html\")\n    class C:"), ({"_page"}, set()), "a class's decorator is evaluated in do_GET, not in the class body")
+
+    def test_a_lambdas_keyword_only_default_reads_the_scope_around_the_lambda(self):
+        calls, _ = self._census("_x_page", """
+            def do_GET(self):
+                _page = _PAGE_RENDERERS.get(self.path)
+                return (lambda _page, *, b=self._send(200, _page(), "text/html"): b)
+            """)
+        self.assertEqual(calls, {"_chat_page", "_feed_page"}, "the keyword-only default reads do_GET's variable, not the lambda's parameter")
+
+    def test_a_table_read_bound_in_a_nested_async_def_is_not_credited_to_a_call_in_the_def_around_it(self):
+        # an async def is a scope of its own, as a def is: _pick's `_page` is _pick's, do_GET's is the module's function
+        calls, names = self._census("_page", """
+            def do_GET(self):
+                p = self.path
+                async def _pick():
+                    _page = _PAGE_RENDERERS.get(p)
+                    return _page
+                _pick()
+                return self._send(200, _page(), "text/html; charset=utf-8")
+            """)
+        self.assertEqual((calls, names), ({"_page"}, set()), "the call reads the module's _page, never the table's renderers")
 
 
 class LazyPanes(unittest.TestCase):
