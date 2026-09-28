@@ -106,13 +106,20 @@ const CONTROLS: Array<[string, string]> = [
   ["var o = { with: 1, eval: 2 }; o.eval(s);", "properties named with and eval"],
 ];
 
-test("the census refuses a direct eval and a with statement in every spelling, and leaves only the survivors it names", () => {
-  for (const [src, what] of REFUSED) assert.equal(scopeRefusals(src).length, 1, "refused once: " + what + ": " + JSON.stringify(src));
-  for (const [src, what] of SURVIVORS) assert.deepEqual(scopeRefusals(src), [], "a survivor the census names: " + what);
-  for (const [src, what] of CONTROLS) assert.deepEqual(scopeRefusals(src), [], "accepted: " + what);
-  assert.deepEqual(scopeRefusals("with (o) { return false; }", "handler"), [scopeRefusals("with (o) {}")[0].replace("1:1", "2:1")],
-    "a handler attribute is read as a function body: its return is no parse error, its with statement is refused");
-  assert.equal(scopeRefusals("var = ;")[0].startsWith("a script the parser cannot read"), true, "an unreadable script is refused");
+for (const [src, what] of REFUSED) {
+  test("refused: " + what + ": " + JSON.stringify(src), () => assert.equal(scopeRefusals(src).length, 1, "refused once"));
+}
+for (const [src, what] of SURVIVORS) {
+  test("left, a survivor the census names: " + what + ": " + JSON.stringify(src), () => assert.deepEqual(scopeRefusals(src), []));
+}
+for (const [src, what] of CONTROLS) {
+  test("accepted: " + what + ": " + JSON.stringify(src), () => assert.deepEqual(scopeRefusals(src), []));
+}
+test("a handler attribute is read as a function body: its return is no parse error, and its with statement is refused", () => {
+  assert.deepEqual(scopeRefusals("with (o) { return false; }", "handler"), ["a with statement at 2:1"]);
+});
+test("a script the parser cannot read is refused", () => {
+  assert.equal(scopeRefusals("var = ;")[0].startsWith("a script the parser cannot read"), true);
 });
 
 // Runs `body` in sloppy node code inside a function `around`, itself inside `outer`, which holds the check a listener in
@@ -125,20 +132,24 @@ function checkSeenAfter(form: string): string {
   return vm.runInNewContext(src, {}, { timeout: 5000 });
 }
 
-test("executed: a direct eval or a with statement puts a laxer check around a listener, and every survivor node runs leaves it alone", () => {
-  for (const form of ["eval(s); seen = check();", "(eval)(s); seen = check();", "e\\u0076al(s); seen = check();",
-    "with ({ check: function () { return 'lax'; } }) { seen = check(); }"]) {
-    assert.equal(checkSeenAfter(form), "lax", "refused, and it shadows: " + form);
-    assert.equal(scopeRefusals(form).length, 1, "the census refuses it: " + form);
-  }
-  for (const form of ["(0, eval)(s); seen = check();", "this.eval(s); seen = check();", "var run = eval; run(s); seen = check();",
-    "this[\"ev\" + \"al\"](s); seen = check();", "Function(s)(); seen = check();", "new Function(s)(); seen = check();"]) {
-    assert.equal(checkSeenAfter(form), "strict", "a survivor, and the check it would shadow stays: " + form);
-    assert.deepEqual(scopeRefusals(form), [], "the census leaves it: " + form);
-  }
-  // refused though it is not a direct eval: an optional call runs its string in the global scope
-  assert.equal(checkSeenAfter("eval?.(s); seen = check();"), "strict");
-});
+// Executed: each refused form that makes a binding puts the laxer check where the listener reads it, and each survivor
+// node can run leaves the check alone.
+for (const form of ["eval(s); seen = check();", "(eval)(s); seen = check();", "e\\u0076al(s); seen = check();",
+  "with ({ check: function () { return 'lax'; } }) { seen = check(); }"]) {
+  test("executed, refused: it puts a laxer check around a listener: " + JSON.stringify(form), () => {
+    assert.equal(checkSeenAfter(form), "lax", "it shadows the check");
+    assert.equal(scopeRefusals(form).length, 1, "the census refuses it");
+  });
+}
+for (const form of ["(0, eval)(s); seen = check();", "this.eval(s); seen = check();", "var run = eval; run(s); seen = check();",
+  "this[\"ev\" + \"al\"](s); seen = check();", "Function(s)(); seen = check();", "new Function(s)(); seen = check();",
+  "eval?.(s); seen = check();"]) {
+  test("executed: the check around a listener stays: " + JSON.stringify(form), () => {
+    assert.equal(checkSeenAfter(form), "strict", "the check it would shadow stays");
+    // an optional call runs its string in the global scope, like the survivors, but the census refuses it by the name
+    assert.equal(scopeRefusals(form).length, form.startsWith("eval?.") ? 1 : 0, "the census leaves a survivor and refuses eval?.");
+  });
+}
 
 /** The kernel's served scripts (tests/test_shell_source_check.py _served_scripts), the pages SERVED_BUILDERS lists, the
  *  documents the scripts were read from, and the pieces of `plant`, a page of our own, as that module's reader finds them;
@@ -171,26 +182,33 @@ function servedScripts(plant: string): { pages: string[]; documents: string[]; s
 const PLANT = "<script>var a = 1; (eval)(s);</script><form onsubmit=\"with (o) { go(); } return false\"></form>" +
   "<a href=\"javascript:e\\u0076al(s)\">x</a>";
 
+let served: ReturnType<typeof servedScripts> | undefined;
+const got = () => (served ??= servedScripts(PLANT));
+const byPage = () => {
+  const m = new Map<string, Piece[]>();
+  for (const p of got().scripts) m.set(p.page, [...(m.get(p.page) || []), p]);
+  return m;
+};
+
 test("every script the kernel serves parses, and none holds a direct eval or a with statement", () => {
-  const got = servedScripts(PLANT);
-  const refusals = got.scripts.flatMap((p) => scopeRefusals(p.code, p.kind).map((why) => p.page + ", " + p.where + ": " + why));
+  const refusals = got().scripts.flatMap((p) => scopeRefusals(p.code, p.kind).map((why) => p.page + ", " + p.where + ": " + why));
   assert.deepEqual(refusals, [], "a direct eval, a with statement or an unreadable script on a page the kernel serves");
-  // the census read every page SERVED_BUILDERS lists and every SVG under /media, every page but the too-large one carries
-  // a script, and the ones this census exists for are among them (the shim's check on every pane page, the shell's
-  // adopted check, the sign-in form's handler)
+});
+
+test("the census read every page SERVED_BUILDERS lists and every media SVG, and the scripts it exists for are among them", () => {
   const svgs = fs.readdirSync(path.join(EXT, "media")).filter((f) => f.endsWith(".svg")).map((f) => "/media/" + f);
   assert.ok(svgs.length > 0, "the media SVGs are listed");
-  assert.deepEqual([...got.documents].sort(), [...got.pages, ...svgs].sort(), "the documents read: every listed page and media SVG");
-  const byPage = new Map<string, Piece[]>();
-  for (const p of got.scripts) byPage.set(p.page, [...(byPage.get(p.page) || []), p]);
-  for (const page of got.pages) if (page !== "the too-large page") assert.ok((byPage.get(page) || []).length > 0, page + " carries a script the census read");
+  assert.deepEqual([...got().documents].sort(), [...got().pages, ...svgs].sort(), "the documents read: every listed page and media SVG");
+  const pages = byPage();
+  for (const page of got().pages) if (page !== "the too-large page") assert.ok((pages.get(page) || []).length > 0, page + " carries a script the census read");
   for (const page of ["/chat", "/feed", "/fleet", "/waiting", "/files", "/settings", "/timeline"])
-    assert.ok((byPage.get(page) || []).some((p) => p.code.includes("const fromShell=function(e){")), page + ": the shim's check is among the scripts read");
-  assert.ok((byPage.get("/") || []).some((p) => p.code.includes("window.__rompPaneSourceOk=function(e){")), "the shell's check is among them");
-  assert.deepEqual((byPage.get("the sign-in page") || []).map((p) => p.kind), ["handler"], "the sign-in form's onsubmit");
-  assert.ok(got.pages.includes("/sw.js") && (byPage.get("/sw.js") || []).length === 1, "/sw.js, read whole");
-  // a page of our own, through the same reader and census: a direct eval in a script, a with statement in a handler
-  // attribute and a direct eval in a javascript: URL are each refused
-  assert.deepEqual(got.plant.map(([, kind]) => kind), ["script", "handler", "url"]);
-  assert.deepEqual(got.plant.map(([, kind, code]) => scopeRefusals(code, kind).length), [1, 1, 1], "each planted script refused");
+    assert.ok((pages.get(page) || []).some((p) => p.code.includes("const fromShell=function(e){")), page + ": the shim's check is among the scripts read");
+  assert.ok((pages.get("/") || []).some((p) => p.code.includes("window.__rompPaneSourceOk=function(e){")), "the shell's check is among them");
+  assert.deepEqual((pages.get("the sign-in page") || []).map((p) => p.kind), ["handler"], "the sign-in form's onsubmit");
+  assert.ok(got().pages.includes("/sw.js") && (pages.get("/sw.js") || []).length === 1, "/sw.js, read whole");
+});
+
+test("a page of our own, through the same reader and census: a direct eval in a script, a with statement in a handler and a direct eval in a javascript: URL are each refused", () => {
+  assert.deepEqual(got().plant.map(([, kind]) => kind), ["script", "handler", "url"]);
+  assert.deepEqual(got().plant.map(([, kind, code]) => scopeRefusals(code, kind).length), [1, 1, 1], "each planted script refused");
 });
