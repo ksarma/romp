@@ -78,7 +78,7 @@ test("a ctrl-, meta- or shift-click on a same-origin .md keeps the tab: the modi
 
 test("the whole-backtick URL anchors (url-code-link) flow through the same delegate — no handler of their own", () => {
   const linkify = RENDER.split("function linkifyFileUris(")[1].split("const previewable")[0];
-  assert.match(linkify, /a\.href = t;/, "an absolute http(s) href — the delegate sees a scheme");
+  assert.match(linkify, /a\.href = withFileCap\(t\);/, "an absolute http(s) href, so the delegate sees a scheme (withFileCap adds this page's cap to this origin's /file address and keeps it absolute: file-cap.test.ts)");
   assert.match(linkify, /a\.className = "url-code-link";/);
   assert.doesNotMatch(linkify, /addEventListener\("click"|onclick|window\.open|openUrlView/,
     "the anchor carries no click logic; the document-level delegate decides viewer vs tab");

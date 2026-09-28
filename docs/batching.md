@@ -43,12 +43,14 @@ reached main (`finish` runs it, and it also runs on every push to main).
    without one. Both read the batcher's state dir, so a result recorded on another machine is
    missing there: say so, and the batcher sweeps your head.
 4. Optionally end the body with a trailer the batch body reads:
-   `<!-- romp-pr: {"tier":"fix","rounds":8,"flakes":[]} -->`. The body takes your review rounds
-   from it. Your sweep is not taken from it: the members table shows the passing result `plan`
-   (or `assemble --repin`) read at your pinned head, so sweep counts or a sweep sha in the trailer
-   are ignored. A missing trailer is not a failure; the member is listed under "Read these first"
-   with "trailer not stated" and its Rounds column reads "not stated", which costs the maintainer
-   a look.
+   `<!-- romp-pr: {"tier":"fix","rounds":8,"flakes":[]} -->`.
+   `rounds` counts the review rounds whose reviewer has reported, so a push that answers round 5's
+   findings still says 5, and the count moves to 6 when round 6's report comes in. The body takes
+   your review rounds from it. Your sweep is not taken from it: the members table shows the
+   passing result `plan` (or `assemble --repin`) read at your pinned head, so sweep counts or a
+   sweep sha in the trailer are ignored. A missing trailer is not a failure; the member is listed
+   under "Read these first" with "trailer not stated" and its Rounds column reads "not stated",
+   which costs the maintainer a look.
 5. For an upstream-worthy change, add the ledger entry file and commit it with the change. Do not
    edit UPSTREAM.md.
 6. Do not click merge. If a change must land now, say so in the body; it lands as a one-member
