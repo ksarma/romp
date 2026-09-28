@@ -72,7 +72,8 @@ reading fails here), the row count is at least the site count, and the modules w
 are exactly the modules with sites (a module the derivation reads in such a form and the textual census does not, or the
 reverse, fails here). Each row carries whether its form is one the textual census reads (the author's pass 8, 2026-09-20): the literal's
 SOURCE segment must be a plain literal or a run of them (a literal with a backslash, a triple-quoted one, a loop or
-comprehension variable are not), and its container must not be a name bound to a slice; a module all of whose rows are in
+comprehension variable are not), and its container must not be a name bound to a slice or a subscript (a fetched tuple's body
+position, `resp[1]`, a name bound to one, or a name unpacked from one); a module all of whose rows are in
 declined forms is outside the module symmetry (its rows are still judged, and the form-space pin below holds the declined
 forms), so a sound module reds nothing there while a module with one readable row and no site still does. The form space is
 pinned on a synthetic module below (a form the derivation stops reading fails there), built over every derived getter and
@@ -101,13 +102,16 @@ bare or `%`-formatted, of the form `http://127.0.0.1:%d/<route>?...token=...` (t
 the fixer pass of the author's pass 8: the tokened fetches in tests/test_kernel.py carried 39 pins over five pages outside the population, one
 of them satisfiable by three comments of the timeline page); a method call on another object (`path.split("/")`) is not one.
 A fetched value unpacked into a tuple binds only the position the helper's own return statements read a response at (`status,
-body, headers = self._req("/")` binds `body` where `_req` returns `r.status, r.read(), r.headers`), and no name where its
-returns read none; a helper the module does not define binds every name (the rulings at the merge of main's login cookie
-split, 2026-09-28; _bind). A call to a helper the module defines is a fetch only where the helper's returns read a response
-(`_pathconf("/", "PC_PATH_MAX", 4096)` is none; _fetched). A Name in a helper's return is followed to its bindings inside the
-helper (`body = r.read(); return r.status, body, r.headers` reads at `body`'s position), and a returned Name the follow cannot
-place (bound only by an unpack of a call's answer, a for or with target) makes the call a fetch that binds every name, so no
-read behind it leaves both censuses in silence (the rulings on the census pass, 2026-09-28; _response_reads).
+body, headers = self._req("/")` binds `body` where `_req` returns `r.status, r.read(), r.headers`), and no name where its returns
+read none; a helper the module does not define binds every name (the rulings at the merge of main's login cookie split,
+2026-09-28; _bind). A call to a helper the module defines is a fetch only where the helper's returns read a response
+(`_pathconf("/", "PC_PATH_MAX", 4096)` is none; _fetched). A fetched tuple bound to ONE name is no text itself: each position the
+helper reads a response at is, by a constant index (`resp = self._req("/")` gives `resp[1]` and `resp[-2]`), bound to a name or
+unpacked after, and the status and headers positions are none (the rulings on the census pass, 2026-09-28; _bind; a subscript by
+anything else, `resp[i]` or `resp[1:]`, and a `for` over the tuple read nothing). A Name in a helper's return is followed to its
+bindings inside the helper (`body = r.read(); return r.status, body, r.headers` reads at `body`'s position), and a returned Name
+the follow cannot place (bound only by an unpack of a call's answer, a for or with target) makes the call a fetch that binds every
+name, so no read behind it leaves both censuses in silence (the rulings on the census pass, 2026-09-28; _response_reads).
 
 Bound: a url built otherwise than as a bare or `%`-formatted literal or a concatenation led by the whole path (a `Request`
 object, an f-string, `.format`, `"/chat" + rest`), a formatted
@@ -511,8 +515,11 @@ def _response_reads(tree):
         at = out.setdefault(fn.name, set())
         placed = lambda e: "unknown" if isinstance(e, ast.Name) and e.id in unknown else None
         for v in values:
-            if isinstance(v, ast.Tuple):
-                at |= {i if _reads_response(e, read) else placed(e) for i, e in enumerate(v.elts)} - {None}
+            if isinstance(v, ast.Tuple) and any(isinstance(e, ast.Starred) for e in v.elts):
+                at.add("unknown")   # the positions a starred element spreads over are not in the source
+            elif isinstance(v, ast.Tuple):
+                n = len(v.elts)
+                at |= {p for i, e in enumerate(v.elts) for p in ((i, i - n) if _reads_response(e, read) else (placed(e),))} - {None}
             elif _reads_response(v, read):
                 at.add("whole")
             elif placed(v):
@@ -582,29 +589,57 @@ def _fetch_path(node):
     return left.value if left is node or "?" in left.value else None
 
 
+def _position_key(node):
+    """(store, key) for a subscript of a Name or a self.<attr> by a constant index, the key _bind binds a fetched tuple's body
+    position under (`resp[1]` gives ("names", "resp[1]"), `self.resp[-2]` gives ("attrs", "resp[-2]")); None for any other node."""
+    if not isinstance(node, ast.Subscript):
+        return None
+    sl = node.slice
+    if isinstance(sl, ast.UnaryOp) and isinstance(sl.op, ast.USub) and isinstance(sl.operand, ast.Constant) and type(sl.operand.value) is int:
+        i = -sl.operand.value
+    elif isinstance(sl, ast.Constant) and type(sl.value) is int:
+        i = sl.value
+    else:
+        return None
+    base = node.value
+    if isinstance(base, ast.Name):
+        return "names", "%s[%d]" % (base.id, i)
+    if isinstance(base, ast.Attribute) and isinstance(base.value, ast.Name) and base.value.id == "self":
+        return "attrs", "%s[%d]" % (base.attr, i)
+    return None
+
+
 def _resolve(node, names, attrs, getters, constants):
     """The served text a node stands for: a getter call or constant inline, a Name bound in the function, a self.<attr> bound in
-    the class; None otherwise."""
+    the class, a fetched tuple's body position by a constant index (`resp[1]`, _position_key); None otherwise."""
     t = _text(node, getters, constants)
     if not t and isinstance(node, ast.Name):
         t = names.get(node.id)
     if not t and isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self":
         t = attrs.get(node.attr)
+    if not t and isinstance(node, ast.Subscript):
+        key = _position_key(node)
+        t = (names if key[0] == "names" else attrs).get(key[1]) if key else None
     return t
 
 
 def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=None, reads=None):
     """Record Name and self.<attr> targets bound to a served text, or to a slice of one; a tuple assignment binds by position; a
     FETCHED value (_fetched, with `routes`) unpacked into a tuple binds the positions its helper's own return statements read a
-    response at (`reads`, a callable giving the module's _response_reads; the rulings at the merge of main's login cookie split, 2026-09-28):
-    `status, body, headers = self._req("/")` binds `body` alone where `_req` returns `r.status, r.read(), r.headers`, and a
-    helper whose returns read no response binds no name. Before the merge's ruling every unpacked name bound, the status and the
-    response headers too, and main's helpers returning (status, body, headers) put 19 reads of the headers (`.get`,
-    `.get_all`, a base-class helper handed them) and of the status into the reader census as reads of the page. A helper the
-    module does not define, a helper with a returned Name _response_reads cannot place ("unknown"; the rulings on the census
-    pass, 2026-09-28), and a tuple target holding a starred name bind every name, the reading before the merge's ruling (the
-    census cannot see which position is the body). `sliced`, when given, tracks the Names bound through a slice (a form the
-    textual census does not read; the author's pass 8)."""
+    response at (`reads`, a callable giving the module's _response_reads; the rulings at the merge of main's login cookie split,
+    2026-09-28): `status, body, headers = self._req("/")` binds `body` alone where `_req` returns `r.status, r.read(), r.headers`,
+    and a helper whose returns read no response binds no name. A target that is ONE name (or a self.<attr>) over such a tuple is
+    no text: each position the helper reads a response at binds under the name's constant-index key, from both ends (`resp =
+    self._req("/")` binds `resp[1]` and `resp[-2]`, which _resolve reads through _position_key), so the status and headers
+    positions bind nothing here either; `body = resp[1]` binds `body`, and `status, body, headers = resp` binds by the same
+    positions (every name where the target holds a starred name). A subscript by any other index (`resp[i]`, `resp[1:]`) and a
+    `for` over the tuple read nothing (the rulings on the census pass, 2026-09-28). Before the merge's ruling every unpacked name
+    bound, the status and the response headers too, and main's helpers returning (status, body, headers) put 19 reads of the
+    headers (`.get`, `.get_all`, a base-class helper handed them) and of the status into the reader census as reads of the page. A
+    helper the module does not define, a helper with a returned Name _response_reads cannot place ("unknown"; the rulings on the
+    census pass, 2026-09-28), and a tuple target holding a starred name bind every name, the reading before the merge's ruling
+    (the census cannot see which position is the body). `sliced`, when given, tracks the Names bound through a slice, a fetched
+    tuple's position or an unpack of one (forms the textual census does not read; the author's pass 8)."""
     if isinstance(value, ast.Tuple) and len(targets) == 1 and isinstance(targets[0], ast.Tuple) \
             and len(targets[0].elts) == len(value.elts):
         pairs = list(zip(targets[0].elts, value.elts))
@@ -613,8 +648,10 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
     for t, v in pairs:
         g = _text(v, getters, constants)
         via_slice = fetched = False
-        if not g and isinstance(v, ast.Subscript):   # `fn = html[a:b]`, a slice of a bound text, judged over the whole text
-            g = _resolve(v.value, names, attrs, getters, constants)
+        if not g and isinstance(v, ast.Subscript):
+            # `body = resp[1]`, a fetched tuple's body position, the text itself; or `fn = html[a:b]`, a slice of a bound text, judged
+            # over the whole text; the textual census reads neither
+            g = _resolve(v, names, attrs, getters, constants) or _resolve(v.value, names, attrs, getters, constants)
             via_slice = True
         if not g and (isinstance(v, ast.Name) or isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == "self"):
             # `js = html` or `js = self.html`, an ALIAS of a bound name (the fixer pass of the author's pass 9: two suite modules alias the page so
@@ -624,8 +661,31 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
         if not g and routes:
             g = _fetched(v, names, routes, reads)
             fetched = bool(g)
+        if not g and isinstance(t, ast.Tuple) and (isinstance(v, ast.Name) or isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == "self"):
+            # `status, body, headers = resp`, a fetched tuple bound to one name (below) and unpacked after: by the positions bound,
+            # every name where the target holds a starred name; the textual census reads neither
+            store, base, n = (names, v.id, len(t.elts)) if isinstance(v, ast.Name) else (attrs, v.attr, len(t.elts))
+            held = [store.get("%s[%d]" % (base, i)) or store.get("%s[%d]" % (base, i - n)) for i in range(n)]
+            starred = any(isinstance(e, ast.Starred) for e in t.elts)
+            for i, e in enumerate(t.elts):
+                got = next((x for x in held if x), None) if starred else held[i]
+                if got and isinstance(e, ast.Name):
+                    names[e.id] = got
+                    if sliced is not None:
+                        sliced.add(e.id)
         if not g:
             continue
+        if isinstance(t, (ast.Name, ast.Attribute)) and fetched and reads is not None and _callee(v) is not None:
+            # `resp = self._req("/")` over a helper that returns a tuple: the name is no text, and each position the helper reads a
+            # response at is, by a constant index (`resp[1]`, and `resp[-2]` for a 3-tuple; _position_key), the reading the tuple
+            # branch below gives an unpacked target
+            at = reads().get(_callee(v))
+            if at and not at & {"whole", "unknown"} and (isinstance(t, ast.Name) or isinstance(t.value, ast.Name) and t.value.id == "self"):
+                store, base = (names, t.id) if isinstance(t, ast.Name) else (attrs, t.attr)
+                store.pop(base, None)
+                for i in at:
+                    store["%s[%d]" % (base, i)] = g
+                continue
         if isinstance(t, ast.Name):
             names[t.id] = g
             if sliced is not None:
@@ -701,7 +761,8 @@ def rows_of(path, getters, constants, routes=None):
     """[(line, literal, text, form, readable, served)] for every membership or position assertion of a literal over a served text in one
     test module; form is "in" for a membership, else the position method; readable is whether the row's form is one the textual
     census reads (the author's pass 8, 2026-09-20): the literal's source segment is a plain literal or a run of them (re.fullmatch over _LIT:
-    no backslash, not triple-quoted, not a loop or comprehension variable) and the container is not a name bound to a slice; served
+    no backslash, not triple-quoted, not a loop or comprehension variable) and the container is not a name bound to a slice, a
+    subscript (`resp[1]`) or a name bound to or unpacked from a fetched tuple's position; served
     is whether the text is a FETCHED body (_fetched), judged as Handler._send serves it (judged_texts; the rulings at the merge of
     main's login cookie split, 2026-09-28)."""
     tree, lines = _parsed(path)
@@ -734,7 +795,7 @@ def rows_of(path, getters, constants, routes=None):
             for targets, value in bindings(fn):   # an assignment, or a with-item's `as` target (`with urlopen(...) as r`; the fixer pass of the author's pass 8)
                 _bind(targets, value, names, attrs, getters, constants, sliced, routes, reads)
             text_of = lambda x: _resolve(x, names, attrs, getters, constants)
-            readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced)
+            readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced) and not isinstance(x, ast.Subscript)
             rows = []
             for node in ast.walk(fn):
                 for lit, x in _memberships(node):
@@ -1066,6 +1127,8 @@ def readers_of(path, getters, constants, routes=None):
         of it into another string or a container literal holding it."""
         if isinstance(x, ast.Name):
             return derived.get(x.id)
+        if _position_key(x) and _resolve(x, names, attrs, getters, constants):
+            return None   # a fetched tuple's body position (`resp[1]`): the text itself
         if isinstance(x, (ast.Subscript, ast.BinOp, ast.JoinedStr, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Starred)):
             return "copy"
         if isinstance(x, ast.Call):
@@ -1949,7 +2012,59 @@ class T(unittest.TestCase):
                                                     (24, "assert", "_sw_js"), (26, "assert", "_landing")],
                          "no read of a status or of the response headers is a read of the page")
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
-                         {"_serve": [1], "_heads": [], "_req": [1], "test_a": []})
+                         {"_serve": [-2, 1], "_heads": [], "_req": [-2, 1], "test_a": []})
+
+    def test_a_fetched_tuple_bound_to_one_name_binds_its_body_position(self):
+        # the rulings on the census pass (2026-09-28), P1's position rule for a target that is one name: `resp = self._req("/")`
+        # over a helper returning (status, body, headers) had bound the whole tuple as the page, so `resp[0]` and `resp[2]` read
+        # as slices of it and `resp[2].get("Set-Cookie")` as an unclassified read, the class P1 removed for unpacked targets. The
+        # name is no text now, and each position the helper reads a response at is, by a constant index from either end (`resp[1]`,
+        # `resp[-2]`), bound to a name (`body = resp[1]`) or unpacked after (`status, page, heads = resp`), in a method and in a
+        # setUp's self.<attr> alike; the status and headers positions are none. A helper whose return is no tuple binds the name
+        # whole, and so does a helper the module does not define. The textual census reads no subscript and no unpack of a name, so
+        # those rows are declined forms. The rows of both derivations are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import re, unittest
+def _text(path):
+    return urlopen(path).read()
+class T(unittest.TestCase):
+    def setUp(self):
+        self.resp = self._req("/chat?token=x")
+    def _req(self, path):
+        return r.status, r.read(), r.headers
+    def test_a(self):
+        resp = self._req("/?token=x")
+        self.assertEqual(resp[0], 200)
+        resp[2].get("Set-Cookie")
+        self.assertIn("c1", resp[1])
+        self.assertIn("c2", resp)
+        re.search("c3", resp[-2])
+        body = resp[1]
+        self.assertIn("c4", body)
+        status, page, heads = resp
+        self.assertIn("c5", page)
+        heads.get_all("Set-Cookie")
+        self.assertIn("c6", self.resp[1])
+        self.assertEqual(self.resp[0], 200)
+        whole = _text("/sw.js")
+        self.assertIn("c7", whole)
+        other = elsewhere("/?token=x")
+        self.assertIn("c8", other)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = rows_of(f.name, getters, constants, routes)
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual([r[:5] for r in rows], [(13, "c1", "_landing", "in", False), (17, "c4", "_landing", "in", False), (19, "c5", "_landing", "in", False),
+                                                 (21, "c6", "_chat_page", "in", False), (24, "c7", "_sw_js", "in", True), (26, "c8", "_landing", "in", True)])
+        self.assertEqual([r[:3] for r in readers], [(13, "assert", "_landing"), (15, "regex", "_landing"), (17, "assert", "_landing"), (19, "assert", "_landing"),
+                                                    (21, "assert", "_chat_page"), (24, "assert", "_sw_js"), (26, "assert", "_landing")],
+                         "a body position read as the text itself, and no read of a status or of the response headers a read of the page")
+        self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
+                         {"_text": ["whole"], "setUp": [], "_req": [-2, 1], "test_a": []})
 
     def test_a_returned_name_is_followed_to_its_binding_in_the_helper(self):
         # the rulings on the census pass (2026-09-28): a helper whose return holds a Name bound to the read (`body = r.read();
@@ -2003,7 +2118,7 @@ class T(unittest.TestCase):
                                                     (25, "assert", "_landing"), (26, "assert", "_landing")],
                          "the body a helper returns by name is read in both censuses, and no status or headers read is a read of the page")
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
-                         {"_named": [1], "_aliased": [1], "_opaque": ["unknown"], "_echo": [], "test_a": []})
+                         {"_named": [-2, 1], "_aliased": [-1, 1], "_opaque": ["unknown"], "_echo": [], "test_a": []})
 
     def test_a_call_is_a_fetch_only_where_its_callee_reads_a_response(self):
         # the rulings at the merge of main's login cookie split (2026-09-28), P2: a call to a Name or a self.<method> whose first
