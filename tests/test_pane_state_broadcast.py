@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -2000,24 +2001,26 @@ def _enclosing(spans, line):
 _ROUTE_TABLE = "_PAGE_RENDERERS"   # the page route table main's fork PR #919 added: do_GET dispatches a page as `_page = _PAGE_RENDERERS.get(p)`
 
 
-def _route_table_renderers(tree):
+def _route_table_renderers(tree, scopes):
     """The renderers of the page route table, read off its one module-level dict literal, and the ids of its `.get(...)` reads (merge
     upkeep for main's fork PR #919, which replaced do_GET's per-page `_send(200, _chat_page(), ...)` branches with one table). Every use
     of the name is classified, since a renderer that reaches the table any other way would not be read here: the literal's own binding, a
-    membership test (`p in _PAGE_RENDERERS`, Handler._need's auth class) or a one-argument `.get(...)`. Anything else is loud: a second
-    binding, a subscript store, another method, the table passed on, a parameter or an import of the name, a `**` entry or a renderer that
-    is not a plain name. Returns (renderer names, ids of the `.get` calls)."""
+    membership test (`p in _PAGE_RENDERERS`, Handler._need's auth class) or a one-argument `.get(...)`. Anything else is loud: any other
+    binding of the name anywhere in the file (an assignment or deletion, a parameter, a def or class, an except-as, an import, a match
+    capture: `scopes`' binders, so a `.get` read under that name elsewhere could be some other object's), another method, the table
+    passed on, a `**` entry or a renderer that is not a plain name. Returns (renderer names, ids of the `.get` calls)."""
     defs = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == _ROUTE_TABLE for t in n.targets)]
     if len(defs) != 1 or len(defs[0].targets) != 1 or not isinstance(defs[0].value, ast.Dict):
         raise AssertionError("kernel.py: %s is not one module-level dict literal (%d bindings); classify it here" % (_ROUTE_TABLE, len(defs)))
     table = defs[0].value
     if any(k is None for k in table.keys) or not all(isinstance(v, ast.Name) for v in table.values):
         raise AssertionError("kernel.py line %d: a %s entry that is a ** splat or a renderer that is not a plain name; classify it here" % (table.lineno, _ROUTE_TABLE))
-    parent = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    for b in scopes.binders.get(_ROUTE_TABLE, ()):
+        if b is not defs[0].targets[0]:
+            raise AssertionError("kernel.py line %d: %s bound again (an assignment, a deletion, a parameter, a def or class, an except-as, an import or a match capture), which a .get would read in the table's place; classify it here" % (b.lineno, _ROUTE_TABLE))
+    parent = scopes.parent
     gets = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.arg) and node.arg == _ROUTE_TABLE or isinstance(node, (ast.Import, ast.ImportFrom)) and any((a.asname or a.name) == _ROUTE_TABLE for a in node.names):
-            raise AssertionError("kernel.py line %d: %s bound as a parameter or an import, which a .get would read in the table's place; classify it here" % (node.lineno, _ROUTE_TABLE))
         if not (isinstance(node, ast.Name) and node.id == _ROUTE_TABLE) or node is defs[0].targets[0]:
             continue
         up = parent.get(node)
@@ -2028,32 +2031,101 @@ def _route_table_renderers(tree):
                 and len(call.args) == 1 and not call.keywords):
             gets.add(id(call))
             continue
-        raise AssertionError("kernel.py line %d: a use of %s this census does not read (a binding, a store, another method, a .get with a default, or the table passed on); classify it here" % (node.lineno, _ROUTE_TABLE))
+        raise AssertionError("kernel.py line %d: a use of %s this census does not read (another method, a .get with a default, or the table passed on); classify it here" % (node.lineno, _ROUTE_TABLE))
     return {v.id for v in table.values}, gets
 
 
-def _bindings_in(fn, name):
-    """Every node binding `name` anywhere inside the function `fn`, its nested scopes included: an over-count only makes the caller refuse,
-    and a binding missed here could let a rebinding pass, so the count leans to the safe side."""
-    out = []
-    for n in ast.walk(fn):
-        if n is fn:
-            continue
-        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)) and n.id == name:
-            out.append(n)
-        elif isinstance(n, ast.arg) and n.arg == name:
-            out.append(n)
-        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name == name:
-            out.append(n)
-        elif isinstance(n, ast.ExceptHandler) and n.name == name:
-            out.append(n)
-        elif isinstance(n, (ast.Import, ast.ImportFrom)) and any((al.asname or al.name.split(".")[0]) == name for al in n.names):
-            out.append(n)
-        elif isinstance(n, (ast.Global, ast.Nonlocal)) and name in n.names:
-            out.append(n)
-        elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name == name or isinstance(n, ast.MatchMapping) and n.rest == name:
-            out.append(n)
-    return out
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _bound_names(n):
+    """The names the node `n` binds: a Name stored or deleted (an assignment, augmented or annotated target, a for or with target, a
+    walrus target, a del), a parameter, a def or class, an except-as, an import, a match capture."""
+    if isinstance(n, ast.Name):
+        return [n.id] if isinstance(n.ctx, (ast.Store, ast.Del)) else []
+    if isinstance(n, ast.arg):
+        return [n.arg]
+    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [n.name]
+    if isinstance(n, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+        return [n.name] if n.name else []
+    if isinstance(n, ast.MatchMapping):
+        return [n.rest] if n.rest else []
+    if isinstance(n, (ast.Import, ast.ImportFrom)):
+        return [al.asname or al.name.split(".")[0] for al in n.names]
+    return []
+
+
+class _Scopes(object):
+    """Python's name binding over one parsed file, for the stamp census: a name read in a scope is the variable of the innermost scope
+    around the read that binds the name, unless that scope declares it global (then the module's) or nonlocal (then the nearest
+    enclosing def's that binds it); a class body is seen by no scope inside it, and a name no enclosing def binds is the module's. The
+    scopes are the module, a def, a lambda, a class body and a comprehension. Built once per file: every node's parent, and every
+    binder and every global or nonlocal declaration by name."""
+
+    def __init__(self, tree):
+        self.tree = tree
+        self.parent = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+        self.binders, self.decls = {}, {}
+        for n in self.parent:
+            for name in _bound_names(n):
+                self.binders.setdefault(name, []).append(n)
+            if isinstance(n, (ast.Global, ast.Nonlocal)):
+                for name in n.names:
+                    self.decls.setdefault(name, []).append(n)
+
+    def scope_of(self, node):
+        """The scope `node` is evaluated in. A def's decorators, defaults and annotations, a lambda's defaults, a class's bases and
+        keywords and a comprehension's first iterable are evaluated in the scope around it; a parameter binds in its own def or
+        lambda; a walrus target inside a comprehension binds in the first scope around it that is not a comprehension."""
+        if isinstance(node, ast.arg):
+            return self.parent[self.parent[node]]
+        prev, child, up = None, node, self.parent.get(node)
+        while up is not None:
+            if isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and any(child is st for st in up.body):
+                break
+            if isinstance(up, ast.Lambda) and child is up.body:
+                break
+            if isinstance(up, _COMPREHENSIONS) and not (child is up.generators[0] and prev is up.generators[0].iter):
+                break
+            prev, child, up = child, up, self.parent.get(up)
+        scope = self.tree if up is None else up
+        walrus = self.parent.get(node)
+        if isinstance(walrus, ast.NamedExpr) and walrus.target is node:
+            while isinstance(scope, _COMPREHENSIONS):
+                scope = self.scope_of(scope)
+        return scope
+
+    def _declares(self, scope, name, kind):
+        return any(isinstance(d, kind) and self.scope_of(d) is scope for d in self.decls.get(name, ()))
+
+    def resolve(self, scope, name, own=True):
+        """The scope whose variable `name`, read in `scope`, is. `own` False skips `scope` itself when it is a class body (the
+        search a nonlocal declaration starts from the scope around it)."""
+        bound = {self.scope_of(b) for b in self.binders.get(name, ())}
+        s = scope
+        while s is not self.tree:
+            if not isinstance(s, ast.ClassDef) or (own and s is scope):
+                if self._declares(s, name, ast.Global):
+                    return self.tree
+                if s in bound and not self._declares(s, name, ast.Nonlocal):
+                    return s
+            s = self.scope_of(s)
+        return self.tree
+
+    def bindings(self, scope, name):
+        """Every node that binds the variable `name` of `scope`, wherever it sits: a nested scope's assignment under a nonlocal (or,
+        for the module's variable, a global) declaration writes it too."""
+        out = []
+        for b in self.binders.get(name, ()):
+            at = self.scope_of(b)
+            if self._declares(at, name, ast.Global):
+                at = self.tree
+            elif self._declares(at, name, ast.Nonlocal):
+                at = self.resolve(self.scope_of(at), name, own=False)
+            if at is scope:
+                out.append(b)
+        return out
 
 
 def _text_html_200_writers(src):
@@ -2067,13 +2139,16 @@ def _text_html_200_writers(src):
     (the page functions) and the names of the bodies passed as a constant (the paste-the-token page). A pattern-matched grep is a sample:
     the reviewer's round-4 refuter's grep missed one of the nine writers; this walks every call. Since main's page route table (fork PR
     #919) do_GET serves every page through one call, `_send(200, _page(), ...)` with `_page = _PAGE_RENDERERS.get(p)`: a body called
-    through a name whose one binding in its function is such a `.get` read stands for every renderer of the table's literal
-    (_route_table_renderers), so a renderer added to the table reds the population below as a new writer would; a name bound from the
-    table and bound again in that function is loud (resolved by its binding, not by its spelling)."""
+    through a name whose variable, resolved where the call is the way Python resolves it (_Scopes: the innermost scope that binds the
+    name, or the one a global or nonlocal declaration names, a nested def, lambda, class body or comprehension a scope of its own), has
+    one binding and that binding is such a `.get` read stands for every renderer of the table's literal (_route_table_renderers), so a
+    renderer added to the table reds the population below as a new writer would; that variable bound from the table and bound again,
+    a nested scope's nonlocal assignment included, is loud. A `.get` bound in a nested scope is that scope's variable, so it is not
+    credited to a call in the scope around it, where the name may be a page outside the table (StampCensusResolvesByBinding)."""
     tree = ast.parse(src)
     spans = _kernel_functions(tree)
-    fn_nodes = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    renderers, gets = _route_table_renderers(tree)
+    scopes = _Scopes(tree)
+    renderers, gets = _route_table_renderers(tree, scopes)
     calls, names = set(), set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "_send"):
@@ -2097,16 +2172,16 @@ def _text_html_200_writers(src):
         if code.value != 200:
             continue
         if isinstance(body, ast.Call) and isinstance(body.func, ast.Name):
-            fn = max((f for f in fn_nodes if f.lineno <= node.lineno <= f.end_lineno), key=lambda f: f.lineno, default=None)
             name = body.func.id
-            from_table = [] if fn is None else [a for a in ast.walk(fn) if isinstance(a, ast.Assign) and len(a.targets) == 1
-                                                and isinstance(a.targets[0], ast.Name) and a.targets[0].id == name and id(a.value) in gets]
+            home = scopes.resolve(scopes.scope_of(body.func), name)
+            binds = scopes.bindings(home, name)
+            from_table = [b for b in binds if isinstance(scopes.parent.get(b), ast.Assign) and len(scopes.parent[b].targets) == 1
+                          and scopes.parent[b].targets[0] is b and id(scopes.parent[b].value) in gets]
             if not from_table:
                 calls.add(name)
                 continue
-            binds = _bindings_in(fn, name)
             if len(binds) != 1:
-                raise AssertionError("kernel.py line %d (%s): %s is bound from %s and bound again (%d bindings), so the page it calls is not the table's alone; classify it here" % (node.lineno, fn.name, name, _ROUTE_TABLE, len(binds)))
+                raise AssertionError("kernel.py line %d (%s): %s is bound from %s and bound again (%d bindings), so the page it calls is not the table's alone; classify it here" % (node.lineno, getattr(home, "name", type(home).__name__), name, _ROUTE_TABLE, len(binds)))
             calls |= renderers
         elif isinstance(body, ast.Name):
             names.add(body.id)
@@ -2177,6 +2252,158 @@ def _raw_socket_writers(src, bypasses):
             kind = "unclassified"
         sites.append({"line": i, "fn": fn, "kind": kind, "text": ln.strip()[:80]})
     return sites
+
+
+class StampCensusResolvesByBinding(unittest.TestCase):
+    """_text_html_200_writers credits the page route table's renderers to a text/html 200 whose body calls a name only when that name,
+    read where the call is, is bound by one `.get` of the table, resolved the way Python resolves it: the innermost scope that binds
+    the name, or the one a global or nonlocal declaration names; a nested def, lambda, class body or comprehension is a scope of its
+    own. A walk through nested scopes credited a `.get` bound inside a nested def to a call in the def around it, where the name is
+    the module's, so a page outside the table passed the census. Each case is a small synthetic kernel: the table, its writer, and a
+    page outside the table (`_page` or `_x_page`)."""
+
+    TABLE = "_PAGE_RENDERERS = {'/chat': _chat_page, '/feed': _feed_page}\n"
+    OUTSIDE = "def %s():\n    return '<!DOCTYPE html><html><body>a page outside the table</body></html>'\n"
+
+    def _census(self, page, do_get):
+        src = self.TABLE + self.OUTSIDE % page + "class Handler:\n" + textwrap.indent(textwrap.dedent(do_get), "    ")
+        return _text_html_200_writers(src)
+
+    def test_a_table_read_bound_in_a_nested_def_is_not_credited_to_a_call_in_the_def_around_it(self):
+        # _pick's `_page` is _pick's own; do_GET's `_page` is the module's function, a page outside the table
+        calls, names = self._census("_page", """
+            def do_GET(self):
+                p = self.path
+                def _pick():
+                    _page = _PAGE_RENDERERS.get(p)
+                    return _page
+                _pick()
+                return self._send(200, _page(), "text/html; charset=utf-8")
+            """)
+        self.assertEqual((calls, names), ({"_page"}, set()), "the call reads the module's _page, so the census names it as the writer's page (which the kernel census's population equality refuses), never the table's renderers")
+
+    def test_a_table_read_bound_where_the_call_is_is_credited_with_every_renderer(self):
+        calls, names = self._census("_x_page", """
+            def do_GET(self):
+                _page = _PAGE_RENDERERS.get(self.path)
+                return self._send(200, _page(), "text/html; charset=utf-8")
+            """)
+        self.assertEqual((calls, names), ({"_chat_page", "_feed_page"}, set()), "the dispatch main's route table brought: the call stands for every renderer the table names")
+
+    def test_a_call_inside_the_nested_def_that_binds_the_table_read_is_credited(self):
+        calls, _ = self._census("_page", """
+            def do_GET(self):
+                def _serve():
+                    _page = _PAGE_RENDERERS.get(self.path)
+                    return self._send(200, _page(), "text/html")
+                return _serve()
+            """)
+        self.assertEqual(calls, {"_chat_page", "_feed_page"}, "the call's own scope binds the name from the table")
+
+    def test_a_parameter_that_shadows_the_table_read_is_the_page_the_call_reads(self):
+        calls, _ = self._census("_x_page", """
+            def do_GET(self):
+                _page = _PAGE_RENDERERS.get(self.path)
+                return (lambda _page: self._send(200, _page(), "text/html"))(_x_page)
+            """)
+        self.assertEqual(calls, {"_page"}, "the lambda's parameter is a binding of its own scope, so the call does not read the table's name")
+
+    def test_a_nonlocal_rebinding_in_a_nested_def_is_refused(self):
+        # the nested def writes do_GET's variable: two bindings of the name the call reads, so the page is not the table's alone
+        with self.assertRaisesRegex(AssertionError, r"_page is bound from _PAGE_RENDERERS and bound again"):
+            self._census("_x_page", """
+                def do_GET(self):
+                    _page = _PAGE_RENDERERS.get(self.path)
+                    def _swap():
+                        nonlocal _page
+                        _page = _x_page
+                    _swap()
+                    return self._send(200, _page(), "text/html")
+                """)
+
+    def test_a_table_read_bound_in_the_class_body_is_not_seen_by_a_method(self):
+        # a class body is no scope a method sees: do_GET's `_page` is the module's function
+        calls, _ = self._census("_page", """
+            _page = _PAGE_RENDERERS.get('/chat')
+            def do_GET(self):
+                return self._send(200, _page(), "text/html")
+            """)
+        self.assertEqual(calls, {"_page"}, "the method reads the module's _page, not the class attribute")
+
+    def test_a_comprehension_variable_that_shadows_the_table_read_is_the_page_the_call_reads(self):
+        calls, _ = self._census("_x_page", """
+            def do_GET(self):
+                _page = _PAGE_RENDERERS.get(self.path)
+                return [self._send(200, _page(), "text/html") for _page in (_x_page,)][0]
+            """)
+        self.assertEqual(calls, {"_page"}, "the comprehension's variable is its own scope's")
+
+    def test_a_call_in_a_comprehensions_first_iterable_reads_the_scope_around_it(self):
+        # the first iterable is evaluated in do_GET, so its `_page` is do_GET's table read, whatever the comprehension binds
+        calls, _ = self._census("_x_page", """
+            def do_GET(self):
+                _page = _PAGE_RENDERERS.get(self.path)
+                return [x for x in (self._send(200, _page(), "text/html"),) for _page in (_x_page,)]
+            """)
+        self.assertEqual(calls, {"_chat_page", "_feed_page"}, "the first iterable reads do_GET's variable")
+
+    def test_a_walrus_rebinding_inside_a_comprehension_is_refused(self):
+        # a walrus target in a comprehension binds in the def around it: a second binding of do_GET's `_page`
+        with self.assertRaisesRegex(AssertionError, r"_page is bound from _PAGE_RENDERERS and bound again"):
+            self._census("_x_page", """
+                def do_GET(self):
+                    _page = _PAGE_RENDERERS.get(self.path)
+                    [(_page := _x_page) for _ in (1,)]
+                    return self._send(200, _page(), "text/html")
+                """)
+
+    def test_a_call_in_the_nested_def_that_rebinds_a_nonlocal_table_read_is_refused(self):
+        # _serve's `_page` is do_GET's variable (nonlocal), which _serve binds a second time
+        with self.assertRaisesRegex(AssertionError, r"_page is bound from _PAGE_RENDERERS and bound again"):
+            self._census("_x_page", """
+                def do_GET(self):
+                    _page = _PAGE_RENDERERS.get(self.path)
+                    def _serve():
+                        nonlocal _page
+                        _page = _x_page
+                        return self._send(200, _page(), "text/html")
+                    return _serve()
+                """)
+
+    def test_a_nonlocal_rebinding_from_a_method_skips_the_class_body_between(self):
+        # _swap's nonlocal `_page` is do_GET's, not the class attribute of the class body between them
+        with self.assertRaisesRegex(AssertionError, r"_page is bound from _PAGE_RENDERERS and bound again"):
+            self._census("_x_page", """
+                def do_GET(self):
+                    _page = _PAGE_RENDERERS.get(self.path)
+                    class _Swap:
+                        _page = _x_page
+                        def swap(self):
+                            nonlocal _page
+                            _page = _x_page
+                    return self._send(200, _page(), "text/html")
+                """)
+
+    def test_a_global_table_read_beside_a_module_binding_is_refused(self):
+        # do_GET's assignment writes the module's `_page`, which the module also binds as a page function
+        with self.assertRaisesRegex(AssertionError, r"_page is bound from _PAGE_RENDERERS and bound again"):
+            self._census("_page", """
+                def do_GET(self):
+                    global _page
+                    _page = _PAGE_RENDERERS.get(self.path)
+                    return self._send(200, _page(), "text/html")
+                """)
+
+    def test_a_local_binding_of_the_table_name_by_a_class_is_refused(self):
+        # do_GET's `_PAGE_RENDERERS` is its own class, so its `.get` is not the table's
+        with self.assertRaisesRegex(AssertionError, r"_PAGE_RENDERERS bound again"):
+            self._census("_x_page", """
+                def do_GET(self):
+                    class _PAGE_RENDERERS:
+                        get = staticmethod(lambda p: _x_page)
+                    _page = _PAGE_RENDERERS.get(self.path)
+                    return self._send(200, _page(), "text/html")
+                """)
 
 
 class LazyPanes(unittest.TestCase):
