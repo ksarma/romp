@@ -118,9 +118,14 @@ atexit.register(_remove_run_dirs)
 # that /proc/<pid>/fd does not show, and a descriptor in flight are not read for it (below). A child forked through
 # multiprocessing's fork context keeps the controller's write end and a spawn-context worker is handed one, on every
 # version; a raw os.fork child keeps it on 3.12 and earlier, and on 3.13 and 3.14 before the gh-146313 releases, which
-# close a raw fork's copy in the child. Any of them keeps the tracker from exiting on its own while it holds the pipe,
-# and a raw fork's child that still holds the pipe when the controller exits keeps the tracker running after the
-# controller has gone. With the pass-over by identity alone, a serial run whose test left a raw fork's child holding
+# close a raw fork's copy in the child. Any of them keeps the tracker from exiting on its own while it holds the pipe.
+# On 3.12.9 and earlier, on 3.13.0 to 3.13.2, on 3.13.14 and later 3.13 releases, on 3.14.5 and later 3.14 releases and
+# on 3.15 from 3.15.0b1, a process that still holds the pipe when the controller exits keeps the tracker running after
+# the controller has gone. On 3.12.10 and later 3.12 releases, on 3.13.3 to 3.13.13 and on 3.14.0 to 3.14.4, the
+# controller's exit waits for the tracker instead: ResourceTracker.__del__, run as the controller's interpreter shuts
+# down, closes the controller's write end and waits for the tracker to exit with a blocking waitpid, so the controller
+# does not exit until no other process holds the pipe, and the tracker exits before the controller does. With the
+# pass-over by identity alone, a serial run whose test left a raw fork's child holding
 # the pipe ended green and silent, since such a child need hold no path under a root (its environment is the block the
 # controller started with, before the run minted its roots). The pipe is read from /proc: the one whose write end the
 # controller's record holds (its descriptor, read at /proc/<pid>/fd), when the tracker holds a descriptor on it too (the

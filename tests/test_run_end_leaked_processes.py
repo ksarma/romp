@@ -1127,11 +1127,14 @@ class RunEnd(unittest.TestCase):
     @procfs
     def test_a_forked_child_that_keeps_the_trackers_pipe_past_the_run_gets_the_tracker_named_with_the_childs_pid(self):
         """The premise of the pass-over (the reviewer's closing check of round 2 of fork PR #894's review): the controller's
-        own tracker exits with the controller only while no other process holds its pipe. The child run's test starts the
-        tracker and forks a child that keeps a descriptor on the pipe and outlives the test (_fork_keeping_the_trackers_pipe).
-        The child holds no path under a root, so no line of its own names it; the run is red, the tracker is named, and
-        its line names the child as a holder of its pipe. Red with the pass-over by identity alone: the run ended 0 and
-        said nothing. The child run's process kills and reaps its child at its exit, and the tracker is gone after that."""
+        own tracker exits with the controller only while no other process holds its pipe, on the versions where a process
+        still holding the pipe when the controller exits keeps the tracker running after it; on the other versions the
+        controller's exit waits for that process instead (the comment above LEAK_EXIT_BOUND_S lists both sets). The child
+        run's test starts the tracker and forks a child that keeps a descriptor on the pipe and outlives the test
+        (_fork_keeping_the_trackers_pipe). The child holds no path under a root, so no line of its own names it; the run is
+        red, the tracker is named, and its line names the child as a holder of its pipe. Red with the pass-over by identity
+        alone: the run ended 0 and said nothing. The child run's process kills and reaps its child at its exit, and the
+        tracker is gone after that."""
         r, _pids, scratch = self._child_run("test_forks_a_child_that_keeps_the_trackers_pipe")
         out = r.stdout + r.stderr
         tracker, (keeper, start) = self._marker_pid(scratch, "tracker"), self._keeper(scratch)
@@ -1309,8 +1312,8 @@ def _tracker_gone(pid):
     return False
 
 
-_KEPT = []    # what a Leaker test keeps referenced until its run's process exits: on 3.13 and later a collected
-#               ResourceTracker stops its tracker
+_KEPT = []    # what a Leaker test keeps referenced until its run's process exits: on 3.12.10 and later 3.12 releases and
+#               on 3.13.3 and later a collected ResourceTracker stops its tracker (ResourceTracker.__del__)
 
 
 def _record(label, pid):
