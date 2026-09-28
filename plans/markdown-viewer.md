@@ -8722,8 +8722,9 @@ pointerId test, the refusal of a record still standing at the click or the refus
 window, with a button down or, the mouse's, with none, the residual and the third order below aside, the mouseup's clear of the
 tap's flag and the mouseout's defensive too, since each empties the slot and only a pointerup fills it and sets the flag again (a
 gate without either reds no test), the mouseout's condition on the flag defensive in every order an engine was measured to send,
-a mouseout that empties the slot whatever the flag giving the same verdict on every recorded row and differing only where a
-mouse's or a pen's pointerup filled the slot, an order a row of its node guard pins, and the tail's condition on the mouseup's
+a mouseout that empties the slot whatever the flag giving the same verdict on every recorded row and differing only on orders no
+engine was measured to send, a slot a mouse's or a pen's pointerup filled and a mouseout to no element between a tap's own
+mousedown and its click, each pinned by a row of its node guard, and the tail's condition on the mouseup's
 detail defensive under the mouseup's clear in every event order, a tail set by any primary mouseup with that clear kept reddening
 no test, and load-bearing once that clear is dropped (the file review's round 19, tests-1); that mousedown's clear of the
 slot is pinned: before it, a tap on another document's element over the picture that went away during the press, whose
@@ -8745,7 +8746,9 @@ pinned by browser cells in Firefox and WebKit and a node guard, red at 142ade155
 held on the control or on the picture, and in Firefox the mouse pressed on the control and released in the other pane, then another
 document's tap on an element over the control that hides at that tap's compatibility mousedown sent the viewer's window a mouseup of
 detail 1 and a click alone, which read the mouse's record; each opened the tab with the sign covered at the tap's start; and the
-mouseout's clear of the slot is pinned by browser cells in Firefox and a node guard, red at ddb446fae: in Firefox, after the
+mouseout's rule is pinned as a whole by browser cells in Firefox and a node guard, red at ddb446fae and under a gate without that
+rule, its two clears each defensive given the other wherever that tap's compatibility mousedown reaches the viewer's window (with
+the slot's clear dropped alone the flag's clear lets that mousedown empty the slot, and no test is red): in Firefox, after the
 viewer's own tap whose compatibility events another document's element took and which started in the viewer, the element first
 hit at the compatibility mousedown or a mouse resting in the viewer, the viewer's window heard a mouseout to no element, and a tap
 on that element over the control, which goes away during the press, took that tap's slot and opened the tab with the sign covered
@@ -8756,12 +8759,15 @@ compatibility events and click, and a tap on that element, which goes away durin
 mousedown, a mouseup of detail 1 and a click and takes the slot the viewer's tap filled, in WebKit, and in Firefox where that
 element is laid out before the tap's compatibility mousemove and no mouse rests in the viewer (where the tap's compatibility
 events start in the viewer, Firefox sends the viewer's window a mouseout to no element before that click, and the gate empties
-the slot there), measured by the closing check at 142ade155 in the dashboard's shape in Firefox 16 of 16 and in WebKit 7 of 7,
+the slot there), the closing check at 142ade155 measuring the class's element shapes its probe drove in the dashboard's shape,
+Firefox 16 of 16 in the shape the mouseout's rule now closes, the element first hit at the compatibility mousedown, and WebKit 7 of
+7, the residual,
 and 0 of 36 in Chromium under a candidate of this gate with the slot's pointerId test, whose foreign click carries its own touch's
 pointerId, the same probe under the gate at ddb446fae reading Firefox 16 of 16, WebKit 7 of 7 and Chromium 0 of 51 and every
 other order of the class it drives opening nothing, and a probe of the file review's round 19 under this gate's rules reading, on
 the Files pane and the chat, Firefox's shapes whose compatibility events start in the viewer 0 of 48 (48 of 48 under the gate at
-ddb446fae) and its laid-out shape with no mouse in the viewer 12 of 12, WebKit 24 of 24 covered opens and Chromium 0 of 16, the
+ddb446fae) and its laid-out shape with no mouse in the viewer 12 of 12 with the element hidden at the covered tap's pointerup (0 of
+12 hidden at its pointerdown), WebKit 24 of 24 covered opens and Chromium 0 of 16, the
 laid-out shape by reading the one a finger's tap on a touch-only device produces for an element added at the tap's pointerdown,
 since a finger's press lasts longer than a frame, the input events the viewer hears in that shape its own tap's, in the same
 order, only coordinates and time differing, and, where the viewer's window held the focus and the element takes the tap's
@@ -8776,7 +8782,8 @@ Firefox, after that release, a mouse click on such an element, whose pointerup h
 10 of 10 and 10 of 10 again at 343ee2eb5, closed by the refusal of a mouse's or a pen's record whose pointer left the viewer's
 window with a button down, Firefox sending the viewer's window a pointerout with no relatedTarget as the press left its frame
 (under this gate 0 of 10, the next click opening; its browser cells in Firefox and a node guard, red at 343ee2eb5 and at
-09f58bec6), Chromium opening neither, and a later check finding a third, open here in WebKit and in one shape in Chromium and, in
+09f58bec6), Chromium opening neither, and a later check finding a third, open here in WebKit and in one shape in Chromium in the
+timings measured and, in
 WebKit, at 142ade155, at 09f58bec6 and at 343ee2eb5, for the owner: the mouse pressed on the control, any button, and held while
 the top page hides the viewer's frame and shows it again, then a mouse click on another document's element over the control that
 hides at that click's mousedown or its pointerdown, whose pointerup under pointerId 1 hands the held press's record to the slot and
@@ -8785,7 +8792,8 @@ opening it at every timing, 3,700 of 3,700 in a later probe of these fixes and 6
 after such a release sends the mouse's pointerout with no button down when a redraw finds the frame hidden after the release or
 when a redraw or a pointer move comes between the element's appearing under the pointer and the click, refusing it under this
 gate's leave rule (in the later probe the gate at ddb446fae opened 1,526 of 3,700, and a probe of the file review's round 19
-under this gate's rules 0 of 3,700; its extra5-1 and extra8-1) but in its still shape, the frame shown again before any redraw
+under this gate's rules 0 of 3,700; its extra5-1 and extra8-1) but, in the timings measured, in its still shape, runs of several
+short hides with the pointer still not measured under these rules, the frame shown again before any redraw
 finds it hidden, the pointer still and the click in the frame the element appeared, with the frame shown at the release 85 of
 225 still clicks of a mouse, each with the release within 12 ms of the hide, and 64 of 180 of a pen, and none with the frame
 shown 300 ms later, with a redraw between the element's appearing and the click, or with a moved click, and Firefox never, 0 of
