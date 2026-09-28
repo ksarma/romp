@@ -1928,6 +1928,19 @@ class Helpers(unittest.TestCase):
         self.assertIsNone(t)
         self.assertIn("not JSON", err)
 
+    def test_docs_define_the_trailers_rounds_once_beside_the_trailer(self):
+        """docs/batching.md says once, right after the trailer's example, what `rounds` counts: the review rounds whose
+        reviewer has reported, not the round a push answers. Nothing defined it before a fork PR's review found its
+        trailer's count unreadable by rule (fork PR #780, round 6, rules-1)."""
+        doc = (ROOT / "docs" / "batching.md").read_text(encoding="utf-8")
+        flat = " ".join(doc.split())
+        sentence = ("`rounds` counts the review rounds whose reviewer has reported, so a push that answers round 5's "
+                    "findings still says 5, and the count moves to 6 when round 6's report comes in.")
+        example = '"sweep_head":"<sha>","flakes":[]} -->`.'
+        self.assertIn(example + " " + sentence, flat, "the definition follows the trailer's example")
+        self.assertEqual(flat.count("`rounds` counts"), 1, "and is written once")
+        self.assertIn('"rounds":', flat[:flat.index(sentence)], "the example it follows carries the key")
+
     def test_ordering_is_dependencies_first_then_by_number(self):
         cands = {5: {"depends_on": [9]}, 9: {"depends_on": []}, 7: {"depends_on": []}, 8: {"depends_on": [5]}}
         self.assertEqual(batch.order_members(cands), ([7, 9, 5, 8], []))

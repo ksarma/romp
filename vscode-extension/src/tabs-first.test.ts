@@ -10,8 +10,9 @@ import * as path from "node:path";
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
-test("a tabMeta map holds the kernel's name+color per tab (and its emoji since 2026-09-06)", () => {
-  assert.match(RENDER, /const tabMeta = new Map<string, \{ name: string; color: Color \| null; emoji\?: string \}>\(\);/);
+test("a tabMeta map holds the kernel's name+color per tab (its emoji since 2026-09-06, its count of open user todos since 2026-09-22)", () => {
+  assert.match(RENDER, /const tabMeta = new Map<string, \{ name: string; color: Color \| null; emoji\?: string; userTodos\?: number \}>\(\);/,
+    "the roster row's fields, the count included (ui/webview/tab-usertodo-skeleton.test.ts pins its readers)");
 });
 
 test("applyTabOrder REBUILDS tabMeta from the authoritative payload (closed tabs don't linger)", () => {

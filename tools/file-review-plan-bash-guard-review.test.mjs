@@ -14,7 +14,10 @@
 // tree's modules are named, so the omission failed nothing. This module holds the cost sentence to the code it
 // describes (the closure's place in the verdict's order, the empty-list return before it, the once-per-call Map
 // the targets share) and to the hook's behavior on a scratch project (a read, an explicit hit and an empty list
-// walk nothing; a write the list does not name walks the root once, however many targets); the shapes module to
+// walk nothing; a write the list does not name walks the root once, however many targets; and, since the
+// non-literal rule's round 2 of 2026-09-18, a non-literal target pays the walk only when the tracked list alone
+// does not settle whether the project is in play: a figures-only or fully vetoed list, or a copy into a landing
+// folder with no refusable entry at or below it, one walk shared with the literal targets); the shapes module to
 // the pins the plan credits it with; and the inventory to the tree: every romp-track-bash-guard*.test.mjs under
 // tools/ is named in decision 47, in the Tests bullet and in the hook's row of hooks/README.md, and every
 // file-review-plan-bash-guard*.test.mjs in the bullet, so a later round's module fails here by name. Synthetic:
@@ -74,6 +77,15 @@ test('decision 47 states the cost with its condition: 60 ms without the closure,
   assert.ok(d47.includes('the same walk the vendored guard pays on every such Write'));
   assert.ok(d47.includes('built once and shared by all the command\'s targets, so a directory copy pays it once'));
   assert.ok(d47.includes('growing with the project\'s markdown count and well under the installer\'s 10 s timeout'));
+  // review round 2 (2026-09-18): the non-literal rule is a second trigger of the walk, stated with its condition,
+  // and the no-closure list names a LITERAL target outside any project, since a non-literal one from a cwd whose
+  // project lists nothing refusable pays the walk to learn so
+  assert.ok(d47.includes('(a read, a literal target outside any project, an explicit hit on the project\'s tracked list, an empty list)'), 'the no-closure list is qualified');
+  assert.ok(d47.includes('A write whose target the hook cannot read pays the same walk only when the tracked list alone does not settle whether its project is in play'), 'the second trigger, with its condition');
+  assert.ok(d47.includes('a figures-only or fully vetoed list, or a copy whose literal landing folder has no refusable entry at or below it'), 'the two cases');
+  assert.ok(d47.includes('a listing of that folder and a guard check of each of its entries first, up to the 2000-entry cap'), 'the landing scan\'s own cost');
+  assert.ok(d47.includes('one walk per call, shared with the literal targets; none when a listed refusable entry settles it, and none when the list is empty'), 'the corrected statement: not one walk whatever the verdict');
+  assert.ok(!d47.includes('whatever the verdict'), 'the rejected wording is absent');
   assert.ok(!/\u2014/.test(d47), 'no em dash');
 });
 
@@ -88,7 +100,7 @@ test('the hook agrees: the closure comes after the veto and the explicit list, n
   assert.ok(veto >= 0 && explicit > veto && empty > explicit && memo > empty && walk > memo, 'the veto, the explicit list, the empty list, the memo, then the walk');
   const evaluateSrc = hook.slice(hook.indexOf('export function evaluate(raw)'), hook.indexOf('const invokedDirectly'));
   assert.ok(evaluateSrc.includes('const closures = new Map();'), 'one Map per call');
-  assert.ok(evaluateSrc.includes('if (!isGuardedPath(t.path, closures)) continue;'), 'handed to every target');
+  assert.ok(evaluateSrc.includes('try { guarded = isGuardedPath(t.path, closures); }') && evaluateSrc.includes('if (!guarded) continue;'), 'handed to every target, its stat error a refusal (family 4)');
   assert.ok(hook.includes('ONE walk of the project\'s markdown tree per call'), 'the hook\'s header states the same cost');
   // the walk is what the plan says it is: store-io lists every .md under the root and reads every tracked note
   const closure = storeIo.slice(storeIo.indexOf('export function trackedClosure(vaultRoot)'), storeIo.indexOf('export function isTrackedFile'));
@@ -138,6 +150,31 @@ test('on a scratch project the condition holds: a read, an explicit hit and an e
     config([]);
     assert.equal(walks(() => { reason = evaluate(payload('echo x > other.md')); }), 0, 'an empty list walks nothing');
     assert.equal(reason, null);
+    // Review round 2 (2026-09-18): the non-literal rule's cost was never pinned, and the module passed 5/5 while
+    // decision 47's cost sentence was wrong for it. The walk is paid when the tracked list alone does not settle
+    // whether the project is in play: a figures-only or fully vetoed list (the closure is asked whether a note
+    // it reaches is refusable), or a copy whose literal landing folder has no refusable entry at or below it
+    // (the closure is asked whether a note below it is). Either way one walk per call, shared with the literal
+    // targets; none when a listed refusable entry settles it, none when the list is empty (above).
+    config(['figs/plot.png']);
+    assert.equal(walks(() => { reason = evaluate(payload('echo x > "$OUT"')); }), 1, 'a non-literal target in a figures-only project: one walk to learn no note is refusable');
+    assert.equal(reason, null, 'and allowed');
+    assert.equal(walks(() => { reason = evaluate(payload(`echo x > ${path.join(path.dirname(proj), 'elsewhere-$$.log')}`)); }), 1, 'a numeric target outside every project pays it from that cwd too: the hits are built before the drop');
+    assert.equal(reason, null);
+    const full = (tracked, untracked) => fs.writeFileSync(path.join(proj, '.trackchanges', 'config.json'), JSON.stringify({ v: 2, tracked, untracked }));
+    full(['docs/report.md'], ['docs/report.md']);   // a real veto: the exact vault-relative name (a glob would not veto, and the project would be refused with no walk)
+    assert.equal(walks(() => { reason = evaluate(payload('cp "$SRC" "$DST"')); }), 1, 'a non-literal target in a fully vetoed project: one walk');
+    assert.equal(reason, null, 'and allowed');
+    config(['docs/report.md']);
+    assert.equal(walks(() => { reason = evaluate(payload('echo x > "$OUT"')); }), 0, 'a listed refusable entry settles it: refused with no walk');
+    assert.ok(reason && /is not a literal path/.test(reason));
+    fs.mkdirSync(path.join(proj, 'scratch'));
+    assert.equal(walks(() => { reason = evaluate(payload('cp "$SRC" scratch/')); }), 1, 'a copy into a landing folder no tracked entry covers, in the ordinary project: one walk (after a listing of the folder) to learn no note below it is reachable');
+    assert.equal(reason, null, 'and allowed');
+    assert.equal(walks(() => { reason = evaluate(payload('echo x > other.md; cp "$SRC" scratch/')); }), 1, 'shared with the literal targets: one walk for both');
+    assert.equal(reason, null);
+    assert.equal(walks(() => { reason = evaluate(payload('cp "$SRC" docs/')); }), 0, 'a landing folder with a refusable entry below it: refused with no walk');
+    assert.ok(reason && /is not a literal path/.test(reason));
   } finally {
     if (saved === undefined) delete process.env.TRACKCHANGES_ROOT; else process.env.TRACKCHANGES_ROOT = saved;
     try { fs.rmSync(proj, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -151,7 +188,9 @@ test('decision 47 and the Tests bullet name the shapes module, credit it to the 
   assert.ok(d47.includes('`' + SHAPES + '`, from the review\'s first round (2026-09-10), the shapes that round found misread'), 'decision 47 names and credits it');
   assert.ok(bullet.includes('from the review\'s first round (2026-09-10), `' + SHAPES + '` pins the shapes the round found misread'), 'the Tests bullet names and credits it');
   const shapes = read(...SHAPES.split('/'));
-  for (const title of [
+  // round 6's second commit (ruling G, tests-5): the titles are asserted as a SET, so one run names every stale title at once (a per-title
+  // assert stopped at the first missing one, which hid the second stale title behind the first in round 5's fourth fix-up)
+  const SHAPES_TITLES = [
     "test('a cd inside ( ... ) moves nothing after the ): the untracked write after it is allowed, the tracked one refused'",
     "test('a cd inside an if, loop or case body leaves the cwd unknown once the body closes: the body may not run'",
     "test('a python or node heredoc script followed by &&, |, ; or & on the opener line is read'",
@@ -161,7 +200,7 @@ test('decision 47 and the Tests bullet name the shapes module, credit it to the 
     "test('python or node with options and a heredoc on stdin is read: -u, -B, -I, -X utf8, --input-type=module, --no-warnings'",
     "test('a prefix with options still leads to the command: sudo -u, sudo -n, env -u, timeout -s, exec -a, time -p, command -p'",
     "test('pushd moves the cwd like cd; popd leaves it unknown'",
-    "test('[[ a > b ]] and (( a > b )) compare and write nothing; [ a > b ] and test a > b redirect, as in the shell'",
+    "test('[[ a > b ]] and (( a > b )) compare in bash and zsh, and are a command named `[[` with a redirection, and a subshell running `a` with one, in dash (round 5\\'s fifth addendum, 2026-09-20): a tracked target refuses by name with dash and the construct named, a read or an untracked target stays allowed, a for head gets no dash reading; [ a > b ] and test a > b redirect in every shell'",
     "test('a function definition is not a run: a cd in its body moves nothing after it; a write in it is still a target'",
     "test('Path(x).open with a write mode, open with keyword arguments in any order, io.open, and fs.openSync with a write flag are writes'",
     "test('node inline scripts in each spelling: -e, --eval, -p, --print'",
@@ -174,7 +213,7 @@ test('decision 47 and the Tests bullet name the shapes module, credit it to the 
     "test('a directory copy to an untracked destination walks the project once, not once per landing file'",
     "test('the per-call closure agrees with store-io\\'s isTrackedFile on every kind of path'",
     // the second round's shapes, each named in the bullet
-    "test('&& and || inside [[ ... ]] stay in the test: a > after them compares; after ]] they end it and a > redirects'",
+    "test('&& and || inside [[ ... ]] stay in the test for bash and zsh (a > after them compares there); dash reads the words after them as a further command, so a tracked target there refuses naming the construct (the `||` branch runs when `[[` is not found, measured; the `&&` branch is read as running too, the safe side); an unquoted parenthesis inside is a syntax error in dash, so those rows stay allowed; after ]] the operators end the test and a > redirects'",
     "test('a quoted or escaped [[ is data, as is [[ in operand position: a > after it redirects'",
     "test('a brace list is expanded before the operands are read: mv x{.new,}, cp {a,b}/x, tee and sed -i lists, nested lists and sequences'",
     "test('a python open( call whose arguments span lines is read: a formatter wraps a heredoc script that way'",
@@ -185,7 +224,8 @@ test('decision 47 and the Tests bullet name the shapes module, credit it to the 
     "test('a symlink to a tracked file is the tracked file: a write through it, inside or outside the project, is refused; a tracked name that is itself a link stays refused'",
     "test('store-io\\'s isTrackedFile has the three steps trackedIn copies, in that order, so a vendored change to them fails here by name'",
     "test('the hook process rules the same way on a subshell cd, a chained heredoc and a heredoc-fed shell'",
-  ]) assert.ok(shapes.includes(title), `the shapes module holds ${title}`);
+  ];
+  assert.deepEqual(SHAPES_TITLES.filter((title) => !shapes.includes(title)), [], 'the shapes module holds every title the bullet credits it with (each missing one named here)');
   assert.ok(shapes.includes("'five literal targets, one walk'"), 'the one-closure pin covers the five redirect targets the bullet names');
   assert.ok(shapes.includes("assert.equal(t.length, 600, 'every file, not the first 500');"), 'the full walk the bullet names: past 500 entries');
   assert.ok(!shapes.includes("'the cap'") && !/\bcap\b.*assert\.equal\(t\.length, 500/.test(shapes), 'no cap pin survives: the walk is uncapped');

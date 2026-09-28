@@ -308,7 +308,8 @@
    Settle it here rather than upstream of the cascade: these rules apply to the
    rendered SVG, so they hold whichever party would otherwise win. Node labels
    go dark; EDGE labels are deliberately separate, since they sit on the page's
-   dark background and get a light chip of their own instead. */
+   dark background and get a light chip of their own instead.
+
    Material defines its --md-mermaid-* variables under `:root>*`, i.e. on <body>,
    not on <html>. A `:root` override therefore LOSES: not on specificity, but on
    tree position, since the closer ancestor's value is the one the diagram

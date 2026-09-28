@@ -272,6 +272,11 @@ class ObservabilityRoutes(unittest.TestCase):
         km._pure_feed_lock = SignallingLock()
         out = []
         first = threading.Thread(target=lambda: out.append(self._get("/feed.json")))
+
+        def end():                                   # on every exit path: release the parked build, wait for the GET
+            release.set()
+            first.join(10)
+        self.addCleanup(end)
         first.start()
         stops = [parked.get(timeout=10)]             # the first GET takes the lock...
         if stops[-1] == "lock":

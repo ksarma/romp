@@ -1200,7 +1200,7 @@ class KernelFolds(Base):
         counts from a write that happened for that path; a failed one is the pass's failure, skipped until the file changes."""
         self._converge_world({"bgJudge": "missing", "agentLaunches": "missing"}, quiescent=True)
         jd._bg_scan(self.leaf); seq = self.doc(self.leaf)["seq"]
-        saved = em.checkpoint_write; em.checkpoint_write = lambda path, force=False: False
+        saved = em.checkpoint_write; em.checkpoint_write = lambda path, force=False, why=None: False
         self.addCleanup(setattr, em, "checkpoint_write", saved)
         km._begin_checkpoint_cycle()
         self.assertEqual(km._converge_checkpoints(TS0 + 600), 0)
@@ -1290,7 +1290,7 @@ class KernelFolds(Base):
         """T361 (b): a failed write must not repeat every cycle."""
         self._converge_world({"bgJudge": "missing"})
         jd._bg_scan(self.leaf)
-        saved = em.checkpoint_write; em.checkpoint_write = lambda path, force=False: False
+        saved = em.checkpoint_write; em.checkpoint_write = lambda path, force=False, why=None: False
         try:
             self.assertEqual(km._converge_checkpoints(TS0 + 600), 0)
         finally:
@@ -1325,14 +1325,14 @@ class KernelFolds(Base):
         drop must call the write outside _JSONL_CACHE_LOCK, no inversion with the reader's own lock on another thread)."""
         real = em.checkpoint_write
         seen = []
-        def wrapped(path, force=False):
+        def wrapped(path, force=False, why=None):
             for name in ("_JSONL_CACHE_LOCK", "_CKPT_LOCK"):
                 lock = getattr(em, name)
                 got = lock.acquire(blocking=False)
                 seen.append((name, got))
                 if got:
                     lock.release()
-            return real(path, force)
+            return real(path, force, why)
         em.checkpoint_write = wrapped
         self.addCleanup(setattr, em, "checkpoint_write", real)
         return seen
@@ -1561,11 +1561,15 @@ class KernelFolds(Base):
         self.assertIn("_cursor_recordable(", inspect.getsource(em.checkpoint_write))
         self.assertIn("_count_recordable(", inspect.getsource(em._carry_forward_states))
         self.assertIn("_path_needs_write(", inspect.getsource(em.checkpoint_converge_candidates))
-        self.assertIn("_path_needs_write(", inspect.getsource(em._drop_quiescent_entry))
         self.assertIn("_cursor_recordable(", inspect.getsource(em._path_needs_write))
-        src = inspect.getsource(em._drop_quiescent_entry)
-        self.assertLess(src.index("checkpoint_write("), src.index("with _JSONL_CACHE_LOCK"), "the write before the reader's lock")
+        src = inspect.getsource(em._drop_write)             # the drop's write, shared by the quiescent drop and the release at an agent's end
+        self.assertIn("_path_needs_write(", src)
         self.assertIn("checkpoint_cycle_take(", src); self.assertNotIn("checkpoint_cycle_room(", src)   # the room check and the charge are one step
+        for fn in (em._drop_quiescent_entry, em.release_entry):
+            src = inspect.getsource(fn)
+            self.assertLess(src.index("_drop_write("),
+                            src.index("with _read_stripe(key), _JSONL_CACHE_LOCK:\n        if _JSONL_CACHE.get(key) is ent"),
+                            "%s: the write before the locks that pop" % fn.__name__)
 
     def test_perf_carries_the_checkpoint_counters_and_the_kernel_wires_the_three_events(self):
         snap = km._PERF_STATS.snapshot()

@@ -72,9 +72,16 @@ export function tailMutRow(sid: string, m: { removedTail: string[]; addedTail: s
 
 /** The breadcrumb for one re-size of a view's virtualization spacers (T262j): a top spacer re-estimate paired with
  *  a bottom one leaves scrollHeight unchanged yet moves everything under the top spacer, and Chrome's scroll
- *  anchoring then moves the reader by the same amount with no pane write. `top`/`bot` = [before, after] heights. */
-export function spacerRow(sid: string, topBefore: number, topAfter: number, botBefore: number, botAfter: number, sh = 0, ch = 0) {
-  return { sid, top: [topBefore, topAfter], bot: [botBefore, botAfter], dTop: topAfter - topBefore, dBot: botAfter - botBefore, sh, ch };
+ *  anchoring then moves the reader by the same amount with no pane write. `top`/`bot` = [before, after] heights.
+ *  `sh`/`ch` are the scroller's heights read a frame later for the view shown in that frame; a row whose view was not the
+ *  element the scroller measured in that frame (switched away before it, or hidden by the section-at-a-glance view, where
+ *  #content holds the section list) has none (null, never another view's or the list's figures; PR E,
+ *  the maintainer's round 1 addendum; the maintainer's round 5 ruling, extra10-1) and carries `view: "inactive"`: one fixed word, no host name, spread only when handed that word (the parameter's type names
+ *  it at compile time and is gone at run time, so the guard holds it there: a value the type does not name mints nothing; the
+ *  kernel admits the key and bounds its value to the same word, CLIENT_DIAG_VALUES, refusing any other), admitted to the kernel's chat allowlist on the owner's approval (the owner
+ *  2026-09-21, who approved the field). A row with numbers and no marker is the shown view's. */
+export function spacerRow(sid: string, topBefore: number, topAfter: number, botBefore: number, botAfter: number, sh: number | null = 0, ch: number | null = 0, view?: "inactive") {
+  return { sid, top: [topBefore, topAfter], bot: [botBefore, botAfter], dTop: topAfter - topBefore, dBot: botAfter - botBefore, sh, ch, ...(view === "inactive" ? { view } : {}) };
 }
 
 /** The breadcrumb for one height change of the transcript's TAIL outside the append path (T262f, the user
@@ -86,8 +93,15 @@ export function tailChangeRow(sid: string, dh: number, last: string, stick: bool
   return { sid, dh, last: String(last || "").slice(0, 60), stick, sh, ch };
 }
 
-/** The class list of the tail element of a view: its last child that is not a virtualization spacer. */
-export function tailLabel(children: ArrayLike<{ className?: string }>): string {
+/** The class list of the tail element of a view: its last child that carries a unit when `isUnit` is given (the pane's data-unit,
+ *  render.ts unitOfNode: a hover's rail band, drawn as the thread's last child with no unit, is not the tail), else, and for a view with
+ *  no unit-carrying child at all, its last child that is not a virtualization spacer: the rule before the predicate (PR E, the
+ *  maintainer's round 2 ruling), kept for callers that pass none and standing in whole, as a second pass, where the predicate finds
+ *  nothing (the maintainer's round 3 ruling C: the empty transcript's placeholder and the deferred build's loading hint are a view's only
+ *  child and carry no unit, and the row whose purpose is naming what changed height named nothing there; a per-child OR would instead
+ *  name a band beside units). DOM-free: the caller says what a unit is. */
+export function tailLabel<T extends { className?: string }>(children: ArrayLike<T>, isUnit?: (c: T) => boolean): string {
+  if (isUnit) for (let i = children.length - 1; i >= 0; i--) if (isUnit(children[i])) return String(children[i]?.className || "");
   for (let i = children.length - 1; i >= 0; i--) {
     const c = String(children[i]?.className || "");
     if (c.indexOf("tx-spacer") < 0) return c;
@@ -133,15 +147,24 @@ export function boxChanges<T extends { id?: string; className?: string }>(entrie
  *  observed units with their new heights, `children` the view's children in order, `heights` the last height seen
  *  per unit (a WeakMap in the pane). The first observation of a unit is its baseline and files nothing (observe()
  *  reports once on attach); an unchanged height files nothing; a virtualization spacer never files (its spacer rows
- *  say what it did); the TAIL unit (the last child that is not a spacer, tailLabel's rule) never files here, because
- *  the view rail's row already carries its change; a unit no longer in the window files nothing. `fromTail` counts
- *  UNITS when `unitOf` can say which unit a child belongs to (the pane's data-unit: a day divider is a child of its
- *  own carrying the unit it opens, so counting children would read one turn plus a divider as two turns); it falls
- *  back to child distance where no unit index exists. */
+ *  say what it did); the TAIL unit never files here, because the view rail's row already carries its change; a unit
+ *  no longer in the window files nothing. The tail is the last child with a unit index when `unitOf` is given (the
+ *  trim's rule, render.ts unitOfNode: a hover's rail band, the thread's last child with no unit, is neither the tail
+ *  nor a unit, and the real tail unit keeps its exemption; PR E, the maintainer's round 2 ruling), else the last child
+ *  that is not a spacer (the rule before, kept for callers that pass no `unitOf`). A view with NO unit-carrying child
+ *  (the empty transcript's placeholder, the deferred build's loading hint: each a view's only child, observed like
+ *  every added element) has no tail and files nothing, as the spacer rule did, and a child that carries no unit (a
+ *  foreign child: the hover's band) files nothing either (the maintainer's round 3 ruling A: the unit-aware scan left
+ *  the tail at -1 and read children[-1], which the pane's `unitOf` threw on, and filed a band below the tail at a
+ *  negative distance). `fromTail` counts UNITS when `unitOf` can say which unit a child belongs to (the pane's
+ *  data-unit: a day divider is a child of its own carrying the unit it opens, so counting children would read one
+ *  turn plus a divider as two turns), and is never negative: the units are in order and the tail is the last of them
+ *  (0 for a divider of the tail's own unit); it falls back to child distance where no unit index exists. */
 export function unitChanges<T extends { className?: string }>(entries: Array<{ target: T; height: number }>, children: ArrayLike<T>,
                                                                 heights: UnitHeights<T>, unitOf?: (t: T) => number | undefined): Array<{ target: T; dh: number; cls: string; fromTail: number }> {
+  const hasUnit = (c: T): boolean => { const u = unitOf!(c); return typeof u === "number" && !Number.isNaN(u); };
   let tail = -1;
-  for (let i = children.length - 1; i >= 0; i--) if (String(children[i]?.className || "").indexOf("tx-spacer") < 0) { tail = i; break; }
+  for (let i = children.length - 1; i >= 0; i--) if (unitOf ? hasUnit(children[i]) : String(children[i]?.className || "").indexOf("tx-spacer") < 0) { tail = i; break; }
   const out: Array<{ target: T; dh: number; cls: string; fromTail: number }> = [];
   for (const e of entries) {
     const prev = heights.get(e.target);
@@ -151,7 +174,8 @@ export function unitChanges<T extends { className?: string }>(entries: Array<{ t
     if (cls.indexOf("tx-spacer") >= 0) continue;
     let idx = -1;
     for (let i = 0; i < children.length; i++) if (children[i] === e.target) { idx = i; break; }
-    if (idx < 0 || idx === tail) continue;
+    if (idx < 0 || tail < 0 || idx === tail) continue;   // tail < 0: no unit-carrying child (the placeholder, the loading hint): nothing to measure a distance from, nothing filed
+    if (unitOf && !hasUnit(e.target)) continue;          // a foreign child below the tail (a hover's band): neither a unit nor the tail, never a negative distance
     const ut = unitOf ? unitOf(children[tail]) : undefined, uu = unitOf ? unitOf(e.target) : undefined;
     const byUnit = typeof ut === "number" && typeof uu === "number" && !Number.isNaN(ut) && !Number.isNaN(uu);
     out.push({ target: e.target, dh: e.height - prev, cls, fromTail: byUnit ? ut - uu : tail - idx });
