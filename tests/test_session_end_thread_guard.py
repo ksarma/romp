@@ -49,7 +49,10 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   in place of the guard's (the premise, checked: the teardown report carries it), and tests/conftest.py adds the
   guard's text after that error, so the report names the thread once, with its target and stack, after the cleanup's
   error, and stderr names it once too, serially and under -n 2, where the worker's text reaches the controller's stderr
-  naming the worker.
+  naming the worker. Two more TestCase shapes, serially: a body and a cleanup that both skip leave a teardown report
+  that is a skip, not an xfail, and it is marked failed all the same (the run fails, the thread named after the
+  cleanup's skip); and a cleanup that fails through pytest.fail puts a pytest.fail failure that is not the guard's in
+  its place, and the guard's text is added after it (the report step tells them apart by identity, not by type).
 - AN XFAIL-MARKED LAST TEST. pytest's skipping plugin makes the teardown error of an xfail-marked test an xfail, which
   would leave the run green. A leaked non-daemon thread after an xfail-marked last test fails the run with one error,
   at that test's teardown, naming the thread in the report and on stderr, whether the marked body fails (xfailed) or
@@ -140,7 +143,8 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
 Each child-run pin was run with the guard removed from tests/conftest.py and fails there: the leak, idle-worker,
 daemon-started-pool, missing-table, xfail (the fixture-teardown one under xfail among them), redaction, stderr-header
 and table-changing runs pass (exit 0, no error), the green runs' witness finds the within-cap threads alive at
-sessionfinish, and the two-error runs (the redaction one among them) and the unmarked fixture-teardown run, red on the
+sessionfinish, the TestCase whose body and cleanup both skip passes (2 skipped), and the two-error runs (the redaction
+one among them), the TestCase whose cleanup fails through pytest.fail and the unmarked fixture-teardown run, red on the
 TestCase's or the fixture's own errors, find no thread named in the report. The fixture-teardown runs also fail with
 the guard as it was before it ran after a failing teardown of the runner, on the same outcomes. The two-error runs also fail with the guard
 as it was before it wrote to stderr, on the same missing name.
@@ -414,6 +418,33 @@ class TwoErrors(unittest.TestCase):
 
     def _cleanup_fails(self):
         raise RuntimeError("plant: the cleanup failed")
+'''
+
+# a TestCase whose body and cleanup both skip, with a leaked thread: the teardown report is a skip (the cleanup's), not
+# an xfail, and tests/conftest.py marks it failed all the same
+BODY_SKIPS_CLEANUP_SKIPS_TEST = '''
+import unittest
+
+
+class BodySkipsCleanupSkips(unittest.TestCase):
+    def test_body_and_cleanup_skip(self):
+        _start("body-skips-cleanup-skips", [threading.Thread(target=_leaked, name="plant-leaked")])
+        self.addCleanup(self.skipTest, "plant: the cleanup skipped")
+        self.skipTest("plant: the body skipped")
+'''
+
+# a TestCase whose body fails and whose cleanup fails through pytest.fail, with a leaked thread: the error that takes the
+# guard's place in the teardown report is a pytest.fail failure too, but not the guard's
+CLEANUP_PYTEST_FAIL_TEST = '''
+import unittest
+import pytest
+
+
+class CleanupPytestFail(unittest.TestCase):
+    def test_body_fails_cleanup_fails_through_pytest_fail(self):
+        _start("cleanup-pytest-fail", [threading.Thread(target=_leaked, name="plant-leaked")])
+        self.addCleanup(pytest.fail, "plant: the cleanup failed through pytest.fail", pytrace=False)
+        raise AssertionError("plant: the body failed")
 '''
 
 # a leaked thread named with the value of ENV_NAMED_VAR, a variable only the child's environment holds (_run's env_extra):
@@ -739,6 +770,33 @@ class SessionEndThreadGuard(unittest.TestCase):
         _report, err = self._assert_two_errors_name_the_thread(rc, out, started, marks)
         self.assertRegex(err, r"this process's last test \(pytest-xdist worker gw\d+\)", "the worker's text reached "
                          "the controller's stderr, naming the worker:\n" + out)
+
+    def test_the_report_step_forces_a_skip_and_adds_its_text_after_a_pytest_fail_that_is_not_the_guards(self):
+        """Two more shapes of a TestCase's teardown report, serially, each with a leaked thread. Its body and cleanup
+        both skip: the teardown report is the cleanup's skip, which is not an xfail, and tests/conftest.py marks it
+        failed all the same, so the run fails with the thread named. Its body fails and its cleanup fails through
+        pytest.fail: the error in the report's place is a pytest.fail failure but not the guard's, and the guard's text
+        is added after it (tests/conftest.py tells the two apart by identity, not by type)."""
+        for plant, case, premise, outcome in (
+                (BODY_SKIPS_CLEANUP_SKIPS_TEST, "BodySkipsCleanupSkips.test_body_and_cleanup_skip",
+                 "plant: the cleanup skipped", r"\b1 skipped, 1 error\b"),
+                (CLEANUP_PYTEST_FAIL_TEST, "CleanupPytestFail.test_body_fails_cleanup_fails_through_pytest_fail",
+                 "plant: the cleanup failed through pytest.fail", r"\b1 failed, 1 error\b")):
+            with self.subTest(case=case):
+                rc, out, started, _ended, _finish, _marks = self._run(plant, cap=LEAK_CAP_S)
+                report, err = self._channels(out)
+                self.assertIn("plant-leaked", {n for names in started.values() for n, _daemon in names},
+                              "the plant ran:\n" + out)
+                self.assertEqual(rc, 1, "the leaked thread fails the run:\n" + out)
+                self.assertEqual(len(re.findall(r"ERROR at teardown of %s\b" % re.escape(case), report)), 1,
+                                 "one error, at the TestCase's teardown:\n" + out)
+                self.assertRegex(report, outcome, "the run's counts:\n" + out)
+                self.assertIn(premise, report, "the premise: the teardown report carries the cleanup's outcome:\n" + out)
+                self.assertEqual(report.count("thread 'plant-leaked' (ident "), 1, "the teardown report names the "
+                                 "thread once:\n" + out)
+                self.assertLess(report.index(premise), report.index("thread 'plant-leaked' ("), "the guard's text "
+                                "follows the cleanup's:\n" + out)
+                self.assertEqual(err.count("thread 'plant-leaked' (ident "), 1, "stderr names the thread once:\n" + out)
 
     # -- an xfail-marked last test: the guard's error stays an error ---------------------------------------------------
 
