@@ -27,7 +27,9 @@ reads the checkout again, and a tracked path changed or gone, or an untracked pa
 does not ignore, records the run invalid naming the paths and the leg (the runner's one producer of invalid;
 the legs after it do not run). The batcher's tree is read for its HEAD sha and branch only, so it need not
 be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
-during a run reaches a leg. TMPDIR and the checkout are removed on every exit path: SIGTERM and SIGHUP stop
+during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
+untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
+length the deepest session-host socket path depends on, is unchanged. TMPDIR and the checkout are removed on every exit path: SIGTERM and SIGHUP stop
 each leg's process group, and on Linux the runner is a child subreaper that kills whatever a leg left
 running, a descendant that left the group included; each checkout records its sha beside it, and every run
 removes the checkouts of runs that are no longer running.
