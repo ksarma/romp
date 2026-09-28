@@ -7874,6 +7874,14 @@ def _heartbeat_loop(interval=None, stop=None):
 # Server-level instructions, surfaced to the model by MCP clients at initialize.
 # This is the self-contained copy of the messaging norms: it ships with the
 # software, so sessions get them even without any global CLAUDE.md.
+# Claude Code shows a session only the first 2048 characters of an MCP server's
+# instructions (CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH, default 2048) and drops the
+# rest, so text past that cut never reaches a Claude Code session. The isolation
+# paragraph therefore stands ahead of the addressing and name paragraphs and lies
+# whole inside the cut; the name paragraph's two refusals (resolve_recipient's
+# own-name and ambiguity refusals) carry its guidance when they fire (round 8 of
+# fork PR #897, the reviewer's round-7 ruling on regression-1;
+# tests/test_postal_isolation.py IsolationParagraphInsideClaudeCodesCut).
 MCP_INSTRUCTIONS = """\
 Messaging peer romp sessions. A peer shares none of your context, only the bytes you send.
 
@@ -7887,11 +7895,11 @@ Write so the recipient can act from your first line:
 
 Before editing a shared repo, run list_agents and read peers' branches + working-notes (overlap only collides on the SAME branch), and publish yours with set_working. Resolve ownership by reading that state, never by messaging "do you still own this?": an idle peer's note may be stale, and a peer with no note holds nothing. Declare what you own in your first line. Never wake an idle session just to coordinate.
 
+An isolation refusal is FINAL. A mailbox toggled off is a boundary the user drew: if send_message refuses for isolation, do NOT reroute the content through any other door (the kernel's /send route, shared files, another peer as relay). Report the refusal to the user and stop; only they lift the isolation.
+
 Addressing is live-only: you can message only currently-live sessions (list_agents). Dead names error, with no parked mail or reviving. A session's stable id (the uuid in list_agents) also works as the recipient — rename-proof, unique by construction.
 
 A name is not guaranteed unique. When more than one live session answers to it the send is refused and the candidates are listed as `host:name`, each with the start of its session id where two share one `host:name`: pick one and resend to that address rather than assuming the first. Your OWN name is refused outright, because a message there lands in your own inbox looking exactly like a reply from someone else. Your row in list_agents is the one marked `(you)`.
-
-An isolation refusal is FINAL. A mailbox toggled off is a boundary the user drew: if send_message refuses for isolation, do NOT reroute the content through any other door (the kernel's /send route, shared files, another peer as relay). Report the refusal to the user and stop — only they lift the isolation.
 
 Claude Code ships its own cross-session messaging (SendMessage / ListAgents). For peer romp sessions, use these postal tools instead: postal mail declares a kind, is tracked until answered, respects the user's per-host trust boundaries, and is visible to them; a native cross-session send has none of that, so it is invisible to the user and unaccountable. Native SendMessage remains the right tool for your own subagents and teammates inside this session — just not for peer sessions.
 """

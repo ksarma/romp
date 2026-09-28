@@ -2092,5 +2092,56 @@ class CliJudgesIsolationToo(unittest.TestCase):
         finally:
             pm._self_identity, pm.ensure, pm._http = saved
 
+
+class IsolationParagraphInsideClaudeCodesCut(unittest.TestCase):
+    """Claude Code shows a session only the first 2048 characters of an MCP server's instructions (its
+    CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH, default 2048) and drops the rest. The isolation paragraph of the postal
+    instructions (an isolation refusal is final: do NOT reroute the content through any other door) lies whole inside
+    that cut (round 8 of fork PR #897, the reviewer's round-7 ruling on regression-1). Before, it stood after the name
+    paragraph and ran past the cut, and round 7's longer name paragraph pushed the directive itself past it. The text
+    is read from the initialize answer of the real stdio server (mcp), the one a session is served, with the bus's
+    ensure and the heartbeat loop stubbed so that nothing dials a bus; the source-text pin in
+    tests/test_kernel_postal_isolation_routes.py (PolicyPins) reads only that the words are in the file."""
+
+    CAP = 2048              # Claude Code's CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH default
+    DIRECTIVE = "do NOT reroute the content through any other door"
+
+    def _served(self):
+        """The instructions of the real server's initialize answer."""
+        import io
+        from unittest import mock
+        req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                          "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                                     "clientInfo": {"name": "t", "version": "1"}}}) + "\n"
+        out = io.StringIO()
+        with mock.patch.object(pm, "ensure", lambda: True), \
+                mock.patch.object(pm, "_heartbeat_loop", lambda *a, **k: None), \
+                mock.patch.object(sys, "stdin", io.StringIO(req)), mock.patch.object(sys, "stdout", out):
+            rc = pm.mcp()
+        self.assertEqual(rc, 0, "the server ends at the end of its input")
+        replies = [json.loads(line) for line in out.getvalue().splitlines() if line.strip()]
+        self.assertEqual([r.get("id") for r in replies], [1], "one answer, to the initialize")
+        return replies[0]["result"]["instructions"]
+
+    def test_the_isolation_paragraph_lies_whole_inside_the_characters_claude_code_shows(self):
+        text = self._served()
+        paras = [p for p in text.split("\n\n") if p.startswith("An isolation refusal is FINAL.")]
+        self.assertEqual(len(paras), 1, "the instructions carry one isolation paragraph")
+        self.assertIn(self.DIRECTIVE, paras[0], "the isolation paragraph carries the do NOT reroute directive")
+        start = text.index(paras[0])
+        last = start + len(paras[0]) - 1
+        self.assertLess(last, self.CAP,
+                        "the isolation paragraph spans characters %d to %d of the instructions, and Claude Code shows a "
+                        "session only the first %d (its CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH default) and drops the "
+                        "rest: move it ahead of less vital text" % (start, last, self.CAP))
+        self.assertIn(paras[0], text[:self.CAP])
+
+    def test_the_do_not_reroute_directive_lies_inside_the_characters_claude_code_shows(self):
+        text = self._served()
+        self.assertIn(self.DIRECTIVE, text[:self.CAP],
+                      "Claude Code shows a session only the first %d characters of the instructions (its "
+                      "CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH default), and the directive is past them" % self.CAP)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
