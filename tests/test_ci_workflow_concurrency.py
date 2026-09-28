@@ -4,10 +4,11 @@
 Triggers (2026-09-27): the workflow runs on a push to a batch branch (`batch/**`), by hand
 (workflow_dispatch) and on its weekly schedule, and on nothing else. A member PR runs no CI of its own:
 the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate (scripts/batch.py
-verify and land read it), and GitHub's full matrix runs once on the batch branch, whose PR shows that
-push run's checks on its head. A merge to main runs none: batch.py land refuses a batch whose head does
-not contain main (tests/test_batch_tool.py, VerifyBehind), so the merge commit's tree is the batch
-head's, which the batch push already tested. The gate is the workflow's `on:` block and not a job-level
+verify and land read it), and GitHub's full matrix runs once on the batch branch, whose PR is expected to
+show that push run's checks on its head (the first batch confirms it). A merge to main runs none: batch.py
+land refuses a batch whose head does not contain main and reads main again right before the merge
+(tests/test_batch_tool.py, VerifyBehind), so the merge commit's tree is the batch head's, which the batch
+push already tested; a move after that read is finish's loud report (LandAndFinish). The gate is the workflow's `on:` block and not a job-level
 `if:`: `pull_request`'s branch filter selects the base branch, so singling out batch PRs there would
 need an `if:` on every job, and a skipped job reports success (a required check reads it as passing).
 CiTriggers reads the `on:` block and holds it to exactly those three triggers, so an added one (a merge queue, a

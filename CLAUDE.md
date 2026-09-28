@@ -212,13 +212,14 @@ broad `git add` will sweep up your work). Conventions:
   gate is the local sweep, `scripts/sweep.py`, whose result for the batch head's full
   sha `scripts/batch.py verify` and `land` read. `land` also requires that batch push's CI
   run green at the batch head, read from GitHub when it runs, and refuses a batch whose head
-  does not contain `main`, so the tree that lands is the tree the sweep and CI tested. It reads
-  `main` once more right before the merge call; what it cannot catch is `main` moving between
-  that read and GitHub's merge, or before an `--auto` merge fires later (`--auto` is refused
-  until auto-merge is allowed and a rule on `main` gates a merge; the fork had neither on
-  2026-09-27). The
+  does not contain `main`. It reads `main` once more right before the merge call; `main` moving
+  between that read and GitHub's merge, or before an `--auto` merge fires later (`--auto` is
+  refused until auto-merge is allowed and a rule on `main` gates a merge; the fork had neither
+  on 2026-09-27), is not stopped, and `finish` then fails loudly: the merge commit's first
+  parent is not the `main` verify read, so the tree on `main` was never swept or tested. The
   button and `gh pr merge` make no such check, so a batch merged by hand needs `main` unmoved
-  since verify (docs/batching.md, maintainer step 6).
+  since verify, and `finish` makes the same first-parent check after it (docs/batching.md,
+  maintainer step 6).
   A PR owes a passing `scripts/sweep.py` result at its own head before its review round and
   again before its closing check: the round and the check read that result (`scripts/sweep.py
   check --tree <worktree>`) where they read CI before, so a push after the sweep needs a new

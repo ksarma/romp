@@ -1666,8 +1666,9 @@ class Verify(_Base):
         self.assertEqual(fx.state("b1")["assembly"]["declared"][0]["subject"], "batch: hotfix for the integrated tree")
         body = fx.ok("summarize", "b1", "--print-only").stdout
         self.assertIn("- `batch:` commit %s by the batcher: batch: hotfix for the integrated tree; 1 file changed, 1 insertion(+); touches hotfix.py." % sha[:10], body)
-        self.assertTrue(body.splitlines()[1].startswith("Land with `scripts/batch.py land b1`, which merges only while the batch "
-                                                         "head contains main. Verified at"), body.splitlines()[1])
+        self.assertTrue(body.splitlines()[1].startswith("Land with `scripts/batch.py land b1`: it reads main again right before "
+                                                         "the merge and refuses if the batch head no longer contains it. "
+                                                         "Verified at"), body.splitlines()[1])
 
     def test_a_verify_that_dies_half_way_leaves_no_green_verification(self):
         fx = self.fx
@@ -1947,10 +1948,13 @@ class VerifyReadsTheSweep(_Base):
 
 
 class VerifyBehind(_Base):
-    """CI does not run on the merge to main (2026-09-27), so a batch lands only when its head contains main
-    as origin has it at that moment: then the merge commit's tree is the batch head's, the tree the sweep
-    and the batch branch's CI ran on. verify reads main with ls-remote, so a stale tracking ref (land
-    --no-fetch) cannot hide a move, and land, which re-runs verify, refuses before it merges anything."""
+    """CI does not run on the merge to main (2026-09-27), so a batch should land only when its head contains main
+    as origin has it at that moment: then the merge commit's tree is the batch head's, the tree the sweep and the
+    batch branch's CI ran on. verify refuses a batch head that does not contain main, reading main with ls-remote,
+    so a stale tracking ref (land --no-fetch) cannot hide a move; land, which re-runs verify, refuses before it
+    merges anything, and reads main again right before the merge call (round 1, extra7-4: what these tests show is
+    that check, not that the merged tree is always the batch head's). A move between that last read and GitHub's
+    merge is not stopped; finish reports it loudly from the merge commit's first parent (LandAndFinish)."""
 
     def ready(self, summarize=False):
         fx = self.fx
@@ -2954,12 +2958,16 @@ class Body(unittest.TestCase):
         self.assertIn("line 4", body)
         self.assertIn("(none)", body)
         self.assertIn("## To pull a member\nComment `pull #N`.", body)
-        self.assertIn("Land with `scripts/batch.py land %s`, which merges only while the batch head contains main. "
+        self.assertIn("Land with `scripts/batch.py land %s`: it reads main again right before the merge and refuses if the "
+                      "batch head no longer contains it. "
                       "Verified at ffffffffff: sweep pass: pytest rc 0 (1 passed in 0.1s), "
                       "bats rc 0 (1 ok, 0 not ok), manager rc 0, tools rc 0, ledger rc 0; not owed: deps, typecheck, npm-test, build; "
                       "provenance clean; main at %s contained at verify time; ledger check clean. " % (st["name"], "e" * 10), body)
         self.assertIn("No CI runs on the merge to main, so if main has moved past %s, do not merge with the button or "
                       "`gh pr merge`: the batch needs main merged in, a new sweep and verify first." % ("e" * 10), body)
+        # round 1, extra7-5: the push run's checks on the PR's head are an expectation the first batch confirms
+        self.assertIn("CI on this PR: the run of the push to batch/%s, expected among the checks on its head (the first batch "
+                      "confirms that)." % st["name"], body)
         self.assertNotIn('Merge with "Create a merge commit"', body, "the body does not send the reader to the button")
         self.assertNotIn("sweep not recorded", body)
         self.assertIn("- none: every member is labeled, carries a trailer, touches no sensitive path and merged clean; "

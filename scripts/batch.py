@@ -61,10 +61,15 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     runs): a failed run that no later run excused with --flake naming the leg reads red, naming the run and
     its logs, and a result recorded under another leg environment (the allowlist hash) reads invalid; verify
     and the body name each invalid run the history holds;
-  - land reads main on origin once more right before the merge call and refuses if it moved since verify;
-    the residual is stated, not closed: a move between that read and GitHub's merge (the merge pins the
-    head, not the base), and a move before an --auto merge fires later (--auto is refused until the
-    repository allows auto-merge and a rule on main gates a merge; the fork had neither on 2026-09-27);
+  - land reads main on origin before it retargets any member and once more right before the merge call, and
+    refuses if it moved since verify, naming any member it had retargeted and how to restore its base; what
+    no read can stop, a move between the last read and GitHub's merge (the merge pins the head, not the
+    base) or before an --auto merge fires later (--auto is refused until the repository allows auto-merge
+    and a rule on main gates a merge; the fork had neither on 2026-09-27), finish reports: it fails loudly,
+    after its cleanup, when the merge commit's first parent is not the main verify read, naming both shas
+    and the sweep at the merge commit that is owed;
+  - finish names the batch head's CI run with land's own filtered read (the push run at the landed head),
+    and reports a read that fails after the merge as unread;
   - land requires the batch head's CI run green, read from GitHub at land time before anything changes:
     the newest run of ci.yml from a push to the batch branch at exactly the verified head (by createdAt,
     then databaseId; a matching row with either missing or malformed, the zero time included, is refused
@@ -1761,9 +1766,11 @@ def pass_legs_phrase(sw):
 
 
 def land_line(name):
-    """The body's first words: how this batch lands. `land` checks main again right before the merge; the
-    button and `gh pr merge` do not."""
-    return "Land with `scripts/batch.py land %s`, which merges only while the batch head contains main." % name
+    """The body's first words: how this batch lands, and what `land` checks that the button and `gh pr merge` do not:
+    main read again right before the merge (round 1, extra7-4: it states the check, not that the merged tree is
+    always the batch head's; a move between that read and GitHub's merge is finish's loud report)."""
+    return ("Land with `scripts/batch.py land %s`: it reads main again right before the merge and refuses if the batch "
+            "head no longer contains it." % name)
 
 
 def gather_body_inputs(root, state):
@@ -1870,9 +1877,12 @@ def render_body(state, inputs, cap=BODY_CAP):
         # The main verify saw, named: "contained" is true at verify time only, and a merge by the button or
         # `gh pr merge` after main moved lands a tree no sweep or CI run tested (none runs on main).
         seen = short(v["main"]) if v.get("main") else "its head then"
+        # Round 1, extra7-5: that the push run's checks show on the batch PR's head is an expectation the first batch
+        # confirms (docs/batching.md, "Checked on the first batch"), so the body says so rather than stating it.
         verified = ("%s Verified at %s: %s; provenance clean; main at %s contained at verify time; %s. CI on this PR: the run "
-                    "of the push to %s, on its head. No CI runs on the merge to main, so if main has moved past %s, do not "
-                    "merge with the button or `gh pr merge`: the batch needs main merged in, a new sweep and verify first."
+                    "of the push to %s, expected among the checks on its head (the first batch confirms that). No CI runs "
+                    "on the merge to main, so if main has moved past %s, do not merge with the button or `gh pr merge`: the "
+                    "batch needs main merged in, a new sweep and verify first."
                     % (land_line(name), short(head), sweep_phrase(sw), seen, ledger, branch_of(name), seen))
     else:
         verified = "%s NOT VERIFIED at %s: run `scripts/batch.py verify %s` (verification is %s)." % (
@@ -2792,14 +2802,16 @@ def main(argv=None):
                                    "the sweep result at the verified head), read the batch head's CI run from GitHub (the "
                                    "newest run of ci.yml from a push to the batch branch at the verified head; missing, "
                                    "pending or red is refused, --auto or not, and so is an earlier attempt of it that did not "
-                                   "pass, unless --flake names it), retarget stacked members to %s, read %s on %s "
-                                   "once more and refuse if it moved since verify, then `gh pr merge --merge "
+                                   "pass, unless --flake names it), read %s on %s and refuse if it moved since verify, "
+                                   "retarget stacked members to %s, read %s once more and refuse if it moved (naming each "
+                                   "member it retargeted and how to restore its base), then `gh pr merge --merge "
                                    "--match-head-commit <verified sha>` and finish. The merge pins the head, not the base, so "
-                                   "a merge to %s between that last read and GitHub's merge is not caught; with --auto the "
+                                   "a merge to %s between that last read and GitHub's merge is not stopped: finish then fails "
+                                   "loudly, naming the merge commit's first parent and the main verify read. With --auto the "
                                    "merge happens later, when a rule on %s is met, and main is not read again then (--auto "
                                    "is refused until the repository allows auto-merge and a rule gates a merge; the fork had "
-                                   "neither on 2026-09-27). Never squash or rebase: that would leave every member open."
-                                   % (MAIN, MAIN, REMOTE, MAIN, MAIN))
+                                   "neither on 2026-09-27). scripts/land.sh runs this subcommand. Never squash or rebase: that "
+                                   "would leave every member open." % (MAIN, REMOTE, MAIN, MAIN, MAIN, MAIN))
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--auto", action="store_true",
                    help="arm auto-merge instead (lands when the required checks pass; needs the repository's \"Allow auto-merge\" "
@@ -2815,12 +2827,14 @@ def main(argv=None):
     p.set_defaults(func=cmd_land)
 
     p = sub.add_parser("finish", help="after the merge: member states, retargets, branch deletion, orphans",
-                       description="After the batch PR merged (by land, or by hand once main was confirmed unmoved since "
-                                   "verify: no CI runs on the merge to %s, so a batch merged behind main lands a tree nothing "
-                                   "tested, and finish cannot undo that): confirm each member reads MERGED and comment "
-                                   "on any that does not, retarget still-open dependents to %s, delete the member branches and "
-                                   "`batch/<name>`, remove the worktree, run scripts/pr-orphans.sh, report one line. Safe to "
-                                   "re-run: what it observed the first time is kept." % (MAIN, MAIN))
+                       description="After the batch PR merged (by land, or by hand): confirm each member reads MERGED and "
+                                   "comment on any that does not, retarget still-open dependents to %s, delete the member "
+                                   "branches and `batch/<name>`, remove the worktree, run scripts/pr-orphans.sh, and report one "
+                                   "line naming the batch head's CI run (the push run land gated on, and its case). Then it "
+                                   "checks that the merge commit's first parent is the %s verify read: no CI runs on the merge "
+                                   "to %s, so a batch merged after %s moved lands a tree nothing tested, and finish cannot undo "
+                                   "that; it exits 1 naming both shas and the sweep at the merge commit that is owed. Safe to "
+                                   "re-run: what it observed the first time is kept." % (MAIN, MAIN, MAIN, MAIN))
     p.add_argument("name", help=HELP_NAME)
     p.add_argument("--no-notify", action="store_true", help=HELP_NO_NOTIFY + " (members that did not read merged)")
     p.add_argument("--keep-worktree", action="store_true", help="leave ../romp-batch-<name> and the local batch branch in place")

@@ -7,10 +7,12 @@ name: CI
 # LINUX runs on every push to a batch branch (batch/**), on the weekly schedule and by hand; it is
 # free on a public repo, with no minute cap. Member PRs and merges to main run none (2026-09-27):
 # the local sweep (scripts/sweep.py) recorded at the batch head is the landing gate, and
-# scripts/batch.py land refuses a batch whose head does not contain main, so the merge commit's tree
-# is the batch head's tree, the one this workflow tested on the batch push (docs/batching.md). A
-# private repository spends its minutes on each batch push, on each manual run and on the weekly
-# schedule, whose macOS cells bill at ten times the Linux rate there: the schedule is the larger cost.
+# scripts/batch.py land refuses a batch whose head does not contain main, reading main again right
+# before the merge, so the merge commit's tree is the batch head's tree, the one this workflow tested
+# on the batch push; a move of main after that last read is not stopped, and batch.py finish reports
+# it loudly from the merge commit's first parent (docs/batching.md). A private repository spends its
+# minutes on each batch push, on each manual run and on the weekly schedule, whose macOS cells bill at
+# ten times the Linux rate there: the schedule is the larger cost.
 # macOS is free too on the standard macOS runners of a public repository (2026-09-17;
 # an earlier note here said it was billed), but the macOS cells are slow (the bats
 # suite alone is about 16 minutes) and the runners are scarcer, so they do NOT run
@@ -32,9 +34,11 @@ on:
   push:
     # Pushes to a batch branch, nothing else (2026-09-27). A member PR runs no CI of its own: the
     # local sweep (scripts/sweep.py) at the batch head is the landing gate, and this workflow runs
-    # once on the batch branch, whose PR shows that run's checks on its head. A merge to main runs
-    # none either: scripts/batch.py land refuses a batch whose head does not contain main, so the
-    # merge commit's tree is the tree this workflow already tested on the batch push. pull_request
+    # once on the batch branch, whose PR is expected to show that run's checks on its head (the first
+    # batch confirms it: docs/batching.md, "Checked on the first batch"). A merge to main runs none
+    # either: scripts/batch.py land refuses a batch whose head does not contain main, reading main
+    # again right before the merge, so the merge commit's tree is the tree this workflow already
+    # tested on the batch push; a move after that read is finish's loud report. pull_request
     # is not a trigger: its branch filter selects the BASE branch, so picking out batch PRs there
     # would take a job-level `if:`, and a skipped job reports success.
     branches: ['batch/**']
