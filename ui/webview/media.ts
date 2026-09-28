@@ -15,8 +15,9 @@ export function mediaSrc(name: string): string {
 // webview's synthetic origin needs the host-injected base — without it these
 // fetches fail silently and the features quietly vanish (the empty model
 // picker, the user 2026-07-13). The kernel gates every request on the serve
-// token, loopback included: the browser rides its cookie (seeded by the first
-// ?token= page load), but a webview's cross-origin fetch carries no cookie, so
+// token, loopback included: the browser rides its sign-in (the session cookie,
+// and the page key the fetch wrapper adds), but a webview's cross-origin fetch
+// carries neither, so
 // the host also injects window.__rompKernelToken and it rides here as ?token=.
 export function kernelUrl(path: string): string {
   const w: any = typeof window !== "undefined" ? (window as any) : {};

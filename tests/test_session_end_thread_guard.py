@@ -779,7 +779,9 @@ class SessionEndThreadGuard(unittest.TestCase):
         `env_extra` adds variables to the child's environment, and `conftest_extra` is code appended to the scratch
         conftest. tests/conftest.py is loaded with `-p tests.conftest`, which registers it before pytest's capture and
         logging plugins; `suite_order` loads it as the suite does, registered during pytest's initial conftests (the
-        scratch conftest's pytest_plugins, SUITE_ORDER), after the capture plugin and before the logging plugin."""
+        scratch conftest's pytest_plugins, SUITE_ORDER), after the capture plugin and before the logging plugin. The
+        child blocks anyio's pytest plugin (-p no:anyio), as CI's Run pytest step does and as tests/test_ci_sdk_pin.py's
+        launcher census requires of every pytest child it reads under tests/."""
         d = os.path.realpath(tempfile.mkdtemp(prefix="tg-"))       # resolved: macOS temp dirs sit under a symlink
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         case, out, home, tmp = (os.path.join(d, n) for n in ("case", "out", "home", "tmp"))
@@ -798,7 +800,7 @@ class SessionEndThreadGuard(unittest.TestCase):
         env.update((k, os.environ[k]) for k in ("LANG", "LC_ALL", "LC_CTYPE", "PYTHON_GIL", "LD_LIBRARY_PATH")
                    if k in os.environ)
         env.update(env_extra or {})
-        argv = [sys.executable, "-m", "pytest"] + ([] if suite_order else ["-p", "tests.conftest"])
+        argv = [sys.executable, "-m", "pytest", "-p", "no:anyio"] + ([] if suite_order else ["-p", "tests.conftest"])
         argv += ["-p", "no:cacheprovider", "-q", "--rootdir", case]
         argv += TIMEOUT_FLAGS + (["-n", str(workers)] if workers is not None else []) + ["test_plant.py"]
         r = subprocess.run(argv, cwd=case, env=env, capture_output=True, text=True, timeout=180)

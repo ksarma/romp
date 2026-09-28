@@ -244,15 +244,17 @@ else
     # on a bare ModuleNotFoundError mid-release on a box with only a repo venv). Prefer a WORKING
     # ambient `python3 -m pytest`; else run through uv's throwaway env with pytest and cryptography
     # (cryptography is the Web Push soft dependency, without it the webpush tests silently skip).
-    # That is not CI's whole set: .github/workflows/ci.yml's Python job also installs pytest-timeout,
-    # for a per-test timeout this run does not ask for, and pytest-xdist, without which the few
-    # tests that run a child pytest under -n skip. With neither an ambient pytest nor uv, die LOUDLY
-    # naming both remedies BEFORE any release state is at stake.
+    # That is not CI's whole set: the Python cells in .github/workflows/ci.yml also install
+    # pytest-timeout, for a per-test timeout this run does not ask for; pytest-xdist, without which
+    # the few tests that run a child pytest under -n skip; and the pinned Claude Agent SDK, without
+    # which the SDK-gated tests skip in that env unless the box's own SDK venv reaches sys.path
+    # (tests/test_host_transport.py adds it at import). With neither an ambient pytest nor uv, die
+    # LOUDLY naming both remedies BEFORE any release state is at stake.
     if [ -z "$PYTEST" ]; then
         if python3 -m pytest --version >/dev/null 2>&1; then
             PYTEST="python3 -m pytest"
         elif command -v uvx >/dev/null 2>&1; then
-            say "no ambient pytest: running the suite through uv's throwaway env (pytest + cryptography)"
+            say "no ambient pytest: running the suite through uv's throwaway env (pytest + cryptography), which has no Claude Agent SDK, so the SDK-gated tests may skip"
             PYTEST="uvx --with pytest --with cryptography pytest"
         else
             die "no way to run the Python suite: python3 has no pytest and uv is not installed.

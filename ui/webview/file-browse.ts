@@ -116,7 +116,7 @@ function human(n: number): string {
   return n + " B";
 }
 
-// The download idiom the viewer uses: a transient cookie-authed <a download> the BROWSER owns; the
+// The download idiom the viewer uses: a transient <a download>, capped through fileUrl, that the BROWSER owns; the
 // kernel's attachment disposition keeps the page from navigating.
 function startDownload(path: string): void {
   const a = document.createElement("a");
