@@ -312,7 +312,7 @@ test("a view-order storage event re-emits all three merged frames to the registe
 
 // ── frame-listener.ts: the pane's install ──
 
-test("listenForFrames installs the one handler on window and in the registry; without a registry, on window only; an older slot without onFrame does not throw", () => {
+test("listenForFrames registers the handler in the registry and installs on window a wrapper that calls it; without a registry, on window only; an older slot without onFrame does not throw", () => {
   const g: any = globalThis;
   const hadWindow = "window" in g, prevWindow = g.window;
   try {
@@ -359,7 +359,7 @@ test("feed, Outline, Waiting, chat and the VS Code timeline install their frame 
   assert.doesNotMatch(fs.readFileSync(path.join(UI, "window-sender.ts"), "utf8"), /^import /m, "window-sender.ts imports nothing");
   const onWindow = helper.indexOf('window.addEventListener("message", (e: MessageEvent) => { if (windowSender(e) === "foreign") return; handler(e); });');
   assert.ok(onWindow > 0, "the window install hands the handler every message but a foreign sender's (executed in foreign-sender-listeners.test.ts)");
-  assert.ok(onWindow < helper.indexOf("fed.onFrame(handler)"), "window first, the registry after");
+  assert.ok(onWindow < helper.indexOf("fed.onFrame(handler)"), "window first, the registry after (their order in the source; the listenForFrames test above runs both installs)");
 });
 
 test("the three merged emissions go through emit and no other dispatch does", () => {

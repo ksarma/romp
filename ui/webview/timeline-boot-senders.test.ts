@@ -8,8 +8,8 @@
 // window, does not name the sender foreign. So the pair cannot drift apart for any sender the grid can express: a
 // window that opened this one, a window it opened, a sibling or child frame (with a top of its own, or sharing the
 // receiving window's top, the child also listed in its frames), an origin whose text overlaps this one's or drops its
-// port, a sourceless post with the opaque origin, a page whose location.origin is "null" (an opaque URL such as
-// about:srcdoc or data:), a window with no location, a missing event.
+// port, a sourceless post with the opaque origin, a page whose location.origin is "null" (a URL whose origin is opaque,
+// such as about:srcdoc or data:), a window with no location, a missing event.
 // The grid runs twice: without a performance collector, and with a real one (perf-telemetry.ts) on window.__rompPerf,
 // as federation.js publishes it on the kernel's page. Both hosts wrap the frame listener in that collector and run the
 // sender check outside the wrapper, so a foreign message is neither drawn nor counted in the page's telemetry.
@@ -78,8 +78,8 @@ function receivers(): Win[] {
     win("a pane framed in the shell, opened by another page", { parent: SHELL, top: GRAND, opener: OPENER, location: { origin: ORIGIN } }),
     win("a top-level page another page opened", { opener: OPENER, location: { origin: ORIGIN } }),
     win("a top-level page no page opened", { opener: null, location: { origin: ORIGIN } }),
-    // location.origin is the origin of the page's URL: "null" for an opaque URL (about:srcdoc, data:), while a sandboxed
-    // page served over http keeps its URL's origin there (the first receiver's case)
+    // location.origin is the origin of the page's URL: "null" for a URL whose origin is opaque (about:srcdoc, data:), while
+    // a sandboxed page served over http keeps its URL's origin there (the first receiver's case)
     win("a framed page whose location.origin is \"null\"", { parent: SHELL, top: GRAND, opener: OPENER, location: { origin: "null" } }),
     win("a framed page with no location", { parent: SHELL, top: GRAND, opener: OPENER, location: undefined }),
     win("a VS Code webview frame whose parent is the frame itself", { opener: null, location: { origin: VSCODE_ORIGIN } }),
@@ -267,8 +267,8 @@ test("in a VS Code webview frame, a post from another webview's origin draws not
 // The grid above holds the boot to windowSender, whatever windowSender says; this leg holds both to the answer outright for
 // the frames in the same tab as the page: a frame beside a pane in the shell shares the pane's top, and a frame inside the
 // page shares its top and is listed in its frames. Neither edge makes a window the page's embedder: a sandboxed frame
-// names the opaque origin "null" and draws nothing, and a frame on the page's own origin is a peer and is drawn.
-test("a frame beside the page or inside it, sharing its top and listed in its frames, is judged by its origin: a sandboxed one draws nothing, one on the page's origin is drawn", () => {
+// names the opaque origin "null" and draws nothing, and a frame on the page's location.origin is a peer and is drawn.
+test("a frame beside the page or inside it, sharing its top and listed in its frames, is judged by its origin: a sandboxed one draws nothing, one on the page's location.origin is drawn", () => {
   const [pane, , topLevel] = receivers();
   assert.equal(pane.top, GRAND, pane.name + ": its top is the shell's own parent");
   assert.equal(topLevel.top, topLevel, topLevel.name + ": its own top");

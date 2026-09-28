@@ -1,7 +1,7 @@
 // Every window "message" listener in the webview bundles ignores a message from a foreign sender (window-sender.ts): a
-// window that is not this document, not its embedder (the romp shell), not on this document's origin, and not this
-// document's own dispatch of a kernel frame. The chat's frame handler got that check first (chat-foreign-frame.test.ts);
-// this file holds it for the rest of the population:
+// window that is not this document, not its embedder (the romp shell), not on this page's location.origin (the origin
+// of its URL), and not this document's own dispatch of a kernel frame. The chat's frame handler got that check first
+// (chat-foreign-frame.test.ts); this file holds it for the rest of the population:
 //   - frame-listener.ts listenForFrames, the one window install every pane's frame handler shares (the feed, the Outline,
 //     Waiting on you, the chat and the VS Code timeline): the window path hands the handler no message from a foreign
 //     sender. The federation registry path is unchanged: only federation.js calls it, with a MessageEvent it built.
@@ -11,9 +11,10 @@
 //     browser, the file-comments panel's replies, the gear's six listeners, the shell palette's two, and the VS Code
 //     strip's.
 // Each listener hears every class windowSender does not name foreign, which covers each one's real senders: the shell
-// (the embedder of a pane; to the shell's own page, its panes are windows on its origin), this document (self), a window
-// on the origin (a second chat column, a pane posting up to the shell, the VS Code webview host, which posts from its own
-// window on the webview's origin) and this document's dispatch (the pane shim's and federation.js's kernel frames).
+// (the embedder of a pane; to the shell's own page, its panes are windows on its location.origin), this document
+// (self), a window on this page's location.origin (a second chat column, a pane posting up to the shell, the VS Code
+// webview host, which posts from its own window on the webview's origin) and this document's dispatch (the pane shim's
+// and federation.js's kernel frames).
 //
 // Executed legs: every listener is run against the same senders. Four run as installed, over a stand-in window: the real
 // listenForFrames, installSettingsSync, initFileView and initFileBrowse, each with that stand-in as the global window
@@ -33,8 +34,9 @@
 // named or a computed member, whatever its receiver, and every onmessage or onmessageerror handler assigned to this page's
 // own window, the receiver resolved by its binding (window, self, globalThis, the bare global, this page's
 // document.defaultView, a local initialised to one of them, the global `this`), must take the event as its one parameter,
-// with no default, open with the check, preceded by nothing but reads of the message, and be one of the gated sites below,
-// each with an executed leg here. A messageerror event carries the sender's origin and source as a message does, and a
+// with no default, have the check, preceded by nothing but reads of the message and early returns whose condition the
+// census judges to run no code (headCheck's docstring lists the forms), judged by form, not by what runs, and be one of
+// the gated sites below, each with an executed leg here. A messageerror event carries the sender's origin and source as a message does, and a
 // sender causes one by posting what the page cannot deserialize, so it is counted as a message. A
 // listener handed over by name is read at the function written in place that a const of that name holds, found by the
 // name's binding; any other name fails. A new
@@ -144,7 +146,7 @@ const HEARD: Row[] = [
   { who: "the VS Code webview host (the frame's window.parent replaced)", ctx: "vscode", source: () => VSCODE_HOST, origin: VSCODE_ORIGIN },
   { who: "the VS Code webview host (the frame's window.parent deleted)", ctx: "vscode, older", source: () => VSCODE_HOST, origin: VSCODE_ORIGIN },
   { who: "this document's own dispatch of a kernel frame (no source, no origin)", ctx: "pane", source: () => null, origin: "" },
-  { who: "a sourceless post on this document's origin", ctx: "pane", source: () => null, origin: ORIGIN },
+  { who: "a sourceless post on this page's location.origin", ctx: "pane", source: () => null, origin: ORIGIN },
   { who: "a frame inside the pane on its origin, sharing its top and listed in its frames", ctx: "pane", source: (w) => frameIn(w, 1), origin: ORIGIN },
 ];
 const FOREIGN: Row[] = [
@@ -391,10 +393,11 @@ const LIFTED: Lifted[] = [
  *  once and every other arm's twice (wayBackScope), which the crossed-message test below holds. Every other listener has
  *  one leg, which names no arm: a representative arm, since the head census pins the check ahead of every arm.
  *  Residual (low, disclosed): this table is hand-written, not derived from the way back's source, so a coordinated test-side
- *  edit that empties it, drops the probe leg and unarms the hostUp leg would leave one unarmed leg and still pass here. The
- *  product stays guarded regardless: the head census refuses onKernelMessage acting before its check, and file-view-seam.ts
- *  reds a foreign hostUp or probe. Deriving the arms from source is listener-specific (the probe arm is a fallthrough, named
- *  by no literal) and not worth the fragility for this; recorded rather than fixed. */
+ *  edit that empties it, drops the probe leg, and removes the hostUp leg's arm while pinning its scope to the hostUp arm
+ *  would leave one leg and still pass here (the pin is needed because wayBackScope refuses a scope for no arm). The
+ *  product stays guarded regardless: the head census refuses onKernelMessage acting before its check, and
+ *  file-view-seam.test.ts reds a foreign hostUp or probe. Deriving the arms from source is listener-specific (the probe arm
+ *  is a fallthrough, named by no literal) and not worth the fragility for this; recorded rather than fixed. */
 const ARMS: Array<[string, string, string[]]> = [["webview/file-view.ts", "probeServed(", ["hostUp", "probe"]]];
 
 const compiled = new Map<string, (scope: unknown) => Listener>();
@@ -602,7 +605,7 @@ const EXEMPT: Array<[string, number, string]> = [];
  *  text `window`, keeps the census red whatever else it carries. */
 const spelledAsGated = (s: Site): boolean => s.receiver === "window" && s.kind === "addEventListener";
 
-test("census: every window message listener in ui/ opens with the foreign-sender check, before any arm, and is one of the gated sites", () => {
+test("census: every window message listener in ui/ has the foreign-sender check, preceded by nothing but reads of the message and early returns the census judges to run no code, and is one of the gated sites", () => {
   const sites = uiSources().flatMap(messageSites);
   const exempt = new Set(EXEMPT.map(([f, line]) => f + ":" + line));
   const counted = new Map<string, number>();

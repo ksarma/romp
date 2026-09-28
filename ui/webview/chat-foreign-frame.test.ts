@@ -1,7 +1,8 @@
 // The chat's frame handler ignores a window message from a foreign sender (window-sender.ts): a window that is not this
-// document, not its embedder (the romp shell), not on this document's origin, and not this document's own dispatch of a
-// kernel frame. A message with no source that carries an origin is not dispatch: a frame removed right after it posts
-// can leave its message sourceless, so such a message is judged by its origin alone. Every other sender is heard as
+// document, not its embedder (the romp shell), not on this page's location.origin (the origin of its URL), and not this
+// document's own dispatch of a kernel frame. A message with no source that carries an origin is not dispatch: a frame
+// removed right after it posts can leave its message sourceless, so such a message is judged by its origin alone.
+// Every other sender is heard as
 // before: the shell's split-column adopt, the file viewer's editorSelection, a sibling column's forwarded frames, the
 // kernel's frames, and every message the VS Code webview host forwards from the extension. VS Code's script in the
 // webview's frame replaces window.parent with the frame itself (older releases delete it), so the host is heard as a
@@ -83,7 +84,7 @@ const HEARD: Record<string, Sent> = {
   "a peer (a second chat column)": { source: { name: "a second chat column" }, origin: ORIGIN },
   "a peer (the VS Code webview host, the frame's window.parent replaced)": { source: VSCODE_HOST, origin: VSCODE_ORIGIN, to: W_VSCODE },
   "a peer (the VS Code webview host, the frame's window.parent deleted)": { source: VSCODE_HOST, origin: VSCODE_ORIGIN, to: W_VSCODE_OLDER },
-  "a peer (a sourceless post on this document's origin)": { source: null, origin: ORIGIN },
+  "a peer (a sourceless post on this page's location.origin)": { source: null, origin: ORIGIN },
   "a peer (a frame inside the chat on its origin, sharing its top and listed in its frames)": { source: OWN_ORIGIN_CHILD, origin: ORIGIN },
   dispatch: { source: null, origin: "" },
 };
@@ -144,7 +145,7 @@ for (const leg of LEGS) {
     }
   });
 
-  test(leg.what + " from this document, the romp shell, a same-origin window (a second chat column or the VS Code webview host) or this document's dispatch is heard: " + leg.effect + " is called once", () => {
+  test(leg.what + " from this document, the romp shell, a window on this page's location.origin (a second chat column or the VS Code webview host) or this document's dispatch is heard: " + leg.effect + " is called once", () => {
     const missed: string[] = [];   // every heard sender that did not reach the effect once, so a narrowed floor names them all
     for (const [who, from] of Object.entries(HEARD)) {
       const h = handlerOverStubs(from.to);
@@ -158,9 +159,10 @@ for (const leg of LEGS) {
 test("at source: the foreign-sender return is the handler's first check after the empty-message return", () => {
   // Where the line sits, not what it does: the executed legs above are the proof that a foreign sender reaches nothing.
   const at = RENDER.indexOf(HEAD);
-  assert.ok(at > 0);
+  assert.ok(at > 0, "the chat handler's install is found in render.ts (the anchor the legs above lift it by)");
   const head = RENDER.slice(at + HEAD.length, at + HEAD.length + 200);
   assert.ok(head.startsWith('(e: MessageEvent) => {\n  const m = e.data;\n  if (!m) return;\n  if (windowSender(e) === "foreign") return;'),
-    "the chat handler's head is: read e.data, return on an empty message, return on a foreign sender");
-  assert.match(RENDER, /\nimport \{ windowSender \} from "\.\/window-sender";\n/);
+    "the chat handler's head is: read e.data, return on an empty message, return on a foreign sender (where the line sits; the executed legs above run the handler against every sender)");
+  assert.match(RENDER, /\nimport \{ windowSender \} from "\.\/window-sender";\n/,
+    "render.ts imports the helper by name (its spelling; the executed legs above run the handler with it)");
 });

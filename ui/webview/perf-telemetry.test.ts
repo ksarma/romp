@@ -1001,7 +1001,8 @@ test("each pane bundle's one frame listener is installed through listenForFrames
   // is one the pane acts on; foreign-sender-listeners.test.ts executes the check)
   const fl = readUi("frame-listener.ts");
   assert.equal((fl.match(/window\.addEventListener\("message", /g) || []).length, 1, "frame-listener.ts owns the one window install");
-  assert.match(fl, /window\.addEventListener\("message", \(e: MessageEvent\) => \{ if \(windowSender\(e\) === "foreign"\) return; handler\(e\); \}\);/);
+  assert.match(fl, /window\.addEventListener\("message", \(e: MessageEvent\) => \{ if \(windowSender\(e\) === "foreign"\) return; handler\(e\); \}\);/,
+    "the window install calls the handler only after the foreign-sender check (its spelling; foreign-sender-listeners.test.ts runs listenForFrames against every sender)");
   assert.match(fl, /fed\.onFrame\(handler\);/);
 });
 

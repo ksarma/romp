@@ -121,7 +121,7 @@ test("another window on this document's origin is a peer; any other origin is fo
 
 // Each origin here shares text with ORIGIN: one begins with it, one is a prefix of it, one differs from it only in the
 // scheme. A comparison by prefix, or by host and port alone, would call one of them a peer; only an exact match may.
-test("an origin whose text overlaps this document's origin is still another origin", () => {
+test("an origin whose text overlaps this page's location.origin is still another origin", () => {
   for (const src of [other, null]) {
     const who = src === null ? "no source, " : "another window, ";
     assert.equal(windowSender({ source: src, origin: ORIGIN + "0" }, framed), "foreign", who + "another port whose text begins with this origin");
@@ -137,7 +137,7 @@ test("an opaque own origin never makes a peer: \"null\" matches nothing", () => 
   assert.equal(windowSender({ source: other, origin: "null" }, { parent }), "foreign", "no location: no peer");
 });
 
-// With no location, this document's origin is unknown. A post that names no origin must not match that unknown: the
+// With no location, this page's location.origin is unknown. A post that names no origin must not match that unknown: the
 // "null" row above cannot show it, since "null" never equals a missing origin.
 test("a window with no location has no peer, even for a post that names no origin", () => {
   const bare = { location: undefined };
@@ -204,7 +204,7 @@ test("a window related to this one other than as its parent is judged by its ori
 // inside it is listed in its frames (window.frames is the window itself: frames.length and frames[i] are the frames
 // inside it). Neither edge makes a window this one's embedder: such a frame is judged by the origin its post names, like
 // any window other than this one and its parent. A sandboxed frame names the opaque origin "null", so it is foreign; a
-// frame inside this one on this window's own origin is a peer. The receiving windows carry both edges as a browser gives
+// frame inside this one on this window's location.origin is a peer. The receiving windows carry both edges as a browser gives
 // them: a pane framed in the romp shell, whose top is the shell's page, and the shell's own top-level page, whose top is
 // itself and whose frames hold its panes.
 test("a frame beside this one or inside it, sharing its top and listed in its frames, is judged by its origin", () => {

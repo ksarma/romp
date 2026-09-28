@@ -370,7 +370,8 @@ class ResponseHardeningHeaders(unittest.TestCase):
         self.assertIn('"X-Frame-Options", "SAMEORIGIN"', src)
         self.assertIn("frame-ancestors 'self'", src)
         self.assertIn('"Referrer-Policy", "same-origin"', src)   # executed by TokenLeavesTheUrl below
-        self.assertIn('"Cross-Origin-Opener-Policy", "same-origin"', src)   # executed by OpenerIsolation below
+        self.assertIn('"Cross-Origin-Opener-Policy", "same-origin"', src,
+                      "where the opener policy is written, in _send; OpenerIsolation below reads it off the wire on every page")
 
     def test_remote_relay_derives_its_own_mime_and_discards_the_remotes(self):
         # the /remote/<host>/file relay must decide the Content-Type from the requested extension

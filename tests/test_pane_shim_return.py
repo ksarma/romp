@@ -1538,24 +1538,26 @@ out({atPark:atPark,afterLink:afterLink,atTap:{sockets:sockets.length,parked:park
 
 class ShellWordsFromTheShellOnly(unittest.TestCase):
     """The shell's two words to a pane (the panes word and the link word, _LANDING_COLLAPSE_JS tell) are heard from the
-    shell alone (2026-09-25): the pane's parent, on the page's origin, the one window that posts them. fromShell gates
-    both listeners, so the link word ends a return's wait and the panes word moves the on-screen flag (and un-parks)
-    only when the shell says so; a pane page open on its own (its parent is itself) hears neither word from anyone. The
-    refused senders include the frames in the pane's tab (inside it and beside it, sandboxed and on its origin) and the
-    windows it opened, over the edges a browser gives them (top, frames, parent, opener)."""
+    shell alone (2026-09-25): the pane's parent, posting on the page's location.origin, the one window that posts them.
+    fromShell gates both listeners, so the link word ends a return's wait and the panes word moves the on-screen flag
+    (and un-parks) only when the shell says so; a pane page open on its own (its parent is itself) hears neither word
+    from anyone. The refused senders include the frames in the pane's tab (inside it and beside it, sandboxed and on its
+    location.origin) and the windows it opened, over the edges a browser gives them (top, frames, parent, opener)."""
 
     # [source, origin] of every sender that is not the shell: a page on another origin that opened this pane page, a
-    # sandboxed frame (origin "null"), a same-origin window that is not the parent (a popup, a sibling pane), this page
+    # sandboxed frame (origin "null"), a window on this page's location.origin that is not the parent (a popup, a sibling
+    # pane), this page
     # itself, this page's own dispatch (no source, no origin), the parent speaking from another origin; a sourceless post
     # that names an origin (a frame removed right after it posted can leave its message with no source): another origin,
-    # the opaque origin, and this page's own origin, none of them the shell's window; the parent with the opaque origin;
+    # the opaque origin, and this page's location.origin, none of them the shell's window; the parent with the opaque origin;
     # and the pane's own window.opener as the source, which in a frame is null (the harness's window has opener null, as a
     # browser's frame does), on this origin and on the opaque one: a check that admitted e.source===window.opener would
     # admit a sourceless post there. Then the windows in the pane's tab and the ones it opened, over the edges a browser
     # gives them (the prelude's first two lines): the pane's top is the shell, its parent, and the shell is its own
     # parent and top; window.frames is the window itself, whose length and indexes list the frames inside it. A frame
-    # inside the pane, sandboxed and on its origin (its parent the pane, its top the shell, listed in its frames); a
-    # frame beside it in the shell, sandboxed and on its origin (its parent and its top the shell); a window this page
+    # inside the pane, sandboxed and on its location.origin (its parent the pane, its top the shell, listed in its
+    # frames); a frame beside it in the shell, sandboxed and on its location.origin (its parent and its top the shell); a
+    # window this page
     # opened (window.open), on another origin and on this one (its opener is this window). A check that took any of
     # those edges for the shell's would hear one of them
     FOREIGN = r"""
@@ -1761,7 +1763,9 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
         # write to it, for the shim as four apps build it (a write spelled no way, an eval's, is the executed test's below)
         for app, kw in (("feed", {}), ("chat", {}), ("files", {"no_stale": True}), ("settings", {"no_stale": True})):
             with self.subTest(app=app):
-                self.assertEqual(self._from_shell_mentions(km._shim(app, 3, **kw)), ["declaration", "read", "read"])
+                self.assertEqual(self._from_shell_mentions(km._shim(app, 3, **kw)), ["declaration", "read", "read"],
+                                 "fromShell is declared once, a const, and only read (its spelling; "
+                                 "test_no_later_code_can_put_a_laxer_check_in_its_place runs the attempts to replace it)")
 
     def test_the_binding_census_reads_what_it_claims(self):
         base = ("const fromShell=function(e){return !!e;};\n// fromShell, described in a comment line\n"
@@ -1783,11 +1787,16 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
 
     def test_source_both_listeners_open_with_the_shell_check(self):
         js = km._shim("feed", 3)
-        self.assertIn('const fromShell=function(e){return !!e&&window.parent!==window&&e.source===window.parent&&e.origin===location.origin;};', js)
+        self.assertIn('const fromShell=function(e){return !!e&&window.parent!==window&&e.source===window.parent&&e.origin===location.origin;};', js,
+                      "the check's text: the parent, posting on this page's location.origin (its spelling; the tests above run "
+                      "it against every sender it refuses)")
         self.assertIn('try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;'
-                      'if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;', js, "the link listener")
+                      'if(!m||(m.romp!=="panes"&&m.romp!=="link"))return;', js, "the link listener opens with the check (its "
+                      "spelling; test_a_link_word_from_anyone_but_the_shell_neither_ends_the_wait_nor_dials runs it)")
         self.assertIn('try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;'
-                      'if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];', js, "the on-screen listener")
+                      'if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];', js, "the on-screen listener opens with the "
+                      "check (its spelling; test_a_panes_word_from_anyone_but_the_shell_neither_unparks_nor_moves_the_on_screen_"
+                      "flag runs it)")
         # in every spelling the text shows, for the shim as four apps build it (with and without no_stale): these two
         # and no third (a third decides its senders here), and no onmessage assignment but on the shim's own sockets and
         # channel (SHIM_ONMESSAGE_RECEIVERS). Each served page, its shim included, is also tests/test_shell_source_check.py's
@@ -1796,9 +1805,11 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
             with self.subTest(app=app):
                 js = km._shim(app, 3, **kw)
                 heads = [js[m.start():m.start() + 80] for m in self.MESSAGE_LISTEN.finditer(js)]
-                self.assertEqual(len(heads), 2, "the shim's window message listeners are these two: %r" % heads)
+                self.assertEqual(len(heads), 2, "the shim's window message listeners are these two (as spelled; "
+                                 "test_run_the_shim_registers_exactly_these_two_and_sets_no_handler_on_a_window counts them run): %r" % heads)
                 for h in heads:
-                    self.assertTrue(h.startswith('addEventListener("message",' + self.SHELL_HEAD), h)
+                    self.assertTrue(h.startswith('addEventListener("message",' + self.SHELL_HEAD),
+                                    "each opens with the shell check (its spelling; the run test below reads the heads run): " + h)
                 self.assertEqual(self._onmessage_writes(js), self.SHIM_ONMESSAGE_RECEIVERS,
                                  "an onmessage assignment in the shim on a receiver SHIM_ONMESSAGE_RECEIVERS does not list, or a listed one gone")
 

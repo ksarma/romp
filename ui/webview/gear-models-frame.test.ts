@@ -37,8 +37,8 @@ const DOC = { createElement: (tag: string): Opt => { assert.equal(tag, "option")
 const SELECTS = ["jm", "im", "je", "ie", "jc", "dm", "de", "cmm", "cme"] as const;   // jc: the judge concurrency select (T277)
 
 // The block, evaluated with the closure variables it reads passed in: `window` (the listener's target),
-// `document` (the injected option), `fetch`/`ku` (the read), the nine <select>s — real stand-ins by
-// default, or null (the guards) — and `windowSender`, the real helper (window-sender.ts) reading that same window: a
+// `document` (the injected option), `fetch`/`ku` (the read), the nine <select>s (real stand-ins by
+// default, or null for the guards), and `windowSender`, the real helper (window-sender.ts) reading that same window: a
 // frame here has no source and no origin, this document's own dispatch, as the pane shim delivers the kernel's frames.
 function lift(withSelects = true) {
   const start = GEAR.indexOf("  var choices = null");

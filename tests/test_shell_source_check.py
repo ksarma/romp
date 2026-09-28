@@ -6,7 +6,7 @@ ready, the Log's notify and wsState, the settings relay (openSettings, viewFile,
 bars, the split columns' drags. A window message listener hears every window that can post to the page, and the
 only legitimate senders of these words are the shell's own pane iframes. Each listener reads the shell's one source
 check, window.__rompPaneSourceOk, FAIL-CLOSED as its first statement: a message counts only when its immediate
-source is a same-origin iframe of the shell.
+source is an iframe of the shell and its origin is the shell's location.origin.
 
 The check is ADOPTED from the romp project's repository, github.com/romp-on/romp, at commit
 f4a57200894ede72a4d4469570490aa64fbf9e94 (kernel/kernel.py there, lines 65382-65384, the opening lines of
@@ -281,14 +281,19 @@ class AdoptedCheck(unittest.TestCase):
         # mentions each), so no assignment in another spelling, and no other reader, sits anywhere in the served shell
         self.assertEqual(html.count("__rompPaneSourceOk"), 2 + 2 * len(LISTENERS),
                          "the name appears only in the adopted definition, the lock and each named listener's gate")
-        self.assertEqual(html.count(GATE), len(LISTENERS), "each named listener's gate, once")
+        self.assertEqual(html.count(GATE), len(LISTENERS), "each named listener's gate, once (its spelling; "
+                         "ShellListenersExecuted runs the listeners and the check)")
         scripts = _inline_scripts(html)
         where = [n for n, s in enumerate(scripts) if REGION_HEAD in s]
         self.assertEqual(len(where), 1)
         first_listener = min(n for n, s in enumerate(scripts) if LISTEN_OPEN in s)
-        self.assertLessEqual(where[0], first_listener, "defined before (or in) the first script that listens")
-        self.assertLess(scripts[where[0]].index(REGION_HEAD), scripts[where[0]].index(LISTEN_OPEN))
-        self.assertLess(html.index("<body"), html.index(REGION_HEAD), "a body script, after the markup it reads")
+        self.assertLessEqual(where[0], first_listener, "defined before (or in) the first script that listens (its place; "
+                             "ShellListenersExecuted finds the check defined when each listener registers)")
+        self.assertLess(scripts[where[0]].index(REGION_HEAD), scripts[where[0]].index(LISTEN_OPEN),
+                        "and ahead of that script's first listener (its place; ShellListenersExecuted finds the check defined "
+                        "when each listener registers)")
+        self.assertLess(html.index("<body"), html.index(REGION_HEAD), "a body script, after the markup it reads (its place; "
+                        "ShellListenersExecuted runs the served page)")
 
 
 # Where the tree is walked for the census below: every file but the repository's own records and tests (a test names
@@ -375,7 +380,8 @@ class ShellListenerCensus(unittest.TestCase):
         for at in opens:
             head = self.html[at + len("window." + LISTEN_OPEN):][:len(GATE)]
             with self.subTest(at=self.html[at:at + 160]):
-                self.assertEqual(head, GATE, "the check, fail-closed, is the listener's first statement")
+                self.assertEqual(head, GATE, "the check, fail-closed, is the listener's first statement (its spelling; "
+                                 "ShellListenersExecuted runs each listener against every sender)")
         # no listener in another spelling slips past the census: every message listener on the page is one of the
         # thirteen above or the service worker's channel
         every = _MESSAGE_LISTEN.findall(self.html)
@@ -413,17 +419,22 @@ class ShellListenerCensus(unittest.TestCase):
     def test_each_named_listener_opens_with_the_check(self):
         for name, phrase in LISTENERS.items():
             with self.subTest(listener=name):
-                self.assertEqual(self.html.count(phrase), 1, "the phrase names one place in the shell")
+                self.assertEqual(self.html.count(phrase), 1, "the phrase names one place in the shell (the locator this test "
+                                 "and ShellListenersExecuted name the listener by)")
                 at = self.html.rindex(LISTEN_OPEN, 0, self.html.index(phrase))
                 self.assertEqual(self.html[at + len(LISTEN_OPEN):][:len(GATE)], GATE,
-                                 "%s acts on a message only after the source check admits it" % name)
+                                 "%s opens with the source check (its spelling; ShellListenersExecuted runs it against every "
+                                 "sender)" % name)
 
     def test_the_active_tab_relay_reads_the_shared_check_instead_of_its_own(self):
         # the relay had the one inline origin check in the shell; it reads the shared check now, as the project's does
         js = km._LANDING_FOCUS_JS
         self.assertIn("window.addEventListener('message',function(e){" + GATE +
-                      "var m=e&&e.data;if(!m||m.romp!=='activeTab')return;", js)
-        self.assertNotIn("e.origin!==location.origin)return;", js)
+                      "var m=e&&e.data;if(!m||m.romp!=='activeTab')return;", js,
+                      "the activeTab relay opens with the shared check (its spelling; ShellListenersExecuted runs it against "
+                      "every sender)")
+        self.assertNotIn("e.origin!==location.origin)return;", js,
+                         "no origin check of the relay's own is left (its spelling; ShellListenersExecuted runs the relay)")
 
 
 # ── every window message listener the kernel serves (2026-09-26) ──
@@ -1571,8 +1582,8 @@ process.stdout.write(JSON.stringify(rows));
 
 
 class AdoptedCheckExecuted(unittest.TestCase):
-    """The adopted lines, run: true only for a same-origin iframe of this document that is not marked
-    data-protocol=none; false for every other sender (a sandboxed iframe of the shell, listed in its frames; a frame
+    """The adopted lines, run: true only for an iframe of this document, posting on its location.origin, that is not
+    marked data-protocol=none; false for every other sender (a sandboxed iframe of the shell, listed in its frames; a frame
     nested in a pane, which shares the shell's top; a window whose parent reads as the shell but that no iframe holds; a
     window the shell opened; the page that opened it, on another origin or on the shell's own) and when the frame walk
     throws."""

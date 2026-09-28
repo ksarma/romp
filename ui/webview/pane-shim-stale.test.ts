@@ -30,7 +30,7 @@ import * as vm from "node:vm";
 import { hideEdges } from "../test-dom-shim";
 
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
-// the page's origin, as a browser's location carries it: the shim compares a message's origin with it (fromShell)
+// the page's location.origin, the origin of its URL: the shim compares a message's origin with it (fromShell)
 const ORIGIN = "http://TESTHOST:29855";
 
 function shimJs(app: string, caps = "", noStale = false, core = ""): string {
@@ -147,7 +147,7 @@ class Harness {
    *  the watchdog never abandoned a silent socket (three cases red, 2026-09-18) */
   tick() { assert.ok(this.intervals.length, "the watchdog is armed"); for (const f of this.intervals) f(); }
   /** the shell's panes word, carrying the link (D3): the shell re-tells it on its socket's open, close and abandon. Posted as
-   *  the shell posts it, from this pane's parent window on the page's own origin: the shim hears the word from the shell alone
+   *  the shell posts it, from this pane's parent window on the page's location.origin: the shim hears the word from the shell alone
    *  (kernel.py _shim fromShell, 2026-09-25) and drops a message with any other source; tests/test_pane_shim_return.py runs
    *  the refusals */
   panes(link: "up" | "down") { for (const f of this.messages) f({ source: this.win.parent, origin: ORIGIN, data: { romp: "panes", on: {}, avail: {}, link } }); }

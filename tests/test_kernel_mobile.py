@@ -659,7 +659,7 @@ back.append(pop); body.append(back);
 const WIN = {}, WSS = [], POSTS = [];
 const on = (book) => (k, f) => { (book[k] = book[k] || []).push(f); };
 global.window = global;
-window.__rompPaneSourceOk = () => true;   // the shell's source check (kernel.py _LANDING_BOOT_JS, run by tests/test_shell_source_check.py): this stub's posts stand for a pane's
+window.__rompPaneSourceOk = () => true;   // the shell's source check (kernel.py _LANDING_BOOT_JS, run by tests/test_shell_source_check.py): this stub's posts stand for a pane's postMessage to the shell.
 global.innerHeight = 844; global.innerWidth = 390; global.scrollY = 0; global.scrollTo = () => {};
 global.matchMedia = () => ({ matches: true });
 global.requestAnimationFrame = () => 1;
