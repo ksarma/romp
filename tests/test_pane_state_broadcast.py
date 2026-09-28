@@ -2007,8 +2007,9 @@ def _route_table_renderers(tree, scopes):
     of the name is classified, since a renderer that reaches the table any other way would not be read here: the literal's own binding, a
     membership test (`p in _PAGE_RENDERERS`, Handler._need's auth class) or a one-argument `.get(...)`. Anything else is loud: any other
     binding of the name anywhere in the file (an assignment or deletion, a parameter, a def or class, an except-as, an import, a match
-    capture: `scopes`' binders, so a `.get` read under that name elsewhere could be some other object's), another method, the table
-    passed on, a `**` entry or a renderer that is not a plain name. Returns (renderer names, ids of the `.get` calls)."""
+    capture: `scopes`' binders, so a `.get` read under that name elsewhere could be some other object's), a subscript store or deletion
+    (`_PAGE_RENDERERS[p] = page` reads the name and writes the table), another method, the table passed on, a `**` entry or a renderer
+    that is not a plain name. Returns (renderer names, ids of the `.get` calls)."""
     defs = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == _ROUTE_TABLE for t in n.targets)]
     if len(defs) != 1 or len(defs[0].targets) != 1 or not isinstance(defs[0].value, ast.Dict):
         raise AssertionError("kernel.py: %s is not one module-level dict literal (%d bindings); classify it here" % (_ROUTE_TABLE, len(defs)))
@@ -2031,7 +2032,7 @@ def _route_table_renderers(tree, scopes):
                 and len(call.args) == 1 and not call.keywords):
             gets.add(id(call))
             continue
-        raise AssertionError("kernel.py line %d: a use of %s this census does not read (another method, a .get with a default, or the table passed on); classify it here" % (node.lineno, _ROUTE_TABLE))
+        raise AssertionError("kernel.py line %d: a use of %s this census does not read (a subscript store or deletion, another method, a .get with a default, or the table passed on); classify it here" % (node.lineno, _ROUTE_TABLE))
     return {v.id for v in table.values}, gets
 
 
@@ -2446,6 +2447,30 @@ class StampCensusResolvesByBinding(unittest.TestCase):
 
     def test_a_dotted_import_binds_its_first_name_and_is_refused(self):
         self._refused_table_binder("import _PAGE_RENDERERS.pages\n")
+
+    def test_a_use_of_the_table_the_census_does_not_read_is_refused_naming_its_shape(self):
+        # the catch-all refusal, and the shape its message names: a subscript store or deletion reads the table's name (a Load under the
+        # Subscript that writes), so it is no binder of the name and reaches this refusal like another method or the table passed on
+        uses = (("_PAGE_RENDERERS['/x'] = _x_page", "a subscript store or deletion"), ("del _PAGE_RENDERERS['/chat']", "a subscript store or deletion"),
+                ("_PAGE_RENDERERS.update({'/x': _x_page})", "another method"), ("_PAGE_RENDERERS.get(self.path, _x_page)", "a .get with a default"),
+                ("print(_PAGE_RENDERERS)", "the table passed on"))
+        for use, shape in uses:
+            with self.subTest(use=use):
+                with self.assertRaisesRegex(AssertionError, r"a use of _PAGE_RENDERERS this census does not read \([^)]*" + re.escape(shape)):
+                    self._census("_x_page", "def do_GET(self):\n    " + use + "\n    _page = _PAGE_RENDERERS.get(self.path)\n    return self._send(200, _page(), \"text/html\")\n")
+
+    def test_a_table_that_is_not_one_plain_module_level_literal_is_refused(self):
+        # the census reads the renderers off the table's one literal, so a table it cannot read that way is loud, never read partly
+        do_get = "class Handler:\n    def do_GET(self):\n        _page = _PAGE_RENDERERS.get(self.path)\n        return self._send(200, _page(), \"text/html\")\n"
+        tables = (("_PAGE_RENDERERS = {'/chat': _chat_page}\n_PAGE_RENDERERS = {'/feed': _feed_page}\n", r"is not one module-level dict literal \(2 bindings\)"),
+                  ("_PAGE_RENDERERS = _PAGES = {'/chat': _chat_page}\n", r"is not one module-level dict literal \(1 bindings\)"),
+                  ("_PAGE_RENDERERS = dict(chat=_chat_page)\n", r"is not one module-level dict literal \(1 bindings\)"),
+                  ("_PAGE_RENDERERS = {'/chat': _chat_page, **_MORE_PAGES}\n", r"entry that is a \*\* splat or a renderer that is not a plain name"),
+                  ("_PAGE_RENDERERS = {'/chat': _pages.chat}\n", r"entry that is a \*\* splat or a renderer that is not a plain name"))
+        for table, refusal in tables:
+            with self.subTest(table=table):
+                with self.assertRaisesRegex(AssertionError, refusal):
+                    _text_html_200_writers(table + do_get)
 
     def _header_send(self, header):
         # do_GET binds `_page` to a page outside the table; the nested def or class `header` opens binds `_page` from the table in its
