@@ -119,9 +119,13 @@ red, so a zero here is a zero the drive can see through.
 Every relay-socket close those records hold outside the drop and the restart, the closes in the shapes above included,
 was the lab's own and not the old bundle's. LinkProxy, the splice, kept create_connection's 5 s timeout on its upstream
 socket until it cleared it after the connect, as kernel.py _remote_ws clears the relay's, so a pair whose remote side sent
-nothing for 5 s was shut: on all three pages at once, 5 to 10 s after the last frame other than a keepalive, under the
-remote kernel's 10 s keepalive. Each cut was a redial, and its whole frame caught the old page up, so those drives
-recorded the old page catching up 6 to 19 s after each change, and one drive ran phase B's card wait to its 20 s cap: a
+nothing for 5 s was shut, 5 to 10 s after the last frame other than a keepalive under the remote kernel's 10 s keepalive.
+The 150 old-hub report JSONs in the builder's caches made under that timeout (copies and mutated drives among them) hold
+1,312 relay-socket closes outside the drop and the restart, every one 4.99 to 10.01 s after its socket's last frame and
+1,269 of them on all three pages at one instant, and the 7 drives made with the timeout cleared hold none
+(`python3 oldhub_closes.py <report.json>...` outside the repo, 2026-09-28). Each cut was a redial, and its whole frame
+caught the old page up, so those drives recorded the old page catching up 6 to 19 s after each change, and one drive
+ran phase B's card wait to its 20 s cap: a
 cut can come up to 10 s after the last frame, and late frames inside that phase put it past the wait. With the timeout
 cleared the old page shows no change on a socket it holds. In every link-up phase the card wait runs to its cap with no
 card shown, phase B's on the socket the link's return dialed, and only a redial's whole frame catches the page up
@@ -306,8 +310,8 @@ class LinkProxy:
     is quiet, as it does through an ssh -L forward. Before that line the splice kept create_connection's 5 s timeout: the
     pump reading the remote timed out after 5 s with no bytes and shut the pair, and under the remote kernel's 10 s
     keepalive (KEEPALIVE_S, which no lab kernel changes) that cut came 5 to 10 s after the last frame other than a
-    keepalive. Every relay-socket close the old-hub records show outside the drop and the restart was that cut, on all
-    three pages at the same instant, and not the old bundle: each cut was a redial whose whole frame caught the old page
+    keepalive. Every relay-socket close the old-hub records show outside the drop and the restart was that cut, and not
+    the old bundle (the module docstring gives the census): each cut was a redial whose whole frame caught the old page
     up, which is how the old-hub class then passed the visibility waits it now asserts run out. A cut coming up to 10 s
     after the last frame is also the cause of the phase-B expiry recorded once at 20 s: late frames inside the phase put
     the cut that would have caught the page up past the 20 s wait. LinkProxyEnds holds that a pair quiet for longer than
