@@ -705,6 +705,29 @@ class Runner(_Base):
                       p.stderr)
         self.assertEqual(len(w.calls()), before, "nothing ran")
 
+    def test_a_leg_rerun_over_an_invalid_result_is_refused_and_changes_nothing(self):
+        """Round 1, tests-1 and extra4-3: a --leg re-run over a result whose newest full run is invalid is refused before
+        anything runs (no npm ci setup, no leg), the result file byte-identical and still read invalid. The invalid run
+        is made the one way the runner makes one (A4: a leg changed its checkout), after pytest failed; without the
+        guard, one re-run of pytest with a flake would be appended over the invalid run."""
+        w = self.w
+        w.ctl({"rc": {"pytest": 1}, "action": {"manager": "edit"}})
+        w.run(check=3)
+        path = w.result_path()
+        with open(path, "rb") as f:
+            before = f.read()
+        self.assertEqual(sweep.assess(w.head(), env=w.env)["case"], "invalid")
+        w.ctl({})
+        calls = len(w.calls())
+        p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
+        self.assertIn("the result at %s is invalid (after the manager leg the checkout is not the sha's tree: content 1 "
+                      "(README.md)" % w.head()[:10], p.stderr)
+        self.assertEqual(len(w.calls()), calls, "no leg ran, the setup's npm ci included")
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), before, "the result file is byte-identical")
+        a = sweep.assess(w.head(), env=w.env)
+        self.assertEqual(a["case"], "invalid", a["line"])
+
     def test_a_full_run_after_a_red_one_counts_only_with_a_flake_naming_each_failed_leg(self):
         """Frozen-head item 1: a finished red result is never overwritten. A full run at a sha whose newest run failed
         legs is refused up front, the file untouched, unless --flake LEG=TEXT names each failed leg (and no other);
@@ -1813,6 +1836,11 @@ class Reader(unittest.TestCase):
              "run 2 names a known flake for bats, which it did not run"),
             ("a run at another sha", self.red_then(self.rerun(sha=self.OTHER)), "run 2 was recorded at %s" % self.OTHER),
             ("a re-run with no full run", self.result(runs=[leg_only]), "it records no full run"),
+            # extra4-7: a --leg re-run recorded before any run of its leg, a full run after it: nothing before the re-run
+            # failed, so its flake excuses nothing
+            ("a re-run before any run of its leg", self.result(runs=[self.rerun(started="2026-01-01T00:00:00Z"),
+                                                                     self.run_rec(started="2026-01-01T00:04:00Z")]),
+             "run 1 names a known flake for pytest, but pytest has no failed run before it at this sha"),
         )
         for label, data, named in cases:
             with self.subTest(label):
@@ -1843,6 +1871,38 @@ class Reader(unittest.TestCase):
         self.assertEqual(case, "invalid", line)
         self.assertIn("(hash none;", line)
 
+    def test_a_result_that_is_not_the_runners_shape_is_unreadable_by_name(self):
+        """Round 1, extra4-5: the reader's named refusals in _load, each read as unreadable with its reason rather than
+        raised: a file that is not a JSON object, runs that are not a list of run records, a run whose legs are not a
+        mapping of leg records (a list of names, a record that is a number), and an older file whose top-level legs are
+        a list. A missing sha read with its branch skips such a file for another sha instead of failing the read."""
+        run = self.run_rec()
+        cases = (
+            ("a JSON list", [], "not a JSON object"),
+            ("runs not a list", dict(self.result(), runs="x"), "its runs are not a list of run records"),
+            ("a run that is a number", dict(self.result(), runs=[5]), "its runs are not a list of run records"),
+            ("a run's legs a list", self.result(runs=[dict(run, legs=[PYTEST_LEG])]), "run 1's legs are not a mapping of leg records"),
+            ("a leg record 5", self.result(runs=[dict(run, legs=dict(run["legs"], **{PYTEST_LEG: 5}))]),
+             "run 1's legs are not a mapping of leg records"),
+            ("an older file's legs a list", {"schema": 1, "sha": self.SHA, "legs": [PYTEST_LEG]},
+             "its legs are not a mapping of leg records"),
+        )
+        path = sweep.result_path(self.SHA, self.env)
+        for label, data, named in cases:
+            with self.subTest(label):
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    json.dump(data, f)
+                case, line = self.case()
+                self.assertEqual(case, "unreadable", line)
+                self.assertIn("sweep unreadable: %s: %s; sweep again" % (path, named), line)
+        os.remove(path)
+        other = sweep.result_path(self.OTHER, self.env)
+        with open(other, "w") as f:
+            json.dump([], f)
+        case, line = self.case(branch="batch/b1")
+        self.assertEqual(case, "missing", "a non-object file for another sha is skipped, not raised: %s" % line)
+
     def test_the_schema_must_be_the_integer(self):
         self.write(self.result(schema=True))
         case, line = self.case()
@@ -1866,6 +1926,8 @@ class Rules(unittest.TestCase):
         self.assertEqual(v(result(bats={"owed": True, "rc": 1})), "red")
         self.assertEqual(v(result(bats={"owed": True, "rc": None})), "red", "an owed leg with no rc is red")
         self.assertEqual(v(result(bats={"owed": True, "rc": False})), "red", "rc must be the integer 0")
+        # extra4-6: the ledger is not a test leg, so a bool rc is the one reason this case is red (False == 0 in Python)
+        self.assertEqual(v(result(ledger={"owed": True, "rc": False})), "red", "rc must be the integer 0, not False")
         self.assertEqual(v(result(bats={"rc": 0, "tests": 1})), "pass", "a leg that does not say it is not owed is owed")
         self.assertEqual(v(result(bats={"owed": "no", "rc": None})), "red", "only owed: false excuses a leg")
         self.assertEqual(v(result(pytest={"owed": True, "rc": 0, "tests": 1})), "pass", "a not-owed leg's empty rc is fine")
