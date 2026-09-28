@@ -2307,7 +2307,7 @@ class LandReadsTheCI(_Base):
         self.assertEqual(len(fx.calls("pr", "merge")), 1)
         st = fx.state("b1")
         self.assertEqual(st["ci"], {"run": url, "id": 1, "attempt": 2, "excused": [
-            {"attempt": 1, "status": "completed", "conclusion": "failure", "url": url + "/attempts/1", "flake": self.FLAKE}]})
+            {"run": 1, "attempt": 1, "status": "completed", "conclusion": "failure", "url": url + "/attempts/1", "flake": self.FLAKE}]})
         self.assertIn("observed: the batch head's CI run was green on a re-run: attempt 1 concluded failure (%s/attempts/1) and "
                       "land excused it as a known flake: %s" % (url, self.FLAKE), p.stdout)
 
@@ -2319,10 +2319,12 @@ class LandReadsTheCI(_Base):
         self.ready()
         url = fx.ci("b1", attempt=2, attempts=[{"conclusion": "cancelled"}])
         self.refused("is green on attempt 2, but attempt 1 concluded cancelled (%s/attempts/1)" % url)
+        fx.set_gh(runs=[])              # each case alone at the head: an older run at the head is read too (below)
         url = fx.ci("b1", attempt=3, attempts=[{"conclusion": "failure"}, {"conclusion": "timed_out"}])
         self.refused("the batch head's CI run %s is green on attempt 3, but attempt 1 concluded failure (%s/attempts/1) and "
                      "attempt 2 concluded timed_out (%s/attempts/2); a known flake is excused once" % (url, url, url),
-                     args=("land", "b1", "--flake", "2/1=" + self.FLAKE, "--flake", "2/2=" + self.FLAKE))
+                     args=("land", "b1", "--flake", "1/1=" + self.FLAKE, "--flake", "1/2=" + self.FLAKE))
+        fx.set_gh(runs=[])
         url = fx.ci("b1", attempt=2, attempts=[{"conclusion": "success"}])
         p = fx.ok("land", "b1")
         self.assertIn("ok   CI: the run of the push to batch/b1 at %s is green: %s\n" % (self.head[:10], url), p.stdout)
@@ -2334,11 +2336,15 @@ class LandReadsTheCI(_Base):
         fx = self.fx
         self.ready()
         fx.ci("b1")
-        self.refused("--flake names run 1 attempt 1, which is no failed earlier attempt of the batch head's CI run",
+        self.refused("--flake names run 1 attempt 1, which is no failed attempt of a run at the batch head (its CI run",
                      args=("land", "b1", "--flake", "1/1=" + self.FLAKE))
         fx.ci("b1", attempt=2, attempts=[{"conclusion": "failure"}])
-        self.refused("--flake names run 9 attempt 1, which is no failed earlier attempt",
+        self.refused("--flake names run 9 attempt 1, which is no failed attempt of a run at the batch head",
                      args=("land", "b1", "--flake", "9/1=" + self.FLAKE))
+        # run 1, older and green on its one attempt, has no failed attempt to excuse either
+        self.refused("--flake names run 1 attempt 1, which is no failed attempt of a run at the batch head (its CI run "
+                     "https://example.invalid/actions/runs/2, attempt 2, run 2, and run 1)",
+                     args=("land", "b1", "--flake", "1/1=" + self.FLAKE, "--flake", "2/1=" + self.FLAKE))
         for bad in ("1=" + self.FLAKE, "2/1=  ", "2/1"):
             with self.subTest(bad=bad):
                 p = fx.run("land", "b1", "--flake", bad)
@@ -2375,17 +2381,69 @@ class LandReadsTheCI(_Base):
         p = self.refused("gh run list returned something that is not JSON")
         self.assertNotIn("is missing", p.stderr)
 
-    def test_the_newest_run_at_the_head_decides(self):
+    def test_the_newest_run_at_the_head_decides_and_an_older_red_one_is_not_erased(self):
+        """The newest push run at the head is the one required green; an older push run at the same head (the same sha
+        pushed again: the branch deleted and pushed back, or pushed elsewhere and back) is read as an earlier attempt is
+        (round 1, decision 13: a red is not erased by a re-run, locally or on GitHub). Its red is refused, naming it
+        and the --flake that excuses it; with that --flake land merges and records the excused run. The stage 1 to 3
+        head merged green, red, green at one head with nothing refused or recorded."""
         fx = self.fx
         self.ready()
         fx.ci("b1")
-        fx.ci("b1", conclusion="failure")
+        red = fx.ci("b1", conclusion="failure")
         self.refused("the batch head's CI run is red (conclusion failure)")
         url = fx.ci("b1")
-        p = fx.ok("land", "b1")
-        self.assertIn("ok   CI: the run of the push to batch/b1 at %s is green: %s" % (self.head[:10], url), p.stdout)
+        self.refused("the batch head's CI run %s is green on attempt 1, but an earlier run at this head, %s, attempt 1, "
+                     "concluded failure (%s), and a red is not erased by a re-run: if that attempt failed on a known flake, "
+                     "land again with --flake 2/1=" % (url, red, red))
+        p = fx.ok("land", "b1", "--flake", "2/1=" + self.FLAKE)
+        self.assertIn("ok   CI: the run of the push to batch/b1 at %s is green: %s; an earlier run's attempt 1 concluded failure "
+                      "and is excused as a known flake (%s): %s" % (self.head[:10], url, red, self.FLAKE), p.stdout)
         self.assertEqual(len(fx.calls("pr", "merge")), 1)
         self.assertEqual(fx.gh()["prs"]["101"]["state"], "MERGED")
+        self.assertEqual(fx.state("b1")["ci"]["excused"], [
+            {"run": 2, "attempt": 1, "status": "completed", "conclusion": "failure", "url": red, "flake": self.FLAKE}])
+
+    def test_every_older_run_at_the_head_is_read_like_an_earlier_attempt(self):
+        """An older run's own earlier attempts are read too, a cancelled older run did not pass either, and one excuse
+        covers every run at the head: two failures across two runs are refused whatever --flake says. Older runs that
+        passed need nothing."""
+        fx = self.fx
+        self.ready()
+        older = fx.ci("b1", attempt=2, attempts=[{"conclusion": "failure"}])
+        url = fx.ci("b1")
+        self.refused("the batch head's CI run %s is green on attempt 1, but an earlier run at this head, %s, attempt 1, "
+                     "concluded failure (%s/attempts/1)" % (url, older, older))
+        fx.set_gh(runs=[])
+        older = fx.ci("b1", conclusion="cancelled")
+        url = fx.ci("b1")
+        self.refused("but an earlier run at this head, %s, attempt 1, concluded cancelled (%s)" % (older, older))
+        fx.set_gh(runs=[])
+        first = fx.ci("b1", conclusion="failure")
+        url = fx.ci("b1", attempt=2, attempts=[{"conclusion": "failure"}])
+        self.refused("the batch head's CI run %s is green on attempt 2, but attempt 1 concluded failure (%s/attempts/1) and an "
+                     "earlier run at this head, %s, attempt 1, concluded failure (%s); a known flake is excused once"
+                     % (url, url, first, first), args=("land", "b1", "--flake", "1/1=" + self.FLAKE, "--flake", "2/1=" + self.FLAKE))
+        fx.set_gh(runs=[])
+        fx.ci("b1")
+        fx.ci("b1", attempt=2, attempts=[{"conclusion": "success"}])
+        url = fx.ci("b1")
+        p = fx.ok("land", "b1")
+        self.assertIn("ok   CI: the run of the push to batch/b1 at %s is green: %s\n" % (self.head[:10], url), p.stdout)
+        self.assertEqual(fx.state("b1")["ci"]["excused"], [])
+
+    def test_a_run_list_as_long_as_its_limit_is_refused(self):
+        """Every run at the head is read, so a `gh run list` that returns as many rows as land asked for (it may have cut
+        the older runs) is refused by name, not read short."""
+        fx = self.fx
+        self.ready()
+        for _ in range(batch.RUN_LIST_LIMIT):
+            fx.ci("b1")
+        self.refused("gh run list returned %d rows, its limit, so older runs at the batch head may be cut" % batch.RUN_LIST_LIMIT)
+        fx.set_gh(runs=[])
+        for _ in range(batch.RUN_LIST_LIMIT - 1):
+            fx.ci("b1")
+        fx.ok("land", "b1")
 
     def test_the_workflow_name_land_matches_is_ci_yml_s(self):
         with open(ROOT / ".github" / "workflows" / batch.CI_WORKFLOW) as f:

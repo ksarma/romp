@@ -239,12 +239,13 @@ subject; `verify` refuses the branch otherwise.
    refuses when that run is missing, pending or red (any conclusion but success, cancelled
    included), or when the read fails; a run of another commit, a manual run and a run on another
    branch do not count. The newest run is the latest `createdAt`, then the highest run id, and a
-   matching row with either one missing or malformed (the zero time gh prints for a missing time
-   included) is refused by name. A red is not erased by a re-run on GitHub either: land reads the
-   run's earlier attempts, and one that did not pass (cancelled included) is refused unless
-   `land <name> --flake <run>/<attempt>='<the failing test, and where it is recorded as a known
-   flake>'` names it, as the refusal spells out. One attempt per run is excused; land records it,
-   and `finish` reports it. It reads main on origin again before it retargets a stacked member to
+   matching row with either one, or its attempt number, missing or malformed (the zero time gh
+   prints for a missing time included) is refused by name. A red is not erased by a re-run on
+   GitHub or by pushing the same sha again either: land reads the newest run's earlier attempts and
+   every attempt of an older push run at the same head, and one that did not pass (cancelled
+   included) is refused unless `land <name> --flake <run>/<attempt>='<the failing test, and where it
+   is recorded as a known flake>'` names it, as the refusal spells out. One attempt across the runs
+   at the head is excused; land records it, and `finish` reports it. It reads main on origin again before it retargets a stacked member to
    main, so a move already made refuses with nothing on GitHub changed, and once more right before
    the merge call; a refusal there after a retarget names each retargeted member and the
    `gh pr edit N --base <old>` that restores it. Then it merges with a merge commit and runs
