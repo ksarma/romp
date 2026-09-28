@@ -335,7 +335,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   real run under either). Also in this tier is a run without `-p no:anyio`,
   which a developer's run may be and no child of the proof is: each child
   passes the flag, since fork PR #872 holds every pytest the suite starts to
-  it, so matching it takes a child that rule refuses. A road on CI's
+  it, so matching it takes a child without the flag, which that rule admits
+  only as an entry of `LAUNCHERS_LISTED` (in `tests/test_ci_sdk_pin.py`) with
+  a reason, and none is made. A road on CI's
   `-p no:anyio` not given is granted (planted; no committed test makes a real
   run under it). Third, unmatchable at any cost: a hook condition
   keyed on an open-valued signal (a mark, an environment variable, a host name,

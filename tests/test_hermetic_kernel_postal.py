@@ -6610,9 +6610,10 @@ def _conftest_reasserted_names(src=None, where=None):
     on the cache plugin blocked with no -k given, each granted by the proof in the context test; no committed test
     makes a real run under either. And a run without -p no:anyio, which a developer's run may be and no child of the
     proof is: each passes the flag after its run's options (_PROOF_CHILD_FLAG), since fork PR #872 holds every pytest
-    the suite starts to it (tests/test_ci_sdk_pin.py, ChildPytestLaunchers), so matching it takes a child that rule
-    refuses, and none is made. The witness is _proof_option_roads' road on CI's -p no:anyio not given, granted by the
-    proof in the context test; no committed test makes a real run under it.
+    the suite starts to it (tests/test_ci_sdk_pin.py, ChildPytestLaunchers), so matching it takes a child without the
+    flag, which that rule admits only as an entry of LAUNCHERS_LISTED with a reason, and none is made. The witness is
+    _proof_option_roads' road on CI's -p no:anyio not given, granted by the proof in the context test; no committed
+    test makes a real run under it.
     THIRD, UNMATCHABLE at any cost: a conftest hook condition keyed on an open-valued signal, a mark of any name, an
     environment variable, a host name, an option's value (a --durations of 5, where CI's step gives 10: the pair
     matches whether an option is given, not its value; _proof_option_roads' road on it is granted), or another
