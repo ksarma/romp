@@ -49,7 +49,13 @@ that text (a page: tests/served_css.py comment_spans, an HTML comment, a /* */ i
 a script element; a constant: the scanner of each kind it lands in, js_comment_spans for script, css_comment_spans for
 style, comment_spans for markup, their union for a text that lands in more than one), an index or find row when the FIRST
 occurrence is comment text and an rindex or rfind row when the LAST is, the occurrence such a pin reads. A row whose
-literal occurs ONLY in comments pins prose and is reported the same way.
+literal occurs ONLY in comments pins prose and is reported the same way. The texts a row is judged against (judged_texts; the
+rulings at the merge of main's login cookie split, 2026-09-28): a constant's value; a getter's render and every string constant
+its own return statements return (getter_renders: the page `_files_page` serves when its sheet cannot be read); and for a row over
+a FETCHED body each of those as the kernel's Handler._send serves it on a sign-in response (served_body: _send itself, run on a
+stand-in request, so the sign-in seed and _PAGE_KEY_JS go first in a page's head in the order _send assembles them). A row whose
+literal occurs in NONE of its texts fails (judge_rows): its verdict proves nothing, since no comment can satisfy what the text
+does not carry; before the rulings such rows passed in silence (four at the merge).
 
 The fix for a row is to read the parsed rule (served_css.rules), the script's code with its comments removed
 (served_css.scripts for a page's script elements, served_css.js_code or css_code for a constant, served_css.code for a
@@ -74,8 +80,8 @@ over a derived constant of each kind. The container NAMES the tests pin are deri
 held to the kernel-derived getters and constants (a getter the tests call or a served str the tests assert over that the
 derivation does not read fails there; the author's pass 7).
 
-The fetched route (the author's pass 8, 2026-09-20): a fetched body is read as the text of the route it fetched. The (route, getter)
-pairs are derived from the kernel's GET dispatch by an AST walk (route_getters), never restated. It reads three shapes. Two are
+The fetched route (the author's pass 8, 2026-09-20): a fetched body is read as the text of the route it fetched, as served (the
+paragraph above). The (route, getter) pairs are derived from the kernel's GET dispatch by an AST walk (route_getters), never restated. It reads three shapes. Two are
 an `if` comparing one Name against a string literal by EQUALITY (`if p == "/sw.js": return self._send(200, _sw_js(), ...)`) or
 by MEMBERSHIP in a tuple of literals (`if p in ("/", ""):`) whose body returns a call carrying a call to a derived getter with
 no arguments. The third is a ROUTE TABLE, the kernel's page dispatch since the merge of main's login cookie split (2026-09-28):
@@ -128,6 +134,7 @@ import bisect
 import functools
 import glob
 import io
+import json
 import os
 import re
 import sys
@@ -239,12 +246,14 @@ def _segment(lines, node):
     return "".join([first] + lines[lineno + 1:end_lineno] + [last])
 
 
+@functools.lru_cache(maxsize=None)
 def page_getters():
     """The kernel's served-text getters, derived from its source by rule: the functions named `_landing`, `_<name>_page`,
-    `_<name>_js` or `_<name>_css` that a call with no arguments renders (no parameter, or every parameter defaulted)."""
+    `_<name>_js` or `_<name>_css` that a call with no arguments renders (no parameter, or every parameter defaulted). Read once per
+    process (the judgment asks it per text: judged_texts)."""
     names = [n for n, params in _GETTER.findall(_kernel_source()) if not params.strip() or all("=" in p for p in params.split(","))]
     assert names, "no served-text getter derived from the kernel source"
-    return sorted(set(names))
+    return tuple(sorted(set(names)))
 
 
 def _returns_calling(fn, names):
@@ -268,7 +277,7 @@ def route_getters(source=None):
     name that is no derived getter) binds nothing. Shape-sensitive by design (the author's pass 8, 2026-09-20): a fourth shape needs
     a fourth branch here and a case in the form-space test; an equality-only walk misses the landing, and a walk without the table
     finds only the service worker on the kernel."""
-    tree = ast.parse(_kernel_source() if source is None else source)
+    tree = _kernel_tree() if source is None else ast.parse(source)   # the kernel's tree is parsed once per process, shared with getter_renders
     getters = set(page_getters())
     routes = {}
     tables, lookups, functions = {}, [], []
@@ -468,13 +477,14 @@ def _fetched(node, names, routes, reads=None):
         a = node.args[0]
         fmt = a.left if isinstance(a, ast.BinOp) and isinstance(a.op, ast.Mod) else a
         route = _url_route(fmt.value) if isinstance(fmt, ast.Constant) and isinstance(fmt.value, str) else None
-        return routes.get(route) if route else None
+        return _Served(routes[route]) if route and route in routes else None
     path = _fetch_path(node.args[0]) if node.args else None
     callee = _callee(node)
     if path and callee is not None:
         if reads is not None and callee in reads and not reads[callee]:
             return None   # the module's own helper, whose returns read no response: no fetch
-        return routes.get(path.split("?")[0])
+        route = path.split("?")[0]
+        return _Served(routes[route]) if route in routes else None
     return None
 
 
@@ -604,10 +614,12 @@ def _loops(fn):
 
 
 def rows_of(path, getters, constants, routes=None):
-    """[(line, literal, text, form, readable)] for every membership or position assertion of a literal over a served text in one
+    """[(line, literal, text, form, readable, served)] for every membership or position assertion of a literal over a served text in one
     test module; form is "in" for a membership, else the position method; readable is whether the row's form is one the textual
     census reads (the author's pass 8, 2026-09-20): the literal's source segment is a plain literal or a run of them (re.fullmatch over _LIT:
-    no backslash, not triple-quoted, not a loop or comprehension variable) and the container is not a name bound to a slice."""
+    no backslash, not triple-quoted, not a loop or comprehension variable) and the container is not a name bound to a slice; served
+    is whether the text is a FETCHED body (_fetched), judged as Handler._send serves it (judged_texts; the rulings at the merge of
+    main's login cookie split, 2026-09-28)."""
     tree, lines = _parsed(path)
     plain = lambda node: isinstance(node, ast.Constant) and bool(re.fullmatch(_LIT, _segment(lines, node) or ""))
     out = []
@@ -665,7 +677,7 @@ def rows_of(path, getters, constants, routes=None):
                             rows += [(node.lineno, lit.col_offset, i, l, text_of(x), form, False) for i, l in enumerate(lits)]
                         elif texts and all(texts) and _literals(lit) and isinstance(x, ast.Name) and x.id == var:   # a for over texts: read by it
                             rows += [(node.lineno, lit.col_offset, i * len(texts) + j, l, g, form, plain(lit)) for i, l in enumerate(_literals(lit)) for j, g in enumerate(texts)]
-            out += [(line, lit, g, form, readable) for line, _, _, lit, g, form, readable in sorted(rows)]
+            out += [(line, lit, str(g), form, readable, isinstance(g, _Served)) for line, _, _, lit, g, form, readable in sorted(rows)]
     return out
 
 
@@ -1107,7 +1119,7 @@ def readers_of(path, getters, constants, routes=None):
                 _bind(targets, value, {}, attrs, getters, constants, None, routes, reads)
         for fn in fns:
             out += walk(fn, dict(modnames), attrs, 0, dict(modderived), methods)
-    return sorted(set(out))
+    return sorted({(line, form, str(text), source) for line, form, text, source in out})
 
 
 def inline_sites(path, getters, constants):
@@ -1117,6 +1129,113 @@ def inline_sites(path, getters, constants):
 
 def _spans(kinds, text):
     return sorted({sp for k in kinds for sp in _SCANNER[k](text)})
+
+
+@functools.lru_cache(maxsize=None)
+def _kernel_tree():
+    return ast.parse(_kernel_source())
+
+
+@functools.lru_cache(maxsize=None)
+def getter_renders(getter):
+    """The texts a served-text getter returns (the rulings at the merge of main's login cookie split, 2026-09-28): its render in the
+    hermetic state (pages()) and every string constant one of its own return statements returns, in source order (the page a state
+    the hermetic render does not meet serves: `_files_page` returns a one-line page naming the ui/ modules when its sheet cannot be
+    read, and two tests pin that text inside a patch of the read). Derived from the getter's definition in the kernel source, which
+    the getter rule reads at the module's top level, so a getter with no such definition fails here."""
+    fn = next((n for n in _kernel_tree().body if isinstance(n, ast.FunctionDef) and n.name == getter), None)
+    assert fn is not None, "a derived getter with no definition at the kernel's top level: %s" % getter
+    consts = [r.value.value for r in sorted(_own_returns(fn), key=lambda r: (r.lineno, r.col_offset))
+              if isinstance(r.value, ast.Constant) and isinstance(r.value.value, str)]
+    return (pages()[getter],) + tuple(c for c in consts if c != pages()[getter])
+
+
+# the type the kernel's GET dispatch serves each kind of getter under (the route table's pages as text/html, the service worker as
+# text/javascript): Handler._send puts its page-key script into a text/html document's head alone
+_SERVED_CTYPE = {"markup": "text/html; charset=utf-8", "script": "text/javascript; charset=utf-8", "style": "text/css; charset=utf-8"}
+# the session id the stand-in sign-in carries (synthetic: _send derives the page key the seed stores from it and the serve token)
+_SERVED_SESSION = "11111111-2222-3333-4444-555555555555"
+
+
+@functools.lru_cache(maxsize=None)
+def served_body(text, kind):
+    """The body the kernel's Handler._send writes for `text` served as a getter of `kind` on a sign-in response (the rulings at the
+    merge of main's login cookie split, 2026-09-28: since that change a fetched page is no longer its getter's text). _send itself runs,
+    on a stand-in request that holds an authorized page (`_page_ok`) and the session the response signs in (`_set_cookie`), and its
+    written bytes are the body: for a page document the sign-in seed and then _PAGE_KEY_JS go first in the head, in the order _send
+    assembles them; a text with no `<head>`, or served as another type, is written as it stands. A fetch on the cookie alone gets the
+    key script without the seed; the sign-in form is the wider one, and every fetched row is judged against it."""
+    written = []
+
+    class _Request:
+        _page_ok, _set_cookie = True, _SERVED_SESSION
+        wfile = type("W", (), {"write": staticmethod(written.append)})
+
+        def send_response(self, code):
+            pass
+
+        def send_header(self, name, value):
+            pass
+
+        def end_headers(self):
+            pass
+
+    km.Handler._send(_Request(), 200, text, _SERVED_CTYPE[kind])
+    assert len(written) == 1, "Handler._send wrote %d bodies" % len(written)
+    return written[0].decode("utf-8")
+
+
+class _Served(str):
+    """A getter's name standing for the body a FETCH of its route returns (_fetched), which a row is judged against as served
+    (served_body), not as the getter's render; compares and hashes as the name, so every other reader of a binding reads the name."""
+    __slots__ = ()
+
+
+@functools.lru_cache(maxsize=None)
+def judged_texts(name, served=False):
+    """((text, comment spans), ...): every text a row over the served text `name` is judged against. A constant: its value, the
+    scanner of each kind it lands in. A getter: each text it returns (getter_renders), scanned as its kind, and for a row over a
+    FETCHED body (`served`) each of those as Handler._send serves it (served_body)."""
+    if name in page_getters():
+        kinds = frozenset([getter_kind(name)])
+        texts = getter_renders(name)
+        if served:
+            texts = tuple(served_body(t, getter_kind(name)) for t in texts)
+    else:
+        kinds, texts = served_constants()[name], (getattr(km, name),)
+    return tuple((t, tuple(_spans(kinds, t))) for t in texts)
+
+
+def judge_rows(rows):
+    """(flagged, zero) for rows (module, line, literal, text, form, readable, served): `flagged` every row a comment can satisfy in a
+    text it is judged against (judged_texts; a membership or a count when any occurrence sits in a comment, an index or find row when
+    the first does, an rindex or rfind row when the last does), `zero` every row whose literal occurs in NONE of its texts. A zero-hit
+    row proves nothing, since a comment spelling its literal cannot satisfy what the text does not carry anywhere (the rulings at the
+    merge of main's login cookie split, 2026-09-28: it had passed in silence, and one of them was a fetched row whose literal is in the
+    page-key script alone, sound only while that script carried no comment); it is judged against the wrong text, or its literal is
+    wrong, and fails."""
+    flagged, zero, getters = [], [], set(page_getters())
+    for fname, line, lit, name, form, _, served in rows:
+        total, marks = 0, []
+        for text, comments in judged_texts(name, served):
+            hits = [m.start() for m in re.finditer(re.escape(lit), text)]
+            inside = [h for h in hits if any(s <= h < e for s, e in comments)]
+            total += len(hits)
+            if form in ("index", "find"):
+                hit = bool(hits) and hits[0] in inside      # the pin reads the first occurrence
+            elif form in ("rindex", "rfind"):
+                hit = bool(hits) and hits[-1] in inside     # the last
+            else:
+                hit = bool(inside)                          # a membership or a count: any occurrence
+            if hit:
+                marks.append((len(inside), len(hits)))
+        label = "%s:%d %r %s %s%s" % (fname, line, lit, form, name, ("()" + (" fetched" if served else "")) if name in getters else "")
+        if marks:
+            inside_n, hits_n = map(sum, zip(*marks))
+            flagged.append("%s: %d of %d occurrences inside a comment%s" % (label, inside_n, hits_n, " (prose only)" if inside_n == hits_n else ""))
+        if not total:
+            zero.append("%s: 0 occurrences in %d text(s)" % (label, len(judged_texts(name, served))))
+    return flagged, zero
 
 
 @functools.lru_cache(maxsize=None)
@@ -1208,7 +1327,7 @@ class ServedPinsReadElements(unittest.TestCase):
         # the string it is); the line-based textual census cannot tell that string from code, so the module is outside both
         self.assertEqual(rows_of(__file__, getters, constants, routes), [], "the census module itself pins nothing over a served text")
         for fname, (derived, (found, containers), _, _) in population_census().items():   # derived once per process, shared with the reader census
-            rows += [(fname, line, lit, name, form, readable) for line, lit, name, form, readable in derived]
+            rows += [(fname,) + tuple(row) for row in derived]   # (module, line, literal, text, form, readable, served)
             sites += [(fname, line, lit, name, form) for line, lit, name, form in found]
             pinned |= containers
         # the floor, derived: every site the textual census finds is a row the derivation found (so a module the derivation
@@ -1235,21 +1354,13 @@ class ServedPinsReadElements(unittest.TestCase):
         pinned_served = {n for n in pinned_caps if isinstance(getattr(km, n, None), str) and (_suffix_kind(n) or landing_kinds(getattr(km, n)))}
         self.assertTrue(pinned_served - roster, "the tests pin a served constant outside the author's pass 6 roster: %r" % (sorted(pinned_served),))
         self.assertEqual(sorted(pinned_served - set(constants)), [], "served constants the tests pin that the derivation does not read")
-        bad = []
-        for fname, line, lit, name, form, _ in rows:
-            text = texts[name]
-            hits = [m.start() for m in re.finditer(re.escape(lit), text)]
-            inside = [h for h in hits if any(s <= h < e for s, e in comments[name])]
-            if form in ("index", "find"):
-                flagged = bool(hits) and hits[0] in inside      # the pin reads the first occurrence
-            elif form in ("rindex", "rfind"):
-                flagged = bool(hits) and hits[-1] in inside     # the last
-            else:
-                flagged = bool(inside)                          # a membership or a count: any occurrence
-            if flagged:
-                bad.append("%s:%d %r %s %s: %d of %d occurrences inside a comment%s" % (
-                    fname, line, lit, form, name + ("()" if name in getters else ""), len(inside), len(hits), " (prose only)" if len(inside) == len(hits) else ""))
+        # each row is judged against every text it can read (judged_texts: a getter's returns, a fetched page as Handler._send
+        # serves it), and a row whose literal occurs in none of them fails (the rulings at the merge of main's login cookie split)
+        self.assertTrue([r for r in rows if r[6]] and [r for r in rows if not r[6]], "rows over fetched bodies and over renders both derived")
+        bad, zero = judge_rows(rows)
         self.assertEqual(bad, [], "a pin a served comment can satisfy; read the parsed rule, the code with its comments removed or the element instead:\n" + "\n".join(bad))
+        self.assertEqual(zero, [], "a row whose literal occurs in no text it is judged against, a verdict that proves nothing: judge it against the text "
+                         "the test reads, or correct its literal:\n" + "\n".join(zero))
 
     def test_no_reader_row_lies_inside_an_f_string(self):
         # the one-cell design's premise (the module docstring's last paragraph), pinned on EVERY interpreter: this test carries no
@@ -1417,12 +1528,14 @@ def test_module_level():
                      (L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
                      (L + 19, "x1", "_landing", "in"), (L + 19, "x2", "_landing", "in"), (L + 20, "x3", "_landing", "in")]
         self.assertEqual([r[:4] for r in rows], expected)
-        self.assertNotIn(("a3", "in"), {(lit, form) for _, lit, _, form, _ in rows}, "the loop variable is bound to the loop's body only")
-        self.assertNotIn(("b3", "in"), {(lit, form) for _, lit, _, form, _ in rows}, "a loop whose iterable mixes a text with something else binds nothing")
+        self.assertNotIn(("a3", "in"), {(r[1], r[3]) for r in rows}, "the loop variable is bound to the loop's body only")
+        self.assertNotIn(("b3", "in"), {(r[1], r[3]) for r in rows}, "a loop whose iterable mixes a text with something else binds nothing")
+        # a row over a fetched body is marked served, judged as Handler._send serves the page (judged_texts); every other row is not
+        self.assertEqual({(r[0], r[1]) for r in rows if r[5]}, {(38, "f1"), (40, "f2"), (42, "f3"), (51, "f7"), (64, "f10")})
         # the author's pass 8 (2026-09-20): a fetch of an unmapped path, a body passed through served_css.js_code, and a method call on another
         # object with a route-shaped literal (path.split("/")) bind nothing; the fixer pass: nor a formatted url of a page route with
         # no token in its query (the gate's paste-the-token page, f8), nor one of a path the dispatch does not map (f9)
-        self.assertEqual({lit for _, lit, _, _, _ in rows} & {"f4", "f5", "f6", "f8", "f9", "f12"}, set())
+        self.assertEqual({r[1] for r in rows} & {"f4", "f5", "f6", "f8", "f9", "f12"}, set())
         # the merge of main's login cookie split (2026-09-28): a concatenation is a fetch of its path only where its leading literal
         # holds the whole path, its `?` inside the literal; a literal that ends before its `?` names no path whole, and a
         # concatenation led by a name (f12 above) is no fetch
@@ -1432,7 +1545,7 @@ def test_module_level():
         # the author's pass 8 (2026-09-20): the rows the textual census declines, by form: a loop or comprehension literal (p, q, r, a4 to a7),
         # a name bound to a slice (h), a literal with a backslash and a triple-quoted one; every other row is readable
         declined = {(15, "p"), (15, "q"), (17, "r"), (28, "h"), (L + 5, "a4"), (L + 5, "a5"), (L + 6, "a6"), (L + 6, "a7"), (34, "y\tz"), (35, "tq")}
-        self.assertEqual({(line, lit) for line, lit, _, _, readable in rows if not readable}, declined)
+        self.assertEqual({(r[0], r[1]) for r in rows if not r[4]}, declined)
         # the textual census reads the inline forms, the one-line bound form (a Name, a self.<attr>), the tuple binding (by
         # position, an item that is no served text binding nothing), the bare assert and assertTrue lines, the position forms,
         # the for over texts, the fetched forms (a literal path, a formatted url with the token) and an implicit concatenation
@@ -1483,7 +1596,7 @@ def test_module_level():
         for fname, (derived, _, on_road, readers) in population_census().items():   # derived once per process, shared with the pins census
             road[fname] = on_road
             rows += [(fname, line, form, text, source) for line, form, text, source in readers]
-            pins |= {(fname, line, text) for line, lit, text, form, readable in derived if form in _POSITION}
+            pins |= {(fname, row[0], row[2]) for row in derived if row[3] in _POSITION}
         self.assertGreater(len(rows), 1000, "the population read: %d rows" % len(rows))
         self.assertEqual(sorted({r[2] for r in rows} - set(READER_FORMS)), [], "a form readers_of names that READER_FORMS does not")
         self.assertTrue(len({r[2] for r in rows}) >= 10, "the forms met across the suite: %r" % (sorted({r[2] for r in rows}),))
@@ -1830,6 +1943,38 @@ def _fits(case, ceiling):
             with self.assertRaises(AssertionError, msg=page) as cm:
                 served_css.fold_text(page)
             self.assertIn(message, str(cm.exception), page)
+
+    def test_a_fetched_page_is_judged_as_served_and_a_row_with_no_hit_fails(self):
+        # the rulings at the merge of main's login cookie split (2026-09-28), Q5: since that change Handler._send puts the sign-in
+        # seed and the page-key script (_PAGE_KEY_JS) first in the head of every authorized page, so a fetched page is no longer its
+        # getter's text, and a row judged against a text that does not carry its literal anywhere had passed in silence
+        # (test_session_cookie_auth.py's `__rompPageKey` over the fetched landing, in the page-key script alone). The model is _send
+        # itself, run on a stand-in sign-in (served_body): the getter's text around what _send puts first in its head, the seed and
+        # then the key script, and a text with no head or served as a script written as it stands. A getter's texts are its render
+        # and the string constants its returns spell (getter_renders: `_files_page` without its sheet). judge_rows fails a row whose
+        # literal occurs in none of its texts, and still flags one a comment satisfies, in a render and in a served body alike.
+        render = pages()["_landing"]
+        body = served_body(render, "markup")
+        head = render.index("<head>") + len("<head>")
+        injected = body[head:len(body) - (len(render) - head)]
+        self.assertEqual((body[:head], body[head + len(injected):]), (render[:head], render[head:]), "the getter's text around what _send puts in its head")
+        key = "<script>" + km._PAGE_KEY_JS + "</script>"
+        self.assertTrue(injected.endswith(key), "the page-key script goes last of the two: %r" % injected[-120:])
+        seed = injected[:-len(key)]
+        self.assertTrue(seed.startswith("<script>") and seed.endswith("</script>") and "localStorage.setItem(%s," % json.dumps(km._PAGE_KEY_SLOT) in seed,
+                        "the sign-in seed goes first, storing the page key in this kernel's slot: %r" % seed[:160])
+        self.assertEqual(served_body(pages()["_sw_js"], "script"), pages()["_sw_js"], "a script is served as it stands")
+        missing = [t for t in getter_renders("_files_page")[1:] if "needs the ui/ modules" in t]
+        self.assertTrue(missing, "the page _files_page returns without its sheet: %r" % (getter_renders("_files_page")[1:],))
+        self.assertEqual(served_body(missing[0], "markup"), missing[0], "a text with no head is served as it stands")
+        s, e = served_css.comment_spans(render)[0]
+        comment = render[s:e]
+        rows = [("m.py", 1, "__rompPageKey", "_landing", "in", True, True), ("m.py", 2, "__rompPageKey", "_landing", "in", True, False),
+                ("m.py", 3, "needs the ui/ modules", "_files_page", "in", True, False), ("m.py", 4, "\x00in no served text\x00", "_LANDING_MOBILE_JS", "in", True, False),
+                ("m.py", 5, comment, "_landing", "in", True, False), ("m.py", 6, comment, "_landing", "in", True, True)]
+        flagged, zero = judge_rows(rows)
+        self.assertEqual([z.split(" ")[0] for z in zero], ["m.py:2", "m.py:4"], "a literal in no text it is judged against fails: %r" % (zero,))
+        self.assertEqual([f.split(" ")[0] for f in flagged], ["m.py:5", "m.py:6"], "a literal a comment satisfies is flagged, over a render and a served body: %r" % (flagged,))
 
     def test_the_route_walk_reads_equality_and_membership(self):
         # the author's pass 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A
