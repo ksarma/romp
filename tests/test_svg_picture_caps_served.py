@@ -9,7 +9,7 @@ address (ui/webview/file-view-svg-reask-browser.test.ts and md-img-park-browser.
 address they pin is the one a page with no key builds, with no cap in it. This lab is the witness under the page key: it
 signs in through the kernel's own sign-in page of a hermetic kernel, drives the REAL chat page in playwright's Chromium
 (the harness of tests/test_file_caps_browser.py: the lab kernel's environment, the built bundles' copy, the driver's
-head) and reads the picture on every road the page takes to an svg's bytes:
+head) and reads the picture on each of these roads:
 
   A. the chat's preview box of a mentioned .svg (previewFull), inside the box's data mark
   B. an svg an author links in a message by its /file address (the cap pass)
@@ -19,8 +19,16 @@ head) and reads the picture on every road the page takes to an svg's bytes:
   F. the viewer's Reload after the file changed on disk (the window's focus raises the bar)
   G. bytes that do not decode (the Reload, the picture fails, the re-ask's fetch and its picture, then the failure pane),
      then valid bytes, a kernel message and, if the picture is not back yet, romp:wsup (which probe brings it is not checked)
-  H. the markdown heal's re-request of a figure in a note the viewer renders
+  H. a note the viewer renders: its figure, and the markdown heal's re-request of a figure in it
   I. a page reload, then A and D again
+  J. the lightbox a tap on the preview box's picture opens
+  K. the preview box's second attempt after a failed first one: a page reload whose first image request for the box's
+     file fails (the lab aborts it until the box shows its wait element), then a kernel message, which runs the box's
+     managed fetch and shows the picture at the address that fetch returns; then a re-render of the chat (the page's
+     romp:settings event), whose box takes that address from the page's memo of it
+
+It takes no other road to an svg's bytes; among those it leaves out are a remote session's relay route
+(/remote/<host>/file), the lightbox's arrow step to another picture and the lightbox's download link.
 
 On every road the picture's src is this page's own /file address, never a blob: or data: URL, it carries a cap, and the
 picture loads (complete, with its natural width); the viewer's picture (D to G, and I's) carries the version key. No /file
@@ -86,7 +94,7 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(String(e).slice(0, 160)));
 /** The picture at `sel`: where its src points (this page's own host and the path, whether a cap and a version key ride in its
  *  query, whether it is a blob: or data: URL), whether it loaded, whether the heal parked it and the parked address carries a
- *  cap, and which data-marked box holds it. */
+ *  cap, and which data-marked box, or the lightbox, holds it. */
 const pic = (sel) => page.evaluate((s) => {
   const i = document.querySelector(s);
   if (!i) return null;
@@ -96,7 +104,8 @@ const pic = (sel) => page.evaluate((s) => {
   return { hasSrc: a !== "", here: !!u && u.protocol === location.protocol && u.host === location.host, path: u ? u.pathname : "",
            cap: !!u && u.searchParams.has("cap"), v: !!u && u.searchParams.has("v"), blobOrData: /^(blob|data):/i.test(a),
            complete: i.complete, natural: i.naturalWidth, parked: i.classList.contains("md-img-failed"), parkedCap,
-           inViewerBox: !!i.closest("[data-fv-picture]"), inPreviewBox: !!i.closest("[data-preview-full]") };
+           inViewerBox: !!i.closest("[data-fv-picture]"), inPreviewBox: !!i.closest("[data-preview-full]"),
+           inLightbox: !!i.closest("#romp-lightbox") };
 }, sel);
 const loadedAt = (sel, want, ms) => page.waitForFunction(([s, w]) => { const i = document.querySelector(s); return !!i && i.complete && i.naturalWidth > 0 && (!w || i.naturalWidth === w); }, [sel, want || 0], { timeout: ms || cfg.deadline }).then(() => true, () => false);
 const parkedAt = (sel) => page.waitForFunction((s) => { const i = document.querySelector(s); return !!i && i.classList.contains("md-img-failed"); }, sel, { timeout: cfg.deadline }).then(() => true, () => false);
@@ -195,6 +204,38 @@ out.I = { preview: await loadedAt(PREVIEW), previewPic: await pic(PREVIEW) };
 await openViewerOn("plots/diagram.svg");
 out.I.viewer = await loadedAt(VIEWER, 60);
 out.I.viewerPic = await pic(VIEWER);
+// J. the lightbox a tap on the preview box's picture opens
+await page.keyboard.press("Escape").catch(() => {});
+await page.waitForFunction(() => !document.getElementById("romp-fileview"), null, { timeout: cfg.deadline }).catch(() => {});
+// a tap that cannot land (the picture never settles) is reported, not thrown: the error would print the picture's capped src
+out.J = { tapped: await page.locator(PREVIEW).first().click({ timeout: cfg.deadline }).then(() => true, () => false) };
+const LIGHTBOX = "#romp-lightbox img.romp-lightbox-img";
+out.J.loaded = out.J.tapped && await loadedAt(LIGHTBOX);
+out.J.pic = await pic(LIGHTBOX);
+await page.keyboard.press("Escape").catch(() => {});
+out.J.closed = await page.waitForFunction(() => !document.getElementById("romp-lightbox"), null, { timeout: cfg.deadline }).then(() => true, () => false);
+// K. the preview box's second attempt: after the reload, every image request for the box's own address fails until the box
+// shows its wait element; then a kernel message runs the box's managed fetch, and the picture shows at the address it
+// returns; then the chat re-renders and the new box takes that address from the page's memo
+const boxFile = (u) => { const x = fileOf(String(u)); return !!x && x.searchParams.get("path") === "plots/diagram.svg"; };
+let blocking = true, aborted = 0;
+await ctx.route(boxFile, (route) => { if (blocking && route.request().resourceType() === "image") { aborted++; return route.abort(); } return route.continue(); });
+const boxAnswers = [];   // every answer for the box's own address from the reload on: its status, whether it carried a cap, its kind
+ctx.on("response", (q) => { if (boxFile(q.url())) boxAnswers.push({ status: q.status(), cap: new URL(q.url()).searchParams.has("cap"), kind: q.request().resourceType() }); });
+await page.reload();
+await openChat();
+out.K = { waiting: await page.waitForSelector("#content [data-preview-full] .path-full-wait", { state: "attached", timeout: cfg.deadline }).then(() => true, () => false) };
+blocking = false;
+out.K.aborted = aborted;
+await kernelMessage();
+out.K.loaded = await loadedAt(PREVIEW);
+out.K.pic = await pic(PREVIEW);
+await page.evaluate((s) => { window.__boxPic = document.querySelector(s); }, PREVIEW);
+await page.evaluate(() => window.dispatchEvent(new Event("romp:settings")));   // a settings change the page hears: the chat re-renders
+out.K.memo = { rebuilt: await page.waitForFunction((s) => { const i = document.querySelector(s); return !!i && i !== window.__boxPic; }, PREVIEW, { timeout: cfg.deadline }).then(() => true, () => false) };
+out.K.memo.loaded = await loadedAt(PREVIEW);
+out.K.memo.pic = await pic(PREVIEW);
+out.K.answers = boxAnswers;
 out.refused = answered.filter((f) => f.status === 401 || f.status === 403).map(({ at, ...f }) => f);
 out.imagesWithoutCap = asked.filter((f) => f.kind === "image" && !f.cap);
 out.images = asked.filter((f) => f.kind === "image").length;
@@ -370,6 +411,24 @@ class SvgPictureUnderThePageKey(unittest.TestCase):
             self._on_address(r["I"]["previewPic"], "I's preview box")
             self.assertTrue(r["I"]["viewer"], "the viewer's picture loaded after the reload")
             self._on_address(r["I"]["viewerPic"], "I's viewer", v=True)
+        with self.subTest("J lightbox"):
+            self.assertTrue(r["J"]["tapped"], "the preview box's picture took the tap")
+            self.assertTrue(r["J"]["loaded"], "the lightbox's picture loaded")
+            self._on_address(r["J"]["pic"], "J")
+            self.assertTrue(r["J"]["pic"]["inLightbox"], "the picture is the lightbox's")
+            self.assertTrue(r["J"]["closed"], "Escape closed the lightbox")
+        with self.subTest("K second attempt after a failed first one, then the memo"):
+            k = r["K"]
+            self.assertGreaterEqual(k["aborted"], 1, "the box's first image request failed (the lab aborted it)")
+            self.assertTrue(k["waiting"], "the box showed its wait element for the second attempt")
+            self.assertTrue(any(f["kind"] == "fetch" and f["status"] == 200 for f in k["answers"]), "the box's managed fetch ran and was answered: %r" % k["answers"])
+            self.assertTrue(k["loaded"], "the second attempt's picture loaded")
+            self._on_address(k["pic"], "K")
+            self.assertTrue(k["pic"]["inPreviewBox"], "the picture is inside the preview box's data mark")
+            self.assertTrue(any(f["kind"] == "image" and f["status"] == 200 and f["cap"] for f in k["answers"]), "its picture was answered 200, capped: %r" % k["answers"])
+            self.assertTrue(k["memo"]["rebuilt"], "the chat re-rendered the preview box")
+            self.assertTrue(k["memo"]["loaded"], "the re-rendered box's picture loaded")
+            self._on_address(k["memo"]["pic"], "K's re-render")
         self.assertGreater(r["images"], 10, "the roads asked their pictures")
         self.assertEqual(r["refused"], [], "no /file request was refused")
         self.assertEqual(r["imagesWithoutCap"], [], "every image request to /file carried its cap")
