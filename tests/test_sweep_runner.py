@@ -2632,7 +2632,7 @@ class ServedLeg(_Base):
                 p = w.run(check=2)
                 self.assertIn("the served leg's interpreter %s (--python) " % w.python, p.stderr)
                 self.assertIn(text, p.stderr)
-                if " lacks " in text:
+                if text.startswith("lacks "):
                     self.assertIn("; pass --python an interpreter that has pytest, pytest-xdist, pytest-timeout and what the "
                                   "served step installs, and not the SDK", p.stderr, "the refusal names what to pass")
                 self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
