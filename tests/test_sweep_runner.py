@@ -104,6 +104,7 @@ def tree_of(root):
     for d, dirs, files in os.walk(root):
         rel = os.path.relpath(d, root)
         dirs[:] = [x for x in dirs if not (rel == "." and x == ".git") and x != "node_modules"]
+        files = [x for x in files if not (rel == "." and x == ".git")]        # a worktree's .git is a file
         for x in [x for x in dirs if os.path.islink(os.path.join(d, x))] + files:
             full = os.path.join(d, x)
             key = os.path.normpath(os.path.join(rel, x))
@@ -921,12 +922,13 @@ class Checkout(_Base):
             self.addCleanup(_kill_quietly, pid)
         call = [c for c in w.calls() if c["leg"] == "bats"][0]
         tmpdir, checkout = call["values"]["TMPDIR"], call["root"]
+        self.addCleanup(shutil.rmtree, tmpdir, True)      # only if the runner under test left it (a mutant run)
         proc.send_signal(15)
         out, err = proc.communicate(timeout=90)
         self.assertEqual(proc.returncode, 128 + 15, out + err)
         self.assertIn("stopped by signal 15", err)
         time.sleep(0.5)
-        self.assertFalse(os.path.exists(tmpdir), "TMPDIR is gone and no writer made it again")
+        self.assertFalse(os.path.exists(tmpdir), "TMPDIR %s is gone and no writer made it again" % tmpdir)
         self.assertFalse(os.path.exists(checkout), "the checkout is gone")
         self.assertEqual([pid for pid in pids if _alive(pid)], [], "both writers are gone")
         self.assertTrue(os.path.exists(os.path.join(marks, "group.pid.term")), "the leg's process group got SIGTERM first")
@@ -1002,6 +1004,7 @@ ROADS = (
     ("a post-checkout hook in the repository", lambda w, env: _hook(os.path.join(w.tree, ".git", "hooks"))),
     ("GIT_CONFIG_* in the runner's environment", lambda w, env: env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="core.autocrlf",
                                                                           GIT_CONFIG_VALUE_0="true")),
+    ("GIT_CONFIG_PARAMETERS in the runner's environment", lambda w, env: env.update(GIT_CONFIG_PARAMETERS="'core.autocrlf'='true'")),
     ("refs/replace of the head by its parent", lambda w, env: w.git("replace", "HEAD", "HEAD~1")),
     ("core.symlinks=false", lambda w, env: (w.git("config", "core.symlinks", "false"), _recheckout(w, "bin/kernel-link"))),
     ("a core.fsmonitor hook that reports nothing", lambda w, env: (_script(os.path.join(w.tmp, "fsmonitor"), "#!/bin/sh\nexit 0\n"),
