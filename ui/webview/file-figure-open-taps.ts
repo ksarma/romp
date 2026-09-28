@@ -198,16 +198,22 @@
 // click or a two-finger touch are red at 0f998a3b9 in the engines that run them, whose gate left the slot alone at the tap's
 // mousedown, so the tap's click took the slot that pointerup with no click had filled, and the cell after nothing reads the same
 // there, by design; the chain rule's cells are red at 142ade155, where each covered click opened, and on the chat and the Files
-// pane under a gate without the rules that close each (in Firefox the tail and the mouseup's clear, for the lone click after the
-// mouse held on the control the refusal of a record still standing at a click too, after the mouse released on the top page's bar
-// the refusal of a record whose pointer left the viewer's window with a button down too, and after the mouse released in the other
-// pane both refusals too, four cells a surface under a gate without the tail alone, those after the viewer's tap whose compatibility
-// events or click went elsewhere; the slot's pointerId test in Chromium; the touch records' refusal in WebKit; for the cells of the
-// mouseup that ended the chain, in Firefox and WebKit, the mouseup's clear, the gate at 1a6470e72 having none; for the cells of a
-// mouse's press whose pointerup the viewer never heard, the refusal of a record still standing at a click in WebKit, and in Firefox
-// both refusals, the gates at 1a6470e72 and at 09f58bec6 having neither; and for Firefox's cells of another document's mouse click
-// after a press that left the viewer's frame, the refusal of a record whose pointer left, the gates at 343ee2eb5 and at 09f58bec6
-// having none), while WebKit's cost cell reads the same there, by design, and Firefox's reads the press dragged out and back opening
+// pane under a gate without the rules that close each, as this head measures them (in Firefox the tail and the mouseup's clear,
+// for the lone click after the mouse held on the control the refusal of a record still standing at a click too, after the mouse
+// released on the top page's bar the refusal of a record whose pointer left the viewer's window with a button down too, and after
+// the mouse released in the other pane both refusals too, two cells a surface under a gate without the tail alone, those after the
+// viewer's tap whose mouseup or click went elsewhere, and for the three a surface after the viewer's tap whose compatibility events
+// went elsewhere the mouseout's rule and the blur's rule too; the slot's pointerId test in Chromium, and for its cells after an
+// element of the top page appeared over the picture the mouseout's rule and the blur's rule too; the touch records' refusal in
+// WebKit; for the cells of the mouseup that ended the chain, in Firefox and WebKit, the mouseup's clear and the blur's rule, and in
+// Firefox the mouseout's rule too, the gate at 1a6470e72 having none of them; for the cells of a mouse's press whose pointerup the
+// viewer never heard, the refusal of a record still standing at a click and the blur's rule in WebKit, and in Firefox both
+// refusals and the blur's rule, the gates at 1a6470e72 and at 09f58bec6 having neither refusal nor the blur's rule; and for
+// Firefox's cells of another document's mouse click after a press that left the viewer's frame, the refusal of a record whose
+// pointer left and the blur's rule, the gates at 343ee2eb5 and at 09f58bec6 having neither; the blur's rule refusing every cell of
+// these whose element takes the focus, the viewer's window holding it, while WebKit's cells of the mouse held and Firefox's of
+// that mouse click run again with an element that cancels its mousedown, where no blur comes (asserted), and are red under a
+// gate without that refusal alone), while WebKit's cost cell reads the same there, by design, and Firefox's reads the press dragged out and back opening
 // there, as at 343ee2eb5, recording its cost; Chromium's frame-hide cells are red at ddb446fae, whose gate read no pointerout
 // with no button down, and under a gate without that arm and without the blur's rule, the pen's cell also under one whose arm
 // marks the mouse's records alone and that reads no blur, and Firefox's cells of a tap whose compatibility events went to
@@ -1287,11 +1293,15 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
      *  hears the press's pointerdown and mousedown and no pointerup; then another document's tap on an element over the control that
      *  hides at that tap's compatibility mousedown, whose mouseup of detail 1 and click alone land in the viewer, WebKit's click under
      *  pointerId 1 typed mouse, the held mouse's own, and Firefox's under pointerId 0 typed touch; in WebKit the held mouse is then
-     *  released on the top page's bar. */
-    const lostUp = async (pre: string, on: "control" | "picture", released: boolean): Promise<void> => {
-      const what = (released ? "the mouse pressed on the control and released in the other pane" : "the mouse held on the " + on) + ", then another document's tap on an element over the control that hides at that tap's compatibility mousedown";
+     *  released on the top page's bar. Where `cancels` is given (WebKit's cells), the blurs of the viewer's window before the covered
+     *  click are asserted: one or more where the element cancels nothing, since it takes the focus at that tap's compatibility
+     *  mousedown and the blur's rule refuses the cell too, and none where it cancels that mousedown, so the refusal of a record still
+     *  standing at a click alone refuses (the file review's round 19, with the blur's rule built). */
+    const lostUp = async (pre: string, on: "control" | "picture", released: boolean, cancels?: boolean): Promise<void> => {
+      const what = (released ? "the mouse pressed on the control and released in the other pane" : "the mouse held on the " + on) + ", then another document's tap on an element over the control that hides at that tap's compatibility mousedown" + (cancels ? " and cancels it, so the focus stays in the viewer and no blur of the viewer's window comes" : "");
       await settle();
       const g = await shown(what);
+      if (cancels !== undefined) await focusKept(what);
       const from = on === "control" ? g.ctl : g.r.pt;
       const tapAt = on === "control" ? { x: Math.round(g.ctl.x), y: Math.round(g.ctl.y) } : g.tapAt;
       await s.page.mouse.move(Math.round(from.x), Math.round(from.y));
@@ -1301,7 +1311,7 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
       const st = await heard();
       assert.ok(n(st, "pointerdown") === 1 && st.some((e) => e.type === "pointerdown" && e.ptype === "mouse") && n(st, "mousedown") === 1 && n(st, "pointerup") === 0 && n(st, "click") === 0, at + what + ": the viewer hears the mouse's pointerdown and mousedown and no pointerup or click (a precondition): " + word(st));
       const stepOpens = await s.opens();
-      const over = await element(g.box, [g.ctl, tapAt], "mousedown:hide");
+      const over = await element(g.box, [g.ctl, tapAt], cancels ? "mousedown:hide+prevent" : "mousedown:hide");
       assert.ok(over[0] && over[1], at + what + ": the element over the control and the tap's point (a precondition): " + JSON.stringify(over));
       await topHeard();
       await tap(tapAt);
@@ -1309,6 +1319,7 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
       const top = await topHeard();
       const el = await drop();
       rec[what] = { step: word(st), tap: word(evs), top, el };
+      if (cancels !== undefined) await blurs(what, cancels, rec[what] as Record<string, unknown>);
       const c = evs.find((e) => e.type === "click");
       assert.ok(c && c.trusted && n(evs, "click") === 1 && n(evs, "mouseup") === 1 && evs.some((e) => e.type === "mouseup" && e.button === 0 && (e.detail ?? 0) > 0) && n(evs, "mousedown") + n(evs, "pointerdown") + n(evs, "pointerup") === 0 && (engine === "webkit" ? c.pid === 1 && c.ptype === "mouse" : c.pid === 0 && c.ptype === "touch"), at + what + ": the viewer hears that tap's mouseup of detail 1 and its trusted click alone, the click under " + (engine === "webkit" ? "pointerId 1 typed mouse" : "pointerId 0 typed touch") + " (a precondition): " + word(evs));
       assert.ok(top.includes("mousedown") && el === "tcover:none", at + what + ": the tap's compatibility mousedown went to the top page's element, hidden at it (a precondition): " + JSON.stringify({ top, el }));
@@ -1396,11 +1407,12 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
         window.addEventListener("pointerout", (e: any) => { if (e.relatedTarget === null && e.buttons > 0 && e.pointerType === "mouse") w.__tlv++; }, true);
       });
       const leaves = (): Promise<number> => s.fr.evaluate(() => { const w = window as any; const k = w.__tlv; w.__tlv = 0; return k; });
-      for (const hideOn of ["mousedown", "pointerdown"]) {
-        const what = "the mouse pressed on the control and released in the other pane, then another document's mouse click on an element over the control that hides at that click's " + hideOn;
+      for (const [hideOn, cancels] of [["mousedown", false], ["pointerdown", false], ["mousedown", true], ["pointerdown", true]] as Array<[string, boolean]>) {
+        const what = "the mouse pressed on the control and released in the other pane, then another document's mouse click on an element over the control that hides at that click's " + hideOn + (cancels ? " and cancels its mousedown, so the focus stays in the viewer and no blur of the viewer's window comes" : "");
         await settle();
         const g = await shown(what);
         const pt = { x: Math.round(g.ctl.x), y: Math.round(g.ctl.y) };
+        await focusKept(what);
         await leaves();
         await s.page.mouse.move(pt.x, pt.y);
         await s.page.mouse.down();
@@ -1411,7 +1423,7 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
         const left = await leaves();
         assert.ok(n(st, "pointerdown") === 1 && n(st, "mousedown") === 1 && n(st, "pointerup") === 0 && n(st, "click") === 0 && left > 0, at + what + ": the viewer hears the mouse's pointerdown and mousedown, a pointerout with no relatedTarget and a button down as the press leaves its frame, and no pointerup or click (a precondition): " + word(st) + ", pointerouts " + left);
         const stepOpens = await s.opens();
-        const over = await element(g.box, [g.ctl, pt], hideOn + ":hide");
+        const over = await element(g.box, [g.ctl, pt], hideOn + ":hide" + (cancels ? ",mousedown:prevent" : ""));
         assert.ok(over[0] && over[1], at + what + ": the element over the control and the click's point (a precondition): " + JSON.stringify(over));
         await topHeard();
         await s.page.mouse.click(pt.x, pt.y);
@@ -1424,6 +1436,7 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
         assert.ok(c && c.trusted && c.pid === 0 && c.ptype === "mouse" && n(evs, "click") === 1 && n(evs, "pointerup") === 1 && n(evs, "mouseup") === 1 && evs.some((e) => e.type === "mouseup" && e.button === 0 && (e.detail ?? 0) > 0) && n(evs, "pointerdown") + n(evs, "mousedown") === 0, at + what + ": the viewer hears that click's pointerup, its mouseup of detail 1 and its trusted click under pointerId 0 typed mouse, and no pointerdown or mousedown (a precondition): " + word(evs));
         assert.ok(top.includes(hideOn) && el === "tcover:none", at + what + ": that click's " + hideOn + " went to the top page's element, hidden at it (a precondition): " + JSON.stringify({ top, el }));
         const clickOpens = await s.opens();
+        await blurs(what, cancels, rec[what] as Record<string, unknown>);
         cell("in Firefox, " + what + ": [the press's opens, the other document's click's, the next click's]", want3, [stepOpens, clickOpens, await next(what)]);
       }
       {
@@ -1601,8 +1614,10 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
         cell("in WebKit, " + what + ": [the viewer's tap's opens, the other document's click's, the next click's]", want3, [stepOpens, tapOpens, await next(what)]);
       }
       await mouseupEnds("in WebKit, ");
-      await lostUp("in WebKit, ", "control", false);
-      await lostUp("in WebKit, ", "picture", false);
+      await lostUp("in WebKit, ", "control", false, false);
+      await lostUp("in WebKit, ", "picture", false, false);
+      await lostUp("in WebKit, ", "control", false, true);
+      await lostUp("in WebKit, ", "picture", false, true);
       {
         const what = "the cost: the viewer's own tap on the picture, an element appearing at its pointerdown that takes the tap's pointerup and hides at it";
         await settle();
