@@ -231,7 +231,7 @@ jobs:
         env:
           # This run requires the SDK the step above installed, said as a switch rather than inferred
           # from GITHUB_ACTIONS (a future step that runs pytest without the SDK on purpose, as the
-          # served-page step in the extension job does, would red for the wrong reason under an
+          # served-page step in the served-pages job does, would red for the wrong reason under an
           # inference): tests/test_ci_sdk_pin.py's InstalledVersion FAILS, naming the interpreter, where
           # claude_agent_sdk does not import in the interpreter running pytest, instead of the warning a
           # box's bare road gets, and tests/test_session_host.py's switch case asserts that the host a
@@ -521,9 +521,16 @@ jobs:
     # against CI's 1121 s, less 44 s of work only the box does (a history sweep CI's shallow
     # checkout skips, and a slower strace leg), and 1571 s against 1222 s in two matched concurrent
     # runs with and without zsh. So the rule gives about 70 to 76 minutes (twice 19 min 40 s, 18 to
-    # 29 percent more, and half again). The macOS cap stays 60, the python job's macOS cap: the
-    # first macOS run (a dispatch or the weekly schedule) measures the step and may be cut at 60.
-    # The PR checks run the Linux cell alone, so they are not affected.
+    # 29 percent more, and half again), an estimate that already includes the half again. The
+    # macOS cap is 90, 14 minutes past the estimate's upper figure, because two of its inputs are
+    # weak: the factor of two comes from the Python suite rather than this step, and about three
+    # quarters of that file's time on the box was spent in child processes (the guard run as a node
+    # process, bash and dash), whose cost on a macOS runner has not been measured. 90 is past the
+    # hour the python job's macOS cap keeps (tests/test_ci_bats_bound.py holds it at 60 or less,
+    # since past an hour a hung cell holds the dispatch): the rule's figure for this step, 70 to 76
+    # minutes, is already past that hour, so a hung macOS cell here holds a dispatch for up to 90
+    # minutes. The first macOS run (a dispatch or the weekly schedule) measures the step, and the
+    # cap is re-read from it. The PR checks run the Linux cell alone, so they are not affected.
     # Follow-ups, in this order: (1) make the hook's per-paren case check linear (skipNested in
     # hooks/romp-track-bash-guard.mjs tests /\bcase\b/ over the whole slice read so far at every
     # `)`: about 210 s of this step on CI, and a stall of about 16 s in the hook itself on a command
@@ -535,8 +542,11 @@ jobs:
     # this job's among them, so a red here holds a batch as any other red does.
     # Placed between the secrets job and the vscode-extension job: tests/test_ci_sdk_pin.py splices
     # its synthetic Shell-job steps in before the secrets job's key and appends others at the end of
-    # the file, where the vscode-extension job must stay last.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 30 }}
+    # the file, where the served-pages job, the job of the served-page step, must stay last.
+    # tests/test_ci_vendored_job.py holds this job, its comments aside, equal to a literal (every
+    # key, step and field, both caps and the node version), so a change here changes that literal
+    # too, on purpose.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 90 || 30 }}
     strategy:
       fail-fast: false
       matrix:
@@ -561,18 +571,19 @@ jobs:
   vscode-extension:
     name: vscode-extension (typecheck + test + build)
     runs-on: ubuntu-latest
-    # Time-boxed like the Python jobs above, and for the same reason the cap must EXCEED the phase it
-    # guards plus the 600 s per-test timeout plus setup. This job's long phase is the served-page
-    # pytest step below, which grows with every served lab added (the focused section's, the widgets',
-    # the held-answer federation lab). Measured from the Actions API (2026-09-14): main's run
-    # 34812968222 took the job 14 min 42 s with the served step alone at 12 min 44 s, seconds under the
-    # old 15 min; PR 1598's run 34809524051 was CANCELLED at 15 min 16 s with the served step killed
-    # at 13 min 14 s and every earlier step green, so a PR adding a lab, or a slow runner, read as a
-    # red. 25 min = 13 min of labs + 600 s for one stalled test + setup, with margin; the served step
-    # names its slowest labs (--durations=20) so the next growth is visible in the log. The labs kept
-    # growing: PR 1790's run 35138058863 was cancelled at 25 min 04 s mid served-lab on a slow runner,
-    # every step green up to the cut (2026-09-16). 40 min: the served step's 20-odd minutes on a slow
-    # runner plus the 600 s per-test timeout plus setup. The Browser legs step below carries a bound of
+    # Time-boxed like the Python jobs above. Until 2026-09-28 this job also ran the served-page pytest
+    # step, which set its length and its cap: 15 minutes, then 25 (main's run 34812968222 took the job
+    # 14 min 42 s with that step at 12 min 44 s, and PR 1598's run 34809524051 was cancelled at
+    # 15 min 16 s), then 40 (PR 1790's run 35138058863 was cancelled at 25 min 04 s mid served lab on a
+    # slow runner, 2026-09-16). At the fork's main 1d591384e (run 36388144219) the job took 36 min 22 s
+    # of its 40: that step 1930 s, the steps before it 250 s. The step now has a job of its own
+    # (served-pages, below; its comment gives the figures and the reason). The cap stays at 40 until
+    # a run of this job without that step measures the job: the Browser legs step's comment records the
+    # job at a head where it still ran the served step, and tools/ci-browser-legs.test.mjs derives that
+    # step's margin from that record and this cap, so a lower cap here waits for the record to be
+    # re-measured. tests/test_ci_served_job.py holds this job, its comments aside, equal to a literal
+    # (every key, step and field, the cap included), so a change here changes that literal too, on
+    # purpose. The Browser legs step below carries a bound of
     # its own, 5 minutes (its timeout-minutes), the roster's budget, which fits within the job's margin
     # under this cap at the head the step's own comment names (tools/ci-browser-legs.test.mjs derives
     # the margin from that comment and this cap, so the figures have one home), so a step that runs to
@@ -654,9 +665,10 @@ jobs:
         # read of the switch changes inBrowser's own skip alone: a private skip is not turned into a failure by it, and
         # a private launch that fails is not inBrowser's failure naming the switch. The step sits directly after the
         # Chromium install with nothing before the Test step moved, so plans/markdown-viewer.md's CI sentence and the
-        # pin that reads it (tools/markdown-viewer-plan-gate-adopt.test.mjs) stay true. The Dashboard pane bench and the
-        # served-page tests below run only after this step passes: a red here skips them for the run, as a red step
-        # before them always has. The script (scripts/ci-browser-legs.sh) checks before node --test that every roster
+        # pin that reads it (tools/markdown-viewer-plan-gate-adopt.test.mjs) stay true. The Dashboard pane bench below
+        # runs only after this step passes: a red here skips it for the run, as a red step before it always has (the
+        # served-page tests run in a job of their own, served-pages, which a red here does not skip).
+        # The script (scripts/ci-browser-legs.sh) checks before node --test that every roster
         # line is a bundle path, listed once, whose source is in the tree and whose bundle is under out-tests/ (the Test
         # step's npm test built it; the Build step writes dist/ only), a red naming the line and the fix; after node
         # --test it reads its own reporter's record (scripts/ci-browser-legs-reporter.mjs) and a rostered leg with no
@@ -696,6 +708,65 @@ jobs:
         env:
           ROMP_UI_BENCH_REQUIRE: "1"
         run: node --test tests/ui-bench.test.mjs
+
+  served-pages:
+    name: Served pages (pytest, ubuntu-latest)
+    runs-on: ubuntu-latest
+    # The served-page tests have a job of their own (since 2026-09-28) because they outgrew the
+    # vscode-extension job, where they ran last. At the fork's main 1d591384e (run 36388144219) that
+    # job took 36 min 22 s of its 40-minute cap, 1930 s of it this step, and fork PRs 821, 857 and
+    # 860 each add served labs (about 205 s, 90 s and 90 s): 821 with either of the others in one
+    # batch would have run that job past its cap, and 857 with 860 would have left it 38 s. Raising
+    # that cap was declined, since it would hide the growth.
+    # In a job of its own the step is held to a cap sized for it alone, it runs beside the
+    # vscode-extension job instead of after that job's steps, and a red step there no longer skips it.
+    # The job repeats the setup the step needs and nothing else: the checkout, node with its npm
+    # cache, npm ci (the labs drive Chromium through the extension's playwright and build their
+    # bundles with its esbuild), the Playwright browser cache and the pinned Chromium, and Python.
+    # It has no Build step: the labs build the bundles themselves through tests/lab_dist.py
+    # (node esbuild.js, one build under a lock, then a copy per lab), which builds whenever its
+    # marker is absent, as it is after an npm run build, so the first lab built that step's dist
+    # again. On main's run the repeated steps took about 16 s: the checkout 6 s, node 1 s, npm ci
+    # 3 s, the cache 3 s, Chromium 1 s, and the job's own set-up and post steps.
+    # The cap is the expected time and half again: the step's 1930 s and about 16 s of setup is
+    # about 32 min 30 s, and half again is about 49 minutes, so 50. That also covers the step's
+    # other rule, the phase plus the 600 s per-test timeout plus setup (about 42 min 30 s), and the
+    # three PRs above together (about 385 s more, a job of about 38 min 50 s).
+    # No strategy key: the job has no matrix, so fail-fast would have no effect (it cancels a
+    # matrix's other cells when one fails, and this job has one cell).
+    # Last in the file: tests/test_ci_sdk_pin.py appends synthetic steps at the end of the file and
+    # reads them as this job's, the served step's. The fork has no ruleset or branch protection: a
+    # batch reads every check of a PR, this job's among them, so a red here holds a batch as any
+    # other red does.
+    # tests/test_ci_served_job.py holds this job, its comments aside, equal to a literal (every key,
+    # step and field, the cap included), so a change here changes that literal too, on purpose.
+    timeout-minutes: 50
+    defaults:
+      run:
+        working-directory: vscode-extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          # Resolved from the REPO ROOT, not from defaults.run.working-directory, as in the
+          # vscode-extension job.
+          cache-dependency-path: vscode-extension/package-lock.json
+      - name: Install deps
+        run: npm ci
+      - name: Cache Playwright's browsers
+        # Keyed on the lockfile, as in the vscode-extension job, so the two jobs restore one entry.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('vscode-extension/package-lock.json') }}
+      - name: Install the pinned Playwright Chromium
+        # The labs' browser: playwright's own download for the version package-lock pins, as in the
+        # vscode-extension job, whose install step says why it is not the image's Chrome and why the
+        # step has no --with-deps.
+        timeout-minutes: 5
+        run: npx playwright install chromium
       - uses: actions/setup-python@v5
         # For the served-page tests below: the image's python3 would do, but its pip refuses to install
         # into the system interpreter, and pytest is not on the image.
@@ -705,19 +776,21 @@ jobs:
         # tests/test_*_browser.py and tests/test_*_served.py boot a hermetic kernel and drive the real
         # dashboard pages in the headless Chromium installed above; on the Python matrix runners (no
         # node deps, no browser) they skip, and say why, so a served-page regression never turned CI
-        # red (the deep-link landing pin, 2026-09-10: red on main, CI green). This is the one job that
-        # has the browser and the built dist, so they run HERE, one pytest process, with
+        # red (the deep-link landing pin, 2026-09-10: red on main, CI green). This job installs what
+        # they need (the extension's node deps and Playwright's Chromium; the labs build the bundles
+        # themselves, once, and each serves its own copy; see the job's comment), so they run HERE, one pytest process, with
         # ROMP_SERVED_TESTS_REQUIRE=1 turning any skip in those files into a failure that carries the
-        # skip's reason (tests/conftest.py; the same stance as ROMP_UI_BENCH_REQUIRE above): a runner
-        # without the browser, the deps or a serving kernel turns the job red rather than green with
-        # the coverage gone. cryptography is what the push tests' kernel needs, as in the Python jobs.
+        # skip's reason (tests/conftest.py; the same stance as ROMP_UI_BENCH_REQUIRE in the
+        # vscode-extension job above): a runner without the browser, the deps or a serving kernel
+        # turns the job red rather than green with the coverage gone. cryptography is what the push
+        # tests' kernel needs, as in the Python jobs.
         # ROMP_SERVED_TESTS_ENGINES names the one engine this job installs: the pane-hiding test drives
         # Chromium, Firefox and WebKit, and its legs for engines a runner declares it does not have skip
         # as "optional", which the switch leaves alone (WebKit's system libraries would need apt, which
         # this step does not run; see the install step above). The matrix jobs are unchanged: still no
         # browser, still skipping these. --durations=20 names the slowest labs in the log: this step is
-        # the job's long phase (12 min 44 s on main, 2026-09-14, against the job's cap above), and every
-        # served lab added grows it, so the next growth should be visible by name.
+        # the job's one long phase (1930 s at the fork's main 1d591384e, against the job's cap above),
+        # and every served lab added grows it, so the next growth should be visible by name.
         # -p no:anyio, as on every pytest invocation in this file (tests/test_ci_sdk_pin.py's population
         # check holds the flag on each, with no exemption): this interpreter has no anyio today (the pip
         # line below installs pip, pytest, pytest-timeout and cryptography, none of which depends on it;

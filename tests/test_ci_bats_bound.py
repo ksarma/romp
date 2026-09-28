@@ -77,17 +77,23 @@ class PythonJobCeiling(unittest.TestCase):
 
 
 class ExtensionJobCeiling(unittest.TestCase):
-    """The vscode-extension job runs the served labs, which grow with every lab added: PR 1790's run was cancelled at the
-    job's 25-minute ceiling after 25 min 04 s mid lab on a slow runner, every step green up to the cut (2026-09-16). Forty
-    minutes: the served step's twenty-odd minutes on a slow runner plus the 600 s per-test timeout plus setup."""
+    """The vscode-extension job ran the served labs until 2026-09-28, and they set its cap: PR 1790's run was cancelled at
+    the job's 25-minute ceiling after 25 min 04 s mid lab on a slow runner, every step green up to the cut (2026-09-16), so
+    forty minutes, the served step's twenty-odd minutes on a slow runner plus the 600 s per-test timeout plus setup. The
+    labs now run in the served-pages job (tests/test_ci_served_job.py holds both jobs equal to literals, caps included). The
+    floor of forty stays until a run of the job without the served step measures it: the Browser legs step's comment
+    records the job at a head where it still ran that step, and tools/ci-browser-legs.test.mjs derives that step's margin
+    from that record and this cap."""
     def test_the_extension_job_gets_forty_minutes(self):
         src = open(WF).read()
         m = re.search(r"^  vscode-extension:\n((?:    .*\n|\n)+?)    defaults:\n", src, re.M)
         self.assertTrue(m, "the extension job's head moved: re-anchor this pin")
         t = re.search(r"^    timeout-minutes: (\d+)$", m.group(1), re.M)
         self.assertTrue(t, "the extension job has no plain timeout-minutes line")
-        self.assertGreaterEqual(int(t.group(1)), 40, "the served labs took 25 min 04 s on a slow runner against a 25-minute ceiling")
-        self.assertLessEqual(int(t.group(1)), 60, "past an hour a hung lab eats the run")
+        self.assertGreaterEqual(int(t.group(1)), 40, "the Browser legs step's margin is derived from this cap and the job time "
+                                "its comment records, taken while the job still ran the served labs: a lower cap waits for a "
+                                "run of the job without them to re-measure that record")
+        self.assertLessEqual(int(t.group(1)), 60, "past an hour a hung job eats the run")
 
 
 if __name__ == "__main__":
