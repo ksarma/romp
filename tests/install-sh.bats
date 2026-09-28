@@ -15,6 +15,12 @@ setup() {
     TEST_DIR="$(mktemp -d)"
     export HOME="$TEST_DIR/home"
     mkdir -p "$HOME"
+    # install.sh reads the state dir as ROMP_STATE_DIR, else XDG_STATE_HOME/romp, else the fake HOME's, and
+    # prints the dashboard link on ROMP_KERNEL_PORT (ROMP_SERVE_PORT is its other name), else the default port.
+    # A caller that sets them (the local sweep sets a private XDG_STATE_HOME and dead ports for every leg) would
+    # move the token file away from the fake HOME and the link off the port these tests expect, so they go with
+    # the real HOME.
+    unset ROMP_STATE_DIR XDG_STATE_HOME ROMP_KERNEL_PORT ROMP_SERVE_PORT
     export ROMP_NO_SERVICE=1 ROMP_NO_EXT=1 ROMP_NO_SDK=1
     # One try only: the closing dashboard-link block polls for the kernel's token
     # file, which never appears in this hermetic HOME — don't wait 10s for it.
