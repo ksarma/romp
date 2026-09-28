@@ -3,7 +3,8 @@
 that commit's full sha. scripts/batch.py verify and land read the record: a batch lands only on a passing
 sweep of its exact head (docs/batching.md).
 
-  run    [--tree DIR] [--python PATH] [--workers N] [--wrap LEG=PREFIX]... [--leg NAME...] [--flake [LEG=]TEXT]...
+  run    [--tree DIR] [--python PATH] [--served-python PATH] [--workers N] [--wrap LEG=PREFIX]... [--leg NAME...]
+         [--flake [LEG=]TEXT]...
          sweep the commit the tree's HEAD names, in a private checkout of it; exit 0 pass, 1 red, 2 refused
          to start, 3 invalid
   check  [SHA|HEAD] [--tree DIR] [--branch BR]
@@ -27,12 +28,13 @@ node, tsc and esbuild would read. After every leg it reads the checkout again wi
 and records the run invalid, naming the paths and the leg, when a tracked path changed or is gone; when any
 other file exists that no rule of a tracked .gitignore ignores (a .gitignore a leg wrote, the clone's
 info/exclude or a commit made in the clone excuses nothing); after the deps leg, when an ignored file exists
-outside vscode-extension/node_modules (bytecode, or a test module the tracked .gitignore covers, which pytest
-would load); when the clone's .git was replaced or its HEAD, config or info/exclude changed; or when one of
-those names is now in an ancestor directory. After the pytest leg it also reads the pytest leg's environment (the
-venv below) against the tree its build left, and records the run invalid, naming the paths, when a file there was
-added, changed or is gone. That re-read after each leg is the runner's one producer of invalid, and the legs after it
-do not run. The batcher's tree is read for its HEAD sha and branch only, so it need not
+outside vscode-extension/node_modules (bytecode, or a test module the tracked .gitignore covers, which the served
+leg's pytest would load) that the legs before it did not leave as it now is (the pytest leg's bytecode is excused
+while npm ci leaves it alone); when the clone's .git was replaced or its HEAD, config or info/exclude changed; or when
+one of those names is now in an ancestor directory. After the pytest leg and the served leg it also reads that leg's
+environment (the venvs below) against the tree its build left, and records the run invalid, naming the paths, when a
+file there was added, changed or is gone. That re-read after each leg is the runner's one producer of invalid, and the
+legs after it do not run. The batcher's tree is read for its HEAD sha and branch only, so it need not
 be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
 during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
 untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
@@ -43,19 +45,23 @@ removes the checkouts of runs that are no longer running. Every orphaned descend
 or not, is reparented to the runner and reaped as soon as it exits while the leg runs, so it does not stay in the
 leg's group as a defunct process.
 
-The legs, in order (LEGS): deps (`npm ci` from the sha's lockfile, in every checkout, since a fresh one has
-no node_modules; a --leg re-run runs it first as its setup), pytest, bats, manager and tools (node --test),
-ledger (scripts/upstream-ledger.py check), the three webview legs (typecheck, npm-test, build), and served (the
-browser-backed served-page tests, below). served is last because CI runs its served step after the extension job's
-Build, so the npm-test leg runs over a checkout holding no bundle a served test built, as CI's Test step does. Every
-head owes every leg, a member's head included, whatever its diff: the webview legs read files outside
-kernel/kernel.py, ui/ and vscode-extension/ (tests, other kernel modules, docs), and the served tests boot the kernel
-and serve the webview bundle, so no set of changed paths shows either may be skipped. deps, the webview legs and
-served are marked not owed only when the sha has no vscode-extension/package.json, and the ledger only when it has
-no ledger script; a reader refuses any other not-owed mark. Every leg runs even after an earlier one is red, so the
-result carries every leg's status.
+The legs mirror CI's two jobs that run pytest. In order (LEGS): pytest (all of tests/, below), deps (`npm ci` from the
+sha's lockfile, in every checkout, since a fresh one has no node_modules; a --leg re-run of a leg after it runs it first
+as its setup), bats, manager and tools (node --test), ledger (scripts/upstream-ledger.py check), the three webview legs
+(typecheck, npm-test, build), and served (the browser-backed served-page tests, below). pytest is first because CI's
+Python cells run it with no node dependencies and no browser: it runs in the fresh checkout before npm ci, with
+PLAYWRIGHT_BROWSERS_PATH at an empty directory, so the browser-backed tests skip there as they do in CI, and the other
+tests in the served globs' files (63 in six files when the served rulings were made) run with the SDK, as CI runs them.
+served is last because CI runs its served step after the extension job's Build, so the npm-test leg runs over a checkout
+holding no bundle a served test built, as CI's Test step does. Every head owes every leg, a member's head included,
+whatever its diff: the webview legs read files outside kernel/kernel.py, ui/ and vscode-extension/ (tests, other kernel
+modules, docs), and the served tests boot the kernel and serve the webview bundle, so no set of changed paths shows
+either may be skipped. deps, the webview legs and served are marked not owed only when the sha has no
+vscode-extension/package.json, and the ledger only when it has no ledger script; a reader refuses any other not-owed
+mark. Every leg runs even after an earlier one is red, so the result carries every leg's status.
 
-The pytest leg runs in a venv the runner builds, not in --python itself (sdk_environment): `python -m venv` from
+The pytest leg runs over all of tests/ (PYTEST_IGNORED aside), in a venv the runner builds, not in --python itself
+(sdk_environment): `python -m venv` from
 --python under <state dir>/sweeps/sdk/<key>, then the install steps of the python job in the swept sha's ci.yml
 (INSTALL_STEPS: pytest and its plugins, cryptography, and the Claude Agent SDK at the pin its SDK step reads from
 kernel/session_host.py), each run with the venv's python in place of `python`, as CI's Python cells run them. The
@@ -84,27 +90,46 @@ with the venv's bin, and the leg gets ROMP_SDK_REQUIRE=1 as CI's Run pytest step
 the pin test fails where the SDK does not import.
 
 The served leg mirrors CI's served step (SERVED_STEP, read by its name in whichever job of the swept sha's ci.yml holds
-it; read_served_step). It runs the files the globs on that step's pytest line select, and the pytest leg leaves exactly
-those files out (one --ignore each), as CI's Python cells collect them and skip them for want of a browser. The served
-leg runs as --python itself, never in the pytest leg's venv, with --python's directory leading its PATH: CI's served
-step runs these tests in an interpreter without the SDK, and a served test's kernel takes the SDK backend wherever the
-SDK imports, a combination CI never runs. So the runner refuses (exit 2, nothing recorded) a --python that has the SDK
-(the SDK step's distribution installed, or its module importable), that lacks a module the leg needs (pytest, xdist,
-pytest-timeout), or that lacks a package the served step's pip line installs (pip aside, the installer itself). The
-leg's environment is the allowlist's plus the served step's own env: block as ci.yml writes it at the swept sha
-(ROMP_SERVED_TESTS_REQUIRE, which turns a skip in those files into a failure, and ROMP_SERVED_TESTS_ENGINES), read and
-never restated here; a served step the runner does not read in full (a value holding an expression, a name the runner
-sets itself, an env: on its job or the workflow, a line of its run text other than a pip install and the one pytest
-line) is refused by name. The command is that pytest line (its flags held here as SERVED_FLAGS, which CiParity
-compares with the step) with the globs' expansion in their place, plus -n at the pytest leg's worker count (CI runs one
-process) and PYTEST_ISOLATION. The result records the step's job, env and globs, and --python's version and packages
-(runner.served).
+it; read_served_step). It runs the files the globs on that step's pytest line select, in one pytest process, as CI's
+served step runs them (SERVED_FLAGS, which CiParity compares with the step, with the globs' expansion in their place,
+and PYTEST_ISOLATION; no -n). It runs in a venv the runner builds for it (served_environment), never in the pytest
+leg's: `python -m venv` from --served-python (default --python) under <state dir>/sweeps/served/<key>, then the served
+step's own pip lines as ci.yml writes them, each with the venv's python in place of `python`, and nothing else. So the
+venv holds no SDK, as CI's served step installs none, while a served test's kernel takes the SDK backend wherever the
+SDK imports. --served-python must be the MAJOR.MINOR the actions/setup-python step before the served step in its job
+names (3.12 today, read from ci.yml, never restated), or the run is refused naming what to pass: an explicit
+interpreter, not one searched for on PATH, and --python by default, since the box's --python is that version. The key
+covers the pip lines and --served-python's path and whole version; the build, its marker (SERVED_MARKER), the tree
+check before each use and after the leg, the shared and exclusive locks and the refusals on a failed build are the
+pytest leg's venv's (_venv_environment). A built venv is refused too when its directory does not hold python3 as the
+same file as its python: the served tests' kernels are started as bin/romp-kernel (#!/usr/bin/env python3), so they
+run the first python3 on the leg's PATH, which leads with the venv's directory. The leg's environment is the
+allowlist's plus the served step's own env: block as ci.yml writes it at the swept sha (ROMP_SERVED_TESTS_REQUIRE,
+which turns a skip in those files into a failure, and ROMP_SERVED_TESTS_ENGINES), read and never restated here; a
+served step the runner does not read in full (a value holding an expression, a name the runner sets itself, an env:
+on its job or the workflow, a line of its run text other than a pip install and the one pytest line, a python-version:
+other than a quoted MAJOR.MINOR) is refused by name. The result records the step's job, env, globs, pip lines and
+Python version, and the venv's key, path, interpreter and version, every distribution in it with its version, and the
+pytest plugins they declare, which pytest loads on its own (runner.served).
+
+The served leg also runs, with the deps present, the tests outside the served globs that the pytest leg skipped for
+want of the extension's node_modules or a browser (DEPS_SKIP). Neither of CI's jobs runs them (the Python cells have
+neither; the served step runs only the globs), and the sweep before the served rulings ran them in its pytest leg,
+after npm ci, so the runner never runs less than it did. They are derived at run time, not listed: the pytest leg
+prints every skip with its node id and reason (-rfEs --no-fold-skipped), and deps_skipped reads, from its log's short
+summary, each skip outside the served globs whose reason DEPS_SKIP matches; the node ids join the served leg's command
+after the globs' files, and both legs' records name them. A pytest leg whose log has no closing summary line leaves
+the set unknown, and the served leg is then red naming why, never run without it. The count when the served rulings'
+condition was measured: 1 test in 1 file when measured on 2026-09-28 (tests/test_landing_bundles_built.py, whose
+build guard needs the extension's deps).
 
 The leg environment is an allowlist (LEG_ALLOW, leg_sets): USER and LOGNAME pass when set, and the runner
-sets everything else. PATH is the directory of --python (for the pytest leg, of its venv's python) and those of node,
-npm, bats, git and gitleaks, then /usr/bin and /bin; HOME is a private empty directory and XDG_STATE_HOME a private
-state root (session hosts off) under TMPDIR, a fresh short directory under /tmp removed at the end; npm_config_cache and
-PLAYWRIGHT_BROWSERS_PATH point at the shared caches the batcher's environment names; SHELL=/bin/bash,
+sets everything else. PATH is the directory of --python (for the pytest and served legs, of its venv's python) and
+those of node, npm, bats, git and gitleaks, then /usr/bin and /bin; HOME is a private empty directory and XDG_STATE_HOME
+a private state root (session hosts off) under TMPDIR, a fresh short directory under /tmp removed at the end;
+npm_config_cache and PLAYWRIGHT_BROWSERS_PATH point at the shared caches the batcher's environment names, but the
+pytest leg's PLAYWRIGHT_BROWSERS_PATH, an empty directory under TMPDIR (NO_BROWSERS), as CI's Python cells have no
+browser; SHELL=/bin/bash,
 LANG=C.UTF-8 and CI=true, as CI's runner has them; npm's global config and git's system config, which live
 outside HOME, are off (npm_config_globalconfig=/dev/null, GIT_CONFIG_NOSYSTEM=1); every ROMP_*_PORT the tree reads is a dead port (a box
 floor CI does not need); and each leg gets the switches CI sets on the matching step (LEG_ENV; the served leg's
@@ -138,7 +163,10 @@ run of that leg carries --flake naming it and its known-flake entry, once per le
 re-run or a full run (`--flake LEG=TEXT`). A leg that failed twice, or that a later run passed without --flake
 naming it, leaves no run at that sha able to pass; the runner refuses such a run up front, and the reader reads
 the result red, naming the failed run and its logs. An invalid run needs no flake, but the pass line names it.
-A --leg re-run refuses unless the newest run finished, is valid, and failed that leg.
+A --leg re-run refuses unless the newest run finished, is valid, and failed that leg. A --leg re-run of pytest
+runs with no setup, as the pytest leg runs before the deps; one naming pytest and a leg after deps is refused, since
+one run cannot give the two legs both checkouts. A --leg re-run of served also runs the tests the newest pytest leg at
+the sha skipped for want of the deps.
 
 The runner calls no nice, ionice, systemd-run, flock or slot script itself: a machine that runs legs
 under such wrappers passes them with --wrap. It imports nothing beyond the standard library.
@@ -162,10 +190,13 @@ import tempfile
 import time
 
 SCHEMA = 2
-LEGS = ("deps", "pytest", "bats", "manager", "tools", "ledger", "typecheck", "npm-test", "build", "served")
+# pytest first, before deps: CI's Python cells run pytest over all of tests/ with no node dependencies and no browser, so
+# the pytest leg runs in the fresh checkout before npm ci and with no browser (the served ruling's item 1, 2026-09-28).
+LEGS = ("pytest", "deps", "bats", "manager", "tools", "ledger", "typecheck", "npm-test", "build", "served")
 WEBVIEW_LEGS = ("typecheck", "npm-test", "build")
 # The browser-backed served-page tests, the files CI's served step selects: a leg of their own, as CI runs them in a
 # step of their own (the served ruling, 2026-09-28). Last in LEGS, as CI runs that step after its extension job's Build.
+# It also runs the tests outside those files that the pytest leg skipped for want of the deps (DEPS_SKIP).
 SERVED_LEG = "served"
 TEST_LEGS = ("pytest", "bats", "manager", "tools", "npm-test", "served")
 # The test legs pytest runs, whose tests are counted from pytest's summary line.
@@ -193,14 +224,17 @@ NO_PACKAGE_JSON = "no vscode-extension/package.json"
 EXIT_PASS, EXIT_RED, EXIT_REFUSED, EXIT_INVALID = 0, 1, 2, 3
 
 # The pytest command the runner builds (pytest_cmd): `<python> -m pytest tests -n <workers>`, then these flags, then
-# PYTEST_ISOLATION, one --ignore per PYTEST_IGNORED entry, and one --ignore per file the served leg runs. Against CI's
-# Run pytest step (.github/workflows/ci.yml, `python -m pytest -q -n <2 or 0> -p no:anyio --durations=10 --timeout=600
-# --timeout-method=thread`, collecting from the root, where test modules live only under tests/) the differences are:
-# -n at this machine's idle cores; -p no:cacheprovider, so nothing is written to a .pytest_cache in the checkout;
-# PYTEST_ISOLATION; the PYTEST_IGNORED list; and the served files, which CI's Python cells collect and skip for want of
-# a browser, and which the served leg runs. tests/test_sweep_runner.py (CiParity) holds the two sides to exactly these
-# differences.
-PYTEST_FLAGS = ("-q", "-p", "no:cacheprovider", "-p", "no:anyio", "--durations=10", "--timeout=600", "--timeout-method=thread")
+# PYTEST_ISOLATION and one --ignore per PYTEST_IGNORED entry. Against CI's Run pytest step (.github/workflows/ci.yml,
+# `python -m pytest -q -n <2 or 0> -p no:anyio --durations=10 --timeout=600 --timeout-method=thread`, collecting from
+# the root, where test modules live only under tests/) the differences are: -n at this machine's idle cores; -p
+# no:cacheprovider, so nothing is written to a .pytest_cache in the checkout; -rfEs --no-fold-skipped, which print
+# every skip with its node id and reason in the short summary beside pytest's default failures and errors (a bare -rs
+# would replace those), where the runner reads the tests the leg skipped for want of the deps (deps_skipped); PYTEST_ISOLATION; and the PYTEST_IGNORED list. The served globs' files are collected, as CI's
+# Python cells collect them: the leg runs before the deps and with no browser, so the browser-backed tests skip there as
+# in CI and the others in those files run with the SDK. tests/test_sweep_runner.py (CiParity) holds the two sides to
+# exactly these differences.
+PYTEST_FLAGS = ("-q", "-p", "no:cacheprovider", "-p", "no:anyio", "--durations=10", "--timeout=600", "--timeout-method=thread",
+                "-rfEs", "--no-fold-skipped")
 # No pytest.ini or conftest.py above the checkout configures the leg: an empty inifile, the rootdir pinned to the
 # checkout (a bare `-c /dev/null` would move it to /dev), and conftest.py files read from the checkout down only.
 PYTEST_ISOLATION = ("-c", os.devnull, "--rootdir=.", "--confcutdir=.")
@@ -228,8 +262,10 @@ WORKFLOW_KEYS_REFUSED = ("env", "defaults")
 # package of its own), as bin/romp-sdk-setup does; ROMP_GET_PIP_URL overrides it, as it does there.
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
 # The file a finished build writes last in the venv; a venv without it is a build that did not finish. It records the
-# venv's tree as the build left it (venv_tree), which every later use compares with the venv's tree then.
+# venv's tree as the build left it (venv_tree), which every later use compares with the venv's tree then. One name for
+# the pytest leg's venv, one for the served leg's.
 SDK_MARKER = "sweep-sdk.json"
+SERVED_MARKER = "sweep-served.json"
 # How many times one run reads the venv under a shared lock before it refuses: each read that finds it stale is
 # followed by a build under the exclusive lock, so a venv that still does not match its build on the last read is
 # refused rather than built again.
@@ -242,21 +278,23 @@ PYTEST_IGNORED = {
                                          "session can stop the session's own process tree; CI covers it once per batch"),
 }
 # The served leg's step in ci.yml, read by its name in whichever job holds it (read_served_step): the extension job
-# today; fork PR 928 moves it into a job of its own. Its env: block is the served leg's switches, and the globs on its
-# pytest line are the files the served leg runs and the pytest leg leaves out (the pytest leg's record says why).
+# today; fork PR 928 moves it into a job of its own. Its env: block is the served leg's switches, the globs on its
+# pytest line are the files the served leg runs, its pip lines are what the served leg's venv holds, and the
+# actions/setup-python step before it in its job names the Python version that venv is built from.
 SERVED_STEP = "Browser-backed served-page tests (pytest)"
-SERVED_LEFT_OUT = ("run by the served leg: ci.yml's served step selects them, and CI's Python cells collect them and "
-                   "skip them for want of a browser")
+SETUP_PYTHON = "actions/setup-python"
+# A python-version: the runner reads on that step: a quoted MAJOR.MINOR (YAML reads a plain 3.10 as the number 3.1).
+_PYTHON_VERSION = re.compile(r"""(['"])([0-9]+\.[0-9]+)\1""")
 # The keys the served step may carry. env: and run: are read; working-directory: must leave the step at the repository
 # root, where its globs resolve; shell: must be bash, which reads the run text the runner reads. if:, continue-on-error:
 # and timeout-minutes: change only whether CI runs the step or counts its red, and the leg runs and counts it always.
 SERVED_STEP_KEYS = ("name", "working-directory", "env", "run", "shell", "if", "continue-on-error", "timeout-minutes")
 SERVED_ROOT = "${{ github.workspace }}"
-# The served leg's command (served_cmd): `<python> -m pytest <the globs' expansion> -n <workers>`, then these flags,
-# which are the served step's pytest line's as ci.yml writes them, then PYTEST_ISOLATION. Against that line the
-# differences are the expansion in place of the globs, -n (CI's served step runs one process; the pytest leg ran these
-# files under the same -n before they had a leg of their own) and PYTEST_ISOLATION; CiParity holds the two sides to
-# exactly these differences.
+# The served leg's command (served_cmd): `<python> -m pytest <the globs' expansion> <the deps-skipped tests>`, then
+# these flags, which are the served step's pytest line's as ci.yml writes them, then PYTEST_ISOLATION. One process, as
+# CI's served step runs it: -n can pass what one process catches (a thread outliving its module, the first bundle
+# build). Against that line the differences are the expansion in place of the globs, the tests the pytest leg skipped
+# for want of the deps (DEPS_SKIP), and PYTEST_ISOLATION; CiParity holds the two sides to exactly these differences.
 SERVED_FLAGS = ("-q", "-rs", "-p", "no:cacheprovider", "-p", "no:anyio", "--durations=20", "--timeout=600",
                 "--timeout-method=thread")
 # pytest's options that take the next word as their value when written apart from it (read_served_step skips the
@@ -267,6 +305,30 @@ PYTEST_VALUE_OPTIONS = ("-p", "-n", "-c", "-k", "-m", "-o", "-r", "-W", "--rootd
 # A glob on the served step's pytest line: a relative pattern for .py files directly under tests/, the form the step
 # writes; anything else there is refused rather than read.
 _SERVED_GLOB = re.compile(r"tests/[A-Za-z0-9_.*?\[\]-]+\.py")
+# The tests outside the served globs that skip without the extension's node_modules or a browser run in neither of CI's
+# jobs: CI's Python cells have neither, and CI's served step runs only the globs. The sweep before the served ruling ran
+# them, in its pytest leg after npm ci, so the served leg runs them now, with the deps present, and the runner never runs
+# less than it did (the served ruling's condition, 2026-09-28). They are derived at run time from the pytest leg's own
+# log: every skip its short summary prints (`SKIPPED <node id> - <reason>`, PYTEST_FLAGS' -rfEs --no-fold-skipped) whose
+# node id is outside the served globs and whose reason matches DEPS_SKIP (deps_skipped). DEPS_SKIP is read off the
+# reasons the tree's tests give when they skip without the deps: every one of the 578 skips in the served globs' files
+# and the one outside them, measured on 2026-09-28, names one of these words, and none of the other 20 skips outside them
+# does (tests/test_sweep_runner.py, DepsSkipRule, holds it to those reasons). A reason it matches that is not about the
+# deps costs one more test the served leg runs, which skips there again; a deps reason it misses is a test no leg runs.
+DEPS_SKIP = re.compile(r"node_modules|npm ci|extension deps|playwright|chromium|esbuild|\bbrowser", re.I)
+DEPS_SKIP_WHY = ("the tests outside the served globs that the pytest leg skipped for want of the extension's node_modules "
+                 "or a browser: they run in neither of CI's jobs, so the served leg runs them with the deps present")
+# What the served ruling's condition measured on 2026-09-28 (all of tests/ run as the pytest leg runs them, in the SDK
+# venv, with no node_modules and no browser: 18428 passed, 599 skipped, 21 of the skips outside the served globs): the
+# tests outside the served globs that skip for want of the deps or a browser, and the files they are in. The run itself
+# derives the set (deps_skipped); this is the count the docstring, the help and docs/batching.md name.
+MEASURED_DEPS_SKIPS = {"date": "2026-09-28", "tests": 1, "files": ("tests/test_landing_bundles_built.py",)}
+MEASURED_TEXT = "%d test%s in %d file%s when measured on %s" % (
+    MEASURED_DEPS_SKIPS["tests"], "" if MEASURED_DEPS_SKIPS["tests"] == 1 else "s", len(MEASURED_DEPS_SKIPS["files"]),
+    "" if len(MEASURED_DEPS_SKIPS["files"]) == 1 else "s", MEASURED_DEPS_SKIPS["date"])
+# The pytest leg's PLAYWRIGHT_BROWSERS_PATH: an empty directory of this name under TMPDIR, so no browser is found there,
+# as none is on CI's Python cells; every other leg gets the shared cache.
+NO_BROWSERS = "no-browsers"
 # The commands of the deps leg and the three webview legs, all run in vscode-extension/ (CI's extension job runs
 # the same commands there; deps adds --no-audit --no-fund, which change what npm prints, not what it installs).
 DEPS_CMD = ("npm", "ci", "--no-audit", "--no-fund")
@@ -1048,7 +1110,8 @@ def verify_checkout(path, sha, entries):
 
 # After the deps leg (npm ci, whose dependencies' install scripts run), the one place an ignored file may appear: every
 # other ignored path it could leave (bytecode in a __pycache__, a module the tracked .gitignore covers) would be read
-# by the pytest leg after it.
+# by the served leg's pytest after it. An ignored file a leg before deps left (the pytest leg's bytecode, beside the
+# modules it imported) is excused when the deps leg left it as it was (ignored_now).
 DEPS_PRODUCTS = b"vscode-extension/node_modules/"
 # The files in the private clone's .git that decide what the runner's own git reads there (its HEAD, its repository
 # config, its excludes): a leg that changes one, or replaces .git itself, changes the re-read's verdict.
@@ -1099,13 +1162,39 @@ def tracked_ignored(path, entries, paths):
     return out, None
 
 
-def recheck_checkout(path, sha, entries, before, only_under=None):
+def _file_digest(path, rel):
+    """What a file under the checkout holds, to tell one a leg changed: a symlink's target, a file's sha256, or None."""
+    full = os.path.join(os.fsencode(path), rel)
+    try:
+        if os.path.islink(full):
+            return "link:" + os.fsdecode(os.readlink(full))
+        h = hashlib.sha256()
+        with open(full, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def ignored_now(path, entries):
+    """{path: digest} of every ignored file on disk in the checkout now (a file no tracked entry names that a rule of a
+    tracked .gitignore ignores, tracked_ignored): read before the deps leg, so the re-read after it excuses what a leg
+    before it left (the pytest leg's bytecode) and still counts what npm ci added or changed. Empty when git's read
+    fails, which excuses nothing."""
+    tracked = {n for n, (mode, _oid) in entries.items() if mode != b"160000"}
+    ignored, _err = tracked_ignored(path, entries, sorted(_disk_paths(path) - tracked))
+    return {n: _file_digest(path, n) for n in ignored or ()}
+
+
+def recheck_checkout(path, sha, entries, before, only_under=None, known=None):
     """[(class, [paths])] where the checkout differs from the sha's tree after a leg, read without trusting any state a
     leg could have written: every tracked entry as _entry_faults reads it; every other file on disk, found by the
     runner's own walk (_disk_paths), that no rule of a tracked .gitignore ignores (untracked: a root conftest.py, which
     pytest loads, or a file hidden by a .gitignore a leg wrote, by the clone's info/exclude or by a commit in the
     clone); with `only_under`, an ignored file outside it too (after deps, bytecode or a module the tracked .gitignore
-    covers, which pytest would still load); the clone's .git replaced or its HEAD, config or info/exclude changed since
+    covers, which pytest would still load), less one `known` (ignored_now before the leg) holds as it is now; the
+    clone's .git replaced or its HEAD, config or info/exclude changed since
     `before` (git_state); and a name of ANCESTOR_NAMES in an ancestor directory (ancestor). Ignored build products
     (node_modules, dist/, out-tests/, bytecode) are otherwise allowed."""
     faults = _entry_faults(path, entries)
@@ -1118,7 +1207,9 @@ def recheck_checkout(path, sha, entries, before, only_under=None):
     else:
         faults["untracked"] = [n for n in extra if n not in ignored]
     if only_under is not None:
-        faults["ignored outside " + os.fsdecode(only_under).rstrip("/")] = sorted(n for n in ignored if not n.startswith(only_under))
+        faults["ignored outside " + os.fsdecode(only_under).rstrip("/")] = sorted(
+            n for n in ignored if not n.startswith(only_under)
+            and not (known is not None and n in known and known[n] is not None and known[n] == _file_digest(path, n)))
     now_state = git_state(path)
     faults["git"] = sorted(os.fsencode(k) for k in set(before) | set(now_state) if before.get(k) != now_state.get(k))
     # A name of ANCESTOR_NAMES that appeared above the checkout during the leg (the refusal before the first leg saw
@@ -1337,16 +1428,19 @@ def build_path(python, env):
     return os.pathsep.join(dict.fromkeys(dirs + list(PATH_FLOOR)))
 
 
-def leg_context(tmpdir, python, env=None, pytest_python=None, served_env=None):
+def leg_context(tmpdir, python, env=None, pytest_python=None, served_env=None, served_python=None):
     """The per-run values the leg environment is built from: TMPDIR, the private HOME and state root under it (both
     removed with it), the shared npm and Playwright caches as the batcher's environment resolves them, PATH (every leg's
-    but the pytest leg's, the served leg's included: it leads with --python's directory), the pytest leg's PATH, which
-    leads with its own interpreter's directory (`pytest_python`, the venv sdk_environment builds; --python when the run
-    has no pytest leg), and the served step's env: block as read_served_step read it (`served_env`)."""
+    but the pytest leg's and the served leg's: it leads with --python's directory), the pytest leg's PATH, which leads
+    with its own interpreter's directory (`pytest_python`, the venv sdk_environment builds; --python when the run has no
+    pytest leg), the served leg's PATH, which leads with its venv's directory (`served_python`, the venv
+    served_environment builds; --python when the run has no served leg), and the served step's env: block as
+    read_served_step read it (`served_env`)."""
     env = os.environ if env is None else env
     return {"tmpdir": tmpdir, "home": os.path.join(tmpdir, "home"), "xdg": os.path.join(tmpdir, "xdg-state"),
             "npm_cache": npm_cache(env), "browsers": browsers_path(env), "path": build_path(python, env),
-            "pytest_path": build_path(pytest_python or python, env), "served_env": dict(served_env or {})}
+            "pytest_path": build_path(pytest_python or python, env),
+            "served_path": build_path(served_python or python, env), "served_env": dict(served_env or {})}
 
 
 # The names the runner sets in every leg's environment from the run's context (leg_sets), beside LEG_FIXED,
@@ -1362,12 +1456,16 @@ def runner_set_names():
 
 
 def leg_sets(leg, ctx, from_ci=True):
-    """{name: value} the runner sets for `leg`: PATH (the pytest leg's own), the private HOME and XDG_STATE_HOME, TMPDIR,
-    the two shared caches (a private HOME has none), LEG_FIXED, TOOL_CONFIG_OFF, PORT_FLOOR and the leg's LEG_ENV; for
-    the served leg, also the served step's env: block read from the swept sha's ci.yml (ctx's served_env), unless
-    `from_ci` is False (leg_env_hash, which hashes the runner's own policy, not the sha's values)."""
-    sets = {"PATH": ctx["pytest_path"] if leg == "pytest" else ctx["path"], "HOME": ctx["home"], "TMPDIR": ctx["tmpdir"],
-            "XDG_STATE_HOME": ctx["xdg"], "npm_config_cache": ctx["npm_cache"], "PLAYWRIGHT_BROWSERS_PATH": ctx["browsers"]}
+    """{name: value} the runner sets for `leg`: PATH (the pytest leg's and the served leg's own), the private HOME and
+    XDG_STATE_HOME, TMPDIR, the shared npm cache and the shared Playwright cache (a private HOME has neither; the pytest
+    leg gets the empty NO_BROWSERS directory under TMPDIR instead, as CI's Python cells have no browser), LEG_FIXED,
+    TOOL_CONFIG_OFF, PORT_FLOOR and the leg's LEG_ENV; for the served leg, also the served step's env: block read from
+    the swept sha's ci.yml (ctx's served_env), unless `from_ci` is False (leg_env_hash, which hashes the runner's own
+    policy, not the sha's values)."""
+    path = {"pytest": ctx["pytest_path"], SERVED_LEG: ctx.get("served_path", ctx["path"])}.get(leg, ctx["path"])
+    browsers = os.path.join(ctx["tmpdir"], NO_BROWSERS) if leg == "pytest" else ctx["browsers"]
+    sets = {"PATH": path, "HOME": ctx["home"], "TMPDIR": ctx["tmpdir"], "XDG_STATE_HOME": ctx["xdg"],
+            "npm_config_cache": ctx["npm_cache"], "PLAYWRIGHT_BROWSERS_PATH": browsers}
     sets.update(LEG_FIXED)
     sets.update(TOOL_CONFIG_OFF)
     sets.update(PORT_FLOOR)
@@ -1390,12 +1488,12 @@ def leg_env(leg, ctx, base=None):
 
 
 def _tokenized(name, leg, value, ctx):
-    """A set value with its per-run and per-machine parts named instead: the leg's PATH (the pytest leg's own, else the
-    others') and the two caches whole, and every value under TMPDIR (TMPDIR, HOME, XDG_STATE_HOME) by its path below
-    it."""
+    """A set value with its per-run and per-machine parts named instead: the leg's PATH (the pytest leg's own, the served
+    leg's own, else the others') and the two caches whole, and every value under TMPDIR (TMPDIR, HOME, XDG_STATE_HOME,
+    the pytest leg's empty browser directory) by its path below it."""
     if name == "PATH":
-        own = ("pytest_path", "<PYTEST_PATH>") if leg == "pytest" else ("path", "<PATH>")
-        if value == ctx[own[0]]:
+        own = {"pytest": ("pytest_path", "<PYTEST_PATH>"), SERVED_LEG: ("served_path", "<SERVED_PATH>")}.get(leg, ("path", "<PATH>"))
+        if value == ctx.get(own[0]):
             return own[1]
     for key, token in (("npm_cache", "<NPM_CACHE>"), ("browsers", "<BROWSERS>")):
         if value == ctx[key]:
@@ -1425,7 +1523,8 @@ def policy_hash():
     t = os.path.join(os.sep + "nonexistent", TMPDIR_PREFIX + "0" * TMPDIR_TAIL)
     return leg_env_hash({"tmpdir": t, "home": os.path.join(t, "home"), "xdg": os.path.join(t, "xdg-state"),
                          "npm_cache": os.sep + "nonexistent-npm-cache", "browsers": os.sep + "nonexistent-browsers",
-                         "path": os.sep + "nonexistent-path", "pytest_path": os.sep + "nonexistent-pytest-path"})
+                         "path": os.sep + "nonexistent-path", "pytest_path": os.sep + "nonexistent-pytest-path",
+                         "served_path": os.sep + "nonexistent-served-path"})
 
 
 def recorded_hash(result):
@@ -1437,9 +1536,11 @@ def recorded_hash(result):
 
 
 def prepare_home(ctx):
-    """The private HOME (empty) and the private state root, with session hosts off in its romp directory (the
-    runner's own floor for leg code that starts a backend over the default state dir)."""
+    """The private HOME (empty), the pytest leg's empty browser directory (NO_BROWSERS), and the private state root, with
+    session hosts off in its romp directory (the runner's own floor for leg code that starts a backend over the default
+    state dir)."""
     os.mkdir(ctx["home"], 0o700)
+    os.mkdir(os.path.join(ctx["tmpdir"], NO_BROWSERS), 0o700)
     os.makedirs(os.path.join(ctx["xdg"], "romp"), mode=0o700)
     with open(os.path.join(ctx["xdg"], "romp", "session-hosts"), "w") as f:
         f.write("off\n")
@@ -1474,8 +1575,8 @@ def tool_versions(ctx):
 
 def expand(tree, patterns):
     """(every pattern's sorted matches relative to the tree, in the patterns' order, each file once; the first pattern
-    that matched nothing, or None). Every pattern is expanded, an empty one included, so a leg that leaves the files out
-    (the pytest leg, for the served leg's globs) leaves out all of them even where one pattern is empty."""
+    that matched nothing, or None). Every pattern is expanded, an empty one included, so every served file stays known
+    where one of the served globs is empty (deps_skipped leaves them all out of the tests the served leg also runs)."""
     import glob
     files, empty = [], None
     for pat in patterns:
@@ -1516,10 +1617,12 @@ def default_workers():
 
 # -- the pytest leg's environment: a venv at ci.yml's install steps, the SDK at its pin (round 1, the SDK ruling) --
 
-# What the runner asks of an interpreter (--python, and the venv it builds from it), as one JSON line: its version, short
-# and whole, which of PYTEST_MODULES it cannot find, whether it has ensurepip, the installed version of each
-# distribution named on its command line (None for one it does not have), and for each `import:NAME` argument whether
-# the top-level module NAME can be found (find_spec, which imports nothing for a top-level name).
+# What the runner asks of an interpreter (--python, and the venvs it builds), as one JSON line: its version, short and
+# whole, which of PYTEST_MODULES it cannot find, whether it has ensurepip, the installed version of each distribution
+# named on its command line (None for one it does not have), for each `import:NAME` argument whether the top-level
+# module NAME can be found (find_spec, which imports nothing for a top-level name), and with the argument `all:` every
+# distribution it holds with its version and the names of the pytest plugins they declare (the pytest11 entry points,
+# which pytest loads on its own), None without it.
 PROBE = ("# sweep probe\n"
          "import importlib.util, json, sys\n"
          "import importlib.metadata as md\n"
@@ -1528,21 +1631,26 @@ PROBE = ("# sweep probe\n"
          "        return md.version(d)\n"
          "    except md.PackageNotFoundError:\n"
          "        return None\n"
-         "args = sys.argv[1:]\n"
+         "whole = 'all:' in sys.argv[1:]\n"
+         "args = [a for a in sys.argv[1:] if a != 'all:']\n"
          "print(json.dumps({'version': sys.version.split()[0], 'full': sys.version, "
          "'missing': [m for m in %r if importlib.util.find_spec(m) is None], "
          "'ensurepip': importlib.util.find_spec('ensurepip') is not None, "
          "'dists': {d: ver(d) for d in args if not d.startswith('import:')}, "
-         "'found': {m[7:]: importlib.util.find_spec(m[7:]) is not None for m in args if m.startswith('import:')}}))\n"
+         "'found': {m[7:]: importlib.util.find_spec(m[7:]) is not None for m in args if m.startswith('import:')}, "
+         "'all': {str(x.metadata['Name']): x.version for x in md.distributions()} if whole else None, "
+         "'plugins': sorted({e.name for e in md.entry_points(group='pytest11')}) if whole else None}))\n"
          % (PYTEST_MODULES,))
 
 
-def probe(python, env, dists=(), what="the pytest interpreter", modules=()):
+def probe(python, env, dists=(), what="the pytest interpreter", modules=(), whole=False):
     """The PROBE's answer from `python`, run in `env` (build_env), for the distributions `dists` and the top-level
-    modules `modules`; Refused when it cannot run or does not answer."""
+    modules `modules`, and with `whole` every distribution and pytest plugin it holds; Refused when it cannot run or
+    does not answer."""
     try:
-        p = subprocess.run([python, "-c", PROBE, *dists, *("import:" + m for m in modules)], env=env, text=True,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=120)
+        p = subprocess.run([python, "-c", PROBE, *dists, *("import:" + m for m in modules), *(["all:"] if whole else [])],
+                           env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                           timeout=120)
     except (OSError, subprocess.SubprocessError) as e:
         raise Refused("%s %s cannot run: %s" % (what, python, e))
     if p.returncode != 0:
@@ -1552,7 +1660,8 @@ def probe(python, env, dists=(), what="the pytest interpreter", modules=()):
     except (ValueError, IndexError):
         out = None
     if (not isinstance(out, dict) or not isinstance(out.get("missing"), list) or not isinstance(out.get("dists"), dict)
-            or (modules and not isinstance(out.get("found"), dict))):
+            or (modules and not isinstance(out.get("found"), dict))
+            or (whole and not (isinstance(out.get("all"), dict) and isinstance(out.get("plugins"), list)))):
         raise Refused("%s %s answered its probe with %r" % (what, python, p.stdout.strip()[:300]))
     return out
 
@@ -1584,12 +1693,13 @@ def workflow_job(text, job):
     four spaces or more. A step is a `      - KEY:` line under the job's `steps:` key, whatever its first key, and the
     lines under it indented eight spaces or more: {"keys": [its keys in order: the dash line's, then each key line
     eight spaces in], "values": {key: the text after the colon, stripped}, "name": its name: value or None,
-    "run": its run text, "env": its env: block}. The run text is None with no run key, the value on the run line, or for
-    `run: |` the block under it less ten spaces of indent; False for another block style (`|-`, `>`) or a run key given
-    twice. The env: block is None with no env key, {NAME: the text after the colon, stripped} of the `NAME: VALUE` lines
-    ten spaces in under an `env:` key with nothing after its colon, or False for any other shape (a value on the env:
-    line, such as a flow mapping; a line in the block of another shape or depth; a name given twice; env: given twice).
-    A comment line is not a key."""
+    "run": its run text, "env": its env: block, "with": its with: block}. The run text is None with no run key, the value
+    on the run line, or for `run: |` the block under it less ten spaces of indent; False for another block style (`|-`,
+    `>`) or a run key given twice. The env: block is None with no env key, {NAME: the text after the colon, stripped} of
+    the `NAME: VALUE` lines ten spaces in under an `env:` key with nothing after its colon, or False for any other shape
+    (a value on the env: line, such as a flow mapping; a line in the block of another shape or depth; a name given twice;
+    env: given twice). The with: block is read the same way, its names allowed a dash (python-version). A comment line is
+    not a key."""
     lines = text.split("\n")
     if "  %s:" % job not in lines:
         return None
@@ -1612,7 +1722,7 @@ def workflow_job(text, job):
             continue
         m = re.fullmatch("      - " + key_re, line)
         if m:
-            cur = {"keys": [], "values": {}, "name": None, "run": None, "env": None}
+            cur = {"keys": [], "values": {}, "name": None, "run": None, "env": None, "with": None}
             steps.append(cur)
         else:
             m = re.fullmatch("        " + key_re, line) if cur is not None else None
@@ -1623,19 +1733,20 @@ def workflow_job(text, job):
         cur["values"][key] = value
         if key == "name":
             cur["name"] = value
-        if key == "env":
-            env = False if value or cur["keys"].count("env") > 1 else {}
+        if key in ("env", "with"):
+            block = False if value or cur["keys"].count(key) > 1 else {}
+            name_re = r"[A-Za-z_][A-Za-z0-9_]*" if key == "env" else r"[A-Za-z_][A-Za-z0-9_-]*"
             while i < len(body) and (body[i].startswith(" " * 10) or not body[i].strip()):
                 entry = body[i]
                 i += 1
                 if not entry.strip() or entry.strip().startswith("#"):
                     continue
-                em = re.fullmatch(" " * 10 + r"([A-Za-z_][A-Za-z0-9_]*):(?: (.*))?", entry)
-                if env is False or not em or em.group(1) in env:
-                    env = False
+                em = re.fullmatch(" " * 10 + "(" + name_re + r"):(?: (.*))?", entry)
+                if block is False or not em or em.group(1) in block:
+                    block = False
                     continue
-                env[em.group(1)] = (em.group(2) or "").strip()
-            cur["env"] = env
+                block[em.group(1)] = (em.group(2) or "").strip()
+            cur[key] = block
             continue
         if key != "run":
             continue
@@ -1932,9 +2043,13 @@ def _job_defaults(text, job):
 
 def read_served_step(checkout, sha):
     """The served leg's step in the swept sha's ci.yml (SERVED_STEP), found by its name in whichever job holds it and
-    read from the checkout: {"job", "step", "env", "globs", "requirements"}. env is the step's env: block, {NAME: value},
-    each value as YAML reads it (_env_value); globs are the file patterns on its one pytest line, in order; requirements
-    the distributions its pip install lines name. Refused, naming the file and the step, when ci.yml cannot be read; has
+    read from the checkout: {"job", "step", "env", "globs", "requirements", "install", "python"}. env is the step's env:
+    block, {NAME: value}, each value as YAML reads it (_env_value); globs are the file patterns on its one pytest line, in
+    order; requirements the distributions its pip install lines name, and install those lines as argvs (each starting
+    `python`, CI's name for the step's interpreter, which the served venv's build replaces with the venv's); python the
+    MAJOR.MINOR the nearest actions/setup-python step before it in its job sets up (its with: python-version:, a quoted
+    version, _PYTHON_VERSION), the interpreter the served venv is built from. Refused, naming the file and the step,
+    when that step or its python-version: is missing or not in that form; when ci.yml cannot be read; has
     a workflow-level env: or defaults: (either reaches the step); holds no step of that name, or two; the step's job has
     an env: (it reaches the step, and the runner reads the step's own env: alone) or a container:, a defaults: other
     than one run: working-directory: line in block form (_job_defaults), or a defaults: while the step names no
@@ -1963,8 +2078,8 @@ def read_served_step(checkout, sha):
         hits += [(job, spec, st) for st in (spec or {}).get("steps", []) if st["name"] == SERVED_STEP]
     if not hits:
         raise Refused("%s has no step %r in any job; the served leg runs the files that step's globs select, with its env: "
-                      "block, and the pytest leg leaves those files out, so a head whose ci.yml lacks it is not swept: merge "
-                      "main into it" % (where, SERVED_STEP))
+                      "block, in a venv its pip line builds, so a head whose ci.yml lacks it is not swept: merge main into it"
+                      % (where, SERVED_STEP))
     if len(hits) > 1:
         raise Refused("%s has %d steps named %r (in %s); the runner reads the served leg from one"
                       % (where, len(hits), SERVED_STEP, ", ".join("the %s job" % h[0] for h in hits)))
@@ -2009,7 +2124,17 @@ def read_served_step(checkout, sha):
     if not run:
         raise Refused("%s has %s" % (step_where, "no run line" if run is None else
                                      "a run the runner does not read (a block style other than |)"))
-    globs, requirements, pytest_lines = [], [], 0
+    setup = [x for x in spec["steps"][:spec["steps"].index(st)] if x["values"].get("uses", "").partition("@")[0] == SETUP_PYTHON]
+    if not setup:
+        raise Refused("%s: no %s step comes before it in the %s job, so the runner cannot tell which Python CI's served "
+                      "step runs; the served leg's venv is built from that version" % (step_where, SETUP_PYTHON, job))
+    version = (setup[-1]["with"] or {}).get("python-version") if setup[-1]["with"] is not False else None
+    m = _PYTHON_VERSION.fullmatch(version or "")
+    if not m:
+        raise Refused("%s: the %s step before it in the %s job sets python-version: %s, which the runner does not read (it "
+                      "reads a quoted MAJOR.MINOR, such as '3.12', under a with: block; YAML reads a plain 3.10 as 3.1)"
+                      % (step_where, SETUP_PYTHON, job, "nothing" if version is None else version))
+    globs, requirements, install, pytest_lines = [], [], [], 0
     for raw_line in run.split("\n"):
         line = raw_line.strip()
         if not line or line.startswith("#") or _SET_LINE.fullmatch(line):
@@ -2024,6 +2149,7 @@ def read_served_step(checkout, sha):
             raise Refused("%s: the line %r does not parse (%s)" % (step_where, line, e))
         if words[:4] == ["python", "-m", "pip", "install"] and len(words) > 4 and all(_PIP_WORD.fullmatch(w) for w in words[4:]):
             requirements += [re.split(r"[\[<>=!~]", w)[0] for w in words[4:] if not w.startswith("-")]
+            install.append(words)
             continue
         if words[:3] != ["python", "-m", "pytest"]:
             raise Refused("%s: the line %r is not one the runner reads (python -m pip install of plain requirements, and one "
@@ -2052,69 +2178,20 @@ def read_served_step(checkout, sha):
                       % (step_where, pytest_lines))
     if not globs:
         raise Refused("%s: its pytest line names no glob of test files" % step_where)
-    return {"job": job, "step": SERVED_STEP, "env": env, "globs": globs, "requirements": list(dict.fromkeys(requirements))}
+    return {"job": job, "step": SERVED_STEP, "env": env, "globs": globs, "requirements": list(dict.fromkeys(requirements)),
+            "install": install, "python": m.group(2)}
 
 
 def _dist_key(dist):
     return re.sub(r"[-_.]+", "-", dist).lower()
 
 
-def served_environment(checkout, sha, python, tmpdir, served):
-    """The served leg's interpreter, checked, and its record for the result (runner.served). The leg runs as --python
-    itself: CI's served step runs its tests in an interpreter without the SDK, so the runner refuses a --python that has
-    the SDK the python job's SDK step installs (read_install_plan: its distribution installed, or its module
-    importable), one missing a module the leg needs (PYTEST_MODULES: pytest, xdist for -n, pytest-timeout), one
-    missing a distribution the served step's pip lines install (pip aside, the installer itself), and one whose
-    directory does not hold python3 as the same file: the served tests' kernels run the first python3 on the leg's
-    PATH, which leads with that directory. The probe runs under build_env, as the SDK build's probes do. The record:
-    job, step, env and globs as read_served_step read them, python (its absolute path), python_version (its whole
-    sys.version) and packages ({distribution: version} of the ones the served step installs)."""
-    python = os.path.abspath(python) if os.sep in python else (shutil.which(python) or python)
-    plan = read_install_plan(checkout, sha)
-    wanted = [d for d in served["requirements"] if _dist_key(d) != "pip"]
-    modules = [plan["module"].split(".")[0]] if plan.get("module") else []
-    work = tempfile.mkdtemp(prefix="served-", dir=tmpdir)
-    try:
-        got = probe(python, build_env(python, work), wanted + [plan["dist"]], what="the served leg's interpreter",
-                    modules=modules)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-    where = "the served leg's interpreter %s (--python)" % python
-    has = got["dists"].get(plan["dist"])
-    found = [m for m in modules if (got.get("found") or {}).get(m)]
-    if has is not None or found:
-        raise Refused("%s has the SDK the python job installs (%s): CI's served step runs the served tests in an "
-                      "interpreter without it, and their kernel takes the SDK backend wherever the SDK imports, a "
-                      "combination CI never runs; pass --python an interpreter without it"
-                      % (where, "; ".join((["%s %s installed" % (plan["dist"], has)] if has is not None else []) +
-                                          ["module %s importable" % m for m in found])))
-    remedy = ("; pass --python an interpreter that has pytest, pytest-xdist, pytest-timeout and what the served step "
-              "installs, and not the SDK (a venv made for the sweep holds exactly that)")
-    if got["missing"]:
-        raise Refused("%s lacks %s, which the served leg needs (it runs pytest -n with pytest-timeout)%s"
-                      % (where, ", ".join(got["missing"]), remedy))
-    lacks = [d for d in wanted if got["dists"].get(d) is None]
-    if lacks:
-        raise Refused("%s lacks %s, which %s's step %r installs (the %s job)%s"
-                      % (where, ", ".join(lacks), CI_WORKFLOW, served["step"], served["job"], remedy))
-    # The served tests' kernels are started as bin/romp-kernel, whose first line is `#!/usr/bin/env python3`, so they run
-    # the first python3 on the leg's PATH (build_path: --python's directory first). The checks above hold for them only
-    # when that python3 is --python: in its directory (so it reads the same pyvenv.cfg) and the same file.
-    path = build_path(python, os.environ)
-    python3 = shutil.which("python3", path=path)
-    same = (python3 is not None and os.path.dirname(os.path.abspath(python3)) == os.path.dirname(python)
-            and os.path.samefile(python3, python))
-    if not same:
-        raise Refused("%s: the served tests' kernels run python3 from the leg's PATH (bin/romp-kernel starts with "
-                      "#!/usr/bin/env python3), and there that is %s, not this interpreter, so the SDK check above does "
-                      "not hold for them; pass --python an interpreter whose directory holds python3 as the same file "
-                      "(a venv's bin/python)" % (where, python3 or "not found"))
-    return {"job": served["job"], "step": served["step"], "env": dict(served["env"]), "globs": list(served["globs"]),
-            "python": python, "python_version": got.get("full"), "packages": {d: got["dists"].get(d) for d in wanted}}
-
-
 def sdk_dir(env=None):
     return os.path.join(sweeps_dir(env), "sdk")
+
+
+def served_dir(env=None):
+    return os.path.join(sweeps_dir(env), "served")
 
 
 def sdk_key(python, base, plan):
@@ -2123,6 +2200,14 @@ def sdk_key(python, base, plan):
     20 hex digits."""
     doc = {"pin": "%s==%s" % (plan["dist"], plan["pin"]), "python": os.path.abspath(python), "version": base.get("full"),
            "commands": [[s["step"], [cmd for _kind, cmd in s["commands"]]] for s in plan["steps"]]}
+    return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+
+
+def served_key(python, base, served):
+    """The served leg's environment's cache key: sha256 over --served-python's absolute path and whole sys.version and
+    the served step's pip lines as ci.yml writes them (so a line that adds or changes a package builds anew), in 20 hex
+    digits."""
+    doc = {"python": os.path.abspath(python), "version": base.get("full"), "install": [list(cmd) for cmd in served["install"]]}
     return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()[:20]
 
 
@@ -2140,10 +2225,10 @@ def build_env(python, tmpdir):
     return env
 
 
-def _build_sdk(venv, python, base, plan, env, log, tmpdir, where):
-    """Create the venv from --python (with --without-pip and PyPA's get-pip.py when it has no ensurepip) and run every
-    command of the install steps with the venv's python in place of `python`, each logged to `log`; Refused, naming the
-    step, the command and the log, on the first that fails or times out."""
+def _build_venv(venv, python, base, steps, env, log, tmpdir, where):
+    """Create the venv from `python` (with --without-pip and PyPA's get-pip.py when it has no ensurepip) and run every
+    (label, argv) of `steps` with the venv's python in place of the argv's `python`, each logged to `log`; Refused,
+    naming the step, the command and the log, on the first that fails or times out."""
     vpy = os.path.join(venv, "bin", "python")
     with open(log, "a") as out:
         out.write("# build: %s\n# key: %s\n# python: %s (%s)\n" % (now(), os.path.basename(venv), python, base.get("version")))
@@ -2180,15 +2265,14 @@ def _build_sdk(venv, python, base, plan, env, log, tmpdir, where):
                 raise Refused("%s: %s has no ensurepip, and get-pip.py could not be fetched from %s (%s); log %s"
                               % (where, python, url, e, log))
             step("get-pip", [vpy, dest, "-q"])
-        for s in plan["steps"]:
-            for _kind, cmd in s["commands"]:
-                step(s["step"], [vpy] + cmd[1:])
+        for label, cmd in steps:
+            step(label, [vpy] + cmd[1:])
 
 
 def venv_tree(venv):
-    """{relative path: entry} of every directory, file and symlink under the venv, links not followed, less SDK_MARKER:
-    ["dir", mode], ["link", target], ["file", mode, size, sha256 of its bytes], or ["other", its file type]. OSError when
-    a directory or file cannot be read."""
+    """{relative path: entry} of every directory, file and symlink under the venv, links not followed, less the build's
+    marker (SDK_MARKER, SERVED_MARKER): ["dir", mode], ["link", target], ["file", mode, size, sha256 of its bytes], or
+    ["other", its file type]. OSError when a directory or file cannot be read."""
     def fail(e):
         raise e
     out = {}
@@ -2197,7 +2281,7 @@ def venv_tree(venv):
         for x in dirs + files:
             full = os.path.join(d, x)
             key = os.path.normpath(os.path.join(rel, x))
-            if key == SDK_MARKER:
+            if key in (SDK_MARKER, SERVED_MARKER):
                 continue
             st = os.lstat(full)
             if stat.S_ISLNK(st.st_mode):
@@ -2234,10 +2318,10 @@ def venv_changes(built, now):
     return out
 
 
-class SdkHold:
-    """The pytest leg's environment as one run holds it from its check to the end of the run: a shared lock on the key's
-    lock file, so no other run rebuilds (which removes the venv) while this run's pytest leg may be running in it, and
-    the tree its build left, which changes() compares with the venv's tree now."""
+class VenvHold:
+    """A venv the runner built (the pytest leg's, the served leg's) as one run holds it from its check to the end of the
+    run: a shared lock on the key's lock file, so no other run rebuilds (which removes the venv) while this run's leg may
+    be running in it, and the tree its build left, which changes() compares with the venv's tree now."""
 
     def __init__(self, lock, venv, built):
         self.lock, self.venv, self.built = lock, venv, built
@@ -2264,7 +2348,7 @@ def _flock(lock, how, sha, waiting):
 
 
 def sdk_environment(checkout, sha, python, tmpdir):
-    """The pytest leg's interpreter and its record for the result, and the SdkHold the run keeps until it ends: a venv
+    """The pytest leg's interpreter and its record for the result, and the VenvHold the run keeps until it ends: a venv
     under <state dir>/sweeps/sdk/<key>, built from --python with the install steps ci.yml holds at the swept sha
     (read_install_plan: pytest and its plugins, cryptography, and the SDK at its pin), or the venv a finished build left
     under the same key (sdk_key: the pin, --python's path and version, the commands). The record: key, path, python (the
@@ -2289,16 +2373,131 @@ def sdk_environment(checkout, sha, python, tmpdir):
     plan = read_install_plan(checkout, sha)
     work = tempfile.mkdtemp(prefix="sdk-", dir=tmpdir)
     try:
-        return _sdk_environment(checkout, sha, python, plan, work)
+        return _venv_environment(_sdk_spec(sha, python, plan), sha, python, work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _sdk_check(venv, vpy, key, base, plan, env):
+def _sdk_spec(sha, python, plan):
+    """The pytest leg's environment as _venv_environment builds and checks it: the install steps' commands, the SDK at
+    ci.yml's pin and the modules the pytest leg needs (PYTEST_MODULES)."""
+    dist, pin = plan["dist"], plan["pin"]
+
+    def stale(got, _vpy):
+        if got["dists"].get(dist) != pin or got["missing"]:
+            return "it now has %s %s and lacks %s" % (dist, got["dists"].get(dist), ", ".join(got["missing"]) or "nothing")
+        return None
+
+    def refuse(got, _vpy):
+        if got["dists"].get(dist) != pin:
+            return "after the install steps the venv's %s is %s, not ci.yml's pin %s" % (dist, got["dists"].get(dist), pin)
+        if got["missing"]:
+            return "after the install steps the venv lacks %s, which the pytest leg needs" % ", ".join(got["missing"])
+        return None
+
+    return {"what": "the pytest leg's environment", "base_what": "the pytest interpreter", "base_check": None,
+            "root": sdk_dir(), "marker": SDK_MARKER, "key": lambda base: sdk_key(python, base, plan),
+            "where": lambda key: "the pytest leg's environment %s (%s==%s at %s, from %s)" % (key, dist, pin, short(sha), python),
+            "building": "%s==%s from %s" % (dist, pin, python),
+            "steps": [(s["step"], cmd) for s in plan["steps"] for _kind, cmd in s["commands"]],
+            "dists": [dist], "modules": [], "whole": False, "record": {"dist": dist, "pin": pin, "version": None},
+            "stale": stale, "refuse": refuse, "fill": lambda rec, got: rec.update(version=got["dists"][dist]),
+            "marker_doc": lambda got: {"dist": dist, "pin": pin, "version": got["dists"][dist]},
+            "ready": lambda rec: "the pytest leg's environment: %s %s (ci.yml's pin) in %s" % (dist, rec["version"], rec["path"])}
+
+
+def served_environment(checkout, sha, python, tmpdir, served):
+    """The served leg's interpreter and its record for the result (runner.served), and the VenvHold the run keeps until
+    it ends: a venv under <state dir>/sweeps/served/<key>, built from `python` (--served-python, default --python) with
+    the served step's own pip lines as ci.yml writes them at the swept sha (read_served_step) and nothing else, so
+    without the SDK, which the python job's install steps install and CI's served step does not; or the venv a finished
+    build left under the same key (served_key: the pip lines, the interpreter's path and whole version). Built, marked,
+    checked and locked as the pytest leg's venv is (_venv_environment). Refused before anything is recorded when `python`
+    is not the MAJOR.MINOR the served step's job sets up (served["python"], read from ci.yml), and when the build fails,
+    leaves the venv without a distribution its pip lines name, or leaves its directory without python3 as the same file
+    as its python (the served tests' kernels run the first python3 on the leg's PATH, which leads with that directory);
+    a finished venv found so is built again. The record: job, step, env, globs and python_ci (that version) as read_served_step read them, install
+    (the pip lines), key, path, python (the venv's), python_version (its whole sys.version), base_python and
+    base_version, packages ({distribution: version} of every distribution in the venv) and plugins (the pytest plugins
+    they declare, which pytest loads on its own), sdk (the SDK's version there, None when it is not installed) and
+    sdk_importable, tree, files, built, build_s and log."""
+    python = os.path.abspath(python) if os.sep in python else (shutil.which(python) or python)
+    plan = read_install_plan(checkout, sha)
+    work = tempfile.mkdtemp(prefix="served-", dir=tmpdir)
+    try:
+        rec, hold = _venv_environment(_served_spec(sha, python, plan, served), sha, python, work)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    rec.update(job=served["job"], step=served["step"], env=dict(served["env"]), globs=list(served["globs"]),
+               python_ci=served["python"], install=[list(cmd) for cmd in served["install"]])
+    return rec, hold
+
+
+def _served_spec(sha, python, plan, served):
+    """The served leg's environment as _venv_environment builds and checks it: the served step's pip lines on the Python
+    version its job sets up, every distribution they name present after the build, every distribution and pytest plugin
+    in the venv recorded, and whether the SDK is there."""
+    wanted = list(served["requirements"])
+    module = plan["module"].split(".")[0] if plan.get("module") else None
+
+    def base_check(base):
+        got = ".".join(str(base.get("version") or "").split(".")[:2])
+        if got != served["python"]:
+            raise Refused("the served leg's venv is built from Python %s, which %s at %s sets up for its step %r (the %s job); "
+                          "--served-python %s is %s (it defaults to --python): pass --served-python a Python %s interpreter "
+                          "(nothing need be installed in it: the venv holds what the served step's pip line installs)"
+                          % (served["python"], CI_WORKFLOW, short(sha), served["step"], served["job"], python,
+                             base.get("version"), served["python"]))
+
+    def lacking(got):
+        return [d for d in wanted if got["dists"].get(d) is None]
+
+    def python3_fault(vpy):
+        # The served tests' kernels are started as bin/romp-kernel, whose first line is `#!/usr/bin/env python3`, so they
+        # run the first python3 on the leg's PATH (build_path: the venv's directory first). What the venv holds is what
+        # they run only when that python3 is the venv's python: in its directory (so it reads the same pyvenv.cfg) and
+        # the same file.
+        python3 = shutil.which("python3", path=build_path(vpy, os.environ))
+        if (python3 is not None and os.path.dirname(os.path.abspath(python3)) == os.path.dirname(vpy)
+                and os.path.samefile(python3, vpy)):
+            return None
+        return ("the served tests' kernels run python3 from the leg's PATH (bin/romp-kernel starts with #!/usr/bin/env "
+                "python3), and there that is %s, not the venv's python, so what the venv holds does not hold for them"
+                % (python3 or "not found"))
+
+    def stale(got, vpy):
+        return "it lacks %s" % ", ".join(lacking(got)) if lacking(got) else python3_fault(vpy)
+
+    def refuse(got, vpy):
+        if lacking(got):
+            return "after the served step's pip line the venv lacks %s, which the line installs" % ", ".join(lacking(got))
+        return python3_fault(vpy)
+
+    def fill(rec, got):
+        rec.update(packages=dict(sorted(got["all"].items())), plugins=list(got["plugins"]), sdk=got["dists"].get(plan["dist"]),
+                   sdk_importable=bool(module and (got.get("found") or {}).get(module)))
+
+    return {"what": "the served leg's environment", "base_what": "--served-python", "base_check": base_check,
+            "root": served_dir(), "marker": SERVED_MARKER, "key": lambda base: served_key(python, base, served),
+            "where": lambda key: "the served leg's environment %s (the served step's pip line at %s, Python %s from %s)"
+                                 % (key, short(sha), served["python"], python),
+            "building": "the served step's pip line on Python %s from %s" % (served["python"], python),
+            "steps": [(served["step"], cmd) for cmd in served["install"]],
+            "dists": wanted + [plan["dist"]], "modules": [module] if module else [], "whole": True,
+            "record": {"packages": None, "plugins": None, "sdk": None, "sdk_importable": None},
+            "stale": stale, "refuse": refuse, "fill": fill,
+            "marker_doc": lambda got: {"install": [list(cmd) for cmd in served["install"]], "packages": got["all"],
+                                       "plugins": got["plugins"]},
+            "ready": lambda rec: "the served leg's environment: Python %s from the served step's pip line (%d packages, "
+                                 "pytest plugins: %s) in %s" % (served["python"], len(rec["packages"]),
+                                                                ", ".join(rec["plugins"]) or "none", rec["path"])}
+
+
+def _venv_check(spec, venv, vpy, key, base, env):
     """(None, probe, tree) when the venv is a finished build of `key` that nothing has changed since, else (why, None,
     None)."""
     try:
-        with open(os.path.join(venv, SDK_MARKER)) as f:
+        with open(os.path.join(venv, spec["marker"])) as f:
             marker = json.load(f)
     except (OSError, ValueError):
         return "no finished build", None, None
@@ -2315,12 +2514,12 @@ def _sdk_check(venv, vpy, key, base, plan, env):
         return ("it is not the tree its build wrote: %d path%s, %s%s" % (len(moved), "" if len(moved) == 1 else "s",
                 ", ".join(moved[:3]), ", ..." if len(moved) > 3 else "")), None, None
     try:
-        got = probe(vpy, env, [plan["dist"]], what="the pytest leg's environment's interpreter")
+        got = probe(vpy, env, spec["dists"], what=spec["what"] + "'s interpreter", modules=spec["modules"], whole=spec["whole"])
     except Refused as e:
         return str(e), None, None
-    if got["dists"].get(plan["dist"]) != plan["pin"] or got["missing"]:
-        return ("it now has %s %s and lacks %s" % (plan["dist"], got["dists"].get(plan["dist"]),
-                                                   ", ".join(got["missing"]) or "nothing")), None, None
+    why = spec["stale"](got, vpy)
+    if why:
+        return why, None, None
     if got.get("full") != base.get("full"):
         return "its interpreter is %r, not %r" % (got.get("full"), base.get("full")), None, None
     return None, got, tree
@@ -2330,38 +2529,46 @@ def _tree_digest(tree):
     return hashlib.sha256(json.dumps(tree, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def _sdk_environment(checkout, sha, python, plan, tmpdir):
+def _venv_environment(spec, sha, python, tmpdir):
+    """A venv the runner builds from `python` as `spec` describes it (_sdk_spec, _served_spec), and its record, and the
+    VenvHold the run keeps until it ends. The venv is <spec root>/<key>, its log <key>.log and its lock <key>.lock beside
+    it. A run reads it under a shared lock on the key, which it holds until it ends, and uses it only when its marker
+    names its key, its tree matches the one its build recorded (venv_changes), its probe passes the spec's check and it
+    reports the base interpreter's version; anything else is built again under the exclusive lock, which waits for
+    every other run holding it (_venv_build). Refused after SDK_ATTEMPTS reads that each find it stale."""
     env = build_env(python, tmpdir)
-    base = probe(python, env)
-    key = sdk_key(python, base, plan)
-    root = sdk_dir()
+    base = probe(python, env, what=spec["base_what"])
+    if spec["base_check"]:
+        spec["base_check"](base)
+    key = spec["key"](base)
+    root = spec["root"]
     os.makedirs(root, mode=0o700, exist_ok=True)
     venv = os.path.join(root, key)
     vpy = os.path.join(venv, "bin", "python")
     log = venv + ".log"
-    where = "the pytest leg's environment %s (%s==%s at %s, from %s)" % (key, plan["dist"], plan["pin"], short(sha), python)
-    rec = {"key": key, "path": venv, "python": vpy, "dist": plan["dist"], "pin": plan["pin"], "version": None,
-           "python_version": None, "tree": None, "files": None, "built": False, "build_s": 0.0, "log": log,
-           "base_python": os.path.abspath(python), "base_version": base.get("version")}
+    where = spec["where"](key)
+    rec = {"key": key, "path": venv, "python": vpy}
+    rec.update(spec["record"])
+    rec.update({"python_version": None, "tree": None, "files": None, "built": False, "build_s": 0.0, "log": log,
+                "base_python": os.path.abspath(python), "base_version": base.get("version")})
     lock = open(venv + ".lock", "a+")
     stale = None
     try:
         for _attempt in range(SDK_ATTEMPTS):
-            _flock(lock, fcntl.LOCK_SH, sha, "waiting for another run's build of the pytest leg's environment %s" % key)
-            stale, got, tree = _sdk_check(venv, vpy, key, base, plan, env)
+            _flock(lock, fcntl.LOCK_SH, sha, "waiting for another run's build of %s %s" % (spec["what"], key))
+            stale, got, tree = _venv_check(spec, venv, vpy, key, base, env)
             if stale is None:
-                rec.update(version=got["dists"][plan["dist"]], python_version=got.get("full"), tree=_tree_digest(tree),
-                           files=len(tree))
-                print("sweep %s: the pytest leg's environment: %s %s (ci.yml's pin) in %s, %s"
-                      % (short(sha), plan["dist"], rec["version"], venv, "built in %.0f s" % rec["build_s"] if rec["built"]
-                         else "built earlier"), flush=True)
-                return rec, SdkHold(lock, venv, tree)
+                spec["fill"](rec, got)
+                rec.update(python_version=got.get("full"), tree=_tree_digest(tree), files=len(tree))
+                print("sweep %s: %s, %s" % (short(sha), spec["ready"](rec), "built in %.0f s" % rec["build_s"] if rec["built"]
+                                             else "built earlier"), flush=True)
+                return rec, VenvHold(lock, venv, tree)
             fcntl.flock(lock, fcntl.LOCK_UN)
-            _flock(lock, fcntl.LOCK_EX, sha, "waiting for the other runs using the pytest leg's environment %s to finish, "
-                   "to rebuild it (%s)" % (key, stale))
-            stale, got, tree = _sdk_check(venv, vpy, key, base, plan, env)
+            _flock(lock, fcntl.LOCK_EX, sha, "waiting for the other runs using %s %s to finish, to rebuild it (%s)"
+                   % (spec["what"], key, stale))
+            stale, got, tree = _venv_check(spec, venv, vpy, key, base, env)
             if stale is not None:
-                _sdk_build(venv, vpy, python, base, plan, env, log, tmpdir, where, sha, key, stale, rec)
+                _venv_build(spec, venv, vpy, python, base, env, log, tmpdir, where, sha, key, stale, rec)
             fcntl.flock(lock, fcntl.LOCK_UN)
         raise Refused("%s does not match its own build after %d builds (%s); log %s" % (where, SDK_ATTEMPTS, stale, log))
     except BaseException:
@@ -2370,33 +2577,30 @@ def _sdk_environment(checkout, sha, python, plan, tmpdir):
         raise
 
 
-def _sdk_build(venv, vpy, python, base, plan, env, log, tmpdir, where, sha, key, stale, rec):
+def _venv_build(spec, venv, vpy, python, base, env, log, tmpdir, where, sha, key, stale, rec):
     """Remove whatever is at the venv's path and build it, under the exclusive lock; the marker, written last, records
     the tree the build left."""
     if os.path.lexists(venv):
-        print("sweep %s: rebuilding the pytest leg's environment %s (%s)" % (short(sha), key, stale), flush=True)
+        print("sweep %s: rebuilding %s %s (%s)" % (short(sha), spec["what"], key, stale), flush=True)
         shutil.rmtree(venv, ignore_errors=True)
         if os.path.lexists(venv):
             raise Refused("%s: the stale venv could not be removed (%s); remove it by hand" % (where, venv))
-    print("sweep %s: building the pytest leg's environment %s: %s==%s from %s; log %s" % (
-        short(sha), key, plan["dist"], plan["pin"], python, log), flush=True)
+    print("sweep %s: building %s %s: %s; log %s" % (short(sha), spec["what"], key, spec["building"], log), flush=True)
     t0 = time.monotonic()
     try:
-        _build_sdk(venv, python, base, plan, env, log, tmpdir, where)
-        got = probe(vpy, env, [plan["dist"]], what="the pytest leg's environment's interpreter")
-        if got["dists"].get(plan["dist"]) != plan["pin"]:
-            raise Refused("%s: after the install steps the venv's %s is %s, not ci.yml's pin %s; log %s"
-                          % (where, plan["dist"], got["dists"].get(plan["dist"]), plan["pin"], log))
-        if got["missing"]:
-            raise Refused("%s: after the install steps the venv lacks %s, which the pytest leg needs; log %s"
-                          % (where, ", ".join(got["missing"]), log))
+        _build_venv(venv, python, base, spec["steps"], env, log, tmpdir, where)
+        got = probe(vpy, env, spec["dists"], what=spec["what"] + "'s interpreter", modules=spec["modules"], whole=spec["whole"])
+        why = spec["refuse"](got, vpy)
+        if why:
+            raise Refused("%s: %s; log %s" % (where, why, log))
         if got.get("full") != base.get("full"):
             raise Refused("%s: the venv's interpreter is %r, not %r, the interpreter it was built from; log %s"
                           % (where, got.get("full"), base.get("full"), log))
         tree = venv_tree(venv)
-        write_result(os.path.join(venv, SDK_MARKER), {"key": key, "dist": plan["dist"], "pin": plan["pin"],
-                                                      "version": got["dists"][plan["dist"]], "python": os.path.abspath(python),
-                                                      "python_version": base.get("full"), "built": now(), "tree": tree})
+        doc = {"key": key}
+        doc.update(spec["marker_doc"](got))
+        doc.update(python=os.path.abspath(python), python_version=base.get("full"), built=now(), tree=tree)
+        write_result(os.path.join(venv, spec["marker"]), doc)
     except BaseException:
         shutil.rmtree(venv, ignore_errors=True)
         raise
@@ -2416,26 +2620,75 @@ def parse_wraps(values):
     return wraps
 
 
-def pytest_cmd(python, workers, left_out=()):
-    """The pytest leg's command: `<python> -m pytest tests -n <workers>`, PYTEST_FLAGS, PYTEST_ISOLATION, one --ignore
-    per PYTEST_IGNORED entry, then one per file in `left_out` (the served leg's files, which the served leg runs)."""
+def pytest_cmd(python, workers):
+    """The pytest leg's command: `<python> -m pytest tests -n <workers>`, PYTEST_FLAGS, PYTEST_ISOLATION and one --ignore
+    per PYTEST_IGNORED entry. The served globs' files are collected, as CI's Python cells collect them."""
     return [python, "-m", "pytest", "tests", "-n", str(workers), *PYTEST_FLAGS, *PYTEST_ISOLATION,
-            *("--ignore=%s" % p for p in sorted(PYTEST_IGNORED)),
-            *("--ignore=%s" % p for p in left_out if p not in PYTEST_IGNORED)]
+            *("--ignore=%s" % p for p in sorted(PYTEST_IGNORED))]
 
 
-def served_cmd(python, workers, files):
-    """The served leg's command: `<python> -m pytest <files> -n <workers>`, SERVED_FLAGS, PYTEST_ISOLATION."""
-    return [python, "-m", "pytest", *files, "-n", str(workers), *SERVED_FLAGS, *PYTEST_ISOLATION]
+def served_cmd(python, files, also=()):
+    """The served leg's command, one process as CI's served step runs it: `<python> -m pytest <files> <also>`,
+    SERVED_FLAGS, PYTEST_ISOLATION. `also` is the node ids the pytest leg skipped for want of the deps (deps_skipped)."""
+    return [python, "-m", "pytest", *files, *also, *SERVED_FLAGS, *PYTEST_ISOLATION]
+
+
+# The pytest leg's short summary (PYTEST_FLAGS' -rfEs --no-fold-skipped): the section's header, one `SKIPPED <node id> -
+# <reason>` line per skip (a collection-time skip names its module; a reason can run on over more lines), and the words
+# that begin its other lines.
+_SUMMARY_HEAD = re.compile(r"=+ short test summary info =+")
+_SKIPPED_LINE = re.compile(r"SKIPPED (tests/\S(?:.*?\S)?)(?: - (.*))?")
+_SUMMARY_WORD = re.compile(r"(?:PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS|DESELECTED) ")
+
+
+def deps_skipped(path, served_files):
+    """([node id, ...], None) of the tests outside `served_files` (the served globs' expansion) that the pytest leg's log
+    at `path` shows skipped for want of the extension's node_modules or a browser: each skip its short summary prints
+    whose reason DEPS_SKIP matches, in the log's order, each once. (None, why) when the log cannot be read or holds no
+    closing summary line (pytest did not finish, so its summary of skips is not whole): the set is then not known, and
+    the served leg, which would run it, is red naming why rather than run without it."""
+    data = _read_log(path) if path else None
+    if data is None:
+        return None, "the pytest leg's log cannot be read"
+    if not PYTEST_SUMMARY.findall(data):
+        return None, ("the pytest leg's log has no closing summary line (it did not finish), so the tests it skipped for want "
+                      "of the extension's node_modules or a browser are not known")
+    lines = data.split("\n")
+    heads = [i for i, line in enumerate(lines) if _SUMMARY_HEAD.fullmatch(line.strip())]
+    skips, cur = [], None
+    for line in lines[heads[-1] + 1:] if heads else ():
+        m = _SKIPPED_LINE.fullmatch(line)
+        if m:
+            cur = [m.group(1), m.group(2) or ""]
+            skips.append(cur)
+        elif _SUMMARY_WORD.match(line) or line.startswith("=") or PYTEST_SUMMARY.fullmatch(line):
+            cur = None
+        elif cur is not None:
+            cur[1] += "\n" + line
+    served = set(served_files)
+    out = [nodeid for nodeid, reason in skips if nodeid.split("::")[0] not in served and DEPS_SKIP.search(reason)]
+    return list(dict.fromkeys(out)), None
+
+
+def served_also(pytest_rec):
+    """([node id, ...], None): the tests the served leg also runs, the set the pytest leg's record names (its
+    deps_skipped); (None, why) when the record names none, or names why it is not known."""
+    d = pytest_rec.get("deps_skipped") if isinstance(pytest_rec, dict) else None
+    if isinstance(d, dict) and isinstance(d.get("tests"), list) and all(isinstance(t, str) for t in d["tests"]):
+        return list(d["tests"]), None
+    known = d.get("error") if isinstance(d, dict) and isinstance(d.get("error"), str) else "the pytest leg records none"
+    return None, ("the tests outside the served globs that the pytest leg skipped for want of the deps are not known (%s), "
+                  "and the served leg does not run without them" % known)
 
 
 def plan_legs(tree, python, workers, served=None):
     """{leg: record} with each leg's owed decision, command and cwd, planned over the fresh checkout; nothing runs
     here. deps (npm ci from the sha's lockfile) is owed whenever the sha has vscode-extension/package.json, since a
     fresh checkout never holds node_modules, and so are the webview legs and served, whatever the head changed
-    (WEBVIEW_WHY, SERVED_WHY). `served` is ci.yml's served step as read_served_step reads it (read from the tree when
-    not given): the served leg runs the files its globs select, and the pytest leg leaves exactly those files out
-    (left_out), whether or not the served leg is owed, as CI's Python cells never run them."""
+    (WEBVIEW_WHY, SERVED_WHY). The pytest leg collects all of tests/, the served globs' files included, as CI's Python
+    cells do. `served` is ci.yml's served step as read_served_step reads it (read from the tree when not given): the
+    served leg runs the files its globs select, in one process, and at run time also the tests the pytest leg skipped
+    for want of the deps (deps_skipped), which join its command before it runs."""
     legs = {}
     package = os.path.exists(os.path.join(tree, "vscode-extension", "package.json"))
     served = read_served_step(tree, "HEAD") if served is None else served
@@ -2448,13 +2701,12 @@ def plan_legs(tree, python, workers, served=None):
             else:
                 rec.update(cmd=list(DEPS_CMD), cwd="vscode-extension", why="a fresh checkout has no vscode-extension/node_modules")
         elif name == "pytest":
-            rec.update(cmd=pytest_cmd(python, workers, served_files), cwd=".", ignored=dict(PYTEST_IGNORED),
-                       left_out={"globs": list(served["globs"]), "files": len(served_files), "why": SERVED_LEFT_OUT})
+            rec.update(cmd=pytest_cmd(python, workers), cwd=".", ignored=dict(PYTEST_IGNORED))
         elif name == SERVED_LEG:
             if not package:
                 rec.update(owed=False, why=NO_PACKAGE_JSON)
             else:
-                rec.update(cmd=served_cmd(python, workers, served_files), cwd=".", globs=list(served["globs"]), why=SERVED_WHY)
+                rec.update(cmd=served_cmd(python, served_files), cwd=".", globs=list(served["globs"]), why=SERVED_WHY)
                 if served_empty:
                     rec.update(empty_glob=served_empty)
         elif name in GLOBS:
@@ -2478,10 +2730,12 @@ def plan_legs(tree, python, workers, served=None):
     return legs
 
 
-# What a leg's record holds from its plan (plan_legs); the rest is the attempt, which a --leg re-run replaces.
-PLAN_KEYS = ("owed", "why", "cmd", "cwd", "ignored", "left_out", "globs", "empty_glob")
+# What a leg's record holds from its plan (plan_legs, and for the served leg the tests it also runs, `also`, set before
+# it runs, with `blocked` when that set is not known); the rest is the attempt, which a --leg re-run replaces. The
+# pytest leg's attempt records the tests it skipped for want of the deps (`deps_skipped`, deps_skipped).
+PLAN_KEYS = ("owed", "why", "cmd", "cwd", "ignored", "globs", "empty_glob", "also", "blocked")
 ATTEMPT_KEYS = ("rc", "error", "started", "finished", "log", "summary", "tests", "failed", "wrap", "env_dropped", "env_set",
-                "left_running")
+                "left_running", "deps_skipped")
 
 PYTEST_SUMMARY = re.compile(r"^=*\s*(\d+ (?:failed|passed|skipped|errors?|deselected|xfailed|xpassed)\b[^\n]* in [0-9.]+s\b[^\n]*?)\s*=*$", re.M)
 # node --test's closing counts: `# pass N` from the TAP reporter (the default when stdout is not a terminal on
@@ -2548,8 +2802,9 @@ def leg_argv(wrap, env, cmd, shown=False):
 
 
 def run_leg(tree, name, rec, wraps, ctx, logdir):
-    """Run one owed leg and fill in its record. A glob that matched nothing, a cwd that does not exist or a
-    command that cannot start leaves rc empty with the reason in `error`: the leg is red, never run bare."""
+    """Run one owed leg and fill in its record. A glob that matched nothing, a set of tests it must also run that is
+    not known (`blocked`), a cwd that does not exist or a command that cannot start leaves rc empty with the reason in
+    `error`: the leg is red, never run bare."""
     env, dropped, extra = leg_env(name, ctx)
     wrap = wraps.get(name, wraps.get("*"))
     stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -2560,6 +2815,8 @@ def run_leg(tree, name, rec, wraps, ctx, logdir):
     cwd = os.path.join(tree, rec.get("cwd") or ".")
     if rec.get("empty_glob"):
         rec["error"] = "no files matched %s" % rec["empty_glob"]
+    elif rec.get("blocked"):
+        rec["error"] = rec["blocked"]
     elif not os.path.isdir(cwd):
         rec["error"] = "no directory %s in the tree" % rec.get("cwd")
     else:
@@ -2643,14 +2900,21 @@ def cmd_run(args):
                       "as a known flake); anything else is a failure: fix it and sweep the new head")
     if only and set(flakes) - set(only):
         raise Refused("--flake names %s, which this --leg re-run does not run" % ", ".join(sorted(set(flakes) - set(only))))
+    after_deps = [n for n in only if LEGS.index(n) > LEGS.index("deps")]
+    if "pytest" in only and "deps" not in only and after_deps:
+        # A --leg re-run installs the deps first as its setup, and the pytest leg runs before them, in a checkout with no
+        # node_modules; one run cannot give it both.
+        raise Refused("--leg pytest runs before the deps, in a checkout with no node_modules, and %s after them, so this "
+                      "re-run would need its setup (npm ci) between the two; re-run pytest in a --leg run of its own, then "
+                      "the others" % ", ".join(after_deps))
     # The batcher's tree is read for its HEAD sha and its branch only: the legs run in a private checkout of the sha,
     # so uncommitted edits there are not swept, and the batcher is told so.
     dirty = uncommitted_count(tree)
     if dirty:
         print("sweep %s: %s has %d uncommitted edit%s (git status); they are not swept: the legs run in a private "
               "checkout of %s" % (short(sha), tree, dirty, "" if dirty == 1 else "s", short(sha)), flush=True)
-    # The interpreter the pytest leg's environment is built from (sdk_environment), and the one the served leg runs in
-    # (served_environment); the pytest leg runs in the venv built from it.
+    # The interpreter the pytest leg's environment is built from (sdk_environment), and by default the one the served
+    # leg's is built from (served_environment, --served-python); each leg runs in the venv built for it.
     python = args.python or sys.executable
     d = sweeps_dir()
     os.makedirs(d, mode=0o700, exist_ok=True)
@@ -2722,6 +2986,7 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
     run = {"kind": "leg" if only else "full", "sha": sha, "branch": branch, "tree": tree, "started": now(), "finished": None,
            "flakes": flakes, "runner": {"script_blob": script_blob(), "python": python, "python_version": ""},
            "legs": {}, "verdict": "running", "red": [], "invalid": None}
+    base_legs = {}
     if only:
         rec, why = effective(data)
         if rec is None or any(name not in (data["runs"][rec["full_run"] - 1].get("legs") or {}) for name in LEGS):
@@ -2744,6 +3009,8 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             if passed(name, old):
                 raise Refused("%s passed at %s; there is no failure to re-run" % (name, short(sha)))
         workers = args.workers or (rec.get("runner") or {}).get("workers") or default_workers()
+        # the served leg's re-run also runs the tests the newest pytest leg at this sha skipped for want of the deps
+        base_legs = rec["legs"]
         for name in only:
             new = {k: rec["legs"][name][k] for k in PLAN_KEYS if k in rec["legs"][name]}
             if name == "pytest":
@@ -2756,7 +3023,8 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
     # The legs run in a private clone of the exact sha under the state dir (A1), verified against the sha's tree before
     # any leg (A2) and re-read after every leg (A4); it and TMPDIR are removed on every exit path (A5).
     sweep_stale_checkouts(sha)
-    checkout = marker = tmpdir = hold = None
+    checkout = marker = tmpdir = hold = served_hold = None
+    served_python = getattr(args, "served_python", None) or python
     try:
         checkout, marker, create_s = make_checkout(tree, sha)
         _plant_for_tests(checkout)
@@ -2775,8 +3043,8 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         before = git_state(checkout)
         run["runner"]["checkout"] = {"form": "clone", "path": checkout, "create_s": create_s,
                                      "verify_s": round(time.monotonic() - t0, 2), "files": len(entries), "setup": None}
-        # ci.yml's served step, found by its name in whichever job holds it: the served leg's files and switches, and the
-        # files the pytest leg leaves out; a step the runner does not read in full is a refusal (read_served_step).
+        # ci.yml's served step, found by its name in whichever job holds it: the served leg's files, switches, pip lines
+        # and Python version; a step the runner does not read in full is a refusal (read_served_step).
         served = read_served_step(checkout, sha)
         served_files, served_empty = expand(checkout, served["globs"])
         if not only:
@@ -2814,23 +3082,29 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             sdk, hold = sdk_environment(checkout, sha, python, tmpdir)
             run["runner"].update(sdk=sdk, python_version=sdk["base_version"])
             pytest_python = sdk["python"]
-            run["legs"]["pytest"]["cmd"] = pytest_cmd(pytest_python, workers, served_files)
+            run["legs"]["pytest"]["cmd"] = pytest_cmd(pytest_python, workers)
+        served_vpy = None
         if SERVED_LEG in run["legs"] and is_owed(SERVED_LEG, run["legs"][SERVED_LEG]):
-            # The served leg runs as --python itself, which must hold no SDK and what the leg needs, checked before
-            # anything is recorded: an interpreter that fails is a refusal (served_environment).
-            run["runner"]["served"] = served_environment(checkout, sha, python, tmpdir, served)
+            # The served leg runs in a venv built from --served-python and the served step's own pip lines, never in the
+            # pytest leg's venv, where the SDK imports: built or reused before anything is recorded, and a build that
+            # fails is a refusal (served_environment).
+            served_rec, served_hold = served_environment(checkout, sha, served_python, tmpdir, served)
+            run["runner"]["served"] = served_rec
+            served_vpy = served_rec["python"]
             rec = run["legs"][SERVED_LEG]
-            rec.update(cmd=served_cmd(run["runner"]["served"]["python"], workers, served_files), globs=list(served["globs"]))
+            rec.update(cmd=served_cmd(served_vpy, served_files), globs=list(served["globs"]))
             rec.pop("empty_glob", None)
             if served_empty:
                 rec["empty_glob"] = served_empty
-        ctx = leg_context(tmpdir, python, pytest_python=pytest_python, served_env=served["env"])
+        ctx = leg_context(tmpdir, python, pytest_python=pytest_python, served_env=served["env"], served_python=served_vpy)
         prepare_home(ctx)
         run["runner"]["leg_env"] = {"allow": list(LEG_ALLOW), "hash": leg_env_hash(ctx)}
         run["runner"]["tools"] = tool_versions(ctx)
-        if only and "deps" not in only and os.path.exists(os.path.join(checkout, "vscode-extension", "package.json")):
-            # A fresh checkout has no node_modules, so a --leg re-run installs them from the sha's lockfile first, as CI
-            # does; without them the tools leg runs narrowed and can pass, and the served leg's tests cannot run.
+        if (only and "deps" not in only and any(LEGS.index(n) > LEGS.index("deps") for n in only)
+                and os.path.exists(os.path.join(checkout, "vscode-extension", "package.json"))):
+            # A fresh checkout has no node_modules, so a --leg re-run of a leg after deps installs them from the sha's
+            # lockfile first, as CI does; without them the tools leg runs narrowed and can pass, and the served leg's
+            # tests cannot run. A --leg re-run of pytest alone has no setup: the pytest leg runs with no node_modules.
             setup = {"owed": True, "cmd": list(DEPS_CMD), "cwd": "vscode-extension", "rc": None}
             print("sweep %s: setup (npm ci) ..." % short(sha), flush=True)
             run_leg(checkout, "deps", setup, wraps, ctx, logdir)
@@ -2848,24 +3122,44 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             rec = run["legs"].get(name)
             if rec is None or not is_owed(name, rec):
                 continue
+            if name == SERVED_LEG:
+                # The tests outside the served globs that the pytest leg skipped for want of the deps join the served
+                # leg's command: this run's pytest leg, or for a --leg re-run the newest one recorded at this sha. A set
+                # that is not known blocks the leg, which is then red naming why (run_leg).
+                also, why = served_also(run["legs"]["pytest"] if "pytest" in run["legs"] else base_legs.get("pytest"))
+                rec.pop("blocked", None)
+                rec["cmd"] = served_cmd(served_vpy, served_files, also or ())
+                if why is None:
+                    rec["also"] = {"tests": also, "count": len(also), "why": DEPS_SKIP_WHY}
+                    print("sweep %s: served also runs %d test%s the pytest leg skipped for want of the deps"
+                          % (short(sha), len(also), "" if len(also) == 1 else "s"), flush=True)
+                else:
+                    rec["also"] = {"error": why}
+                    rec["blocked"] = why
+            # before deps, the ignored files the legs before it left, which its re-read excuses as long as it leaves them
+            known = ignored_now(checkout, entries) if name == "deps" else None
             print("sweep %s: %s ..." % (short(sha), name), flush=True)
             run_leg(checkout, name, rec, wraps, ctx, logdir)
+            if name == "pytest":
+                ids, why = deps_skipped(rec.get("log"), served_files)
+                rec["deps_skipped"] = {"tests": ids, "count": len(ids), "rule": DEPS_SKIP.pattern} if why is None else {"error": why}
             print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
-            changed = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS if name == "deps" else None)
-            # A4 reads the pytest leg's environment too: a leg that changed the venv changed what this run's pytest leg,
-            # or another run's using the same venv, ran in, as a leg that changed the checkout changed the tree later
-            # legs run on. The next run that uses the venv finds it changed and builds it again (sdk_environment).
-            moved = hold.changes() if name == "pytest" and hold is not None else []
+            changed = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS if name == "deps" else None,
+                                       known=known)
+            # A4 reads the pytest and served legs' environments too: a leg that changed its venv changed what it, or
+            # another run's leg using the same venv, ran in, as a leg that changed the checkout changed the tree later
+            # legs run on. The next run that uses the venv finds it changed and builds it again (_venv_environment).
+            own = {"pytest": hold, SERVED_LEG: served_hold}.get(name)
+            moved = own.changes() if own is not None else []
             if changed or moved:
                 # A4, the runner's one producer of invalid: a leg changed the checkout, so later legs would not run on
-                # the sha's tree, or the pytest leg's environment, so the pytest leg may not have run in what its build
-                # installed.
+                # the sha's tree, or its own environment, so it may not have run in what its build installed.
                 parts = []
                 if changed:
                     parts.append("after the %s leg the checkout is not the sha's tree: %s" % (name, describe_faults(changed)))
                 if moved:
-                    parts.append("after the pytest leg its environment %s is not the tree its build wrote (%d path%s: %s%s); "
-                                 "the next run that uses it builds it again" % (hold.venv, len(moved), "" if len(moved) == 1
+                    parts.append("after the %s leg its environment %s is not the tree its build wrote (%d path%s: %s%s); "
+                                 "the next run that uses it builds it again" % (name, own.venv, len(moved), "" if len(moved) == 1
                                                                                  else "s", ", ".join(moved[:3]),
                                                                                  ", ..." if len(moved) > 3 else ""))
                 run["invalid"] = "; ".join(parts) + "; the legs after it did not run"
@@ -2876,10 +3170,11 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         run["runner"].update(home_empty=not left, home_left=left[:20])
     finally:
         reap_descendants()
-        # The shared lock on the pytest leg's environment is held to here, after the reap, so no rebuild removes the
-        # venv while anything this run started may still be running from it.
-        if hold is not None:
-            hold.release()
+        # The shared locks on the legs' environments are held to here, after the reap, so no rebuild removes a venv while
+        # anything this run started may still be running from it.
+        for h in (hold, served_hold):
+            if h is not None:
+                h.release()
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
         remove_checkout(checkout, marker)
@@ -2921,26 +3216,33 @@ def main(argv=None):
     p = sub.add_parser("run", help="sweep the tree's HEAD and record every leg's exit status",
                        description="Sweep the commit the tree's HEAD names: check it out into a private clone under the "
                                    "state dir and verify it against the sha's tree, build or reuse the pytest leg's venv at "
-                                   "the install steps of the sha's ci.yml (the SDK at its pin), read the served leg's files and "
-                                   "switches from the sha's ci.yml served step (the pytest leg leaves those files out), run "
-                                   "every owed leg there in order (%s), "
-                                   "append the run to the sha's result after every leg, and record it invalid if a leg "
-                                   "changed the checkout. The tree need not be clean; its uncommitted edits are not swept. "
-                                   "Exit 0 pass, 1 red, 2 refused to start, 3 invalid." % ", ".join(LEGS))
+                                   "the install steps of the sha's ci.yml (the SDK at its pin) and the served leg's venv at "
+                                   "the sha's ci.yml served step's pip line (no SDK), read the served leg's files and switches "
+                                   "from that step, run every owed leg there in order (%s): pytest over all of tests/ before "
+                                   "the deps and with no browser, as CI's Python cells run it, and served last, in one "
+                                   "process, as CI's served step runs it, with the tests outside the served globs that the "
+                                   "pytest leg skipped for want of the deps (%s); append the run to the sha's result after "
+                                   "every leg, and record it invalid if a leg changed the checkout or its venv. The tree need "
+                                   "not be clean; its uncommitted edits are not swept. Exit 0 pass, 1 red, 2 refused to "
+                                   "start, 3 invalid." % (", ".join(LEGS), MEASURED_TEXT))
     p.add_argument("--tree", metavar="DIR", help="the repository whose HEAD is swept (default: the one holding the current "
                                                  "directory); read for its HEAD sha and branch only")
     p.add_argument("--python", metavar="PATH", help="the interpreter the pytest leg's venv is built from (default: the one running "
                                                     "this script); the pytest leg runs in that venv, under <state "
                                                     "dir>/sweeps/sdk/<key>, which holds what the install steps of the sha's "
                                                     "ci.yml install (pytest and its plugins, cryptography, the Claude Agent SDK "
-                                                    "at its pin); a build that fails refuses the run. The served leg runs in "
-                                                    "this interpreter itself, as CI's served step runs without the SDK: one "
-                                                    "that has the SDK, or lacks pytest, xdist, pytest-timeout or a package the "
-                                                    "served step installs, or whose directory's python3 (what the served "
-                                                    "tests' kernels run) is another file, refuses the run; the "
-                                                    "system python usually lacks pytest, so pass a venv's bin/python")
-    p.add_argument("--workers", type=int, metavar="N", help="pytest -n for the pytest and served legs (default: the idle cores at "
-                                                            "launch, clamped to %d..%d)" % (WORKERS_MIN, WORKERS_MAX))
+                                                    "at its pin); a build that fails refuses the run. Nothing need be "
+                                                    "installed in it")
+    p.add_argument("--served-python", metavar="PATH",
+                   help="the interpreter the served leg's venv is built from (default: --python); it must be the Python "
+                        "version the sha's ci.yml sets up for its served step (3.12 today), or the run is refused naming "
+                        "what to pass. The served leg runs in that venv, under <state dir>/sweeps/served/<key>, which "
+                        "holds what the served step's pip line installs and nothing else, so not the Claude Agent SDK, as "
+                        "CI's served step installs none; a build that fails refuses the run. Nothing need be installed "
+                        "in it")
+    p.add_argument("--workers", type=int, metavar="N", help="pytest -n for the pytest leg (default: the idle cores at launch, "
+                                                            "clamped to %d..%d); the served leg runs one process, as CI's "
+                                                            "served step does" % (WORKERS_MIN, WORKERS_MAX))
     p.add_argument("--wrap", action="append", metavar="LEG=PREFIX",
                    help="a command prefix for that leg's argv (shlex-split); * means every leg, and a leg's own prefix "
                         "replaces * for it; the recorded rc is the wrapper's. The prefix runs with this runner's "

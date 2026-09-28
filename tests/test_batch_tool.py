@@ -1916,7 +1916,7 @@ class VerifyReadsTheSweep(_Base):
         as (kind, legs, flakes) or a run record."""
         stamp = sweep.now()
         failed = self.legs()
-        failed[sweep.LEGS[1]].update(rc=1, failed=1, log="logs/pytest.log")
+        failed[sweep.PYTEST_LEGS[0]].update(rc=1, failed=1, log="logs/pytest.log")      # the pytest leg
         runs = [self.fx.run_record(kind="full", sha=head, started=stamp, finished=stamp, flakes={}, legs=failed, invalid=None)]
         for item in later:
             if isinstance(item, dict):
@@ -1932,7 +1932,8 @@ class VerifyReadsTheSweep(_Base):
         failure and the flake; a re-run that names no flake is refused as invalid."""
         fx = self.fx
         head = self.assembled()
-        pytest_leg = sweep.LEGS[1]
+        pytest_leg = sweep.PYTEST_LEGS[0]
+        self.assertEqual(pytest_leg, "pytest")
         rerun = {pytest_leg: self.legs()[pytest_leg]}
         fx.sweep("b1", runs=self.history(head, ("leg", rerun, {pytest_leg: self.FLAKE})))
         p = fx.ok("verify", "b1")

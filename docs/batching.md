@@ -171,12 +171,12 @@ subject; `verify` refuses the branch otherwise.
    an earlier member's head) gets no merge commit of its own; it is recorded as contained, lands
    with the batch, and the body lists it as such under "Read these first" and in its table row.
 3. Run the local sweep at the batch head: `scripts/sweep.py run --tree ../romp-batch-<name> --python
-   <python>`, where `<python>` is an interpreter that has pytest, pytest-xdist, pytest-timeout and
-   what CI's served step installs (cryptography today), does not have the Claude Agent SDK, and has
-   a `python3` in its directory that is the same file. A venv made for the sweep, named by its
-   `bin/python`, meets all of that; the system python usually lacks pytest, and the sweep refuses
-   an interpreter that fails any of it, naming what is missing.
-   pytest runs in a venv holding what the batch head's `ci.yml` installs in CI's Python cells
+   <python>`, where `<python>` is a Python 3.12 interpreter, the version CI's served step runs.
+   Nothing need be installed in it: the runner builds a venv for each leg that runs pytest and runs
+   no test in `<python>` itself. When `<python>` is another version, pass
+   `--served-python <a 3.12 interpreter>` as well; the sweep refuses to build the served leg's venv
+   from any other version, naming what to pass.
+   The pytest leg runs in a venv holding what the batch head's `ci.yml` installs in CI's Python cells
    (pytest and its plugins, cryptography, and the Claude Agent SDK at the pin its SDK step reads),
    so the SDK-gated tests run as they do in CI. The runner builds the venv from `--python`
    (default: the interpreter running `sweep.py`) under `<state dir>/sweeps/sdk/`: the first sweep at
@@ -195,25 +195,30 @@ subject; `verify` refuses the branch otherwise.
    see what it sets). The legs run in a private clone of the batch
    head's exact sha under the state dir, verified against the sha's tree first, never in the batch
    worktree: the worktree need not be clean, and its uncommitted edits are not swept (the runner
-   prints how many there are). It runs `npm ci` from the sha's lockfile, pytest, bats, the manager
-   and tooling node tests, the ledger check, `npm run typecheck`, `npm test`, `npm run build` and
-   the served leg: every leg at every head, whatever it changed, since the webview tests and the
-   served tests also read files outside `kernel/kernel.py`, `ui/` and `vscode-extension/`. The
-   served leg runs what CI's served step runs. The runner finds that step by its name,
-   "Browser-backed served-page tests (pytest)", in whichever job of the head's `ci.yml` holds it.
-   It runs the files the step's globs select (`tests/test_*_browser.py` and
-   `tests/test_*_served.py` today) with the step's own `env:` block: `ROMP_SERVED_TESTS_REQUIRE`,
-   which turns a skip in those files into a failure, and `ROMP_SERVED_TESTS_ENGINES`. It runs them
-   in `--python` itself rather than in the pytest leg's venv, because CI runs them without the
-   SDK. It also passes `-n`, where CI's served step runs one process. The pytest leg leaves the
-   same files out, as CI's Python cells skip them for lack of a browser. The runner refuses the
-   sweep when `--python` has the SDK, or lacks pytest, pytest-xdist, pytest-timeout or a package
-   the served step installs, or when the `python3` in its directory is missing or another file: the
-   served tests start their kernels as `bin/romp-kernel`, which runs the first `python3` on the
-   leg's PATH. It also refuses a served step it does not read in full: an
-   expression in its `env:`, an `env:` on its job or the workflow, or a line in its `run:` other
-   than a pip install and the one pytest line. The served leg runs last, because CI runs the
-   served step after its Build step. The pane bench
+   prints how many there are). The legs mirror CI's Python cells and CI's served step. pytest runs
+   first, over all of `tests/`, before `npm ci` and with an empty browser directory, as CI's Python
+   cells run it: the browser-backed tests skip there, as in CI, and the other tests in the served
+   files run with the SDK. Then come `npm ci` from the sha's lockfile, bats, the manager and tooling
+   node tests, the ledger check, `npm run typecheck`, `npm test`, `npm run build` and the served
+   leg: every leg at every head, whatever it changed, since the webview tests and the served tests
+   also read files outside `kernel/kernel.py`, `ui/` and `vscode-extension/`. The served leg runs
+   what CI's served step runs. The runner finds that step by its name, "Browser-backed served-page
+   tests (pytest)", in whichever job of the head's `ci.yml` holds it. It runs the files the step's
+   globs select (`tests/test_*_browser.py` and `tests/test_*_served.py` today) with the step's own
+   `env:` block: `ROMP_SERVED_TESTS_REQUIRE`, which turns a skip in those files into a failure, and
+   `ROMP_SERVED_TESTS_ENGINES`. It runs them in one pytest process, as CI does, in a venv of their
+   own under `<state dir>/sweeps/served/`, built from the step's own pip line on the Python version
+   the step's job sets up (3.12 today) and holding nothing else, so without the SDK, as CI runs them.
+   That venv is reused, checked and rebuilt as the pytest leg's is. The served leg also runs the
+   tests outside the served files that the pytest leg skipped for want of the extension's
+   `node_modules` or a browser (1 test in 1 file when measured on 2026-09-28, the build guard in
+   `tests/test_landing_bundles_built.py`). Neither of CI's jobs runs those tests, and the sweep
+   ran them before its pytest leg moved ahead of `npm ci`, so the runner reads them from the pytest
+   leg's own log, by the reasons their skips give, and runs them with the deps present. The runner
+   refuses a served step it does not read in full: an expression in its `env:`, an `env:` on its
+   job or the workflow, a line in its `run:` other than a pip install and the one pytest line, or a
+   job whose setup-python step before it names no quoted `python-version:`. The served leg runs
+   last, because CI runs the served step after its Build step. The pane bench
    (`tests/ui-bench.test.mjs`), the Browser legs step (its roster checks, and the rostered browser
    tests with `ROMP_BROWSER_LEGS_REQUIRE=1`; the sweep's `npm test` runs those tests without the
    switch, so a Chromium that fails to launch there skips instead of failing), the other Python
@@ -238,7 +243,9 @@ subject; `verify` refuses the branch otherwise.
    `--flake <leg>=<the flake>` for each failed leg: a later green counts over a red run only then. A
    flake is excused once per leg: a leg that fails again, or that a later run passes without
    `--flake`, leaves that head unable to pass, and the fix goes on a new head. The runner refuses a
-   run that cannot count, and refuses a re-run of a leg that did not fail. `verify` reads the whole
+   run that cannot count, and refuses a re-run of a leg that did not fail. A re-run of pytest runs
+   alone, before any `npm ci`, as the pytest leg does; one that names pytest and a leg after `npm ci`
+   is refused, so re-run pytest first, then the others. `verify` reads the whole
    history, and the body's first block names each excused failure and its flake, and each invalid
    run (an invalid run needs no flake). `scripts/sweep.py check --tree ../romp-batch-<name>` prints
    what `verify` will read.
