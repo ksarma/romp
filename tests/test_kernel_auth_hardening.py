@@ -607,20 +607,20 @@ class OpenerIsolation(unittest.TestCase):
     carries it, and so do the dashboard's own tabs: a /file image or PDF it opens with window.open is a same-origin
     document with the same policy, so window.open still returns a handle (ui/webview/preview.ts openFileTab reads only
     that). Executed on the shell, every pane page, the sign-in page (on / and on /login), a static asset, and each
-    document shape the /file
-    route builds: an image, every shape that hands _send extra headers of its own (an SVG, with its sandbox policy; a
-    PDF, with its name; a text file, with its mtimes; a 404, with its reason), the 413 page a PDF's own tab shows, and
-    both 415 refusals (a file no view shows, a text-named file that is not text). Each shape is served once per entry of
-    NAVIGATIONS (tests/document_navigations.py): bare, and with the headers a browser sends on a navigation typed,
-    opened by the dashboard, and opened by another origin, which is where a browser reads the policy, signed in by the
-    session cookie as a browser's navigation is, a /file shape with the cap its URL carries. Read off a live socket
-    (_wire_get), so a header written anywhere, a send_response or end_headers override included, is seen, and each
-    carries it exactly once: a second copy, even of the same value, leaves a browser with a header it cannot parse and
-    so with no policy. The /remote/<host>/file relay's shapes are tests/test_kernel_remote_file_relay.py's, read the
-    same way. The one reply without it is one in HTTP/0.9's shape, to a request line of at most 65536 bytes whose
-    version is missing, malformed, HTTP/0.9 itself, or HTTP/2.0 or later, which no browser sends: it has no status line
-    and no headers at all (test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all). A line over 65536
-    bytes gets the full 414 with the policy whatever its version
+    document shape the /file route builds: an image, every shape that hands _send extra headers of its own (an SVG, with
+    its sandbox policy; a PDF, with its name; a text file, with its mtimes; a 404, with its reason), the 413 page a
+    PDF's own tab shows, and both 415 refusals (a file no view shows, a text-named file that is not text). Each shape is
+    served once per entry of NAVIGATIONS (tests/document_navigations.py): bare, and with the headers a browser sends on
+    a navigation typed, opened by the dashboard, and opened by another origin, which is where a browser reads the
+    policy, signed in by the session cookie as a browser's navigation is, a /file shape with the cap its URL carries.
+    Read off a live socket (_wire_get), so a header written anywhere, a send_response or end_headers override included,
+    is seen, and each carries it exactly once: a second copy, even of the same value, leaves a browser with a header it
+    cannot parse and so with no policy. The /remote/<host>/file relay's shapes are
+    tests/test_kernel_remote_file_relay.py's, read the same way. The one reply without it is one in HTTP/0.9's shape,
+    which Python 3.10 to 3.14 (the interpreters CI runs) give a request line of at most 65536 bytes, its line terminator
+    included, whose version is missing, malformed, HTTP/0.9 itself, or HTTP/2.0 or later, which no browser sends: it has
+    no status line and no headers at all (test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all). A
+    longer line gets the full 414 with the policy whatever its version
     (test_a_request_line_over_65536_bytes_gets_the_full_414_whatever_its_version)."""
 
     @classmethod
@@ -694,41 +694,69 @@ class OpenerIsolation(unittest.TestCase):
                 self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], what + ": one header, same-origin")
 
     def test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all(self):
-        # The one reply without the policy (Handler.send_error's comment names it): a request line of at most 65536 bytes
-        # whose version is missing, malformed (a word after the version makes it so), HTTP/0.9 itself, or HTTP/2.0 or
-        # later gets every reply in HTTP/0.9's shape, the body alone, so no header can ride it. No browser sends one. A GET
-        # with no version or with HTTP/0.9 is answered with the page itself, here the sign-in page, as bare as
-        # http.server's refusals, and so are http.server's 431 and 501 and the kernel's own reply to any other request
-        # (the second loop). Any other version below HTTP/2.0 gets a full reply with the policy once (the last case).
-        for what, line in (("a word after the version", "GET /chat HTTP/1.1 extra"), ("a malformed version", "GET / HTTP/x.y"),
-                           ("HTTP/2.0", "GET / HTTP/2.0"), ("two words, not a GET", "PUT /"), ("one word", "GET"),
-                           ("a bare GET", "GET /"), ("a GET with HTTP/0.9 itself", "GET / HTTP/0.9")):
+        # The one reply without the policy (Handler.send_error's comment names it): on Python 3.10 to 3.14, a request line
+        # of at most 65536 bytes, its line terminator included, whose version is missing, malformed (a word after the
+        # version makes it so), HTTP/0.9 itself, or HTTP/2.0 or later gets every reply in HTTP/0.9's shape, the body
+        # alone, so no header can ride it. No browser sends one. Each case names the body it gets, so a case whose reply
+        # is not written fails: http.server's refusal (its error page, with its code), the sign-in page for a bare
+        # `GET /`, the page itself, as _send writes it, for an authorized GET, and the gate's refusal for a GET with no
+        # credential. The second loop reads http.server's 431 and 501 and the kernel's own reply to a POST on a request
+        # line ending in HTTP/0.9 itself, whose headers http.server reads, so the 431 is written; after a line of two
+        # words, 3.13 and later read no headers and answer a GET with the page for its path. Any other version below
+        # HTTP/2.0 gets a full reply with the policy once (the last case).
+        chat = km._chat_page()
+        head = chat.index("<head>") + len("<head>")
+        for what, line, want in (
+                ("a word after the version", "GET /chat HTTP/1.1 extra", 400), ("a malformed version", "GET / HTTP/x.y", 400),
+                ("HTTP/2.0", "GET / HTTP/2.0", 505), ("two words, not a GET", "PUT /", 400), ("one word", "GET", 400),
+                ("a bare GET", "GET /", "sign-in"), ("a GET with HTTP/0.9 itself", "GET / HTTP/0.9", "sign-in"),
+                ("a bare GET's line of 65536 bytes, its CRLF included", "GET /?x=" + "a" * (65534 - len("GET /?x=")),
+                 "sign-in"),
+                ("an authorized GET", "GET /chat?token=" + TOK, "page"),
+                ("an authorized GET with HTTP/0.9 itself", "GET /chat?token=%s HTTP/0.9" % TOK, "page"),
+                ("a GET with no credential", "GET /chat", "gate")):
             with self.subTest(what=what):
                 status, msg, body = _wire_raw(self.port, (line + "\r\n\r\n").encode())
                 self.assertIsNone(status, what + ": no status line")
                 self.assertIsNone(msg, what + ": no headers")
-                self.assertTrue(body.lstrip().lower().startswith(b"<!doctype html"), what + ": the body alone: %r" % body[:60])
-                if what in ("a bare GET", "a GET with HTTP/0.9 itself"):
-                    self.assertEqual(body.decode("utf-8"), km._TOKEN_LOGIN_HTML, what + ": the sign-in page, served with no headers")
-        for what, req in (("a 431 to a bare GET's header line over 65536 bytes", b"GET /\r\nX-Big: " + b"b" * 70000 + b"\r\n\r\n"),
-                          ("a 501 to a method no do_ handler takes, on HTTP/0.9 itself", b"FOO / HTTP/0.9\r\n\r\n"),
-                          ("the kernel's own reply to a POST on HTTP/0.9 itself", b"POST /nope HTTP/0.9\r\n\r\n")):
+                text = body.decode("utf-8")
+                if want == "sign-in":
+                    self.assertEqual(text, km._TOKEN_LOGIN_HTML, what + ": the sign-in page, served with no headers")
+                elif want == "page":
+                    self.assertTrue(text.startswith(chat[:head]) and text.endswith(chat[head:]) and km._PAGE_KEY_JS in text,
+                                    what + ": the chat page as _send writes it: %r" % body[:60])
+                elif want == "gate":
+                    self.assertTrue(body.startswith(b"forbidden: token required"),
+                                    what + ": the gate's refusal: %r" % body[:60])
+                else:
+                    self.assertIn(b"Error code: %d" % want, body, what + ": http.server's %d page: %r" % (want, body[:60]))
+        for what, req, want in (
+                ("a 431 to a header line over 65536 bytes, on HTTP/0.9 itself",
+                 b"GET / HTTP/0.9\r\nX-Big: " + b"b" * 70000 + b"\r\n\r\n", b"Error code: 431"),
+                ("a 501 to a method no do_ handler takes, on HTTP/0.9 itself", b"FOO / HTTP/0.9\r\n\r\n", b"Error code: 501"),
+                ("the kernel's own reply to a POST on HTTP/0.9 itself", b"POST /nope HTTP/0.9\r\n\r\n",
+                 b"forbidden: token required")):
             with self.subTest(what=what):
                 status, msg, body = _wire_raw(self.port, req)
                 self.assertIsNone(status, what + ": no status line")
                 self.assertIsNone(msg, what + ": no headers")
-                self.assertTrue(body, what + ": the body alone")
+                self.assertIn(want, body, what + ": the body alone, that reply's: %r" % body[:60])
         with self.subTest(what="HTTP/0.5, another version below HTTP/2.0"):
             status, msg, body = _wire_raw(self.port, b"GET / HTTP/0.5\r\n\r\n")
             self.assertEqual(status, 200, "a full reply: %r" % body[:60])
             self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], "one header, same-origin")
 
     def test_a_request_line_over_65536_bytes_gets_the_full_414_whatever_its_version(self):
-        # http.server refuses a request line over 65536 bytes before it parses the line, so the version the line names
-        # never shapes the reply: each form the test above answers with no headers at all gets the full 414 here, with the
-        # policy once, as a line ending in HTTP/1.1 does
+        # http.server reads at most 65537 bytes of the request line and refuses a line over 65536 bytes, its line terminator
+        # included, before it parses the line, so the version the line names never shapes the reply: each form the test
+        # above answers with no headers at all gets the full 414 here, with the policy once, as a line ending in HTTP/1.1
+        # does. The first case is the shortest line ending in CRLF that is refused: 65535 bytes of text and its CRLF, 65537
+        # bytes in all, one more than the test above's line of 65534 bytes of text and its CRLF, which gets its page with
+        # no headers
         long = "GET /chat?x=" + "a" * 70000
-        for what, line in (("no version", long), ("HTTP/0.9 itself", long + " HTTP/0.9"), ("HTTP/2.0", long + " HTTP/2.0"),
+        edge = "GET /chat?x=" + "a" * (65535 - len("GET /chat?x="))
+        for what, line in (("no version, 65535 bytes of text and its CRLF", edge), ("no version", long),
+                           ("HTTP/0.9 itself", long + " HTTP/0.9"), ("HTTP/2.0", long + " HTTP/2.0"),
                            ("a word after the version", long + " HTTP/1.1 extra"), ("a malformed version", long + " HTTP/x.y"),
                            ("one word", "G" * 70000), ("HTTP/1.1", long + " HTTP/1.1")):
             with self.subTest(what=what):
