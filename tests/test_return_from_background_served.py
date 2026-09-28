@@ -505,10 +505,12 @@ class ReturnFromBackground(unittest.TestCase):
         self.assertTrue(str(rt.get("contentType") or "").startswith("text/html"), where + "…text/html: %r" % (rt,))
         self.assertEqual(rt.get("scriptsStripped"), 1, where + "the route removed exactly one script element, the inline shim's: %r" % (rt,))
         self.assertEqual(rt.get("stripped"), 1, where + "…which held exactly one marker statement (zero would mean the pane's own document, `app`): %r" % (rt,))
-        # the bundles' src elements, counted before and after the strip: the page carries inline script elements besides the shim's (its
-        # loader's, and since main's fork PR #919 the page-key script), so a count of every script element above one did not show a bundle
+        # the script elements, all of them and the bundles' src ones, counted before and after the strip: the page carries inline script
+        # elements besides the shim's (its loader's, and since main's fork PR #919 the page-key script), so a count of every script element
+        # above one did not show a bundle, and the shim-pattern count above does not show that nothing else went with the shim's element
         self.assertGreater(rt.get("srcScripts") or 0, 0, where + "the page carried the bundles' src script elements: %r" % (rt,))
-        self.assertEqual(rt.get("srcKept"), rt.get("srcScripts"), where + "...and every one stayed through the strip, which removes the inline shim's element alone: %r" % (rt,))
+        self.assertEqual(rt.get("srcKept"), rt.get("srcScripts"), where + "...and every one stayed through the strip: %r" % (rt,))
+        self.assertEqual(rt.get("scriptsKept"), (rt.get("scripts") or 0) - 1, where + "...and so did every other script element, the inline ones (the page-key script, the loader's) among them: the strip removed one element in all, the shim's: %r" % (rt,))
         self.assertEqual(rt.get("stampedTags"), 1, where + "…and the kernel's stamp on the <html> tag survived the strip, once: %r" % (rt,))
         # the premise, pinned (the author's pass-5 verify): no shim ran in the document, so the pane's app dialed no socket and posted no wsState word
         # after the tap. With the marker alone removed the shim connected and redialed every ~250 ms, refused each time: a perturbation the

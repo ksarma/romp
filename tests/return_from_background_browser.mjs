@@ -357,7 +357,7 @@ try {
     // (data-romp-served=200 on its <html> tag, written by Handler._send) with no pane shim in its window, the shape of the kernel's "needs the
     // ui/ modules" page, through a real HTML parser; the bundles' <script src> elements stay, as the pane's own page carries them, and so
     // do the page's other inline scripts (its loader's, and since main's fork PR #919 the page-key script Handler._send puts first in
-    // every authorized page's head). The shell
+    // every authorized page's head): the route counts the script elements before and after the strip, one fewer after. The shell
     // must show it as served: the loader retires on the document's load (not the 30 s backstop), the src stays, no failed state on the body
     // or the pane, one pane-load-unmarked row via load and no pane-load-failed row. The stamp is read in the engine off documentElement (a
     // byte count cannot tell a stamped root tag from a stamped `<html` elsewhere in the body). No shim runs in the document, so the pane says
@@ -366,7 +366,7 @@ try {
     const path = "/" + cfg.tapPane, isPath = (u) => u.pathname === path;
     const MARK = "window.__rompApp=APP;";
     const SHIM_SCRIPT = /<script\b[^>]*>(?:(?!<\/script>)[\s\S])*?window\.__rompApp=APP;(?:(?!<\/script>)[\s\S])*<\/script>/g;   // the inline <script> element that holds the marker statement: the shim's, whole
-    const unmarked = { status: null, contentType: null, scripts: null, srcScripts: null, srcKept: null, scriptsStripped: 0, stripped: 0, stampedTags: null };
+    const unmarked = { status: null, contentType: null, scripts: null, srcScripts: null, scriptsKept: null, srcKept: null, scriptsStripped: 0, stripped: 0, stampedTags: null };
     const stripper = async (route) => {
       const resp = await route.fetch();
       unmarked.status = resp.status(); unmarked.contentType = (resp.headers() || {})["content-type"] || null;
@@ -374,10 +374,11 @@ try {
       const shim = text.match(SHIM_SCRIPT) || [];
       unmarked.scripts = (text.match(/<script\b/g) || []).length;                      // the page's script elements before the strip (its inline ones, the shim's among them, the page-key script, the bundles' src ones)
       unmarked.srcScripts = (text.match(/<script\b[^>]*\ssrc=/g) || []).length;       // the bundles' src elements among them
-      unmarked.scriptsStripped += shim.length;                                         // exactly one element removed: the shim's
+      unmarked.scriptsStripped += shim.length;                                         // the elements the shim's pattern matched (one: the shim's)
       unmarked.stripped += shim.join("").split(MARK).length - 1;                      // the marker statements inside it (one)
       const body = text.replace(SHIM_SCRIPT, "");
       unmarked.stampedTags = (body.match(/<html data-romp-served=200[\s>]/g) || []).length;   // the kernel's stamp survives the strip (counted, not read)
+      unmarked.scriptsKept = (body.match(/<script\b/g) || []).length;                 // the page's script elements after the strip (all but the shim's: one element removed in all)
       unmarked.srcKept = (body.match(/<script\b[^>]*\ssrc=/g) || []).length;         // the bundles' src elements after the strip (every one stays)
       return route.fulfill({ response: resp, body });
     };
