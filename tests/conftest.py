@@ -1857,15 +1857,18 @@ def _guard_failure_into_report(item, call, rep):
 
 
 def _redact_as_exconly(failure):
-    """The failure's text, str(failure), scrubbed as the report prints it: pytest renders the exception as its exconly
-    does, the type name, a colon and the message (`Failed: <message>` for a pytest.fail failure), on the first line
-    under its `E` marker when the failure has a traceback, and in the report's crash message, which the short test
-    summary prints. The colon puts the message's first word in the pattern net's value position (after `: `), so a token
-    that leads the message is masked in the report, and the bare message leaves it at the start of a line, where, with
-    more text after it, no rule reads it as a value. So the rendering is scrubbed as the stderr copy is (as it stands,
-    then under the marker, _redact_crash_message), and the type name and colon are taken off again. When the scrub
-    changed them (an environment value or a token in the type name), the scrubbed rendering is returned whole, type
-    name included."""
+    """The failure's text, str(failure), scrubbed as the report prints a failure raised with a traceback: pytest renders
+    that exception as its exconly does, the type name, a colon and the message (`Failed: <message>` for a pytest.fail
+    failure), on the first line of its error under the `E` marker, and in the report's crash message, which the short
+    test summary prints. The colon puts the message's first word in the pattern net's value position (after `: `), so a
+    token that leads such a failure's message is masked in the report, and the bare message leaves it at the start of a
+    line, where, with more text after it, no rule reads it as a value. So the rendering is scrubbed as the stderr copy
+    is (as it stands, then under the marker, _redact_crash_message), and the type name and colon are taken off again.
+    When the scrub changed them (an environment value or a token in the type name), the scrubbed rendering is returned
+    whole, type name included. A failure raised with pytrace=False is scrubbed the same way here, but the report prints
+    it differently: its error is the bare message, and _redact_report rebuilds the crash message only when the report's
+    text changed, so the report prints a leading token raw and only the stderr copy masks it. That gap is
+    _redact_report's."""
     message = str(failure)
     excinfo = pytest.ExceptionInfo.from_exc_info((type(failure), failure, failure.__traceback__))
     rendered = excinfo.exconly(tryshort=True)
@@ -1885,17 +1888,19 @@ def _guard_failure_to_stderr(item, failure):
     /dev/null but, outside Windows, does not redirect its stderr (on Windows it moves sys.stderr to a copy of the
     controller's). Everything written goes through the teardown report's redaction, in the order _redact_report applies
     it (_note_env_values, then redact_report_text), three ways. The failure's text is scrubbed first as pytest's exconly
-    renders it, the type name, a colon and the message (_redact_as_exconly): the report prints that rendering in its
-    crash message and, for a failure raised with a traceback, on the first line of its error, where the colon puts the
-    message's first word in the pattern net's value position, and stderr prints the message without the type name. Then
-    the whole write, the header with its node id and worker name included, is scrubbed as it stands, and then again
-    with each line under pytest's `E` marker (_redact_crash_message): the report prints a failure raised with a
-    traceback (a pytest.fail inside the guard's call, from a Thread subclass's join, say) under that marker, where the
-    pattern net's rules for a failed comparison's diff lines apply, and stderr prints it bare. CI's logs are public, and
-    a value the report masks (a thread named with an environment value, say) must not reach them raw here. One window
-    is left: this copy is scrubbed with the values noted at the guard's check, and the report later, at report time, so
-    a value that enters the environment between the two (written by a thread still running then, say, which is a
-    thread the guard names) is masked in the report and printed raw here."""
+    renders it, the type name, a colon and the message (_redact_as_exconly): for a failure raised with a traceback, the
+    report prints that rendering on the first line of its error and in its crash message, where the colon puts the
+    message's first word in the pattern net's value position and the report masks a token there, and stderr prints the
+    message without the type name. (For a failure raised with pytrace=False the report prints a leading token raw and
+    this copy masks it; _redact_as_exconly's docstring says why.) Then the whole write, the header with its node id and
+    worker name included, is scrubbed as it stands, and then again with each line under pytest's `E` marker
+    (_redact_crash_message): the report prints a failure raised with a traceback (a pytest.fail inside the guard's call,
+    from a Thread subclass's join, say) under that marker, where the pattern net's rules for a failed comparison's diff
+    lines apply, and stderr prints it bare. CI's logs are public, and a value the report masks (a thread named with an
+    environment value, say) must not reach them raw here. One window is left: this copy is scrubbed with the values
+    noted at the guard's check, and the report later, at report time, so a value that enters the environment between the
+    two (written by a thread still running then, say, which is a thread the guard names) is masked in the report and
+    printed raw here."""
     worker = os.environ.get("PYTEST_XDIST_WORKER")
     _note_env_values()
     text = ("\n[tests/conftest.py, the session-end thread guard] the teardown of %s, this process's last test%s, fails "
