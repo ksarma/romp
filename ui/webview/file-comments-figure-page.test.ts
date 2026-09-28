@@ -1,5 +1,6 @@
 // A rendered figure whose markup carries `data-page` is NOT a PDF page (plans/file-review.md, Slice 4; contract F4:
-// kind "pdf" means a page of a PDF file). The sanitizer keeps a figure's data-* attributes, so a raw
+// kind "pdf" means a page of a PDF file). Before the sanitizer stripped an author's data-* attributes (md-sanitize.ts:
+// ALLOW_DATA_ATTR false, since 2026-09-07), a raw
 // `<img src="figure.png" data-page="2">` a session wrote into markdown reached pageOf() as page 2: the composer said
 // "of page 2", regionTarget dropped the embed's src for kind "pdf", the Re-place own-picture guard was bypassed, and
 // the host then refused the comment for the missing src — a misleading composer and a comment that could not be saved.
@@ -408,8 +409,8 @@ test("pageOf: a page for the chunk's canvas or its shell; null for an <img> or a
 });
 
 // ── a rendered figure written as raw HTML with data-page ───────────────────────────────────────────
-// marked passes a raw <img> tag through verbatim and the sanitizer keeps its data-* attributes, so the rendered figure
-// carries data-page="2" exactly as the source wrote it.
+// marked passes a raw <img> tag through verbatim; the sanitizer strips its data-* attributes now (md-sanitize.ts), and the
+// stand-in hands the panel the figure as the source wrote it, data-page="2" and all, for pageOf's own rule.
 const RAW_IMG = '<img src="figure.png" alt="Figure" data-page="2">';
 const RAW_REPORT = "## Findings\n\n" + RAW_IMG + "\n\nWe recommend shipping the cache in v1.2.\n";
 const RAW_HTML = "<h2>Findings</h2>\n" + RAW_IMG + "\n<p>We recommend shipping the cache in v1.2.</p>\n";
