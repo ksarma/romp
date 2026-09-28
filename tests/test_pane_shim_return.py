@@ -86,17 +86,19 @@ function out(o){process.stdout.write(JSON.stringify(o));}
 """
 
 
-def _run(scenario, pre="", app="test", **shim_kw):
+def _run(scenario, pre="", app="test", mid="", **shim_kw):
     """`app` and `shim_kw` reach km._shim_core_js as a served page's would (D2, review round 1, 2026-09-18: the park's
     feed exemption and the chat pane's fresh hold are keyed on APP, so a test names the pane it builds; the Files pane's
-    no_stale rides shim_kw). The default, "test", keeps every earlier scenario's core byte for byte."""
+    no_stale rides shim_kw). The default, "test", keeps every earlier scenario's core byte for byte. `mid` runs between
+    the harness and the core (a scenario that changes the stand-in browser before the shim boots in it); empty by
+    default, so every other scenario's script is unchanged."""
     node = shutil.which("node")
     if not node:
         raise unittest.SkipTest("node not installed")
     fx = tempfile.mkdtemp()
     path = os.path.join(fx, "run.js")
     with open(path, "w") as f:
-        f.write(pre + HARNESS + km._shim_core_js(app, **shim_kw) + "\n" + scenario)
+        f.write(pre + HARNESS + mid + km._shim_core_js(app, **shim_kw) + "\n" + scenario)
     r = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise AssertionError("node failed:\n" + r.stderr)
@@ -1690,11 +1692,20 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
                 self.assertEqual(r["afterShell"], {"sockets": 2, "awaiting": False}, "and the shell's own word still dials once")
                 self.assertIn(r["threw"], ("TypeError", "SyntaxError"), "the attempt itself fails, threw " + str(r["threw"]))
 
-    # a message listener in any spelling text can show (the method named or by a computed member, the event type in any
-    # quotes), and an onmessage handler on the window; tests/test_shell_source_check.py reads all of kernel.py the same way
-    MESSAGE_LISTEN = re.compile(r"(?:(?<![\w$])addEventListener|\[\s*(['\"`])addEventListener\1\s*\])\s*\(\s*(['\"`])message\2")
-    ONMESSAGE = re.compile(r"(?:(?<![\w$.])(?:window|self|globalThis)\s*(?:\.\s*onmessage|\[\s*(['\"`])onmessage\1\s*\])"
-                           r"|(?<![\w$.])onmessage)\s*=(?!=)")
+    # a message listener in any spelling text can show (the method named or by a computed member, the event type, a message
+    # or a messageerror, in any quotes), and every onmessage or onmessageerror assignment in the shim, whatever its
+    # receiver: the receiver is the dotted chain before .onmessage or ['onmessage'] with its spaces taken out ("" for a bare
+    # name, the window's own handler; None for a chain the census cannot read, one after a call, an index or another
+    # member), and each must be one of the shim's own sockets and channel, counted in SHIM_ONMESSAGE_RECEIVERS: park's and
+    # abandon's detaches of a dead socket (`var d=ws;`, d.onopen=d.onmessage=...=null), the socket's own handler
+    # (ws.onmessage=function(ev){) and the dispatch channel's (ch.port1.onmessage=flush). These are the shim's entries of
+    # tests/test_shell_source_check.py's ONMESSAGE_RECEIVERS, which counts every such assignment in all of kernel.py and on
+    # every page it serves. Like that table, this one counts receivers by name, not by binding: a listed name rebound to a
+    # window passes it, and only the executed test below catches that, on the roads its stand-in drives
+    MESSAGE_LISTEN = re.compile(r"(?:(?<![\w$])addEventListener|\[\s*(['\"`])addEventListener\1\s*\])\s*\(\s*(['\"`])message(?:error)?\2")
+    ONMESSAGE_ANY = re.compile(r"(?:(?<![\w$])(onmessage(?:error)?)|\[\s*(['\"`])(onmessage(?:error)?)\2\s*\])\s*=(?!=)")
+    CHAIN_BEFORE = re.compile(r"(?<![\w$.)\]])((?:[\w$]+\s*\.\s*)*[\w$]+)\s*$")
+    SHIM_ONMESSAGE_RECEIVERS = {"d": 2, "ws": 1, "ch.port1": 1}
     SHELL_HEAD = 'function(e){if(!fromShell(e))return;'
 
     # every mention of the name fromShell in code: its one declaration, a const, and the two listeners' reads. A second
@@ -1713,6 +1724,21 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
     UNICODE_ESCAPE = re.compile(r"\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})")
     FROM_SHELL_DECL = "const fromShell=function(e){"
     FROM_SHELL_READ = "if(!fromShell(e))return;"
+
+    def _onmessage_writes(self, js):
+        """{receiver or "receiver (onmessageerror)": count} for every onmessage or onmessageerror assignment in `js`."""
+        got = {}
+        for m in self.ONMESSAGE_ANY.finditer(js):
+            handler = m.group(1) or m.group(3)
+            before = js[max(0, m.start() - 160):m.start()].rstrip()
+            if m.group(1) and not before.endswith("."):
+                r = ""
+            else:
+                c = self.CHAIN_BEFORE.search(before[:-1] if m.group(1) else before)
+                r = re.sub(r"\s+", "", c.group(1)) if c else None
+            key = r if handler == "onmessage" else "%s (%s)" % (r, handler)
+            got[key] = got.get(key, 0) + 1
+        return got
 
     def _from_shell_mentions(self, js):
         """The kind of each mention of fromShell in `js` outside a // comment line, in order: declaration, read, other."""
@@ -1763,8 +1789,9 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
         self.assertIn('try{window.addEventListener("message",function(e){if(!fromShell(e))return;var m=e&&e.data;'
                       'if(!m||m.romp!=="panes"||!m.on)return;onScreen=m.on[APP];', js, "the on-screen listener")
         # in every spelling the text shows, for the shim as four apps build it (with and without no_stale): these two
-        # and no third (a third decides its senders here), and no onmessage handler on the window. Each served page, its
-        # shim included, is tests/test_shell_source_check.py's KernelListenerCensus and ServedPagesExecuted
+        # and no third (a third decides its senders here), and no onmessage assignment but on the shim's own sockets and
+        # channel (SHIM_ONMESSAGE_RECEIVERS). Each served page, its shim included, is also tests/test_shell_source_check.py's
+        # KernelListenerCensus and ServedPagesExecuted
         for app, kw in (("feed", {}), ("chat", {}), ("files", {"no_stale": True}), ("settings", {"no_stale": True})):
             with self.subTest(app=app):
                 js = km._shim(app, 3, **kw)
@@ -1772,37 +1799,83 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
                 self.assertEqual(len(heads), 2, "the shim's window message listeners are these two: %r" % heads)
                 for h in heads:
                     self.assertTrue(h.startswith('addEventListener("message",' + self.SHELL_HEAD), h)
-                self.assertEqual([m.group(0) for m in self.ONMESSAGE.finditer(js)], [], "an onmessage handler on the window")
+                self.assertEqual(self._onmessage_writes(js), self.SHIM_ONMESSAGE_RECEIVERS,
+                                 "an onmessage assignment in the shim on a receiver SHIM_ONMESSAGE_RECEIVERS does not list, or a listed one gone")
 
     def test_the_census_reads_each_spelling(self):
         for src in ('window.addEventListener("message",f)', "window.addEventListener('message',f)",
                     "addEventListener(`message`,f)", "window['addEventListener']('message',f)", 'self [ "addEventListener" ] ( "message" ,f)'):
             with self.subTest(src=src):
                 self.assertEqual(len(self.MESSAGE_LISTEN.findall(src)), 1)
-        for src in ("window.onmessage=f", "window['onmessage']=f", "self.onmessage = f", ";onmessage=f"):
+        self.assertEqual(len(self.MESSAGE_LISTEN.findall("window.addEventListener('messageerror',f)")), 1, "a messageerror listener")
+        # every onmessage assignment, with its receiver: one the table does not list (the window by each name, a frame, a
+        # document's window, the body element, a chain the census cannot read, any onmessageerror handler) is a count the
+        # table does not hold
+        for src, key in (("window.onmessage=f", "window"), ("window['onmessage']=f", "window"), ("self.onmessage = f", "self"),
+                         (";onmessage=f", ""), ("frames.onmessage=f", "frames"), ("window.frames.onmessage=f", "window.frames"),
+                         ("self.frames.onmessage=f", "self.frames"), ("document.defaultView.onmessage=f", "document.defaultView"),
+                         ("document.body.onmessage=f", "document.body"), ("var w0=window;w0.onmessage=f", "w0"), ("top.onmessage=f", "top"),
+                         ("document.querySelector('body').onmessage=f", None), ("window[0].onmessage=f", None),
+                         ("ws.onmessageerror=f", "ws (onmessageerror)"), ("ws.onmessage=f", "ws"), ("d.onopen=d.onmessage=null", "d"),
+                         ("ch.port1.onmessage=flush", "ch.port1")):
             with self.subTest(src=src):
-                self.assertEqual(len(self.ONMESSAGE.findall(src)), 1)
-        for src in ("window.addEventListener('resize',f)", "ws.onmessage=f", "removeEventListener('message',f)"):
+                self.assertEqual(self._onmessage_writes(src), {key: 1})
+        for src in ("window.addEventListener('resize',f)", "removeEventListener('message',f)", "if(window.onmessage===f)go()"):
             with self.subTest(src=src):
-                self.assertEqual(self.MESSAGE_LISTEN.findall(src) + self.ONMESSAGE.findall(src), [])
+                self.assertEqual(self.MESSAGE_LISTEN.findall(src), [])
+                self.assertEqual(self._onmessage_writes(src), {})
 
-    def test_run_the_shim_registers_exactly_these_two_and_no_onmessage_handler(self):
-        # executed, so a listener in any spelling that reaches the window's addEventListener counts, whether it registers
-        # at boot or on a road a pane's life drives (an open, a frame, a hide and a return, a watchdog tick, the timers,
-        # the dispatch flush, the shell's words)
+    # The stand-in browser the executed census below boots the shim in, set up before the core runs: an onmessage or
+    # onmessageerror handler written, by a set or a define, on any object a script reaches a window's handler through is
+    # heard. That is the pane's window by every name a script reaches it by (window, self, frames, which in a browser is
+    # the window itself, and document.defaultView, as bare names and as the window's members), the shell above it
+    # (window.parent, top), and the body element, whose
+    # handler is its window's. Not heard: a body reached by a query (the harness's document has no querySelector; the
+    # receiver census above reads that spelling)
+    HEARD_WINDOWS = r"""
+var HEARD=[];
+function heardHandlers(o){return new Proxy(o,{set:function(t,k,v){if(k==="onmessage"||k==="onmessageerror")HEARD.push(String(k));t[k]=v;return true;},
+defineProperty:function(t,k,d){if(k==="onmessage"||k==="onmessageerror")HEARD.push(String(k));return Reflect.defineProperty(t,k,d);}});}
+window.parent=heardHandlers(window.parent);window=heardHandlers(window);
+var self=window,frames=window,top=window.parent;window.self=window;window.frames=window;window.top=window.parent;
+document.defaultView=window;document.body=heardHandlers({});
+"""
+
+    def test_run_the_shim_registers_exactly_these_two_and_sets_no_handler_on_a_window(self):
+        # executed, so a listener in any spelling that reaches the window's addEventListener counts, and a handler written
+        # on any road HEARD_WINDOWS hears, whether it happens at boot or on a road a pane's life drives (an open, a frame, a
+        # hide and a return, a watchdog tick, the timers, the dispatch flush, the shell's words)
         r = _run(r"""
 function listeners(){return {n:(winL.message||[]).length,heads:(winL.message||[]).map(function(f){return String(f).slice(0,HEADLEN);}),
-onmessage:typeof window.onmessage};}
+messageerror:(winL.messageerror||[]).length,onmessage:typeof window.onmessage,heard:HEARD.slice()};}
 var atBoot=listeners();
 open();recv({type:"ka"});caps();word({test:true},"up");fireWin("message",{romp:"link",link:"up"});
 hide();NOW+=46000;show();tick();fireTimers();runFlushes();sock().readyState=3;sock().onclose&&sock().onclose({});fireTimers();tick();
-out({atBoot:atBoot,afterLife:listeners()});""".replace("HEADLEN", str(len(self.SHELL_HEAD))))
+out({atBoot:atBoot,afterLife:listeners()});""".replace("HEADLEN", str(len(self.SHELL_HEAD))), mid=self.HEARD_WINDOWS)
         for when in ("atBoot", "afterLife"):
             with self.subTest(when=when):
                 self.assertEqual(r[when]["n"], 2, "the shim's window message listeners are these two")
                 self.assertEqual(r[when]["heads"], [self.SHELL_HEAD] * 2, "each opens with the shell check")
+                self.assertEqual(r[when]["messageerror"], 0, "no messageerror listener on the window")
                 self.assertEqual(r[when]["onmessage"], "undefined", "no onmessage handler on the window")
+                self.assertEqual(r[when]["heard"], [], "no onmessage or onmessageerror handler written on the window by any name, "
+                                                        "on the shell above it or on the body element")
 
+    def test_the_executed_census_hears_a_handler_on_every_road_its_stand_in_drives(self):
+        # each write planted ahead of the shim's core: the stand-in hears it (so the test above reds on it), and hears
+        # nothing unplanted
+        for plant in ("frames.onmessage=function(e){};", "window.frames.onmessage=function(e){};", "self.frames.onmessage=function(e){};",
+                      "document.defaultView.onmessage=function(e){};", "document.body.onmessage=function(e){};",
+                      "frames['on'+'message']=function(e){};", "document.defaultView['on'+'message']=function(e){};",
+                      "document.body['on'+'message']=function(e){};", "var w0=window;w0.onmessage=function(e){};",
+                      "top.onmessage=function(e){};", "var dv=document.defaultView;dv['on'+'message']=function(e){};",
+                      "Object.defineProperty(document.body,'on'+'message',{value:function(e){}});",
+                      "Object.defineProperty(window,'on'+'message',{value:function(e){}});",
+                      "window.parent['onmessage'+'error']=function(e){};"):
+            with self.subTest(plant=plant):
+                r = _run("out({heard:HEARD.slice()});", mid=self.HEARD_WINDOWS + plant + "\n")
+                self.assertNotEqual(r["heard"], [], "the stand-in heard the handler")
+        self.assertEqual(_run("out({heard:HEARD.slice()});", mid=self.HEARD_WINDOWS)["heard"], [], "and nothing unplanted")
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,9 +17,10 @@ them reds; recompute the recorded digest from that commit, never from the fork's
 
 NoOtherWriter holds that nothing else names the check: no file in the tree but the kernel, and in the kernel's code
 nothing but the adopted lines and the gates. The rest runs the served landing: the census of every window message
-listener in its inline scripts (addEventListener, and an onmessage handler on the window), the same census over all of
-kernel.py and every page it serves (KernelListenerCensus), and node executing the scripts in a stand-in browser. The
-run goes through every callback they leave for later (timers, animation frames, idle callbacks, microtasks, load
+listener in its inline scripts (addEventListener for a message or a messageerror, and every onmessage or onmessageerror
+assignment, whatever its receiver, which must be one of the sockets and the channel ONMESSAGE_RECEIVERS lists), the same
+census over all of kernel.py and every page it serves (KernelListenerCensus), and node executing the scripts in a
+stand-in browser. The run goes through every callback they leave for later (timers, animation frames, idle callbacks, microtasks, load
 listeners) and an exercise: every other listener and handler they register (on the window, the document, a frame or an
 element), handed a stand-in event; every callback they hand to a stand-in (an observer's, a fetch's then); and every word
 a message listener's arms compare against, from each pane. Then it forges a message from each sender the shell must
@@ -104,15 +105,43 @@ LISTENERS = {
 
 LISTEN_OPEN = "addEventListener('message',function(e){"
 
-# An onmessage handler assigned to the window: window., self. or globalThis. (or a computed ['onmessage'] member of
-# one of them), or a bare onmessage with no receiver. A plain `=` only: == and === compare.
-_ONMESSAGE = re.compile(r"(?:(?<![\w$.])(?:window|self|globalThis)\s*(?:\.\s*onmessage|\[\s*(['\"`])onmessage\1\s*\])"
-                        r"|(?<![\w$.])onmessage)\s*=(?!=)")
+# Every onmessage or onmessageerror assignment in a text, whatever its receiver. The receiver is the dotted chain before
+# .onmessage or ['onmessage'], its spaces taken out: "" for a bare name (the window's own handler), None for a chain the
+# census cannot read (one that follows a call, an index or another member: foo().d.onmessage=,
+# document.querySelector('body').onmessage=, window[0].onmessage=). A plain `=` only: == and === compare.
+_ONMESSAGE_ANY = re.compile(r"(?:(?<![\w$])(onmessage(?:error)?)|\[\s*(['\"`])(onmessage(?:error)?)\2\s*\])\s*=(?!=)")
+_CHAIN_BEFORE = re.compile(r"(?<![\w$.)\]])((?:[\w$]+\s*\.\s*)*[\w$]+)\s*$")
+# The onmessage handlers kernel.py sets, by receiver, and how many: the three detaches of a dead socket (the shim's park
+# and abandon, `var d=ws;`, and the shell's shAbandon, `var d=shWs;`, each d.onopen=d.onmessage=...=null), the shim's and
+# the shell's sockets (ws.onmessage=function(ev){), and the shim's dispatch channel, a MessageChannel
+# (ch.port1.onmessage=flush). None is a window, and no other page can post on a socket or on the channel. Any other
+# receiver (the window by any name, a frame, a document's window, the body element, whose handler is its window's), a bare
+# onmessage, a chain the census cannot read, or any onmessageerror handler fails until it is listed here, which is where
+# its senders get decided. The table counts receivers by name, not by binding: a listed name rebound to a window keeps
+# its count and passes here, and only the executed stand-in catches it (ShellListenersExecuted, ServedPagesExecuted), on
+# the roads it drives.
+ONMESSAGE_RECEIVERS = {"d": 3, "ws": 2, "ch.port1": 1}
 
 
-def _window_onmessage(text):
-    """Every onmessage handler assigned to the window in `text` (the matches, for the failure message)."""
-    return [m.group(0) for m in _ONMESSAGE.finditer(text)]
+def _onmessage_writes(text):
+    """[(receiver, handler name, the write's surroundings)] for every onmessage or onmessageerror assignment in `text`."""
+    out = []
+    for m in _ONMESSAGE_ANY.finditer(text):
+        handler = m.group(1) or m.group(3)
+        before = text[max(0, m.start() - 160):m.start()].rstrip()
+        ctx = text[max(0, m.start() - 40):m.end() + 20]
+        if m.group(1) and not before.endswith("."):
+            out.append(("", handler, ctx))   # a bare name: the window's own handler
+            continue
+        r = _CHAIN_BEFORE.search(before[:-1] if m.group(1) else before)
+        out.append((re.sub(r"\s+", "", r.group(1)) if r else None, handler, ctx))
+    return out
+
+
+def _unlisted_onmessage(text):
+    """The surroundings of every onmessage assignment in `text` on a receiver ONMESSAGE_RECEIVERS does not list, and of
+    every onmessageerror assignment."""
+    return [ctx for r, h, ctx in _onmessage_writes(text) if h != "onmessage" or r not in ONMESSAGE_RECEIVERS]
 
 
 def _inline_scripts(html):
@@ -269,21 +298,33 @@ class ShellListenerCensus(unittest.TestCase):
         self.assertEqual(len(every), len(LISTENERS) + 1, "the thirteen window listeners and the service worker's")
         self.assertEqual(self.html.count("swc.addEventListener('message',function(ev){"), 1,
                          "the service worker's own channel: exempt, a window cannot post on it")
-        # nor as an onmessage handler on the window, by any name the page reaches it by: window.onmessage=,
-        # self.onmessage=, globalThis['onmessage']=, a bare onmessage=. A socket's (ws.onmessage=, d.onmessage=) and a
-        # MessageChannel port's are no window listener, and no other page can post on them
-        self.assertEqual(_window_onmessage(self.html), [], "an onmessage handler on the shell's window")
+        # nor as an onmessage handler: every onmessage assignment on the page, by any receiver, is on one of the sockets
+        # or the channel ONMESSAGE_RECEIVERS lists (a socket's and a MessageChannel port's are no window listener, and no
+        # other page can post on them), and none sets an onmessageerror handler
+        self.assertEqual(_unlisted_onmessage(self.html), [], "an onmessage handler on a receiver ONMESSAGE_RECEIVERS does not list")
 
     def test_the_onmessage_census_reads_each_spelling(self):
-        for src in ("window.onmessage=function(e){}", "self.onmessage = f", "globalThis['onmessage']=f", "window [\"onmessage\"] =f",
-                    "window[`onmessage`]=f",
-                    ";onmessage=function(e){}", "\n  onmessage = f"):
+        # every onmessage assignment is read with its receiver, and one on a receiver the table does not list fails: the
+        # window by each name a script reaches it by, its frames, a document's window, the body element, a chain the
+        # census cannot read, and an onmessageerror handler on any receiver
+        for src, receiver in (("window.onmessage=function(e){}", "window"), ("self.onmessage = f", "self"),
+                              ("globalThis['onmessage']=f", "globalThis"), ("window [\"onmessage\"] =f", "window"),
+                              ("window[`onmessage`]=f", "window"), (";onmessage=function(e){}", ""), ("\n  onmessage = f", ""),
+                              ("window . onmessage = f", "window"), ("frames.onmessage=function(e){go(e.data)};", "frames"),
+                              ("window.frames.onmessage=f", "window.frames"), ("self.frames.onmessage=f", "self.frames"),
+                              ("document.defaultView.onmessage=f", "document.defaultView"), ("document.body.onmessage=f", "document.body"),
+                              ("var w0=window;w0.onmessage=f", "w0"), ("top.onmessage=f", "top"), ("x.d.onmessage=f", "x.d"),
+                              ("document.querySelector('body').onmessage=f", None), ("window[0].onmessage=f", None),
+                              ("foo().d.onmessage=f", None), ("window.onmessageerror=f", "window"), ("ws.onmessageerror=f", "ws")):
             with self.subTest(src=src):
-                self.assertEqual(len(_window_onmessage(src)), 1)
-        for src in ("ws.onmessage=function(ev){}", "d.onopen=d.onmessage=d.onclose=null", "ch.port1.onmessage=flush",
-                    "if(window.onmessage===f)go()", "var x_onmessage=1"):
+                self.assertEqual([r for r, _h, _c in _onmessage_writes(src)], [receiver])
+                self.assertEqual(len(_unlisted_onmessage(src)), 1, "a receiver the table does not list, or an onmessageerror handler")
+        for src in ("ws.onmessage=function(ev){}", "d.onopen=d.onmessage=d.onclose=null", "ch.port1.onmessage=flush"):
             with self.subTest(src=src):
-                self.assertEqual(_window_onmessage(src), [])
+                self.assertEqual(_unlisted_onmessage(src), [], "a listed socket or channel")
+        for src in ("if(window.onmessage===f)go()", "var x_onmessage=1", "a==onmessage", "// onmessage/onclose"):
+            with self.subTest(src=src):
+                self.assertEqual(_onmessage_writes(src), [], "no assignment")
 
     def test_each_named_listener_opens_with_the_check(self):
         for name, phrase in LISTENERS.items():
@@ -304,7 +345,8 @@ class ShellListenerCensus(unittest.TestCase):
 # ── every window message listener the kernel serves (2026-09-26) ──
 # The census above reads the served shell. This one reads all of kernel.py and every page it serves, so a listener added
 # to any other page (the chat page's phone script, a small inline script on /feed or /settings, the sign-in page), or a
-# third listener in the pane shim, in any quoting, fails here too. Each window message listener in kernel.py's code
+# third listener in the pane shim, in any quoting, fails here too, and so does an onmessage assignment on any receiver
+# ONMESSAGE_RECEIVERS does not list. Each window message listener in kernel.py's code
 # opens with one of the heads below, from its receiver through its first statement, and each head occurs the number of
 # times listed. A new listener, or a listed one gone, fails until this table names it, which is where its senders get
 # decided.
@@ -329,9 +371,11 @@ for _page in ("/chat", "/feed", "/fleet", "/waiting", "/files", "/settings"):
     PAGE_LISTENERS[_page] = {"pane shim (fromShell; tests/test_pane_shim_return.py)": 2}
 
 # A message listener in any spelling text can show: the method named or reached by a computed member, the event type in
-# any quotes. (A registration that reaches the method with no such text, window['add'+'EventListener'], is the executed
+# any quotes, a message or a messageerror (which carries the sender's origin and source as a message does, and which a
+# sender causes by posting what the page cannot deserialize; no listed kind hears one, so a messageerror listener fails
+# until it is listed). (A registration that reaches the method with no such text, window['add'+'EventListener'], is the executed
 # legs' to catch: the shell's and every served page's below, and the shim's in tests/test_pane_shim_return.py.)
-_MESSAGE_LISTEN = re.compile(r"(?:(?<![\w$])addEventListener|\[\s*(['\"`])addEventListener\1\s*\])\s*\(\s*(['\"`])message\2")
+_MESSAGE_LISTEN = re.compile(r"(?:(?<![\w$])addEventListener|\[\s*(['\"`])addEventListener\1\s*\])\s*\(\s*(['\"`])message(?:error)?\2")
 # Every addEventListener in the kernel's code, named: each must be a call with a literal event type, so that the census
 # above reads the type (a bind, a call or apply, a comma-operator call, a variable holding the method, or a computed type
 # are the ways around it). Two other shapes stand: a feature test followed at once by the same receiver's literal call
@@ -390,7 +434,8 @@ def _loose_add_tokens(code):
 class KernelListenerCensus(unittest.TestCase):
     """Every window message listener in kernel.py, and on every page it serves, is one of the listed kinds: the shell's
     (the adopted check), the pane shim's (fromShell), the timeline boot's (heardSender), and the service worker's
-    channel. No onmessage handler is assigned to a window anywhere in the kernel's code or its pages, and no
+    channel. Every onmessage assignment in the kernel's code and its pages, whatever its receiver, is on one of the sockets
+    or the channel ONMESSAGE_RECEIVERS lists, by the receiver's name, and none sets an onmessageerror handler; and no
     addEventListener in the kernel's code escapes the census by an alias or a computed event type."""
 
     def test_every_message_listener_in_the_kernels_code_is_a_listed_kind(self):
@@ -403,8 +448,13 @@ class KernelListenerCensus(unittest.TestCase):
                 self.assertEqual(sum(1 for kind, _ in found if kind == name), n, "how many listeners of this kind the kernel has")
         self.assertEqual(len(found), sum(n for _r, _h, n in KERNEL_LISTENER_KINDS.values()))
 
-    def test_no_onmessage_handler_on_a_window_in_the_kernels_code(self):
-        self.assertEqual(_window_onmessage(_kernel_code()), [], "an onmessage handler assigned to a window in kernel.py")
+    def test_every_onmessage_assignment_in_the_kernels_code_is_a_listed_socket_or_channel(self):
+        got = {}
+        for r, h, _ctx in _onmessage_writes(_kernel_code()):
+            key = r if h == "onmessage" else "%s (%s)" % (r, h)
+            got[key] = got.get(key, 0) + 1
+        self.assertEqual(got, ONMESSAGE_RECEIVERS, "an onmessage assignment in kernel.py on a receiver ONMESSAGE_RECEIVERS does "
+                         "not list, or a listed one gone: %r" % _unlisted_onmessage(_kernel_code()))
 
     def test_every_add_event_listener_in_the_kernels_code_names_its_event_type(self):
         code = _kernel_code()
@@ -432,7 +482,7 @@ class KernelListenerCensus(unittest.TestCase):
                 for kind, _ in found:
                     got[kind] = got.get(kind, 0) + 1
                 self.assertEqual(got, PAGE_LISTENERS[name])
-                self.assertEqual(_window_onmessage(page), [], "an onmessage handler on the page's window")
+                self.assertEqual(_unlisted_onmessage(page), [], "an onmessage handler on a receiver ONMESSAGE_RECEIVERS does not list")
                 self.assertIsNone(re.search(r"<[a-z][^>]*\sonmessage\s*=", page, re.I), "an onmessage attribute on an element")
 
     def test_the_census_reads_each_spelling(self):
@@ -443,7 +493,9 @@ class KernelListenerCensus(unittest.TestCase):
                     "addEventListener ( 'message' ," + listener + ");",
                     "window['addEventListener']('message'," + listener + ");",
                     "self [ \"addEventListener\" ] (\"message\"," + listener + ");",
-                    "try{window.addEventListener('message',function(e){if(!fromShell(e))return;});}catch(e){}"):
+                    "try{window.addEventListener('message',function(e){if(!fromShell(e))return;});}catch(e){}",
+                    "window.addEventListener('messageerror'," + listener + ");",
+                    "window.addEventListener(\"messageerror\",function(e){" + GATE + "});"):
             with self.subTest(src=src):
                 self.assertEqual([k for k, _ in _message_listeners(src)], [None], "one listener, of no listed kind")
         for name, (receiver, head, _n) in KERNEL_LISTENER_KINDS.items():
@@ -476,10 +528,13 @@ class KernelListenerCensus(unittest.TestCase):
 # it does not hold with an inert stub (callable, constructible, every property another stub, 0 as a number), so the
 # scripts boot far enough to register their listeners without a DOM. What the checks read is real: location (the
 # shell's origin), document.querySelectorAll('iframe') and window.frames (the shell's frames), window.parent/top (the
-# shell is the top window), and each sending window's parent, top and opener. Before any message is tested it runs what
-# the scripts left for later and the exercise (ShellListenersExecuted names the roads). The harness then hands each
-# registered window message listener a message from each sender and counts how often the listener reads the message's
-# data: a listener that returns before reading it acts on nothing.
+# shell is the top window), and each sending window's parent, top and opener. So is every object a script reaches a
+# window's onmessage handler through: the shell's window by any name, document.defaultView (the shell's window),
+# document.body (whose handler is its window's), window.frames and each frame's window; an onmessage or onmessageerror
+# handler written on any of them, by a set or a define, is heard. Before any message is tested it runs what the scripts
+# left for later and the exercise (ShellListenersExecuted names the roads). The harness then hands each registered window
+# message listener a message from each sender and counts how often the listener reads the message's data: a listener
+# that returns before reading it acts on nothing.
 _HARNESS = r"""
 'use strict';
 const vm = require('vm');
@@ -530,7 +585,7 @@ function stubbed(o) {
 // replaced its own window.parent with the shell (no iframe of the shell holds it); a window the shell opened, on
 // another origin and on the shell's
 const POSTED = [];
-function win(name) { return stubbed({ name, postMessage(m) { POSTED.push([name, m]); }, focus() {} }); }
+function win(name) { return heardHandlers(stubbed({ name, postMessage(m) { POSTED.push([name, m]); }, focus() {} })); }
 const CHAT = win('chat'), FILES = win('files'), SANDBOXED = win('sandboxed'), XFRAME = win('xframe'),
       STRAY = win('stray'), OPENER = win('opener');
 const NESTED_SBX = win('nested-sandboxed'), NESTED = win('nested'), FORGED = win('parent-replaced'),
@@ -545,7 +600,21 @@ const BYID = {}; FRAMES.forEach((f) => { BYID[f.id] = f; });
 const LATE = [];
 const LATE_EVENTS = new Set(['load', 'DOMContentLoaded', 'pageshow', 'readystatechange']);
 function later(f) { if (typeof f === 'function') LATE.push(f); return LATE.length; }
+// every value the scripts assign to a window's onmessage or onmessageerror handler, however spelled: an onmessage
+// handler is a window message listener addEventListener never sees. The global's writes are heard at G below; these are
+// the other objects a script reaches such a handler through: the body element, whose handler is its window's, the
+// shell's frames list and each frame's window (win above), each by a set or a define
+const HANDLERS = new Set(['onmessage', 'onmessageerror']);
+const ONMESSAGE = [];
+function heardHandlers(o) {
+  return new Proxy(o, {
+    set(t, k, v) { if (HANDLERS.has(k)) ONMESSAGE.push(textOf(v)); t[k] = v; return true; },
+    defineProperty(t, k, d) { if (HANDLERS.has(k)) ONMESSAGE.push(textOf('value' in d ? d.value : d.set)); return Reflect.defineProperty(t, k, d); },
+  });
+}
+const BODY = heardHandlers(stubbed({}));
 const document = stubbed({
+  body: BODY,
   querySelectorAll(sel) { return sel === 'iframe' ? FRAMES.slice() : []; },
   getElementById(id) { return BYID[id] || STUB; },
   addEventListener(type, f) { if (LATE_EVENTS.has(type)) later(f); else other(type, f); },
@@ -559,14 +628,13 @@ const target = {};
 // in the order first heard; an accessor's descriptor is kept as itself
 const CHECK = '__rompPaneSourceOk', ASSIGNED = [];
 function heard(v) { if (!ASSIGNED.includes(v)) ASSIGNED.push(v); }
-// every value the scripts assign to the window's onmessage, however spelled: an onmessage handler is a window message
-// listener addEventListener never sees
-const ONMESSAGE = [];
+// a write of the window's own onmessage or onmessageerror handler, however spelled (window.x=, a computed member, a bare
+// global, a defineProperty), lands on the global and is heard here (ONMESSAGE, above)
 function onGlobalWrite(k, v) {
   if (k === CHECK) heard(v);
-  if (k === 'onmessage') ONMESSAGE.push(textOf(v));
+  if (HANDLERS.has(k)) ONMESSAGE.push(textOf(v));
   if ((k === 'onload' || k === 'onpageshow') && typeof v === 'function') later(v);
-  else if (k !== 'onmessage') onWrite(k, v);
+  else if (!HANDLERS.has(k)) onWrite(k, v);
 }
 function textOf(v) { return typeof v === 'function' ? Function.prototype.toString.call(v) : typeof v; }
 const BUILTINS = new Set(['Object', 'Array', 'JSON', 'Math', 'Date', 'String', 'Number', 'Boolean', 'RegExp', 'Error',
@@ -619,7 +687,7 @@ Object.assign(target, {
   queueMicrotask: later,
   innerWidth: 1280, innerHeight: 800,
   addEventListener(type, f) {
-    if (type === 'message') LISTENERS.push({ f, src: String(f), checkDefined: typeof target.__rompPaneSourceOk === 'function' });
+    if (type === 'message' || type === 'messageerror') LISTENERS.push({ f, src: String(f), checkDefined: typeof target.__rompPaneSourceOk === 'function' });
     else if (LATE_EVENTS.has(type)) later(f);
     else other(type, f);
   },
@@ -632,12 +700,14 @@ const ctx = vm.createContext(G);
 // it). Its iframes are its children: each has the shell as parent and top, and window.frames lists them (in a browser
 // window.frames is the window itself, indexed by its frames; vm's global reads window[i] but answers `i in window` false,
 // so Array.prototype.indexOf over it finds nothing, and an array of the same windows stands in, with window.length and
-// window[i] reading the same list). A frame nested in a pane has the pane as parent and the shell as top. A window the
+// window[i] reading the same list; the array hears a handler written on it, as the window it stands for would, and each
+// frame's window hears one written on it). The document's defaultView is the shell's window. A frame nested in a pane has the pane as parent and the shell as top. A window the
 // shell opened has the shell as its opener, and the page that opened the shell is its opener.
 // test_the_stand_in_windows_carry_the_edges_a_browser_gives_them reads these edges as the scripts see them.
 const SHELL_WIN = vm.runInContext('window', ctx);
+document.defaultView = SHELL_WIN;   // the shell's document's window is the shell's
 [CHAT, FILES, SANDBOXED, XFRAME].forEach((w) => { w.parent = SHELL_WIN; w.top = SHELL_WIN; });
-target.frames = [CHAT, FILES, SANDBOXED, XFRAME];
+target.frames = heardHandlers([CHAT, FILES, SANDBOXED, XFRAME]);
 target.length = target.frames.length;
 target.frames.forEach((w, i) => { target[i] = w; });
 [NESTED_SBX, NESTED].forEach((w) => { w.parent = CHAT; w.top = SHELL_WIN; });
@@ -1009,9 +1079,59 @@ class ShellListenersExecuted(unittest.TestCase):
         self.assertEqual(ex["left"], 0, "every listener, handler, callback and message listener was exercised: %r" % ex)
 
     def test_no_script_assigns_an_onmessage_handler_to_the_window(self):
-        # an onmessage handler is a window message listener that addEventListener never sees; however a script spells
-        # the write (window.onmessage=, a computed member, a bare global, a defineProperty), it lands on the global
-        self.assertEqual(self.run_["onmessage"], [], "an onmessage handler on the shell's window")
+        # an onmessage handler is a window message listener that addEventListener never sees. However a script spells the
+        # write, on the roads the stand-in drives it is heard: on the window by any name (window.onmessage=, a computed
+        # member, a bare global, top, a local holding it, a define), on document.defaultView, on document.body, whose
+        # handler is its window's, and on window.frames or a frame's window; an onmessageerror handler the same
+        # (test_the_stand_in_hears_a_handler_written_on_every_road_to_a_window plants each)
+        self.assertEqual(self.run_["onmessage"], [], "an onmessage or onmessageerror handler on the shell's window, its body or a frame's window")
+
+    # Every road to a window's onmessage handler the stand-in hears, each planted as one more script after the shell's: the
+    # window by other names (frames, window.frames, self.frames, top, parent, a local holding it), a document's window
+    # (document.defaultView, and one held in a local), the body element, whose handler is its window's, and a frame's
+    # window (frames[0], window[0], a pane iframe's contentWindow), by a plain write, under a computed name, by a define
+    # or by Object.assign; and an onmessageerror handler. Not heard here: a body the page reaches by a query
+    # (document.querySelector answers a stub; KernelListenerCensus's text census reads that spelling). A write on the
+    # html element, which reflects no window handler, is heard nowhere (the control).
+    HANDLER_ROADS = {
+        "frames": "frames.onmessage=function(e){go(e.data)};",
+        "window.frames": "window.frames.onmessage=function(e){go(e.data)};",
+        "self.frames": "self.frames.onmessage=function(e){go(e.data)};",
+        "document.defaultView": "document.defaultView.onmessage=function(e){go(e.data)};",
+        "document.body": "document.body.onmessage=function(e){go(e.data)};",
+        "frames, under a computed name": "frames['on'+'message']=function(e){go(e.data)};",
+        "document.defaultView, under a computed name": "document.defaultView['on'+'message']=function(e){go(e.data)};",
+        "document.body, under a computed name": "document.body['on'+'message']=function(e){go(e.data)};",
+        "a local holding the window": "var w0=window;w0.onmessage=function(e){go(e.data)};",
+        "top": "top.onmessage=function(e){go(e.data)};",
+        "parent, under a computed name": "parent['on'+'message']=function(e){go(e.data)};",
+        "a local holding document.defaultView, under a computed name":
+            "var dv=document.defaultView;dv['on'+'message']=function(e){go(e.data)};",
+        "a local holding the document, its body under a computed name": "var dd=document;dd.body['on'+'message']=function(e){go(e.data)};",
+        "a frame's window by index, under a computed name": "frames[0]['on'+'message']=function(e){go(e.data)};",
+        "window[0]": "window[0].onmessage=function(e){go(e.data)};",
+        "a pane iframe's contentWindow, under a computed name":
+            "document.getElementById('f-chat').contentWindow['on'+'message']=function(e){go(e.data)};",
+        "the window, by a define": "Object.defineProperty(window,'on'+'message',{value:function(e){go(e.data)}});",
+        "frames, by a define": "Object.defineProperty(frames,'on'+'message',{value:function(e){go(e.data)}});",
+        "document.body, by a define": "Object.defineProperty(document.body,'on'+'message',{value:function(e){go(e.data)}});",
+        "document.body, by Reflect.defineProperty": "Reflect.defineProperty(document.body,'on'+'message',{value:function(e){go(e.data)}});",
+        "document.body, by Object.assign": "Object.assign(document.body,{['on'+'message']:function(e){go(e.data)}});",
+        "the window's onmessageerror": "window.onmessageerror=function(e){go(e.data)};",
+        "document.body's onmessageerror, under a computed name": "document.body['onmessage'+'error']=function(e){go(e.data)};",
+        "a frame's window's onmessageerror": "frames[1].onmessageerror=function(e){go(e.data)};",
+    }
+
+    def test_the_stand_in_hears_a_handler_written_on_every_road_to_a_window(self):
+        base = _inline_scripts(km._landing())
+        for road, plant in self.HANDLER_ROADS.items():
+            with self.subTest(road=road):
+                run = _run_scripts(base + [plant], "census")
+                self.assertEqual([e for e in run["errors"] if e[0] == len(base)], [], "the planted script ran")
+                # heard at least once (vm can report one write as more than one trap), and nothing but the planted handler
+                self.assertEqual(sorted(set(run["onmessage"])), ["function(e){go(e.data)}"], "the stand-in heard the handler")
+        control = _run_scripts(base + ["document.documentElement['on'+'message']=function(e){go(e.data)};"], "census")
+        self.assertEqual(control["onmessage"], [], "the html element reflects no window handler, and none is heard")
 
     # A write of the check under a computed name, planted on each road the exercise drives. On the shell without its lock,
     # each is heard and replaces the adopted function before the listeners are tested (what the tests above would then
@@ -1061,6 +1181,15 @@ class ShellListenersExecuted(unittest.TestCase):
         self.assertEqual([n for n in (_name_of(l["src"]) for l in run["listeners"]) if n.startswith("unnamed listener")],
                          ["unnamed listener: function(e){}"])
 
+    def test_a_messageerror_listener_is_counted_as_a_window_message_listener(self):
+        # a messageerror event carries the sender's origin and source as a message does, and a sender causes one by posting
+        # what the page cannot deserialize: the stand-in counts a listener for it, under any name, with the page's message
+        # listeners, so the census tests above fail on it
+        run = _run_scripts(_inline_scripts(km._landing()) + ["window['add'+'EventListener']('messageerror',function(e){});"], "reads")
+        self.assertEqual(len(run["listeners"]), len(LISTENERS) + 1, "the messageerror listener is counted")
+        self.assertEqual([n for n in (_name_of(l["src"]) for l in run["listeners"]) if n.startswith("unnamed listener")],
+                         ["unnamed listener: function(e){}"])
+
     def test_without_the_check_no_listener_reads_anything(self):
         run = _run_scripts(_inline_scripts(_without_check(km._landing())), "nocheck")
         self.assertEqual(len(run["reads"]), len(LISTENERS))
@@ -1072,8 +1201,9 @@ class ShellListenersExecuted(unittest.TestCase):
 class ServedPagesExecuted(unittest.TestCase):
     """Every other page the kernel serves, its inline scripts run in the same stand-in, the exercise included: the window
     message listeners each registers, by whatever spelling reaches the window's addEventListener, are its listed kinds
-    (PAGE_LISTENERS); none assigns the window an onmessage handler; and none writes the shell's check, under any name, on
-    its window or its parent (in the stand-in they are one window). The shell's run is ShellListenersExecuted's; /sw.js
+    (PAGE_LISTENERS); none writes an onmessage or onmessageerror handler on any road the stand-in hears (the window by any
+    name, document.defaultView, document.body, window.frames or a frame's window); and none writes the shell's check,
+    under any name, on its window or its parent (in the stand-in they are one window). The shell's run is ShellListenersExecuted's; /sw.js
     runs in a worker, where no window posts. The roads run and the residual are ShellListenersExecuted's."""
 
     # a registered listener's text opens with its kind's head from the function on
@@ -1093,7 +1223,7 @@ class ServedPagesExecuted(unittest.TestCase):
                     kind = next((k for k, h in self.HEADS.items() if l["src"].startswith(h)), "unlisted: " + l["src"][:160])
                     got[kind] = got.get(kind, 0) + 1
                 self.assertEqual(got, PAGE_LISTENERS[name], "script errors: %r" % run["errors"])
-                self.assertEqual(run["onmessage"], [], "an onmessage handler on the page's window")
+                self.assertEqual(run["onmessage"], [], "an onmessage or onmessageerror handler on the page's window, its body or a frame's window")
                 # the stand-in's window is its own parent and top, so a write of the shell's check through
                 # window.parent, under any name, lands where the harness hears it
                 self.assertEqual(run["assigns"], [], "a pane page writes the shell's check")
