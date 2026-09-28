@@ -1941,11 +1941,14 @@ class LinkDropOldLocal(_LinkDrop):
     def test_without_a_redial_the_old_page_does_not_show_the_change(self):
         """The pre-815 defect, exhibited: each link-up phase's cards were posted while every page held one relay socket, which
         stayed open through the phase with no relay socket dialed inside it, and the old feed page showed none of them: the
-        card wait ran to its cap (seen.expired names it) and no card was on the page at the read. Phase B's is the change
-        after the link's return, on the socket the return dialed; phase A's came before the drop and phase C's after the
-        restart's redial. A card that showed or a card wait that resolved reds here, and so does a relay socket closed or
-        dialed inside a phase (the splice's former 5 s idle cut did both, and its redials caught the page up: LinkProxy). The
-        catch-up is test_each_redials_whole_frame_caught_the_old_page_up's."""
+        card wait ran to its cap (seen.expired names it) and no card was on the page at the read. The change reached that
+        page all the same: in each phase the feed page's held socket received a frame carrying a card (_carries_cards), so
+        the missing cards are a change the page was sent and did not show. Phase B's is the change after the link's return,
+        on the socket the return dialed; phase A's came before the drop and phase C's after the restart's redial. A card
+        that showed or a card wait that resolved reds here, and so does a relay socket closed or dialed inside a phase (the
+        splice's former 5 s idle cut did both, and its redials caught the page up: LinkProxy), and so does a phase whose
+        cards never reached the feed page's held socket. The catch-up is
+        test_each_redials_whole_frame_caught_the_old_page_up's."""
         m = self._marks()
         for p in self._link_up_phases():
             t0, t1 = m[p + "0"], m[p + "1"]
@@ -1956,6 +1959,12 @@ class LinkDropOldLocal(_LinkDrop):
                 self.assertEqual((len(held), inside), (1, []), "phase %s on the %s page: one relay socket open from the phase's first change to its end and none "
                                  "dialed inside it, so no redial could catch the page up (held %r, dialed inside %r): %r"
                                  % (p, app, held, inside, [(s["i"], s["dialedAt"], s["openAt"], s["closeAt"]) for s in socks]))
+                if app == "feed":
+                    frames = [f for s in socks if s["i"] in held for f in s["frames"]]
+                    self.assertTrue([f for f in frames if t0 <= f["at"] <= t1 and self._carries_cards(f)],
+                                    "phase %s: the change reached the old feed page: the relay socket it held received a frame carrying a card inside the "
+                                    "phase (_carries_cards), so the absent cards are a change the page was sent and did not show; that socket's frames: %r"
+                                    % (p, [(f["t"], f.get("slot"), f.get("coll"), f["at"]) for f in frames]))
         self._assert_seen(self._phase("A")["seen"], False, what="phase A's cards on the old feed page before the drop, on the socket it held", waited=True, expired=("card",))
         self._assert_seen(self._phase("B")["seen"], False, what="phase B's cards on the old feed page after the link's return, on the socket the return dialed", waited=True, expired=("card",))
         if self.local_drop:
