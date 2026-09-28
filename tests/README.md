@@ -223,8 +223,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   module that loads `bin/romp-*` is a new writer of `XDG_STATE_HOME` (or
   `ROMP_STATE_DIR`) and pops or writes `ROMP_STATE_DIR`, no date bounds the
   writers of either name, and their licences rest on the value check of every
-  write), `ROMP_SERVE_TOKEN` (a string literal, or the shell's value put back) and
-  `ROMP_KERNEL_NO_OPEN` (the value "1"), the four of them dated 2026-09-22 and
+  write), `ROMP_SERVE_TOKEN` (a string literal, the shell's value put back, or a
+  string literal joined to `secrets.token_hex(<an int literal>)` through the
+  module's own `import secrets`, its one binding of that name, a random value)
+  and `ROMP_KERNEL_NO_OPEN` (the value "1"), the four of them dated 2026-09-22 and
   pointed at the class item filed on the reviewer's ruling from fork PR #871's
   polluter investigation (fork PR #871 merged 2026-09-22; import-time writers
   migrate into fixtures or the floor); the writer modules of these two are
@@ -268,7 +270,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   the runners whose step sets some (`-n 2`, on `ubuntu-latest`). The
   developer's form has none of those options but `-n`, and has
   `-p no:cacheprovider -k reassert`, which blocks the cache plugin and
-  deselects none of the four, and `-n 2` in its run with workers. A
+  deselects none of the four, and `-n 2` in its run with workers. Each child
+  of either form passes `-p no:anyio` after its run's options, since fork PR
+  #872 holds every pytest the suite starts to the flag, so a child in CI's
+  form, whose step passes it among its options, passes it twice. A
   `PYTEST_ADDOPTS` the caller exported does not reach the child
   (`_proof_child_env` drops it), so it adds no option to either form. Where
   pytest-xdist is installed the run makes four children per case, whatever run
@@ -287,10 +292,12 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   each of those runs made in both: whether each option that one run gives and
   another does not is given (CI's `-q`, `--durations`, `--timeout`,
   `--timeout-method` and `-n`, the last given by every run but the developer's
-  with no worker; and the developer's `-p no:cacheprovider` and `-k`). The pair
-  covers whether an option is given, not its value. Code that stops the fixture
-  from running in any of those tests, keyed on those facts alone or on facts one
-  run has together, named or not, is refused by the run. The pair doubles each
+  with no worker; and the developer's `-p no:cacheprovider` and `-k`). CI's
+  `-p no:anyio`, read as one option as `-p no:cacheprovider` is, is given in
+  every run, since each child passes it. The pair covers whether an option is
+  given, not its value. Code that stops the fixture from running in any of
+  those tests, keyed on those facts alone or on facts one run has together,
+  named or not, is refused by the run. The pair doubles each
   case's runs, which adds to the time of `tests/test_hermetic_kernel_postal.py`
   run serially: 2.6 s on 3.10 and 3.4 s on 3.12 where no run has `-n 2`
   (pytest-xdist not installed), and 7.1 s and 7.8 s where the `-n 2` runs are
@@ -325,7 +332,12 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   of this suite may run). Each could be matched by more runs per case, one per
   option or combination. A road on `--rootdir` given and one on the cache
   plugin blocked with no `-k` are granted (planted; no committed test makes a
-  real run under either). Third, unmatchable at any cost: a hook condition
+  real run under either). Also in this tier is a run without `-p no:anyio`,
+  which a developer's run may be and no child of the proof is: each child
+  passes the flag, since fork PR #872 holds every pytest the suite starts to
+  it, so matching it takes a child that rule refuses. A road on CI's
+  `-p no:anyio` not given is granted (planted; no committed test makes a real
+  run under it). Third, unmatchable at any cost: a hook condition
   keyed on an open-valued signal (a mark, an environment variable, a host name,
   an option's value such as a `--durations` of 5 where CI's step gives 10, or
   another collection-time signal), what each clone keeps for itself, and what

@@ -786,7 +786,7 @@ class Guard(unittest.TestCase):
                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
         self.assertEqual(u.returncode, 0, u.stdout + u.stderr)
         self.assertRegex(u.stderr, r"\nOK \(skipped=\d+\)\n", u.stderr)
-        t = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+        t = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio",
                             THIS + "::Scanner::test_the_run_roots_are_the_controllers_and_its_recorded_childrens_recursively"],
                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
         self.assertEqual(t.returncode, 0, t.stdout + t.stderr)
@@ -811,7 +811,7 @@ class RunEnd(unittest.TestCase):
         if bound is not None:
             env[BOUND_ENV] = bound
         env.update(env_over or {})
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"] + list(args)
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio"] + list(args)
                            + [THIS + "::Leaker::" + test] + [THIS + "::" + a for a in also],
                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
         pids = {}
@@ -1374,7 +1374,7 @@ def _nested_run(test):
     env = dict(os.environ)
     for k in ("PYTEST_CURRENT_TEST",) + XDIST_ENV:
         env.pop(k, None)
-    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", THIS + "::Leaker::" + test],
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio", THIS + "::Leaker::" + test],
                        cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
     return r.stdout + r.stderr
 

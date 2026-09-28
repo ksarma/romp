@@ -138,10 +138,13 @@ recorded it at its parse, parsed other than the parse pin expects over the whole
 makes of a -c program in it (_program_spawns_kernel, _program_calls) each release their bindings before the scan is
 dropped, so its tree is freed by reference counting, and two tests hold those releases with automatic collection off,
 so a cycle a scan left would survive to their checks and red them: the cycle test holds _roads_row's, and the plant
-scan pin (test_a_scan_of_a_planted_source_leaves_no_cycle_holding_its_tree) the others. The teardown's checks run with
-the collector as the process has it, so a cycle holding a tree the module made reds them only when no collection has
-reclaimed it first, neither an automatic collection nor the cycle test's gc.collect(), which reclaims what the tests
-before it left. The release pin holds the
+scan pin (test_a_scan_of_a_planted_source_leaves_no_cycle_holding_its_tree) the others. The conftest reader's proof of a
+pytest_make_collect_report (_collect_report_shape_faults) clears its nested defs when it ends, since they hold one
+another through their closures, so the defs it read are freed by reference counting too
+(test_a_collect_report_proof_leaves_no_cycle_holding_the_modules_defs, which reads them with no collection). The
+teardown's checks run with the collector as the process has it, so a cycle holding a tree the module made reds them
+only when no collection has reclaimed it first, neither an automatic collection nor the cycle test's gc.collect(), which
+reclaims what the tests before it left. The release pin holds the
 release, the plain value and the checks on a tree or a Bindings still alive and on the objects made in the module's run;
 the aborted read's pin (test_an_aborted_read_of_the_tree_reports_where_it_stopped_and_expects_no_parse_count) holds the
 check on an aborted read, and that the parse check then names no file; the parse pin holds the parse check. This is an
@@ -1501,6 +1504,7 @@ _OWN_TREE_ROADS = (
     "HermeticKernelPostal.test_a_bare_name_is_a_call_only_as_a_decorator_or_a_metaclass_and_a_base_runs_its_init_subclass",
     "HermeticKernelPostal.test_a_call_chain_longer_than_the_cap_raises_naming_the_chain_and_a_cycle_is_cut",
     "HermeticKernelPostal.test_a_collect_report_hook_is_admitted_by_the_shape_the_reader_proves_and_any_other_is_refused_naming_why",
+    "HermeticKernelPostal.test_a_collect_report_proof_leaves_no_cycle_holding_the_modules_defs",
     "HermeticKernelPostal.test_a_fixture_another_modules_code_registers_over_by_name_re_asserts_nothing",
     "HermeticKernelPostal.test_a_hook_that_may_keep_pytest_from_running_a_fixture_refuses_it_on_both_roads",
     "HermeticKernelPostal.test_a_name_is_read_through_its_first_binding_alone_and_a_later_binding_or_a_parameter_makes_it_loud",
@@ -1519,6 +1523,7 @@ _OWN_TREE_ROADS = (
     "HermeticKernelPostal.test_the_resolver_reads_every_binding_of_a_name_in_every_import_time_block_and_follows_the_mapping_into_a_parameter",
     "HermeticKernelPostal.test_the_scan_completes_and_derives_the_same_records_under_a_tag_another_census_left_on_the_parsers_shared_singletons",
     "HermeticKernelPostal.test_the_scan_reads_every_write_shape_ignores_a_def_and_is_loud_on_a_key_it_cannot_read",
+    "HermeticKernelPostal.test_the_serve_token_licence_admits_a_literal_joined_to_secrets_token_hex_by_binding_and_refuses_each_near_miss",
 )
 #   the defs of fork PR #894 that build a tree by a road of their own, by name (a module-level def, or Class.method),
 #   which the helpers pin admits beside _parse_text and _bindings_of and holds EQUAL to the defs outside the two helpers
@@ -2253,7 +2258,11 @@ class _EnvNames:
     import, to its value expression when its one binding is an assignment and None otherwise, so a licence's value check
     reads a value written through a name (`_ROOT = tempfile.mkdtemp(); os.environ["XDG_STATE_HOME"] = _ROOT`,
     `_STATE_TD.name`), and a name rebound by any form above stays a name the check cannot read (_shown_value says so);
-    _resolved does the substitution."""
+    _resolved does the substitution. `imports` (the reviewer's ruling at fork PR #894's landing merge with main, (1))
+    is every name bound at import, to the module of that name when its one binding is a plain `import <name>`, with no
+    alias and no dot, and None otherwise, THE RULE holding it as it holds `bindings`, so a licence's value check reads
+    `secrets.token_hex(12)` as a call of the secrets module the module imported itself only while nothing else binds
+    secrets (_imported)."""
 
     def __init__(self, tree=None):
         self.os_names = {"os"}
@@ -2261,6 +2270,8 @@ class _EnvNames:
         self.dicts = {}
         self.loop_literals = {}      # a name a `for` binds to each of a tuple or list of string literals, in turn
         self.bindings = {}           # a name bound at import -> its value node when that one binding is an assignment; else None
+        self.imports = {}            # a name bound at import -> the module of that name when that one binding is a plain
+                                     # `import <name>` (no alias, no dot); else None (_imported)
         self._scope, self._parent, self._dicts_checked = tree, None, False     # the dict check's scope (dict_items)
         self._star = False           # a star import seen at import time (absorb): every name it could bind is unreadable
         if tree is not None:
@@ -2303,8 +2314,10 @@ class _EnvNames:
     def _bind(self, name, value):
         """`name` bound at import to the expression `value`, or to None (bound by something that is not an assignment); a
         second binding handed here, of any kind, makes the name unreadable (None). A rebinding the module's code does not
-        spell is never handed here (_absorb_loop names those)."""
+        spell is never handed here (_absorb_loop names those). Every binding handed here clears the name's entry in
+        `imports`, which absorb sets back only for a plain import that is the name's first binding."""
         self.bindings[name] = None if name in self.bindings else value
+        self.imports[name] = None
 
     def _bind_targets(self, targets):
         for t in _flat_targets(targets):
@@ -2326,7 +2339,11 @@ class _EnvNames:
                 elif isinstance(n, ast.Import):
                     self.os_names.update(a.asname for a in n.names if a.name == "os" and a.asname)
                     for a in n.names:
-                        self._rebound((a.asname or a.name).split(".")[0])
+                        bound = (a.asname or a.name).split(".")[0]
+                        first = bound not in self.bindings
+                        self._rebound(bound)
+                        if first and a.asname is None and "." not in a.name:
+                            self.imports[bound] = a.name     # its one binding so far: `import secrets` binds secrets
                 elif isinstance(n, ast.ImportFrom):
                     if n.module == "os":
                         self.environ_names.update(a.asname or a.name for a in n.names if a.name in ("environ", "environb"))
@@ -2430,17 +2447,17 @@ class _EnvNames:
 
     def within(self, node, environ_params=()):
         """These names plus whatever `node` (a function) binds itself. Every parameter (its own and a nested def's or
-        lambda's) is unreadable in `bindings`, `loop_literals` and `dicts`, and the function's own parameters leave
-        `environ_names`, so a module-level loop, dict or alias of the same name is never read through one (the reviewer's
-        ruling of round 1 on fork PR #894); `environ_params` names the parameters the call being followed binds to the
-        mapping (_environ_params), which are the mapping here."""
+        lambda's) is unreadable in `bindings`, `loop_literals`, `dicts` and `imports`, and the function's own parameters
+        leave `environ_names`, so a module-level loop, dict or alias of the same name is never read through one (the
+        reviewer's ruling of round 1 on fork PR #894); `environ_params` names the parameters the call being followed binds
+        to the mapping (_environ_params), which are the mapping here."""
         inner = _EnvNames()
         inner.os_names, inner.environ_names, inner.dicts = set(self.os_names), set(self.environ_names), dict(self.dicts)
-        inner.loop_literals, inner.bindings = dict(self.loop_literals), dict(self.bindings)
+        inner.loop_literals, inner.bindings, inner.imports = dict(self.loop_literals), dict(self.bindings), dict(self.imports)
         inner._scope, inner._parent = node, self
         for a in ast.walk(node):
             if isinstance(a, ast.arg):
-                inner.bindings[a.arg] = inner.loop_literals[a.arg] = inner.dicts[a.arg] = None
+                inner.bindings[a.arg] = inner.loop_literals[a.arg] = inner.dicts[a.arg] = inner.imports[a.arg] = None
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             inner.environ_names.difference_update(a.arg for a in _parameters(node))
         inner.environ_names.update(environ_params)
@@ -2549,6 +2566,25 @@ def _resolved(node, names):
     return ast.unparse(_Substitute(names.bindings).visit(_fresh(node)))
 
 
+def _imported(node, names):
+    """The names the value expression `node` reads, resolved as _resolved resolves it, whose one binding in the scope of
+    the write is a plain import of the module of that name (_EnvNames.imports), sorted: ("secrets",) for
+    `"census-" + secrets.token_hex(12)` in a module whose one binding of secrets is `import secrets`, and for the same
+    value written through a name bound once to it; () for None, and for a name bound by anything else as well or
+    instead (another module under the name, a def, a class, a parameter, an assignment, a star import: THE RULE in
+    _EnvNames). _record then drops a name that resolves to a module under tests/ (_tests_module_path), where
+    `import secrets` would bind that module and not the standard library's. The rebindings THE RULE does not see, through
+    the module's namespace or by a string that exec or eval runs, are not seen here either (the comment above _Module
+    names both, [namespace-rebinding] and [exec-eval])."""
+    if node is None:
+        return ()
+    # Contract: a parsed tree is read-only for every consumer, so the value is re-parsed from its text, never deep-copied.
+    # Mechanism: its ctx nodes are parser singletons another census may have tagged with its whole graph (_fresh).
+    tree = _Substitute(names.bindings).visit(_fresh(node))
+    return tuple(sorted({n.id for n in ast.walk(tree)
+                         if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and names.imports.get(n.id) == n.id}))
+
+
 def _unreadable(what, node, where):
     return UnreadableEnvWrite("cannot read the key%s of this %s at line %d of %s: %s (a string or bytes literal key, a dict literal, "
                               "keyword arguments, or a name bound once to a dict literal are read; a computed key or "
@@ -2591,13 +2627,15 @@ def _flat_targets(targets):
             yield t
 
 
-_Write = collections.namedtuple("_Write", "key shape value line resolved via", defaults=("",))
+_Write = collections.namedtuple("_Write", "key shape value line resolved via imported", defaults=("", ()))
 #   one environment write as the scan reads it: the KEY written, the SHAPE (assignment, setdefault, update, |=, putenv;
 #   __setitem__ and __ior__ for the dunder spellings, called on the mapping or unbound with the mapping as the first argument;
 #   augmented for `environ[KEY] += ...` and target for a key bound as a for, comprehension or with target, both with no
 #   value), the VALUE expression (an ast node, or None where the shape has none the scan reads), the LINE of the statement (of
-#   the CALL, for a write reached through one), the value RESOLVED through the names bound once at import (_resolved) and
-#   VIA: "" for a write made where it stands, else the callee chain a write at import is reached through (_reached_writes)
+#   the CALL, for a write reached through one), the value RESOLVED through the names bound once at import (_resolved),
+#   VIA: "" for a write made where it stands, else the callee chain a write at import is reached through
+#   (_reached_writes), and IMPORTED, the names the resolved value reads whose one binding is a plain import of the
+#   module of that name (_imported)
 
 
 def _env_write_records(node, names, where="<module>", environ_params=()):
@@ -2629,7 +2667,7 @@ def _writes_in_scope(node, names, where):
                             # and of a bare annotation's target, which writes nothing
 
     def write(key, shape, value, line):
-        out.append(_Write(key, shape, value, line, _resolved(value, names)))
+        out.append(_Write(key, shape, value, line, _resolved(value, names), imported=_imported(value, names)))
 
     for n in ast.walk(node):
         if isinstance(n, (ast.Assign, ast.AnnAssign)):
@@ -4451,20 +4489,25 @@ def _tests_tree_paths():
     return paths
 
 
-_Record = collections.namedtuple("_Record", "module line shape value nested resolved via")
+_Record = collections.namedtuple("_Record", "module line shape value nested resolved via imported", defaults=((),))
 #   one module-level write in the tree: the writer MODULE (relative to tests/), its LINE (of the call, for a write reached
 #   through one), the SHAPE, the VALUE text (ast.unparse of the expression, or "" where the shape has none), whether the
 #   statement is NESTED in a block or a class body, the value RESOLVED through the names bound once at import (the same
-#   text as VALUE where nothing substitutes) and VIA, "" for a write made where it stands, else the callee chain
+#   text as VALUE where nothing substitutes), VIA, "" for a write made where it stands, else the callee chain, and
+#   IMPORTED, the names the resolved value reads through a plain import of the standard module of that name (_imported,
+#   less a name that resolves to a module under tests/), which a licence's value check may read (_Licence.fault)
 
 
-def _record(module, w, nested):
-    return _Record(module, w.line, w.shape, ast.unparse(w.value) if w.value is not None else "", nested, w.resolved, w.via)
+def _record(module, w, nested, root):
+    return _Record(module, w.line, w.shape, ast.unparse(w.value) if w.value is not None else "", nested, w.resolved, w.via,
+                   tuple(n for n in w.imported if not _tests_module_path(n, root)))
 
 
 def _module_level_records(tree, module, root=None):
-    """Every module-level write of `tree` as (name, _Record) pairs, `module` naming the file (relative to tests/)."""
-    return [(w.key, _record(module, w, nested)) for w, nested in _module_level_env_write_records(tree, module, root)]
+    """Every module-level write of `tree` as (name, _Record) pairs, `module` naming the file (relative to tests/) and
+    `root` the directory its tests-local imports resolve in (tests/ by default)."""
+    root = HERE if root is None else root
+    return [(w.key, _record(module, w, nested, root)) for w, nested in _module_level_env_write_records(tree, module, root)]
 
 
 _CENSUS_BUILDS = collections.Counter()
@@ -4877,13 +4920,13 @@ def _is_module_state_home(node):
             and _str_literal(node.slice) and node.slice.value == "XDG_STATE_HOME")
 
 
-def _a_mkdtemp(v):
+def _a_mkdtemp(v, imported=()):
     """A fresh private directory under the run's temp root: a bare `tempfile.mkdtemp()`, or one with a literal prefix
     (_is_mkdtemp); a `dir=` is a fault naming the module and the line."""
     return _is_mkdtemp(_expr(v))
 
 
-def _a_state_dir(v):
+def _a_state_dir(v, imported=()):
     """A private state directory for ROMP_STATE_DIR: a bare TemporaryDirectory's name, a path of literals joined onto a
     mkdtemp (`os.path.join(tempfile.mkdtemp(), 'romp')`), or the shell's own value written back after the load (the three
     converge and update modules); each of the three the exact form the census shows. A bare mkdtemp is not one: no
@@ -4893,7 +4936,7 @@ def _a_state_dir(v):
     return _is_temporary_directory_name(node) or _is_join_onto(node, _is_mkdtemp) or v == "os.environ.get('ROMP_STATE_DIR')"
 
 
-def _under_the_state_root(v):
+def _under_the_state_root(v, imported=()):
     """A path built on the module's own state root and nowhere real: literals joined onto its XDG_STATE_HOME, or onto a
     mkdtemp, or a literal concatenated onto a mkdtemp (`tempfile.mkdtemp(prefix='romp-envnames-') + '/absent.env'`); the
     mkdtemp bare or with a literal prefix, never with a `dir=`."""
@@ -4902,17 +4945,33 @@ def _under_the_state_root(v):
             or (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add) and _is_mkdtemp(node.left) and _str_literal(node.right)))
 
 
-def _a_serve_token(v):
-    """A synthetic serve token: a string literal, or the shell's own value written back (test_postal_token.py)."""
-    return _a_string_literal(v) or v == "os.environ.get('ROMP_SERVE_TOKEN')"
+def _a_serve_token(v, imported=()):
+    """A synthetic serve token: a string literal; the shell's own value written back (test_postal_token.py); or, BY
+    PROVEN SHAPE (the reviewer's ruling at fork PR #894's landing merge with main, (1), after fork PR #919's
+    test_fetch_wrapper_census.py wrote `"census-" + secrets.token_hex(12)`), a string literal joined by + to a call
+    of secrets.token_hex with one int literal as its only argument, where secrets is in `imported`: the value reads it
+    through the module's own `import secrets`, its one binding, of the standard module (_imported, _record). That is a
+    random value the process mints, never a real token. REFUSED, each a near-miss of that shape
+    (test_the_serve_token_licence_admits_a_literal_joined_to_secrets_token_hex_by_binding_and_refuses_each_near_miss):
+    a name in place of the call, the callee a bare name (token_hex imported from secrets, or a def of the module of
+    that name), a call of anything else (os.urandom(12).hex(), a read of a file), secrets bound to anything but that
+    import (another module under the name, the name bound again, a class, a name imported from another module, a
+    parameter, a module named secrets under tests/, a star import after it), and an argument that is not one int
+    literal (a name the resolver cannot read, a call, a keyword, a bool, none)."""
+    node = _expr(v)
+    joined = isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add) and _str_literal(node.left)
+    call = node.right if joined else None
+    return (_a_string_literal(v) or v == "os.environ.get('ROMP_SERVE_TOKEN')"
+            or (_call_of(call, "secrets.token_hex") and not call.keywords and len(call.args) == 1
+                and isinstance(call.args[0], ast.Constant) and type(call.args[0].value) is int and "secrets" in imported))
 
 
-def _a_service_env(v):
+def _a_service_env(v, imported=()):
     """The service-env path: the same value as the sibling name (which is checked itself), or a path under the root."""
     return v == "os.environ['ROMP_SERVICE_ENV_FILE']" or _under_the_state_root(v)
 
 
-def _a_loopback_url(v):
+def _a_loopback_url(v, imported=()):
     """A URL on port 9 of 127.0.0.1, the one writer's (the discard port: privileged, so no test process binds it, and
     nothing answers there). Any other port is refused, a live one included (the reviewer's ruling of round 1 on fork PR
     #894: the condition accepted any port on a permanent licence that nothing re-asserts per test)."""
@@ -4936,11 +4995,11 @@ class _Licence:
     """One licensed module-level write, per name (the comment above): `reason` says why a child may inherit the write;
     the CHECKABLE conditions are `value` (the one literal the writers may set), `value_ok` (a predicate over the written
     value's text, resolved through the names bound once at import, so `_ROOT = tempfile.mkdtemp()` is read as the
-    mkdtemp), `reasserted` (tests/conftest.py sets or pops the name before every test, proved by a child pytest in
-    the context _conftest_reasserted_names' docstring names with what the proof does not read:
-    _conftest_reasserts_proved) and,
-    for a licence that waits on an item, `since` (the ISO date it was granted) with `until` (the item, named with the
-    date it was filed).
+    mkdtemp, and over the names that text reads through a plain import of the standard module of that name,
+    _Record.imported, which _a_serve_token alone reads), `reasserted` (tests/conftest.py sets or pops the name before
+    every test, proved by a child pytest in the context _conftest_reasserted_names' docstring names with what the proof
+    does not read: _conftest_reasserts_proved) and, for a licence that waits on an item, `since` (the ISO date it was
+    granted) with `until` (the item, named with the date it was filed).
     _licence_table_faults holds every licence to that shape: since the fixup of 2026-09-22 (the verifier's finding
     that since and until were stored and read by nothing) a licence must carry a per-write condition, an `until` must
     come with a `since`, and the dates must be dates."""
@@ -4961,7 +5020,7 @@ class _Licence:
         shown = _shown_value(rec)
         if self.value is not None and rec.resolved != repr(self.value):
             return "licensed for the value %r alone, not %s" % (self.value, shown or "a shape with no value")
-        if self.value_ok is not None and not self.value_ok(rec.resolved):
+        if self.value_ok is not None and not self.value_ok(rec.resolved, rec.imported):
             return "the value %s is not one this licence covers" % (shown or "(none)")
         return None
 
@@ -5005,10 +5064,11 @@ LICENSED_MODULE_LEVEL_WRITES = {
         value_ok=_a_state_dir, since="2026-09-22", until=CLASS_ITEM_871),
     "ROMP_SERVE_TOKEN": _Licence(
         "a synthetic serve token so a kernel or bus loaded in-process mints none under the module's root: a string "
-        "literal, by setdefault in most modules and by assignment in the rest (test_postal_token.py puts the shell's "
-        "value back after its load, the one non-literal). Licensed 2026-09-22 until the class item is taken, by the "
-        "reviewer's ruling: a dated licence, not current practice. The writer modules are the committed set "
-        "(WRITER_SET_FILES), compared by equality: a new writer faults, a migrated one reds until its line is removed",
+        "literal, by setdefault in most modules and by assignment in the rest; test_postal_token.py puts the shell's "
+        "value back after its load, and test_fetch_wrapper_census.py sets a literal joined to secrets.token_hex(12), a "
+        "random value through its own import of secrets (_a_serve_token). Licensed 2026-09-22 until the class item is "
+        "taken, by the reviewer's ruling: a dated licence, not current practice. The writer modules are the committed "
+        "set (WRITER_SET_FILES), compared by equality: a new writer faults, a migrated one reds until its line is removed",
         value_ok=_a_serve_token, since="2026-09-22", until=CLASS_ITEM_871),
     "ROMP_KERNEL_NO_OPEN": _Licence(
         "the kernel's one reader opens a browser when the name is unset (kernel/kernel.py, the serve path), and \"1\" "
@@ -5326,7 +5386,8 @@ def _fixture_names_by_keyword(tree):
 
 _PYTEST_OWN = ("pytest", "_pytest")
 #   the top-level packages of pytest's own code: the runner imported them before any conftest, and a name imported from
-#   one of them is pytest's own object
+#   one of them is pytest's own object. Fork PR #872's launcher census reads this tuple as pytest by name, a command
+#   with no -p no:anyio; tests/test_ci_sdk_pin.py lists it (LAUNCHERS_LISTED) as a tuple of module names, not a command
 _PYTEST_DECORATORS = (("fixture",), ("yield_fixture",), ("hookimpl",))
 #   the attributes of the pytest module a module read by its text may decorate with or call (besides any
 #   pytest.mark.<name>): the two fixture functions, whose name= is keyword-only and read in the tree
@@ -5750,8 +5811,15 @@ def _collect_report_shape_faults(hook, resolve):
                              "holds the report" % ", ".join(ast.unparse(t) for t in s.targets))
                 else:
                     fault(s, "a %s statement, which THE SHAPE does not read" % type(s).__name__)
-        stmts(body)
-    prove(hook, frozenset(), (hook.name,))
+        try:
+            stmts(body)
+        finally:
+            call = value = stmts = None     # each holds the next, or itself, through its closure: a cycle only a
+                                            # collection frees, holding the def's nodes (the module end's checks count)
+    try:
+        prove(hook, frozenset(), (hook.name,))
+    finally:
+        prove = None                        # its closure holds itself, and through `resolve` the module's defs
     return faults
 
 
@@ -6480,7 +6548,9 @@ def _conftest_reasserted_names(src=None, where=None):
     (-n 0, on macos-latest) and its run with workers those of the runners whose step sets some (-n 2, on ubuntu-latest;
     _proof_ci_forms, _proof_mode_options). The developer's form has none of those options but -n, and has
     -p no:cacheprovider and -k reassert (_PROOF_DEVELOPER_OPTIONS), which blocks the cache plugin and deselects none of
-    the four, and -n 2 in its run with workers.
+    the four, and -n 2 in its run with workers. Each child of either form passes -p no:anyio after its run's options
+    (_PROOF_CHILD_FLAG: fork PR #872 holds every pytest the suite starts to the flag), so a child in CI's form, whose
+    step passes it among its options, passes it twice.
     THE PROOF'S LIMIT, IN THREE TIERS (the reviewer's ruling of 2026-09-25 08:14Z on round 2 of fork PR #894, (10)). The
     proof refuses an unconditional removal of a counted fixture's re-assert (from every test), the class of the bug, and
     any removal keyed on a fact of the first tier. The second and third tiers are what it grants although pytest may not
@@ -6494,8 +6564,9 @@ def _conftest_reasserted_names(src=None, where=None):
     gives and another does not is given, CI's -q, --durations, --timeout, --timeout-method and -n (the last given by
     every run but the developer's with no worker), and the developer's -p no:cacheprovider and -k, read as words of
     the command line and, all but -n, as pytest reads them (the cache plugin loaded or not, a -k or none, --durations
-    or none, --timeout or none, -q by the verbosity). The pair covers whether an option is given, and no condition on
-    its value. A road in
+    or none, --timeout or none, -q by the verbosity). CI's -p no:anyio, read as one option as the developer's
+    -p no:cacheprovider is, is given in every run, since each child passes it (_PROOF_CHILD_FLAG). The pair covers
+    whether an option is given, and no condition on its value. A road in
     the conftest's own code, in the code that runs before it or in pytest that keeps pytest from running that re-assert
     in a test of that context, keyed on those facts alone, or together where one read has them all (V1, the package,
     the start, V3, V4 and V5 with either form, and one run's options with one another), is refused, named above or not
@@ -6537,7 +6608,11 @@ def _conftest_reasserted_names(src=None, where=None):
     cache plugin blocked): each is finite and could be matched by more runs per case, one per option or combination,
     which are not made here. The witness is _proof_option_roads' two roads of this tier, one on --rootdir given and one
     on the cache plugin blocked with no -k given, each granted by the proof in the context test; no committed test
-    makes a real run under either.
+    makes a real run under either. And a run without -p no:anyio, which a developer's run may be and no child of the
+    proof is: each passes the flag after its run's options (_PROOF_CHILD_FLAG), since fork PR #872 holds every pytest
+    the suite starts to it (tests/test_ci_sdk_pin.py, ChildPytestLaunchers), so matching it takes a child that rule
+    refuses, and none is made. The witness is _proof_option_roads' road on CI's -p no:anyio not given, granted by the
+    proof in the context test; no committed test makes a real run under it.
     THIRD, UNMATCHABLE at any cost: a conftest hook condition keyed on an open-valued signal, a mark of any name, an
     environment variable, a host name, an option's value (a --durations of 5, where CI's step gives 10: the pair
     matches whether an option is given, not its value; _proof_option_roads' road on it is granted), or another
@@ -6739,7 +6814,17 @@ _PROOF_DEVELOPER_OPTIONS = (("-p", "no:cacheprovider"), ("-k", "reassert"))
 #   absence was granted, and a developer's run leaked): the options of the proof's runs in that form besides -n, none
 #   of CI's options and the two a developer's run of this suite passes that CI's step does not, the cache plugin blocked, as
 #   this repository's sweeps run, and a -k, which selects a test by name ("reassert" is in the name of each module the
-#   proof adds, so it deselects none); its run with workers adds -n 2 (_proof_mode_options)
+#   proof adds, so it deselects none); its run with workers adds -n 2 (_proof_mode_options). Its child passes
+#   -p no:anyio after these, as every child of the proof does (_PROOF_CHILD_FLAG)
+_PROOF_CHILD_FLAG = ("-p", "no:anyio")
+#   THE FLAG EVERY CHILD OF THE PROOF PASSES, after its run's options (_reassert_proof's run; the reviewer's ruling at
+#   fork PR #894's landing merge with main, (3)). Fork PR #872 holds every pytest the suite starts to -p no:anyio
+#   (tests/test_ci_sdk_pin.py, ChildPytestLaunchers), so that no child in a CI cell loads the pytest plugin of anyio,
+#   which the SDK step installs there. CI's step passes the same flag among its options, and _proof_option_roads reads
+#   it there as one option of two words, as it reads the developer's -p no:cacheprovider (that ruling, (2);
+#   _proof_ci_option_units). Since each child passes it, every run of the proof has the flag and none lacks it: a road
+#   keyed on it not given is granted, in the proof's second tier (_conftest_reasserted_names), and a developer's run
+#   that does not pass the flag has that fact
 
 
 def _proof_developer_options():
@@ -7140,7 +7225,8 @@ def _reassert_proof(cases, real=False):
     run of _proof_modes (_PROOF_MODE_RUNS: in CI's form of command line, as its Run pytest step runs on a runner with
     no worker and on one with workers, and in a developer's, with _proof_developer_options, the ruling of 2026-09-25
     09:17Z, (11); each with no xdist worker and, where pytest-xdist is installed, with two; each run's options
-    _proof_mode_options'), a child pytest over the four modules of _proof_module_files: two probe modules
+    _proof_mode_options', and each child passing -p no:anyio after them, _PROOF_CHILD_FLAG), a child pytest over the
+    four modules of _proof_module_files: two probe modules
     (_REASSERT_PROBE) over the names of the case's sites, the first collected first and the second fourth, after two
     dummy modules (_REASSERT_DUMMY), each probe test writing its report under the case's reports directory, in a
     directory of its form, outside the package. With `real` (the ruling of 2026-09-25 01:54Z, (6), and its application
@@ -7183,7 +7269,8 @@ def _reassert_proof(cases, real=False):
     def run(job):
         mode, cwd, args, tmp = job
         os.makedirs(tmp, exist_ok=True)
-        return subprocess.run([sys.executable, "-m", "pytest"] + options[mode] + args,
+        # _PROOF_CHILD_FLAG after the run's options, spelled here, where fork PR #872's launcher census reads it
+        return subprocess.run([sys.executable, "-m", "pytest", *options[mode], "-p", "no:anyio", *args],
                               cwd=cwd, env=dict(child, TMPDIR=tmp), stdin=subprocess.DEVNULL, capture_output=True,
                               text=True, timeout=180)
 
@@ -10009,6 +10096,81 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(_licence_faults(without, reasserted),
                          ["ROMP_MODELS_URL is licensed but no test module writes it at module level any more: remove the licence"])
 
+    def test_the_serve_token_licence_admits_a_literal_joined_to_secrets_token_hex_by_binding_and_refuses_each_near_miss(self):
+        """THE SERVE TOKEN'S LICENCE, WIDENED BY PROVEN SHAPE (the reviewer's ruling at fork PR #894's landing merge with
+        main, (1), after fork PR #919's test_fetch_wrapper_census.py wrote `"census-" + secrets.token_hex(12)` at module
+        level and the licence check faulted it). ADMITTED: a string literal joined by + to secrets.token_hex with one int
+        literal, where secrets is the module's own `import secrets`, its one binding, of the standard module (a module
+        named secrets under the root the scan resolves imports in would be the one imported), written by setdefault or
+        by assignment, directly, through a name bound once to the value, or in a def a call at import reaches; and the
+        real module's write, whose record reads secrets through the import. REFUSED, each with the licence's own fault:
+        a name in place of the call; the callee a bare name (token_hex imported from secrets, or a def of the module of
+        that name); a call of anything else (os.urandom, a read of a file); secrets bound to anything but that import
+        (another module under the name, the name bound again after it, a class, a name imported from another module, a
+        parameter of the def the write is reached through, a module named secrets under the root, a star import after
+        it); and an argument that is not one int literal (a name the resolver cannot read, a call, a keyword, a bool,
+        none). Every near-miss but the first reds under a licence that admits any + of a string literal and a call; the
+        first, which that licence refuses too, reds under one that admits any + of a string literal and anything."""
+        every = frozenset(LICENSED_MODULE_LEVEL_WRITES)
+
+        def faults(src, root=None):
+            planted = collections.defaultdict(list)
+            for name, rec in _module_level_records(ast.parse(src), "test_planted.py", root):
+                planted[name].append(rec)
+            return _licence_faults({**_all_licensed_once(), **planted}, every)
+        write = 'os.environ.setdefault("ROMP_SERVE_TOKEN", "census-" + %s)\n'
+        self.assertIsNone(_tests_module_path("secrets", HERE), "no module named secrets under tests/, where the scan resolves imports")
+        for label, src in (("by setdefault", "import os, secrets\n" + write % "secrets.token_hex(12)"),
+                           ("by assignment", 'import os\nimport secrets\nos.environ["ROMP_SERVE_TOKEN"] = "census-" + secrets.token_hex(16)\n'),
+                           ("through a name bound once", 'import os, secrets\n_TOKEN = "census-" + secrets.token_hex(12)\n'
+                                                         'os.environ.setdefault("ROMP_SERVE_TOKEN", _TOKEN)\n'),
+                           ("in a def a call at import reaches", "import os, secrets\ndef _floor():\n    " + write % "secrets.token_hex(12)"
+                                                                 + "_floor()\n")):
+            with self.subTest(admitted=label):
+                self.assertEqual(faults(src), [], label)
+        with open(os.path.join(HERE, "test_fetch_wrapper_census.py"), encoding="utf-8") as f:
+            real = [rec for name, rec in _module_level_records(ast.parse(f.read()), "test_fetch_wrapper_census.py")
+                    if name == "ROMP_SERVE_TOKEN"]
+        self.assertEqual([(r.resolved, r.imported) for r in real], [("'census-' + secrets.token_hex(12)", ("secrets",))],
+                         "fork PR #919's write, read through the module's own import of secrets")
+        self.assertEqual([LICENSED_MODULE_LEVEL_WRITES["ROMP_SERVE_TOKEN"].fault(r, every) for r in real], [None])
+        local = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, local, True)
+        with open(os.path.join(local, "secrets.py"), "w", encoding="utf-8") as f:
+            f.write("def token_hex(n):\n    return open('/srv/serve-token').read()\n")
+        near_misses = (
+            ("a name in place of the call", "import os, secrets\n_TOKEN = secrets.token_hex(12)\n_TOKEN = _TOKEN.upper()\n"
+                                            + write % "_TOKEN", None),
+            ("the callee a bare name, token_hex imported from secrets", "import os\nfrom secrets import token_hex\n"
+                                                                        + write % "token_hex(12)", None),
+            ("the callee a def of the module named token_hex", "import os\ndef token_hex(n):\n    return open('/srv/serve-token').read()\n"
+                                                                + write % "token_hex(12)", None),
+            ("a call of anything else, os.urandom", "import os\n" + write % "os.urandom(12).hex()", None),
+            ("a call of anything else, a read of a file", "import os\n" + write % "open('/srv/serve-token').read()", None),
+            ("secrets another module under the name", "import os\nimport os as secrets\n" + write % "secrets.token_hex(12)", None),
+            ("secrets bound again after its import", "import os, secrets\nsecrets = os\n" + write % "secrets.token_hex(12)", None),
+            ("secrets a class", "import os, secrets\nclass secrets:\n    token_hex = staticmethod(lambda n: open('/srv/serve-token').read())\n"
+                                + write % "secrets.token_hex(12)", None),
+            ("secrets a name imported from another module", "import os\nfrom os import path as secrets\n"
+                                                            + write % "secrets.token_hex(12)", None),
+            ("secrets a parameter of the def the write is reached through",
+             "import os, secrets\ndef _floor(secrets):\n    " + write % "secrets.token_hex(12)" + "_floor(os)\n", None),
+            ("secrets a module named secrets under the root", "import os, secrets\n" + write % "secrets.token_hex(12)", local),
+            ("secrets under a star import after its import", "import os, secrets\nfrom h_star import *\n"
+                                                             + write % "secrets.token_hex(12)", None),
+            ("an argument the resolver cannot read, a name bound twice", "import os, secrets\n_N = 12\n_N = 16\n"
+                                                                         + write % "secrets.token_hex(_N)", None),
+            ("an argument that is a call", "import os, secrets, sys\n" + write % "secrets.token_hex(len(sys.argv))", None),
+            ("an argument by keyword", "import os, secrets\n" + write % "secrets.token_hex(nbytes=12)", None),
+            ("an argument that is a bool", "import os, secrets\n" + write % "secrets.token_hex(True)", None),
+            ("no argument", "import os, secrets\n" + write % "secrets.token_hex()", None))
+        for label, src, root in near_misses:
+            with self.subTest(near_miss=label):
+                got = faults(src, root)
+                self.assertEqual(len(got), 1, (label, got))
+                self.assertTrue(got[0].startswith("ROMP_SERVE_TOKEN at test_planted.py:"), (label, got))
+                self.assertIn("is not one this licence covers", got[0], label)
+
     def test_conftest_re_asserts_the_names_the_re_asserted_licences_rest_on(self):
         """The licences marked `reasserted` are conditions on tests/conftest.py, read from its autouse fixtures by
         _conftest_reasserted_names: the dead ports (both spellings of the kernel's), the catalog and scope switches, the
@@ -10219,7 +10381,7 @@ class HermeticKernelPostal(unittest.TestCase):
                 f.write(text)
         child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST" and not k.startswith("ROMP_PROBE_")}
         child["TMPDIR"] = d
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "--rootdir", d, "test_probe.py"],
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-p", "no:anyio", "--rootdir", d, "test_probe.py"],
                            cwd=d, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
         out = r.stdout + r.stderr
         self.assertEqual(r.returncode, 0, out[-3000:])
@@ -10306,7 +10468,7 @@ class HermeticKernelPostal(unittest.TestCase):
                     f.write(text)
         child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST" and not k.startswith("ROMP_PROBE_")}
         child["TMPDIR"] = d
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "--rootdir", d, d],
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-p", "no:anyio", "--rootdir", d, d],
                            cwd=d, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
         out = r.stdout + r.stderr
         self.assertEqual(r.returncode, 0, out[-3000:])
@@ -10455,7 +10617,7 @@ class HermeticKernelPostal(unittest.TestCase):
                     f.write(text)
         child = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST" and not k.startswith("ROMP_PROBE_")}
         child["TMPDIR"] = d
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "--rootdir", d, d],
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-p", "no:anyio", "--rootdir", d, d],
                            cwd=d, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
         out = r.stdout + r.stderr
         self.assertEqual(r.returncode, 0, out[-3000:])
@@ -11127,6 +11289,31 @@ class HermeticKernelPostal(unittest.TestCase):
             why = _why_a_hook_may_stop_it([("pytest_make_collect_report", "pytest_make_collect_report")]) or ""
             self.assertTrue(why.startswith(refusal) and "handed no module and text" in why, why)
 
+    def test_a_collect_report_proof_leaves_no_cycle_holding_the_modules_defs(self):
+        """THE SHAPE READER FREES WHAT IT READ (found building round 2's eighty-third commit of fork PR #894: the module
+        end's checks, which the aborted read's pin runs mid-module, counted the defs of tests/conftest.py alive after a
+        test before it had read fork PR #872's hook, on 3.12, at the eighty-second commit as well; paired with the
+        aborted read's pin, each of the three tests that read that hook red it there). The nested defs of
+        _collect_report_shape_faults hold one another, and prove itself, through their closures, and through `resolve`
+        the module's defs: a cycle only a collection frees, and no check of this module collects. Over a tree of
+        tests/conftest.py's text, the proof of its pytest_make_collect_report with the resolver over that tree finds no
+        fault, and once this test drops the tree, the hook and the resolver, a weak reference to each def at the top of
+        the module is dead, freed by reference counting with no collection. Red before the proof cleared its nested
+        defs when it ended: every weak reference alive."""
+        with open(os.path.join(HERE, "conftest.py"), encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        defs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
+        hooks = [d for d in defs if d.name == "pytest_make_collect_report"]
+        self.assertEqual(len(hooks), 1, "tests/conftest.py defines one pytest_make_collect_report at its top")
+        refs = [weakref.ref(d) for d in defs]       # made first: nothing is made between the proof's end and the read
+        faults = _collect_report_shape_faults(hooks[0], _shape_resolver(tree))
+        tree = defs = hooks = None      # dropped before any assertion: a red's traceback keeps no tree of the module
+        alive = [ref().name for ref in refs if ref() is not None]
+        self.assertEqual(faults, [], "the proof of tests/conftest.py's hook finds no fault")
+        self.assertTrue(refs, "tests/conftest.py has defs at its top")
+        self.assertEqual(alive, [], "the defs of tests/conftest.py alive once the proof has ended and the test dropped the "
+                                    "tree: a cycle the proof left holds them")
+
     def test_a_re_asserted_licence_holds_only_where_a_child_pytest_sees_the_fixtures_own_re_assert(self):
         """THE EXECUTION PROOF (the reviewer's ruling of 2026-09-24 21:09Z on round 2 of fork PR #894, (1): the static
         reader had no closed boundary, each fix closing one facet of the class, a fixture counted that pytest never ran,
@@ -11254,9 +11441,11 @@ class HermeticKernelPostal(unittest.TestCase):
         loaded, on no --durations or on a -k was granted): every run is made in CI's form and in a developer's
         (_PROOF_MODE_RUNS), and each road of _proof_option_roads, in one case with a fixture per road
         (_proof_option_case), keyed on each run's options leading its command line or on an option word one run gives
-        and another does not, given or not, is refused for the reads of the runs that have its fact and no others; the
-        roads keyed on an option neither form gives (--rootdir), on a combination of options neither form has (the cache
-        plugin not loaded with no -k given) and on an option's value (a --durations of 5) are granted. The proof runs
+        and another does not, given or not, is refused for the reads of the runs that have its fact and no others (CI's
+        -p no:anyio given, for every read: each child passes it, _PROOF_CHILD_FLAG); the roads keyed on an option
+        neither form gives (--rootdir), on a combination of options neither form has (the cache plugin not loaded with no
+        -k given), on CI's -p no:anyio not given, which no run of the proof is, and on an option's value (a --durations
+        of 5) are granted. The proof runs
         here with this process's environment carrying the variables pytest-xdist sets in a worker, as on a worker of a
         sweep with -n 8, and its runs with no worker drop them (_proof_child_env), so the variable's road is refused for
         the -n 2 runs' reads alone. V5's worker roads and the conjunctions are refused only where the proof makes the
@@ -11315,8 +11504,9 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual({label: got["the pair of forms"][name] is not None for name, (label, runs) in option_roads.items()},
                          {label: runs is not None for name, (label, runs) in option_roads.items()},
                          "THE PAIR OF FORMS: the proof refuses each road keyed on a run's options leading its command line or "
-                         "on an option word one run gives and another does not, given or not, and grants the roads keyed on an "
-                         "option neither form gives, on a combination of options neither form has and on an option's value:\n%s"
+                         "on an option one run gives and another does not, given or not, and grants the roads keyed on an "
+                         "option neither form gives, on a combination of options neither form has, on CI's -p no:anyio not "
+                         "given, which each child passes, and on an option's value:\n%s"
                          % "\n".join("%s: %s" % (label, got["the pair of forms"][name] or "granted")
                                      for name, (label, _f) in option_roads.items()))
         for name, (label, runs) in option_roads.items():
@@ -11424,6 +11614,62 @@ class HermeticKernelPostal(unittest.TestCase):
             _proof_mode_options("serial", root)
         self.assertIn("sets its worker count by a spelling the proof does not leave out", str(caught.exception),
                       "with pytest-xdist out of reach, -n0 is refused by name")
+
+    def test_the_proofs_option_roads_read_cis_anyio_flag_as_one_option_and_any_other_p_as_the_word_it_was(self):
+        """CI'S -p no:anyio, ONE OPTION (the reviewer's ruling at fork PR #894's landing merge with main, (2), after fork
+        PR #872 put -p no:anyio in CI's pytest step: the proof read -p there as a word, which every run gives, so its
+        road on -p not given fired in no run and the pair-of-forms test failed). From the real ci.yml,
+        _proof_ci_option_units reads the flag as one option in each of CI's forms, and _proof_option_roads plants on it
+        a road on the flag given, keyed on the two words together as the developer's -p no:cacheprovider is, of every
+        run, since each child passes the flag (_PROOF_CHILD_FLAG), and a road on it not given, granted (None), and no
+        road on the word -p or on no:anyio. Over a copy of ci.yml whose step gives another plugin (-p no:other), or -p
+        alone (at the end of the line, or before --durations=10), -p is read as the word it was before that ruling:
+        roads on -p given and not given, keyed on the word, the first of every run and the second of none (the
+        developer's -p no:cacheprovider and each child's flag give -p too), and no road on a plugin."""
+        args = "item.config.invocation_params.args"
+        line = "(' ' + ' '.join(%s) + ' ')" % args
+        modes = _proof_modes()
+        ci = [m for m in modes if _PROOF_MODE_RUNS[m][0] == "ci"]
+        flag = " ".join(_PROOF_CHILD_FLAG)
+        self.assertEqual(flag, "-p no:anyio")
+
+        def ci_roads(roads):
+            return sorted(label for label, _c, _r in roads if label.startswith(("CI's option ", "the second tier: CI's option ")))
+        for m in ci:
+            units = _proof_ci_option_units(_proof_mode_options(m))
+            self.assertIn(flag, units, "the real ci.yml, %s: %s" % (m, units))
+            self.assertEqual([u for u in units if u in ("-p", "no:anyio") or "no:anyio" in u and u != flag], [], units)
+        roads = _proof_option_roads()
+        by_label = {label: (condition, runs) for label, condition, runs in roads}
+        self.assertEqual(by_label["CI's option -p no:anyio given"], ("' -p no:anyio ' in %s" % line, modes))
+        self.assertEqual(by_label["the second tier: CI's option -p no:anyio not given, which each child passes"],
+                         ("' -p no:anyio ' not in %s" % line, None))
+        self.assertEqual([label for label in ci_roads(roads) if "-p" in label and flag not in label], [],
+                         "no road on the word -p, from the real ci.yml")
+        with open(_proof_ci_yml(), encoding="utf-8") as f:
+            real = f.read()
+        anchor = "}} -p no:anyio --durations=10 --timeout=600 --timeout-method=thread\n"
+        self.assertEqual(real.count(anchor), 1, "the step's flag, which the plants below change")
+        plants = (("another plugin", real.replace(anchor, "}} -p no:other --durations=10 --timeout=600 --timeout-method=thread\n")),
+                  ("-p alone, at the end of the line", real.replace(anchor, "}} --durations=10 --timeout=600 --timeout-method=thread -p\n")),
+                  ("-p alone, before --durations=10", real.replace(anchor, "}} -p --durations=10 --timeout=600 --timeout-method=thread\n")))
+        root = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        os.makedirs(os.path.join(root, ".github", "workflows"))
+        for label, text in plants:
+            self.assertNotEqual(text, real, "%s: the plant changes ci.yml" % label)
+            with open(_proof_ci_yml(root), "w", encoding="utf-8") as f:
+                f.write(text)
+            with self.subTest(plant=label):
+                for m in ci:
+                    units = _proof_ci_option_units(_proof_mode_options(m, root))
+                    self.assertIn("-p", units, "%s, %s: %s" % (label, m, units))
+                    self.assertEqual([u for u in units if "no:" in u], [], "%s, %s: no plugin read as an option: %s" % (label, m, units))
+                planted = _proof_option_roads(root)
+                got = {lab: (condition, runs) for lab, condition, runs in planted}
+                self.assertEqual((got.get("CI's option -p given"), got.get("CI's option -p not given")),
+                                 (("'-p' in %s" % args, modes), ("'-p' not in %s" % args, ())), label)
+                self.assertEqual([lab for lab in ci_roads(planted) if "no:" in lab], [], "%s: no road on a plugin" % label)
 
     def test_the_proofs_ci_form_refuses_by_name_a_shell_word_that_is_not_a_pytest_argument(self):
         """SHELL SYNTAX ON THE STEP'S LINE (correctness-1 of round 2 of fork PR #894: the proof handed every word after
@@ -11617,7 +11863,7 @@ class HermeticKernelPostal(unittest.TestCase):
         child = {k: v for k, v in os.environ.items() if k not in ("PYTEST_CURRENT_TEST", "ROMP_KERNEL_PORT")}
         child["PYTHONPATH"] = os.pathsep.join(p for p in (os.path.dirname(HERE), child.get("PYTHONPATH")) if p)
         child["TMPDIR"] = root
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", root, tests_dir],
+        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio", "--rootdir", root, tests_dir],
                            cwd=root, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
         reads = {}
         for key in ("marked", "control"):
@@ -11700,7 +11946,7 @@ class HermeticKernelPostal(unittest.TestCase):
         child["TMPDIR"] = root
         runs = {}
         for form, args in (("the directory", [tests_dir]), ("the five files", [os.path.join(tests_dir, m + ".py") for m in modules])):
-            r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", root] + args,
+            r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio", "--rootdir", root] + args,
                                cwd=root, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
             runs[form] = {}
             for module in modules:
@@ -13935,7 +14181,7 @@ class HermeticKernelPostal(unittest.TestCase):
         env = dict(os.environ, ROMP_TEST_DIAL_SPY=out, ROMP_TEST_DIAL_SPY_FIXED=str(fixed),
                    PYTHONPATH=os.pathsep.join([d] + ([os.environ["PYTHONPATH"]] if os.environ.get("PYTHONPATH") else [])))
         env.pop("PYTEST_CURRENT_TEST", None)
-        p = subprocess.Popen([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+        p = subprocess.Popen([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio",
                               "tests/test_kernel.py::PostalPeerTunnels::test_notify_bus_peer_is_guarded"],
                              cwd=os.path.dirname(HERE), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True)
@@ -13978,7 +14224,7 @@ class HermeticKernelPostal(unittest.TestCase):
         env.pop("PYTEST_CURRENT_TEST", None)
 
         def run():
-            p = subprocess.Popen([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"] + list(targets),
+            p = subprocess.Popen([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio"] + list(targets),
                                  cwd=os.path.dirname(HERE), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, text=True)
             try:
@@ -14081,7 +14327,7 @@ class HermeticKernelPostal(unittest.TestCase):
         child["TMPDIR"] = d
 
         def run():
-            r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--rootdir", d] + sorted(modules),
+            r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:anyio", "--rootdir", d] + sorted(modules),
                                cwd=d, env=child, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
             return r.returncode, r.stdout + r.stderr, d
         return run
@@ -15442,39 +15688,70 @@ def _proof_copy_roads(checkout=None):
          "_cr_in_place(os.path.dirname(%s), %r, %r)" % (here, checkout, outside)))
 
 
-def _proof_option_roads():
+def _proof_ci_option_units(words):
+    """CI's options as _proof_option_roads reads them, from `words`, the options of a run in CI's form, in their order:
+    each word that begins with a dash, but -p followed by no:anyio, which is one option of two words (_PROOF_CHILD_FLAG)
+    read as the developer's -p no:cacheprovider is (the reviewer's ruling at fork PR #894's landing merge with main,
+    (2), after fork PR #872 put the flag in CI's pytest step, where the word -p, given by every run, made its road on
+    -p not given fire in none). Any other -p, alone or before another plugin, is the word -p, as it was read before that
+    ruling (test_the_proofs_option_roads_read_cis_anyio_flag_as_one_option_and_any_other_p_as_the_word_it_was)."""
+    out, i = [], 0
+    while i < len(words):           # loop-ok: bounded by the words
+        if tuple(words[i:i + 2]) == _PROOF_CHILD_FLAG:
+            out.append(" ".join(_PROOF_CHILD_FLAG))
+            i += 2
+            continue
+        if words[i].startswith("-"):
+            out.append(words[i])
+        i += 1
+    return out
+
+
+def _proof_option_roads(root=None):
     """THE PAIR OF FORMS, PLANTED (the reviewer's ruling of 2026-09-25 09:17Z on round 2 of fork PR #894, (11), after
     the verifier's finding N4 at the forty-third commit: every child passed CI's options, and a hook keyed on the cache
     plugin not loaded, on no --durations given or on a -k given, its X1N, Y3N and Y2N, was granted, and a developer's
     run of each read the module-level write): (label, condition on `item`, the runs of _proof_modes that have the fact,
     or None): each run's options leading its command line (_proof_mode_options: CI's form as its runners with no
-    worker and with workers run it, and the developer's options), and each option word one run's command line gives
-    and another's does not, given and not given, each fact's runs derived from the options each run passes. Read two
-    ways: as words of the command line (each of CI's option words, the words of _proof_mode_options' CI runs that begin
-    with a dash, the worker count's value being V5's, and each of the developer's, _PROOF_DEVELOPER_OPTIONS), and as
-    pytest reads the option (-q by the verbosity; the verifier's X1, Y2, Y3 and Y3T at the thirty-ninth and fortieth
-    commits and X1N, Y2N and Y3N at the forty-third, word for word, and --timeout not given; -n is read as a word
-    alone), the --timeout options only where pytest-timeout is installed and -n only where pytest-xdist is
-    (_proof_mode_options). What the pair does not match, each road granted (None): an option neither form gives, given
-    (--rootdir, the verifier's X2 negated), and a combination of options neither form has (the cache plugin not loaded
-    with no -k given), both in the proof's second tier; and a condition on an option's value (a --durations of 5,
-    where CI's step gives 10), in its third, the open-valued."""
+    worker and with workers run it, and the developer's options), and each option one run's command line gives and
+    another's does not, given and not given, each fact's runs derived from the words each run's child passes before
+    its modules (its options, then _PROOF_CHILD_FLAG). Read two ways: as words of the command line (each of CI's
+    options, _proof_ci_option_units over _proof_mode_options' CI runs: -q, -n, -p no:anyio, --durations,
+    --timeout and --timeout-method today, the worker count's value being V5's, and each of the developer's,
+    _PROOF_DEVELOPER_OPTIONS, -p no:cacheprovider and -k), and as pytest reads the option (-q by the verbosity; the
+    verifier's X1, Y2, Y3 and Y3T at the thirty-ninth and fortieth commits and X1N, Y2N and Y3N at the forty-third,
+    word for word, and --timeout not given; -n is read as a word alone), the --timeout options only where
+    pytest-timeout is installed and -n only where pytest-xdist is (_proof_mode_options). CI's -p no:anyio is given in
+    every run, since each child passes it (_PROOF_CHILD_FLAG), so its road on the flag given is refused in every read.
+    What the pair does not match, each road granted (None): an option neither form gives, given (--rootdir, the
+    verifier's X2 negated), a combination of options neither form has (the cache plugin not loaded with no -k given),
+    and CI's -p no:anyio not given, which no run of the proof is, all three in the proof's second tier; and a condition
+    on an option's value (a --durations of 5, where CI's step gives 10), in its third, the open-valued. `root` is
+    _proof_mode_options', the checkout whose .github/workflows/ci.yml is read."""
     args = "item.config.invocation_params.args"
     line = "(' ' + ' '.join(%s) + ' ')" % args
     modes = _proof_modes()
-    given = {mode: _proof_mode_options(mode) for mode in modes}
+    options = {mode: _proof_mode_options(mode, root) for mode in modes}
+    given = {mode: options[mode] + list(_PROOF_CHILD_FLAG) for mode in modes}      # the words each child passes
     ci = tuple(m for m in modes if _PROOF_MODE_RUNS[m][0] == "ci")
     developer = tuple(m for m in modes if _PROOF_MODE_RUNS[m][0] == "developer")
 
     def having(test):
         return tuple(m for m in modes if test(given[m]))
     roads = []
-    leads = [("CI's options leading the command line: %s", given[m]) for m in ci]
+    leads = [("CI's options leading the command line: %s", options[m]) for m in ci]
     leads.append(("the developer's options leading the command line: %s", _proof_developer_options()))
     for label, words in leads:
         roads.append((label % " ".join(words), "list(%s[:%d]) == %r" % (args, len(words), words),
                       having(lambda g, w=words: g[:len(w)] == w)))
-    for word in dict.fromkeys(w for m in ci for w in given[m] if w.startswith("-")):
+    flag = " ".join(_PROOF_CHILD_FLAG)
+    for word in dict.fromkeys(w for m in ci for w in _proof_ci_option_units(options[m])):
+        if word == flag:
+            words = " %s " % flag
+            roads += [("CI's option %s given" % flag, "%r in %s" % (words, line), having(lambda g, w=words: w in " %s " % " ".join(g))),
+                      ("the second tier: CI's option %s not given, which each child passes" % flag,
+                       "%r not in %s" % (words, line), None)]
+            continue
         roads += [("CI's option %s given" % word, "%r in %s" % (word, args), having(lambda g, w=word: w in g)),
                   ("CI's option %s not given" % word, "%r not in %s" % (word, args), having(lambda g, w=word: w not in g))]
     for option in _PROOF_DEVELOPER_OPTIONS:
@@ -15540,12 +15817,13 @@ def _proof_command_roads():
     -k, on --durations or on --timeout granted, and at its forty-third, N4, a hook keyed on the cache plugin not
     loaded, on no --durations or on a -k granted, a real run of each reading the module-level write): (label,
     condition on `item`, a test of the child's, the runs of _proof_modes that have the fact) for each fact of the
-    child's command line, `python -m pytest` from the checkout's root with its run's options (_proof_mode_options),
-    each on the road of _COPY_ROAD_HOOK beside _proof_copy_roads'. Of some runs alone, _proof_option_roads' roads with
-    runs: each run's options leading its command line in their order (CI's read from .github/workflows/ci.yml as each
-    of its runners runs the step), which pytest-xdist hands its workers too, and each option word one run gives and
-    another does not, given and not given. Of every run: the verifier's X2, no --rootdir given, and the rootdir the
-    copy's root, where pytest puts it for a run from there. Read in the child alone: this process's command line is
+    child's command line, `python -m pytest` from the checkout's root with its run's options (_proof_mode_options)
+    and -p no:anyio after them (_PROOF_CHILD_FLAG), each on the road of _COPY_ROAD_HOOK beside _proof_copy_roads'. Of
+    some runs alone, _proof_option_roads' roads with runs: each run's options leading its command line in their order
+    (CI's read from .github/workflows/ci.yml as each of its runners runs the step), which pytest-xdist hands its workers
+    too, and each option one run gives and another does not, given and not given. Of every run: its road on CI's
+    -p no:anyio given, which each child passes; the verifier's X2, no --rootdir given; and the rootdir the copy's root,
+    where pytest puts it for a run from there. Read in the child alone: this process's command line is
     its own (a sweep's run may pass -p no:cacheprovider). What the child's command line does not share with a real
     run, its four modules handed as files and the -n 2 of the developer's form's run with workers, is among what the
     proof does not read (_conftest_reasserted_names)."""
