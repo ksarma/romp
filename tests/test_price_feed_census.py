@@ -1402,7 +1402,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "closes every write through the name by one arm; an attribute named `__globals__`, `__builtins__`, f_globals, "
                 "f_builtins or f_locals, on any receiver; a listed callable (locals, exec, eval, compile, `__import__`, import_module "
                 "or _getframe) reached in the first three ways; or one of those callables or attributes, globals, vars, setattr, "
-                "delattr or `__dict__` reached in the fourth; or, in a position of the fourth, a key the POSITIVE ALLOWLIST does not prove by its binding. The allowlist accepts only a constant string spelling no listed name; a parameter; a call's return whose callee reaches neither text nor the str, bytes or bytearray type nor a method of one; a name that is a loop or comprehension target inside a function over a literal of constants, a once-bound module tuple constant no code can mutate or an attribute whose base reaches no text and whose name the file never writes (it binds and declares no such name, uses an attribute so named only as such a source or an item read, never storing, deleting, augmenting or calling a method on one, spells the name in no string constant or keyword and in no setattr, delattr, `__setattr__` or `__delattr__` name folded from string constants, and names no globals, vars, locals or `__dict__` and holds no star import; such a setter whose name is not so folded is not read for it); a name that is such a target, or an unpacking target, over a parameter or such a call's return, directly or through names an assignment, such a target or an unpacking binds to one; a boolean operation or an if-expression each of whose values the allowlist accepts where it stands; and a name an assignment binds to any of these but a constant string. Every other key refuses by name, the reason naming what the walk met: a join, format, format_map or replace call, a `%`, a `+` or an f-string a string constant does not fold; a method of the name str, bytes or bytearray, however reached; any method called on, or attribute read on, constant text or anything not proven to reach no text; a direct attribute key or a name bound to one, an attribute proven only as a loop or comprehension source; such a source whose name the file may write, as above; a name bound to a constant string; a with target, or a name bound to one; a walrus, or a name a walrus binds anywhere, a comprehension's included; a subscript; an augmented assignment; a loop target bound at module level; a name a function or a class body declares global or a scope declares nonlocal; a name a class body binds; a name bound only in another form or by no statement; a list, set or dict module constant; and any other node kind. A name read at module level or as a builtin refuses where the file may rewrite its namespace. The four ways, the whole of the reach the census reads for each of these "
+                "delattr or `__dict__` reached in the fourth; or, in a position of the fourth, a key the POSITIVE ALLOWLIST does not prove by its binding. The allowlist accepts only a constant string spelling no listed name; a parameter; a call's return whose callee reaches neither text nor the str, bytes or bytearray type nor a method of one; a name that is a loop or comprehension target inside a function over a literal of constants, a once-bound module tuple constant no code can mutate or the one attribute source the file kernel/host_transport.py holds, sh.SPEC_FIELDS, keyed by binding on the file, the attribute name and the base bound once at module level and declared global or nonlocal nowhere, whose base reaches no text and for which the file writes no attribute of that name (it binds and declares no such name, uses an attribute so named only as such a source or an item read, never storing, deleting, augmenting or calling a method on one, spells the name in no string constant or keyword, uses setattr, delattr, `__setattr__` or `__delattr__`, or an attribute so named, only as the callee of a call each of whose arguments that may name an attribute (the second of a setattr or delattr called by its bare name, else the first two) folds to string constants other than that name and none of whose first two arguments folds as constants to that name, imports none of the four under another name, spells none of them in a string constant or constants the census folds, and names no globals, vars, locals or `__dict__` and holds no star import; an argument folds only as a string constant, as constants the census folds to one or as a name bound in its scope only as the target of a loop in a function's own body or of a comprehension over a tuple, list or set literal each of whose elements is a string constant or constants the census folds to one), so a new accepted source enters only by an allowlist edit; a name that is such a target, or an unpacking target, over a parameter or such a call's return, directly or through names an assignment, such a target or an unpacking binds to one; a boolean operation or an if-expression each of whose values the allowlist accepts where it stands; and a name an assignment binds to any of these but a constant string. Every other key refuses by name, the reason naming what the walk met: a join, format, format_map or replace call, a `%`, a `+` or an f-string a string constant does not fold; a method of the name str, bytes or bytearray, however reached; any method called on, or attribute read on, constant text or anything not proven to reach no text; a direct attribute key or a name bound to one, an attribute source other than that one binding, and that binding where the file may write its attribute as above, a setter argument of any other shape counting as such a write (a mixed literal, a dict, an unpacking target, a parameter, a call's return, a join the census does not fold, a starred argument or a keyword among them), as does a setter's name or an attribute so named used other than as a call's callee (an alias or an argument among them), an import of one under another name, or a string constant, or constants the census folds, that spells one (for that one binding, one line under the class limit: a class replaced through type() with a folded key, a namespace constructor or a store elsewhere on the base chain, since the census reads no base's text; a setter reached reflectively other than by a string constant, or constants the census folds, that spells its name, through `__getattribute__`, inspect.getattr_static, an index into a mapping of an object's members or a getattr handed to another call among them; and a writer other than setattr, delattr, `__setattr__` and `__delattr__` handed the name other than as one string constant, functools.update_wrapper and its kin and an item store into a `__dict__` reached reflectively among them); a name bound to a constant string; a with target, or a name bound to one; a walrus, or a name a walrus binds anywhere, a comprehension's included; a subscript; an augmented assignment; a loop target bound at module level; a name a function or a class body declares global or a scope declares nonlocal; a name a class body binds; a name bound only in another form or by no statement; a list, set or dict module constant; and any other node kind. A name read at module level or as a builtin refuses where the file may rewrite its namespace. The four ways, the whole of the reach the census reads for each of these "
                 "names (`__dict__` in the fourth alone, beside the attribute the computed-name forms above name): by its own name, in "
                 "any context; by a name an import anywhere in the file binds to it from its module (locals, exec, eval, compile, "
                 "`__import__`, globals, vars, setattr and delattr from builtins, import_module and `__import__` from importlib, "
@@ -1578,8 +1578,13 @@ ROUND_FOUR_SENTENCES = (("the echo rule", ECHO_RULE), ("the served pages", SERVE
 # class, stands as a subscript operand or is refused by name as the pass reads it, whose line then stands for that text (the (r1.4)
 # plants hold each, and the (fd) plants hold the receiver's one line); since its decision 3, as the owner rebuilt it and the
 # reviewer accepted, a lookup key is a run-time form unless a positive allowlist proves its shape by the binding (the shapes
-# SERVED_PAGES lists, which take an attribute only as a loop or comprehension source whose name the file never writes and neither
-# a with target nor a walrus), every other shape refused by name (the (d3) plants hold each);
+# SERVED_PAGES lists, which since round 11 take an attribute as a loop or comprehension source only as kernel/host_transport.py's
+# sh.SPEC_FIELDS by binding, its honest writes still refused and its setter read failing closed (a setter's name the census does not
+# fold to string constants refusing it; a setter reached reflectively other than by a string the census folds to its name, and a
+# writer other than the four setters handed the name other than as one string constant, named under the class limit), and neither
+# a with target nor a walrus),
+# every other shape refused by name (the (d3) plants
+# hold each, and the host_transport plants, HT_WRITES and HT_SETTERS, hold that one binding's writes in its own file);
 # since its R2,
 # SERVED_PAGES states that the index of a subscript over a container whose text the pass does not read is not read at all, whatever it holds, and scopes the import system's names, `__file__` in a file
 # that binds it, the attribute reads and the SERVED list's refusals of a page's text to the positions the pass reads, and it names
@@ -5134,9 +5139,11 @@ R14_TEXTS = dict(R14_FILES)
 # does not prove refuses by name, the reason naming in words what the walk met. Accepted, keyed on the binding: a constant string
 # spelling no listed name; a parameter; a call's return whose callee reaches neither text nor the str, bytes or bytearray type nor a
 # method of one; a name that is a loop or comprehension target inside a function over a literal of constants, a once-bound module
-# tuple constant no code can mutate or an attribute whose base reaches no text and whose name the file never writes (an attribute only
-# as such a source, no name bound to an attribute; Scan._key_attr reads the facts _key_const reads for a module constant, keyed on the
-# attribute's name); a name that is such a target, or an unpacking target, over a parameter or such a call's return, directly or through
+# tuple constant no code can mutate or the one attribute source kernel/host_transport.py holds, sh.SPEC_FIELDS, keyed by binding on the
+# file, the attribute name and the base bound once at module level (Scan._spec_source; any other attribute source refuses by name),
+# whose base reaches no text and for which the file writes no attribute of that name (Scan._key_attr reads the facts _key_const reads
+# for a module constant, keyed on the attribute's name, and its setter read fails closed: HT_WRITES and HT_SETTERS); a name
+# that is such a target, or an unpacking target, over a parameter or such a call's return, directly or through
 # names an assignment, such a target or an unpacking binds to one; a boolean operation or an if-expression each of whose values the
 # allowlist accepts where it stands; and a name an assignment binds to any of these but a constant string. No with target and no
 # walrus is accepted: a with target or a name bound to one, a walrus, and a name a walrus binds anywhere, a comprehension's included,
@@ -5168,7 +5175,13 @@ R14_TEXTS = dict(R14_FILES)
 # (awlc), and a walrus as the key (awnd); and no attribute source whose name the file writes: the attribute stored on its base at
 # module level (xawm) and in a function the key's function calls first (xawf), set by setattr with its name as a string constant
 # (xaws) and as a `+` of two (xawj), bound in a class body whose class is stored on the base (xawb), and written through vars()
-# of the base with a computed key (xawv). The accepted plants (D3_ACCEPT), each proved by one accept clause, its __file__ and
+# of the base with a computed key (xawv). Since the round 11 narrowing (Scan._spec_source), an attribute is accepted as a loop's
+# source only as kernel/host_transport.py's sh.SPEC_FIELDS by binding; the SECOND attribute source, an escape the round 10 fix head's
+# _key_attr leaves silent (a class type() builds under a folded key, stored on the base), refuses on the narrowing: another module
+# constant's attribute (xatn) and the same attribute name on another base (xasb). Since the round 11 setter read, a setter whose name
+# is a loop or comprehension target over a literal of constants folding to the source's name refuses that source: a for target (kqxl),
+# a comprehension target (kqxc) and a two-leaf literal (kqxt); the read's other shapes, each failing closed, are pinned in the one
+# file where the source is accepted (HT_SETTERS). The accepted plants (D3_ACCEPT), each proved by one accept clause, its __file__ and
 # module-constant pages with no line: a direct constant (adir), a parameter (apar), a call's return (acal), a loop target over a
 # tuple literal (aloop), a comprehension's target (acmp), a loop target over a module tuple constant (amod) and an unpacking target
 # over a call's return (aunp). Each refused plant is silent at the reviewed head, its __file__ and module-constant
@@ -5250,8 +5263,9 @@ D3_SPEC = (
     ('awlp', 'import builtins\n\n\ndef _probe_k(_probe_x):\n    [(_probe_n := _probe_x) for _probe_x in ("exec",)]\n    return getattr(builtins, _probe_n)', 'spells a name by _probe_n, bound by a walrus, which the census does not evaluate', 'return getattr(builtins, _probe_n)', '_probe_k("id")("%s = %s")'),
     ('awlc', 'import builtins\nimport os\n\n\ndef _probe_k():\n    _probe_x = os.getcwd()\n    [(_probe_n := _probe_x) for _probe_x in ("exec",)]\n    return getattr(builtins, _probe_n)', 'spells a name by _probe_n, bound by a walrus, which the census does not evaluate', 'return getattr(builtins, _probe_n)', '_probe_k()("%s = %s")'),
     ('awnd', 'import builtins\n\n\ndef _probe_k(_probe_x):\n    return getattr(builtins, (_probe_n := _probe_x))', 'spells a name by a walrus the census does not evaluate', 'return getattr(builtins, (_probe_n := _probe_x))', '_probe_k("exec")("%s = %s")'),
-    # an attribute accepted as a loop's source only where the file writes no attribute so named (Scan._key_attr, the facts _key_const
-    # reads for a module constant): the attribute stored on its base at module level (xawm) and in a function the key's function calls
+    # since the round 11 narrowing an attribute is accepted as a loop's source only as kernel/host_transport.py's sh.SPEC_FIELDS by
+    # binding (Scan._spec_source); for that one binding the honest writes stay refused (Scan._key_attr, the facts _key_const reads for a
+    # module constant): the attribute stored on its base at module level (xawm) and in a function the key's function calls
     # first (xawf), set by setattr with its name as a string constant (xaws) and as a `+` of two (xawj), bound in a class body whose
     # class is stored on the base as another attribute (xawb), and written through vars() of the base with a computed key (xawv).
     # Each 0 live, silent at the reviewed head and refused at the fix
@@ -5272,6 +5286,33 @@ D3_SPEC = (
      'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
     ('xawv', 'import builtins\nimport os\n\nvars(os)["_probe" + "_x"] = ("exec",)\n\n\ndef _probe_k():\n    for k in os._probe_x:\n        return getattr(builtins, k)',
      "spells a name by k, bound to an attribute ._probe_x as a loop's source in a file that names globals, vars, locals or __dict__, so the census does not evaluate it",
+     'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
+    # the round 11 narrowing (Scan._spec_source): an attribute is accepted as a loop or comprehension source only as
+    # kernel/host_transport.py's sh.SPEC_FIELDS by binding; every OTHER attribute source refuses by name, whatever the file writes
+    # (so an escape a general write check could not close, a class replaced through type() with a folded key, a namespace
+    # constructor, a store elsewhere on the base chain, refuses here on the narrowing, not on a write fact it can leave silent).
+    # A SECOND attribute source, an escape of that shape the reviewed head's _key_attr leaves silent: another module constant's
+    # attribute (xatn, ._probe_x on a class type() builds under a folded key) and the same attribute name on another base (xasb,
+    # .SPEC_FIELDS on such a class), each 0 live, silent at the reviewed head and refused at the fix
+    ('xatn', 'import builtins\nimport os\n\nos._probe_c = type("_ProbeC", (object,), {"_probe" + "_x": ("exec",)})\n\n\ndef _probe_k():\n    for k in os._probe_c._probe_x:\n        return getattr(builtins, k)',
+     "spells a name by k, bound to an attribute ._probe_x as a loop's source the census does not evaluate, accepted only as kernel/host_transport.py's sh.SPEC_FIELDS by binding",
+     'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
+    ('xasb', 'import builtins\nimport os\n\nos._probe_b = type("_ProbeB", (object,), {"SPEC" + "_FIELDS": ("exec",)})\n\n\ndef _probe_k():\n    for k in os._probe_b.SPEC_FIELDS:\n        return getattr(builtins, k)',
+     "spells a name by k, bound to an attribute .SPEC_FIELDS as a loop's source the census does not evaluate, accepted only as kernel/host_transport.py's sh.SPEC_FIELDS by binding",
+     'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
+    # the round 11 setter read (_key_index folds a setter's name that is, by binding, a loop or comprehension target over a literal
+    # of constants into the file's setter names: Scan._setter_fold): the attribute a loop-target setter writes is refused, whose
+    # name folds through a for target (kqxl), a comprehension target (kqxc) and a two-leaf literal one of whose leaves folds to it
+    # (kqxt), each 0 live (the live setter at kernel/host_transport.py:287 folds to hosts and dir, not SPEC_FIELDS), silent at the
+    # reviewed head, refused at the fix
+    ('kqxl', 'import builtins\nimport os\n\n\ndef _probe_w():\n    for n in ("_probe" + "_x",):\n        setattr(os, n, ("exec",))\n\n\ndef _probe_k():\n    _probe_w()\n    for k in os._probe_x:\n        return getattr(builtins, k)',
+     "spells a name by k, bound to an attribute ._probe_x as a loop's source whose name the file spells as a string or a keyword, which may write it through setattr or a namespace, so the census does not evaluate it",
+     'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
+    ('kqxc', 'import builtins\nimport os\n\n\ndef _probe_w():\n    [setattr(os, n, ("exec",)) for n in ("_probe" + "_x",)]\n\n\ndef _probe_k():\n    _probe_w()\n    for k in os._probe_x:\n        return getattr(builtins, k)',
+     "spells a name by k, bound to an attribute ._probe_x as a loop's source whose name the file spells as a string or a keyword, which may write it through setattr or a namespace, so the census does not evaluate it",
+     'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
+    ('kqxt', 'import builtins\nimport os\n\n\ndef _probe_w():\n    for n in ("_probe_a", "_probe" + "_x"):\n        setattr(os, n, ("exec",))\n\n\ndef _probe_k():\n    _probe_w()\n    for k in os._probe_x:\n        return getattr(builtins, k)',
+     "spells a name by k, bound to an attribute ._probe_x as a loop's source whose name the file spells as a string or a keyword, which may write it through setattr or a namespace, so the census does not evaluate it",
      'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
     )
 # the accepted plants (D3_ACCEPT): a key the allowlist proves, so its __file__ and module-constant pages have no line; its str
@@ -8336,12 +8377,25 @@ class TheServedPagesAreScanned(_Scope):
         is accepted (0 live: no live key is or is bound to a with target or a walrus, and no walrus is met in any live key's walk): a
         with target over a parameter's call whose `__enter__` returns the listed name (awth), a name a walrus binds inside a
         comprehension to the comprehension's own target, which shadows a parameter (awlp) or a local bound to a call's return (awlc),
-        and a walrus as the key (awnd, a parameter's value through it); and an attribute is accepted as a loop's source only where the
-        file writes no attribute of its name (Scan._key_attr, the facts _key_const reads for a module constant, keyed on the name; 0
-        live: the one live attribute source, sh.SPEC_FIELDS, is used nowhere else in its file, which holds none of the facts
-        _key_attr reads): the attribute stored on its base at module level (xawm) and in a function the key's function calls first
-        (xawf), set by setattr with its name as a string constant (xaws) and as a `+` of two (xawj), bound in a class body whose
-        class is stored on the base as another attribute (xawb), and written through vars() of the base with a computed key (xawv).
+        and a walrus as the key (awnd, a parameter's value through it); and, since the round 11 narrowing, an attribute is accepted
+        as a loop's source only as kernel/host_transport.py's sh.SPEC_FIELDS, keyed by binding on the file, the attribute name and the
+        base bound once at module level and declared global or nonlocal nowhere (Scan._spec_source); every other attribute source
+        refuses by name, whatever the file writes, so a new accepted source enters only by an allowlist edit. For that one binding the
+        honest writes stay refused (Scan._key_attr, the facts _key_const reads for a module constant, keyed on the name; 0 live: the
+        one live attribute source, sh.SPEC_FIELDS, is used nowhere else in its file, which holds none of the facts _key_attr reads):
+        the attribute stored on its base at module level (xawm) and in a function the key's function calls first (xawf), set by setattr
+        with its name as a string constant (xaws) and as a `+` of two (xawj), bound in a class body whose class is stored on the base
+        as another attribute (xawb), and written through vars() of the base with a computed key (xawv); and, since the round 11 setter
+        read, a setter whose name is a loop or comprehension target over a literal of constants that folds to the source's name
+        (_key_index over Scan._setter_fold): a for target (kqxl), a comprehension target (kqxc) and a two-leaf literal one of
+        whose leaves folds to it (kqxt), each 0 live (the live setter at kernel/host_transport.py:287 folds to hosts and dir, not
+        SPEC_FIELDS); the setter read's other shapes, which fail closed, and the honest writes are pinned in the one file where the
+        source is accepted (TheOneAttributeSourceRefusesWhereItsOwnFileMayWriteIt), since in a probe module every attribute source
+        refuses on the narrowing whatever the write check says. The SECOND attribute source the narrowing refuses, an escape the
+        round 10 fix head's _key_attr leaves silent because
+        it writes the source's attribute in a way no write fact reads (a class a type() call builds under a folded key, stored on the
+        base): another module constant's attribute (xatn, ._probe_x) and the same attribute name on another base (xasb, .SPEC_FIELDS),
+        each 0 live.
         The accepted plants (D3_ACCEPT), each proved by one accept clause, its __file__ and module-constant pages with no line and
         its str page refused by the builtins import alone: a direct constant (adir), a parameter (apar), a call's return (acal), a loop
         target over a tuple literal (aloop), a comprehension's
@@ -8356,10 +8410,13 @@ class TheServedPagesAreScanned(_Scope):
         exec's fetch, and refused at the fix (its str page refused at both heads by the builtins import); each accept clause reds when
         it is removed, refusing its plant and the live keys it proves; awth goes silent when the with target is accepted (its
         context expression walked as a value reaching no text), awlp and awlc when a walrus's name is read as an assignment's, its
-        value resolved in the enclosing scope, and awnd when a walrus node is walked through to its value; the six attribute-source
-        plants go silent when _key_attr is removed, xawm and xawf when its use fact alone is, xaws and xawj when its string fact is,
-        xawj when a setter's folded name is dropped from that fact, xawb when its binding fact is, and xawv when its namespace fact
-        is."""
+        value resolved in the enclosing scope, and awnd when a walrus node is walked through to its value; the honest-write
+        attribute-source plants refuse via _key_attr and red when its fact is removed, each then refused by the narrowing with the
+        other-source reason (not the write reason): the use fact for xawm and xawf, the string fact for xaws and xawj, a setter's
+        folded name dropped from that fact for xawj, the binding fact for xawb and the namespace fact for xawv; the round 11 setter
+        read (the setter folds in _key_index) for kqxl, kqxc and kqxt, silent at the reviewed head and refused with the other-source
+        reason when the setter read is removed; and the narrowing itself (Scan._spec_source) for xatn and xasb, which go SILENT when it
+        is removed, since the round 10 fix head's _key_attr does not read the type() escape's write."""
         self.assertARefused(("(d3)",))
         for tag in D3_TEXTS:
             with self.subTest(plant="(d3) the module's SERVED lines (%s)" % tag):
@@ -8506,6 +8563,128 @@ class TheServedPagesAreScanned(_Scope):
         for rel, text in A_FILES:   # the seventh round's probe modules, the files the pass scans beside kernel/kernel.py
             self.plant(rel, text)
         self.assertCommandLine(scope_copy(), self.rc, self.out, timeout=300)
+
+
+# The round 11 setter read and honest writes, pinned in the one file where they decide: kernel/host_transport.py, whose sh.SPEC_FIELDS
+# is the one loop-source attribute the allowlist accepts (Scan._spec_source), so a write check that fails there is a defect no probe
+# module shows (in a probe module every attribute source refuses on the narrowing, whatever the write check says). Each plant writes
+# sh's SPEC_FIELDS in a copy of that file's text, planted in memory as the served pass plants kernel/kernel.py's (_ht_text): the
+# file's own `_send` renamed first, since the census types a route's call only through the one def statement that binds `_send` in
+# its file, then the plant, then a route class serving a page from __file__ and one from a module constant (HT_ROUTE). The served
+# pass over that one file (_ht_served: Scan and served_texts, as WALK_DRIVER's child runs them) refuses both pages with the live
+# key's run-time form at the key's own line (HT_KEY) where the check holds, and lists no line where the source stays accepted.
+HT_REL = "kernel/host_transport.py"
+HT_KEY = "getattr(opts, k, None)"   # the live key, read over sh.SPEC_FIELDS in spawn_spec: its line, found by content
+HT_ROUTE = _a_module("htp", A_SEND % "", head='_PROBE_HTPC = "<p>ok</p>"', branches=(
+    ("htpf", 'return self._send(200, "<p>htpf</p>" + __file__, "text/html")'),
+    ("htpc", 'return self._send(200, "<p>htpc</p>" + _PROBE_HTPC, "text/html")')))
+HT_PAGES = (("__file__", '"<p>htpf</p>" + __file__'), ("_PROBE_HTPC", '"<p>htpc</p>" + _PROBE_HTPC'))
+_HT_FORM = "spells a name by k, bound to an attribute .SPEC_FIELDS as a loop's source %s, so the census does not evaluate it"
+_HT_USE = "that the file writes or uses other than as a loop's source or an item read"
+_HT_STR = "whose name the file spells as a string or a keyword, which may write it through setattr or a namespace"
+_HT_OPEN = ("in a file that reaches setattr, delattr, __setattr__ or __delattr__ other than by a call whose name the census folds to "
+            "constant strings")
+# (tag, what the plant is, its text, the reason's tail at the fix): the honest writes, each refused at the round 10 fix head too
+HT_WRITES = (("hta", "an assignment", 'sh.SPEC_FIELDS = ("exec",)', _HT_USE),
+             ("htg", "an augmented assignment", 'sh.SPEC_FIELDS += ("exec",)', _HT_USE),
+             ("htd", "a del", "del sh.SPEC_FIELDS", _HT_USE),
+             ("hts", "setattr with a constant name", 'setattr(sh, "SPEC_FIELDS", ("exec",))', _HT_STR),
+             ("htm", "a mutating method call", 'sh.SPEC_FIELDS.append("exec")', _HT_USE))
+# the setter read, each silent at the round 10 fix head but htf: a setter's name that folds to SPEC_FIELDS through a loop or
+# comprehension target over a literal of constants (the string fact), and every shape the read cannot prove, which fails closed
+# (sopen); and a bound `sh.__setattr__` handed a string-constant value, so its value argument folds and only the read of its first
+# argument decides: that argument folded constants (htf, refused at the round 10 fix head too, by the direct fold of a setter's first
+# two arguments) or a loop target over them (hty)
+HT_SETTERS = (
+    ("htl", "a loop target over a literal of constants", 'def _probe_w():\n    for n in ("SPEC" + "_FIELDS",):\n        setattr(sh, n, ("exec",))', _HT_STR),
+    ("htc", "a comprehension target over such a literal", 'def _probe_w():\n    [setattr(sh, n, ("exec",)) for n in ("SPEC" + "_FIELDS",)]', _HT_STR),
+    ("htx", "a loop target over a mixed literal", 'def _probe_w():\n    for n in ("SPEC" + "_FIELDS", 0):\n        setattr(sh, n, ("exec",))', _HT_OPEN),
+    ("htk", "a loop target over a dict literal", 'def _probe_w():\n    for n in {"SPEC" + "_FIELDS": 0}:\n        setattr(sh, n, ("exec",))', _HT_OPEN),
+    ("htq", "a comprehension target over a dict literal", 'def _probe_w():\n    [setattr(sh, n, ("exec",)) for n in {"SPEC" + "_FIELDS": 0}]', _HT_OPEN),
+    ("htu", "an unpacking target", 'def _probe_w():\n    for _a, n in (("x", "SPEC" + "_FIELDS"),):\n        setattr(sh, n, ("exec",))', _HT_OPEN),
+    ("htp", "a parameter", 'def _probe_w(n):\n    setattr(sh, n, ("exec",))', _HT_OPEN),
+    ("htb", "a parameter sharing its name with a loop target over constants in another function", 'def _probe_v():\n    for n in ("hosts",):\n        return n\n\n\n'
+     'def _probe_w(n):\n    setattr(sh, n, ("exec",))', _HT_OPEN),
+    ("htr", "a call's return", 'def _probe_n():\n    return "SPEC" + "_FIELDS"\n\n\ndef _probe_w():\n    setattr(sh, _probe_n(), ("exec",))', _HT_OPEN),
+    ("hti", "setattr imported under another name", 'from builtins import setattr as _probe_s\n\n\ndef _probe_w():\n    _probe_s(sh, "SPEC" + "_FIELDS", ("exec",))', _HT_OPEN),
+    ("htt", "__setattr__ reached through getattr by a string the census folds", 'def _probe_w():\n    getattr(sh, "__set" + "attr__")("SPEC" + "_FIELDS", ("exec",))', _HT_OPEN),
+    ("htf", "a bound __setattr__ whose first argument folds to SPEC_FIELDS, its value a string constant", 'def _probe_w():\n    sh.__setattr__("SPEC" + "_FIELDS", "x")', _HT_STR),
+    ("hty", "a bound __setattr__ whose first argument is a loop target over constants folding to SPEC_FIELDS, its value a string constant",
+     'def _probe_w():\n    for n in ("SPEC" + "_FIELDS",):\n        sh.__setattr__(n, "x")', _HT_STR))
+# accepted: a setter on sh whose loop target folds to names other than SPEC_FIELDS, as the live setter at :287 does on self
+HT_ACCEPT = (("hto", "a setter on sh whose loop target folds to other names", 'def _probe_w():\n    for n in ("hosts", "dir"):\n        setattr(sh, n, ("exec",))'),)
+
+
+def _ht_text(plant=""):
+    """kernel/host_transport.py's text as the tree holds it, its own `_send` renamed (every whole-word `_send`, at least one), then
+    `plant` and HT_ROUTE appended."""
+    with open(os.path.join(ROOT, HT_REL), encoding="utf-8") as f:
+        text, n = re.subn(r"(?<![A-Za-z0-9_])_send(?![A-Za-z0-9_])", "_hsend", f.read())
+    if not n:
+        raise AssertionError("%s holds no _send to rename: the plants' premise moved" % HT_REL)
+    return text + "\n\n" + (plant + "\n\n\n" if plant else "") + HT_ROUTE
+
+
+def _ht_served(mod, text):
+    """The served pass over that one file's text: (the routes the scan found, the file's SERVED lines, sorted)."""
+    res = mod.Result()
+    res.files, res.skipped = [HT_REL], []
+    tree = ast.parse(text, filename=HT_REL)
+    sc = mod.Scan(HT_REL, res)
+    sc.visit(tree)
+    mod.served_texts(HT_REL, tree, sorted(sc.routes, key=lambda r: r[0].lineno), res)
+    return len(sc.routes), sorted(ln for ln in res.problems if ln.startswith("SERVED %s:" % HT_REL))
+
+
+def _ht_want(text, tail):
+    """Both pages' SERVED lines where the live key refuses with the reason's tail `tail`, at the key's line and each page's."""
+    form = _RUNTIME % ("%s at line %d" % (_HT_FORM % tail, _a_line(text, HT_KEY)))
+    return sorted((_A_TEXT % (HT_REL, name, form)) % _a_line(text, needle) for name, needle in HT_PAGES)
+
+
+class TheOneAttributeSourceRefusesWhereItsOwnFileMayWriteIt(unittest.TestCase):
+    """The round 11 items on the one accepted attribute source, kernel/host_transport.py's sh.SPEC_FIELDS, pinned in that file,
+    the only one where the write check decides (the block above HT_REL says why and how). The unplanted copy lists no line: the
+    live key stays accepted (0 live) and the live setter at :287, `setattr(self, name, None)` with `name` a loop target over
+    ("hosts", "dir"), folds to those names. The honest writes refuse it (HT_WRITES, Scan._key_attr's use and string facts): an
+    assignment (hta), an augmented assignment (htg), a del (htd), setattr with a constant name (hts) and a mutating method call
+    (htm), each refused at the round 10 fix head with the same reason. The setter read fails closed (HT_SETTERS, Scan._setter_sites,
+    Scan._setter_args and Scan._setter_fold): a setter's name that folds to SPEC_FIELDS through a loop target (htl) or a comprehension
+    target (htc) over a literal of constants refuses it by the string fact; a name the read cannot prove refuses it by its own reason,
+    a loop target over a mixed literal (htx) or a dict (htk), a comprehension target over a dict (htq), an unpacking target (htu), a
+    parameter (htp), a parameter whose name is a loop target over constants in another function (htb: the fold is keyed on the
+    binding, not the spelling) and a call's return (htr); and so does a setter reached other than by a call, setattr imported under another
+    name (hti) and `__setattr__` reached through getattr by a string the census folds (htt). A bound `sh.__setattr__` handed a
+    string-constant value, so that only the read of its first argument decides, refuses it by the string fact where that argument
+    folds to SPEC_FIELDS as constants (htf) or as a loop target over them (hty). Each setter plant but htf is silent at the round 10
+    fix head, both pages read as value slots. A setter on sh whose loop target folds to other names stays accepted (hto). Every run
+    finds the route class's two routes, so a page with no line is a page the pass read. The reds are in the build record, over
+    mutants of the fix script that disable a check for this file alone: with the setter read skipped for it, every HT_SETTERS plant
+    but htf goes silent (the direct fold of a setter's first two arguments still refuses htf); with every setter's first argument
+    left unread there, htf and hty go silent; with _key_attr skipped for it, every HT_WRITES and HT_SETTERS plant does."""
+
+    def assertHt(self, mod, tag, label, plant, tail):
+        with self.subTest(plant="%s (%s)" % (label, tag)):
+            text = _ht_text(plant)
+            routes, got = _ht_served(mod, text)
+            self.assertEqual(routes, 2, "the route class's two routes are read, so the pages are the pass's to refuse or accept")
+            if tail is None:
+                self.assertEqual(got, [], "the live key stays accepted: no line")
+            else:
+                self.assertEqual(got, _ht_want(text, tail), "both pages refused with the live key's run-time form at its line")
+
+    def test_the_honest_writes_of_the_one_binding_refuse_it_in_its_own_file(self):
+        mod = script_module(ROOT)
+        for tag, label, plant, tail in HT_WRITES:
+            self.assertHt(mod, tag, label, plant, tail)
+
+    def test_a_setter_the_census_cannot_fold_refuses_it_in_its_own_file_and_the_live_setter_does_not(self):
+        mod = script_module(ROOT)
+        self.assertHt(mod, "none", "the unplanted copy, its live setter folding to hosts and dir", "", None)
+        for tag, label, plant in HT_ACCEPT:
+            self.assertHt(mod, tag, label, plant, None)
+        for tag, label, plant, tail in HT_SETTERS:
+            self.assertHt(mod, tag, label, plant, tail)
 
 
 # The walks' two pins, decisions 10 and 11 of the tenth round's review as the reviewer's 21:39Z item 2 rules them. Every walk the

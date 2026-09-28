@@ -489,14 +489,27 @@ binding. The allowlist accepts only a constant string spelling no listed name; a
 parameter; a call's return whose callee reaches neither text nor the str, bytes
 or bytearray type nor a method of one; a name that is a loop or comprehension
 target inside a function over a literal of constants, a once-bound module tuple
-constant no code can mutate or an attribute whose base reaches no text and whose
-name the file never writes (it binds and declares no such name, uses an
-attribute so named only as such a source or an item read, never storing,
-deleting, augmenting or calling a method on one, spells the name in no string
-constant or keyword and in no setattr, delattr, `__setattr__` or `__delattr__`
-name folded from string constants, and names no globals, vars, locals or
-`__dict__` and holds no star import; such a setter whose name is not so folded
-is not read for it); a name that is such a target, or an unpacking target, over
+constant no code can mutate or the one attribute source the file
+kernel/host_transport.py holds, sh.SPEC_FIELDS, keyed by binding on the file,
+the attribute name and the base bound once at module level and declared global
+or nonlocal nowhere, whose base reaches no text and for which the file writes no
+attribute of that name (it binds and declares no such name, uses an attribute so
+named only as such a source or an item read, never storing, deleting, augmenting
+or calling a method on one, spells the name in no string constant or keyword,
+uses setattr, delattr, `__setattr__` or `__delattr__`, or an attribute so named,
+only as the callee of a call each of whose arguments that may name an attribute
+(the second of a setattr or delattr called by its bare name, else the first two)
+folds to string constants other than that name and none of whose first two
+arguments folds as constants to that name, imports none of the four under
+another name, spells none of them in a string constant or constants the census
+folds, and names no globals, vars, locals or `__dict__`
+and holds no star import; an argument folds only as a string constant, as
+constants the census folds to one or as a name bound in its scope only as the
+target of a loop in a function's own body or of a comprehension over a tuple,
+list or set literal each of whose elements is a string constant or constants
+the census folds to one), so a new accepted source
+enters only by an allowlist edit;
+a name that is such a target, or an unpacking target, over
 a parameter or such a call's
 return, directly or through names an assignment, such a target or an unpacking
 binds to one; a boolean operation or an if-expression each of whose values the
@@ -507,9 +520,24 @@ met: a join, format, format_map or replace call, a `%`, a `+` or an f-string a
 string constant does not fold; a method of the name str, bytes or bytearray,
 however reached; any method
 called on, or attribute read on, constant text or anything not proven to reach no
-text; a direct attribute key or a name bound to one, an attribute proven only as
-a loop or comprehension source; such a source whose name the file may write, as
-above; a name bound to a constant string; a with
+text; a direct attribute key or a name bound to one, an attribute source other
+than that one binding, and that binding where the file may write its attribute
+as above, a setter argument of any other shape counting as such a write (a mixed
+literal, a dict, an unpacking target, a parameter, a call's return, a join the
+census does not fold, a starred argument or a keyword among them), as does a
+setter's name or an attribute so named used other than as a call's callee (an
+alias or an argument among them), an import of one under another name, or a
+string constant, or constants the census folds, that spells one (for that one
+binding, one line under the class limit: a class replaced through type() with a
+folded key, a namespace constructor or a store elsewhere on the base chain,
+since the census reads no base's text; a setter reached reflectively other than
+by a string constant, or constants the census folds, that spells its name,
+through `__getattribute__`, inspect.getattr_static, an index into a mapping of
+an object's members or a getattr handed to another call among them; and a writer
+other than setattr, delattr, `__setattr__` and `__delattr__` handed the name
+other than as one string constant, functools.update_wrapper and its kin and an
+item store into a `__dict__` reached reflectively among them);
+a name bound to a constant string; a with
 target, or a name bound to one; a walrus, or a name a walrus binds anywhere, a
 comprehension's included; a subscript; an augmented assignment; a loop target
 bound at module level; a name a function or a class body

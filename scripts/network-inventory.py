@@ -380,19 +380,38 @@ reached in the first three ways; or one of those callables or attributes, global
 the fourth; or, in a position of the fourth, a key the POSITIVE ALLOWLIST does not prove by its
 binding. The allowlist accepts only a constant string spelling no listed name; a parameter; a call's return whose callee reaches
 neither text nor the str, bytes or bytearray type nor a method of one; a name that is a loop or comprehension target inside a
-function over a literal of constants, a once-bound module tuple constant no code can mutate or an attribute whose base reaches no
-text and whose name the file never writes (it binds and declares no such name, uses an attribute so named only as such a source or
-an item read, never storing, deleting, augmenting or calling a method on one, spells the name in no string constant or keyword and
-in no setattr, delattr, `__setattr__` or `__delattr__` name folded from string constants, and names no globals, vars, locals or
-`__dict__` and holds no star import; such a setter whose name is not so folded is not read for it); a name that is such a target,
+function over a literal of constants, a once-bound module tuple constant no code can mutate or the one attribute source the file
+kernel/host_transport.py holds, sh.SPEC_FIELDS, keyed by binding on the file, the attribute name and the base bound once at module
+level and declared global or nonlocal nowhere, whose base reaches no text and for which the file writes no attribute of that name
+(it binds and declares no such name, uses an attribute so named only as such a source or an item read, never storing, deleting,
+augmenting or calling a method on one, spells the name in no string constant or keyword, uses setattr, delattr, `__setattr__` or
+`__delattr__`, or an attribute so named, only as the callee of a call each of whose arguments that may name an attribute (the second
+of a setattr or delattr called by its bare name, else the first two) folds to string constants other than that name and none of
+whose first two arguments folds as constants to that name, imports none of the four under another name,
+spells none of them in a string constant or constants the census folds, and names no globals,
+vars, locals or
+`__dict__` and holds no star import; an argument folds only as a string constant, as constants the census folds to one or as a name
+bound in its scope only as the target of a loop in a function's own body or of a comprehension over a tuple, list or set literal
+each of whose elements is a string constant or constants the census folds to one), so a new accepted source
+enters only by an allowlist edit; a name that is such a target,
 or an unpacking target, over a parameter or such a call's return, directly or through names an
 assignment, such a target or an unpacking binds to one; a boolean operation or an if-expression each of whose values the allowlist
 accepts where it stands; and a name an assignment binds to any of these but a constant string. Every other key refuses by name,
 the reason naming what the
 walk met: a join, format, format_map or replace call, a `%`, a `+` or an f-string a string constant does not fold; a method of the
 name str, bytes or bytearray, however reached; any method called on, or attribute read on, constant text or anything not proven to
-reach no text; a direct attribute key or a name bound to one, an attribute proven only as a loop or comprehension source; such a
-source whose name the file may write, as above; a name bound to a constant string; a with target, or a name bound to one; a
+reach no text; a direct attribute key or a name bound to one, an attribute source other than that one binding, and that binding
+where the file may write its attribute as above, a setter argument of any other shape counting as such a write (a mixed literal, a
+dict, an unpacking target, a parameter, a call's return, a join the census does not fold, a starred argument or a keyword among
+them), as does a setter's name or an attribute so named used other than as a call's callee (an alias or an argument among them), an
+import of one under another name, or a string constant, or constants the census folds, that spells one (for that one binding, one
+line under the class limit: a class replaced through type() with a folded key, a namespace constructor or a store elsewhere on the
+base chain, since the census reads no base's text; a setter reached reflectively other than by a string constant, or constants the
+census folds, that spells its name, through `__getattribute__`, inspect.getattr_static, an index into a mapping of an object's
+members or a getattr handed to another call among them; and a writer other than setattr, delattr, `__setattr__` and `__delattr__`
+handed the name other than as one string constant, functools.update_wrapper and its kin and an item store into a `__dict__` reached
+reflectively among them);
+a name bound to a constant string; a with target, or a name bound to one; a
 walrus, or a name a walrus binds anywhere, a comprehension's
 included; a subscript; an augmented assignment; a loop target bound at module level; a name a function or a class body declares
 global or a scope declares nonlocal;
@@ -1225,12 +1244,16 @@ class Scan(ast.NodeVisitor):
         (3) a name that is a loop or comprehension target, inside a function, over a literal (a tuple, list or set literal, nested
         tuple and list literals among its elements, or a dict literal's keys) whose every leaf is constant text as in (1) or another
         constant, over a module constant bound once to a tuple literal of such constants, nested tuple literals among them, which no
-        code can mutate (_key_const decides it: the file never binds, declares, names or writes that constant any other way), over an
-        attribute whose base reaches no text and whose name the file never writes (the live key at kernel/host_transport.py:1116,
-        sh.SPEC_FIELDS; _key_attr decides it by the facts _key_const reads, keyed on the attribute's name on any receiver: the file
-        binds and declares no such name, uses an attribute so named only as such a source or an item read, spells the name in no
-        string constant or keyword and in no setter's name folded from string constants, and names no globals, vars, locals or
-        `__dict__` and holds no star import; a setter whose name is not so folded is not read for it), or over a parameter or such a
+        code can mutate (_key_const decides it: the file never binds, declares, names or writes that constant any other way), over the
+        one attribute source kernel/host_transport.py holds (the live key at kernel/host_transport.py:1116, sh.SPEC_FIELDS): keyed by
+        binding on the file, the attribute name and the base bound once at module level (_spec_source; any other attribute source
+        refuses by name, so a new one enters only by an allowlist edit), whose base reaches no text and for which the file writes no
+        attribute of that name (_key_attr decides that by the facts _key_const reads, keyed on the attribute's name on any receiver:
+        the file binds and declares no such name, uses an attribute so named only as such a source or an item read, spells the name in
+        no string constant or keyword, reaches a setter only by a call each of whose arguments that may name an attribute folds to
+        string constants other than that name, directly or as a loop or comprehension target over a literal of them, the setter read
+        failing closed on any other shape (_setter_sites, _setter_args, _setter_fold), and names no globals, vars, locals or
+        `__dict__` and holds no star import), or over a parameter or such a
         call's return, directly or through a name an assignment, such a target or an unpacking binds to one; a module-level loop
         target refuses;
         a boolean operation or an if-expression is accepted where each of its values is, and a name an assignment binds to any
@@ -1239,8 +1262,9 @@ class Scan(ast.NodeVisitor):
         join, format, format_map or replace call, a `%`, a `+` or an f-string _const_text does not fold ("... the census does
         not fold", _key_kind); a method of the name str, bytes or bytearray, however reached; any method called on, or attribute
         read on, constant text, a literal container or anything else that is not proven to reach no text; a direct attribute key or a
-        name bound to one, an attribute accepted only as a loop or comprehension source; such a source whose name the file may write
-        (_key_attr); a name bound to a constant string; a with
+        name bound to one, any attribute source but that one binding (_spec_source), and that binding where the file may write its
+        attribute (_key_attr), a setter whose name the census cannot fold, or one the file reaches other than by a call of its name,
+        counting as such a write; a name bound to a constant string; a with
         target, or a name bound to one (its `__enter__` call's return is no shape the allowlist proves); a walrus, and a name a
         walrus binds, in any scope, a comprehension's included (a walrus in a comprehension binds the enclosing scope's name to a
         value the comprehension's own scope computes, so no binding of a walrus target is read in an enclosing scope); a loop
@@ -1298,9 +1322,11 @@ class Scan(ast.NodeVisitor):
                     if x.attr in _TEXT_TYPES: return why(x, "the %s type reached as an attribute, which the census does not fold" % x.attr)
                     tail = "a .%s() call on constant text the census does not fold" % x.attr if ctx == "callee" else ctx[1]
                     todo.append((x.value, chain, ("nt", tail, x.attr) if not nt else ctx)); continue
-                if ctx == "src":   # an attribute as a loop or comprehension source (the live key at kernel/host_transport.py:1116, sh.SPEC_FIELDS): accepted where its base reaches no text by binding
-                    shut = self._key_attr(x.attr)   # and the file writes no attribute so named (the facts _key_const reads for a module constant)
+                if ctx == "src":   # an attribute as a loop or comprehension source: the live key at kernel/host_transport.py:1116, sh.SPEC_FIELDS
+                    shut = self._key_attr(x.attr)   # for that one binding the honest writes stay refused (the facts _key_const reads for a module constant)
                     if shut: return why(x, _KEY_ATTR % (x.attr, shut))
+                    if not self._spec_source(x, chain):   # NARROWED to the one live binding: any other attribute source refuses by name, so a new one enters only by an allowlist edit
+                        return why(x, _KEY_SRC % x.attr)
                     todo.append((x.value, chain, ("nt", "an attribute .%s of constant text the census does not evaluate" % x.attr, x.attr))); continue
                 return why(x, "an attribute .%s the census does not evaluate, accepted only as a loop or comprehension source" % x.attr)
             if isinstance(x, (ast.Tuple, ast.List, ast.Set, ast.Dict)) and ctx == "src":   # a loop's literal source
@@ -1461,6 +1487,60 @@ class Scan(ast.NodeVisitor):
             return id(self.ktree), got, True
         if name not in _IMPORT_NAMES and hasattr(builtins, name): return id(self.ktree), [("builtin", name)], True
         return "refuse", _KEY_BOUND["none"]
+    @staticmethod
+    def _setter_sites(tree):
+        """The setter read's population, by one iterative walk of the file's tree: (each call of setattr, delattr, `__setattr__`
+        or `__delattr__`, by that name or as an attribute so named, with the scopes around it as Scan.kscopes holds them where the
+        walk stands, innermost last: a def's or a class's whole statement, a lambda's body, a comprehension; whether the file
+        reaches one of the four in one of the three other ways the walk reads: the name, or an attribute so named, anywhere but as
+        a call's callee (an alias, an argument, a rebinding), an import of one under another name, or a string constant, or
+        constants _const_text folds, that spells one; a setter reached reflectively other than by such a string is none of these,
+        named under the class limit). _key_index reads it (the facts snames and sopen)."""
+        calls, loose, todo = [], False, [(tree, ())]
+        scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)
+        while todo:
+            n, chain = todo.pop()
+            if isinstance(n, ast.Call) and (getattr(n.func, "id", None) or getattr(n.func, "attr", None)) in _SETTERS: calls.append((n, chain))
+            if isinstance(n, ast.alias) and n.name.rsplit(".", 1)[-1] in _SETTERS and n.asname not in (None, n.name): loose = True
+            if isinstance(n, (ast.Constant, ast.BinOp, ast.JoinedStr, ast.Call)):
+                c = _Served._const_text(n)
+                if c is not None and c[0] in _SETTERS: loose = True
+            inner = chain + (n,) if isinstance(n, scopes) else chain
+            for c in ast.iter_child_nodes(n):
+                if ((isinstance(c, ast.Name) and c.id in _SETTERS or isinstance(c, ast.Attribute) and c.attr in _SETTERS)
+                        and not (isinstance(n, ast.Call) and n.func is c)): loose = True
+                todo.append((c, chain + (n,) if isinstance(n, ast.Lambda) and c is n.body else inner))
+        return calls, loose
+    @staticmethod
+    def _setter_args(call):
+        """The arguments of a setter call that may name the attribute it sets or deletes: a setattr's or delattr's second, called
+        by its bare name; the first two of any other (a bound `x.__setattr__(name, v)` names it first, an unbound
+        `object.__setattr__(x, name, v)` second, and the spelling does not say which). None where the call's shape does not say
+        (a starred argument, a keyword, too few arguments): _key_index then counts the call's name as unprovable."""
+        if call.keywords or any(isinstance(a, ast.Starred) for a in call.args): return None
+        if isinstance(call.func, ast.Name) and call.func.id in ("setattr", "delattr"): return call.args[1:2] if len(call.args) > 1 else None
+        return call.args[:2] or None
+    def _setter_fold(self, a, chain):
+        """The set of strings the setter argument `a`, read in the scopes `chain`, may be, or None where the census cannot prove
+        it by construction: a string constant, or constants _const_text folds to one; or a name bound, in the scope Python
+        resolves it in (_key_binding, keyed on the binding and never on the spelling), only as the target of a for loop in a
+        function's own body or of a comprehension, never unpacked, over a tuple, list or set literal each of whose elements is a
+        string constant or constants _const_text folds to one. Every other shape is None: a literal holding any other element (a mixed literal, a nested one, a starred one), a dict
+        or a dict's comprehension, a name bound at module level or in a class body, or bound any other way besides (a parameter,
+        an assignment, an unpacking target), a call's return, a join or format the census does not fold, and any other node."""
+        c = _Served._const_text(a)
+        if c is not None: return {c[0]} if type(c[0]) is str else None
+        if not isinstance(a, ast.Name): return None
+        got = self._key_binding(a, chain, "key")
+        if got[0] == "refuse" or got[2]: return None
+        out = set()
+        for item in got[1]:
+            if item[0] not in ("for", "comp") or item[3] != 1 or not isinstance(item[1], (ast.Tuple, ast.List, ast.Set)): return None
+            for e in item[1].elts:
+                c = _Served._const_text(e)
+                if c is None or type(c[0]) is not str: return None
+                out.add(c[0])
+        return out
     def _key_index(self):
         """The file's facts _key_const and _key_attr read, gathered once per file by one walk of its whole tree: how many times each
         name is bound, in any scope and by any form (a store or delete, a parameter, a def or class statement, an import, an except
@@ -1469,7 +1549,11 @@ class Scan(ast.NodeVisitor):
         every string constant, every keyword argument's name, whether a call of setattr, delattr, `__setattr__` or `__delattr__` (by
         that name or as an attribute so named) names its attribute other than by a string constant, the names such a call's first
         or second argument folds to (_const_text: a string constant, or constants it folds to one), whether the file names globals,
-        vars or locals (as a name or an attribute) or an attribute `__dict__`, and whether it holds a star import."""
+        vars or locals (as a name or an attribute) or an attribute `__dict__`, and whether it holds a star import. And the setter
+        read, which fails closed (_setter_sites, _setter_args, _setter_fold): the strings every argument of a setter call that may
+        name its attribute folds to, joined into the setter names (snames), and whether any such argument is unprovable or the file
+        uses a setter's name, or an attribute so named, other than as a call's callee, imports one under another name or spells one
+        in folded constants (sopen), which _key_attr refuses."""
         if self.kindex is None:
             binds, decl, loads, attrs, strs, kws, auses, snames = {}, set(), {}, set(), set(), set(), {}, set()
 
@@ -1503,8 +1587,14 @@ class Scan(ast.NodeVisitor):
                     for a in n.args[:2]:   # the bound `x.__setattr__(name, v)` names it first, every other setter second: both read
                         c = _Served._const_text(a)
                         if c is not None and type(c[0]) is str: snames.add(c[0])
+            calls, sopen = self._setter_sites(self.ktree)   # the setter read: every setter's name folded by binding, or unprovable
+            for call, chain in calls:
+                for a in self._setter_args(call) or [None]:
+                    got = None if a is None else self._setter_fold(a, chain)
+                    if got is None: sopen = True
+                    else: snames.update(got)
             self.kindex = {"binds": binds, "decl": decl, "loads": loads, "attrs": attrs, "strs": strs, "kws": kws, "setter": setter, "ns": ns,
-                           "star": star, "auses": auses, "snames": snames}
+                           "star": star, "auses": auses, "snames": snames, "sopen": sopen}
         return self.kindex
     def _key_const(self, name):
         """Why the allowlist may not read the module constant `name` (bound once, at the module's top level, to a tuple literal)
@@ -1534,10 +1624,16 @@ class Scan(ast.NodeVisitor):
         sets it on a class or a module a base may reach), declares it global or nonlocal anywhere, uses an attribute so named other
         than as a loop or comprehension source or an item read's container (an attribute store or delete, an augmented assignment,
         a method called on it, an item or slice store, an alias and a callee handed it among them), spells the name as a string
-        constant or a keyword argument or hands it as a setattr's, delattr's, `__setattr__`'s or `__delattr__`'s name in constants
-        _const_text folds to it, names globals, vars, locals or `__dict__`, or holds a star import. Not read for it: such a setter
-        call whose name is not folded from string constants (the fact _key_const reads as "setter", which kernel/host_transport.py,
-        the file of the live attribute source, holds: `setattr(self, name, None)` over a loop target), and a write in another file."""
+        constant or a keyword argument or hands it as a setter's name that folds to it (_setter_fold), names globals, vars, locals
+        or `__dict__`, or holds a star import. The setter read fails closed (sopen): the attribute refuses in a file where any call
+        of setattr, delattr, `__setattr__` or `__delattr__` has an argument that may name the attribute (_setter_args) whose strings
+        _setter_fold cannot prove (a mixed literal, a dict, a parameter, a call's return and an unfolded join among them), or that
+        uses one of the four's names, or an attribute so named, other than as a call's callee, imports one under another name, or
+        spells one in a string constant or constants _const_text folds (_setter_sites). Not read for it: a write in another file, a
+        setter reached reflectively other than by such a string, and a writer other than the four handed the name other than as
+        one string constant (functools.update_wrapper among them), each named under the class limit. The live
+        setter at kernel/host_transport.py:287, `setattr(self, name, None)` with `name` a loop target over ("hosts", "dir"),
+        folds to those names, not SPEC_FIELDS, so the one accepted source (Scan._spec_source) stays accepted."""
         ix = self._key_index()
         if ix["binds"].get(name, 0): return "whose name the file binds, which may set it on a class or a module a base reaches"
         if name in ix["decl"]: return "whose name a scope of the file declares global or nonlocal"
@@ -1547,9 +1643,25 @@ class Scan(ast.NodeVisitor):
                 return "that the file writes or uses other than as a loop's source or an item read"
         if name in ix["strs"] or name in ix["kws"] or name in ix["snames"]:
             return "whose name the file spells as a string or a keyword, which may write it through setattr or a namespace"
+        if ix["sopen"]: return "in a file that reaches setattr, delattr, __setattr__ or __delattr__ other than by a call whose name the census folds to constant strings"
         if ix["ns"]: return "in a file that names globals, vars, locals or __dict__"
         if ix["star"]: return "in a file that holds a star import"
         return None
+    def _spec_source(self, x, chain):
+        """Whether the loop- or comprehension-source attribute `x` is the one the allowlist accepts: kernel/host_transport.py's
+        sh.SPEC_FIELDS, keyed by binding on three things and never on the spelling: the file (_SPEC_FILE), the attribute name
+        (_SPEC_ATTR), and the binding of the base (_SPEC_BASE): a bare name `sh` that resolves, from the scopes `chain` outward, to
+        a module-level constant bound exactly once and declared global or nonlocal nowhere, so a local or a rebound `sh` of the same
+        spelling is not it. Any other attribute source refuses by name (_KEY_SRC), so a new accepted source enters only by an
+        allowlist edit made on purpose. The escapes a general write check could not close for a bare base (a class replaced
+        through type() with a folded key, a namespace constructor, a store elsewhere on the base chain) are, for this one binding,
+        one line under the class limit (Scan._holds_class): the census does not read a base's text, so a run-time rebuild of sh's
+        class or module that the walk cannot see is the class limit's residual, which the remainder sentence names."""
+        if self.rel != _SPEC_FILE or x.attr != _SPEC_ATTR or not (isinstance(x.value, ast.Name) and x.value.id == _SPEC_BASE):
+            return False
+        got = self._key_binding(x.value, chain, "src")
+        ix = self._key_index()
+        return got[0] != "refuse" and got[2] and ix["binds"].get(_SPEC_BASE, 0) == 1 and _SPEC_BASE not in ix["decl"]
     def _key_settle(self):
         """The allowlist over every key _unfolded held (Scan.kdefer), once the file's walk is done, each refusal a run-time form;
         then a key accepted by reading a name at module level, a builtin or a module constant (Scan.kheld) is refused where the
@@ -1580,12 +1692,13 @@ class Scan(ast.NodeVisitor):
         # allowlist (_unfolded, _key_form) does not PROVE by its binding, a run-time form of its own. The allowlist accepts only a
         # constant string spelling no listed name; a parameter; a call's return whose callee reaches neither text nor the str, bytes
         # or bytearray type nor a method of one; a name that is a loop or comprehension target inside a function over a literal of
-        # constants, a once-bound module tuple constant no code can mutate or an attribute whose base reaches no text and whose name
-        # the file never writes (_key_attr); a name that is such a target, or an unpacking target, over a parameter or such a call's
+        # constants, a once-bound module tuple constant no code can mutate or the one attribute source kernel/host_transport.py
+        # holds, sh.SPEC_FIELDS, by binding (_spec_source), where the file may write no attribute of its name (_key_attr, its setter
+        # read failing closed); a name that is such a target, or an unpacking target, over a parameter or such a call's
         # return, directly or through names an assignment, such a target or an unpacking binds to one; a boolean operation or an
         # if-expression each of whose values the allowlist accepts where it stands; and a name an assignment binds to any of these
-        # but a constant string. Every other shape refuses by name (a direct attribute key or a name bound to one, accepted only as a
-        # loop or comprehension source; such a source whose name the file may write; a name bound to a constant string; a with
+        # but a constant string. Every other shape refuses by name (a direct attribute key or a name bound to one; any other
+        # attribute source; that one where the file may write its attribute; a name bound to a constant string; a with
         # target, or a name bound to one; a walrus, or a name a walrus binds anywhere, a comprehension's included; a loop target
         # bound at module level, among them), the reason naming what the walk met
         if isinstance(node, ast.Subscript):
@@ -2730,6 +2843,11 @@ _KEY_BOUND = {"global": "which a function or a class body declares global, so th
               "mutable": "a list, set or dict module constant, which code may mutate, so the census does not evaluate it"}
 _KEY_CONST = "a module constant %s, so the census does not evaluate it"   # Scan._key_const's reasons
 _KEY_ATTR = "an attribute .%s as a loop's source %s, so the census does not evaluate it"   # Scan._key_attr's, in _key_form
+# the one attribute the allowlist accepts as a loop or comprehension source, keyed by binding (Scan._spec_source, in _key_form):
+# the file, the attribute name, and the base bound once at module level to the session-host module. Any other refuses (_KEY_SRC)
+_SPEC_FILE, _SPEC_BASE, _SPEC_ATTR = "kernel/host_transport.py", "sh", "SPEC_FIELDS"
+_KEY_SRC = ("an attribute .%s as a loop's source the census does not evaluate, accepted only as %s's %s.%s by binding"
+            % ("%s", _SPEC_FILE, _SPEC_BASE, _SPEC_ATTR))
 _KEY_SHUT = "spells a name by %s, which reads %s in a file that may rewrite %s, so the census does not evaluate it"   # _key_settle
 _NS_NONE = {"computed": False, "builtins": False, "file": False, "deco": False, "runtime": None}   # _namespace_flags's answer for a file the walk did not read
 def _namespace_flags(facts, stem):
@@ -2790,10 +2908,14 @@ def _namespace_flags(facts, stem):
     allowlist accepts only a constant string that spells no listed name; a parameter; a call's return whose callee reaches neither
     text nor the str, bytes or bytearray type nor a method of one; a name that is a loop or comprehension target inside a function
     over a literal of constants, a once-bound module tuple constant the file never writes, rebinds, aliases, names as a string or a
-    keyword, or mutates, or an attribute whose base reaches no text and whose name the file never writes (it binds and declares no
-    such name, uses an attribute so named only as such a source or an item read, spells the name in no string constant or keyword
-    and in no setattr, delattr, `__setattr__` or `__delattr__` name folded from string constants, and names no globals, vars,
-    locals or `__dict__` and holds no star import; such a setter whose name is not so folded is not read for it); a name that is
+    keyword, or mutates, or the one attribute source kernel/host_transport.py holds, sh.SPEC_FIELDS, keyed by binding on the file, the
+    attribute name and the base bound once at module level (_spec_source; any other attribute source refuses by name), whose base
+    reaches no text and for which the file writes no attribute of that name (it binds and declares no such name, uses an attribute so
+    named only as such a source or an item read, spells the name in no string constant or keyword, uses setattr, delattr,
+    `__setattr__` or `__delattr__`, or an attribute so named, only as the callee of a call each of whose arguments that may name an
+    attribute folds to string constants other than that name, directly or as a loop or comprehension target over a literal of them,
+    imports none of the four under another name and spells none in folded constants (_setter_sites, _setter_args, _setter_fold),
+    and names no globals, vars, locals or `__dict__` and holds no star import); a name that is
     such a target, or an unpacking target, over a parameter or such a call's return, directly or through names an assignment,
     such a target or an unpacking binds to one; a
     boolean operation or an if-expression each of whose values the allowlist accepts where it stands; and a name an assignment
@@ -2801,8 +2923,10 @@ def _namespace_flags(facts, stem):
     naming what the walk met: a join, format, format_map or replace call, a `%`, a `+` or an f-string a string constant does not fold
     (_key_kind); a method of the name str, bytes or bytearray, however reached (`str.lower(v)`, a name bound to str, `builtins.str`);
     any method called on, or attribute read on, constant text or anything the allowlist does not prove reaches no text; a direct
-    attribute key or a name bound to one, an attribute proven only as a loop or comprehension source; such a source whose name the
-    file may write, as above; a name bound to a constant string;
+    attribute key or a name bound to one, any attribute source but that one binding, and that binding where the file may write its
+    attribute as above (a class replaced through type() with a folded key, a namespace constructor or a store elsewhere on the base
+    chain being, for that one binding, one line under the class limit, since the census reads no base's text), a setter argument of
+    any other shape, or a setter reached any other way, counting as such a write; a name bound to a constant string;
     a with target, or a name bound to one; a walrus, or a name a walrus binds anywhere, a comprehension's included (no binding of a
     walrus target is read in an enclosing scope); a subscript; a loop target bound at module level;
     an augmented assignment; a name a function or a class body declares global, wherever the declaration stands, or a scope declares
