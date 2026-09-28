@@ -1784,10 +1784,10 @@ def _guard_failure_into_report(item, call, rep):
     a teardown the guard failed: pytest's skipping plugin makes the error of an xfail-marked test an xfail, which leaves
     the run green, and its unittest plugin puts a TestCase's second stored error (a body and a cleanup that both fail)
     into the report in place of the guard's, which then names no thread. So a teardown report whose item's stash holds
-    the guard's failure (pytest_runtest_teardown records it there) is marked failed and is no xfail, and when the error
-    it carries is not the guard's, the guard's text is added after that error. The wrapper redacts the report after
-    this step, so the added text goes through the same redaction as the rest of the report and the guard's stderr
-    copy."""
+    the guard's failure (pytest_runtest_teardown records it there) is marked failed, and loses the skipping plugin's
+    wasxfail (pytest's session counts a failed report toward the run's exit status only without one), and when the error
+    it carries is not the guard's, the guard's text is added after that error. The wrapper redacts the report after this
+    step, so the added text goes through the same redaction as the rest of the report and the guard's stderr copy."""
     if call.when != "teardown":
         return
     failure = item.stash.get(_GUARD_FAILURE, None)

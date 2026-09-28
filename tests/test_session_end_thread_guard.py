@@ -127,21 +127,22 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   pytest-worker, Timers whose functions are in pytest_asyncio and pytest_testmon).
 
 Each child-run pin was run with the guard removed from tests/conftest.py and fails there: the leak, idle-worker,
-daemon-started-pool and missing-table runs pass (exit 0, no error), the green runs' witness finds the within-cap
-threads alive at sessionfinish, and the two-error runs, red on the TestCase's own errors, find no thread named on
-stderr. The two-error runs also fail with the guard as it was before it wrote to stderr, on the same missing name.
+daemon-started-pool, missing-table, xfail, redaction, stderr-header and table-changing runs pass (exit 0, no error), the
+green runs' witness finds the within-cap threads alive at sessionfinish, and the two-error runs (the redaction one among
+them), red on the TestCase's own errors, find no thread named in the report. The two-error runs also fail with the guard
+as it was before it wrote to stderr, on the same missing name.
 The pins for the exit-join tables, as this file has them, were run serially on 3.12 against the guard as it was before
 it read the tables, when it waited for non-daemon threads only, and every one that reads the guard fails there. Of the
 child runs, the four daemon-started-pool runs (busy and idle, serially and under -n 2) and each missing-table run exit 0
-with no error. In this process (ExitJoinTables): test_the_guard_reads_the_tables_the_exit_hooks_join fails on the
-missing EXIT_JOIN_TABLES (AttributeError); the pins of the daemon-started pool's worker and of the process pool's table
-fail with the guard returning an empty list; the re-read pin (test_the_tables_are_read_again_after_every_pass) fails
-with a KeyError on 'w2' at its unpack line, since that guard skips the daemon W1 and returns at once, before W1's task
-records W2; the retry pin (test_a_table_read_that_meets_a_concurrent_insert_is_read_again) fails at its assertion with
-an empty list; and the deadline pin fails because the guard returns its non-daemon plant at the cap instead of
-failing. The one that passes there is test_they_are_the_only_exit_hooks_the_standard_library_registers, a premise pin:
-it reads no guard, only the standard library's source against the class's own TABLES, so no change to the guard can
-turn it red.
+with no error, and the table-changing run, whose leaked thread fails that guard as a leak, finds no table's failure in
+its report. In this process (ExitJoinTables): test_the_guard_reads_the_tables_the_exit_hooks_join fails on the missing
+EXIT_JOIN_TABLES (AttributeError); the pins of the daemon-started pool's worker and of the process pool's table fail
+with the guard returning an empty list; the re-read pin (test_the_tables_are_read_again_after_every_pass) fails with a
+KeyError on 'w2' at its unpack line, since that guard skips the daemon W1 and returns at once, before W1's task records
+W2; the retry pin (test_a_table_read_that_meets_a_concurrent_insert_is_read_again) fails at its assertion with an empty
+list; and the deadline pin fails because the guard returns its non-daemon plant at the cap instead of failing. The one
+that passes there is test_they_are_the_only_exit_hooks_the_standard_library_registers, a premise pin: it reads no guard,
+only the standard library's source against the class's own TABLES, so no change to the guard can turn it red.
 Synthetic fixtures only; no kernel, no network.
 """
 import importlib.util
