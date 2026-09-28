@@ -79,7 +79,10 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   guard at its deadline, failing it by the table's name and naming the non-daemon thread still alive beside it, but not
   a plain daemon thread (a stand-in that adds to itself during every read, with the process-wide time.monotonic frozen,
   the guard run under a backstop whose firing is the defect of a retry with no bound, or one bounded on that frozen
-  clock).
+  clock). The same failure in a child run (a stand-in table whose every read raises, in place for the session, beside a
+  leaked non-daemon thread) fails the run with one error whose report prints the table's failure once, with no
+  exception chain: raised inside the handler of the table's own failure, it would print that one first, under "During
+  handling of the above exception". Stderr prints it once too.
 - Threads that END WITHIN THE CAP (each test starts one that sleeps WITHIN_S and exits) and plain DAEMON threads that
   run past the session (one per test, released at unconfigure) leave the run green, serially and under -n 2, at the
   guard's own cap. The guard's wait is WITNESSED, not assumed: the scratch conftest records at pytest_sessionfinish,
@@ -396,22 +399,58 @@ def test_leak_named_by_an_env_value():
     _start("env-named", [threading.Thread(target=_leaked, name="plant-leaked-" + os.environ[%r])])
 ''' % ENV_NAMED_VAR
 
+# appended to the scratch conftest: concurrent.futures.thread's exit-join table replaced for the session by a stand-in
+# whose every read raises the RuntimeError a concurrent insert raises, as a table another thread adds to without pause
+# would, and put back at pytest_sessionfinish, after the guard; any insert is passed on to the real table
+TABLE_KEEPS_CHANGING = '''
+
+import concurrent.futures.thread as _cft
+_REAL_TABLE = _cft._threads_queues
+
+
+class _ChangesDuringEveryRead:
+    def __iter__(self):
+        walked = {object(): None}
+        it = iter(walked)
+        next(it)
+        walked[object()] = None     # an insert mid-walk: the walk's next step raises RuntimeError
+        return it
+
+    def __setitem__(self, key, value):
+        _REAL_TABLE[key] = value
+
+
+_plant_configure, _plant_sessionfinish = pytest_configure, pytest_sessionfinish
+
+
+def pytest_configure(config):
+    _plant_configure(config)
+    _cft._threads_queues = _ChangesDuringEveryRead()
+
+
+def pytest_sessionfinish(session):
+    _cft._threads_queues = _REAL_TABLE
+    _plant_sessionfinish(session)
+'''
+
 
 class SessionEndThreadGuard(unittest.TestCase):
-    def _run(self, plant, *, cap=None, workers=None, drop=None, env_extra=None):
+    def _run(self, plant, *, cap=None, workers=None, drop=None, env_extra=None, conftest_extra=""):
         """pytest in a child over the plant `plant` (PLANT's helpers plus test functions), tests/conftest.py loaded as a
         plugin. Returns (exit status, the child's output (its stdout, STDERR_LINE, then its stderr; _channels splits
         them), {pid: [[name, daemon]] started}, {pid: {within-cap thread name:
         its end time}}, {pid: {"alive": plant threads alive at pytest_sessionfinish, "t": that time, "cap": the guard's
         cap}}, {"release": {pid: time of the scratch conftest's stop at pytest_unconfigure}, "atexit": {pid: time of the
         process's atexit handler}}), the times from each process's monotonic clock. `drop`, a (module, attribute) pair,
-        is deleted by the scratch conftest for the session. `env_extra` adds variables to the child's environment."""
+        is deleted by the scratch conftest for the session. `env_extra` adds variables to the child's environment, and
+        `conftest_extra` is code appended to the scratch conftest."""
         d = os.path.realpath(tempfile.mkdtemp(prefix="tg-"))       # resolved: macOS temp dirs sit under a symlink
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         case, out, home, tmp = (os.path.join(d, n) for n in ("case", "out", "home", "tmp"))
         for p in (case, out, home, tmp):
             os.makedirs(p)
-        for name, body in (("plant_shared.py", SHARED), ("conftest.py", CONFTEST.format(cap=cap, drop=drop)),
+        for name, body in (("plant_shared.py", SHARED),
+                           ("conftest.py", CONFTEST.format(cap=cap, drop=drop) + conftest_extra),
                            ("test_plant.py", PLANT.format(within=WITHIN_S, hold=EXIT_HOLD_S) + plant)):
             with open(os.path.join(case, name), "w") as f:
                 f.write(body)
@@ -726,6 +765,28 @@ class SessionEndThreadGuard(unittest.TestCase):
                                   "%s names the missing attribute:\n%s" % (channel, out))
                 self.assertEqual(sorted(pid for pid in started if pid not in marks["atexit"]), [],
                                  "the process exited once the scratch conftest put the table back:\n" + out)
+
+    def test_a_table_that_changes_during_every_read_fails_a_serial_run_and_the_report_prints_that_failure_once(self):
+        """The guard's failure for a table it could not read by its deadline, with a non-daemon thread still alive, prints
+        once in the report: the guard raises it outside the handler of the table's own failure, so pytest does not print
+        that one before it as its context ("During handling of the above exception")."""
+        rc, out, started, _ended, _finish, marks = self._run(LEAK_TEST, cap=LEAK_CAP_S,
+                                                             conftest_extra=TABLE_KEEPS_CHANGING)
+        report, err = self._channels(out)
+        table = "could not read concurrent.futures.thread._threads_queues before its deadline"
+        self.assertTrue(started, "the plant's test ran:\n" + out)
+        self.assertEqual(rc, 1, "the table's failure fails the run:\n" + out)
+        self.assertEqual(len(re.findall(r"ERROR at teardown of test_leak", report)), 1, "one error, at the teardown of "
+                         "the process's last test:\n" + out)
+        self.assertEqual(report.count(table), 1, "the report prints the table's failure once:\n" + out)
+        self.assertNotIn("During handling of the above exception", report, "the report prints no exception chain:\n"
+                         + out)
+        self.assertEqual(report.count("thread 'plant-leaked' (ident "), 1, "the report names the non-daemon thread "
+                         "still alive once:\n" + out)
+        self.assertEqual(err.count(table), 1, "stderr prints the table's failure once:\n" + out)
+        self.assertEqual(sorted(pid for pid in started if pid not in marks["atexit"]), [],
+                         "the process exited once the scratch conftest put the table back and released the thread:\n"
+                         + out)
 
     # -- threads that end within the cap, and plain daemon threads, leave the run green -------------------------------
 

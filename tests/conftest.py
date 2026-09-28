@@ -1725,11 +1725,15 @@ def threads_left_at_session_end(cap_s):
         listed = _enumerate()
         # after the list: a listed worker whose pool's submit returned is in the table
         try:
-            joined = _exit_joined_threads(deadline)
+            joined, kept_changing = _exit_joined_threads(deadline), None
         except _ExitJoinTableKeptChanging as failure:
+            joined, kept_changing = None, failure.msg
+        # failed outside the except block: inside it, the report would print the table's failure a second time, as this
+        # failure's context, under "During handling of the above exception"
+        if kept_changing is not None:
             alive = [t for t in listed if t.is_alive() and _guarded_thread(t, frozenset())]    # the non-daemon ones
             frames = sys._current_frames()
-            pytest.fail("%s\n\n%s" % (failure.msg, (
+            pytest.fail("%s\n\n%s" % (kept_changing, (
                 "The non-daemon threads still alive then, which hold the process at exit whatever the table lists:"
                 "\n\n" + "\n".join(_thread_report(t, frames) for t in alive)) if alive
                 else "No non-daemon thread was alive then."), pytrace=False)
