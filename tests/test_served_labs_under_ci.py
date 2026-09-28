@@ -1,8 +1,9 @@
 """Every served lab runs in CI's served job (2026-09-15).
 
-CI's browser-backed step (.github/workflows/ci.yml, "Browser-backed served-page tests") runs ONLY the files its two
-globs name, tests/test_*_browser.py and tests/test_*_served.py, under ROMP_SERVED_TESTS_REQUIRE=1; tests/conftest.py
-turns a skip in exactly those files into a failure (_is_served_test_file, the same two suffixes). A lab whose name misses
+CI's browser-backed step (.github/workflows/ci.yml, "Browser-backed served-page tests") runs ONLY the files its pytest
+line names, the two globs tests/test_*_browser.py and tests/test_*_served.py and one module named by file (the handler-parse
+leg's test below), under ROMP_SERVED_TESTS_REQUIRE=1; tests/conftest.py turns a skip in the files the globs collect into a
+failure (_is_served_test_file, the same two suffixes). A lab whose name misses
 both suffixes therefore skips on the Python matrix runners (no node deps, no browser), never runs in the served job,
 and its skip stays a skip: eleven labs stood outside the globs on 2026-09-15, and one of them
 (the ship-reship lab, since renamed with the suffix; its NackNoticeSurvivesReload class) hid a real regression on main
