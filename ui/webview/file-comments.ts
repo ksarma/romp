@@ -1790,11 +1790,16 @@ class Panel {
    *  last content paint, a card keeps the link and a spanned change's Comment on this change as the rule's last event left
    *  them, until the next event (a status that differs takes them away then, as in the row text-status-over-pane), and a
    *  click on either answers that the change is not in view (notInView).
-   *  #latchCardState is the one writer, and the functions of the events above are its only callers; a refile through paintAll
-   *  or repaintPresel writes the cards' filing (event 1), so the callers of those two are named as well: every call whose callee
-   *  is either name or a property access ending in it is counted, and every other mention of either name in the code (a bound
-   *  reference, an alias, a string literal spelled as the name) is listed and held empty; a name computed at run time (this[k])
-   *  is not read.
+   *  #latchCardState is the one writer, and the functions of the events above are its only callers; a refile through paintAll,
+   *  or through repaintPreselPass (the composer's repaint, run by repaintPresel), writes the cards' filing (event 1), so the
+   *  callers of those three are named as well. The census (writer-census.ts, cardStateCensus's doc) counts every call whose
+   *  callee is the name or a property access ending in it, and lists, to be held empty, every other mention of the name in this
+   *  file's code (a bound reference or one handed on, an alias, a destructured name, a call through parentheses or .call, a
+   *  string literal spelled as the name, a decorator on its declaration or its parameters), the name's own declarations aside,
+   *  and these doors to code in a string: eval and Function by name; the identifier constructor; a string literal spelled eval,
+   *  Function, constructor, setTimeout or setInterval; and a timer given anything but a function written in place. It reads no
+   *  name computed at run time (this[k]), no code in another module, and none of the other ways a page runs code from a string,
+   *  such as a module imported from a data address, handler attributes or markup, and an element whose text runs as code.
    *  file-comments-changes-review2.test.ts pins all three by parsing this file, and runs the roads below row by row. Each row names a
    *  road, the steps at which the change cards moved with the code before this rule (fe43d2c2a) and with it (head), why each
    *  move the code before made that the rule drops carried no new information (Dropped), and the event that brings each move
@@ -2109,11 +2114,14 @@ class Panel {
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
   // loses focus, so a poll-triggered re-render would drop the input's focus mid-word
   sections = { head: el("div", "fc-sec-head"), cards: el("div", "fc-sec-cards"), send: el("div", "fc-sec-send"), log: el("div", "fc-sec-log") };
-  // the panel's one live region, which notInView speaks through (the row under the card is rebuilt at every render and carries
-  // no role, so nothing announces it): role status, polite, visually hidden (.fc-live, the settings sheet's .rs-live rule), since
-  // the row already shows the words. Made here once and put in the root with the sections (render), never rebuilt.
+  // the panel's one live region, for notInView's words (speak: emptied at the click and written on the next animation frame; its
+  // doc says why, and that the announcement was not measured with a screen reader). The row under the card is rebuilt at every
+  // render and carries no role, so the words need an element of their own: role status, polite, and visually hidden (.fc-live,
+  // the settings sheet's .rs-live rule), since the row already shows them. Made here once and put in the root with the sections
+  // (render), never rebuilt.
   live = liveRegion();
-  liveFrame: number | null = null;          // the frame that writes the words (speak), until it runs, or the next click's speak or a retired row drops it (hush)
+  liveFrame: number | null = null;          // the frame that writes the words (speak), until it runs or hush drops it
+  liveSlot: string | null = null;           // the "view:" slot of the row the region's words are for (speak sets it, hush clears it): only that row's retire or ✕ empties the region (notInView)
   // persistent composer parts, for the same reason
   composerBox = el("div", "fc-composer");   // in the panel's slot, or inside the card a reply answers (placeComposer)
   composerRef = el("div", "fc-composer-ref");
@@ -2373,7 +2381,7 @@ class Panel {
         // own (reloadView), so a status landing first over a standing pane leaves the wait to the fetch's paint (the head of its
         // pass, paintPass)
         fcreload: (x) => { const slot = x.dataset.slot || "head"; if (slot === "composer") this.ownRefusal = null; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.reloadView(); },
-        fcerrx: (x) => { const slot = x.dataset.slot || ""; if (slot === "composer") this.ownRefusal = null; if (slot.startsWith("view:")) this.hush(); this.errors.delete(slot); this.render(); },   // the composer's row may be a restored comment's own (ownRefusal); a not-in-view row's words leave the live region with it (notInView)
+        fcerrx: (x) => { const slot = x.dataset.slot || ""; if (slot === "composer") this.ownRefusal = null; if (slot === this.liveSlot) this.hush(); this.errors.delete(slot); this.render(); },   // the composer's row may be a restored comment's own (ownRefusal); the row the live region speaks for takes its words with it, and any other row leaves them (notInView)
         fchiddenx: () => { this.hiddenSaved = null; this.render(); },   // the line for a comment saved under Changes (hiddenSavedRow): read, dismissed
         fcheldback: (x) => this.bringBack(Number(x.dataset.held)),   // a refused comment's note under the open composer (heldRows): its composer, words and row back
         fcheldx: (x) => this.dropHeld(Number(x.dataset.held)),       // …or the note dismissed, the words with it
@@ -2629,13 +2637,15 @@ class Panel {
   }
   /** The rows notInView put up whose change can no longer have a link or Comment on this change after the status just applied:
    *  one the status no longer lists (decided in another client, say) or lists detached (its card offers neither, now or
-   *  later). Each goes at that status, so no row stays saying a change is not in view when its words cannot come true, and the
-   *  live region is emptied with it (hush). A card the filter or the fold hides keeps its row, hidden with it (notInView). */
+   *  later). Each goes at that status, so no row stays saying a change is not in view when its words cannot come true. When the
+   *  row that goes is the one the live region speaks for (liveSlot), the region is emptied with it (hush); another card's row
+   *  going leaves the region's words, landed or waiting for their frame. A card the filter or the fold hides keeps its row,
+   *  hidden with it (notInView). */
   private retireViewRows(): void {
     const held = new Set(this.changeView().cards.filter((x) => !x.detached).map((x) => "view:" + x.id));
-    let gone = false;
-    for (const slot of [...this.errors.keys()]) if (slot.startsWith("view:") && !held.has(slot)) { this.errors.delete(slot); gone = true; }
-    if (gone) this.hush();
+    let spoke = false;
+    for (const slot of [...this.errors.keys()]) if (slot.startsWith("view:") && !held.has(slot)) { this.errors.delete(slot); if (slot === this.liveSlot) spoke = true; }
+    if (spoke) this.hush();
   }
   /** The composer's about ids against the status just applied (About's comment): an id the status holds no pending or
    *  detached change for — the two the host accepts (`no-change` otherwise) — leaves the list. The ids were fixed as the
@@ -2880,6 +2890,7 @@ class Panel {
     this.sizer?.disconnect(); this.cardSizer?.disconnect(); this.contentWatched.clear();   // the margin layout's observers and its pending frame go with the viewer
     if (this.layoutFrame !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this.layoutFrame);
     this.layoutFrame = null;
+    this.hush();                                       // and the live region's pending frame (speak), which would write into the closed panel's region and keep the panel reachable until it ran
     window.removeEventListener("resize", this.onWindowResize);
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
@@ -3122,31 +3133,36 @@ class Panel {
    *  emptied at the click and given the words on the next animation frame, the technique used so screen readers announce
    *  repeated text; the announcement itself was not measured with a screen reader. The row has its own slot, "view:" and the
    *  change's id, beside the slot a decision's row uses ("change:"), so it never replaces a refusal standing under the card,
-   *  and both show (renderChangeCard). It shows only under its card, never as a stray row (strayRows lists the decision slots
-   *  only): while the filter or the fold hides the card the row is hidden with it, and it comes back with the card unless
-   *  something has retired it. The next content paint retires it (#latchCardState); so does a status after which the change
-   *  can no longer have a link or Comment on this change, one that drops it or detaches it (retireViewRows); and the row's ✕
-   *  clears it before either. Each of the three empties the live region too (hush). */
+   *  and both show (renderChangeCard). It shows only under its card, never as a stray row (its "view:" slot is none of the
+   *  prefixes strayRows' callers pass): while the filter or the fold hides the card the row is hidden with it, and it comes back
+   *  with the card unless something has retired it. The next content paint retires it (#latchCardState); so does a status after
+   *  which the change can no longer have a link or Comment on this change, one that drops it or detaches it (retireViewRows); and
+   *  the row's ✕ clears it before either. The content paint empties the live region too (hush); a status's retire and the ✕
+   *  empty it only when the row they take is the one it speaks for (liveSlot, the last click's), so another card's row going
+   *  leaves the last click's words, landed or waiting for their frame. */
   private notInView(c: ChangeCard, what: "link" | "comment"): void {
     const words = what === "link" ? NOT_IN_VIEW_LINK : NOT_IN_VIEW_COMMENT;
     this.errors.set("view:" + c.id, { text: words, reload: false });
-    this.speak(words);
+    this.speak("view:" + c.id, words);
     this.render();
   }
-  /** notInView's words into the live region: the region emptied at once, and the words written on the next animation frame (an
-   *  event, not a timer), so a second press with the same words still gives the region new text. That is the technique used so
-   *  screen readers announce repeated text; the sequence is what is pinned, and the announcement itself was not measured with a
-   *  screen reader. With no frame to wait for (no requestAnimationFrame), the words are written at once. */
-  private speak(words: string): void {
+  /** notInView's words into the live region, for the row in `slot`: the region emptied at once, the slot recorded as the one it
+   *  speaks for (liveSlot), and the words written on the next animation frame (an event, not a timer), so a second press with the
+   *  same words still gives the region new text. That is the technique used so screen readers announce repeated text; the
+   *  sequence is what is pinned, and the announcement itself was not measured with a screen reader. With no frame to wait for
+   *  (no requestAnimationFrame), the words are written at once. */
+  private speak(slot: string, words: string): void {
     this.hush();
+    this.liveSlot = slot;
     if (typeof requestAnimationFrame !== "function") { this.live.textContent = words; return; }
     this.liveFrame = requestAnimationFrame(() => { this.liveFrame = null; this.live.textContent = words; });
   }
-  /** The live region emptied, and words still waiting for their frame dropped: speak's first step, and a not-in-view row retired
-   *  (the content paint, retireViewRows, the row's ✕). */
+  /** The live region emptied, words still waiting for their frame dropped, and the slot it spoke for cleared: speak's first step,
+   *  the content paint, the retire or the ✕ of the row the region speaks for (retireViewRows, fcerrx), and the close (dispose). */
   private hush(): void {
     if (this.liveFrame !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this.liveFrame);
     this.liveFrame = null;
+    this.liveSlot = null;
     this.live.textContent = "";
   }
   /** A card's link (fcgoto): goTo, except that a change card's link while the body does not show the last content paint

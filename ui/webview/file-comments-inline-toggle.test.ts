@@ -529,7 +529,7 @@ test("off: one click repaints at once with no status ask — no change mark in e
   assert.equal(w.body.querySelectorAll(".fc-hl").length, 1);
   // a poll's repaint keeps the person's choice (the field, not a per-paint read of the DOM)
   toggle(aside)!.click(); await flush();
-  w.ctx.reload();   // the viewer re-rendered the body: onRendered → paintAll
+  w.ctx.reload();   // the viewer re-rendered the body: onRendered → #latchCardState → paintPass
   await flush();
   assert.equal(marksOf(w).length, 0, "a repaint paints no mark while the toggle is off");
   assert.equal(toggle(aside)!.dataset.on, "0");

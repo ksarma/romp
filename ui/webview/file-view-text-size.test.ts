@@ -1301,8 +1301,8 @@ const DOCS: Record<string, string> = { [REPORT]: README, [SNIPPET]: SNIPPET_MD, 
  *  files-pane.css under body.fileview-pane), the bundle, a fetch that serves the README with the kernel's headers, and two
  *  registered actions standing in for Comments and the GitHub unit (both mount once the kernel answers; the row is measured
  *  with them, its widest ordinary form). The probe action counts the seam's paints and selection hooks. Opened with ?hl=1,
- *  a third action paints a comment highlight over the first paragraph the panel's way (file-comments.ts paintAll: every
- *  onRendered unwraps the marks, normalizes the text and re-wraps them through the real painter). A test may install
+ *  a third action paints a comment highlight over the first paragraph the panel's way (file-comments.ts: a paint's
+ *  onRendered runs #latchCardState's pass, which unwraps the marks, normalizes the text and re-wraps them through the real painter). A test may install
  *  window.__disturb, which the probe runs from its onRendered with the body: a stand-in for a paint that moves a text node
  *  the selection stands in. */
 const REAL_PAGE = (mode: "chat" | "feed" | "pane") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "feed" ? web("feed.css") : mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("styles.css")}</style></head>

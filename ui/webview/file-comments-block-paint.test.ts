@@ -358,7 +358,7 @@ test("a paint pass over a body whose display formula wears the highlight's block
   const tops = () => shapeOf(w.md).filter((s) => !s.startsWith("T("));
   assert.deepEqual(tops(), ["H1", "P", "SPAN.katex-display.fc-hl-block.fc-hl-context", "P"], "stamped as the paint and the pass leave it");
   normalized.clear();
-  for (const cb of w.hooks.rendered) cb();   // the seam's onRendered for the same text: paintAll unpaints what stands, then repaints (nothing: no comment)
+  for (const cb of w.hooks.rendered) cb();   // the seam's onRendered for the same text: #latchCardState's pass (paintPass) unpaints what stands, then repaints (nothing: no comment)
   assert.deepEqual(stripped(d), CLEAN, "the box stripped of everything the paint and the pass put on it");
   assert.equal(d.parentNode, w.md, "still a top-level node of the rendered root");
   assert.deepEqual(shapeOf(d), ["SPAN.katex"], "KaTeX's root still its child, nothing between them");

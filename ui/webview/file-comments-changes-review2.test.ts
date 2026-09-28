@@ -1462,7 +1462,7 @@ test("a fetch the panel asks on a NEW mtime while a pane stands (the poll's tick
   assert.deepEqual(w.hookErrors, []);
 });
 
-test("Edit clicked over the pane (the button's gate reads the last landing's text and mtime, so it is offered): the editor's entry is a content paint of the earlier text under paintAll's editing early return, and the row takes the text tail THERE, not at the exit; Cancel's repaint keeps it; a save under the editor moves the mtime, and the exit's repaint takes the row away", async (t: TestContext) => {
+test("Edit clicked over the pane (the button's gate reads the last landing's text and mtime, so it is offered): the editor's entry is a content paint of the earlier text, run by #latchCardState under paintPass's editing early return, and the row takes the text tail THERE, not at the exit; Cancel's repaint keeps it; a save under the editor moves the mtime, and the exit's repaint takes the row away", async (t: TestContext) => {
   const { w, aside, OVER_TEXT_ROW, rowText } = await failureRow(t);
   w.edit(true); await flush();
   assert.equal(w.ctx.editing(), true); assert.equal(w.viewError, null, "the editor took the body: no pane");
@@ -1599,42 +1599,52 @@ test("Enter on a focused change mark with the panel closed: the panel opens with
 });
 
 // ── the card-state rule (file-comments.ts, #cardState's doc) ──────────────────────────────────────────────────────────────────
-// Its writer and the functions that call it, and the callers of the two passes that refile (paintAll, repaintPresel), read by the
-// compiler's own parser (writer-census.ts cardStateCensus); its roads, each row of the doc's table run over a seam the rows drive and
-// the change cards read after every step; and, from each of five starts, every ordering of three of the steps that act on it.
+// Its writer and the functions that call it, and the callers of the passes that refile (paintAll, and repaintPresel with the
+// repaintPreselPass it runs), read by the compiler's own parser (writer-census.ts cardStateCensus); its roads, each row of the doc's
+// table run over a seam the rows drive and the change cards read after every step; and, from each of five starts, every ordering of
+// three of the steps that act on it.
 
 const PANEL_SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-comments.ts"), "utf8");
 
 /** The writer's callers, each with the event it names (file-comments.ts, #cardState's doc). */
 const RULE_CALLERS = ["onRendered's callback paint", "constructor paint", "onSaved's callback paint", "paintAll refile", "repaintPreselPass refile", "applyStatus status", "toggleInline gesture", "setFilter gesture", "settingsFlipped gesture"];
+/** The names whose callers the census counts: the five gestures, each of which reaches #latchCardState("gesture"), and the passes
+ *  that refile (repaintPreselPass holds the composer's repaint's refile). */
+const CARD_CALLEES = ["settingsFlipped", "toggleInline", "setFilter", "showAbout", "goToArrival", "paintAll", "repaintPresel", "repaintPreselPass"];
 
-test("the card-state rule's writer: the one assignment to the private #cardState is #latchCardState's, #latchCardState's calls are the callers #cardState's doc names with their events, #replaced, the count of what the viewer put up other than a content paint, is written by the seam's onReplaced and a pane's onRendered alone, and the callers of paintAll and repaintPresel, whose refile writes a card's filing, are the ones named here (file-comments.ts read by the compiler's own parser)", () => {
-  const c = cardStateCensus(PANEL_SRC, ["settingsFlipped", "toggleInline", "setFilter", "showAbout", "goToArrival", "paintAll", "repaintPresel"]);
+test("the card-state rule's writer: the one assignment to the private #cardState is #latchCardState's, #latchCardState's calls are the callers #cardState's doc names with their events, #replaced, the count of what the viewer put up other than a content paint, is written by the seam's onReplaced and a pane's onRendered alone, the callers of the five gestures and of paintAll, repaintPresel and repaintPreselPass, whose refile writes a card's filing, are the ones named here, and file-comments.ts, read by the compiler's own parser, holds no other mention of any of those eight names and none of the doors to code in a string the census lists (eval and Function by name; the identifier constructor; a string literal spelled eval, Function, constructor, setTimeout or setInterval; a timer given anything but a function written in place)", () => {
+  const c = cardStateCensus(PANEL_SRC, CARD_CALLEES);
   assert.equal(c.decls, 1, "one #cardState, the Panel's private field whose doc states the rule");
   assert.deepEqual(c.writes.map((x) => x.fn + ": " + x.text), ["#latchCardState: this.#cardState = Object.freeze({ ...next, painted: Object.freeze(Array.from(this.paintedChanges)) })"],
     "the writer's one assignment is the only assignment to #cardState in the file (#cardState's doc)");
   assert.deepEqual(c.refs, [], "the writer is only ever called, never handed on");
-  assert.deepEqual(c.evals, [], "no identifier spelled eval in the file: a direct eval inside the class could write #cardState where no syntax shows it, so the census refuses the name (writer-census.ts, cardStateCensus's doc)");
+  assert.deepEqual(c.evals, [], "none of the doors to code in a string the census lists is in the file (eval and Function by name; the identifier constructor; a string literal spelled eval, Function, constructor, setTimeout or setInterval; a timer given anything but a function written in place): a direct eval inside the class could write #cardState where no syntax shows it, and any of them can run code that calls a pass on a panel handed to it, so the census refuses them all; it reads none of the other ways a page runs code from a string (writer-census.ts, cardStateCensus's doc)");
   assert.deepEqual(c.calls.map((x) => x.fn + " " + x.at).sort(), [...RULE_CALLERS].sort(),
     "the writer's callers, each with its event (#cardState's doc): " + JSON.stringify(c.calls.map((x) => x.fn + " " + x.at + " at " + x.line)));
   assert.deepEqual(c.counts.map((x) => x.fn + ": " + x.text), ["onRendered's callback: this.#replaced++", "onReplaced's callback: this.#replaced++"],
     "#replaced counts the seam's onReplaced and a pane's onRendered, and nothing else writes it (#cardState's doc, event 1)");
   assert.deepEqual(c.callers.settingsFlipped, ["onExternalSettingsChange's callback", "onExternalSettingsChange's callback"], "a flip in another viewer reaches the writer through the two settings listeners alone");
-  assert.deepEqual([...new Set(c.callers.toggleInline)], ["fcinline's callback"], "Show changes inline from its button alone");
-  assert.deepEqual([...new Set(c.callers.setFilter)].sort(), ["addEventListener's callback", "fcfilter's callback", "goToArrival", "showAbout"], "the filter from its buttons, their arrow keys, and two clicks that bring a hidden card into view");
+  assert.deepEqual([...c.callers.toggleInline].sort(), ["fcinline's callback"], "Show changes inline from its button alone, one call");
+  assert.deepEqual([...c.callers.setFilter].sort(), ["addEventListener's callback", "fcfilter's callback", "goToArrival", "showAbout"], "the filter from its buttons, their arrow keys, and two clicks that bring a hidden card into view, one call each");
   assert.deepEqual([c.callers.showAbout, c.callers.goToArrival], [["fcaboutfirst's callback"], ["fcarrivals's callback"]], "those two clicks: a change card's comments tag and the arrivals line");
-  // A refile through either pass writes a card's filing (#cardState's doc, event 1), so a new caller of either is a new writer. The
-  // census counts a call whose callee is the name or a property access ending in it (this.paintAll()): a new one reds the two lists
-  // below until it is added deliberately, with its event named. Every other mention of either name in the code (a bound reference,
-  // an alias, a destructured name, a call through parentheses or .call, a string literal spelled as the name) is listed apart, and
-  // that list is held empty after them. Neither list holds a pass's own declaration, and neither reads a name computed at run time
-  // (this[k]).
+  // A refile through a pass writes a card's filing (#cardState's doc, event 1), and repaintPreselPass holds the composer's repaint's
+  // refile, so a new caller of paintAll, repaintPresel or repaintPreselPass is a new writer, as a new caller of any of the five
+  // gestures above is (each reaches #latchCardState("gesture")). The census counts every call whose callee is the name or a property
+  // access ending in it (this.paintAll()): a new one reds these lists until it is added deliberately, with its event named. Every
+  // other mention of the name in this file's code (a bound reference or one handed on, an alias, a destructured name, a call through
+  // parentheses or .call, a string literal spelled as the name, a decorator on its declaration or its parameters), the name's own
+  // declarations aside, is listed apart and held empty below for all eight names, and the doors to code in a string the census
+  // lists (eval and Function by name; the identifier constructor; a string literal spelled eval, Function, constructor, setTimeout
+  // or setInterval; a timer given anything but a function written in place) are held empty above. No name computed at run time
+  // (this[k]), no code in another module and none of the other ways a page runs code from a string (a module imported from a data
+  // address, handler attributes or markup, an element whose text runs as code) is read.
   assert.deepEqual([...c.callers.paintAll].sort(), ["#latchCardState", "applyStatus", "loadColors", "onRendered's callback"],
     "paintAll's four callers: a pane's onRendered, applyStatus's status that does not differ, the colour fetch's repaint (loadColors) and a gesture over anything else (#latchCardState)");
   assert.deepEqual([...c.callers.repaintPresel].sort(), ["closeComposer", "onRegionDrawn", "onRegionDrawn", "restoreRefused", "settleAway", "startChangeComment", "startComment", "startFileComment", "startImageComment", "startReplace", "startReply", "switchToRaw", "switchToRaw"],
     "repaintPresel's thirteen calls, the composer's target painted again: a composer opened (a passage's, a region's, the file's, a reply's, a change's, a replace), closed, restored after a refusal, settled away, and the switch to Raw and a region drawn twice each");
-  assert.deepEqual({ paintAll: c.calleeRefs.paintAll, repaintPresel: c.calleeRefs.repaintPresel }, { paintAll: [], repaintPresel: [] },
-    "no mention of paintAll or repaintPresel in the code but the calls counted above and each pass's declaration (writer-census.ts, cardStateCensus's doc: calleeRefs)");
+  assert.deepEqual(c.callers.repaintPreselPass, ["repaintPresel"], "repaintPreselPass, which holds the composer's repaint's refile, is run by repaintPresel alone");
+  assert.deepEqual(c.calleeRefs, Object.fromEntries(CARD_CALLEES.map((n) => [n, []])),
+    "no mention of any of the eight names in the code but the calls counted above and their own declarations (writer-census.ts, cardStateCensus's doc: calleeRefs)");
 });
 
 test("the card-state census counts every assignment to the private #cardState (an assignment operator's, a compound one's, a destructuring target's, a for-of head's, an increment's) and to #replaced, and every call of the private #latchCardState; it lists a mention of the writer that is not a call and every identifier spelled eval, a direct eval's or any other; and it counts nothing a public name reaches, which the language keeps off a private field, as it keeps an indirect eval off one (executed below)", () => {
@@ -1674,7 +1684,7 @@ test("the card-state census counts every assignment to the private #cardState (a
   assert.throws(() => run("go() { (0, eval)('this.#x = 7'); }"), (e: unknown) => e !== null && typeof e === "object" && (e as { name?: string }).name === "SyntaxError", "an indirect eval cannot name the private field");
 });
 
-test("the card-state census lists, by name, every mention of a callee that is not a call it counts (a bound reference, an alias, a destructured name, a call through parentheses or .call, a string literal spelled as the name), and not a counted call, the name's own declaration or a name computed at run time; so a caller that reaches paintAll through a bound reference, added to file-comments.ts, leaves the counted callers as they were and reds the hold on the passes' other mentions", () => {
+test("the card-state census lists, by name, every mention of a callee in the code other than a call it counts (a bound reference or one handed on, an alias, a destructured name, a call through parentheses or .call, a string literal spelled as the name, a decorator on its declaration or its parameters, the last pinned in the next case), the name's own declarations aside, and no name computed at run time; so a caller that reaches paintAll through a bound reference, added to file-comments.ts, leaves the counted callers as they were and reds the hold on the eight names' other mentions", () => {
   const src = "class P {\n  paintAll(): void { /* the pass */ }\n  a(): void { this.paintAll(); }\n  b(): void { const f = this.paintAll.bind(this); f(); }\n"
     + "  c(): void { const g = this.paintAll; g(); }\n  d(): void { const { paintAll } = this; paintAll(); }\n  e(): void { (this.paintAll)(); this.paintAll.call(this); }\n"
     + "  f(): void { (this as any)[\"paintAll\"](); Reflect.get(this, \"paintAll\"); }\n  g(k: string): void { (this as any)[k](); }\n}\n";
@@ -1686,13 +1696,60 @@ test("the card-state census lists, by name, every mention of a callee that is no
   // the real file with one caller added through a bound reference, in hideFloat under a guard that never runs
   const at = "  hideFloat(): void { ";
   assert.equal(PANEL_SRC.split(at).length, 2, "one hideFloat to add the caller to");
-  const real = cardStateCensus(PANEL_SRC, ["paintAll", "repaintPresel"]);
-  const added = cardStateCensus(PANEL_SRC.replace(at, at + "if (false) { const f = this.paintAll.bind(this); f(); } "), ["paintAll", "repaintPresel"]);
+  const none = Object.fromEntries(CARD_CALLEES.map((n) => [n, []]));
+  const real = cardStateCensus(PANEL_SRC, CARD_CALLEES);
+  const added = cardStateCensus(PANEL_SRC.replace(at, at + "if (false) { const f = this.paintAll.bind(this); f(); } "), CARD_CALLEES);
   assert.deepEqual(added.callers, real.callers, "the counted callers do not see it");
-  assert.deepEqual(real.calleeRefs, { paintAll: [], repaintPresel: [] }, "the file as it is: nothing listed");
+  assert.deepEqual(real.calleeRefs, none, "the file as it is: nothing listed");
   assert.deepEqual(added.calleeRefs.paintAll.map((x) => x.fn + ": " + x.text), ["hideFloat: this.paintAll.bind"], "the bound reference is listed");
-  assert.throws(() => assert.deepEqual({ paintAll: added.calleeRefs.paintAll, repaintPresel: added.calleeRefs.repaintPresel }, { paintAll: [], repaintPresel: [] }), assert.AssertionError,
-    "so the rule's census, which holds that list empty, reds on it");
+  assert.throws(() => assert.deepEqual(added.calleeRefs, none), assert.AssertionError, "so the rule's census, which holds that list empty, reds on it");
+});
+
+test("the card-state census lists these doors to code in a string, whose code no census reads: eval and Function by name; the identifier constructor (a function's constructor property); a string literal spelled eval, Function, constructor, setTimeout or setInterval; and a timer given anything but a function written in place, one handed on or given another name included; and it lists a decorator on a callee's declaration or its parameters, which is handed the method; a timer given a function written in place, a timer's name in a type and a decorator on another member are not listed; so a caller that reaches paintAll through the Function constructor, a timer given a string or a decorator on its declaration, added to file-comments.ts, leaves the counted callers as they were and reds the hold on the doors or, for the decorator, the hold on the eight names' other mentions", () => {
+  const src = "class P {\n  @wrap paintAll(@mark n = 0): void { /* the pass */ }\n  @other q(): void { /* another member */ }\n"
+    + "  a(): void { new Function(\"p\", \"p.paintAll()\")(this); Function(\"return 1\"); }\n  b(): void { (function () { return 0; }).constructor(\"p\", \"p.paintAll()\")(this); }\n"
+    + "  c(): void { (globalThis as any)[\"eval\"](\"1\"); void (window as any)[\"Function\"]; }\n"
+    + "  d(s: string): void { setTimeout(\"x.paintAll()\"); setInterval(s, 5); window.setTimeout(this.tick, 1); const t = setTimeout; setTimeout.call(window, s); }\n"
+    + "  e(): void { setTimeout(() => this.paintAll(), 0); window.setInterval(function () { return 0; }, 5); const h: ReturnType<typeof setTimeout> | null = null; void h; }\n}\n";
+  const c = cardStateCensus(src, ["paintAll"]);
+  assert.deepEqual(c.evals.map((x) => x.fn + ": " + x.text),
+    ["a: new Function(\"p\", \"p.paintAll()\")", "a: Function(\"return 1\")", "b: (function () { return 0; }).constructor", "c: (globalThis as any)[\"eval\"]", "c: (window as any)[\"Function\"]",
+      "d: setTimeout(\"x.paintAll()\")", "d: setInterval(s, 5)", "d: window.setTimeout", "d: t = setTimeout", "d: setTimeout.call"],
+    "each door, by its function, shown with what holds it; e's timers, given a function written in place or named in a type, are not listed");
+  assert.deepEqual(c.calleeRefs.paintAll.map((x) => x.fn + ": " + x.text), ["paintAll: @wrap", "paintAll: @mark"], "the decorators on paintAll's declaration and on its parameter; q's is not listed, and no string's code is read");
+  assert.deepEqual(c.callers.paintAll, ["setTimeout's callback"], "the one call counted: the arrow function a timer was given");
+  // the real file with a caller added through each door, in hideFloat under a guard that never runs, and with a decorator on paintAll
+  const at = "  hideFloat(): void { ", decl = "  paintAll(): void {";
+  assert.deepEqual([PANEL_SRC.split(at).length, PANEL_SRC.split(decl).length], [2, 2], "one hideFloat to add the caller to, and one paintAll declaration");
+  const none = Object.fromEntries(CARD_CALLEES.map((n) => [n, []]));
+  const real = cardStateCensus(PANEL_SRC, CARD_CALLEES);
+  assert.deepEqual([real.evals, real.calleeRefs], [[], none], "the file as it is: nothing listed");
+  const viaFunction = cardStateCensus(PANEL_SRC.replace(at, at + "if (false) new Function(\"p\", \"p.paintAll()\")(this); "), CARD_CALLEES);
+  const viaTimer = cardStateCensus(PANEL_SRC.replace(at, at + "if (false) setTimeout(\"globalThis.panel.paintAll()\", 0); "), CARD_CALLEES);
+  const decorated = cardStateCensus(PANEL_SRC.replace(decl, "  @wrap paintAll(): void {"), CARD_CALLEES);
+  for (const [what, x] of [["the Function constructor", viaFunction], ["a timer given a string", viaTimer], ["a decorator on paintAll's declaration", decorated]] as const)
+    assert.deepEqual(x.callers, real.callers, "the counted callers do not see a caller through " + what);
+  assert.deepEqual(viaFunction.evals.map((x) => x.fn + ": " + x.text), ["hideFloat: new Function(\"p\", \"p.paintAll()\")"], "the Function constructor is listed");
+  assert.deepEqual(viaTimer.evals.map((x) => x.fn + ": " + x.text), ["hideFloat: setTimeout(\"globalThis.panel.paintAll()\", 0)"], "the timer given a string is listed");
+  assert.deepEqual(decorated.calleeRefs.paintAll.map((x) => x.fn + ": " + x.text), ["paintAll: @wrap"], "the decorator is listed");
+  assert.throws(() => assert.deepEqual(viaFunction.evals, []), assert.AssertionError, "so the rule's census, which holds the doors empty, reds on the Function constructor");
+  assert.throws(() => assert.deepEqual(viaTimer.evals, []), assert.AssertionError, "and on the timer");
+  assert.throws(() => assert.deepEqual(decorated.calleeRefs, none), assert.AssertionError, "and the hold on the eight names' other mentions reds on the decorator");
+});
+
+test("the card-state census lists a door's string literal written as a template with no substitution as it lists a quoted one, a timer's instantiation expression (setTimeout<[string]>, handed on under another name), which is a value and not a type, and a string literal spelled setTimeout, setInterval or constructor; a timer given a function written in place inside parentheses is not listed, as one given it bare is not", () => {
+  const src = "class P {\n  paintAll(): void { /* the pass */ }\n  a(): void { (globalThis as any)[`eval`](\"1\"); void (window as any)[`Function`]; }\n"
+    + "  b(): void { const t = setTimeout<[string]>; t(\"globalThis.panel.paintAll()\"); }\n"
+    + "  c(): void { setTimeout((() => this.paintAll()), 5); window.setInterval(((function () { return 0; })), 5); }\n"
+    + "  d(): void { (window as any)[\"setTimeout\"](\"globalThis.panel.paintAll()\", 0); (window as any)[\"setInterval\"](\"0\", 5); (function () { return 0; } as any)[\"constructor\"](\"p\", \"p.paintAll()\")(this); }\n}\n";
+  const c = cardStateCensus(src, ["paintAll"]);
+  const listed = (fn: string): string[] => c.evals.filter((x) => x.fn === fn).map((x) => x.text);
+  assert.deepEqual(listed("a"), ["(globalThis as any)[`eval`]", "(window as any)[`Function`]"], "a string literal written as a template with no substitution is listed as a quoted one is");
+  assert.deepEqual(listed("b"), ["setTimeout<[string]>"], "a timer's instantiation expression is a value, not a type: listed, since the name it is given may be called with a string");
+  assert.deepEqual(listed("c"), [], "a timer given a function written in place inside parentheses is given one written in place: not listed");
+  assert.deepEqual(listed("d"), ["(window as any)[\"setTimeout\"]", "(window as any)[\"setInterval\"]", "(function () { return 0; } as any)[\"constructor\"]"],
+    "a string literal spelled setTimeout, setInterval or constructor is listed, as one spelled eval or Function is");
+  assert.deepEqual([...new Set(c.evals.map((x) => x.fn))], ["a", "b", "d"], "and nothing else is listed");
 });
 
 type RoadKind = "text" | "svg" | "raster";
@@ -2239,16 +2296,23 @@ const rowUnder = (m: RoadSeam, id: string): string | null => {
   return r ? r.childNodes[0].textContent : null;
 };
 /** The insertion's link and its Comment on this change, clicked while the body does not show the last content paint: each answers in
- *  the row under the card and does nothing else. */
+ *  the row under the card and in the live region, and does nothing else. No requestAnimationFrame is installed here, so the region
+ *  takes the words at once (speak's branch for a host with no frames; the live-region case below installs one). */
 async function clicksSayNotInView(m: RoadSeam, where: string): Promise<void> {
   const { NOT_IN_VIEW_LINK, NOT_IN_VIEW_COMMENT } = await import("./file-comments");
   const aside = m.w.main.querySelector(".fileview-aside")!;
+  const live = (): string | null => aside.querySelector(".fc-live")!.textContent;
   assert.deepEqual(changeCards(m.w)!["chg:h5"], { tags: [], buttons: ["Accept", "Reject", "Comment on this change"], reveal: null, link: true }, where + ": the premise: the card keeps the link and Comment on this change the last content paint gave it (#cardState's doc)");
+  assert.equal(typeof (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame, "undefined", where + ": the premise: no requestAnimationFrame, so speak writes the words at once");
   const before = sideEffects(m);
-  card(aside, "chg:h5")!.querySelector(".fc-ref")!.click(); await flush(); await flush();
+  card(aside, "chg:h5")!.querySelector(".fc-ref")!.click();
+  assert.equal(live(), NOT_IN_VIEW_LINK, where + ": the live region holds the link's words right after its click, written at once with no frame to wait for (speak)");
+  await flush(); await flush();
   assert.deepEqual(sideEffects(m), before, where + ": the link's click does nothing else: no scroll, no switch to Raw, no composer, no request");
   assert.equal(rowUnder(m, "h5"), NOT_IN_VIEW_LINK, where + ": the row under the card says the change is not in view (notInView)");
-  act(card(aside, "chg:h5")!, "fcchangecomment", "h5")!.click(); await flush(); await flush();
+  act(card(aside, "chg:h5")!, "fcchangecomment", "h5")!.click();
+  assert.equal(live(), NOT_IN_VIEW_COMMENT, where + ": and Comment on this change's words right after its click");
+  await flush(); await flush();
   assert.deepEqual(sideEffects(m), before, where + ": Comment on this change's click does nothing else: no composer, no scroll, no request");
   assert.equal(rowUnder(m, "h5"), NOT_IN_VIEW_COMMENT, where + ": the row says so for Comment on this change");
 }
@@ -2567,8 +2631,14 @@ test("a refusal standing under a card, then over a failure pane that card's link
   });
 });
 
-test("the not-in-view words go into the panel's one live region (file-comments.ts, notInView, speak and hush): made once, role status and polite, visually hidden, the same node through renders and a close and open; at each click on the link or on Comment on this change, over a failure pane and in a press window, it holds nothing at the end of the click's task and the words after the next animation frame, a second identical press included; the content paint, a status that drops the change and the row's dismiss empty it, and words still waiting for their frame are dropped (the sequence is what is pinned: the technique used so screen readers announce repeated text; the announcement itself was not measured with a screen reader)", async (t: TestContext) => {
+test("the not-in-view words go into the panel's one live region (file-comments.ts, notInView, speak and hush): made once, role status and polite, carrying the class fc-live, whose rule in both sheets (styles.css, feed.css) hides it from sight as the settings sheet's .rs-live does (absolute, 1px by 1px, overflow hidden, clipped), the same node through renders and a close and open; at each click on the link or on Comment on this change, over a failure pane and in a press window, it holds nothing at the end of the click's task and the words after the next animation frame, a second identical press included; the content paint empties it, and so do a status that drops the change and the row's dismiss when the row they take is the one the region speaks for, words still waiting for their frame dropped at each of the three; another card's row going, or a refusal's row dismissed, leaves the last click's words, landed or waiting for their frame; and the viewer's close drops a frame still pending (the sequence is what is pinned: the technique used so screen readers announce repeated text; the announcement itself was not measured with a screen reader)", async (t: TestContext) => {
   const { NOT_IN_VIEW_LINK, NOT_IN_VIEW_COMMENT } = await import("./file-comments");
+  // the rule's text in both sheets, as widget-reorder.test.ts pins .rs-live's (a source pin, since the node leg lays nothing out),
+  // and no other line of either sheet names the class
+  for (const sheet of ["styles.css", "feed.css"])
+    assert.deepEqual(fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", sheet), "utf8").split("\n").filter((l) => l.includes(".fc-live")),
+      [".fc-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }"],
+      sheet + "'s one .fc-live rule hides the region from sight (absolute, 1px by 1px, overflow hidden, clipped, as gear.css's .rs-live), since the row under the card already shows the words");
   const frames = new Map<number, () => void>(); let fid = 0;
   const g = globalThis as { requestAnimationFrame?: unknown; cancelAnimationFrame?: unknown };
   const had = { raf: g.requestAnimationFrame, caf: g.cancelAnimationFrame };
@@ -2577,22 +2647,29 @@ test("the not-in-view words go into the panel's one live region (file-comments.t
   t.after(() => { g.requestAnimationFrame = had.raf; g.cancelAnimationFrame = had.caf; });
   const frame = (): void => { const due = [...frames.values()]; frames.clear(); for (const cb of due) cb(); };
   const region = (m: RoadSeam): El => { const r = m.w.main.querySelectorAll(".fileview-aside .fc-live"); assert.equal(r.length, 1, "one live region in the panel"); return r[0]; };
-  const click = async (m: RoadSeam, what: "link" | "comment"): Promise<void> => {
-    const c = card(m.w.main.querySelector(".fileview-aside")!, "chg:h5")!;
-    if (what === "link") c.querySelector(".fc-ref")!.click(); else act(c, "fcchangecomment", "h5")!.click();
+  const click = async (m: RoadSeam, what: "link" | "comment", id = "h5"): Promise<void> => {
+    const c = card(m.w.main.querySelector(".fileview-aside")!, "chg:" + id)!;
+    if (what === "link") c.querySelector(".fc-ref")!.click(); else act(c, "fcchangecomment", id)!.click();
   };
-  const says = async (m: RoadSeam, what: "link" | "comment", where: string): Promise<void> => {
-    await click(m, what);
+  const says = async (m: RoadSeam, what: "link" | "comment", where: string, id = "h5"): Promise<void> => {
+    await click(m, what, id);
     assert.equal(region(m).textContent, "", where + ", " + what + ": the region holds nothing at the end of the click's task");
     await flush(); await flush();
     frame();
     assert.equal(region(m).textContent, what === "link" ? NOT_IN_VIEW_LINK : NOT_IN_VIEW_COMMENT, where + ", " + what + ": the words after the next animation frame");
   };
+  /** The link clicked again over the pane, its words waiting for their frame: the region empty, and one frame pending. */
+  const again = async (m: RoadSeam, id = "h5"): Promise<void> => {
+    frames.clear();
+    await click(m, "link", id); await flush(); await flush();
+    assert.deepEqual([region(m).textContent, frames.size], ["", 1], "the premise: the click's words wait for their frame, the one frame pending");
+  };
+  const dismiss = async (m: RoadSeam, slot: string): Promise<void> => { m.w.main.querySelector('.fileview-aside .fc-err[data-slot="' + slot + '"] [data-act="fcerrx"]')!.click(); await flush(); };
   await t.test("over a failure pane", async (st: TestContext) => {
     st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
     const m = await roadStart(st, "text", "painted");
     const live = region(m);
-    assert.deepEqual([live.getAttribute("role"), live.getAttribute("aria-live"), live.classes.includes("fc-live"), live.textContent], ["status", "polite", true, ""], "role status, polite, the visually hidden class, empty");
+    assert.deepEqual([live.getAttribute("role"), live.getAttribute("aria-live"), live.classes.includes("fc-live"), live.textContent], ["status", "polite", true, ""], "role status, polite, the class fc-live (its rule is pinned in both sheets above), empty");
     assert.equal(live.closest(".fc-card"), null, "in no card: the panel's own element");
     await m.pane();
     await says(m, "link", "over the pane");
@@ -2641,16 +2718,125 @@ test("the not-in-view words go into the panel's one live region (file-comments.t
     assert.deepEqual(m.w.hookErrors, []);
     m.w.close();
   });
+  await t.test("a status that drops the change while its words wait for their frame", async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const m = await roadStart(st, "text", "painted");
+    await m.pane();
+    await says(m, "link", "over the pane");
+    await again(m);
+    await m.status(statusF1({ storeMtimeNs: S12, hunks: [h1, h3] }));   // the insertion decided in another client, before the frame
+    frame();
+    assert.equal(region(m).textContent, "", "words still waiting for their frame when a status drops the change are dropped with the row (retireViewRows)");
+    assert.deepEqual(m.w.hookErrors, []);
+    m.w.close();
+  });
   await t.test("the row's dismiss", async (st: TestContext) => {
     st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
     const m = await roadStart(st, "text", "painted");
     await m.pane();
     await says(m, "link", "over the pane");
-    card(m.w.main.querySelector(".fileview-aside")!, "chg:h5")!.querySelector('.fc-err[data-slot="view:h5"] [data-act="fcerrx"]')!.click(); await flush();
+    await dismiss(m, "view:h5");
     assert.equal(region(m).textContent, "", "the row's dismiss empties it");
     assert.deepEqual(rowsUnderCard(m, "h5"), [], "and the row is gone");
+    await again(m);                                          // the row back, its words waiting for their frame
+    await dismiss(m, "view:h5");                             // dismissed before the frame
+    frame();
+    assert.equal(region(m).textContent, "", "words still waiting for their frame when the row is dismissed are dropped with it");
     assert.deepEqual(m.w.hookErrors, []);
     m.w.close();
+  });
+  await t.test("a refusal's row dismissed while the not-in-view row stands, the words landed or waiting for their frame", async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const m = await roadStart(st, "text", "painted");
+    const words = await refusedAccept(m);
+    await m.pane();
+    await says(m, "link", "over the pane");
+    assert.deepEqual(rowsUnderCard(m, "h5"), [["change:h5", words], ["view:h5", NOT_IN_VIEW_LINK]], "the premise: the refusal and the not-in-view row both show");
+    await dismiss(m, "change:h5");
+    assert.equal(region(m).textContent, NOT_IN_VIEW_LINK, "dismissing the refusal's row leaves the region's words: the row they are for still shows");
+    assert.deepEqual(rowsUnderCard(m, "h5"), [["view:h5", NOT_IN_VIEW_LINK]], "and that row stands");
+    assert.deepEqual(m.w.hookErrors, []);
+    m.w.close();
+    const p = await roadStart(st, "text", "painted");
+    const refused = await refusedAccept(p);
+    await p.pane();
+    await again(p);                                          // the click's words waiting for their frame
+    assert.deepEqual(rowsUnderCard(p, "h5"), [["change:h5", refused], ["view:h5", NOT_IN_VIEW_LINK]], "the premise: the refusal and the not-in-view row both show, the words waiting for their frame");
+    await dismiss(p, "change:h5");                           // dismissed before the frame
+    assert.deepEqual([region(p).textContent, frames.size], ["", 1], "dismissing the refusal's row before the frame leaves the words waiting for it, the one frame still pending");
+    frame();
+    assert.equal(region(p).textContent, NOT_IN_VIEW_LINK, "and the words land after the frame: the row they are for still shows");
+    assert.deepEqual(rowsUnderCard(p, "h5"), [["view:h5", NOT_IN_VIEW_LINK]], "and that row stands");
+    assert.deepEqual(p.w.hookErrors, []);
+    p.w.close();
+  });
+  await t.test("two rows: another card's row going leaves the last click's words, landed or waiting for their frame; the row the region speaks for takes them, waiting or landed", async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const DROP_H1 = (): Status => statusF1({ storeMtimeNs: S12, hunks: [h3, h5] });   // the substitution decided in another client
+    const DROP_H5 = (): Status => statusF1({ storeMtimeNs: S12, hunks: [h1, h3] });   // the insertion decided in another client
+    /** Over a pane, h1's Comment on this change said and its words landed, then h5's link clicked, its words waiting for their frame. */
+    const twoRows = async (): Promise<RoadSeam> => {
+      const m = await roadStart(st, "text", "painted");
+      await m.pane();
+      await says(m, "comment", "over the pane, h1", "h1");
+      await again(m, "h5");
+      assert.deepEqual([rowsUnderCard(m, "h1"), rowsUnderCard(m, "h5")], [[["view:h1", NOT_IN_VIEW_COMMENT]], [["view:h5", NOT_IN_VIEW_LINK]]], "the premise: a row under each card");
+      return m;
+    };
+    const done = (m: RoadSeam): void => { assert.deepEqual(m.w.hookErrors, []); m.w.close(); };
+    let m = await twoRows();
+    await m.status(DROP_H1());
+    frame();
+    assert.equal(region(m).textContent, NOT_IN_VIEW_LINK, "a status that drops h1 between h5's click and its frame leaves that click's sequence: h5's words land after the frame");
+    assert.deepEqual([rowsUnderCard(m, "h5"), card(m.w.main.querySelector(".fileview-aside")!, "chg:h1")], [[["view:h5", NOT_IN_VIEW_LINK]], null], "h5's row stands, h1's card gone with its row");
+    done(m);
+    m = await twoRows();
+    await dismiss(m, "view:h1");
+    frame();
+    assert.equal(region(m).textContent, NOT_IN_VIEW_LINK, "h1's row dismissed between h5's click and its frame: h5's words land after the frame");
+    done(m);
+    m = await twoRows();
+    frame();
+    await m.status(DROP_H1());
+    assert.equal(region(m).textContent, NOT_IN_VIEW_LINK, "a status that drops h1 after h5's words landed leaves them");
+    done(m);
+    m = await twoRows();
+    frame();
+    await dismiss(m, "view:h1");
+    assert.equal(region(m).textContent, NOT_IN_VIEW_LINK, "h1's row dismissed after h5's words landed leaves them");
+    done(m);
+    m = await twoRows();
+    await m.status(DROP_H5());
+    frame();
+    assert.equal(region(m).textContent, "", "a status that drops h5 while its words wait drops them");
+    assert.deepEqual(rowsUnderCard(m, "h1"), [["view:h1", NOT_IN_VIEW_COMMENT]], "h1's row still standing");
+    done(m);
+    m = await twoRows();
+    await dismiss(m, "view:h5");
+    frame();
+    assert.equal(region(m).textContent, "", "h5's row dismissed while its words wait: dropped, h1's row still standing");
+    done(m);
+    m = await twoRows();
+    frame();
+    await m.status(DROP_H5());
+    assert.equal(region(m).textContent, "", "a status that drops h5 after its words landed empties the region, h1's row still standing");
+    done(m);
+    m = await twoRows();
+    frame();
+    await dismiss(m, "view:h5");
+    assert.equal(region(m).textContent, "", "h5's row dismissed after its words landed: emptied, h1's row still standing");
+    done(m);
+  });
+  await t.test("the viewer closed while the words wait for their frame", async (st: TestContext) => {
+    st.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const m = await roadStart(st, "text", "painted");
+    await m.pane();
+    const live = region(m);
+    await again(m);
+    m.w.close();                                             // the viewer's close: the seam's onClose, the panel's dispose
+    assert.equal(frames.size, 0, "no frame of the panel's stays pending after the close, so the scheduler holds nothing that reaches the panel");
+    frame();
+    assert.equal(live.textContent, "", "and nothing is written into the closed panel's region");
   });
 });
 

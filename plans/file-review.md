@@ -1861,7 +1861,7 @@ line for it, since this row says where the comment is; and the save moves nothin
 before it, the margin's scroll to a saved card, `scrollToSaved`, found no card for such a comment and moved nothing).
 The filter hides a card by leaving it out of the list (`renderCards`), never by
 styling it away, so the placement pass lays out the cards the chosen option shows and no other, and a pick
-repaints through `paintAll`, whose render ends in the pass (`afterRender`). The filter's row is a control row
+repaints through `#latchCardState`'s pass, whose render ends in the pass (`afterRender`). The filter's row is a control row
 of the head, like the toggles' above it, not growth: the margin layout's two-tier rule leaves the head in the
 collapsed tier while that row is all the head holds beyond its buttons (`:has(.fc-head > :nth-child(n+2):not(.fc-filter))`
 in both sheets), so the head gives only in the collapsed tier's turn while it holds its two control rows alone;

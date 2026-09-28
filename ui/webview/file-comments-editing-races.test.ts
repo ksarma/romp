@@ -319,7 +319,7 @@ function world(): World {
   } as World;
   rows(code, text);
   // the viewer's renderBody + fireRendered — in the real viewer the one hook in edit mode is enterEdit's; a test that paints in edit
-  // mode is exercising the panel's own render, which the hook reaches through paintAll's editing branch
+  // mode is exercising the panel's own render, which the hook reaches through #latchCardState's pass, paintPass's editing branch
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };
   w.ctx = {
     path: ABS, sid: SID, todoId: null,

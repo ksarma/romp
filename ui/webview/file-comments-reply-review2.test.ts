@@ -339,7 +339,7 @@ async function harness(over: Partial<FileViewActionCtx> = {}) {
   const tracked: Array<TrackedEdit | null> = [];
   const closers: Array<() => void> = [];
   const saved: Array<(info: { mtimeNs: string; logged: boolean }) => void> = [];
-  const rendered: Array<() => void> = [];             // the viewer's repaint hooks (paintAll runs from them)
+  const rendered: Array<() => void> = [];             // the viewer's repaint hooks (#latchCardState's pass runs from them)
   let aside: E | null = null;
   const noop = () => { /* inert */ };
   const ctx: FileViewActionCtx = {
@@ -590,7 +590,7 @@ test("the session rewrites the passage under an open reply: the repaint's locate
   const box = h.box(), card = h.card(passage.id)!;
   draft(box, "Which one, then?", 16, 42);
   assert.equal(card.className, "fc-card open");
-  // the Raw view shows a text that no longer holds the passage or its context; the viewer's repaint hook runs paintAll
+  // the Raw view shows a text that no longer holds the passage or its context; the viewer's repaint hook runs #latchCardState's pass
   txt = DOC.replace("We recommend shipping the cache in v1.2.\n\n", "");
   md = "raw";
   const code = doc.createElement("code"); code.className = "hljs"; code.textContent = txt; h.body.appendChild(code);
