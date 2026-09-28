@@ -1820,7 +1820,10 @@ def _guard_failure_to_stderr(item, failure):
     Under pytest-xdist that is the controller's stderr: execnet, xdist's transport, points a worker's stdout at
     /dev/null but, outside Windows, does not redirect its stderr (on Windows it moves sys.stderr to a copy of the
     controller's). Everything written goes through the teardown report's redaction first, in the order _redact_report
-    applies it (_note_env_values, then redact_report_text), the header with its node id and worker name included: CI's
+    applies it (_note_env_values, then redact_report_text), the header with its node id and worker name included, and
+    then through it again with each line under pytest's `E` marker (_redact_crash_message): the report prints a failure
+    raised with a traceback (a pytest.fail inside the guard's call, from a Thread subclass's join, say) under that
+    marker, where the pattern net's rules for a failed comparison's diff lines apply, and stderr prints it bare. CI's
     logs are public, and a value the report masks (a thread named with an environment value, say) must not reach them
     raw here."""
     worker = os.environ.get("PYTEST_XDIST_WORKER")
@@ -1829,7 +1832,9 @@ def _guard_failure_to_stderr(item, failure):
             "that no report hook can change.\n%s\n"
             % (item.nodeid, " (pytest-xdist worker %s)" % worker if worker else "", failure))
     _note_env_values()
-    text = redact_report_text(text)             # the whole write: nothing below writes any other text
+    # the whole write, nothing below writes any other text: scrubbed as it stands and then marked, as the report's crash
+    # message is (_redact_crash_message), since the report prints a message with a traceback under pytest's `E` marker
+    text = _redact_crash_message(redact_report_text(text))
     capman = item.config.pluginmanager.getplugin("capturemanager")
     if capman is None:                          # -p no:capture: nothing captures stderr
         sys.stderr.write(text)

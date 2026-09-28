@@ -60,7 +60,11 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   channel carries the raw value, and stderr names the thread by the masked name the report prints, serially and under
   -n 2: CI's logs are public, so the stderr copy goes through the report's redaction. So does the guard's text that
   tests/conftest.py adds after a TestCase's second error (the two-error shape above, serially), and so does the stderr
-  header, which names the last test by its node id (a test whose parametrize id is that value, serially).
+  header, which names the last test by its node id (a test whose parametrize id is that value, serially). The pattern
+  net reaches stderr the same way: a pytest.fail raised with a traceback inside the guard's call (a Thread subclass's
+  join) carries a credential-shaped token, in no environment, on a `- <token>` line; the report prints the message
+  under pytest's `E` marker, where the net's diff-line rule masks it, and stderr, which prints it bare, masks it too
+  (serially).
 - IDLE EXECUTOR WORKERS ALONE (the pool left open and the loop never closed, no other guarded thread) fail the run,
   serially and under -n 2, and the process exits: every process that ran tests writes its atexit marker. The message's
   wording, that such a worker lets the process exit, is pinned by its text; the markers are the executed evidence.
@@ -428,6 +432,23 @@ def test_leak_with_an_env_value_in_its_id(n):
 # report after the cleanup's error, and is redacted there too
 TWO_ERRORS_ENV_NAMED_TEST = TWO_ERRORS_TEST.replace('name="plant-leaked"',
                                                     'name="plant-leaked-" + os.environ[%r]' % ENV_NAMED_VAR)
+
+# a leaked thread whose join, which the guard calls, fails through pytest.fail with a traceback and a line shaped as a
+# failed comparison's diff line, a sign and then a credential-shaped token that is in no environment: the report prints
+# the message under pytest's `E` marker, where the pattern net's diff-line rule masks the token. The token is built at
+# run time, in two halves, so no credential-shaped literal sits in this file or in the plant's source
+FAILS_IN_JOIN_TEST = '''
+import pytest
+
+
+class _FailsInJoin(threading.Thread):
+    def join(self, timeout=None):
+        pytest.fail("plant: a join that fails\\n- " + "abcdefghijklmnopqrstuvwx" + "0123456789", pytrace=True)
+
+
+def test_leak_whose_join_fails():
+    _start("fails-in-join", [_FailsInJoin(target=_leaked, name="plant-leaked")])
+'''
 
 # appended to the scratch conftest: concurrent.futures.thread's exit-join table replaced for the session by a stand-in
 # whose every read raises the RuntimeError a concurrent insert raises, as a table another thread adds to without pause
@@ -810,6 +831,25 @@ class SessionEndThreadGuard(unittest.TestCase):
         report, _err = self._channels(out)
         self.assertLess(report.index("RuntimeError: plant: the cleanup failed"), report.index("thread 'plant-leaked-"),
                         "the masked name is in the guard's text, added after the cleanup's error:\n" + out)
+
+    @unittest.skipUnless("tests.conftest" in sys.modules, "reads the redaction's marker from tests/conftest.py")
+    def test_a_token_the_report_masks_on_its_marked_diff_line_is_masked_on_stderr_too(self):
+        """A pytest.fail with a traceback raised inside the guard's call (a Thread subclass's join) fails the guard,
+        and its message goes to stderr as the guard's failure. The report prints that message under pytest's `E`
+        marker, and the pattern net's rule for a failed comparison's diff lines is keyed on that marker, so a
+        credential-shaped token on a `- <token>` line is masked there. Stderr prints the message without the marker,
+        so it is scrubbed marked too, as the report's crash message is: the token, which no environment holds, is on
+        neither channel."""
+        token = "abcdefghijklmnopqrstuvwx" + "0123456789"
+        rc, out, _started, _ended, _finish, _marks = self._run(FAILS_IN_JOIN_TEST, cap=LEAK_CAP_S)
+        report, err = self._channels(out)
+        self.assertEqual(rc, 1, "the join's failure fails the run:\n" + out)
+        self.assertIn("plant: a join that fails", report, "the report carries the join's failure:\n" + out)
+        self.assertIn("plant: a join that fails", err, "stderr carries the join's failure:\n" + out)
+        self.assertNotIn(token, report, "the premise: the report masks the token on its marked diff line:\n" + out)
+        self.assertNotIn(token, err, "stderr carries the token the report masks:\n" + out)
+        self.assertIn("- " + sys.modules["tests.conftest"].CREDENTIAL_REDACTED, err, "stderr masks the token on its "
+                      "diff line:\n" + out)
 
     # -- idle executor workers alone fail the run, and the process exits ----------------------------------------------
 
