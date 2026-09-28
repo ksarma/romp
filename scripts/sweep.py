@@ -277,13 +277,16 @@ def _count(value):
 
 def passed(name, leg):
     """rc is the integer 0, and for a test leg (TEST_LEGS) its log showed at least one test passing and none
-    failing: an rc of 0 alone is also what a wrapper that never ran its command returns."""
+    failing: an rc of 0 alone is also what a wrapper that never ran its command returns. Both counts must be
+    integers, and the failed count is required whenever the leg has a test count (the runner writes the two
+    together): a failed count that is missing, not an int (a string, a float, a bool) or negative reads as not
+    passed, never as zero failures (round 1, extra5-6)."""
     rc = leg.get("rc") if isinstance(leg, dict) else None
     if not (type(rc) is int and rc == 0):
         return False
     if name in TEST_LEGS:
         tests, failed = _count(leg.get("tests")), _count(leg.get("failed"))
-        return tests is not None and tests > 0 and not (failed or 0) > 0
+        return tests is not None and tests > 0 and failed is not None and failed == 0
     return True
 
 
@@ -416,10 +419,16 @@ def _rc_text(name, leg):
         err = leg.get("error") if isinstance(leg, dict) else None
         return "no rc" + (": %s" % err if err else "")
     if type(rc) is int and rc == 0 and name in TEST_LEGS and not passed(name, leg):
-        failed = _count(leg.get("failed"))
-        if failed:
-            return "rc 0 but its log shows %d failed" % failed
-        return "rc 0 but no test ran"
+        tests, failed = leg.get("tests"), leg.get("failed")
+        if tests is not None and not (type(tests) is int and tests >= 0):
+            return "rc 0 but its test count is malformed (tests %r)" % (tests,)
+        if not (type(tests) is int and tests > 0):
+            return "rc 0 but no test ran"
+        if failed is None:
+            return "rc 0 but it records no failed count"
+        if not (type(failed) is int and failed >= 0):
+            return "rc 0 but its failed count is malformed (failed %r)" % (failed,)
+        return "rc 0 but its log shows %d failed" % failed
     return "rc %s" % rc
 
 

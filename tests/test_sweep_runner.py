@@ -1635,6 +1635,27 @@ class Reader(unittest.TestCase):
         self.assertIn("sweep at 1234567890: pass, finished 2026-01-01T00:01:00Z (pytest 0, bats 0, manager 0, tools 0, ledger 0; "
                       "not owed: deps, typecheck, npm-test, build)", line)
 
+    def test_a_malformed_failed_count_reads_red_and_is_named(self):
+        """Round 1, extra5-6: a test leg at rc 0 whose failed count is not an int of 0 or more (a string, a float, a bool,
+        negative, null or absent) is red through the reader, the line naming the count; at the frozen head each read
+        pass, as zero failures."""
+        absent = object()
+        for bad, named in (("1", "its failed count is malformed (failed '1')"),
+                           (1.0, "its failed count is malformed (failed 1.0)"),
+                           (True, "its failed count is malformed (failed True)"),
+                           (-1, "its failed count is malformed (failed -1)"),
+                           (None, "it records no failed count"), (absent, "it records no failed count")):
+            with self.subTest(failed="absent" if bad is absent else repr(bad)):
+                legs = self.legs()
+                if bad is absent:
+                    del legs["bats"]["failed"]
+                else:
+                    legs["bats"]["failed"] = bad
+                self.write(self.result(legs=legs))
+                case, line = self.case()
+                self.assertEqual(case, "red", line)
+                self.assertIn("bats (rc 0 but %s)" % named, line)
+
     def test_missing_names_the_full_sha_the_directory_read_and_where_it_came_from(self):
         """The runner and the reader share the state dir only when their environments agree (ROMP_STATE_DIR, else
         XDG_STATE_HOME, else HOME), so a missing result names the directory the reader read and the variable it
@@ -1918,7 +1939,7 @@ class Rules(unittest.TestCase):
             for n in sweep.EXTENSION_LEGS:
                 base[n] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
             for n in sweep.ALWAYS_OWED:
-                base[n] = {"owed": True, "rc": 0, "tests": 1}
+                base[n] = {"owed": True, "rc": 0, "tests": 1, "failed": 0}
             base.update(legs)
             return {"finished": finished, "invalid": invalid, "legs": base}
         self.assertEqual(v(result(finished=None)), "running")
@@ -1928,9 +1949,22 @@ class Rules(unittest.TestCase):
         self.assertEqual(v(result(bats={"owed": True, "rc": False})), "red", "rc must be the integer 0")
         # extra4-6: the ledger is not a test leg, so a bool rc is the one reason this case is red (False == 0 in Python)
         self.assertEqual(v(result(ledger={"owed": True, "rc": False})), "red", "rc must be the integer 0, not False")
-        self.assertEqual(v(result(bats={"rc": 0, "tests": 1})), "pass", "a leg that does not say it is not owed is owed")
+        self.assertEqual(v(result(bats={"rc": 0, "tests": 1, "failed": 0})), "pass", "a leg that does not say it is not owed is owed")
         self.assertEqual(v(result(bats={"owed": "no", "rc": None})), "red", "only owed: false excuses a leg")
-        self.assertEqual(v(result(pytest={"owed": True, "rc": 0, "tests": 1})), "pass", "a not-owed leg's empty rc is fine")
+        self.assertEqual(v(result(pytest={"owed": True, "rc": 0, "tests": 1, "failed": 0})), "pass",
+                         "a not-owed leg's empty rc is fine")
+        # extra5-6: a test leg's failed count is required beside its test count and must be an int of 0 or more; one that
+        # is missing, a string, a float, a bool or negative reads not passed, never as zero failures
+        absent = object()
+        for leg in (PYTEST_LEG, "bats", "npm-test"):
+            for bad in ("1", 1.0, True, -1, None, absent):
+                rec = {"owed": True, "rc": 0, "tests": 3}
+                if bad is not absent:
+                    rec["failed"] = bad
+                with self.subTest(leg=leg, failed="absent" if bad is absent else repr(bad)):
+                    self.assertFalse(sweep.passed(leg, rec))
+                    self.assertEqual(v(result(**{leg: rec})), "red")
+        self.assertTrue(sweep.passed("bats", {"owed": True, "rc": 0, "tests": 3, "failed": 0}))
         self.assertEqual(v(result(bats={"owed": True, "rc": 0})), "red", "a test leg with rc 0 and no count ran nothing")
         self.assertEqual(v(result(bats={"owed": True, "rc": 0, "tests": 0})), "red", "a count of 0 is no test run")
         self.assertEqual(v(result(bats={"owed": True, "rc": 0, "tests": True})), "red", "a count must be an int")
@@ -1941,9 +1975,23 @@ class Rules(unittest.TestCase):
         self.assertEqual(v(result(deps={"owed": False, "rc": None})), "red", "not owed takes a reason")
         self.assertEqual(v(result(build={"owed": False, "rc": None, "why": "ui/ untouched"})), "red",
                          "a webview leg is not owed only for a missing extension")
-        missing = result(pytest={"owed": True, "rc": 0, "tests": 1})
+        missing = result(pytest={"owed": True, "rc": 0, "tests": 1, "failed": 0})
         del missing["legs"]["bats"]
         self.assertEqual(v(missing), "red", "a leg absent from the record is owed")
+
+    def test_the_rc_text_names_a_malformed_count(self):
+        """Round 1, extra5-6: a test leg at rc 0 that did not pass says why, and a malformed count is named as one,
+        not as "no test ran"."""
+        t = sweep._rc_text
+        self.assertEqual(t("bats", {"rc": 0, "tests": 3, "failed": "1"}), "rc 0 but its failed count is malformed (failed '1')")
+        self.assertEqual(t("bats", {"rc": 0, "tests": 3, "failed": -1}), "rc 0 but its failed count is malformed (failed -1)")
+        self.assertEqual(t("bats", {"rc": 0, "tests": 3, "failed": True}), "rc 0 but its failed count is malformed (failed True)")
+        self.assertEqual(t("bats", {"rc": 0, "tests": 3}), "rc 0 but it records no failed count")
+        self.assertEqual(t("bats", {"rc": 0, "tests": True, "failed": 0}), "rc 0 but its test count is malformed (tests True)")
+        self.assertEqual(t("bats", {"rc": 0, "tests": 0, "failed": 0}), "rc 0 but no test ran")
+        self.assertEqual(t("bats", {"rc": 0}), "rc 0 but no test ran")
+        self.assertEqual(t("bats", {"rc": 0, "tests": 3, "failed": 2}), "rc 0 but its log shows 2 failed")
+        self.assertEqual(t("bats", {"rc": 0, "tests": 3, "failed": 0}), "rc 0")
 
     def test_the_state_dir_resolves_as_bin_romp_does(self):
         sd = sweep.state_dir
