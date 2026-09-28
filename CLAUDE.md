@@ -165,10 +165,11 @@ repos are in play and only ONE of them is ours to write to:
   `gh pr view N` or `gh pr merge N` reads the fork's PR N. Without that key gh
   consults `upstream` first: on a fresh clone with both remotes and no terminal
   to ask on, `gh pr view N` read the project's PR N (2026-09-09), and
-  `scripts/land.sh`, which merges by number without `-R`, would have aimed a
-  merge at the project. `scripts/fork-remotes.sh --check` verifies all of it
-  without changing anything, and is worth a run in any new clone or worktree,
-  since this lives in git config and a fresh clone starts without it.
+  `scripts/batch.py land` (which `scripts/land.sh` runs), merging by number
+  without `-R`, would have aimed a merge at the project.
+  `scripts/fork-remotes.sh --check` verifies all of it without changing
+  anything, and is worth a run in any new clone or worktree, since this lives
+  in git config and a fresh clone starts without it.
 - **Checking for upstream changes.** `scripts/upstream-check.sh` fetches and
   reports what the project has added since we diverged, and which of those files
   we have also changed — the ones a merge will actually cost attention on. It
@@ -203,7 +204,7 @@ broad `git add` will sweep up your work). Conventions:
   2. Open a PR within the fork against `main`. PRs land through a batch
      (`scripts/batch.py`; see `docs/batching.md`): do not click merge. A change that
      must land alone lands as a one-member batch (`scripts/batch.py plan --only N`) on the
-     user's word; `scripts/land.sh` merges only a batch PR. Opening a PR against the upstream
+     user's word; `scripts/land.sh` runs `scripts/batch.py land`. Opening a PR against the upstream
      project is a separate decision only the user makes.
   A fork PR runs no CI of its own (2026-09-27): its one check is the tier label (next
   bullet), which runs when the PR opens and when its labels change. GitHub's CI runs once

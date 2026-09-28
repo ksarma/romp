@@ -15,9 +15,9 @@ merged tree is the tree the sweep and CI tested.
 The tooling is `scripts/batch.py` (subcommands `plan`, `assemble`, `verify`, `summarize`, `pull`,
 `land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps the commit a
 worktree's HEAD names, in a private checkout of it, and records the result; `check` reads it back),
-`scripts/land.sh`, which merges a batch PR by hand and nothing else (a single PR lands as a
-one-member batch), and `scripts/pr-orphans.sh`, which reports a merged PR whose content never
-reached main (it also runs on every push to main).
+`scripts/land.sh <name>`, which runs `scripts/batch.py land` with its arguments and has no merge
+logic of its own, and `scripts/pr-orphans.sh`, which reports a merged PR whose content never
+reached main (`finish` runs it, and it also runs on every push to main).
 
 ## If you open a PR
 
@@ -69,7 +69,7 @@ PR a required CI check is met by the run of the push to its branch, which attach
 Strict mode ("require branches to be up to date") makes GitHub itself refuse a batch PR that is
 behind main, which is the case the no-CI-on-main rule cannot allow; without it only `scripts/batch.py
 land` checks. A member PR has no CI checks and never merges by itself: a single PR lands as a
-one-member batch, and `scripts/land.sh` merges only a batch PR.
+one-member batch, and `scripts/land.sh` runs `scripts/batch.py land`.
 
 Auto-merge (`gh pr merge --auto`) needs two things: the repository's "Allow auto-merge" setting
 (`gh api repos/{owner}/{repo} --jq .allow_auto_merge`; off on this fork today, and turning it on is
@@ -77,11 +77,11 @@ your call: `gh repo edit --enable-auto-merge`) and a rule on main that gates a m
 of type `required_status_checks` or `pull_request` (`required_deployments`, `merge_queue` and
 `code_scanning` count too), or classic branch protection with required status checks or required
 reviews. A ruleset that only blocks force pushes or deletion does not count. Without the setting
-GitHub rejects it; without such a rule it merges at once and protects nothing. `scripts/land.sh
---auto` and `scripts/batch.py land --auto` read both and refuse, naming the missing one or the rules
-they found instead. A rules read that fails, or a protection read that fails with anything but a 404
-(GitHub's answer for no protection), is refused with gh's error, not reported as none. Neither adds
-`--auto` on its own.
+GitHub rejects it; without such a rule it merges at once and protects nothing. `scripts/batch.py
+land --auto` (and `scripts/land.sh --auto`, which runs it) reads both and refuses, naming the
+missing one or the rules it found instead. A rules read that fails, or a protection read that fails
+with anything but a 404 (GitHub's answer for no protection), is refused with gh's error, not reported
+as none. It never adds `--auto` on its own.
 
 Per batch, in order:
 
@@ -117,25 +117,18 @@ steps 2 to 5 and 8. It gets its own sweep at the batch head and the one CI run, 
 One batch at a time still holds, so while a batch is open the PR joins it (a re-plan and rebuild)
 or waits for it to land.
 
-`scripts/land.sh B` merges a batch PR by hand (`--help` prints the refusal table). It refuses any PR
-that is not a batch PR, one without the `batch` label or whose head branch is not `batch/<name>`,
-and names the one-member batch route, so it never merges a member PR. For a batch PR it requires
-what `scripts/batch.py land` requires of GitHub: the batch head's CI run, the newest run of `ci.yml`
-from a push to the batch branch at exactly the head, green, read before each merge (missing,
-pending with or without `--auto`, red, and a failed read are refused by name). It reads the checks
-GitHub reports at the head too (failing, or none at all, refused; pending, or blocked by a rule on
-main, refused without `--auto`), the mergeability and the merge state, merges with a merge commit
-pinned to the head it checked, and runs the orphan check afterward. It reads neither the sweep
-result nor main, so use it only while main is still at the SHA the first block names (step 6).
-It still takes two numbers and keeps its rules for a stacked pair
-(the lower PR first, each read again right before its merge, a stop when a head moved) from when it
-merged member PRs; with one batch open at a time, one number is the case.
+`scripts/land.sh <name>` runs `scripts/batch.py land <name>` with the same arguments and has no
+merge logic of its own, so a batch has one gated merge path: the sweep result at the batch head, the
+batch push's CI run, main read again right before the merge, and `finish`'s check of the merge
+commit's first parent (`scripts/land.sh --help` prints its usage and then `batch.py land --help`).
+It takes the batch's name, not a PR number. The rules it once kept for a member PR, a stacked pair
+and a merge into an open PR's branch are gone: every PR lands through a batch.
 
-It never passes `--delete-branch`: gh's flag also deletes the local branch, which is checked out in
-a session's worktree here; the remote branch is deleted by the repository setting, or through the
-API when that setting is off. The web button is equally safe now that branches delete on merge. If
-main moves while a batch is open, `verify` refuses the batch as behind until the batcher merges main
-into it, sweeps again and re-verifies (batcher step 7).
+`batch.py land` never passes `--delete-branch`: gh's flag also deletes the local branch, which is
+checked out in a session's worktree here; `finish` deletes the member branches and the batch branch
+on origin, and the repository deletes a merged head branch itself. The web button is equally safe
+now that branches delete on merge. If main moves while a batch is open, `verify` refuses the batch
+as behind until the batcher merges main into it, sweeps again and re-verifies (batcher step 7).
 
 ## If you are the batcher
 

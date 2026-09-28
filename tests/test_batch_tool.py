@@ -444,8 +444,8 @@ class Plan(_Base):
         self.assertIn("gh pr edit 108 --base main", reasons[108])
 
     def test_only_plans_a_single_pr_as_a_one_member_batch(self):
-        """A single PR lands through batch.py as a one-member batch (pre-round ruling Q8; scripts/land.sh merges only a
-        batch PR): plan --only N plans N alone; a dependency not named is not taken in, so its dependent is left out
+        """A single PR lands through batch.py as a one-member batch (pre-round ruling Q8; scripts/land.sh runs batch.py
+        land): plan --only N plans N alone; a dependency not named is not taken in, so its dependent is left out
         with it; a number that is not an open PR is refused."""
         fx = self.fx
         self.two_members()
@@ -2712,7 +2712,7 @@ class LandAndFinish(_Base):
         """The rules endpoint lists every rule on main, the protective ones included. A ruleset that
         only blocks force pushes and deletion leaves --auto nothing to wait for, so it is refused
         naming what was found; a pull_request rule (required reviews) counts like required checks
-        (scripts/land.sh applies the same gate)."""
+        (scripts/land.sh runs this land, so the same gate)."""
         fx = self.fx
         self.ready()
         fx.set_repo(allowAutoMerge=True)

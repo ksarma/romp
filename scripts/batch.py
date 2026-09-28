@@ -2135,8 +2135,8 @@ def main_protection(root):
     there instead, for the refusal. A rules read that fails, or a protection read that fails with
     anything but a 404 (GitHub's answer for an unprotected branch), raises Fail with gh's error: a
     failed read is not "none". `gh pr merge --auto` is only useful with a gating rule: with nothing
-    required, auto-merge merges at once. This detects, it never assumes (scripts/land.sh applies the
-    same gate)."""
+    required, auto-merge merges at once. This detects, it never assumes (scripts/land.sh runs land, so
+    the same gate)."""
     proc = gh("api", "repos/{owner}/{repo}/rules/branches/%s" % MAIN, cwd=root, check=False)
     if proc.returncode != 0:
         raise Fail("--auto, and could not read the rules on %s: %s" % (MAIN, (proc.stderr + proc.stdout).strip()))
@@ -2396,7 +2396,7 @@ def cmd_land(args):
                                                  % (e["attempt"], e["conclusion"] or e["status"], e["url"], e["flake"]) for e in excused)))
     cmd = ["pr", "merge", str(b), "--merge", "--match-head-commit", head]
     if args.auto:
-        # Both preconditions are read, never assumed (scripts/land.sh applies the same two), and
+        # Both preconditions are read, never assumed (scripts/land.sh runs this land, so it has them too), and
         # before anything is changed: GitHub refuses auto-merge until the repository setting is on,
         # and with nothing required on main --auto merges at once and protects nothing.
         allowed = auto_merge_allowed(root)
