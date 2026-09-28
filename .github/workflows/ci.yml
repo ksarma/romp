@@ -60,13 +60,22 @@ jobs:
     # anyone finds out, and a required check that hangs blocks merges silently.
     # T230b follow-up (the review's catch): the job cap must EXCEED the pytest phase plus the
     # 600 s per-test timeout plus setup, or a stall that begins late in the run is killed by
-    # this cap first - the identical silence the per-test timeout exists to end. Measured pytest
-    # phases run 160-300 s, so 15 min left ~100 s of headroom; 25 min = 300 + 600 + setup, with
-    # margin for a slow runner. The macOS cells (a manual dispatch) run the same suite in 17 to 25
-    # minutes on the image's slower runners: the 3.10 cell took 24 min 43 s on one dispatch and was
-    # cancelled at 25 min 27 s on the next (2026-09-16), a one-minute margin that can kill the
-    # release's combined proof for nothing. macOS gets 40; Linux keeps 25.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 40 || 25 }}
+    # this cap first - the identical silence the per-test timeout exists to end. On 2026-09-03 the
+    # measured pytest phases ran 160-300 s, so 15 min left ~100 s of headroom and 25 min was
+    # 300 + 600 + setup with margin for a slow runner. The macOS cells (a manual dispatch or the
+    # weekly schedule) run the same suite on the image's slower runners, and the suite grows with
+    # every merge: 17 to 26 minutes on 2026-09-16 (the 3.10 cell cancelled at 25 min 27 s under a
+    # 25-minute cap), 33 to 35 minutes on the dispatch of 2026-09-24 03:48 UTC, and on the release
+    # dispatch five hours later (run 35976250043) the 3.13 cell finished green in 38 min 52 s while
+    # the 3.10 cell was cancelled at 40 min 20 s by the 40-minute cap with no failure in its log,
+    # having reached 90 percent 36 min 40 s into its pytest step; the 3.13 cell's pytest step ended
+    # about 5.5 minutes after its own 90 percent, so the 3.10 suite sits near 42 to 43 minutes and
+    # the rule gives 53 to 54. macOS gets 60, the pin's ceiling (past an hour a hung cell eats the
+    # dispatch). Linux gets 35 by the same rule: the 3.10 Linux cell took 19 min 34 s on the
+    # dispatch of 2026-09-24 03:48 UTC (run 35952964334) and the Linux cells 14 to 17 minutes on
+    # the release dispatch, so 25 left under six minutes where about 20 plus 10 plus setup is
+    # about 31.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 35 }}
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
@@ -89,38 +98,263 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install pytest
-        run: python -m pip install --upgrade pip pytest pytest-timeout
+        # pytest-xdist: the Run pytest step passes -n on every cell, two workers on ubuntu-latest
+        # and -n 0, an in-process run, elsewhere, and pytest refuses -n without it (the reasons
+        # are on that step).
+        run: python -m pip install --upgrade pip pytest pytest-timeout pytest-xdist
       - name: Install cryptography
         # cryptography: the kernel's Web Push soft dependency (plans/ios-app.md). Installed here
         # so tests/test_kernel_webpush.py's crypto layers RUN in CI instead of skipping — the
         # kernel itself still degrades loudly without it (that path has its own test). It ships
-        # free-threaded (cp314t) wheels since 46.0, so the 3.14t cell installs it like the rest;
-        # that cell alone may continue without it, should a future release lag the interpreter,
-        # and the webpush tests then skip and say so rather than the whole cell going red.
+        # free-threaded (cp314t) wheels since 46.0, so the 3.14t cell installs it like the rest.
+        # The 3.14t allowance below no longer keeps that cell green without it (2026-09-20): the
+        # SDK step next requires cryptography through mcp's pyjwt[crypto] and carries no allowance,
+        # so a cryptography wheel lagging the interpreter reds the cell there. What the allowance
+        # still does is let the failure be named by this step first, where the package is.
         continue-on-error: ${{ endsWith(matrix.python-version, 't') }}
         run: python -m pip install cryptography
+      - name: Install the Claude Agent SDK
+        # The SDK behind the hosted-session backend, installed at the version the session host is written
+        # against: SDK_TESTED_VERSION in kernel/session_host.py, the repo's ONE declaration of it, read here
+        # with the sed bin/romp-sdk-setup runs over the same line. With it installed, the SDK-gated tests
+        # (in tests/test_sdk_backend.py and tests/test_host_transport.py) and the two SDK-transport host
+        # tests in tests/test_session_host.py RUN in CI instead of skipping, and every session host a test
+        # spawns takes the SDK transport, as it does on a box with the venv bin/romp-sdk-setup builds (one
+        # control in tests/test_session_host.py hides the SDK from its host and keeps the pipe transport tested).
+        # Why that version and not PyPI's latest: it is the one the full suite passed under on the box that
+        # runs the hosted sessions (16875 passed, 566 skipped, 1 xfailed, 0 failed), and the newer release that existed
+        # when this landed (0.2.157, the fifth release in four days) was left alone on purpose: the version is
+        # chosen by a run of the host tests, not by the package index. Bumping it is the act the constant's
+        # comment describes: install the new version, run the host tests on it, move the number, and the
+        # installer, the host's own version check and this step follow the line. The residual is that nothing
+        # polls PyPI: a person notices a release, and a break in a newer SDK shows up only when someone moves
+        # the constant. A second residual, of the interpreter having the SDK: on the 3.10 to 3.13 cells (and
+        # the two macOS cells; not 3.14t, which defers annotations) tests/test_session_host.py run ALONE fails
+        # 8 SpawnSecrets tests, its Popen patch live when the module first imports the SDK and mcp's win32
+        # utilities evaluate subprocess.Popen[bytes] at class definition; the one pytest invocation below
+        # collects an SDK-importing module first and is green. Pre-existing on any such interpreter; the
+        # class's docstring has the detail; a follow-up.
+        # The constant pins the SDK alone. Its dependency closure resolves fresh on every run (26 packages on
+        # 2026-09-20: the 3.12 cell's pip line on run 35518107329 lists 27 names with the SDK, anyio among
+        # them), so a red that no commit explains is a transitive release, and the pin test below does not
+        # catch one: it compares the SDK's own version and nothing else. One of those packages, anyio,
+        # registers a pytest plugin (a pytest11 entry point) that pytest would auto-load in every cell across
+        # the whole suite; the pytest step passes -p no:anyio so it does not (2026-09-20). Blocked because:
+        # the box's default pytest run never loads it (romp's SDK lives in the venv bin/romp-sdk-setup builds,
+        # whose site joins sys.path at tests/test_host_transport.py's import, after plugin autoload, and the
+        # box venvs carry no anyio; the one box road that would load it, tests/README.md's PYTHONPATH recipe,
+        # which puts that site on the path before pytest starts, passes the same flag), so no pytest process
+        # the two checks below read loads a plugin the box's default run does not, unless something loads
+        # anyio's plugin again by its entry-point name or its module name (among them -p anyio or
+        # -p anyio.pytest_plugin after the flag, PYTEST_PLUGINS, plugins= on pytest.main), which the flag check does not
+        # read; on the Run pytest step run_pytest_status refuses a -p re-load on its line as a word outside its option
+        # allowlist and PYTEST_PLUGINS in its merged env as a key outside its env allowlist, and on the served-page step
+        # and in the launcher census nothing reads them. The flag is on
+        # both of this file's pytest lines and on every pytest the suite starts in the cell's interpreter in a
+        # form the launcher census reads (tests/test_ci_sdk_pin.py holds both populations, this file's by its population
+        # check and the suite's by its launcher census, whose read, refusals and residual _launchers_in's docstring
+        # there states in full; among them: it reads argv literals under tests/, the positional arguments of
+        # asyncio.create_subprocess_exec and of the os.exec and os.spawn l forms, and an in-process pytest.main,
+        # pytest.console_main or _pytest.config.main by name, alias or import; it refuses, red until rewritten, a pytest
+        # command in a constant string or f-string written at the call and handed to subprocess, os.system or os.popen,
+        # asyncio.create_subprocess_shell, shlex.split or a shell's -c, a call through a name it cannot resolve (in a
+        # comprehension in a class body that binds the name, or, beside a star import from a module it does not read,
+        # one the module binds or no scope binds, or one a function binds from such a name by a plain or annotated
+        # assignment from a name or an attribute), an argv it cannot read as a launcher (an interpreter option it does
+        # not take apart before pytest, as in -Bm pytest or -Impytest, -m pytest.__main__, and pytest after a wrapper
+        # such as env in an argv written at the call; its argv rule is _argv_command's docstring), and pytest.main held
+        # as a value rather than called where it is written (a Thread target, functools.partial, a parameter default, a
+        # tuple, a walrus or a conditional expression, among others); and outside its read are a string anywhere else,
+        # or one held in a variable or built with %, + or .format, an argv assembled one element at a time, an option it
+        # does not take apart that spells no pytest and that no pytest follows, other than a cluster ending in m right
+        # before an element that is not a constant, a wrapper-headed argv built away from the call, a call reached
+        # through a name the census does not resolve (a string call through tuple unpacking, a conditional expression or
+        # a parameter default, an import by name from a module that does not define the call, a relative one included, a
+        # class or instance attribute, getattr, importlib or runpy, a builtin or a module name such a star import
+        # rebinds, a function's binding from such a name made any other way, a class body's call before the class binds
+        # that name, among others), and every module whose text spells neither pytest nor py.test and holds no star
+        # import, which the census does not parse). pytest-xdist's two plugins, which the box's default run
+        # loads, load in every cell too since batch 917 (#916) installed it there, and xdist hands each worker
+        # the command's arguments, so the flag blocks anyio's plugin in the Linux cells' two workers as well
+        # (2026-09-26, in a venv holding anyio: with -n 2 and the flag no worker loaded it; without the flag
+        # both did). Nothing under tests/ is marked
+        # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
+        # claude_agent_sdk.testing, so the plugin does no work here; and blocked in every pytest process the
+        # two checks read where nothing loads it again by its entry-point or module name, a bad anyio pytest
+        # plugin cannot fail one at pytest startup before a test runs.
+        # Unblocked in a child it did: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv red tests
+        # in each of the six modules whose pytest children lacked the flag, none of which imports the SDK
+        # (2026-09-20, before the children gained it). A bad anyio itself, not its plugin, still surfaces
+        # where anyio is imported: this step's own `python -c "import claude_agent_sdk"` below, with the
+        # import in the traceback, or the SDK-using tests at run time. Measured before the block, the two
+        # gated modules on a 3.12 venv with the pinned SDK, single process: 653 passed, 1 skipped, 0 warnings
+        # with the plugin (header: timeout, anyio) and the same counts without it (header: timeout). A test
+        # that imports the conformance suite lifts the block, and says why.
+        # The step refuses an empty, malformed or duplicated constant rather than installing the unpinned
+        # latest, and it carries no continue-on-error: the SDK requires cryptography (through mcp's
+        # pyjwt[crypto]), so a cryptography wheel lagging an interpreter fails THIS step, and that must be the
+        # cell's red, not the gated tests silently skipping. Runs after the cryptography step so pip finds it installed.
+        # After pip, the same `python` imports the package: pip and the pytest step below share that name on
+        # PATH, so an install that reached another interpreter reds THIS step, with its name on it, instead
+        # of a run with the gated tests skipping and a warning as the only trace. The pytest step declares the
+        # requirement with ROMP_SDK_REQUIRE=1 (its env below), so the pin test fails on an interpreter that
+        # lost the SDK between the two steps.
+        # The 3.14t cell installs it too: the wheel is py3-none with Requires-Python >=3.10, its compiled
+        # dependencies (cryptography, cffi, pydantic-core, rpds-py) publish cp314t wheels, and on a free-threaded
+        # 3.14.6 the install, the import and the gated and host test modules ran green before this landed
+        # (2026-09-20). The free-threading evidence is the import with PYTHON_GIL UNSET: in that configuration
+        # CPython turns the GIL back on, with a RuntimeWarning, for an extension module that does not declare
+        # free-threading support, and the GIL read off after the import, so the four compiled extensions it
+        # loads (_cffi_backend, cryptography's _rust, pydantic_core, rpds) declare it. Under the PYTHON_GIL=0 the
+        # pytest step runs with, that read cannot fail: the setting forbids the re-enable and silences the
+        # warning, so "still off after the import" under it says nothing about the extensions. What the setting
+        # buys is that a later wheel without the declaration cannot turn the cell back into a GIL cell; the
+        # price is that such a wheel runs without the GIL and without a warning. The SDK's own classifiers
+        # stop at 3.13, so a release that breaks there shows as a red cell, which is the point of having the cell.
+        # Cost on the Linux cells: about 106.5 MB of download per cell after the cryptography step (the SDK
+        # wheel is 102 MB there, 92 MB on the macOS arm64 cells; it bundles the Claude Code binary; its other
+        # dependencies total about 4.5 MB) and a few seconds of install; the run's own step timings are the
+        # measurement that counts. The step timeout is the file's convention for a download (the bats,
+        # gitleaks and Playwright steps): a wedged fetch fails in minutes instead of eating the job's cap.
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p' kernel/session_host.py)"
+          [[ "$pin" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "kernel/session_host.py: expected exactly one line SDK_TESTED_VERSION = \"<x.y.z>\", read: '$pin'" >&2
+            exit 1
+          }
+          python -m pip install "claude-agent-sdk==$pin"
+          python -c "import claude_agent_sdk"
       - name: Run pytest
         env:
+          # This run requires the SDK the step above installed, said as a switch rather than inferred
+          # from GITHUB_ACTIONS (a future step that runs pytest without the SDK on purpose, as the
+          # served-page step in the extension job does, would red for the wrong reason under an
+          # inference): tests/test_ci_sdk_pin.py's InstalledVersion FAILS, naming the interpreter, where
+          # claude_agent_sdk does not import in the interpreter running pytest, instead of the warning a
+          # box's bare road gets, and tests/test_session_host.py's switch case asserts that the host a
+          # test spawns imports it. The stance of ROMP_SERVED_TESTS_REQUIRE below. Off (a box), that road
+          # warns and the host case skips, saying so. tests/test_ci_sdk_pin.py's population check holds
+          # this on every pytest invocation in this file, not on this step's text: each command that runs
+          # pytest here sets the switch to exactly 1 in the env Actions merges for it (pytest_invocations'
+          # docstring there states the merge; among the forms it reads are an env: key line of the
+          # workflow, the job or the step as this file writes them, and a prefix on the command; a quoted
+          # value read as written) or is listed there by job and step name with a reason the test checks (the
+          # served-page step alone today, whose job installs no SDK), and each passes -p no:anyio with no
+          # listing. The check does not run the shell: a step whose run block spells the switch other
+          # than as that prefix (among them an unset, an export, an assignment), or whose job's other run blocks
+          # spell it (a write to $GITHUB_ENV reaches the steps after), is red until read, and so is any
+          # other line here that spells the switch outside an env: key line it reads (among them an aliased
+          # or flow env:, a quoted or spaced key, a key-shaped line deeper than its block's keys, a step's
+          # shell: or a job's defaults; switch_line_census there states the rule), and a value on an env:
+          # key's own line, which may set the switch without spelling it, is refused. Any write of the
+          # switch that does not spell its name is outside it, among them one in a run block (env -i, an
+          # indirect unset, a loop over the environment), in a shell: or defaults key, by a script or action
+          # a step calls, or to $GITHUB_ENV, except on this step, where run_pytest_status refuses those it can
+          # see, among them a shell: here or a defaults: on the job or the workflow, a second command or
+          # anything before the pytest command (env -i, an unset), a key of this step's merged env outside its
+          # env allowlist (BASH_ENV among them), and a run block of this job that spells GITHUB_ENV,
+          # GITHUB_PATH or BASH_ENV (run_pytest_status's docstring in tests/test_ci_sdk_pin.py states the rule
+          # and its residual); among what stays outside, a write by a script or action a step calls, or one to
+          # $GITHUB_ENV or $GITHUB_PATH that does not spell the name. GitHub substitutes a ${{ }} expression
+          # into a run block before the shell reads it, so a block whose every expression is the one shape
+          # batch 917's evaluator reads (command_on in tests/test_ci_pytest_workers.py: matrix.os compared with
+          # one label, choosing between two quoted values, as this step's worker count is) is read once for
+          # each label its expressions name and once for every other label, each text substituted as that
+          # cell's shell reads it (matrix_os_texts in tests/test_ci_sdk_pin.py), and
+          # a step whose run block holds any other expression and spells pytest anywhere in it, in a comment
+          # line or a trailing comment too, is red until the value moves to an env: key the block reads as a
+          # shell variable (the substituted text can end a comment with a newline and run what follows it);
+          # anything that rewrites a pytest command's arguments after that (among them a shell function or
+          # alias, a python earlier on PATH, a step's shell:; pytest_invocations' docstring in
+          # tests/test_ci_sdk_pin.py states the read) is outside the check, except on this step, where it
+          # refuses those it can see, among them a function or alias, which is a second command here, this
+          # step's shell: and a defaults: on its job or the workflow, the BASH_ENV key in its merged env or
+          # spelled in a run block of this job, and a $GITHUB_PATH write spelled in a run block of this job,
+          # which could put another python earlier on PATH (run_pytest_status's docstring states the rule); a
+          # write to $GITHUB_PATH that does not spell the name stays outside.
+          # The check reads this file's text, in the YAML forms this file uses and no others: every line
+          # here is in one of them (YAML_FORMS_ACCEPTED in tests/test_ci_sdk_pin.py, which
+          # test_the_forms_the_allowlist_accepts_are_the_forms_ci_yml_uses holds equal to the forms this
+          # file uses: block mappings and sequences two columns per level, one-line plain and quoted
+          # scalars without escapes, one-line flow sequences of them, a literal block as a step's run,
+          # blank lines and comments; on a name: or working-directory: key a non-null plain scalar with no
+          # comment, and
+          # no value on an env: key's line), or the check refuses it by name, valid YAML included (an
+          # anchor, an alias, a folded block, a quoted scalar over two lines, among others): a form the
+          # check does not accept is refused by name; reword the step in an accepted form. Every line here that
+          # spells pytest, other than the lines its line census excuses (pytest_line_census's docstring in
+          # tests/test_ci_sdk_pin.py states the rule), is read as a command or is red until it is read, and so
+          # is a job key it does not read; among what it leaves unread (pytest_invocations' docstring in
+          # tests/test_ci_sdk_pin.py states the read in full) are a run line that never spells pytest, a pytest
+          # run by a script or action a step calls, and the other workflow files. It also holds this step's
+          # failure to the cell: this step's exit status is pytest's and the cell's is the step's
+          # (run_pytest_status in tests/test_ci_sdk_pin.py; its docstring is the rule). So each of these is red
+          # at its line, among others: an if: or a continue-on-error on this step or its job; a key of its job
+          # outside its job-key allowlist (a container: among them); the command followed by ||, a pipe or a
+          # trailing &; a second command or command line (an earlier trap 'exit 0' EXIT among them); an argument
+          # outside its option allowlist (--collect-only, --co and --setup-plan among the refused); a shell:
+          # here, or a defaults: on the job or the workflow; a key of this step's merged env outside its env
+          # allowlist (PYTEST_ADDOPTS and BASH_ENV among them); and a run block of this job that spells
+          # GITHUB_ENV, GITHUB_PATH or BASH_ENV. Outside it, among others (run_pytest_status's docstring states
+          # the residual): a write to those files that does not spell their names, such as one by a script or
+          # action a step calls; a command that names its interpreter or pytest by a path; and an earlier step
+          # whose run block changes the runner without spelling those names, such as one that replaces or
+          # shadows the python on PATH, reinstalls pytest, or deletes or edits test files.
+          ROMP_SDK_REQUIRE: "1"
           # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
           # build disables it by default, and an extension that lacks free-threading support
-          # would otherwise turn it back on silently). Empty on every other cell, which CPython
-          # reads as unset.
+          # would otherwise turn it back on, with a RuntimeWarning in pytest's summary that the
+          # cell does not fail on). Empty on every other cell, which CPython reads as unset.
           PYTHON_GIL: ${{ endsWith(matrix.python-version, 't') && '0' || '' }}
         # T230b: a hung test used to be 15 minutes of silence (five jobs since 2026-08-27, a
         # process-global time.sleep patch consumed by a foreign thread). pytest-timeout turns the
-        # NEXT stall into a named failure with every thread's stack: thread method = guaranteed
-        # termination (the process ends; the dump's bottom frame is the blocked primitive, and the
-        # hung test is the lowest tests/ frame above the _pytest/runner frames) - the signal
-        # method cannot interrupt a C call. 600 s strictly exceeds the slowest legitimate test
-        # (~122 s, leak-scaled) and the 300 s child timeout in test_session_move_live. Its timer
-        # waits on an Event, so it can never itself consume a patched sleep. --durations names the
-        # slowest tests on every run so a creeping one is visible before it stalls.
-        run: python -m pytest -q --durations=10 --timeout=600 --timeout-method=thread
+        # NEXT stall into a failure that names the test: thread method = guaranteed termination
+        # (the process running the test ends) - the signal method cannot interrupt a C call. 600 s
+        # strictly exceeds the slowest legitimate test (~122 s, leak-scaled) and the 300 s child
+        # timeout in test_session_move_live. Its timer waits on an Event, so it can never itself
+        # consume a patched sleep. --durations names the slowest tests on every run so a creeping
+        # one is visible before it stalls.
+        # Two workers on the ubuntu-latest cells, none elsewhere (-n 2 and -n 0, 2026-09-25):
+        # serially the cells had reached the 25-minute cap they had then (this fork's main, run
+        # 35890814789: the 3.14t cell at 24 min 35 s). Measured on 2026-09-22 with Python 3.10 at
+        # this step's other flags on a four-CPU budget (a systemd CPUQuota of 400 percent; GitHub
+        # documents its Linux runner for a public repository at 4 CPUs and 16 GB), the suite took
+        # 1437 s serially at a cgroup memory peak of 6.0 GB and 739 s with two workers at 10.9 GB
+        # (decimal, page cache included), about 5 GB a worker; three workers peaked at 15.8 GB,
+        # near the 16 GB GitHub documents. The macOS cells stay serial under their 60-minute cap:
+        # GitHub documents that runner for a public repository at 3 CPUs and 7 GB (arm64), below
+        # the two-worker peak, and two workers have not been measured on it.
+        # The count keys on matrix.os, as timeout-minutes does, and names the one label whose
+        # documented runner (4 CPUs, 16 GB) the four-CPU measurement was sized to, rather than
+        # excluding macOS or matching every Linux runner (runner.os), so a runner the matrix adds
+        # later runs serially until it is measured.
+        # GitHub substitutes the expression into this line before the shell runs it. -n 0 is
+        # xdist's in-process run, and pytest refuses -n without xdist, so every cell installs it.
+        # The job cap above and its pin in tests/test_ci_bats_bound.py are romp-on/romp PR #2130
+        # as merged: their figures and run ids are romp-on/romp's Actions runs of its serial
+        # suite. With two workers the measurement above puts this fork's Linux cells at about
+        # half their serial time, well inside that cap.
+        # Under the Linux cells' workers a timeout ends the worker process running the hung test:
+        # xdist fails that test by name ("worker 'gw0' crashed while running '<test id>'") and the
+        # other tests run on. The thread dump pytest-timeout writes goes to that worker's stdout,
+        # which xdist's transport (execnet) points at /dev/null, so the log names the test but
+        # carries no stacks; run the named test alone (without -n) and the dump prints, its bottom
+        # frame the blocked primitive.
+        # -p no:anyio: the SDK step's closure carries anyio, whose pytest plugin would otherwise
+        # auto-load in this process, in the Linux cells' two workers (xdist hands each the command's
+        # arguments, the flag among them) and in every pytest child the suite spawns in this interpreter
+        # (the launchers under tests/ pass the same flag); the SDK step's comment states the decision
+        # and its measurement, and tests/test_ci_sdk_pin.py holds the flag on every pytest invocation
+        # in this file (its population check) and on the launchers under tests/ its launcher census reads.
+        run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }} -p no:anyio --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
     name: Shell (bats, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Generous vs the python jobs on purpose: the suite takes ~1min on Linux but
+    # Generous on purpose: the suite takes ~1min on Linux but
     # ~16min on macOS, so anything near 15 would kill a PASSING job.
     timeout-minutes: 35
     strategy:
@@ -153,7 +387,8 @@ jobs:
       - name: Install gitleaks (Linux)
         # tests/gitleaks-config.bats skips itself when gitleaks is absent, so without this step the
         # repo's scanning rules (.gitleaks.toml: the value-anchored allowlist, the merge-commit scan)
-        # would be checked nowhere and a rule regression would ship green. The same pinned,
+        # would be checked nowhere; ROMP_GITLEAKS_REQUIRE=1 on the Run bats step below turns that
+        # skip into a red job, so a broken install cannot ship as green skips. The same pinned,
         # checksummed release the secrets job installs; bump the two version/sha pairs together.
         # Linux only: the macOS cell is manual (see the header), and one arbiter is enough.
         if: runner.os == 'Linux'
@@ -177,6 +412,12 @@ jobs:
         # slowest legitimate test on macOS (the romp-serve probe tests hold 60 s by design).
         env:
           BATS_TEST_TIMEOUT: "180"
+          # ROMP_GITLEAKS_REQUIRE=1 on Linux only: the Linux cell installs the pinned gitleaks in the
+          # step above, so tests/gitleaks-config.bats skipping there would hide a broken install
+          # behind ten green skips; with the switch its setup() fails and names the reason. macOS
+          # has no install step and may keep skipping. Off-Linux the expression yields an empty
+          # value, which the file reads as the switch unset (the PYTHON_GIL idiom above).
+          ROMP_GITLEAKS_REQUIRE: ${{ runner.os == 'Linux' && '1' || '' }}
         run: bats --print-output-on-failure tests/*.bats
       # T224: the manager<->kernel handshake proof (tests/manager-*.test.js: restart coalescing, the
       # quiet-window chain, the drain-lease refusal notices) ran only by hand until now. It runs HERE,
@@ -239,8 +480,19 @@ jobs:
         # ref. --diff-merges=first-parent: `gitleaks git` runs `git log -p`, which omits
         # merge-commit diffs, so a secret introduced only in a merge (a conflict resolution) is
         # invisible to --all alone; the tree scan below catches it only while it is still at HEAD;
-        # this surfaces it in history for good. A finding exits nonzero and fails the step.
-        run: gitleaks git . --no-banner --redact -v --config .gitleaks.toml --log-opts="--all --diff-merges=first-parent"
+        # this surfaces it in history for good. --text: that same `git log -p` reads the checkout's
+        # .gitattributes, and a path marked -diff prints a `Binary files ... differ` line with no
+        # hunk, so a secret committed in such a path and removed in a later commit is text this scan
+        # never sees while the tree scan below reads HEAD, where it is gone; --text prints the diff
+        # regardless of the attribute. Latent here today: the one committed .gitattributes
+        # (ui/webview/anchor-map-fixtures/.gitattributes) marks a fixture -text, for its line
+        # endings, not -diff. Other plain-stream options (--no-color, --no-textconv, --no-ext-diff)
+        # guard against a developer's git config; no step of this workflow configures color, textconv
+        # or a diff driver (actions/checkout's config writes touch nothing about diff output), so here
+        # they would be defence in depth, not load-bearing.
+        # The committed attribute is the input this repository carries itself, and --text is its
+        # option. A finding exits nonzero and fails the step.
+        run: gitleaks git . --no-banner --redact -v --config .gitleaks.toml --log-opts="--all --diff-merges=first-parent --text"
       - name: Scan the tree as it stands
         # The history scan reads commit diffs, so a secret in a file that is present but untouched
         # by any scanned commit (a submodule tip, a file added before a rewrite) is only caught by
@@ -262,7 +514,12 @@ jobs:
     # names its slowest labs (--durations=20) so the next growth is visible in the log. The labs kept
     # growing: PR 1790's run 35138058863 was cancelled at 25 min 04 s mid served-lab on a slow runner,
     # every step green up to the cut (2026-09-16). 40 min: the served step's 20-odd minutes on a slow
-    # runner plus the 600 s per-test timeout plus setup.
+    # runner plus the 600 s per-test timeout plus setup. The Browser legs step below carries a bound of
+    # its own, 5 minutes (its timeout-minutes), the roster's budget, which fits within the job's margin
+    # under this cap at the head the step's own comment names (tools/ci-browser-legs.test.mjs derives
+    # the margin from that comment and this cap, so the figures have one home), so a step that runs to
+    # its bound fails by name and the job still ends under this cap. A roster whose legs together exceed
+    # that bound raises the step's timeout-minutes and this cap in the same PR.
     timeout-minutes: 40
     defaults:
       run:
@@ -311,6 +568,58 @@ jobs:
         # which one ran ("browser: playwright chromium").
         timeout-minutes: 5
         run: npx playwright install chromium
+      - name: Browser legs (node --test over ci-browser-legs.txt)
+        # The browser legs named in vscode-extension/ci-browser-legs.txt run here with the Chromium installed above.
+        # The Test step runs every leg too, but before any browser is installed, so there each one skips at launch,
+        # and this step is the job's only run of a rostered leg with a browser. ROMP_BROWSER_LEGS_REQUIRE=1 arms the
+        # one shared launcher, inBrowser in ui/webview/real-viewer-leg.ts (any non-empty value counts), and under the
+        # switch, inBrowser fails a launch it cannot make, naming the switch and the reason, instead of skipping. So,
+        # for a leg that follows the roster rule below, a runner that lost its browser turns this step red rather than
+        # green with the coverage gone (the ROMP_UI_BENCH_REQUIRE stance below), and the script prints "the runner
+        # lost its browser: check the Chromium install step" beside the failing leg, within the scope the script's
+        # header states. The roster is the file each PR
+        # adds its legs to, one compiled bundle path per line. The roster rule: under the switch, a rostered leg
+        # passes only when inBrowser has launched Chromium, and the leg does nothing that lets it pass otherwise (for
+        # example: it launches no browser of its own; nothing catches or settles inBrowser's rejection, so the
+        # rejection fails its test; it does not change ROMP_BROWSER_LEGS_REQUIRE, and hands inBrowser no test context
+        # but the one node gave it; it does not end its own process, from a test, a hook or a timer; no condition the
+        # runner can leave unmet stands between a browser test and its inBrowser call; it skips and marks todo
+        # nothing). The reviewer of any PR that adds a roster line or changes a rostered leg's source or inBrowser
+        # checks the rule; the step does not. Nothing in the tree reads a leg's source for the rule, so the step can
+        # read green a rostered leg that breaks it. Examples, not the whole set: a rostered leg that launches its own
+        # browser and swallows a failed launch without skipping; a rostered module that launches nothing; a leg that
+        # drives a browser from a child process and tolerates the child's failure; a todo test that passes beside a
+        # real pass; a leg that catches inBrowser's rejection and passes (a try and catch around the awaited call,
+        # .catch(), .then's second argument or Promise's allSettled). A leg built to pass without a browser is outside
+        # what the step can detect. tools/ci-browser-legs.test.mjs runs a synthetic leg of each example and reads it
+        # green. Nothing checks that every browser leg in the tree is rostered, and main has no such check. inBrowser's
+        # read of the switch changes inBrowser's own skip alone: a private skip is not turned into a failure by it, and
+        # a private launch that fails is not inBrowser's failure naming the switch. The step sits directly after the
+        # Chromium install with nothing before the Test step moved, so plans/markdown-viewer.md's CI sentence and the
+        # pin that reads it (tools/markdown-viewer-plan-gate-adopt.test.mjs) stay true. The Dashboard pane bench and the
+        # served-page tests below run only after this step passes: a red here skips them for the run, as a red step
+        # before them always has. The script (scripts/ci-browser-legs.sh) checks before node --test that every roster
+        # line is a bundle path, listed once, whose source is in the tree and whose bundle is under out-tests/ (the Test
+        # step's npm test built it; the Build step writes dist/ only), a red naming the line and the fix; after node
+        # --test it reads its own reporter's record (scripts/ci-browser-legs-reporter.mjs) and a rostered leg with no
+        # passing test of its own, a skipped test, a failure inside a todo, or a file that failed as a whole is red too,
+        # naming the leg or the test, within the scope the script's header states; an empty roster prints "no legs in
+        # the roster" and exits 0 without starting node --test, whose default glob would rerun the whole suite
+        # (tools/ci-browser-legs.test.mjs, in the shell job, runs the script over synthetic trees).
+        # Two bounds: this step's timeout-minutes (the job comment above says it fits within the margin under the
+        # job's cap at the measured head), so a roster whose legs together exceed it fails this step by name instead of
+        # cancelling the job nameless; and node's --test-timeout in the script, a per-FILE bound under the step's, so
+        # one hung leg fails by name (node cancels that file and ends its process at the bound, naming it, and runs the
+        # other files on; a leg's own { timeout } does not end the process, since a live browser handle keeps it up
+        # after the named failure). Nothing reads a leg's cost before it runs: a PR that rosters a leg measures it in
+        # its own run, raises the step's timeout-minutes and the job's cap together when the total needs it (the job
+        # comment above), and node's --test-timeout when one leg's own bound or its whole-file seconds need it. Step
+        # seconds, job minutes and the job's 40-minute cap:
+        # (measured on the runner at 74db18d9c, the merge of the fork's main into this branch before the review's round 3, the merge whose title says so, one leg rostered, the launcher's own switch test: 15 s for this step in a job of 35 min 0 s, under the 40-minute cap, a margin of 300 s. The script then also ran a census of the tree's test modules and checks over an exclusions file before node --test; both have left this branch since (the fork's branch ci-browser-legs-census keeps them), so this step now runs less than was measured: at b6fd829bf, the author's landing merge for the review's round 11, whose subject names main at ffab236bd, three runs of this step's command from vscode-extension/ on a development box, with the bundles built and the switch set, took 1.87 s, 1.89 s and 1.87 s at a load average of about 22 on 60 cores (node's own duration in the first, 1.77 s). Three runs at 84cc6c142, the commit of the review's round 11 whose subject names condition 4 first, took 2.69 s, 2.70 s and 2.55 s at a load average of about 46 (node's own duration in the first, 2.55 s), three at 789b8252c, the commit of the author's closing pass after the review's round 11 whose subject names the script's header first, took 2.90 s, 2.65 s and 2.89 s at a load average of about 46, three at c0046a3b8, the commit of the review's round 11 whose subject names correctness-4 first and then seen_at and the post-run key, took 2.31 s, 2.38 s and 2.46 s at a load average of about 28, three at 2e4104fad, the commit of the author's closing pass after the review's round 10 whose subject names the reporter's file-level mark first, took 1.89 s, 1.99 s and 2.03 s at a load average of about 18, three at 345805840, the commit of the review's round 10 whose subject names extra5-1 first, took 1.69 s, 1.67 s and 1.84 s at a load average of about 17, and three at f6f736f31, the commit of the review's round 9 whose subject names regression-1 first, took 1.82 s each at a load average of about 12. The files this step runs are the roster (vscode-extension/ci-browser-legs.txt), each rostered leg's source (today ui/webview/real-viewer-leg-switch.test.ts alone), the script (scripts/ci-browser-legs.sh), its reporter (scripts/ci-browser-legs-reporter.mjs) and the launcher (ui/webview/real-viewer-leg.ts): between 74db18d9c and f6f736f31 the roster changes in its header comment alone, the reporter in its header comment alone, the script by that removal, by refusing a bundle path that is not canonical, by the wording of its reds and by its comments, and the switch test by its narrowed title and comments and by an assertion that reads the script's phrase, and the roster's one line and the launcher are as measured; between f6f736f31 and 2e4104fad, through 345805840, the roster, the reporter and the script change in their comments alone, and the switch test and the launcher not at all; between 2e4104fad and c0046a3b8 the roster changes in its header comment alone, the script by handing awk two values through its environment in place of -v (the line its duplicate check compares and the path its post-run pass keys on) and by its comments, the switch test by its comments, its second test's title and one assertion's message, and the reporter and the launcher not at all; between c0046a3b8 and 789b8252c the script changes by one line of its header comment and by the wording of its skip red under the switch, and the roster, the switch test, the reporter and the launcher not at all; between 789b8252c and 84cc6c142 the script changes in its header comment alone, and the roster, the switch test, the reporter and the launcher not at all; and between 84cc6c142 and b6fd829bf the switch test changes by giving each child run a temporary directory of its own, in a scratch directory it removes, with two assertions on them, by its first test's report of its temporary directory and by its comments, the roster and the script change in their comments alone, the launcher changes by the fork's main that b6fd829bf merges, where PR 912 adds a clause to bundleViewer's docstring and previewFull to its esbuild entry, and the reporter not at all. A later commit, or a merge of the fork's main when the branch takes one, is read against the same files from its diff, and one that changes none of them leaves those files as measured (the Playwright version vscode-extension/package-lock.json pins, which fixes the Chromium the install step fetches, and the runner can still move the step's seconds). The step's seconds and the job's length, which moves with the suite, are re-read from CI at each pushed head in the PR's body. This description of the measured heads and of what changed after them is NOT PINNED: tools/ci-browser-legs.test.mjs pins the figures beside it by shape and against the cap and the step's own bound, and each head is named by its sha and by its merge's title or its commit's subject, which the fork's merge-commit landings keep in main's history (a rebase or an offer elsewhere re-measures and renames them), while the Shell job checks out at depth 1, so no pin there can read a sha's title, subject or diff, and a reader checks them against the branch's history. The margin is the job's other phases' to spend, so a job that grows toward the cap with the roster unchanged re-measures here and lowers this bound or raises the cap; the first pushed head, with the roster empty, took 9 s inside a job that lasted 33 min 51 s; each PR that adds a leg states its own leg's numbers in its body.)
+        timeout-minutes: 5
+        env:
+          ROMP_BROWSER_LEGS_REQUIRE: "1"
+        run: bash scripts/ci-browser-legs.sh
       - name: Dashboard pane bench (node --test)
         # tools/ui-bench.mjs replays a synthetic frame stream into the real feed and timeline pages in the
         # headless Chromium installed above, served by the kernel's own page route from the dist the Build
@@ -363,6 +672,19 @@ jobs:
         # runs (5e5ee79ed, 68d043742 and 5b8df8f5c; the jobs 29 min 03 s, 31 min 07 s and 33 min 24 s) and 28 min 21 s on
         # this branch (job 106182603399, the job 31 min 32 s), against the 40-minute cap above; the cap and the job's
         # structure are main's item, unchanged here.
+        # -p no:anyio, as on every pytest invocation in this file (tests/test_ci_sdk_pin.py's population
+        # check holds the flag on each, with no exemption): this interpreter has no anyio today (the pip
+        # line below installs pip, pytest, pytest-timeout and cryptography, none of which depends on it;
+        # run 35535192879's served step installed nine packages, none anyio) and pytest accepts the flag
+        # where the plugin is absent, so the flag costs nothing here and a package added to that line
+        # whose closure carries anyio cannot auto-load its pytest plugin without a word. No
+        # ROMP_SDK_REQUIRE: the switch declares that the interpreter running pytest has the SDK the Python
+        # job's install step put there, and this job installs none, so setting it would declare something
+        # untrue; the population check lists this step for the switch with that reason and checks its
+        # premises (no SDK install in this job's run blocks; no file the two globs collect, and no helper
+        # module under tests/ they could import, conftest included, spells the switch's name), so the day a
+        # served module spells the switch's name the listing goes red (keyed on the spelling in the file's
+        # text: a reader that spells the name indirectly is outside that read).
         working-directory: ${{ github.workspace }}
         env:
           ROMP_SERVED_TESTS_REQUIRE: "1"
@@ -370,4 +692,4 @@ jobs:
           ROMP_CORNER_TWO_HOSTS: "1"
         run: |
           python -m pip install --upgrade pip pytest pytest-timeout cryptography
-          python -m pytest tests/test_*_browser.py tests/test_*_served.py tests/test_relay_dial_declares_held_pair.py -q -rs -p no:cacheprovider --durations=20 --timeout=600 --timeout-method=thread
+          python -m pytest tests/test_*_browser.py tests/test_*_served.py tests/test_relay_dial_declares_held_pair.py -q -rs -p no:cacheprovider -p no:anyio --durations=20 --timeout=600 --timeout-method=thread

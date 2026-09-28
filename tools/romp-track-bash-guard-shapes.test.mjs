@@ -4,7 +4,8 @@
 // never touches). A subshell's cd ends at its `)`; a heredoc body belongs to the command that opened
 // it, so `python3 - <<EOF && echo done` is read; a shell fed its script by heredoc is read like `sh -c`;
 // `bash -lc` is `bash -l -c`; `python3 -u <<EOF` still reads stdin; `sudo -u USER cp` is a cp; `[[ a > b ]]`
-// compares; `Path('x').open('w')` and `open(mode='w', file='x')` are writes. The verdict builds the
+// compares in bash and zsh (and since round 5's fifth addendum, 2026-09-20, is read in dash's grammar too,
+// where it redirects, so a tracked target there refuses); `Path('x').open('w')` and `open(mode='w', file='x')` are writes. The verdict builds the
 // project's link closure once per call, not once per landing file, so a directory copy costs one
 // walk. And the branches no other test reached (the prefixes, pushd and popd, node -p and --print,
 // the NUL-byte rule) are pinned so removing one fails by name. The review's second round added:
@@ -12,8 +13,10 @@
 // before the operands are read; a wrapped `open(` call and a here-string script are scanned; a
 // process substitution is a word, not a segment break; a glob operand is expanded against the
 // filesystem; a directory source is walked to every file; a symlink to a tracked file is the
-// tracked file; and store-io's isTrackedFile is pinned to the steps the verdict copies. Synthetic:
-// a project under os.tmpdir(), invented paths, no session data.
+// tracked file; and store-io's isTrackedFile is pinned to the steps the verdict copies. Review round 3
+// (2026-09-19) added: a literal relative target after a cd inside a body is refused in a tracked project
+// with the reason, not dropped; bash's -O and an o or O inside an option cluster take the next word.
+// Synthetic: a project under os.tmpdir(), invented paths, no session data.
 //
 // Run: node --test tools/romp-track-bash-guard-shapes.test.mjs
 import { test, beforeEach, afterEach } from 'node:test';
@@ -25,6 +28,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { evaluate, extractWriteTargets, scriptWriteTargets, lex, isGuardedPath } from '../hooks/romp-track-bash-guard.mjs';
+import * as guard from '../hooks/romp-track-bash-guard.mjs';   // a namespace for the exports added since (round 6's dqSingleField), so a run against an older hook reports the test alone
 
 const HOOK = fileURLToPath(new URL('../hooks/romp-track-bash-guard.mjs', import.meta.url));
 const ROMP_SID = '11111111-2222-3333-4444-555555555555';
@@ -91,16 +95,38 @@ test('a write inside the subshell, a brace group and a nested subshell resolve a
 });
 
 test('a cd inside an if, loop or case body leaves the cwd unknown once the body closes: the body may not run', () => {
-  // before the fix `if false; then cd docs; fi; cp base/report.md report.md` was refused as a write to docs/report.md
-  for (const cmd of [
+  // Before the review's first fix `if false; then cd docs; fi; cp base/report.md report.md` was refused as a write to
+  // docs/report.md; that fix left the cwd unknown and DROPPED the literal relative target, so the same command from a
+  // tracked cwd passed, and a body cd turned a refused write on a tracked file into an allowed one (review round 3,
+  // 2026-09-19, by execution in real bash: the body did not run and the copy ran in the project). A literal relative
+  // target whose directory is not known is now refused while the cwd's project is in play, with the reason (the cd
+  // sits in a body that may not run) and a remedy (an absolute target, or a cd to a literal directory first); from a
+  // cwd in no project it passes as every unreadable target does, and an absolute target after the same body is judged
+  // as ever. Both directions, so the rule cannot be met by refusing everything after a body.
+  const UNKNOWN_DIR = /the directory it is relative to is not known/;
+  const bodies = [
     'if false; then cd docs; fi; cp base/report.md report.md',
     'while false; do cd docs; done; echo x > report.md',
     'for d in docs; do cd "$d"; done; echo x > report.md',
     'case $x in a) cd docs;; esac; echo x > report.md',
-  ]) {
-    assert.deepEqual(targets(cmd), [], `unresolvable after the body: ${cmd}`);
-    assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
+  ];
+  for (const cmd of bodies) {
+    assert.deepEqual(targets(cmd), [], `no literal target after the body: ${cmd}`);
+    const reason = evaluate(payload(cmd));
+    // the reason is the first thing that made the directory unknown: the body for a literal cd, the word for `cd "$d"`
+    const why = cmd.includes('"$d"') ? 'an earlier `cd` names "$d", a directory the shell fills in' : 'sits in an if, loop or case body that may not run';
+    assert.ok(reason && UNKNOWN_DIR.test(reason) && reason.includes(why), `refused in the tracked project, saying why: ${cmd}: ${reason}`);
+    assert.ok(reason.includes('Spell the target as an absolute path, or cd to a literal directory that exists first'), 'and what to do');
+    assert.ok(!/is not a literal path/.test(reason), 'not the non-literal text: the word is literal, the directory is what is not known');
+    assert.ok(reason.includes(`and ${proj} tracks files`), 'naming the project in play');
   }
+  const plain = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-shapes-plain-')));
+  try {
+    fs.mkdirSync(path.join(plain, 'docs'));
+    for (const cmd of bodies) assert.equal(evaluate(payload(cmd, plain)), null, `from a cwd in no project: ${cmd}`);
+  } finally { fs.rmSync(plain, { recursive: true, force: true }); }
+  assert.equal(evaluate(payload(`if false; then cd docs; fi; cp base/report.md ${rootFile}`)), null, 'an absolute untracked target after the body is judged as ever');
+  assert.match(evaluate(payload(`if false; then cd docs; fi; cp base/report.md ${report}`)), /^Track-changes is ON for /, 'and an absolute tracked one is refused by name');
   assert.deepEqual(targets('if true; then cd docs; cp ../base/report.md report.md; fi'), [report], 'inside the body the cd holds');
   assert.deepEqual(targets('if true; then echo x > docs/report.md; fi; cp base/report.md docs/report.md'), [report, report], 'a body with no cd leaves the cwd as it was (evaluate dedupes)');
   assert.deepEqual(targets('for f in a b; do cp "$f" docs/report.md; done; echo x > docs/report.md'), [report, report], 'the loop body and the echo each name it');
@@ -167,6 +193,27 @@ test('a -c in an option cluster is a -c: bash -lc, sh -ec, bash -xc; a variable 
   assert.ok(extractWriteTargets('bash -lc "$SCRIPT"', proj).opaque, 'a script the hook cannot read is marked so');
   assert.equal(evaluate(payload('bash -lc "$SCRIPT"')), null);
   assert.deepEqual(targets('bash -x run.sh'), [], 'no -c, a script file');
+  // Review round 3 (2026-09-19): bash reads `-O <shopt>` and `+O <shopt>`, and an O anywhere in a cluster, as taking the
+  // next word, so `bash -O extglob -c '<script>'` read extglob as the operand and the script was never scanned (a literal
+  // tracked target in it passed and, run for real, overwrote the file); an o anywhere in a cluster takes a word too
+  // (`-oc errexit`), where before only a cluster ending in o did. zsh takes no word after -O and dash rejects it, so the
+  // rule is bash's alone: `zsh -O -c '<script>'` is judged on its script. Both directions.
+  for (const cmd of [
+    "bash -O extglob -c 'cp base/report.md docs/report.md'",
+    "bash +O extglob -c 'cp base/report.md docs/report.md'",
+    "bash -iO extglob -c 'cp base/report.md docs/report.md'",
+    "bash -Oc extglob 'cp base/report.md docs/report.md'",
+    "bash -oc errexit 'cp base/report.md docs/report.md'",
+    "bash -ox errexit -c 'cp base/report.md docs/report.md'",
+    "zsh -O -c 'cp base/report.md docs/report.md'",
+  ]) {
+    assert.deepEqual(targets(cmd), [report], cmd);
+    assert.ok(evaluate(payload(cmd)), `refused: ${cmd}`);
+  }
+  for (const cmd of ["bash -O extglob -c 'cp base/report.md sub/ok.md'", "bash -Oc extglob 'cp base/report.md sub/ok.md'", "zsh -O -c 'cp base/report.md sub/ok.md'"]) {
+    assert.deepEqual(targets(cmd), [path.join(proj, 'sub', 'ok.md')], cmd);
+    assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
+  }
 });
 
 // ── interpreter options before a heredoc ───────────────────────────
@@ -209,8 +256,12 @@ test('a prefix with options still leads to the command: sudo -u, sudo -n, env -u
   ]) {
     assert.deepEqual(targets(cmd), [report], cmd);
   }
-  assert.deepEqual(targets('env -C base cp report.md ../docs/report.md'), [], 'env -C runs the command elsewhere: its relative paths are not the cwd\'s');
-  assert.deepEqual(targets('sudo -D base cp report.md ../docs/report.md'), []);
+  // round 4 (2026-09-19): env -C / sudo -D run the command in DIR, so its relative operands resolve there, not the
+  // cwd. Before, commandOf returned null and the whole segment was dropped, and the copy onto the tracked file passed.
+  assert.deepEqual(targets('env -C base cp report.md ../docs/report.md'), [report], 'env -C base: ../docs/report.md is relative to base = proj/docs/report.md');
+  assert.deepEqual(targets('sudo -D base cp report.md ../docs/report.md'), [report]);
+  assert.deepEqual(targets('env --chdir=base cp report.md ../docs/report.md'), [report], 'env --chdir=DIR, glued');
+  assert.deepEqual(targets('env -C base cp report.md ../docs/other.md'), [path.join(proj, 'docs', 'other.md')], 'the target resolves under base too, here to an untracked file');
 });
 
 test('pushd moves the cwd like cd; popd leaves it unknown', () => {
@@ -222,24 +273,49 @@ test('pushd moves the cwd like cd; popd leaves it unknown', () => {
 
 // ── [[ ... ]] and (( ... )) compare ────────────────────────────────
 
-test('[[ a > b ]] and (( a > b )) compare and write nothing; [ a > b ] and test a > b redirect, as in the shell', () => {
+test('[[ a > b ]] and (( a > b )) compare in bash and zsh, and are a command named `[[` with a redirection, and a subshell running `a` with one, in dash (round 5\'s fifth addendum, 2026-09-20): a tracked target refuses by name with dash and the construct named, a read or an untracked target stays allowed, a for head gets no dash reading; [ a > b ] and test a > b redirect in every shell', () => {
+  // refused since the fifth addendum: dash 0.5.12 truncated docs/report.md through each (measured), bash 5.2 and zsh 5.9 compared
+  for (const [cmd, head] of [
+    ['[[ a > docs/report.md ]]', '[['],
+    ['[[ docs/other.md > docs/report.md ]] && echo hi', '[['],
+    ['if [[ "$name" > docs/report.md ]]; then echo newer; fi', '[['],
+    ['(( 3 > docs/report.md )) && echo yes', '(('],
+    ['if (( x > docs/report.md )); then :; fi', '(('],
+  ]) {
+    assert.deepEqual(targets(cmd), [report], cmd);
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && reason.includes(report) && reason.includes(`dash has no \`${head}\``), `refused, dash and the construct named: ${cmd}: ${reason}`);
+  }
+  // allowed still: a read, a dash target that is untracked (a file named `2` in the project root), a for head (a syntax error in dash: nothing runs)
   for (const cmd of [
-    '[[ a > docs/report.md ]]',
-    '[[ docs/other.md > docs/report.md ]] && echo hi',
-    'if [[ "$name" > docs/report.md ]]; then echo newer; fi',
     '[[ docs/report.md < b ]]',
     '(( 3 > 2 )) && echo yes',
     'for ((i=0; i<3; i++)); do echo $i; done',
+    'for ((i=3; i>0; i--)); do echo $i; done',
     '[[ -f docs/report.md ]] && cat docs/report.md',
+    '[[ a > docs/other.md ]]',
   ]) {
-    assert.deepEqual(targets(cmd), [], cmd);
     assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
   }
+  assert.deepEqual(targets('(( 3 > 2 )) && echo yes'), [path.join(proj, '2')], 'the dash reading names the file `2` in the cwd, untracked here');
+  assert.deepEqual(targets('for ((i=3; i>0; i--)); do echo $i; done'), [], 'a for head is a syntax error in dash and gets no dash reading');
   assert.deepEqual(targets('[[ x ]] > docs/report.md'), [report], 'after ]] a > redirects again');
+  // the test's boundaries (round 5's fifth addendum's fix-up, 2026-09-20): an operator glued to the closing `]]` is outside the test,
+  // and a process substitution among the operands is performed by bash (zsh after `!`, in a pipeline, with `&`, `|&` and under coproc; dash rejects it), its command read
+  assert.deepEqual(targets('[[ x ]]>docs/report.md'), [report], 'glued to ]] a > redirects too: the ]] under way ends the test before the operator is read (bash, zsh and dash truncated the file)');
+  assert.deepEqual(targets('[[ x ]]>|docs/report.md'), [report], 'the clobber form glued');
+  assert.deepEqual(targets('[[ -n a ]]&&cp base/report.md docs/report.md'), [report], 'a list operator glued to ]] ends the segment: the cp is a command');
+  assert.deepEqual(targets('[[ -f <(cp base/report.md docs/report.md) ]]'), [report], 'a process substitution among the operands runs its command');
+  assert.deepEqual(targets('[[ -f <(echo x > docs/report.md) ]]'), [report]);
+  assert.deepEqual(targets('[[ -f <(cat docs/report.md) ]]'), [], 'a read inside it is no write');
+  assert.deepEqual(targets('[[ x ]]>docs/other.md'), [path.join(proj, 'docs', 'other.md')], 'the untracked twin names its own file');
+  const gluedSeg = lex('[[ x ]]>docs/report.md').segments[0];
+  assert.deepEqual([gluedSeg.words.map((w) => w.text), gluedSeg.redirects.map((r) => r.op)], [['[[', 'x', ']]'], ['>']], 'the ]] closes the test before the operator is read: no test word for the operator');
+  assert.deepEqual(lex('[[ -f <(cmd) ]]').segments[0].subs, ['cmd'], 'the substitution is recorded as one, not as the test\'s < and a parenthesis');
   assert.deepEqual(targets('[ a > docs/report.md ]'), [report], 'single brackets are a command: the shell redirects');
   assert.deepEqual(targets('test a > docs/report.md'), [report]);
-  assert.deepEqual(targets('[[ a > b ]]; echo x > docs/report.md'), [report], 'the next command is not inside the test');
-  assert.deepEqual(targets('[[ a>docs/report.md ]] && echo x > docs/other.md'), [path.join(proj, 'docs', 'other.md')], 'glued, the shell still compares');
+  assert.deepEqual(targets('[[ a > b ]]; echo x > docs/report.md'), [path.join(proj, 'b'), report].sort(), 'the next command is not inside the test; the test\'s own dash target is the file b');
+  assert.deepEqual(targets('[[ a>docs/report.md ]] && echo x > docs/other.md'), [path.join(proj, 'docs', 'other.md'), report].sort(), 'glued, bash and zsh compare and dash redirects onto the tracked file');
   const { segments } = lex('[[ a>b ]]');
   assert.deepEqual(segments[0].words.map((w) => w.text), ['[[', 'a', '>', 'b', ']]'], 'the comparison is a word of its own');
 });
@@ -446,21 +522,27 @@ test('the per-call closure agrees with store-io\'s isTrackedFile on every kind o
 
 // ── the review's second round: [[ ]] with && and ||, a quoted [[ ──
 
-test('&& and || inside [[ ... ]] stay in the test: a > after them compares; after ]] they end it and a > redirects', () => {
-  // before the fix && and || ended the segment inside the test, so `[[ -n a && b > docs/report.md ]]` had
-  // its > read as a redirection onto the tracked file and the command was refused though bash writes nothing
+test('&& and || inside [[ ... ]] stay in the test for bash and zsh (a > after them compares there); dash reads the words after them as a further command, so a tracked target there refuses naming the construct (the `||` branch runs when `[[` is not found, measured; the `&&` branch is read as running too, the safe side); an unquoted parenthesis inside is a syntax error in dash, so those rows stay allowed; after ]] the operators end the test and a > redirects', () => {
+  // the second round (2026-09-18) made && and || words of the test, so `[[ -n a && b > docs/report.md ]]` was allowed, bash writing
+  // nothing; round 5's fifth addendum (2026-09-20) reads the same words as dash does too, a further command with a redirection
   for (const cmd of [
     '[[ -n "$x" && "$y" > docs/report.md ]] && echo newer',
     '[[ -z "$x" || "$y" > docs/report.md ]]',
     '[[ -n a && b > docs/report.md ]]',
-    '[[ ( a > docs/report.md ) ]]',
-    '[[ -n "$x" && ( "$y" > docs/report.md || -z "$z" ) ]]',
     'if [[ -f base/report.md && base/report.md > docs/report.md ]]; then echo newer; fi',
     'while [[ -n a || b > docs/report.md ]]; do break; done',
     '[[ "$x" == "]]" && a > docs/report.md ]]',
   ]) {
+    assert.deepEqual(targets(cmd), [report], cmd);
+    const reason = evaluate(payload(cmd));
+    assert.ok(reason && reason.includes(report) && /as a further command dash reads after the `(&&|\|\|)` inside a `\[\[ \.\.\. \]\]`/.test(reason), `refused, the further command named: ${cmd}: ${reason}`);
+  }
+  for (const cmd of [
+    '[[ ( a > docs/report.md ) ]]',
+    '[[ -n "$x" && ( "$y" > docs/report.md || -z "$z" ) ]]',
+  ]) {
     assert.deepEqual(targets(cmd), [], cmd);
-    assert.equal(evaluate(payload(cmd)), null, `allowed: ${cmd}`);
+    assert.equal(evaluate(payload(cmd)), null, `allowed, a syntax error in dash: ${cmd}`);
   }
   assert.deepEqual(targets('[[ -n a && b ]] && echo x > docs/report.md'), [report], 'after ]] the && ends the test and the > writes');
   assert.deepEqual(targets('[[ -n a ]] || echo x > docs/report.md'), [report]);
@@ -507,6 +589,9 @@ test('a brace list is expanded before the operands are read: mv x{.new,}, cp {a,
     ['tee notes/n{01..03}.md', ['01', '02', '03'].map((k) => path.join(proj, 'notes', `n${k}.md`))],
     ['tee notes/{a..c}.md', ['a', 'b', 'c'].map((k) => path.join(proj, 'notes', `${k}.md`))],
     [`tee ${proj}/notes/{x,y}.md`, ['x', 'y'].map((k) => path.join(proj, 'notes', `${k}.md`))],
+    // a redirection onto several alternatives: bash calls it ambiguous and writes nothing, zsh (multios, on by
+    // default) writes each, so each is named (2026-09-18); the tracked alternative is refused
+    ['echo x > docs/{report,other}.md', [path.join(proj, 'docs', 'other.md'), report].sort()],
   ]) {
     assert.deepEqual(targets(cmd), expected, cmd);
     assert.ok(evaluate(payload(cmd)), `refused: ${cmd}`);
@@ -516,17 +601,18 @@ test('a brace list is expanded before the operands are read: mv x{.new,}, cp {a,
   assert.ok(segments[0].words.every((w) => w.literal));
 });
 
-test('what a brace list does not write: three operands and no directory, an ambiguous redirect, {x}, a quoted brace, a list past the cap', () => {
+test('what a brace list does not write: three operands and no directory, {x}, a quoted brace, a list past the cap', () => {
+  // a redirection onto several alternatives writes each (zsh's multios): that case sits in the expansion test
+  // above, beside the other lists the shell writes (review round 1, 2026-09-18: the title here had said the
+  // opposite of the assertion it held)
   assert.deepEqual(targets('cp base/report.md docs/report.{md,bak}'), [], 'cp stops: the last operand is not a directory');
   assert.equal(evaluate(payload('cp base/report.md docs/report.{md,bak}')), null);
   assert.deepEqual(targets('mkdir -p docs/{a,b}; cp base/report.md docs/{a,b}/report.md'), []);
-  assert.deepEqual(targets('echo x > docs/{report,other}.md'), [], 'an ambiguous redirect: the shell writes nothing');
-  assert.equal(evaluate(payload('echo x > docs/{report,other}.md')), null);
   assert.deepEqual(targets('echo x > docs/{report}.md'), [path.join(proj, 'docs', '{report}.md')], 'no comma: text');
   assert.deepEqual(targets("echo x > 'docs/{report,other}.md'"), [path.join(proj, 'docs', '{report,other}.md')], 'quoted: text');
   assert.deepEqual(targets('echo x > docs/\\{report,other\\}.md'), [path.join(proj, 'docs', '{report,other}.md')], 'escaped: text');
   assert.deepEqual(targets('echo x > "docs/${d}.md"'), [], 'a parameter expansion is not a brace list');
-  assert.deepEqual(targets('tee notes/n{1..1000}.md'), [], 'past the cap the word is unresolvable and passes');
+  assert.deepEqual(targets('tee notes/n{1..1000}.md'), [], 'past the cap the word names no path (a tracked project refuses it: the grammar module)');
   assert.deepEqual(targets('{ echo x; } > docs/report.md'), [report], 'a brace group is a group, and its redirection writes');
   assert.deepEqual(targets("awk '{print}' base/report.md > docs/report.md"), [report]);
 });
@@ -624,6 +710,8 @@ test('a glob operand is expanded against the filesystem as the shell expands it:
   assert.deepEqual(targets('cat x | tee docs/rep*.md'), [report]);
   assert.deepEqual(targets("perl -pi -e 's/a/b/' docs/*"), [path.join(proj, 'docs', 'other.md'), report].sort());
   assert.deepEqual(targets('echo x > docs/rep*.md'), [report], 'one match for a redirection: the shell writes it');
+  assert.deepEqual(targets('echo x > docs/*.md'), [path.join(proj, 'docs', 'other.md'), report].sort(), 'two matches for a redirection: zsh writes each (multios), bash writes none and says so (2026-09-18)');
+  assert.ok(evaluate(payload('echo x > docs/*.md')), 'the tracked match is refused');
   assert.deepEqual(targets('cp base/report.md docs/rep*.md'), [report], 'one match for the destination');
   assert.deepEqual(targets('tee */report.md'), [path.join(proj, 'base', 'report.md'), report].sort(), 'a glob directory and a literal tail that must exist');
   assert.deepEqual(targets('cd doc* && echo x > report.md'), [report], 'a cd through a glob with one match moves there');
@@ -639,7 +727,8 @@ test('what a glob does not write: several destination matches, no match, a quote
   assert.deepEqual(targets('cp base/report.md report.md docs/report.md'), [], 'the same without a glob: three operands and no directory');
   assert.deepEqual(targets('cp base/*.rst notes/'), [], 'no match: zsh runs nothing, bash names a file the session did not mean');
   assert.equal(evaluate(payload('cp base/*.rst notes/')), null);
-  assert.deepEqual(targets('echo x > docs/*.md'), [], 'two matches for a redirection: ambiguous, the shell writes nothing');
+  // a redirection onto two matches writes each (zsh's multios): pinned in the expansion test above, where the
+  // title fits it (review round 1, 2026-09-18)
   assert.deepEqual(targets("cp base/report.md 'notes/*.md'"), [path.join(proj, 'notes', '*.md')], 'a quoted glob is a name');
   assert.ok(evaluate(payload("cp base/report.md 'notes/*.md'")), 'and under the tracked folder that name is tracked');
   assert.deepEqual(targets('cp base/report.md notes/\\*.md'), [path.join(proj, 'notes', '*.md')], 'escaped: a name');
@@ -693,6 +782,47 @@ test('a symlink to a tracked file is the tracked file: a write through it, insid
   } finally { fs.rmSync(elsewhere, { recursive: true, force: true }); }
 });
 
+test('a directory reached through a symlink is judged under its real path and its name: a link into the tracked folder refuses a non-literal copy or cd there, a folder under it that links out stays refused, a link out from an untracked spot is allowed', () => {
+  // Review round 1 (2026-09-18): the project in play for a non-literal target was searched from the lexical
+  // directory alone, so `cp "$SRC" link/` with link leading into the tracked folder passed while the same copy
+  // spelled out was refused (isGuardedPath judges the real path too). The real path alone would have flipped
+  // two refusals the literal rule gives to allow: a folder under the tracked notes/ that links out, whose
+  // lexical name the literal rule refuses, and a cwd that is such a link. So both names are judged, the real
+  // one first; and a link out of the project from a spot no tracked entry covers is allowed, as the literal
+  // copy through it is.
+  const plain = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-shapes-plain-')));
+  const out = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-shapes-out-')));
+  try {
+    fs.mkdirSync(path.join(plain, '.git'));
+    fs.writeFileSync(path.join(plain, 'src.md'), 'a source\n');
+    fs.symlinkSync(path.join(proj, 'notes'), path.join(plain, 'linknotes'));   // into the tracked folder
+    fs.symlinkSync(out, path.join(proj, 'notes', 'ext'));                       // out of the project, from under the tracked folder
+    fs.symlinkSync(out, path.join(proj, 'linkout'));                            // out of the project, from an untracked spot
+    // into the project: the landing folder, a cd, the cwd itself, each spelled through the link
+    for (const cmd of ['cp "$SRC" linknotes/', 'cp -t linknotes "$SRC"', 'cd linknotes && cp a "$DST"', 'cd linknotes && echo x > "$F"']) {
+      assert.ok(evaluate(payload(cmd, plain)), `refused: ${cmd}`);
+    }
+    assert.ok(evaluate(payload('cp a "$DST"', path.join(plain, 'linknotes'))), 'a cwd spelled through the link');
+    assert.ok(evaluate(payload('cp src.md linknotes/new.md', plain)), 'as the literal write through the link is');
+    assert.deepEqual(targets('cp "$SRC" linknotes/', plain), [], 'no literal target: the refusal is the non-literal rule\'s');
+    // out of the project from under the tracked folder: the name given is under notes/, which the literal rule refuses
+    assert.ok(evaluate(payload('cp "$SRC" notes/ext/')), 'a folder under the tracked notes/ that links out');
+    assert.ok(evaluate(payload('cp base/report.md notes/ext/x.md')), 'as the literal name is: judged under the name given first');
+    assert.ok(evaluate(payload('cp a "$DST"', path.join(proj, 'notes', 'ext'))), 'a cwd that is such a link');
+    // out of the project from an untracked spot: nothing tracked can land there, and the literal copy passes too
+    assert.equal(evaluate(payload('cp "$SRC" linkout/')), null, 'a link out from a folder no tracked entry covers');
+    assert.equal(evaluate(payload('cp -t linkout "$SRC"')), null);
+    assert.equal(evaluate(payload('cp base/report.md linkout/x.md')), null, 'as the literal copy is');
+    assert.ok(evaluate(payload('cp a "$DST"', path.join(proj, 'linkout'))), 'but a target that could land anywhere, from a cwd whose name is inside the project, is refused');
+    // a link to the project root was never affected: the marker is found through the link itself
+    fs.symlinkSync(proj, path.join(plain, 'linkproj'));
+    assert.ok(evaluate(payload('cp "$SRC" linkproj/notes/', plain)));
+  } finally {
+    fs.rmSync(plain, { recursive: true, force: true });
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});
+
 // ── the steps the verdict copies from store-io ─────────────────────
 
 test('store-io\'s isTrackedFile has the three steps trackedIn copies, in that order, so a vendored change to them fails here by name', () => {
@@ -738,15 +868,139 @@ test('the hook process rules the same way on a subshell cd, a chained heredoc an
   assert.equal(run(`python3 - <<'EOF' && echo done\n${PY_WRITE}\nEOF`).status, 2);
   assert.equal(run("bash <<'EOF'\ncp base/report.md docs/report.md\nEOF").status, 2);
   assert.equal(run("bash -lc 'cp base/report.md docs/report.md'").status, 2);
-  assert.equal(run('[[ a > docs/report.md ]]').status, 0);
+  assert.equal(run('[[ a > docs/report.md ]]').status, 2, 'a comparison in bash and zsh, a redirection in dash (round 5\'s fifth addendum)');
+  assert.equal(run('[[ a ]]>docs/report.md').status, 2, 'an operator glued to the closing ]] is a redirection in every shell (the fifth addendum\'s fix-up)');
+  assert.equal(run('[[ -f <(echo x > docs/report.md) ]]').status, 2, 'a process substitution among the operands runs its command in bash (the fifth addendum\'s fix-up)');
   assert.equal(run('sudo -n cp base/report.md docs/report.md').status, 2);
   assert.equal(run("python3 -u <<'EOF'\n" + PY_WRITE + '\nEOF').status, 2);
   // the second round's shapes
-  assert.equal(run('[[ -n "$x" && "$y" > docs/report.md ]] && echo newer').status, 0, 'a comparison after && inside [[ ]]');
+  assert.equal(run('[[ -n "$x" && "$y" > docs/report.md ]] && echo newer').status, 2, 'a comparison after && inside [[ ]] in bash and zsh, a further command with a redirection in dash (round 5\'s fifth addendum)');
   assert.equal(run('echo "[[" > docs/report.md').status, 2, 'a quoted [[ is data');
   assert.equal(run(`python3 - <<< "${PY_WRITE}"`).status, 2, 'a here-string script');
   assert.equal(run('echo x | tee >(cat) docs/report.md').status, 2, 'an operand after a process substitution');
   assert.equal(run('mv docs/report.md{.new,}').status, 2, 'a brace list');
   assert.equal(run('cp base/*.md notes/').status, 2, 'a glob source into the tracked folder');
   assert.equal(run('cp base/report.md docs/report.{md,bak}').status, 0, 'three operands and no directory: cp writes nothing');
+});
+
+// ── round 5's fifth addendum, third fix-up (2026-09-20): the lexer's reads ───────────────────
+
+test("round 5's fifth addendum, third fix-up: the lexer resolves a substitution whose command is a literal echo or printf to the text it prints (one literal word inside double quotes, as a here-string and as a redirection target; split at blanks among unquoted operands, marked 'e'; not while the command names IFS), keeps echo's two readings on a word that is the substitution alone, reads a `${...}` default word as a reading of the word, expands an unquoted here-document body (its substitutions run and its text is the consumer's) and leaves a quoted one as written, reads zsh's `=(cmd)` where zsh performs it and not inside double quotes or for a script handed to bash, records a `<` into the standard input with its descriptor, and reads a script operand naming stdin as stdin", () => {
+  const seg = (c, sh = null) => lex(c, sh).segments[0];
+  const texts = (c) => seg(c).words.map((w) => w.text);
+  // THE RESOLVED SUBSTITUTION
+  assert.deepEqual(seg("bash -c \"$(echo 'cp a b')\"").words.map((w) => [w.text, w.literal]), [['bash', true], ['-c', true], ['cp a b', true]], 'inside double quotes the printed text is one literal word');
+  assert.deepEqual(seg("echo $(echo 'cp a b')").words.map((w) => [w.text, w.marks]), [['echo', 'uuuu'], ['cp', 'ee'], ['a', 'e'], ['b', 'e']], "among unquoted operands the text splits at blanks, each piece marked 'e'");
+  assert.deepEqual(texts("a$(echo ' b c ')d"), ['a', 'b', 'c', 'd'], 'a blank at either end ends the word under way, as in the shells');
+  assert.deepEqual(texts("cp $(echo '')x"), ['cp', 'x'], 'an empty result alone makes no word');
+  assert.deepEqual(seg("bash <<< $(echo 'echo x > f')").heredocs, ['echo x > f'], 'a here-string word is one text, never split');
+  assert.deepEqual(seg("echo x > $(echo 'r.md')").redirects.map((r) => [r.target.text, r.target.literal]), [['r.md', true]], 'a redirection target is one literal word');
+  assert.deepEqual(seg("bash -c \"`echo 'cp a b'`\"").words[2].text, 'cp a b', 'a backtick resolves as a $(...) does');
+  assert.deepEqual([seg("bash -c \"$(printf '%s %s' cp 'a b')\"").words[2].literal, seg("bash -c \"$(printf '%s %s' cp 'a b')\"").words[2].readings], [false, ['cp a b']], 'printf too, its conversions taking the operands; a conversion is an interpretation, so the text is a reading of the word on the script road and the word stays an expansion (round 6, THE RESOLVER\'S CONTRACT)');
+  assert.deepEqual(seg("bash -c \"$(printf 'cp a b')\"").words[2].text, 'cp a b', 'a printf whose format holds no conversion and no backslash is plain: its text stands in the word');
+  assert.equal(seg("echo $(echo '*.md')").words[1].glob, true, "a glob character in the text globs (mark 'e' is unquoted for a glob), as bash and dash glob a substitution's result");
+  assert.deepEqual(texts("echo x > $(echo '{a,b}.md')"), ['echo', 'x'], 'and no brace list: the target is the literal name');
+  assert.deepEqual(seg("echo x > $(echo '{a,b}.md')").redirects.map((r) => r.target.text), ['{a,b}.md']);
+  const ifs = lex("IFS=:; cp $(echo 'a:b')").segments[1];
+  assert.deepEqual([ifs.words[1].literal, ifs.subs], [false, ["echo 'a:b'"]], 'while the command names IFS an unquoted substitution among operands is not resolved: the expansion stays, its command read');
+  const two = seg("bash -c \"$(echo 'cp a b\\c')\"").words[2];
+  assert.deepEqual([two.literal, two.readings], [false, ['cp a b\\c', 'cp a b']], "echo's two readings (bash as spelled; zsh and dash with the escape interpreted, \\c ending the output) stay on the word that is the substitution alone");
+  const mixed = seg("bash -c \"x$(echo 'a\\tb')\"").words[2];
+  assert.deepEqual([mixed.literal, mixed.readings], [false, ['xa\\tb', 'xa\tb']], 'beside other text a two-reading substitution leaves the word an expansion, its readings each with the literal text around them (THE GLUED READING, round 6\'s fourth commit: `${c:-c}p a b` ran cp while the glued reading was dropped; until then the word had no readings here)');
+  assert.deepEqual(seg("bash <<< \"$(echo 'a\\tb')\"").heredocs.length, 2, 'a here-string keeps both readings as texts');
+  // THE DEFAULT WORD
+  assert.deepEqual(seg("bash -c \"${x:-$(echo 'cp a b')}\"").words[2].readings, ['cp a b'], 'a default word whose text the lexer can read is a reading of the word');
+  assert.deepEqual(seg("bash -c ${x:-'cp a b'}").words[2].readings, ['cp a b'], 'unquoted: the single quotes quote');
+  assert.deepEqual(seg("bash -c \"${x:-'cp a b'}\"").words[2].readings, ["'cp a b'"], 'inside double quotes they are characters');
+  assert.deepEqual(seg('bash -c "${x-cp a b}"').words[2].readings, ['cp a b'], 'the - form');
+  assert.deepEqual(seg('bash -c "${x:=cp a b}"').words[2].readings, ['cp a b'], 'the := form');
+  assert.deepEqual(seg('bash -c "${x:+cp a b}"').words[2].readings, ['cp a b'], 'the :+ form');
+  assert.deepEqual(seg('bash -c "${x:-${y:-cp a b}}"').words[2].readings, ['cp a b'], 'a default word that is one nested default carries its readings up');
+  assert.deepEqual(seg('bash -c "${x:?cp a b}"').words[2].readings, [], "the message form gives no text of its own (round 6's fifth commit: the word stands for the value of x, carried as readingParams for extract's scriptTexts)");
+  assert.deepEqual(seg('bash -c "${x:?cp a b}"').words[2].readingParams, [{ name: 'x', op: ':?', before: '', after: '' }], 'and names the parameter it stands for');
+  assert.equal(seg('bash -c "${x}"').words[2].readings, undefined, 'a plain name gives none');
+  assert.equal(seg('bash -c "${x:-$(cat f)}"').words[2].readings, undefined, 'a word the lexer cannot read gives none (its command is read)');
+  assert.deepEqual(seg('bash -c "${x:-$(cat f)}"').viaSubs.map((v) => v.text), ['cat f']);
+  assert.deepEqual(seg('echo ${x:-a #$(cp a b)}').viaSubs.map((v) => v.text), ['cp a b'], 'the descent still reads every substitution in the word');
+  // THE UNQUOTED BODY
+  const hd = (c) => lex(c).segments[0];
+  assert.deepEqual([hd('cat <<EOF\n$(cp a b)\nEOF').heredocs, hd('cat <<EOF\n$(cp a b)\nEOF').viaSubs.map((v) => v.text)], [['$(cp a b)'], ['cp a b']], "an unquoted body's substitution is read as the command it runs, and its spelling stays in the body's text");
+  assert.deepEqual(hd('cat <<EOF\n`cp a b`\nEOF').viaSubs.map((v) => v.text), ['cp a b'], 'a backtick too');
+  assert.deepEqual(hd('cat <<EOF\n${x:-$(cp a b)}\nEOF').viaSubs.map((v) => v.text), ['cp a b'], 'and one nested in a ${...} word of the body');
+  assert.deepEqual(hd("cat <<EOF\n${x:-'$(cp a b)'}\nEOF").viaSubs.map((v) => v.text), ['cp a b'], 'a quote is a character in the body');
+  assert.deepEqual(hd("bash <<EOF\n$(echo 'echo x > f')\nEOF").heredocs, ['echo x > f'], 'the body a shell consumer reads is the text after the expansions');
+  assert.deepEqual(hd("bash <<EOF\n${x:-$(echo 'cp a b')}\nEOF").heredocs, [], "a body that is one default word is no plain here-document text (round 6's fifth commit: its reading depends on the parameter's value)");
+  assert.deepEqual(hd("bash <<EOF\n${x:-$(echo 'cp a b')}\nEOF").stdin.map((s) => [s.readings, s.readingParams]), [[['cp a b'], [{ name: 'x', op: ':-', before: '', after: '' }]]], "and hands the consumer its reading with the name it depends on, for scriptTexts to join the value or refuse (round 6's second commit had it hand the reading alone: the spelling is not a text the consumer sees, and read as a plain script it reached THE HEAD SPLICE with its quotes removed)");
+  for (const c of ["cat <<'EOF'\n$(cp a b)\nEOF", 'cat <<"EOF"\n$(cp a b)\nEOF', 'cat <<\\EOF\n$(cp a b)\nEOF', 'cat <<E"O"F\n$(cp a b)\nEOF']) assert.deepEqual([hd(c).heredocs, hd(c).viaSubs], [['$(cp a b)'], []], `a quoted delimiter keeps the body as written: ${JSON.stringify(c)}`);
+  assert.deepEqual([hd('cat <<EOF\n\\$(cp a b)\nEOF').heredocs, hd('cat <<EOF\n\\$(cp a b)\nEOF').viaSubs], [['$(cp a b)'], []], 'a backslash quotes the dollar');
+  assert.deepEqual(hd('cat <<-EOF\n\t$(cp a b)\n\tEOF').viaSubs.map((v) => v.text), ['cp a b'], '<<- strips the tabs and expands alike');
+  // zsh's =(cmd)
+  assert.deepEqual([seg('cat =(cp a b)').subs, seg('cat =(cp a b)').words.map((w) => w.text)], [['cp a b'], ['cat', '=(cp a b)']], 'an operand: cmd runs, the word stands for a file');
+  assert.deepEqual(seg('x==(cp a b)').subs, ['cp a b'], "an assignment's value");
+  assert.deepEqual(seg('echo ${x:-=(cp a b)}').viaSubs.map((v) => v.text), ['cp a b'], 'the word of a ${...} operator');
+  assert.deepEqual(seg('echo ${x/b/=(cp a b)}').viaSubs.map((v) => v.text), ['cp a b'], 'a replacement part');
+  assert.deepEqual([seg('echo "${x:-=(cp a b)}"').viaSubs, seg('echo ${x:-a=(cp a b)}').viaSubs], [[], []], 'not inside double quotes, not after a character of the word');
+  assert.deepEqual(seg('cat =(cp a b)', 'bash').subs, [], 'not for a script handed to bash (the parenthesis is read as bash reads it)');
+  assert.deepEqual(seg('cat =(cp a b)', 'zsh').subs, ['cp a b'], 'read for a script handed to zsh');
+  assert.deepEqual(lex('x=(a b)').segments.map((s) => s.paren || s.words.map((w) => w.text)), [['x='], '(', ['a', 'b'], ')'], 'an array assignment keeps its reading');
+  // the standard input
+  assert.deepEqual(seg("bash < <(echo 'cp a b')").stdin.map((s) => [s.text, s.fd]), [["<(echo 'cp a b')", null]], 'a < into the standard input records its word');
+  assert.deepEqual(seg('bash 3</dev/null').stdin.map((s) => [s.text, s.fd]), [['/dev/null', '3']], 'and the descriptor numbered before it');
+  assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | bash /dev/stdin"), [report], 'a script operand naming stdin reads the piped script');
+  assert.deepEqual(targets("bash <(echo 'cp base/report.md docs/report.md')"), [report], 'a process substitution as the script operand, its echo literal, is the script');
+  assert.deepEqual(targets("bash < <(echo 'cp base/report.md docs/report.md')"), [report], 'and as a < into the standard input');
+  assert.deepEqual(targets('bash <(cat f)'), [], 'a producer the guard cannot read: nothing');
+  assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | (bash)"), [report], 'a subshell consumer reads what was piped into it');
+  assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | if true; then bash; fi"), [report], 'an if body too');
+  assert.deepEqual(targets("(bash) <<'EOF'\ncp base/report.md docs/report.md\nEOF"), [report], "a here-document on a subshell's closer feeds it");
+  assert.deepEqual(targets("{ bash; } <<'EOF'\ncp base/report.md docs/report.md\nEOF"), [report], "and on a group's");
+  assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | bash -c 'bash'"), [report], "a -c script's inner shell reads its caller's stdin");
+  assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | f() { bash; }"), [], 'a definition reads nothing');
+  assert.deepEqual(targets("bash -c \"$(echo 'cp base/report.md docs/report.md')\""), [report], 'a resolved -c operand is the script');
+  assert.deepEqual(targets("x=cp; bash -c \"${x:-echo} base/report.md docs/report.md\""), [report], "a default word is read as the script under the value the command gives its name (round 6's fifth commit, THE PARAMETER'S VALUE: x=cp runs the copy where the word alone read `echo`)");
+  assert.deepEqual(targets("bash -c \"${x:-$(echo 'cp base/report.md docs/report.md')}\""), [], 'a default word of a name the command never sets is no target of its own');
+  assert.ok(extractWriteTargets("bash -c \"${x:-$(echo 'cp base/report.md docs/report.md')}\"", proj).unresolved.some((u) => u.why && u.why.kind === 'unresolvableReading' && /does not set `x`/.test(u.why.text)), 'it is UNRESOLVABLE: the value is the shell\'s own, which the guard does not read (refused while a project is in play; the third fix-up read the word alone as the script)');
+  assert.deepEqual(targets('cat <<EOF\n$(cp base/report.md docs/report.md)\nEOF'), [report], "an unquoted body's substitution runs");
+  assert.deepEqual(targets("cat <<'EOF'\n$(cp base/report.md docs/report.md)\nEOF"), [], 'a quoted one does not');
+  assert.deepEqual(targets("$(echo 'cp base/report.md docs/report.md')"), [report], 'the substitution alone is the command line, split');
+  const split = evaluate(payload('cp $(cat f)'));
+  assert.ok(split && /may split into several words/.test(split), `a copying writer with one unquoted expansion as its operand is refused while the project is in play: the shell may split it (THE SPLIT OPERAND): ${split}`);
+  assert.equal(evaluate(payload('cp "$(cat f)"')), null, 'double-quoted, one operand: no write');
+  // round 6, THE SINGLE FIELD (round 5's extra7-1: `cp "$@"` copied in every shell while every double-quoted word was exempt): a
+  // double-quoted operand is exempt from THE SPLIT OPERAND only when the guard proves it one field; every `@` form, a `[@]` subscript,
+  // bash's `${!..}` and zsh's `(`, `=`, `~` and `^` openers may split. Pinned in both directions; the rows with the shells that write
+  // are the round-6 rows of tools/romp-track-bash-guard.test.mjs.
+  const splitRefused = (cmd) => { const r = evaluate(payload(cmd)); assert.ok(r && /may split into several words/.test(r), `refused, may split: ${cmd}: ${r}`); };
+  for (const cmd of ['cp "$@"', 'cp "${@}"', 'cp "${@:2}"', 'cp "${@#x}"', 'cp "${arr[@]}"', 'cp "${arr[@]:1}"', 'cp "${!m[@]}"', 'cp "${(@)arr}"', 'cp "${=s}"', 'cp "${(s: :)s}"', 'cp "${(f)s}"', 'cp "${(z)s}"', 'cp "$arr[@]"', 'cp "x$@"', 'cp "${!BB@}"', 'cp "$=s"', 'cp $=s']) splitRefused(cmd);   // `"$=s"` and `$=s`: zsh's unbraced flag (round 6's third commit)
+  for (const cmd of ['cp "$x"', 'cp "${x}"', 'cp "$*"', 'cp "${arr[*]}"', 'cp "${x:-a b}"', 'cp "${x#zz}"', 'cp "$1"', 'cp "$#"', 'cp "`cat f`"', 'cp "$((1+2))"', 'cp "a $x b"']) assert.equal(evaluate(payload(cmd)), null, `double-quoted and one field: no write: ${cmd}`);
+  assert.deepEqual(['"$x"', '"$@"', '"${a[@]}"', '"${(@)a}"', '"${=s}"', '"$a[@]"', '"${!p@}"', '$x', '"a"x', '"$=s"', '"$^s"', '"$~s"'].map((raw) => guard.dqSingleField(raw)), [true, false, false, false, false, false, false, false, false, false, false, false], 'the predicate: one field only for a wholly double-quoted word with no splitting form; a word not wholly quoted is never exempt; zsh\'s unbraced flags (round 6\'s third commit) are never proven one field');
+  // zsh's unbraced flags are expansions (round 6's third commit: `cp ../base/report.md $~X` was a copy onto the literal name `$~X`, allowed while zsh copied onto X's value)
+  assert.deepEqual(seg('cp a $~X $^Y $=Z').words.slice(2).map((w) => [w.text, w.literal]), [['$~X', false], ['$^Y', false], ['$=Z', false]], 'unbraced flags: expansions of the name, for the Bash tool\'s command');
+  assert.deepEqual(seg('cp a $~X', 'bash').words[2].literal, true, 'a literal dollar in a script handed to bash');
+  assert.deepEqual(seg('cp a $~X', 'zsh').words[2].literal, false, 'and an expansion in one handed to zsh');
+  assert.ok(/is not a literal path/.test(evaluate(payload('X=docs/report.md; cp base/report.md $~X'))), 'so a target spelled with a flag is one the hook cannot read');
+  // THE SPLIT TARGET (round 6's third commit): each field bash and zsh open beside the whole text dash opens
+  assert.deepEqual(seg("echo x > $(echo 'a docs/report.md')").redirects.map((r) => r.target.text), ['a docs/report.md', 'a', 'docs/report.md'], 'a resolved text with a blank at a redirection target: the whole text and each field');
+  assert.deepEqual(targets("echo x > $(echo 'a docs/report.md')"), [report].concat(targets('echo x > a')).concat(targets("echo x > 'a docs/report.md'")).sort(), 'the tracked field is a target by name');
+  assert.deepEqual(targets("echo x > $(echo 'docs/report.md ')"), [report, report + ' '].sort(), 'a trailing blank: the stripped field is the tracked file, beside the whole text dash opens (a name ending in a blank)');
+});
+
+test("round 6, sixth commit: THE APPLIED RESOLVER at the lexer, a printer with a redirection or an operator inside a list is UNRESOLVABLE, never null, and a list with no printer stays null; THE SPECIAL PARAMETER's forms; THE ASSIGNED DEFAULT on the segment; THE EMPTY ALTERNATIVE's mark", () => {
+  const printedOf = (c) => lex(c).segments.filter((s) => s.printed).pop();   // the last: a printer before a `|` inside the list carries its own reading, the closer the list's
+  const whyOf = (c) => { const s = printedOf(c); return s && s.printed && s.printed.unresolvableReading ? s.printed.unresolvableReading.why : `(no unresolvable reading placed: ${s ? JSON.stringify(s.printed) : 'no printed segment'})`; };   // the mark's reason, or a text that says what was placed instead, so a missing mark fails the assertion that follows
+  for (const c of ["echo 'cp a b' 2>/dev/null | bash", "printf '%s\\n' 'cp a b' </dev/null | bash", "echo 'cp a b' 3>/dev/null | bash", "echo 'cp a b' >/dev/null | bash", "echo 'cp a b' <<< x | bash"]) assert.ok(whyOf(c).includes('whether its text reaches the stream'), `a redirection on the printer: ${c}`);
+  for (const c of ["(echo 'cp a b' && true) | bash", "(echo 'cp a b' || true) | bash", "(echo 'cp a b' & wait) | bash", "(echo 'cp a b' | cat) | bash", "{ echo 'cp a b' && true; } | bash"]) assert.ok(whyOf(c).includes('an operator outside the model'), `a printer followed by an operator inside the list: ${c}`);
+  for (const c of ["(echo 'cp a b') 2>/dev/null | bash", "{ echo 'cp a b'; } 2>/dev/null | bash", "(time echo 'cp a b') 2>/dev/null | bash", "(cat <<'EOF'\ncp a b\nEOF\n) </dev/null | bash"]) assert.ok(whyOf(c).includes('stands on the'), `a redirection on the closer: ${c}`);
+  assert.equal(printedOf("(cat f) 2>/dev/null | bash"), undefined, 'no printer in the list: null, the residual');
+  assert.equal(printedOf("(cat f && true) | bash"), undefined, 'an operator after a non-printer: null');
+  assert.ok(lex("bash -c \"$(echo 'cp a b' 2>/dev/null)\"").segments[0].words[2].unresolvableReading, 'the same inside a $(..): the word is marked');
+  assert.deepEqual(lex('${#:+cp} a b').segments[0].words[0].readings, ['cp'], 'THE SPECIAL PARAMETER: a + form over `#` is the word alone');
+  assert.deepEqual(lex('${?:+cp} a b').segments[0].words[0].readings, ['cp'], "over `?` too (the `?` is the name, not a glob character of the word)");
+  for (const c of ['${#:-cp} a b', '${?-cp} a b', '${0:=cp} a b', '${$:-cp} a b', '${-:-cp} a b', '${!:-cp} a b', '${@:-cp} a b', '${*:-cp} a b']) assert.ok(lex(c).segments[0].words[0].unresolvableReading, `a -, = or ? form over a special parameter is UNRESOLVABLE: ${c}`);
+  assert.deepEqual(lex('${1:-cp} a b').segments[0].words[0].readingParams, [{ name: '1', op: ':-', before: '', after: '' }], 'a positional parameter carries its name for THE POSITIONAL VALUE');
+  assert.deepEqual(lex('${10:+cp} a b').segments[0].words[0].readings, ['cp'], 'a digit run');
+  assert.deepEqual(lex(': ${e:=cp}; x=${f=cat}').segments.flatMap((s) => s.paramAssigns), [{ name: 'e', texts: ['cp'] }, { name: 'f', texts: ['cat'] }], 'THE ASSIGNED DEFAULT: `:=` and `=` are recorded with the word\'s texts');
+  assert.deepEqual(lex('echo ${e:-cp}').segments[0].paramAssigns, [], 'a `:-` assigns nothing');
+  assert.deepEqual(lex('{cp,} a b').segments[0].words.map((x) => [x.text, !!x.braceEmpty]), [['cp', false], ['', true], ['a', false], ['b', false]], 'THE EMPTY ALTERNATIVE: the empty word is marked');
+  assert.deepEqual(lex("cp '' a b").segments[0].words.map((x) => !!x.braceEmpty), [false, false, false, false], 'a quoted empty operand is not');
 });

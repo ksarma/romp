@@ -22,6 +22,7 @@ import unittest
 from romp_load import load_source
 from pathlib import Path
 from unittest.mock import patch
+from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -371,7 +372,8 @@ class MemoEviction(_Memo):
             return go
         threads = [threading.Thread(target=wrap(i, fn), name="fill-%d" % i, daemon=True)
                    for i, fn in enumerate(targets)]
-        for t in threads:
+        self.addCleanup(join_started, None, threads, self.JOIN_S)    # on every exit path, the threads that started (the joins below
+        for t in threads:                                            # are the success path's; tests/thread_ends.py is the guard)
             t.start()
         for t in threads:
             t.join(timeout=self.JOIN_S)

@@ -426,6 +426,8 @@ class CorruptBytes(_Ledger):
         def replace_racing(src, dst, *a, **k):
             if ".corrupt-" in str(dst) and not peer:
                 peer.append(threading.Thread(target=peer_moves_and_publishes))
+                self.addCleanup(peer[0].join, 5)   # the peer ends on every exit path (T282): the kernel's lock is released by
+                #                                    the read's own exit, so a bounded join is the stop
                 peer[0].start()
                 self.assertTrue(probed.wait(5), "the peer probed the lock")
             return real_replace(src, dst, *a, **k)

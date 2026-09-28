@@ -13,7 +13,11 @@ export interface Run { kind: "run"; lo: number; hi: number | null; events: Ev[];
 export interface Gap { kind: "gap"; lo: number; hi: number; }
 export type Region = Run | Gap;
 
-export const DEFAULT_TURN_PX = 120;   // the per-TURN estimate the spacers use until a run is measured (a turn is ~two rows; render.ts sizeSpacers measures px-per-turn)
+export const DEFAULT_TURN_PX = 120;   // the per-TURN estimate the spacers use until a run is measured (a turn is ~two rows; render.ts measureUnits measures px-per-turn off the unit observer)
+// The most a gap may be drawn at per turn (PR E, 2026-09-19): a BACKSTOP under every reader of gapHeight, not the estimate itself (the
+// estimate is the median over complete turns, turn-estimate.ts). The figure it guards against was the old estimator's: a tail window of
+// one user row and 79 dense rows measured about 7,150 px per turn, and a 200-turn head gap went from 24k px to 1.43M px in one paint.
+export const MAX_TURN_PX = 20 * DEFAULT_TURN_PX;
 
 /** The regions a set of runs implies: the runs in turn order with a gap between each pair that does not touch, and a head gap
  *  [0, first.lo) when the first run does not start at the head. Runs must not overlap (insertRun keeps that). */
@@ -68,9 +72,10 @@ function mergeRuns(held: Run, win: Run): Run {
 }
 
 /** A gap's height in the thread: its TURN count × the measured px-per-TURN (not px-per-display-unit: a turn is a user row plus its
- *  reply and any tool rows, so multiplying a turn count by a per-unit average drew gaps roughly half their true height), at least a turn. */
+ *  reply and any tool rows, so multiplying a turn count by a per-unit average drew gaps roughly half their true height), at least a turn.
+ *  The per-turn figure is capped at MAX_TURN_PX here, under every reader (the spacer map, the rendered gap element, the turn walks). */
 export function gapHeight(gap: { lo: number; hi: number }, perTurnPx: number | null | undefined): number {
-  const per = perTurnPx ?? DEFAULT_TURN_PX;
+  const per = Math.min(perTurnPx ?? DEFAULT_TURN_PX, MAX_TURN_PX);
   return Math.max(Math.round(per), Math.round((gap.hi - gap.lo) * per));
 }
 

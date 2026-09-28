@@ -24,8 +24,9 @@ KPORTS = ["http://127.0.0.1:29855", "http://127.0.0.1:7878", "http://127.0.0.1:7
 
 
 def _token():
-    """The serve token — required on every kernel request, loopback included (Jupyter's model).
-    Same resolution the kernel uses: env override, else the 0600 state file."""
+    """The serve token: required on every kernel request, loopback included, presented directly or,
+    by a browser, through a sign-in made with it (Jupyter's model). Same resolution the kernel uses:
+    env override, else the 0600 state file."""
     t = (os.environ.get("ROMP_SERVE_TOKEN") or "").strip()
     if t:
         return t

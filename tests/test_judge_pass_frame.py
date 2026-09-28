@@ -432,6 +432,7 @@ class PassFrame(unittest.TestCase):
             except BaseException as e:               # surfaced on the test thread, never swallowed by the worker
                 err.append(e)
         t = threading.Thread(target=run, name="pusher")
+        self.addCleanup(t.join, 10)                  # on every exit path (the join below is the success path's)
         t.start(); t.join(10)
         self.assertFalse(t.is_alive(), "the thread finished")
         if err:
