@@ -147,14 +147,14 @@ const runLayout = async (tag, width) => {
       try { const m = JSON.parse(d); if (m && ["activeTab", "openSession", "showOnTimeline"].includes(m.type)) note("send:" + m.type, { id: m.id || m.sid || null }); } catch (e) {}
       return S.call(this, d);
     };
-    // THE KERNEL'S FRAME HELD (a forced order: roads d4 and d5, and the settle before d3): while window.__holdKernelFrame
-    // names a session, the socket's activeChat frames wait here, ahead of the shim, until window.__openFrameGate runs (two
-    // animation frames after the shell's relay for that session was handled, below), then go to the shim in their order,
-    // stamped recv as they do, one per animation frame: the shim hands on in one task every frame it took before that
-    // task ran, and the head observer records only a name that differs from the last it saw, so frames released in one
-    // task could move the section away and back with no record (d5 reads that record). A frame that arrives before the
-    // animation frame after the last release joins the end of the line, so the socket's order stands and the spacing
-    // holds however late a held frame's successor comes
+    // THE KERNEL'S FRAME HELD (a forced order: roads d4 and d5, and the settles before d3 and d4): while
+    // window.__holdKernelFrame names a session, the socket's activeChat frames wait here, ahead of the shim, until
+    // window.__openFrameGate runs (two animation frames after the shell's relay for that session was handled, below),
+    // then go to the shim in their order, stamped recv as they do, one per animation frame: the shim hands on in one
+    // task every frame it took before that task ran, and the head observer records only a name that differs from the
+    // last it saw, so frames released in one task could move the section away and back with no record (d5 reads that
+    // record). A frame that arrives before the animation frame after the last release joins the end of the line, so the
+    // socket's order stands and the spacing holds however late a held frame's successor comes
     const heldFrames = [];
     let releasing = false;   // from a release to the first animation frame that finds nothing left to release
     window.__frameGate = null;   // null while frames are held; once open, the reason it opened
@@ -219,8 +219,9 @@ const runLayout = async (tag, width) => {
     // changes the focused session opens a record for that session and number, one for the session already focused only
     // renews a standing record's number; a kernel frame closes the record when it carries the record's session at or
     // above its number, or the kernel's reaffirm mark, and a kernel frame that finds no record standing focuses its
-    // session. The feed's own clicks (roads a to c) open a record the copy does not see; the chat's switch and its relay
-    // follow each of them, and the copy agrees with the feed again from there
+    // session. The feed's own clicks (roads a to c and g) open a record the copy does not see, and can leave the copy
+    // and the feed disagreeing in either direction (a record standing in one and not the other) until a switch whose
+    // kernel echo follows its relay, which settleEchoed makes before d3 and before d4
     const rec = (window.__feedRecord = { focused: null, pending: null });
     const idOf = (d) => (typeof d.id === "string" && d.id ? d.id : null), nonceOf = (d) => (typeof d.nonce === "number" ? d.nonce : null);
     // two signals carry a chat's tab change to the feed's page code, each in a task of its own, in either order: the
@@ -318,8 +319,9 @@ const runLayout = async (tag, width) => {
     return last;
   });
   const setDrop = (on) => page.evaluate((on) => { document.getElementById("f-feed").contentWindow.__dropActiveChat = on; }, on);
-  // the forced orders' holds (roads d3 to d5, and the settle before d3), each naming the session whose other signal opens
-  // it; switched off, a hold opens (anything it still holds goes on, in its order), so nothing waits past its road
+  // the forced orders' holds (roads d3 to d5, and the settles before d3 and d4), each naming the session whose other
+  // signal opens it; switched off, a hold opens (anything it still holds goes on, in its order), so nothing waits past
+  // its road
   const setHoldRelay = (sid) => page.evaluate((sid) => {
     if (sid) { window.__relayGate = null; window.__holdShellRelay = sid; } else { window.__openRelayGate("off"); window.__holdShellRelay = null; }
   }, sid);
@@ -410,11 +412,13 @@ const runLayout = async (tag, width) => {
     if (!(await waitHead(name, 5000))) await die("the section never settled on " + name);
     await deliver(payloadOf(false)); await park(); await clearHops();
   };
-  // the section on `sid` again, by a switch whose kernel echo reaches the feed's page code after its relay: away and back,
-  // every activeChat frame held from the first switch until two animation frames after the relay into `sid`. That echo
-  // closes whatever record stood, whatever order the switches before it took. Without it a record can outlive a settle:
-  // a relay that reaches the feed after its switch's kernel frame opens a record whose echo has already come and gone
-  // (after a withheld echo, road e2's, the kernel frame that comes first also yields to the record still standing)
+  // the section on `sid` again, by a switch away and back, every activeChat frame held from the first switch until two
+  // animation frames after the relay into `sid`, and a wait for a kernel frame for `sid` handed on to the feed's page
+  // code after that relay. The echo of the switch into `sid` reaches the page code after that relay as well, and closes
+  // whatever record stood, whatever order the switches before it took. Without this switch a record can outlive a
+  // settle: a relay that reaches the feed after its switch's kernel frame opens a record whose echo has already come
+  // and gone (after a withheld echo, road e2's, the kernel frame that comes first also yields to the record still
+  // standing)
   const settleEchoed = async (sid, name) => {
     const other = sid === cfg.api ? cfg.tests : cfg.api;
     await clearHops();
@@ -778,19 +782,19 @@ class FeedFocusLatencyServed(unittest.TestCase):
         that frame, not the task: a repaint in a later task inside the same frame passes. The chat sends its tab on its
         socket and posts it to the shell in the same call; the shell hands the post to the feed in a task of its own (the
         relay), and the kernel relays the socket's copy back as an activeChat frame, which the feed's shim hands to the page
-        code in a later task of its own (the handoff). Either task can run first. With no pending record standing (every
-        switch the feed made has had its kernel echo), no card held under the pointer and no card menu open, which is how
-        every road here drives it, the feed's handler moves the section on whichever runs first and the other then finds
-        nothing to change and paints nothing, so the bound reads the first signal and not the relay alone (test_3c forces
-        each order). Outside that case the rule does not hold: while a record stands, a kernel frame for another session
-        yields to it and the relay moves the section; under a held card a kernel frame that comes first only parks the
-        paint (feed.ts's activeChat arm marks the section stale), and the relay's gesture releases the park and paints in
-        the relay's task (applyLocalFocus); with a card menu open neither signal paints until the menu closes. The three
-        panes share one main thread, so nothing paints before the chat's switch handler and its post-switch frame return,
-        and on a loaded machine that wait stretches; the claim reads the frame clock, which stretches with it. The relay's
-        worth is a link the kernel's frame crosses slowly, which `withheld` stands in for (the frame never reaches the
-        feed's handler, the relay is the only signal, and the section must still follow before the animation frame after
-        the relay)."""
+        code in a later task of its own (the handoff). Either task can run first. With no pending record standing (the
+        latest switch the feed made has had its kernel echo, or a reaffirm), no card held under the pointer and no card
+        menu open, which is how every road here drives it, the feed's handler moves the section on whichever runs first
+        and the other then finds nothing to change and paints nothing, so the bound reads the first signal and not the
+        relay alone (test_3c forces each order). Outside that case the rule does not hold: while a record stands, a
+        kernel frame for another session yields to it and the relay moves the section; under a held card a kernel frame
+        that comes first only parks the paint (feed.ts's activeChat arm marks the section stale), and the relay's
+        gesture releases the park and paints in the relay's task (applyLocalFocus); with a card menu open neither signal
+        paints until the menu closes. The three panes share one main thread, so nothing paints before the chat's switch
+        handler and its post-switch frame return, and on a loaded machine that wait stretches; the claim reads the frame
+        clock, which stretches with it. The relay's worth is a link the kernel's frame crosses slowly, which `withheld`
+        stands in for (the frame never reaches the feed's handler, the relay is the only signal, and the section must
+        still follow before the animation frame after the relay)."""
         legs = "\n".join("%+9.1f ms %s %s %s%s" % (dt, f, ev, ident, " reaffirm" if re_ else "") for f, ev, ident, dt, re_ in _legs(road["hops"]))
         head = _t(road, "head", name=target)
         self.assertIsNotNone(head, "%s/%s: the section never repainted to %s:\n%s" % (tag, key, target, legs))
