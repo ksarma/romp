@@ -2554,6 +2554,43 @@ class LandAndFinish(_Base):
         os.chmod(wrapper, 0o755)
         fx.env.update(ROMP_GH=wrapper, MOVE_MAIN_AUTHOR=fx.author, MOVE_MAIN_FAKE_GH=os.path.join(fx.bin, "gh"), MOVE_MAIN_ON=call)
 
+    def test_land_refuses_a_main_move_before_it_retargets_anything(self):
+        """Round 1, correctness-6 and extra4-9: land retargeted a stacked member to main before its last read of main, so a
+        move already made refused with "nothing merged" while #102's base had been changed on GitHub. land reads main
+        before the retarget too, so a move seen by then refuses with nothing on GitHub changed (the move is made on the
+        repository-settings read, after land's verify)."""
+        fx = self.fx
+        self.ready()
+        before = fx.bare_rev("main")
+        self.move_main_on("repo view")
+        p = fx.run("land", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        moved = fx.bare_rev("main")
+        self.assertNotEqual(moved, before, "the wrapper moved main")
+        self.assertEqual(fx.calls("pr", "edit"), [], "no member was retargeted")
+        self.assertIn("main moved on origin to %s after verify read %s; nothing merged, and nothing on GitHub was changed"
+                      % (moved[:10], before[:10]), p.stderr)
+        self.assertEqual(fx.gh()["prs"]["102"]["baseRefName"], "a")
+        self.assertEqual(fx.calls("pr", "merge"), [])
+
+    def test_a_main_move_after_the_retarget_names_each_retargeted_member_and_how_to_restore_it(self):
+        """The last read stays right before the merge call; a move it sees after the retarget (made on the first pr edit
+        call) refuses naming #102, its old base and the command that restores it, and the state keeps the old base, so
+        the next land retargets #102 again."""
+        fx = self.fx
+        self.ready()
+        before = fx.bare_rev("main")
+        self.move_main_on("pr edit")
+        p = fx.run("land", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        moved = fx.bare_rev("main")
+        self.assertIn("main moved on origin to %s after verify read %s; nothing merged, but land had already retargeted #102 "
+                      "from a to main on GitHub: restore it with `gh pr edit 102 --base a`, or run land again, which retargets "
+                      "it again" % (moved[:10], before[:10]), p.stderr)
+        self.assertEqual(fx.calls("pr", "merge"), [])
+        self.assertEqual(fx.gh()["prs"]["102"]["baseRefName"], "main", "the retarget had happened on GitHub")
+        self.assertEqual(fx.state("b1")["members"]["102"]["base_ref"], "a", "the state keeps the old base")
+
     def test_finish_reports_loudly_a_merge_whose_first_parent_is_not_the_main_verify_read(self):
         """Pre-round item 4: a batch merged by hand after main moved lands a tree no sweep or CI run tested. finish does its
         cleanup, then fails naming the merge commit, its first parent, the main verify read, and the remedy (a sweep at

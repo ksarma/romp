@@ -2322,18 +2322,22 @@ def retarget_stacked_members(root, state):
     main, so a member whose base is a sibling branch would stay open (its base never moves) even
     though its content is in main. Against main, the documented indirect-merge rule applies to it
     like every other member. Done here and not at plan time so the member keeps its stacked diff
-    and review until the moment it lands."""
+    and review until the moment it lands. Returns [(n, old base)] for each member retargeted, so a
+    refusal after it can name what it changed on GitHub."""
     members = members_by_n(state)
     landing = in_batch(state)
     in_batch_refs = {members[e["n"]]["head_ref"] for e in landing}
+    done = []
     for e in landing:
         m = members[e["n"]]
         if m["base_ref"] != MAIN and m["base_ref"] in in_batch_refs:
             gh("pr", "edit", str(m["n"]), "--base", MAIN, cwd=root)
             log(state, "retargeted #%d from %s to %s before the merge, so the indirect merge marks it" % (m["n"], m["base_ref"], MAIN))
+            done.append((m["n"], m["base_ref"]))
             m["base_ref"] = MAIN
             state["members"][str(m["n"])] = m
     save_state(root, state)
+    return done
 
 
 def cmd_land(args):
@@ -2389,15 +2393,39 @@ def cmd_land(args):
                        "with nothing required, auto-merge merges at once and protects nothing. Merge without --auto." % (MAIN, found))
         print("merging with --auto: auto-merge is allowed and %s" % gating)
         cmd.append("--auto")
-    retarget_stacked_members(root, state)
-    # main may have moved since verify read it (a merge by hand): the last read before
-    # the merge call, so the tree that lands is still the batch head's. GitHub's merge pins the head
-    # (--match-head-commit), not the base, so the gap left is the one between this read and that call.
+    # main may have moved since verify read it (a merge by hand). It is read twice more: once here, before anything on
+    # GitHub is changed, so a move already made refuses with nothing changed (round 1, correctness-6), and once right
+    # before the merge call, so the tree that lands is still the batch head's. GitHub's merge pins the head
+    # (--match-head-commit), not the base, so the gap left is the one between that last read and the call; finish
+    # reports it loudly when the merge commit's first parent is not the main verify read (pre-round item 4).
+    seen = state["verified"].get("main")
+
+    def moved_text(now_sha):
+        return "%s moved on %s to %s after verify read %s; nothing merged" % (MAIN, REMOTE, short(now_sha) if now_sha else "nothing",
+                                                                          short(seen))
+    again = "Run land again: its verify reads the new %s and says whether the batch still contains it" % MAIN
     main_now = main_on_origin(root)
-    if main_now != state["verified"].get("main"):
-        raise Fail("%s moved on %s to %s after verify read %s; nothing merged. Run land again: its verify reads the new %s "
-                   "and says whether the batch still contains it" % (MAIN, REMOTE, short(main_now) if main_now else "nothing",
-                                                                     short(state["verified"].get("main")), MAIN))
+    if main_now != seen:
+        raise Fail("%s, and nothing on GitHub was changed. %s" % (moved_text(main_now), again))
+    retargeted = retarget_stacked_members(root, state)
+    main_now = main_on_origin(root)
+    if main_now != seen:
+        if not retargeted:
+            raise Fail("%s. %s" % (moved_text(main_now), again))
+        # The members are based on main on GitHub now; the state takes back their old bases, so the next land
+        # retargets them again, whether or not they are restored by hand first.
+        members = members_by_n(state)
+        for n, old in retargeted:
+            members[n]["base_ref"] = old
+            state["members"][str(n)] = members[n]
+        log(state, "land refused after retargeting %s: %s moved; the state keeps the old base%s"
+            % (", ".join("#%d" % n for n, _old in retargeted), MAIN, "" if len(retargeted) == 1 else "s"))
+        save_state(root, state)
+        raise Fail("%s, but land had already retargeted %s on GitHub: restore %s with %s, or run land again, which retargets "
+                   "%s again: its verify reads the new %s and says whether the batch still contains it"
+                   % (moved_text(main_now), ", ".join("#%d from %s to %s" % (n, old, MAIN) for n, old in retargeted),
+                      "it" if len(retargeted) == 1 else "them", " and ".join("`gh pr edit %d --base %s`" % (n, old) for n, old in retargeted),
+                      "it" if len(retargeted) == 1 else "them", MAIN))
     gh(*cmd, cwd=root)
     poll = float(os.environ.get("ROMP_BATCH_POLL", "3"))
     for _ in range(20):
