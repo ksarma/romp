@@ -513,25 +513,26 @@ def _wire_raw(port, request):
 
 
 class OpenerIsolation(unittest.TestCase):
-    """Every document the kernel serves a browser declares Cross-Origin-Opener-Policy: same-origin (2026-09-25), so a
-    page on another origin that opens a dashboard page gets no live handle to it, and a handle is what a window message
+    """Every document the kernel serves a browser declares Cross-Origin-Opener-Policy: same-origin (2026-09-25), so a page
+    on another origin that opens a dashboard page gets no live handle to it, and a handle is what a window message
     needs. It rides _send, and http.server's own refusals, which it writes outside _send, carry it through Handler's
-    send_error override (the 414 a page on another origin can open with a long URL, both 431s, the 501 and a 400:
-    test_each_refusal_http_server_writes_itself_carries_it_once). So every page carries it, and so do the dashboard's
-    own tabs: a /file image or PDF it opens with window.open is a same-origin document with the same policy, so
-    window.open still returns a handle (ui/webview/preview.ts openFileTab reads only that). Executed on the shell, every
-    pane page, the sign-in page, a static asset, and each document shape the /file route builds: an image, every shape
-    that hands _send extra headers of its own (an SVG, with its sandbox policy; a PDF, with its name; a text file, with
-    its mtimes; a 404, with its reason), the 413 page a PDF's own tab shows, and both 415 refusals (a file no view
-    shows, a text-named file that is not text). Each shape is served once per entry of NAVIGATIONS
-    (tests/document_navigations.py): bare, and with the headers a browser sends on a navigation typed, opened by the
-    dashboard, and opened by another origin, which is where a browser reads the policy, signed in by the romp_token
-    cookie as a browser's navigation is. Read off a live socket (_wire_get), so a header written anywhere, a
+    send_error override (the 414 a page on another origin can open with a long URL, both 431s, the 501 and two 400s:
+    test_each_refusal_http_server_writes_itself_carries_it_once). So every page served to a request line a browser sends
+    carries it, and so do the dashboard's own tabs: a /file image or PDF it opens with window.open is a same-origin
+    document with the same policy, so window.open still returns a handle (ui/webview/preview.ts openFileTab reads only
+    that). Executed on the shell, every pane page, the sign-in page, a static asset, and each document shape the /file
+    route builds: an image, every shape that hands _send extra headers of its own (an SVG, with its sandbox policy; a
+    PDF, with its name; a text file, with its mtimes; a 404, with its reason), the 413 page a PDF's own tab shows, and
+    both 415 refusals (a file no view shows, a text-named file that is not text). Each shape is served once per entry of
+    NAVIGATIONS (tests/document_navigations.py): bare, and with the headers a browser sends on a navigation typed,
+    opened by the dashboard, and opened by another origin, which is where a browser reads the policy, signed in by the
+    romp_token cookie as a browser's navigation is. Read off a live socket (_wire_get), so a header written anywhere, a
     send_response or end_headers override included, is seen, and each carries it exactly once: a second copy, even of
     the same value, leaves a browser with a header it cannot parse and so with no policy. The /remote/<host>/file
     relay's shapes are tests/test_kernel_remote_file_relay.py's, read the same way. The one reply without it is one in
-    HTTP/0.9's shape, to a request line that does not end in an HTTP/1.x version, which no browser sends: it has no
-    status line and no headers at all (test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all)."""
+    HTTP/0.9's shape, to a request line whose version is missing, malformed, HTTP/0.9 itself, or HTTP/2.0 or later,
+    which no browser sends: it has no status line and no headers at all
+    (test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all)."""
 
     @classmethod
     def setUpClass(cls):
@@ -571,8 +572,10 @@ class OpenerIsolation(unittest.TestCase):
 
     def test_each_refusal_http_server_writes_itself_carries_it_once(self):
         # http.server writes these with send_error, outside _send; Handler's send_error override adds the policy. The 414
-        # is the one a page on another origin can open as a top-level document (a URL past 65536 bytes is enough). It is
-        # refused before any header is read, so a navigation's headers would change nothing and it is sent bare.
+        # is one a page on another origin can open as a top-level document (a URL past 65536 bytes is enough), and in
+        # principle so is the 431 for a Cookie line past 65536 bytes, since a page on another loopback port can set the
+        # kernel host's cookies. The 414 is refused before any header is read, so a navigation's headers would change
+        # nothing and it is sent bare.
         host = "Host: 127.0.0.1:%d\r\n" % self.port
         refusals = (
             ("a request line over 65536 bytes", 414, lambda: _wire_get(self.port, "/chat?x=" + "a" * 70000)),
@@ -582,7 +585,9 @@ class OpenerIsolation(unittest.TestCase):
             ("more than 100 headers", 431,
              lambda: _wire_raw(self.port, ("GET / HTTP/1.1\r\n%s%s\r\n" % (host, "".join("X-H%d: v\r\n" % i for i in range(120)))).encode())),
             ("a request line that ends in a version but has a word too many", 400,
-             lambda: _wire_raw(self.port, ("GET /a b HTTP/1.1\r\n%s\r\n" % host).encode())))
+             lambda: _wire_raw(self.port, ("GET /a b HTTP/1.1\r\n%s\r\n" % host).encode())),
+            ("the same, ending in HTTP/0.5, a version below HTTP/2.0 other than HTTP/0.9 itself", 400,
+             lambda: _wire_raw(self.port, ("GET /a b HTTP/0.5\r\n%s\r\n" % host).encode())))
         for what, code, send in refusals:
             with self.subTest(what=what):
                 status, msg, body = send()
@@ -591,18 +596,25 @@ class OpenerIsolation(unittest.TestCase):
                 self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], what + ": one header, same-origin")
 
     def test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all(self):
-        # The one reply without the policy (Handler.send_error's comment names it): a request line that does not end in an
-        # HTTP/1.x version is answered in HTTP/0.9's shape, the body alone, so no header can ride it. No browser sends one.
-        # A bare "GET <path>" is answered with the page itself, here the sign-in page, as bare as http.server's refusals.
+        # The one reply without the policy (Handler.send_error's comment names it): a request line whose version is
+        # missing, malformed (a word after the version makes it so), HTTP/0.9 itself, or HTTP/2.0 or later is answered in
+        # HTTP/0.9's shape, the body alone, so no header can ride it. No browser sends one. A GET with no version or with
+        # HTTP/0.9 is answered with the page itself, here the sign-in page, as bare as http.server's refusals. Any other
+        # version below HTTP/2.0 gets a full reply with the policy once (the last case).
         for what, line in (("a word after the version", "GET /chat HTTP/1.1 extra"), ("a malformed version", "GET / HTTP/x.y"),
-                           ("HTTP/2.0", "GET / HTTP/2.0"), ("two words, not a GET", "PUT /"), ("a bare GET", "GET /")):
+                           ("HTTP/2.0", "GET / HTTP/2.0"), ("two words, not a GET", "PUT /"), ("one word", "GET"),
+                           ("a bare GET", "GET /"), ("a GET with HTTP/0.9 itself", "GET / HTTP/0.9")):
             with self.subTest(what=what):
                 status, msg, body = _wire_raw(self.port, (line + "\r\n\r\n").encode())
                 self.assertIsNone(status, what + ": no status line")
                 self.assertIsNone(msg, what + ": no headers")
                 self.assertTrue(body.lstrip().lower().startswith(b"<!doctype html"), what + ": the body alone: %r" % body[:60])
-                if what == "a bare GET":
-                    self.assertEqual(body.decode("utf-8"), km._TOKEN_LOGIN_HTML, "the sign-in page, served with no headers")
+                if what in ("a bare GET", "a GET with HTTP/0.9 itself"):
+                    self.assertEqual(body.decode("utf-8"), km._TOKEN_LOGIN_HTML, what + ": the sign-in page, served with no headers")
+        with self.subTest(what="HTTP/0.5, another version below HTTP/2.0"):
+            status, msg, body = _wire_raw(self.port, b"GET / HTTP/0.5\r\n\r\n")
+            self.assertEqual(status, 200, "a full reply: %r" % body[:60])
+            self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], "one header, same-origin")
 
     def _file_coop(self, name, data, want_status, cap=None):
         """Serve `data`, written to a file called `name`, through /file once per NAVIGATIONS entry (_coop). Returns

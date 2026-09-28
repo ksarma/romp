@@ -315,7 +315,7 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3261,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3263,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
     #                                no other entry moved), at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
     #                                directory row's helper; the credentials.py count did not move), at the landing merge of main
@@ -324,7 +324,9 @@ COUNTS = {
     #                                _note_agent_released, _release_ended_agents and _remember_unheld_end to kernel/kernel.py and
     #                                _bg_row_may_be_agent, _known_agents_locked, _note_live_agents, drain_agent_live_events and
     #                                note_agent_live to kernel/sdk_backend.py; fork PR #909 adds _lane_flag_refusal to
-    #                                kernel/kernel.py; no lambda and no other entry moved
+    #                                kernel/kernel.py; no lambda and no other entry moved; and 3263 on fork PR #923's branch, which
+    #                                adds Handler.send_error and Handler.end_headers to kernel/kernel.py (the opener policy on
+    #                                http.server's own refusals); no lambda and no other entry moved
 }
 CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 36, "alias": 5}   # the 359's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and

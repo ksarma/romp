@@ -73554,13 +73554,14 @@ class Handler(BaseHTTPRequestHandler):
 
     # http.server writes its own refusals with send_error, outside _send: a request line over 65536 bytes (414), a
     # header line over 65536 bytes or more than 100 headers (431), a method no do_ handler takes (501), and a request
-    # line that ends in an HTTP/1.x version but has too many words (400). A page on another origin can open the 414 as
-    # a top-level document (a long URL is enough), so these carry the opener policy _send's comment describes.
-    # send_error writes its headers in end_headers, so the header is added there, and only while send_error runs:
-    # _send writes its own copy, and a second copy leaves a browser with no policy. A request line that does not end
-    # in an HTTP/1.x version, which no browser sends (no version, a malformed one, HTTP/2.0 or later, a word after
-    # it), is answered in HTTP/0.9's shape, a body with no status line and no headers: http.server's 400 or 505, or
-    # for a bare "GET <path>" the page itself. No header can ride those replies.
+    # line of four or more words whose last is a well-formed version below HTTP/2.0 other than HTTP/0.9 itself (400).
+    # A page on another origin can open the 414 as a top-level document (a long URL is enough), so these carry the
+    # opener policy _send's comment describes. send_error writes its headers in end_headers, so the header is added
+    # there, and only while send_error runs: _send writes its own copy, and a second copy leaves a browser with no
+    # policy. A request line whose version is missing, malformed (a word after the version makes it so), HTTP/0.9
+    # itself, or HTTP/2.0 or later, none of which a browser sends, is answered in HTTP/0.9's shape, a body with no
+    # status line and no headers: http.server's 400 or 505, or, for a GET with no version or with HTTP/0.9, the page
+    # itself. No header can ride those replies. Any other version below HTTP/2.0 (HTTP/0.5, say) gets a full reply.
     def send_error(self, code, message=None, explain=None):
         self._in_send_error = True
         try:
