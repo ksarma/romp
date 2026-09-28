@@ -120,18 +120,23 @@ Every relay-socket close those records hold outside the drop and the restart, th
 was the lab's own and not the old bundle's. LinkProxy, the splice, kept create_connection's 5 s timeout on its upstream
 socket until it cleared it after the connect, as kernel.py _remote_ws clears the relay's, so a pair whose remote side sent
 nothing for 5 s was shut, 5 to 10 s after the last frame other than a keepalive under the remote kernel's 10 s keepalive.
-The 150 old-hub report JSONs in the builder's caches made under that timeout (copies and mutated drives among them) hold
-1,312 relay-socket closes outside the drop and the restart, every one 4.99 to 10.01 s after its socket's last frame and
-1,269 of them on all three pages at one instant, and the 7 drives made with the timeout cleared hold none
-(`python3 oldhub_closes.py <report.json>...` outside the repo, 2026-09-28). Each cut was a redial, and its whole frame
-caught the old page up, so those drives recorded the old page catching up 6 to 19 s after each change, and one drive
-ran phase B's card wait to its 20 s cap: a
-cut can come up to 10 s after the last frame, and late frames inside that phase put it past the wait. With the timeout
+A census shows this (`python3 oldhub_closes.py <report.json>...` outside the repo, run on 2026-09-28 over one copy
+of each distinct old-hub report that the caches of this PR's review drives held at 20:01Z: 55 LinkDropOldLocal.json
+files by content, 167 with the copies). The 41 made while the splice kept that timeout, at the branch's heads from its
+first commit through 1fa8cfd4d (four of those heads since rewritten, several with uncommitted edits: mutated and
+in-progress trees) and at f3094c4b7 with the timeout put back, hold 358 relay-socket closes outside the drop and the
+restart, every one 4.95 to 10.01 s after its socket's last recorded frame and 345 of them on all three pages at one
+instant. The 14 made with the timeout cleared, at fbd7b3ad0, fd38417e6 and f3094c4b7 and at 1fa8cfd4d with the clear
+applied, hold none. Each cut was a redial, and its whole frame caught the old page up, so the drives made under the
+cut recorded the old page catching up 6 to 19 s after each change, and one drive ran phase B's card wait to its 20 s
+cap: a cut can come up to 10 s after the last frame, and late frames inside that phase put it past the wait. With the timeout
 cleared the old page shows no change on a socket it holds. In every link-up phase the card wait runs to its cap with no
 card shown, phase B's on the socket the link's return dialed, and only a redial's whole frame catches the page up
 (phase A's cards after the return, phase B's after the restart). That freeze is the defect PR 815 fixed, and the
 old-hub class asserts it. No socket closes inside a phase now, so the allowance above no longer fires, and a close
-there reds the freeze test.
+there reds the freeze test. The allowance is also overridden: the old class's margin yardstick needs a
+card-carrying patch at the Outline in every link-up phase, so the storm and gate tests red on any phase the allowance
+would excuse, whatever it returns, and only the phase-A drops test can still pass on it.
 
 The driver ends before CI does. CI's served job runs every served lab in one pytest process under pytest-timeout's
 600 s per-test cap (thread method: it ends the whole process), and the drive runs in setUpClass, so the node driver's
@@ -1298,18 +1303,22 @@ class _LinkDrop(unittest.TestCase):
         socket was down, so that phase's change crosses as no patch and files no row. In the old-hub records every such close
         was the splice's idle cut, every few seconds until LinkProxy cleared its upstream timeout, not the old bundle; with
         the cut gone no phase holds such a gap, and a close inside a phase reds
-        test_without_a_redial_the_old_page_does_not_show_the_change. The
+        test_without_a_redial_the_old_page_does_not_show_the_change. The allowance is overridden as well as unused: a
+        phase it excuses holds no card-carrying patch at the Outline, and LinkDropOldLocal._link_up_delivery_ms, the margin
+        leg's yardstick on the old bundle, fails any such phase, so the storm test and the gate test red on it whatever
+        this returns; only the phase-A drops test (test_the_old_bundle_drops_every_remote_patch_and_asks_the_local_kernel)
+        can still pass on it. The
         distinguishing datum an empty window needs (the maintainer's round 2's ruling on correctness-1: the allowance is keyed on this EVENT,
         read from the hook's frames, never a dropped requirement). Pass 8 added the gap (the maintainer's round 3, extra6-1) because the frame alone was no key:
-        on the old bundle a routine redial produces a whole frame after the phase's notices were already delivered as
-        patches, so the frame-only excuse was available in 55 of the 90 phase windows (A, B, C) over the 30 unmutated
+        in the records made under the splice's idle cut, a redial produced a whole frame after the phase's notices were
+        already delivered as patches, so the frame-only excuse was available in 55 of the 90 phase windows (A, B, C) over the 30 unmutated
         old-hub records in the builder's cache as of the drive at `r10/lab-ci9.log` (2026-09-21), load-bearing (a
         window with no patch) in 6 of the 55, and a planted gating miss (a phase's patches and rows removed from the record) stayed green
         at both floors; keyed on the gap it is available in 6 of those 90 and load-bearing in 6, the phase-A windows
         of 6 of those records, and the planted miss reds. Over all 90 windows the planted miss (the phase's feed
         patches and rows removed, every frame kept) reds the floor in 84 and stays excused in 6: a
-        real gating miss during a churn is indistinguishable from the churn in the record, the excuse's remaining hole and
-        the price of excusing the churn at all. Every figure in this paragraph, the population, its drive and the counts, is
+        real gating miss during such a close is indistinguishable from the close in the record, the excuse's remaining hole
+        and the price of excusing the close at all. Every figure in this paragraph, the population, its drive and the counts, is
         ONE derivation (the maintainer's round 4: a hand-kept pair of a count and a drive drifted apart twice, one drive behind each time):
         `population_drive.py --check <tests_dir> <pass-7 head tests_dir>` in the builder's cache outside the repo lists the
         records by `population6.py` and names the drive whose reports directory holds the NEWEST counted record by the
@@ -1852,7 +1861,8 @@ class LinkDropOldLocal(_LinkDrop):
     found the Outline without an open, served relay socket and a whole keyed feed frame then caught it up inside the phase
     after the bundle's last notice could have been posted (the allowance _outline_caught_up_whole keys on that gap and
     that frame; the splice's idle cut made such gaps, and with it gone a socket closing inside a phase reds the freeze
-    test) and empty while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the pass-2
+    test; the margin yardstick, _link_up_delivery_ms, fails any phase the allowance would excuse, so only the phase-A
+    drops test can still pass on it) and empty while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the pass-2
     head): 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C; a reviewer's drive at the head the maintainer's round 1 ruled gave
     3 / 0 / 1 / 3 when the splice's idle cut inside phase B absorbed two notices into whole frames (the module docstring
     gives the recorded population). A relay redial does not end the storm but restarts it, so with a link that comes and
