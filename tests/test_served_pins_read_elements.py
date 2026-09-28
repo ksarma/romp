@@ -277,7 +277,7 @@ def route_getters(source=None):
     name that is no derived getter) binds nothing. Shape-sensitive by design (the author's pass 8, 2026-09-20): a fourth shape needs
     a fourth branch here and a case in the form-space test; an equality-only walk misses the landing, and a walk without the table
     finds only the service worker on the kernel."""
-    tree = _kernel_tree() if source is None else ast.parse(source)   # the kernel's tree is parsed once per process, shared with getter_renders
+    tree = ast.parse(_kernel_source() if source is None else source)
     getters = set(page_getters())
     routes = {}
     tables, lookups, functions = {}, [], []
@@ -423,23 +423,31 @@ def _own_returns(fn):
     return out
 
 
+@functools.lru_cache(maxsize=8)
 def _response_reads(tree):
     """{name: frozenset of positions} for every function and method a module defines, read from its own return statements (the
     rulings at the merge of main's login cookie split, 2026-09-28): the index of each element of a returned tuple that reads a
     response (_reads_response), and "whole" where a returned value that is no tuple reads one. `return r.status, r.read(),
     r.headers` gives {1}; `return r.status, r.headers` gives the empty set. Two definitions of one name (a helper per class) give
-    the union of their positions."""
-    out = {}
-    for fn in ast.walk(tree):
-        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            at = set()
-            for ret in _own_returns(fn):
-                if isinstance(ret.value, ast.Tuple):
-                    at |= {i for i, e in enumerate(ret.value.elts) if _reads_response(e)}
-                elif ret.value is not None and _reads_response(ret.value):
-                    at.add("whole")
-            out[fn.name] = out.get(fn.name, frozenset()) | frozenset(at)
-    return out
+    the union of their positions. One walk of the module, each Return credited to the innermost function holding it, kept per tree
+    (the parsed tree is _parse's, shared by rows_of, readers_of and _module_bindings for one module) and asked only when a call has
+    a fetch's shape (_bind and _fetched take it as a callable): read four times for every module, it had added about 35 s to the
+    population's derivation."""
+    out, todo = {}, [(tree, None)]
+    while todo:
+        node, fn = todo.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            fn = node.name
+            out.setdefault(fn, set())
+        elif isinstance(node, ast.ClassDef):
+            fn = None   # a class body's statements are no function's; its methods are their own
+        elif isinstance(node, ast.Return) and fn is not None and node.value is not None:
+            if isinstance(node.value, ast.Tuple):
+                out[fn] |= {i for i, e in enumerate(node.value.elts) if _reads_response(e)}
+            elif _reads_response(node.value):
+                out[fn].add("whole")
+        todo.extend((child, fn) for child in ast.iter_child_nodes(node))
+    return {name: frozenset(at) for name, at in out.items()}
 
 
 def _callee(call):
@@ -460,7 +468,7 @@ def _fetched(node, names, routes, reads=None):
     naming such a route with the token in its query (_url_route; the fixer pass of the author's pass 8); or the `.read(...)` or `.decode(...)`
     of such a value or of a Name bound to one, through any chain of the two (`body.decode()`, `fetch("/chat").read().decode()`);
     else None. A bare Name is not followed (as _text does not). A call to a Name or a self.<method> the module defines counts as a
-    fetch only where that callee returns a response it reads (`reads`, the module's _response_reads, holds a position for it; the
+    fetch only where that callee returns a response it reads (`reads`, a callable giving the module's _response_reads, holds a position for it; the
     rulings at the merge of main's login cookie split, 2026-09-28): `_pathconf("/", "PC_PATH_MAX", 4096)`, a helper returning
     os.pathconf's answer, had read as a fetch of the landing and its caller's helper as an unclassified reader of the page. A callee
     the module does not define keeps the reading before the ruling (a fetch). Bound: a helper the module defines that returns an
@@ -481,7 +489,8 @@ def _fetched(node, names, routes, reads=None):
     path = _fetch_path(node.args[0]) if node.args else None
     callee = _callee(node)
     if path and callee is not None:
-        if reads is not None and callee in reads and not reads[callee]:
+        known = reads() if reads is not None else {}   # the module's helper returns, read on the first fetch-shaped call only
+        if callee in known and not known[callee]:
             return None   # the module's own helper, whose returns read no response: no fetch
         route = path.split("?")[0]
         return _Served(routes[route]) if route in routes else None
@@ -515,7 +524,7 @@ def _resolve(node, names, attrs, getters, constants):
 def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=None, reads=None):
     """Record Name and self.<attr> targets bound to a served text, or to a slice of one; a tuple assignment binds by position; a
     FETCHED value (_fetched, with `routes`) unpacked into a tuple binds the positions its helper's own return statements read a
-    response at (`reads`, the module's _response_reads; the rulings at the merge of main's login cookie split, 2026-09-28):
+    response at (`reads`, a callable giving the module's _response_reads; the rulings at the merge of main's login cookie split, 2026-09-28):
     `status, body, headers = self._req("/")` binds `body` alone where `_req` returns `r.status, r.read(), r.headers`, and a
     helper whose returns read no response binds no name. Before that ruling every unpacked name bound, the status and the
     response headers too, and main's helpers returning (status, body, headers) put 19 reads of the headers (`.get`,
@@ -550,7 +559,7 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
                 (sliced.add if via_slice else sliced.discard)(t.id)
         elif isinstance(t, ast.Tuple) and fetched:   # `status, body = fetch("/x")`: the positions the helper reads a response at
             callee = _callee(v)
-            at = reads.get(callee) if reads is not None and callee is not None and not any(isinstance(e, ast.Starred) for e in t.elts) else None
+            at = reads().get(callee) if reads is not None and callee is not None and not any(isinstance(e, ast.Starred) for e in t.elts) else None
             for i, e in enumerate(t.elts):
                 if isinstance(e, ast.Name) and (at is None or i in at):
                     names[e.id] = g
@@ -626,7 +635,7 @@ def rows_of(path, getters, constants, routes=None):
     functions = (ast.FunctionDef, ast.AsyncFunctionDef)
     groups = [[n for n in cls.body if isinstance(n, functions)] for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)]
     groups.append([n for n in tree.body if isinstance(n, functions)])   # module-level test functions (the author's pass 6, 2026-09-20)
-    reads = _response_reads(tree)   # the positions each helper of the module reads a response at (_bind)
+    reads = functools.partial(_response_reads, tree)   # the positions each helper of the module reads a response at (_bind), read on demand
     modnames = _module_bindings(tree, getters, constants, routes)   # a served text bound at module level is read in every function (the fixer pass of the author's pass 9)
     binds = {}
     def bindings(fn):   # in walk order, so a with-item's `as` target is bound before the assignments in its body read it; read once per function
@@ -860,7 +869,7 @@ _VALUE_USES = {"dumps", "len", "print", "isinstance", "write", "repr", "str", "t
 def _module_bindings(tree, getters, constants, routes):
     """{Name: served text} for the module-level assignments that bind a served text (`JS = km._LANDING_APIH_JS`; the fixer pass of
     the author's pass 9: three suite modules bind one at import time and read it in every test, and neither census had seen the binding)."""
-    names, reads = {}, _response_reads(tree)
+    names, reads = {}, functools.partial(_response_reads, tree)
     for st in tree.body:
         if isinstance(st, ast.Assign):
             _bind(st.targets, st.value, names, {}, getters, constants, None, routes, reads)
@@ -913,7 +922,7 @@ def readers_of(path, getters, constants, routes=None):
     `container=`), the text read, a served text in the member position being compared whole (`assertIn("x" + km._SVG, page)` is an
     `assert` over the page). Before the close each of these was no row at all, or the assertRegex an `assert`."""
     tree, lines = _parsed(path)
-    reads = _response_reads(tree)   # the positions each helper of the module reads a response at (_bind)
+    reads = functools.partial(_response_reads, tree)   # the positions each helper of the module reads a response at (_bind), read on demand
     seg = lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
     nodes = list(ast.walk(tree))   # one walk of the module for the patterns and the classes below
     patterns = {t.id for node in nodes if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
@@ -1132,8 +1141,16 @@ def _spans(kinds, text):
 
 
 @functools.lru_cache(maxsize=None)
-def _kernel_tree():
-    return ast.parse(_kernel_source())
+def _getter_constant_returns():
+    """{getter: (str, ...)}: for each derived getter defined at the kernel's top level, the string constants its own return statements
+    return, in source order, read from one parse of the kernel source whose tree is dropped after (a tree of the whole kernel held for
+    the process made the collector's passes over it cost the population's derivation about 25 s)."""
+    getters, out = set(page_getters()), {}
+    for fn in ast.parse(_kernel_source()).body:
+        if isinstance(fn, ast.FunctionDef) and fn.name in getters:
+            out[fn.name] = tuple(r.value.value for r in sorted(_own_returns(fn), key=lambda r: (r.lineno, r.col_offset))
+                                 if isinstance(r.value, ast.Constant) and isinstance(r.value.value, str))
+    return out
 
 
 @functools.lru_cache(maxsize=None)
@@ -1143,11 +1160,9 @@ def getter_renders(getter):
     the hermetic render does not meet serves: `_files_page` returns a one-line page naming the ui/ modules when its sheet cannot be
     read, and two tests pin that text inside a patch of the read). Derived from the getter's definition in the kernel source, which
     the getter rule reads at the module's top level, so a getter with no such definition fails here."""
-    fn = next((n for n in _kernel_tree().body if isinstance(n, ast.FunctionDef) and n.name == getter), None)
-    assert fn is not None, "a derived getter with no definition at the kernel's top level: %s" % getter
-    consts = [r.value.value for r in sorted(_own_returns(fn), key=lambda r: (r.lineno, r.col_offset))
-              if isinstance(r.value, ast.Constant) and isinstance(r.value.value, str)]
-    return (pages()[getter],) + tuple(c for c in consts if c != pages()[getter])
+    consts = _getter_constant_returns()
+    assert getter in consts, "a derived getter with no definition at the kernel's top level: %s" % getter
+    return (pages()[getter],) + tuple(c for c in consts[getter] if c != pages()[getter])
 
 
 # the type the kernel's GET dispatch serves each kind of getter under (the route table's pages as text/html, the service worker as
