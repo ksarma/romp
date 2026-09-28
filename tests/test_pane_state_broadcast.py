@@ -1013,7 +1013,7 @@ out.gearBlankLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }
 window.__rompOpenSettings();   // (c) the mirror: a committed document with the marker (the settings page) is not re-fetched
 out.gearLiveTap = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
 // (d) review round 4 (kernel-2): a same-origin document AT /settings with no marker, what the origin served in place of the page (the kernel's
-// own 403 line under a stale cookie, a proxy's 502 body): not the page, so the tap drops the src and fetches again; the page's load delivers
+// own 403 line to a browser holding no session cookie the kernel accepts, a proxy's 502 body): not the page, so the tap drops the src and fetches again; the page's load delivers
 // the open once its shim has set the marker. Before this the url alone read as live and the gear stayed dead across every tap.
 ATTRS['f-settings'].src = '/settings'; SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_APP = undefined;
 window.__rompOpenSettings();
@@ -1454,7 +1454,7 @@ const diagRows = (what) => SOCKS.flatMap((s) => s.sent.map((x) => JSON.parse(x))
 const backstops = () => TIMERS.filter((t) => t.ms === 30000).forEach((t) => t.f());   // every 30 s backstop armed so far (a stale promotion's is inert on its token)
 const shimUp = (k, url) => { frames['f-' + k].contentDocument = { URL: url || ('http://TESTHOST:1/' + k) }; frames['f-' + k].contentWindow.__rompApp = k; };   // the pane's OWN document: committed at its url with the pane shim run in its window (window.__rompApp, as the served shim sets it while parsing); docState's 'app'
 const servedDoc = (k) => { frames['f-' + k].contentDocument = { URL: 'http://TESTHOST:1/' + k, documentElement: { getAttribute: (a) => (a === 'data-romp-served' ? '200' : null) } }; };   // a 200 the kernel served at the pane's url with NO shim (its "needs the ui/ modules" page): the stamp Handler._send writes on every text/html 200 (data-romp-served=200 on <html>); docState's 'doc', shown as served and said (review round 4 narrowed the shown-as-served rule to this)
-const otherDoc = (k) => { frames['f-' + k].contentDocument = { URL: 'http://TESTHOST:1/' + k, documentElement: { getAttribute: () => null } }; };   // a same-origin document at the pane's url with neither the marker nor the stamp: what the kernel did not serve as a 200 (its 403 line under a stale cookie, a text/plain body the browser wraps in a bare <html>; its 500 page; a proxy's 502 body); docState's 'other', a failure (review round 4, kernel-1)
+const otherDoc = (k) => { frames['f-' + k].contentDocument = { URL: 'http://TESTHOST:1/' + k, documentElement: { getAttribute: () => null } }; };   // a same-origin document at the pane's url with neither the marker nor the stamp: what the kernel did not serve as a 200 (its 403 line to a browser holding no session cookie the kernel accepts, a text/plain body the browser wraps in a bare <html>; its 500 page; a proxy's 502 body); docState's 'other', a failure (review round 4, kernel-1)
 const out = {};
 const origTell = window.__rompPanesTell; window.__rompPanesTell = () => { LOG.push('tell'); origTell(); };
 """
@@ -1630,7 +1630,7 @@ out.noneLoad = snapK('timeline');
 console.log(JSON.stringify(out));
 """
 # Review round 4 (2026-09-19, kernel-1 and tests-1): a same-origin document at the pane's url with neither the pane shim's marker nor the
-# kernel's 200 stamp is NOT shown as served: the kernel's 403 line for a token-gated route once the cookie is stale (text/plain: the browser
+# kernel's 200 stamp is NOT shown as served: the kernel's 403 line to a browser holding no session cookie the kernel accepts (text/plain: the browser
 # wraps it in a bare <html> the kernel never wrote, so no stamp), its 500 page, a proxy's 502 body while it restarts. Pass 3 showed every
 # such document as served, which put the 403 body (it names the serve-token file's path) on the phone's screen with no retry road for the
 # page's life. Now it is a failure like an error page, on both detectors: the load listener (the 403 and the 500 commit a document and fire
@@ -1655,7 +1655,7 @@ RETRY.clicks.forEach((f) => f({ stopPropagation() {} }));   // the Try again but
 out.buttonTap = snapK('waiting');
 frames['f-waiting'].contentDocument = { URL: 'about:blank' };   // still loading...
 out.loadingAgain = snapK('waiting');
-shimUp('waiting'); (LOADS.waiting || []).forEach((f) => f());   // ...and the good load (the cookie fresh again): the episode ends
+shimUp('waiting'); (LOADS.waiting || []).forEach((f) => f());   // ...and the good load (the browser signed in again): the episode ends
 out.goodLoad = snapK('waiting');
 window.__rompMobileTab('fleet');   // the tab's re-tap road, on a second pane: fail via load, re-tap, load
 otherDoc('fleet'); (LOADS.fleet || []).forEach((f) => f());
@@ -1854,7 +1854,7 @@ console.log(JSON.stringify(out));
 # ui-1 (review round 4, 2026-09-19): the keyboard's retry keeps its focus. paintLoading hides the button while the retry loads, which drops focus to the
 # body in every engine (the served leg's witness); the failed paint that shows it again must put focus back, and nothing else may move focus onto it.
 # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding correctness-3, ruled high): the desktop's bound is reached by docState's `other` answer too, whose commonest
-# member is a document the KERNEL sent (its 403 line under a stale cookie, whose body names the serve-token file's path). Pass 4's bound kept
+# member is a document the KERNEL sent (its 403 line to a browser holding no session cookie the kernel accepts, whose body names the serve-token file's path). Pass 4's bound kept
 # the src whatever the answer, so that body stood on the desktop's screen with no failed state and no retry for the page's life: pass 3's
 # high moved to the desktop. The bound now drops a document the kernel sent from the frame (src removed, the url under data-lazy-src) and keeps
 # the browser's own error page (`none`) as before; both record DEAD, and the flip back parks the pane with the failed state (the DEAD branch
@@ -1872,7 +1872,7 @@ const snapO = (k) => ({ src: src()[k], lazy: lazy()[k], dataSrc: dataSrc()[k], d
 MATCHES = false; MQL.forEach((f) => f({}));   // the rotation to the desktop: every parked pane promoted
 ['waiting', 'files'].forEach((k) => { shimUp(k); (LOADS[k] || []).forEach((f) => f()); });
 out.flipped = { fleet: snapO('fleet'), timeline: snapO('timeline') };
-otherDoc('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the Outline's document is the kernel's own 403 line (the cookie stale): the episode's first desktop failure, re-parked under data-src and promoted again
+otherDoc('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the Outline's document is the kernel's own 403 line (no session cookie the kernel accepts): the episode's first desktop failure, re-parked under data-src and promoted again
 out.firstOther = snapO('fleet');
 otherDoc('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the re-promotion's document is the same denial: the bound, and the document is dropped from the frame, its url under data-lazy-src
 out.desktopOtherBound = snapO('fleet');
@@ -1887,7 +1887,7 @@ MATCHES = true; MQL.forEach((f) => f({}));   // the flip back to the phone: both
 out.back = { fleet: snapO('fleet'), timeline: snapO('timeline') };
 window.__rompMobileTab('fleet');   // the tab tap: promoted again, the loader painted
 out.tabTap = snapO('fleet');
-shimUp('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the good load (the cookie fresh again): recovered
+shimUp('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the good load (the browser signed in again): recovered
 out.recovered = snapO('fleet');
 console.log(JSON.stringify(out));
 """
@@ -2633,7 +2633,8 @@ class LazyPanes(unittest.TestCase):
         # data-romp-served=200 on that tag (a rule over the writer, so no list of pages can go stale), and nothing else: the seven pane routes'
         # pages, the shell page every client loads (pass 5, the reviewer's round-4 tests-4: _landing(), covered by neither census before), the four fallback
         # pages a missing ui/ module yields all carry it; a 403 or a 500 text/plain body (what the kernel's denial and its traceback are), a
-        # text/plain 200 and a body with no <html> tag (the paste-the-token page at /, disclosed below) pass through untouched, bytes or str.
+        # text/plain 200 and a body with no <html> tag (the paste-the-token page at / and /login, disclosed below) pass through untouched,
+        # bytes or str.
         # The population is DERIVED from the writers: an AST walk over kernel.py's `_send(200, <body>, "text/html…")` calls must name exactly
         # the page functions in the bodies loop, and the one constant body (the token page), so a new text/html 200 writer reds this test.
         # The page dispatch main's route table brought (fork PR #919: `_page = _PAGE_RENDERERS.get(p)`, then one `_send`) counts as every
@@ -2663,7 +2664,7 @@ class LazyPanes(unittest.TestCase):
             self.assertEqual(out.count("<html data-romp-served=200"), 1, k + ": one stamp on the <html> tag of a text/html 200")
             self.assertEqual(len(out), len(b) + len(" data-romp-served=200"), k + ": nothing else changes")
             self.assertTrue(re.match(r"\s*<!DOCTYPE html>\s*<html data-romp-served=200[\s>]", out, re.I), k + ": the stamped tag is the document's ROOT, the one documentElement carries (the author's pass-5 verify: the stamp lands on the FIRST <html match, so a leading comment naming the tag would take it, count one and add the same 21 bytes, with the root unstamped and docState reading `other`): %r" % (out[:80],))
-        self.assertNotIn("<html", km._TOKEN_LOGIN_HTML, "the token-less landing (the paste-the-token page at /) writes no root tag, so it is the one 200 the writer cannot stamp: disclosed here; it is served at / (a request with no credential) and at /login (the sign-in page, exempt, since main's fork PR #919), never at a pane url, so no pane frame's reader meets it")
+        self.assertNotIn("<html", km._TOKEN_LOGIN_HTML, "the token-less landing (the paste-the-token page at / and /login) writes no root tag, so it is the one 200 the writer cannot stamp: disclosed here; it is served at / (a request with no credential) and at /login (the sign-in page, exempt, since main's fork PR #919), never at a pane url, so no pane frame's reader meets it")
         self.assertEqual(stamp(200, km._TOKEN_LOGIN_HTML, "text/html"), km._TOKEN_LOGIN_HTML, "...and it passes through as it came")
         self.assertEqual(stamp(200, b"<!DOCTYPE html><html lang=en><body>x</body></html>", "text/html"), b"<!DOCTYPE html><html data-romp-served=200 lang=en><body>x</body></html>", "a bytes body is stamped the same")
         self.assertEqual(stamp(200, "<HTML><body>x</body></HTML>", "text/html"), "<HTML data-romp-served=200><body>x</body></HTML>", "the tag's case does not matter")

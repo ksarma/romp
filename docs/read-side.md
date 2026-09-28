@@ -289,14 +289,16 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   writers and off a lab kernel (`tests/test_pane_state_broadcast.py`,
   `tests/test_return_from_background_served.py`); a body with no `<html>` tag
   is served as it came, unstamped, so at a pane url it would read as a
-  failure (the paste-the-token page at `/` is such a body today, and `/` is
-  not a pane url); and the shell reads that stamp) is not a failure: the
-  shell cannot classify it, so it is shown as served (the loader clears, the
-  src stays) and one `pane-load-unmarked` row (surface `shell`: `pane`, `via`)
-  says what was seen; a reader that cannot classify a 200 never reports
-  absent. A document at the url with neither the shim nor the stamp (the
-  kernel's 403 line under a stale cookie, its 500 page, a proxy's 502 body) is
-  a failure like an error page: re-parked with the retry control and one
+  failure (the paste-the-token page at `/` and `/login` is such a body today,
+  and neither is a pane url); and the shell reads that stamp) is not a
+  failure: the shell cannot classify it, so it is shown as served (the loader
+  clears, the src stays) and one `pane-load-unmarked` row (surface `shell`:
+  `pane`, `via`) says what was seen; a reader that cannot classify a 200 never
+  reports absent. A document at the url with neither the shim nor the stamp
+  (the kernel's 403 line, which a pane url answers only to a browser holding
+  no session cookie this kernel accepts, since a page opens on that cookie
+  alone; its 500 page; a proxy's 502 body) is a failure like an error page:
+  re-parked with the retry control and one
   `pane-load-failed` row (since 2026-09-19; the 200 scope since review round 4
   the same day). On the desktop layout a pane a flip promoted files the same
   two rows (its promotion arms the same load listener and 30 s backstop): the

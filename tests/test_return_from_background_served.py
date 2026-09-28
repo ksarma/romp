@@ -914,8 +914,9 @@ class ReturnFromBackground(unittest.TestCase):
                 self.assertFalse(b"data-romp-served" in denial, p + ": ...and carries no stamp (%d bytes)" % (len(denial),))
         # pass 5, the author's label, taking the reviewer's round-4 finding tests-4: the shell page every client loads, `/` with the token (Handler._send's _landing() writer), is stamped once
         # although its body carries more than one <html match (its own script's), the first-tag rule; and the credential-less `/` is the
-        # paste-the-token page, a text/html 200 with NO <html> tag and no stamp, the one such body the kernel writes (served at / alone, never at
-        # a pane url: unstamped, it would read as a failure there). Counted, never printed.
+        # paste-the-token page, a text/html 200 with NO <html> tag and no stamp, the one such body the kernel writes (served at / to a request
+        # with no credential and at /login, the sign-in page since main's fork PR #919, the same bytes; never at a pane url: unstamped, it
+        # would read as a failure there). Counted, never printed.
         with urllib.request.urlopen("http://127.0.0.1:%d/?token=%s" % (self.port, self.token), timeout=10) as resp:
             landing = resp.read()
             self.assertEqual(resp.status, 200, "/: the landing, served with the token")
@@ -929,6 +930,11 @@ class ReturnFromBackground(unittest.TestCase):
             self.assertTrue(resp.headers.get("Content-Type", "").startswith("text/html"), "/ without a credential: text/html: %r" % (resp.headers.get("Content-Type"),))
         self.assertGreater(len(token_page), 0, "the token page has a body")
         self.assertEqual((len(re.findall(rb"<html(?=[\s>])", token_page, re.I)), token_page.count(b"data-romp-served")), (0, 0), "the paste-the-token page: no <html> tag, so unstamped, the disclosed exception, read off the real kernel (%d bytes)" % (len(token_page),))
+        with urllib.request.urlopen("http://127.0.0.1:%d/login" % self.port, timeout=10) as resp:
+            login_page = resp.read()
+            self.assertEqual(resp.status, 200, "/login: the sign-in page, a 200")
+            self.assertTrue(resp.headers.get("Content-Type", "").startswith("text/html"), "/login: text/html: %r" % (resp.headers.get("Content-Type"),))
+        self.assertTrue(login_page == token_page, "/login serves the same paste-the-token page, so the exception has two routes and neither is a pane url (%d and %d bytes)" % (len(login_page), len(token_page)))
 
     def test_firefox_phone_hung_12s_tab_tap_denied_document(self):
         self._leg("phone", "hung", 12, engine="firefox", tap="fleet", denied=True, retry_enter=True)

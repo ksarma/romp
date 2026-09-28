@@ -69877,7 +69877,7 @@ var open=function(){try{f.contentWindow&&f.contentWindow.postMessage(msg,'*');}c
 // and falls through to the promotion below, which fetches again and posts the open on the load. Live means the settings PAGE: a
 // same-origin document at a url with the pane shim's marker in its window (window.__rompApp, set as the shim parses, the read
 // docState makes for its `app` answer in _LANDING_MOBILE_JS, kernel.py function docState; review round 4, 2026-09-19, kernel-2). A document without it (the kernel's 403 line
-// under a stale cookie, a proxy's 502 body) is not the page: it cannot hear the ask, and this frame is display:none until the page
+// to a browser holding no session cookie the kernel accepts, a proxy's 502 body) is not the page: it cannot hear the ask, and this frame is display:none until the page
 // speaks, so the lazy panes' shown-as-served rule has no bearing here; before this a same-origin error body left the gear dead for the
 // page's life, every tap posting into it. A body that stays an error leaves the gear silently unopenable still (a disclosed residual).
 // A tap while the first fetch is still in flight reads not-live too. Before the document commits (about:blank, or no document) it restarts
@@ -70882,9 +70882,9 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // the shim parses, ahead of the bundle and the load event). `doc`: a same-origin document at the url with no shim that carries the
 // kernel's stamp of a 200 (data-romp-served=200 on its <html> tag, written by Handler._send on every text/html 200 this kernel
 // writes whose body has an <html> tag, _stamp_served_html: a rule over the writer, not a list of pages; a body with none is served
-// unstamped and would read as a failure here, the paste-the-token page at / being the one today, never at a pane url), so a 200 the kernel served that this reader cannot
+// unstamped and would read as a failure here, the paste-the-token page at / and /login being the one today, never at a pane url), so a 200 the kernel served that this reader cannot
 // classify: the kernel's own "needs the ui/ modules" fallback page. `other`: a same-origin document at the url with neither the
-// marker nor the stamp, so what the kernel did not serve as a 200 (its 403 line for a token-gated route once the cookie is stale,
+// marker nor the stamp, so what the kernel did not serve as a 200 (its 403 line to a browser holding no session cookie the kernel accepts,
 // its 500 page, a proxy's 502 body while it restarts). THE RULE (review round 2's family two, narrowed in review round 4,
 // 2026-09-19, kernel-1 and tests-1): a 200 the kernel served at the pane's url is not a failure just because this reader cannot
 // recognise it, so `doc` is SHOWN AS SERVED (the loader clears, the src stays, one shell client-diag row `pane-load-unmarked`
@@ -74253,13 +74253,14 @@ def _stamp_served_html(code, body, ctype):
     Sec-WebSocket-Key, a header no navigation or fetch can set (tests/test_kernel_remote_ws_proxy.py), and the one status line the
     relay writes raw is that 101. A third census in the same module classifies every raw `sendall(` and `wfile.write(` in this file
     (this writer's, a bypassing block's, that splice's, or a WebSocket frame's), so a new raw writer of an HTTP response reds it. A body
-    with no <html> tag is returned as it came, unstamped, so served at a pane url it
-    would read as a failure; the paste-the-token page at / is one today, and / is not a pane url (correctness-2, regression-1, extra6-2:
-    the rule with its shape condition, the token page an example and not a list). The phone shell's docState (_LANDING_MOBILE_JS) reads it
-    off a pane frame's same-origin document: one with the pane shim's marker is the pane's own; one with this stamp and no marker
-    is a 200 the kernel served that the shell cannot classify (its "needs the ui/ modules" page), shown as served; one with neither
-    is not a 200 of this kernel's (its 403 line under a stale cookie, its 500 page, a proxy's 502 body while it restarts) and is a
-    failure with the retry road. The 403 and the 500 are text/plain and a proxy's page is not this kernel's, so none can carry it:
+    with no <html> tag is returned as it came, unstamped, so served at a pane url it would read as a failure; the paste-the-token page,
+    served at / and at /login, is one today, and neither is a pane url (correctness-2, regression-1, extra6-2: the rule with its shape
+    condition, the token page an example and not a list). The phone shell's docState (_LANDING_MOBILE_JS) reads it off a pane frame's
+    same-origin document: one with the pane shim's marker is the pane's own; one with this stamp and no marker is a 200 the kernel
+    served that the shell cannot classify (its "needs the ui/ modules" page), shown as served; one with neither is not a 200 of this
+    kernel's (its 403 line, which a pane url answers only to a browser holding no session cookie this kernel accepts, since a page opens
+    on that cookie alone and a stale page key does not close it; its 500 page; a proxy's 502 body while it restarts) and is a failure
+    with the retry road. The 403 and the 500 are text/plain and a proxy's page is not this kernel's, so none can carry it:
     that is the point. The first <html tag alone (the shell page's own script names the tag in a regex and a comment, so a body can
     carry more than one match); a body with none is returned as it came, bytes or str alike; any other status or type passes through
     untouched."""
