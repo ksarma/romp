@@ -96,14 +96,15 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   plain daemon thread beside it is not. The tables are read again after every pass: a busy worker started, by a worker
   of a pool a daemon thread started, after the guard's first read is returned. A read that raises RuntimeError, as
   iterating a WeakKeyDictionary does on 3.10 to 3.13 when another thread inserts into it, is read again (a stand-in
-  table raises on its first read, and the pin drives the guard's clock, so no real time passes), up to the guard's one
-  deadline: a table that changes during every read ends the guard at its deadline, failing it by the table's name and
-  naming the non-daemon thread still alive beside it, but not a plain daemon thread (a stand-in that adds to itself
-  during every read, with the process-wide time.monotonic frozen, the guard run under a backstop whose firing is the
-  defect of a retry with no bound, or one bounded on that frozen clock). The same failure in a child run (a stand-in
-  table whose every read raises, in place for the session, beside a leaked non-daemon thread) fails the run with one
-  error whose report prints the table's failure once, with no exception chain: raised inside the handler of the table's
-  own failure, it would print that one first, under "During handling of the above exception". Stderr prints it once too.
+  table raises on its first read, and the pin drives the guard's clock, so the guard waits for nothing and the pin does
+  not depend on the cap), up to the guard's one deadline: a table that changes during every read ends the guard at its
+  deadline, failing it by the table's name and naming the non-daemon thread still alive beside it, but not a plain
+  daemon thread (a stand-in that adds to itself during every read, with the process-wide time.monotonic frozen, the
+  guard run under a backstop whose firing is the defect of a retry with no bound, or one bounded on that frozen clock).
+  The same failure in a child run (a stand-in table whose every read raises, in place for the session, beside a leaked
+  non-daemon thread) fails the run with one error whose report prints the table's failure once, with no exception chain:
+  raised inside the handler of the table's own failure, it would print that one first, under "During handling of the
+  above exception". Stderr prints it once too.
 - Threads that END WITHIN THE CAP (each test starts one that sleeps WITHIN_S and exits) and plain DAEMON threads that
   run past the session (one per test, released at unconfigure) leave the run green, serially and under -n 2, at the
   guard's own cap. The guard's wait is WITNESSED, not assumed: the scratch conftest records at pytest_sessionfinish,
@@ -1368,8 +1369,8 @@ class ExitJoinTables(unittest.TestCase):
         another thread starts while it is in place is still recorded where the exit hook reads. The pin drives the
         guard's clock (its own binding, _monotonic) from the stand-in's reads: it reads 0 until the table's second read,
         so the deadline is the cap and the retry after the first read falls before it, and then the deadline itself, so
-        the guard returns the thread it found without joining it. No real time passes on the guard's clock, so the pin
-        does not depend on the cap or on how long the machine takes to reach the retry."""
+        the guard returns the thread it found without joining it. The guard's clock reads no real time, so the pin does
+        not depend on the cap or on how long the machine takes to reach the retry."""
         import concurrent.futures.thread as cft
         cf = sys.modules["tests.conftest"]
         real_table = cft._threads_queues
