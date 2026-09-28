@@ -56,14 +56,86 @@ PYTEST_LEG = sweep.LEGS[1]
 assert PYTEST_LEG == "pytest", sweep.LEGS
 
 FAKE = r'''#!%(python)s
-import glob, json, os, shutil, subprocess, sys, time
+import glob, json, os, re, shutil, subprocess, sys, time
 name = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 # The control and log paths are written into this file when the World makes it, never read from the environment:
 # the runner's leg environment is an allowlist that drops every name a test would set.
-CTL, LOG = %(ctl)r, %(log)r
+CTL, LOG, SETUP = %(ctl)r, %(log)r, %(setup)r
 ctl = json.load(open(CTL)) if os.path.exists(CTL) else {}
+# The pytest leg's environment (sweep.py's sdk_environment): `python -m venv DIR` makes DIR a venv whose bin/python is a
+# copy of this file; a copy running there is "in the venv", and its pip records each requirement in DIR's
+# fake-installs.json, which its probe and its `-c "import X"` read. Every such call goes to SETUP, not to LOG, so the
+# legs' record stays one entry per leg.
+here = os.path.abspath(sys.argv[0])
+venv_root = os.path.dirname(os.path.dirname(here))
+in_venv = os.path.exists(os.path.join(venv_root, "pyvenv.cfg"))
+installs_path = os.path.join(venv_root, "fake-installs.json")
+installs = json.load(open(installs_path)) if in_venv and os.path.exists(installs_path) else {}
+MODULE_DISTS = {"pytest": "pytest", "xdist": "pytest-xdist", "pytest_timeout": "pytest-timeout"}
+
+
+def norm(dist):
+    return re.sub(r"[-_.]+", "-", dist).lower()
+
+
+def setup(kind, **extra):
+    with open(SETUP, "a") as f:
+        f.write(json.dumps(dict(extra, kind=kind, exe=here, argv=args, names=sorted(os.environ),
+                                home=os.environ.get("HOME"), pythonpath=os.environ.get("PYTHONPATH"))) + "\n")
+
+
+if name == "python" and args[:2] == ["-m", "venv"]:
+    setup("venv", target=args[-1])
+    if ctl.get("venv_rc"):
+        sys.exit(ctl["venv_rc"])
+    os.makedirs(os.path.join(args[-1], "bin"))
+    shutil.copy(here, os.path.join(args[-1], "bin", "python"))
+    os.chmod(os.path.join(args[-1], "bin", "python"), 0o755)
+    with open(os.path.join(args[-1], "pyvenv.cfg"), "w") as f:
+        f.write("home = %%s\n" %% os.path.dirname(here))
+    sys.exit(0)
+if name == "python" and args[:3] == ["-m", "pip", "install"]:
+    setup("pip")
+    if not in_venv:
+        print("fake pip: refusing to install outside a venv")
+        sys.exit(1)
+    if any(bad in args for bad in ctl.get("pip_fail", [])):
+        print("ERROR: fake pip failed on %%s" %% args[3:])
+        sys.exit(1)
+    for a in args[3:]:
+        if not a.startswith("-"):
+            dist, _eq, version = a.partition("==")
+            installs[norm(dist)] = version or "9.9.9"
+    with open(installs_path, "w") as f:
+        json.dump(installs, f)
+    sys.exit(0)
+if name == "python" and args[:1] and args[0].endswith("get-pip.py"):
+    setup("get-pip")
+    installs["pip"] = "9.9.9"
+    with open(installs_path, "w") as f:
+        json.dump(installs, f)
+    sys.exit(0)
 if name == "python" and args[:1] == ["-c"]:
+    code = args[1] if len(args) > 1 else ""
+    if "sweep probe" in code:
+        setup("probe")
+        missing = set(ctl.get("missing", [])) if in_venv else set()
+        if in_venv:
+            missing |= {m for m, d in MODULE_DISTS.items() if d not in installs}
+        dists = {d: (ctl.get("sdk_reports") or installs.get(norm(d))) if in_venv else None for d in args[2:]}
+        version = ctl.get("probe_version", "3.99.0")
+        print(json.dumps({"version": version, "full": version + " (fake)", "missing": sorted(missing),
+                          "ensurepip": ctl.get("ensurepip", True), "dists": dists}))
+        sys.exit(0)
+    imported = re.fullmatch(r"import ([A-Za-z_][A-Za-z0-9_.]*)", code)
+    if imported:
+        setup("import", module=imported.group(1))
+        if not any(norm(d).replace("-", "_") == imported.group(1).lower() for d in installs):
+            print("ModuleNotFoundError: No module named %%r" %% imported.group(1))
+            sys.exit(1)
+        sys.exit(0)
+    # any other -c: the two-line module probe of a runner before the venv (its version, then its missing modules)
     print(ctl.get("probe_version", "3.99.0"))
     print(" ".join(ctl.get("missing", [])))
     sys.exit(0)
@@ -83,7 +155,7 @@ else:
 keep = ("TMPDIR", "HOME", "PATH", "SHELL", "LANG", "CI", "USER", "LOGNAME", "XDG_STATE_HOME", "npm_config_cache",
         "PLAYWRIGHT_BROWSERS_PATH", "NODE_OPTIONS", "SWEEP_WRAPPED", "ROMP_SERVED_TESTS_REQUIRE", "ROMP_SERVED_TESTS_ENGINES",
         "ROMP_GITLEAKS_REQUIRE", "BATS_TEST_TIMEOUT", "ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT",
-        "ROMP_POSTAL_PORT", "npm_config_globalconfig", "GIT_CONFIG_NOSYSTEM")
+        "ROMP_POSTAL_PORT", "npm_config_globalconfig", "GIT_CONFIG_NOSYSTEM", "ROMP_SDK_REQUIRE")
 marker = ctl.get("marker")
 home = os.path.expanduser("~")
 # every file the runner put in the leg's private state root (names and contents), read without naming any
@@ -128,6 +200,9 @@ with open(LOG, "a") as f:
                         "marked": sorted(k for k, v in os.environ.items() if marker and marker in v),
                         "home_files": sorted(n for n in (".npmrc", ".gitconfig", ".zshenv") if os.path.exists(os.path.join(home, n))),
                         "sdk": glob.glob(os.path.join(home, ".local", "state", "romp", "sdkvenv", "lib", "*", "site-packages")),
+                        # the interpreter this leg ran as, and what the venv it runs in holds (None outside one)
+                        "exe": here, "venv_installs": installs if in_venv else None,
+                        "tmp": sorted(os.listdir(os.environ["TMPDIR"])) if os.path.isdir(os.environ.get("TMPDIR", "")) else None,
                         "state": state}) + "\n")
 act = ctl.get("action", {}).get(leg)
 if act == "commit":
@@ -310,6 +385,40 @@ with open(LOG, "a") as f:
 os.execvp(rest[0], rest)
 '''
 
+# The seed's ci.yml: a python job whose three install steps the runner reads to build the pytest leg's environment
+# (sweep.py's INSTALL_STEPS), the SDK's pin read from kernel/session_host.py as the real workflow reads it. Synthetic;
+# CiParity holds the runner to the real workflow.
+SEED_PIN = "1.2.3"
+SEED_SDK_STEP = """      - name: Install the Claude Agent SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^SDK_TESTED_VERSION = "\\([^"]*\\)".*$/\\1/p' kernel/session_host.py)"
+          [[ "$pin" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || {
+            echo "kernel/session_host.py: expected exactly one line SDK_TESTED_VERSION = \\"<x.y.z>\\", read: '$pin'" >&2
+            exit 1
+          }
+          python -m pip install "claude-agent-sdk==$pin"
+          python -c "import claude_agent_sdk"
+"""
+SEED_CI = """name: CI
+on:
+  push:
+    branches: ['batch/**']
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest pytest-timeout pytest-xdist
+      - name: Install cryptography
+        run: python -m pip install cryptography
+""" + SEED_SDK_STEP + """      - name: Run pytest
+        run: python -m pytest -q
+"""
+SEED_HOST = 'SDK_TESTED_VERSION = "%s"\n' % SEED_PIN
+
 SEED = {
     ".gitignore": "vscode-extension/node_modules\n",
     "README.md": "# notes-api\n",
@@ -335,8 +444,9 @@ class World:
         self.ctl_path = os.path.join(self.tmp, "ctl.json")
         self.log_path = os.path.join(self.tmp, "fake.log")
         self.wrap_log = os.path.join(self.tmp, "wrap.log")
+        self.setup_path = os.path.join(self.tmp, "setup.log")
         os.makedirs(self.bin)
-        fake = FAKE % {"python": sys.executable, "ctl": self.ctl_path, "log": self.log_path}
+        fake = FAKE % {"python": sys.executable, "ctl": self.ctl_path, "log": self.log_path, "setup": self.setup_path}
         for name in ("python", "npm", "node", "bats"):
             with open(os.path.join(self.bin, name), "w") as f:
                 f.write(fake)
@@ -359,6 +469,9 @@ class World:
         self.git("symbolic-ref", "HEAD", "refs/heads/main", cwd=self.tree)
         files = dict(SEED if seed is None else seed)
         files["scripts/upstream-ledger.py"] = fake
+        # every head the runner sweeps holds the install steps its pytest leg's environment is built from
+        files.setdefault(".github/workflows/ci.yml", SEED_CI)
+        files.setdefault("kernel/session_host.py", SEED_HOST)
         self.write(files)
         os.chmod(os.path.join(self.tree, "scripts", "upstream-ledger.py"), 0o755)
         self.git("add", "-A", cwd=self.tree)
@@ -409,6 +522,16 @@ class World:
 
     def legs_called(self):
         return [c["leg"] for c in self.calls()]
+
+    def setups(self):
+        """The fake python's calls that build or probe the pytest leg's environment ({kind, exe, argv, names, home})."""
+        if not os.path.exists(self.setup_path):
+            return []
+        with open(self.setup_path) as f:
+            return [json.loads(line) for line in f]
+
+    def sdk_root(self):
+        return os.path.join(self.xdg, "romp", "sweeps", "sdk")
 
     def wraps(self):
         if not os.path.exists(self.wrap_log):
@@ -967,12 +1090,17 @@ class Runner(_Base):
         self.assertNotEqual(os.path.realpath(call["root"]), os.path.realpath(w.tree))
         self.assertEqual(os.listdir(shared), ["kept.txt"], "the batcher's shared deps are untouched")
 
-    def test_a_pytest_interpreter_without_the_plugins_is_refused(self):
+    def test_an_environment_without_the_pytest_plugins_is_refused(self):
+        """The pytest leg's interpreter is the venv the runner builds at ci.yml's install steps: a venv that lacks a
+        module the leg needs after them (here the probe says so; PytestEnvironment's case drops the plugin from ci.yml)
+        is refused, nothing recorded, and the venv removed."""
         w = self.w
         w.ctl({"missing": ["xdist"]})
         p = w.run(check=2)
-        self.assertIn("lacks xdist", p.stderr)
+        self.assertIn("after the install steps the venv lacks xdist, which the pytest leg needs", p.stderr)
         self.assertFalse(os.path.exists(w.result_path()))
+        self.assertEqual(sorted(n for n in os.listdir(w.sdk_root()) if not n.endswith((".log", ".lock"))), [],
+                         "the failed build's venv is removed")
 
     def test_check_reads_the_result_as_batch_does(self):
         w = self.w
@@ -1667,7 +1795,7 @@ class CheckoutRoads(unittest.TestCase):
 
 
 # The keys of leg_context, with placeholder values: leg_sets' NAMES do not depend on them.
-CTX_SHAPE = {k: "/nonexistent/" + k for k in ("tmpdir", "home", "xdg", "npm_cache", "browsers", "path")}
+CTX_SHAPE = {k: "/nonexistent/" + k for k in ("tmpdir", "home", "xdg", "npm_cache", "browsers", "path", "pytest_path")}
 
 
 class LegEnvironment(_Base):
@@ -1749,9 +1877,12 @@ class LegEnvironment(_Base):
                 self.assertNotIn("NPM_CONFIG_GLOBALCONFIG", c["names"])
                 self.assertNotIn("GIT_CONFIG_SYSTEM", c["names"])
                 path = v["PATH"].split(os.pathsep)
-                self.assertEqual(path[0], w.bin, "the pytest interpreter's directory leads PATH")
+                # --python's directory leads every leg's PATH but the pytest leg's, which leads with the directory of
+                # the venv the runner built from it (its bin holds pytest's interpreter; --python's does not)
+                lead = os.path.dirname(w.result()["runner"]["sdk"]["python"]) if c["leg"] == PYTEST_LEG else w.bin
+                self.assertEqual(path[0], lead, "the leg's interpreter's directory leads PATH")
                 tool_dirs = {os.path.dirname(shutil.which(t, path=env["PATH"]) or "") for t in sweep.PATH_TOOLS} - {""}
-                self.assertEqual(sorted(set(path) - {w.bin} - tool_dirs - set(sweep.PATH_FLOOR)), [])
+                self.assertEqual(sorted(set(path) - {lead} - tool_dirs - set(sweep.PATH_FLOOR)), [])
                 self.assertTrue(set(sweep.PATH_FLOOR) <= set(path), path)
                 self.assertNotIn(decoy, path, "the batcher's PATH is not passed on")
                 self.assertEqual(len(path), len(set(path)), "each directory once")
@@ -1873,6 +2004,260 @@ class LegEnvironmentReader(unittest.TestCase):
         self.assertRegex(src, r'os\.environ\.get\("ROMP_REMOTE_KERNEL_PORT", str\(PORT\)\)')
 
 
+class PytestEnvironment(_Base):
+    """Round 1's SDK ruling (2026-09-28): the pytest leg runs in a venv the runner owns, built from --python with the
+    install steps the swept sha's ci.yml holds (pytest and its plugins, cryptography, the Claude Agent SDK at its pin)
+    and cached under <state dir>/sweeps/sdk/<key>, keyed by the pin, --python's path and version and the install
+    commands. The pin is read from ci.yml, never restated; the result records the key and the SDK's version; the leg's
+    private HOME keeps a live deployment's SDK venv out; a build that fails is a refusal, nothing recorded. FAKE makes
+    the venv, records what pip installs in it, and answers the probe and the import check from that record."""
+
+    FLAKE = "tests/test_a.py::test_a (a known flake, recorded in the notes)"
+
+    def sdk(self, sha=None):
+        return self.w.result(sha)["runner"]["sdk"]
+
+    def pytest_calls(self):
+        return [c for c in self.w.calls() if c["leg"] == PYTEST_LEG]
+
+    def test_the_pin_is_read_from_ci_yml_and_another_pin_is_another_key_and_version(self):
+        w = self.w
+        w.run(check=0)
+        first = self.sdk()
+        self.assertEqual((first["dist"], first["pin"], first["version"]), ("claude-agent-sdk", SEED_PIN, SEED_PIN),
+                         "the pin ci.yml's SDK step reads from kernel/session_host.py")
+        # the pin moves where ci.yml reads it: a new key, a new venv beside the old one, the new version recorded
+        w.change({"kernel/session_host.py": 'SDK_TESTED_VERSION = "1.2.4"\n'})
+        w.run(check=0)
+        second = self.sdk()
+        self.assertEqual((second["pin"], second["version"]), ("1.2.4", "1.2.4"))
+        self.assertNotEqual(second["key"], first["key"], "a pin change is a new key")
+        # a ci.yml whose SDK step names its pin in the install line itself
+        w.change({".github/workflows/ci.yml": SEED_CI.replace('"claude-agent-sdk==$pin"', "claude-agent-sdk==2.0.0")})
+        w.run(check=0)
+        third = self.sdk()
+        self.assertEqual((third["pin"], third["version"]), ("2.0.0", "2.0.0"))
+        self.assertEqual(len({first["key"], second["key"], third["key"]}), 3, "each pin its own key")
+        self.assertEqual(sorted(n for n in os.listdir(w.sdk_root()) if os.path.isdir(os.path.join(w.sdk_root(), n))),
+                         sorted([first["key"], second["key"], third["key"]]), "each key's venv stays in the cache")
+        self.assertEqual(self.pytest_calls()[-1]["venv_installs"]["claude-agent-sdk"], "2.0.0")
+
+    def test_the_pytest_leg_runs_in_the_venv_where_the_sdk_imports(self):
+        w = self.w
+        w.run(check=0)
+        call = self.pytest_calls()[0]
+        self.assertEqual((call["venv_installs"] or {}).get("claude-agent-sdk"), SEED_PIN,
+                         "the pytest leg runs in a venv holding the SDK at ci.yml's pin")
+        sdk = self.sdk()
+        self.assertEqual(sdk["python"], os.path.join(w.sdk_root(), sdk["key"], "bin", "python"))
+        self.assertEqual(call["exe"], sdk["python"], "the pytest leg ran as the venv's python")
+        self.assertEqual(w.result()["legs"][PYTEST_LEG]["cmd"][0], sdk["python"])
+        self.assertEqual(call["venv_installs"], {"pip": "9.9.9", "pytest": "9.9.9", "pytest-timeout": "9.9.9",
+                                                 "pytest-xdist": "9.9.9", "cryptography": "9.9.9",
+                                                 "claude-agent-sdk": SEED_PIN},
+                         "what ci.yml's three install steps install, and nothing else")
+        self.assertEqual(call["values"]["PATH"].split(os.pathsep)[0], os.path.dirname(sdk["python"]),
+                         "the venv's bin leads the pytest leg's PATH")
+        self.assertEqual(call["values"].get("ROMP_SDK_REQUIRE"), "1",
+                         "the Run pytest step's switch: the pin test fails where the SDK does not import")
+        self.assertEqual([(s["exe"], s["module"]) for s in w.setups() if s["kind"] == "import"],
+                         [(sdk["python"], "claude_agent_sdk")], "the SDK step's own import check ran in the venv")
+        self.assertEqual(sorted(call["tmp"]), ["home", "xdg-state"], "the build's own directory under TMPDIR is gone before the legs")
+        self.assertTrue(all(s["home"].startswith(os.path.dirname(call["values"]["HOME"]) + os.sep + "sdk-") for s in w.setups()),
+                        "the build ran under a private HOME of its own, in its directory under the run's TMPDIR")
+        for c in w.calls():
+            if c["leg"] != PYTEST_LEG:
+                self.assertIsNone(c["venv_installs"], "only the pytest leg runs in the venv (%s)" % c["leg"])
+                self.assertNotIn("ROMP_SDK_REQUIRE", c["names"], c["leg"])
+
+    def test_the_result_records_the_sdk_version_and_the_key(self):
+        w = self.w
+        w.run(check=0)
+        runner = w.result()["runner"]
+        self.assertIn("sdk", runner, "the result records the pytest leg's environment")
+        sdk = runner["sdk"]
+        self.assertEqual(sdk["version"], SEED_PIN, "the SDK's version, as the venv reports it")
+        self.assertRegex(sdk["key"], r"^[0-9a-f]{20}$")
+        self.assertEqual(sdk["path"], os.path.join(w.sdk_root(), sdk["key"]))
+        self.assertEqual((sdk["built"], sdk["base_python"], sdk["base_version"]), (True, w.python, "3.99.0"))
+        self.assertEqual(sdk["log"], sdk["path"] + ".log")
+        with open(os.path.join(sdk["path"], sweep.SDK_MARKER)) as f:
+            marker = json.load(f)
+        self.assertEqual((marker["key"], marker["pin"], marker["version"]), (sdk["key"], SEED_PIN, SEED_PIN))
+        self.assertEqual(runner["python_version"], "3.99.0")
+
+    def test_a_venv_whose_sdk_reports_another_version_is_refused(self):
+        """The recorded version is the venv's own report, not the pin copied: a venv whose SDK reports another
+        version after the install steps is refused, nothing recorded."""
+        w = self.w
+        w.ctl({"sdk_reports": "0.0.1"})
+        p = w.run(check=2)
+        self.assertIn("after the install steps the venv's claude-agent-sdk is 0.0.1, not ci.yml's pin %s" % SEED_PIN, p.stderr)
+        self.assertFalse(os.path.exists(w.result_path()))
+
+    def test_a_live_sdk_venv_on_the_batchers_machine_reaches_no_leg(self):
+        """A live deployment's SDK venv under the batcher's HOME (tests/test_host_transport.py puts
+        ~/.local/state/romp/sdkvenv on sys.path at import), named on PYTHONPATH and by ROMP_SDK_SITE as well: the pytest
+        leg runs in the runner's venv at ci.yml's pin under a private HOME that holds no such venv, and neither variable
+        reaches the leg or any command of the build."""
+        w = self.w
+        home = os.path.join(w.tmp, "batcher-home")
+        site = os.path.join(home, ".local", "state", "romp", "sdkvenv", "lib", "python3.99", "site-packages")
+        for rel, text in (("claude_agent_sdk/__init__.py", "__version__ = '0.0.9'\n"),
+                          ("claude_agent_sdk-0.0.9.dist-info/METADATA", "Name: claude-agent-sdk\nVersion: 0.0.9\n")):
+            os.makedirs(os.path.dirname(os.path.join(site, rel)), exist_ok=True)
+            with open(os.path.join(site, rel), "w") as f:
+                f.write(text)
+        w.run(env=dict(w.env, HOME=home, PYTHONPATH=site, ROMP_SDK_SITE=site), check=0)
+        call = self.pytest_calls()[0]
+        self.assertEqual((call["venv_installs"] or {}).get("claude-agent-sdk"), SEED_PIN,
+                         "the leg's SDK is the runner's venv's, at ci.yml's pin, not the live one")
+        self.assertEqual(call["exe"], self.sdk()["python"])
+        self.assertEqual(call["sdk"], [], "no SDK venv under the leg's HOME")
+        self.assertNotEqual(call["values"]["HOME"], home)
+        for name in ("PYTHONPATH", "ROMP_SDK_SITE"):
+            self.assertNotIn(name, call["names"])
+        self.assertTrue(w.setups(), "the build ran")
+        for s in w.setups():
+            with self.subTest(setup=s["kind"]):
+                self.assertNotIn("PYTHONPATH", s["names"], "the build and its probes see no PYTHONPATH")
+                self.assertNotIn("ROMP_SDK_SITE", s["names"])
+                self.assertNotEqual(s["home"], home, "the build runs under a private HOME")
+
+    def test_a_failed_build_is_refused_records_nothing_and_leaves_no_venv(self):
+        w = self.w
+        cases = (({"pip_fail": ["claude-agent-sdk==%s" % SEED_PIN]},
+                  "the step 'Install the Claude Agent SDK', `-m pip install claude-agent-sdk==%s`, exited 1; log " % SEED_PIN),
+                 ({"venv_rc": 3}, "the step 'venv', `-m venv %s" % w.sdk_root()))
+        for ctl, text in cases:
+            with self.subTest(ctl=ctl):
+                w.ctl(ctl)
+                p = w.run(check=2)
+                self.assertIn(text, p.stderr)
+                self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
+                self.assertEqual(w.legs_called(), [], "no leg ran")
+                left = os.listdir(w.sdk_root())
+                self.assertEqual(sorted(n for n in left if not n.endswith((".log", ".lock"))), [], "the venv is removed")
+                with open(os.path.join(w.sdk_root(), [n for n in left if n.endswith(".log")][0])) as f:
+                    self.assertIn("# rc: ", f.read(), "the build's log keeps what failed")
+                self.assertEqual(os.listdir(os.path.join(w.xdg, "romp", "sweeps", "trees")), [], "the checkout is removed")
+        w.ctl({})
+        w.run(check=0)
+        self.assertIs(self.sdk()["built"], True, "the next run builds it again")
+
+    def test_a_finished_build_is_reused_and_an_unfinished_one_built_again(self):
+        w = self.w
+        w.run(check=0)
+        first = self.sdk()
+        builds = [s for s in w.setups() if s["kind"] in ("venv", "pip")]
+        self.assertEqual([s["kind"] for s in builds], ["venv", "pip", "pip", "pip"])
+        w.change({"README.md": "# notes-api, again\n"})
+        w.run(check=0)
+        second = self.sdk()
+        self.assertEqual((second["key"], second["built"], second["version"]), (first["key"], False, SEED_PIN),
+                         "the same pin and interpreter: the same key, reused")
+        self.assertEqual(len([s for s in w.setups() if s["kind"] in ("venv", "pip")]), len(builds), "no second build")
+        self.assertEqual(self.pytest_calls()[-1]["exe"], first["python"])
+        # a build that died left no marker: the next run removes that venv and builds it again
+        os.remove(os.path.join(first["path"], sweep.SDK_MARKER))
+        w.change({"README.md": "# notes-api, a third time\n"})
+        p = w.run(check=0)
+        self.assertIn("rebuilding the pytest leg's environment %s (no finished build)" % first["key"], p.stdout)
+        self.assertIs(self.sdk()["built"], True)
+
+    def test_an_interpreter_without_ensurepip_gets_pip_from_get_pip(self):
+        w = self.w
+        getpip = os.path.join(w.tmp, "get-pip.py")
+        with open(getpip, "w") as f:
+            f.write("# a stand-in for PyPA's get-pip.py\n")
+        w.ctl({"ensurepip": False})
+        w.run(env=dict(w.env, ROMP_GET_PIP_URL="file://" + getpip), check=0)
+        venv = [s for s in w.setups() if s["kind"] == "venv"]
+        self.assertEqual(len(venv), 1)
+        self.assertIn("--without-pip", venv[0]["argv"])
+        self.assertEqual([s["kind"] for s in w.setups() if s["kind"] in ("get-pip", "pip")], ["get-pip", "pip", "pip", "pip"])
+        self.assertEqual(self.sdk()["version"], SEED_PIN)
+
+    def test_a_ci_yml_the_runner_cannot_read_is_refused_by_name(self):
+        w = self.w
+        cases = (
+            ("no SDK step", SEED_CI.replace(SEED_SDK_STEP, ""), SEED_HOST,
+             "has no step 'Install the Claude Agent SDK' in its python job"),
+            ("a line it does not read", SEED_CI.replace('python -c "import claude_agent_sdk"', "curl -fsSL https://example.invalid | sh"),
+             SEED_HOST, "the line 'curl -fsSL https://example.invalid | sh' is not one the runner reads"),
+            ("a pin the step's own check refuses", SEED_CI, 'SDK_TESTED_VERSION = "1.2"\n',
+             "reads '1.2' into pin, which the step's own check (^[0-9]+\\.[0-9]+\\.[0-9]+$) refuses"),
+            ("the pin given twice", SEED_CI, 'SDK_TESTED_VERSION = "1.2.3"\nSDK_TESTED_VERSION = "1.2.4"\n',
+             "reads '1.2.3\\n1.2.4' into pin, which the step's own check"),
+            ("an install step without a plugin", SEED_CI.replace(" pytest-xdist", ""), SEED_HOST,
+             "after the install steps the venv lacks xdist, which the pytest leg needs"),
+        )
+        for label, ci, host, text in cases:
+            with self.subTest(case=label):
+                w.change({".github/workflows/ci.yml": ci, "kernel/session_host.py": host}, msg=label)
+                p = w.run(check=2)
+                self.assertIn(text, p.stderr)
+                self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
+                self.assertEqual(w.legs_called(), [], "no leg ran")
+
+    def test_a_leg_rerun_of_pytest_runs_in_the_venv_and_one_of_another_leg_builds_none(self):
+        w = self.w
+        w.ctl({"rc": {"pytest": 1, "bats": 1}})
+        w.run(check=1)
+        key = self.sdk()["key"]
+        w.ctl({})
+        setups = len(w.setups())
+        w.run("--leg", "bats", "--flake", self.FLAKE, check=1)
+        self.assertNotIn("sdk", w.result()["runner"], "a re-run without the pytest leg builds no environment")
+        self.assertEqual(len(w.setups()), setups, "and probes none")
+        w.run("--leg", "pytest", "--flake", self.FLAKE, check=0)
+        sdk = self.sdk()
+        self.assertEqual((sdk["key"], sdk["built"]), (key, False), "the full run's venv, reused")
+        self.assertEqual(self.pytest_calls()[-1]["exe"], sdk["python"])
+        self.assertEqual(w.result()["legs"][PYTEST_LEG]["cmd"][0], sdk["python"])
+
+
+class ReadSed(unittest.TestCase):
+    r"""read_sed evaluates the pin read in ci.yml's SDK step (`sed -n 's/RE/\1/p' FILE`) without running sed. Held to
+    the sed on this machine over the real line and cases around it; a shape it does not read is refused, not guessed."""
+
+    SCRIPTS = (r's/^SDK_TESTED_VERSION = "\([^"]*\)".*$/\1/p', r's/VERSION = \(.*\)/\1/p', r's/^\([0-9]*\)\..*$/\1/p',
+               r's/a+\(b\)?/\1/p', r's/[.]\(x\)/\1/p', r's/x\{2\}\(y\)/\1/p')
+    TEXT = ('SDK_TESTED_VERSION = "0.2.156"\n# SDK_TESTED_VERSION = "9"\nSDK_TESTED_VERSION = "1.0" # two\nOTHER_VERSION = 7\n'
+            '12.4 and more\na+b? xa+b?y .x x.x xxy\nno newline at the end')
+
+    def test_it_prints_what_sed_prints(self):
+        sed = shutil.which("sed")
+        if not sed:
+            self.skipTest("no sed on PATH to compare with")
+        tmp = tempfile.mkdtemp(prefix="readsed-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with open(os.path.join(tmp, "f.txt"), "w") as f:
+            f.write(self.TEXT)
+        for script in self.SCRIPTS:
+            with self.subTest(script=script):
+                p = subprocess.run([sed, "-n", script, "f.txt"], cwd=tmp, text=True, stdout=subprocess.PIPE, check=True,
+                                   env={"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"})
+                self.assertEqual(sweep.read_sed(tmp, script, "f.txt", "t"), p.stdout.rstrip("\n"))
+        self.assertEqual(sweep.read_sed(tmp, self.SCRIPTS[0], "f.txt", "t"), "0.2.156\n1.0",
+                         "the population is not empty: two lines match")
+
+    def test_a_shape_it_does_not_read_is_refused(self):
+        tmp = tempfile.mkdtemp(prefix="readsed-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with open(os.path.join(tmp, "f.txt"), "w") as f:
+            f.write("x\n")
+        outside = os.path.join(tmp, "..", os.path.basename(tmp) + "-outside")
+        for script, rel, text in ((r"s/\(x\)/\1/g", "f.txt", "is not s/RE/\\1/p"), (r"s/\w\(x\)/\1/p", "f.txt", "uses \\w"),
+                                  (r"s/[[:digit:]]\(x\)/\1/p", "f.txt", "character class"), (r"s/x/\1/p", "f.txt", "no group"),
+                                  (r"s/\(x\)/\1/p", "../f.txt", "not a file in the checkout"),
+                                  (r"s/\(x\)/\1/p", outside, "not a file in the checkout")):
+            with self.subTest(script=script, rel=rel):
+                with self.assertRaises(sweep.Refused) as cm:
+                    sweep.read_sed(tmp, script, rel, "t")
+                self.assertIn(text, str(cm.exception))
+
+
 def _pytest_counts(test, ini=None, conftest=None):
     """(rc, failed) of the runner's real pytest command over a checkout holding one passing and one failing test,
     with `ini` and `conftest` (texts) written in the checkout's PARENT directory."""
@@ -1975,14 +2360,13 @@ class CiParity(unittest.TestCase):
     """B6 (fresh-1): the legs' commands are hand copies of ci.yml's, so this reads ci.yml's steps by name and compares
     them with what the runner builds (pytest_cmd, plan_legs' commands, LEG_ENV). Every difference is named here with
     its reason; a change to either side that adds one reds. Every named step of the four jobs is either compared with a
-    leg or named as CI-only, so a new step reds until it is placed."""
+    leg or named as CI-only, so a new step reds until it is placed. The python job's install steps are not hand copies:
+    the runner reads them from ci.yml and builds the pytest leg's venv with them (the SDK ruling), and the cases below
+    hold that read to the file and run it."""
 
     CI_ONLY = {
         # setup that installs the tools the runner finds on the batcher's machine instead
-        ("python", "Install pytest"), ("python", "Install cryptography"), ("shell", "Install bats (Linux)"),
-        # the SDK install (PR 872): the pytest leg runs --python as it is, so the SDK-gated tests skip there unless
-        # that interpreter has the SDK
-        ("python", "Install the Claude Agent SDK"),
+        ("shell", "Install bats (Linux)"),
         ("shell", "Install bats (macOS)"), ("shell", "Install gitleaks (Linux)"), ("secrets", "Install gitleaks"),
         ("vscode-extension", "Cache Playwright's browsers"), ("vscode-extension", "Install the pinned Playwright Chromium"),
         # the history and tree scans: the pre-push hook scans what a push publishes; CI scans all of history
@@ -2019,7 +2403,8 @@ class CiParity(unittest.TestCase):
                           "it; name the difference in PYTEST_ISOLATION's comment or pass it to the leg" % name)
 
     def test_every_named_step_is_compared_or_named_as_ci_only(self):
-        compared = {("python", "Run pytest"), ("shell", "Run bats"), ("shell", "Manager handshake tests (node --test)"),
+        compared = {("python", "Install pytest"), ("python", "Install cryptography"), ("python", "Install the Claude Agent SDK"),
+                    ("python", "Run pytest"), ("shell", "Run bats"), ("shell", "Manager handshake tests (node --test)"),
                     ("shell", "Vendored tooling and host-script tests (node --test)"), ("vscode-extension", "Install deps"),
                     ("vscode-extension", "Typecheck"), ("vscode-extension", "Test"), ("vscode-extension", "Build"),
                     ("vscode-extension", "PDF renderer dependency smoke test (node --test)"),
@@ -2048,7 +2433,61 @@ class CiParity(unittest.TestCase):
         env, _run = self.jobs["vscode-extension"]["Browser-backed served-page tests (pytest)"]
         served = {k: v for k, v in env.items() if k.startswith("ROMP_SERVED_TESTS_")}
         self.assertEqual(served, {k: v for k, v in sweep.LEG_ENV[PYTEST_LEG].items() if k.startswith("ROMP_SERVED_TESTS_")})
-        self.assertEqual(sorted(sweep.LEG_ENV[PYTEST_LEG]), sorted(served), "the pytest leg's switches are the served step's")
+        self.assertEqual(sorted(sweep.LEG_ENV[PYTEST_LEG]), sorted(set(served) | {"ROMP_SDK_REQUIRE"}),
+                         "the pytest leg's switches are the served step's and the Run pytest step's SDK switch")
+
+    def test_the_run_pytest_steps_env_is_the_pytest_legs_but_the_gil_setting(self):
+        env, _run = self.jobs["python"]["Run pytest"]
+        self.assertEqual(sorted(env), ["PYTHON_GIL", "ROMP_SDK_REQUIRE"])
+        self.assertEqual(sweep.LEG_ENV[PYTEST_LEG]["ROMP_SDK_REQUIRE"], env["ROMP_SDK_REQUIRE"])
+        # PYTHON_GIL, the named difference: CI's free-threaded cell alone sets it (to 0); the runner runs the one --python
+        # and sets nothing, so a free-threaded --python runs with its own default
+        self.assertEqual(env["PYTHON_GIL"], "${{ endsWith(matrix.python-version, 't') && '0' || '' }}")
+        self.assertNotIn("PYTHON_GIL", sweep.LEG_ENV[PYTEST_LEG])
+
+    def pin(self):
+        """kernel/session_host.py's SDK_TESTED_VERSION, read by this test on its own (ci.yml's SDK step reads the same
+        line with sed)."""
+        hits = re.findall(r'(?m)^SDK_TESTED_VERSION = "([^"]*)"', (ROOT / "kernel" / "session_host.py").read_text(encoding="utf-8"))
+        self.assertEqual(len(hits), 1, hits)
+        return hits[0]
+
+    def test_the_runner_reads_every_install_step_of_the_python_job_as_written(self):
+        """Every named step of the python job before Run pytest is an install step the runner reads, in CI's order
+        (INSTALL_STEPS), and it reads each as written: the two pip lines as they stand, and the SDK step as its pip line
+        with the pin its sed read gives, then its import check."""
+        self.assertEqual([n for n in self.jobs["python"] if n != "Run pytest"], list(sweep.INSTALL_STEPS),
+                         "the runner reads every install step of the python job, and only those")
+        plan = sweep.read_install_plan(str(ROOT), "HEAD")
+        pin = self.pin()
+        self.assertEqual((plan["dist"], plan["pin"], plan["module"]), ("claude-agent-sdk", pin, "claude_agent_sdk"))
+        by_step = {step["step"]: step["commands"] for step in plan["steps"]}
+        for name in ("Install pytest", "Install cryptography"):
+            self.assertEqual(by_step[name], [("pip", shlex.split(self.jobs["python"][name][1]))], name)
+        self.assertEqual(by_step[sweep.SDK_STEP], [("pip", ["python", "-m", "pip", "install", "claude-agent-sdk==" + pin]),
+                                                   ("check", ["python", "-c", "import claude_agent_sdk"])])
+
+    def test_the_runners_environment_holds_what_the_install_steps_install(self):
+        """Run: the runner over a world holding this tree's ci.yml and kernel/session_host.py, FAKE standing in for
+        pip. The venv the pytest leg runs in holds every requirement the python job's install steps name, the SDK at
+        the pin the SDK step reads, and nothing else; the population is read from ci.yml here, not from the runner."""
+        real = {".github/workflows/ci.yml": CI_YML.read_text(encoding="utf-8"),
+                "kernel/session_host.py": (ROOT / "kernel" / "session_host.py").read_text(encoding="utf-8")}
+        w = World(dict(SEED, **real))
+        self.addCleanup(w.close)
+        w.run(check=0)
+        pin, expected = self.pin(), {}
+        for name, (_env, run) in self.jobs["python"].items():
+            for line in (run or "").splitlines():
+                words = shlex.split(line) if line.strip().startswith("python -m pip install") else []
+                for word in words[4:]:
+                    if not word.startswith("-"):
+                        dist, _eq, version = word.replace("$pin", pin).partition("==")
+                        expected[dist.lower()] = version or "9.9.9"
+        self.assertEqual(expected.get("claude-agent-sdk"), pin, "the SDK step's requirement is in the population read")
+        call = [c for c in w.calls() if c["leg"] == PYTEST_LEG][0]
+        self.assertEqual(call["venv_installs"], expected, "the pytest leg's venv holds what ci.yml installs")
+        self.assertEqual(w.result()["runner"]["sdk"]["version"], pin)
 
     def test_bats_and_the_node_legs_run_ci_s_commands(self):
         env, run = self.jobs["shell"]["Run bats"]

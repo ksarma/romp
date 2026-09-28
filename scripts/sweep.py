@@ -50,10 +50,26 @@ skipped. deps and the webview legs are marked not owed only when the sha has no 
 and the ledger only when it has no ledger script; a reader refuses any other not-owed mark. Every leg runs even
 after an earlier one is red, so the result carries every leg's status.
 
+The pytest leg runs in a venv the runner builds, not in --python itself (sdk_environment): `python -m venv` from
+--python under <state dir>/sweeps/sdk/<key>, then the install steps of the python job in the swept sha's ci.yml
+(INSTALL_STEPS: pytest and its plugins, cryptography, and the Claude Agent SDK at the pin its SDK step reads from
+kernel/session_host.py), each run with the venv's python in place of `python`, as CI's Python cells run them. The
+runner reads those steps in a few line shapes (read_run) and restates nothing they install; a line it does not read,
+or a head whose ci.yml lacks one of the steps, is refused. The key covers the SDK's pin, --python's path and version
+and the install commands, so a pin change builds a new venv beside the old one (an old one stays until removed by
+hand), and a finished build is reused; unlike CI, which resolves the unpinned packages fresh on every run, a reused
+venv keeps the versions it resolved when it was built. The build runs under a lock per key, with a private HOME and
+pip's configuration files off, so no index, PYTHONPATH or SDK of the batcher's reaches it; an interpreter without
+ensurepip gets pip from PyPA's get-pip.py (ROMP_GET_PIP_URL overrides where from). A build that fails refuses the run
+(exit 2, nothing recorded, the venv removed), naming the step and its log, <key>.log beside the venv. The result
+records the key and the SDK's version as the venv's own metadata reports it (runner.sdk). The pytest leg's PATH leads
+with the venv's bin, and the leg gets ROMP_SDK_REQUIRE=1 as CI's Run pytest step does, so the SDK-gated tests run and
+the pin test fails where the SDK does not import.
+
 The leg environment is an allowlist (LEG_ALLOW, leg_sets): USER and LOGNAME pass when set, and the runner
-sets everything else. PATH is the pytest interpreter's directory and those of node, npm, bats, git and
-gitleaks, then /usr/bin and /bin; HOME is a private empty directory and XDG_STATE_HOME a private state root
-(session hosts off) under TMPDIR, a fresh short directory under /tmp removed at the end; npm_config_cache and
+sets everything else. PATH is the directory of --python (for the pytest leg, of its venv's python) and those of node,
+npm, bats, git and gitleaks, then /usr/bin and /bin; HOME is a private empty directory and XDG_STATE_HOME a private
+state root (session hosts off) under TMPDIR, a fresh short directory under /tmp removed at the end; npm_config_cache and
 PLAYWRIGHT_BROWSERS_PATH point at the shared caches the batcher's environment names; SHELL=/bin/bash,
 LANG=C.UTF-8 and CI=true, as CI's runner has them; npm's global config and git's system config, which live
 outside HOME, are off (npm_config_globalconfig=/dev/null, GIT_CONFIG_NOSYSTEM=1); every ROMP_*_PORT the tree reads is a dead port (a box
@@ -138,6 +154,22 @@ PYTEST_FLAGS = ("-q", "-p", "no:cacheprovider", "-p", "no:anyio", "--durations=1
 # checkout (a bare `-c /dev/null` would move it to /dev), and conftest.py files read from the checkout down only.
 PYTEST_ISOLATION = ("-c", os.devnull, "--rootdir=.", "--confcutdir=.")
 PYTEST_MODULES = ("pytest", "xdist", "pytest_timeout")
+# The pytest leg's interpreter is a venv the runner builds from --python and ci.yml's install steps (sdk_environment):
+# the workflow file, its job, and the job's steps the runner reads, in the order CI runs them. What they install (pytest
+# and its plugins, cryptography, the Claude Agent SDK at its pin) is read from the swept sha's ci.yml, never restated
+# here; tests/test_sweep_runner.py (CiParity) holds this list to every install step of the job.
+CI_WORKFLOW = os.path.join(".github", "workflows", "ci.yml")
+CI_PYTHON_JOB = "python"
+INSTALL_STEPS = ("Install pytest", "Install cryptography", "Install the Claude Agent SDK")
+# The step whose one pinned requirement is the SDK: its name and version are the pin the result records.
+SDK_STEP = INSTALL_STEPS[-1]
+# Where pip comes from for an interpreter without ensurepip (Debian's and Ubuntu's system python split it into a
+# package of its own), as bin/romp-sdk-setup does; ROMP_GET_PIP_URL overrides it, as it does there.
+GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
+# The file a finished build writes last in the venv; a venv without it is a build that did not finish.
+SDK_MARKER = "sweep-sdk.json"
+# The most one command of the build may take (a pip install that downloads the SDK's wheel of about 100 MB included).
+SDK_STEP_TIMEOUT = 900
 # Test modules the pytest leg never collects, each with its reason (recorded in the result).
 PYTEST_IGNORED = {
     "tests/test_cut_turn_tree_kill.py": ("it runs the real cut-turn reaper on a child of pytest, which inside a romp "
@@ -178,11 +210,13 @@ TOOL_CONFIG_OFF = {"npm_config_globalconfig": os.devnull, "GIT_CONFIG_NOSYSTEM":
 PORT_FLOOR = {"ROMP_MANAGER_PORT": "1", "ROMP_KERNEL_PORT": "1", "ROMP_SERVE_PORT": "1", "ROMP_POSTAL_PORT": "1"}
 # Port variables the floor need not set, each with the floored variable it defaults to.
 PORT_DEFAULTS = {"ROMP_REMOTE_KERNEL_PORT": "ROMP_KERNEL_PORT"}
-# Per leg: the switches CI sets on the matching steps (the served-page step's two for pytest, the Run bats step's two
-# for bats), so a skip that CI would count as a failure counts here too; and the box rule's heap cap for npm test, a
-# difference from CI, which sets none.
+# Per leg: the switches CI sets on the matching steps (the served-page step's two and the Run pytest step's SDK switch
+# for pytest, the Run bats step's two for bats), so a skip that CI would count as a failure counts here too; and the box
+# rule's heap cap for npm test, a difference from CI, which sets none.
 LEG_ENV = {
-    "pytest": {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"},
+    # ROMP_SDK_REQUIRE is the Run pytest step's: the leg's interpreter has the SDK at ci.yml's pin, so the pin test
+    # fails, naming the interpreter, where it does not import.
+    "pytest": {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium", "ROMP_SDK_REQUIRE": "1"},
     "bats": {"BATS_TEST_TIMEOUT": "180", "ROMP_GITLEAKS_REQUIRE": "1"},
     "npm-test": {"NODE_OPTIONS": "--max-old-space-size=8192"},
 }
@@ -1210,19 +1244,22 @@ def build_path(python, env):
     return os.pathsep.join(dict.fromkeys(dirs + list(PATH_FLOOR)))
 
 
-def leg_context(tmpdir, python, env=None):
+def leg_context(tmpdir, python, env=None, pytest_python=None):
     """The per-run values the leg environment is built from: TMPDIR, the private HOME and state root under it (both
-    removed with it), the shared npm and Playwright caches as the batcher's environment resolves them, and PATH."""
+    removed with it), the shared npm and Playwright caches as the batcher's environment resolves them, PATH, and the
+    pytest leg's PATH, which leads with its own interpreter's directory (`pytest_python`, the venv sdk_environment
+    builds; --python when the run has no pytest leg)."""
     env = os.environ if env is None else env
     return {"tmpdir": tmpdir, "home": os.path.join(tmpdir, "home"), "xdg": os.path.join(tmpdir, "xdg-state"),
-            "npm_cache": npm_cache(env), "browsers": browsers_path(env), "path": build_path(python, env)}
+            "npm_cache": npm_cache(env), "browsers": browsers_path(env), "path": build_path(python, env),
+            "pytest_path": build_path(pytest_python or python, env)}
 
 
 def leg_sets(leg, ctx):
-    """{name: value} the runner sets for `leg`: PATH, the private HOME and XDG_STATE_HOME, TMPDIR, the two shared caches
-    (a private HOME has none), LEG_FIXED, TOOL_CONFIG_OFF, PORT_FLOOR and the leg's LEG_ENV."""
-    sets = {"PATH": ctx["path"], "HOME": ctx["home"], "TMPDIR": ctx["tmpdir"], "XDG_STATE_HOME": ctx["xdg"],
-            "npm_config_cache": ctx["npm_cache"], "PLAYWRIGHT_BROWSERS_PATH": ctx["browsers"]}
+    """{name: value} the runner sets for `leg`: PATH (the pytest leg's own), the private HOME and XDG_STATE_HOME, TMPDIR,
+    the two shared caches (a private HOME has none), LEG_FIXED, TOOL_CONFIG_OFF, PORT_FLOOR and the leg's LEG_ENV."""
+    sets = {"PATH": ctx["pytest_path"] if leg == "pytest" else ctx["path"], "HOME": ctx["home"], "TMPDIR": ctx["tmpdir"],
+            "XDG_STATE_HOME": ctx["xdg"], "npm_config_cache": ctx["npm_cache"], "PLAYWRIGHT_BROWSERS_PATH": ctx["browsers"]}
     sets.update(LEG_FIXED)
     sets.update(TOOL_CONFIG_OFF)
     sets.update(PORT_FLOOR)
@@ -1242,10 +1279,15 @@ def leg_env(leg, ctx, base=None):
     return env, dropped, sets
 
 
-def _tokenized(value, ctx):
-    """A set value with its per-run and per-machine parts named instead: PATH and the two caches whole, and every
-    value under TMPDIR (TMPDIR, HOME, XDG_STATE_HOME) by its path below it."""
-    for key, token in (("path", "<PATH>"), ("npm_cache", "<NPM_CACHE>"), ("browsers", "<BROWSERS>")):
+def _tokenized(name, leg, value, ctx):
+    """A set value with its per-run and per-machine parts named instead: the leg's PATH (the pytest leg's own, else the
+    others') and the two caches whole, and every value under TMPDIR (TMPDIR, HOME, XDG_STATE_HOME) by its path below
+    it."""
+    if name == "PATH":
+        own = ("pytest_path", "<PYTEST_PATH>") if leg == "pytest" else ("path", "<PATH>")
+        if value == ctx[own[0]]:
+            return own[1]
+    for key, token in (("npm_cache", "<NPM_CACHE>"), ("browsers", "<BROWSERS>")):
         if value == ctx[key]:
             return token
     t = ctx["tmpdir"]
@@ -1259,7 +1301,7 @@ def leg_env_hash(ctx):
     tokenized (_tokenized): it identifies the runner's allowlist and set values, which depend only on its code, and
     not on the machine, the batcher's environment or the run."""
     doc = {"allow": sorted(LEG_ALLOW),
-           "set": {leg: sorted("%s=%s" % (k, _tokenized(v, ctx)) for k, v in leg_sets(leg, ctx).items()) for leg in LEGS}}
+           "set": {leg: sorted("%s=%s" % (k, _tokenized(k, leg, v, ctx)) for k, v in leg_sets(leg, ctx).items()) for leg in LEGS}}
     return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -1269,7 +1311,7 @@ def policy_hash():
     t = os.path.join(os.sep + "nonexistent", TMPDIR_PREFIX + "0" * TMPDIR_TAIL)
     return leg_env_hash({"tmpdir": t, "home": os.path.join(t, "home"), "xdg": os.path.join(t, "xdg-state"),
                          "npm_cache": os.sep + "nonexistent-npm-cache", "browsers": os.sep + "nonexistent-browsers",
-                         "path": os.sep + "nonexistent-path"})
+                         "path": os.sep + "nonexistent-path", "pytest_path": os.sep + "nonexistent-pytest-path"})
 
 
 def recorded_hash(result):
@@ -1356,18 +1398,430 @@ def default_workers():
     return max(WORKERS_MIN, min(WORKERS_MAX, idle))
 
 
-def probe_python(python):
-    """(version, [missing modules]) of the pytest leg's interpreter."""
-    code = ("import importlib.util, sys; print(sys.version.split()[0]); "
-            "print(' '.join(m for m in %r if importlib.util.find_spec(m) is None))" % (PYTEST_MODULES,))
+# -- the pytest leg's environment: a venv at ci.yml's install steps, the SDK at its pin (round 1, the SDK ruling) --
+
+# What the runner asks of an interpreter (--python, and the venv it builds from it), as one JSON line: its version, short
+# and whole, which of PYTEST_MODULES it cannot find, whether it has ensurepip, and the installed version of each
+# distribution named on its command line (None for one it does not have).
+PROBE = ("# sweep probe\n"
+         "import importlib.util, json, sys\n"
+         "import importlib.metadata as md\n"
+         "def ver(d):\n"
+         "    try:\n"
+         "        return md.version(d)\n"
+         "    except md.PackageNotFoundError:\n"
+         "        return None\n"
+         "print(json.dumps({'version': sys.version.split()[0], 'full': sys.version, "
+         "'missing': [m for m in %r if importlib.util.find_spec(m) is None], "
+         "'ensurepip': importlib.util.find_spec('ensurepip') is not None, "
+         "'dists': {d: ver(d) for d in sys.argv[1:]}}))\n" % (PYTEST_MODULES,))
+
+
+def probe(python, env, dists=(), what="the pytest interpreter"):
+    """The PROBE's answer from `python`, run in `env` (build_env); Refused when it cannot run or does not answer."""
     try:
-        p = subprocess.run([python, "-c", code], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
-    except OSError as e:
-        raise Refused("the pytest interpreter %s cannot run: %s" % (python, e))
+        p = subprocess.run([python, "-c", PROBE, *dists], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           stdin=subprocess.DEVNULL, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise Refused("%s %s cannot run: %s" % (what, python, e))
     if p.returncode != 0:
-        raise Refused("the pytest interpreter %s failed its module probe: %s" % (python, (p.stderr or p.stdout).strip()[:300]))
-    lines = p.stdout.splitlines()
-    return (lines[0].strip() if lines else ""), (lines[1].split() if len(lines) > 1 else [])
+        raise Refused("%s %s failed its probe: %s" % (what, python, (p.stderr or p.stdout).strip()[:300]))
+    try:
+        out = json.loads(p.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        out = None
+    if not isinstance(out, dict) or not isinstance(out.get("missing"), list) or not isinstance(out.get("dists"), dict):
+        raise Refused("%s %s answered its probe with %r" % (what, python, p.stdout.strip()[:300]))
+    return out
+
+
+def workflow_steps(text, job):
+    """{name: run text} of one job's named steps in a workflow file's text, read by line shape as CiParity reads it (the
+    runner imports nothing beyond the standard library, so no YAML parser): the job is the `  <job>:` line and the lines
+    under it indented four spaces or more; a step is a `      - name:` line and the lines under it; its run text is the
+    value on its `        run:` line or, for `run: |`, the block under it, less ten spaces of indent. A step with no run
+    line maps to None, one whose run is another block style (`|-`, `>`) to False, and a name given twice to False. None
+    when the file has no such job."""
+    lines = text.split("\n")
+    if "  %s:" % job not in lines:
+        return None
+    body = []
+    for line in lines[lines.index("  %s:" % job) + 1:]:
+        if line.strip() and not line.startswith("    "):
+            break
+        body.append(line)
+    steps, i = {}, 0
+    while i < len(body):
+        m = re.fullmatch(r"      - name: (.*)", body[i])
+        i += 1
+        if not m:
+            continue
+        name, run = m.group(1).strip(), None
+        while i < len(body) and not body[i].startswith("      - ") and (body[i].startswith("        ") or not body[i].strip()):
+            k = re.fullmatch(r"        run:(.*)", body[i])
+            i += 1
+            if not k:
+                continue
+            value = k.group(1).strip()
+            if value == "|":
+                block = []
+                while i < len(body) and (body[i].startswith(" " * 10) or not body[i].strip()):
+                    block.append(body[i][10:])
+                    i += 1
+                run = "\n".join(block).strip("\n")
+            elif value[:1] in ("|", ">"):
+                run = False
+            else:
+                run = value
+        steps[name] = False if name in steps else run
+    return steps
+
+
+# The line shapes read_run reads in an install step's run text, and no others.
+_SET_LINE = re.compile(r"set -[euo]+(?: pipefail)?")
+_SED_ASSIGN = re.compile(r"""([A-Za-z_][A-Za-z0-9_]*)="\$\(sed -n '([^']*)' ([A-Za-z0-9_./-]+)\)\"""")
+_ERE_CHECK = re.compile(r"""\[\[ "\$([A-Za-z_][A-Za-z0-9_]*)" =~ (\S+) \]\] \|\| \{""")
+_PIP_WORD = re.compile(r"-U|--upgrade|-q|--quiet|[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9._,-]+\])?"
+                       r"(?:(?:==|>=|<=|~=|!=|<|>)[A-Za-z0-9.*+!_-]+)?")
+_IMPORT_CODE = re.compile(r"import [A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
+_VAR_REF = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
+
+
+def _bre(bre, where):
+    r"""A POSIX basic regular expression as a Python one, for the shapes a sed pin read uses: \( \) a group, \{ \} an
+    interval, bracket expressions (a backslash inside one is literal, as POSIX has it), . * and ^ at the start and $ at
+    the end with their meaning; + ? | ( ) { } are literal in a BRE and escaped. A backslash before anything else (a GNU
+    extension such as \+ or \w, a back-reference) and a character class such as [:digit:] are Refused, not guessed."""
+    out, i, n = [], 0, len(bre)
+    while i < n:
+        c = bre[i]
+        if c == "\\":
+            nxt = bre[i + 1] if i + 1 < n else ""
+            if nxt in ("(", ")", "{", "}"):
+                out.append(nxt)
+            elif nxt and nxt in ".*[]^$\\/":
+                out.append("\\" + nxt)
+            else:
+                raise Refused("%s: the sed expression %r uses \\%s, which the runner does not read" % (where, bre, nxt))
+            i += 2
+            continue
+        if c == "[":
+            j = i + 1
+            if j < n and bre[j] == "^":
+                j += 1
+            if j < n and bre[j] == "]":
+                j += 1
+            while j < n and bre[j] != "]":
+                if bre[j] == "[" and j + 1 < n and bre[j + 1] in ":.=":
+                    raise Refused("%s: the sed expression %r uses a character class, which the runner does not read"
+                                  % (where, bre))
+                j += 1
+            if j >= n:
+                raise Refused("%s: the sed expression %r has an unclosed [" % (where, bre))
+            out.append("[" + bre[i + 1:j].replace("\\", "\\\\") + "]")
+            i = j + 1
+            continue
+        if c == "^" and i != 0 or c == "$" and i != n - 1 or c in "+?|(){}" or c == "*" and i == 0:
+            out.append("\\" + c)
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def read_sed(checkout, script, rel, where):
+    r"""What `sed -n SCRIPT FILE` prints, less its trailing newlines as $(...) takes it, for the one script shape
+    read_run reads, s/RE/\1/p (RE by _bre), over FILE, a relative path that stays inside the checkout: every line RE
+    matches, with the match replaced by its first group."""
+    m = re.fullmatch(r"s/((?:[^/\\]|\\.)*)/\\1/p", script)
+    if not m:
+        raise Refused("%s: the sed script %r is not s/RE/\\1/p, the one form the runner reads" % (where, script))
+    root = os.path.realpath(checkout)
+    real = os.path.realpath(os.path.join(root, rel))
+    if os.path.isabs(rel) or not real.startswith(root + os.sep) or not os.path.isfile(real):
+        raise Refused("%s: sed reads %s, which is not a file in the checkout" % (where, rel))
+    try:
+        rx = re.compile(_bre(m.group(1), where))
+    except re.error as e:
+        raise Refused("%s: the sed expression %r does not compile (%s)" % (where, m.group(1), e))
+    if rx.groups < 1:
+        raise Refused("%s: the sed expression %r has no group for \\1" % (where, m.group(1)))
+    with open(real, "rb") as f:
+        lines = f.read().decode("utf-8", "surrogateescape").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    printed = []
+    for line in lines:
+        hit = rx.search(line)
+        if hit:
+            printed.append(line[:hit.start()] + (hit.group(1) or "") + line[hit.end():])
+    return "\n".join(printed).rstrip("\n")
+
+
+def _expand(word, variables, where, line):
+    def value(m):
+        name = m.group(1) or m.group(2)
+        if name not in variables:
+            raise Refused("%s: the line %r uses $%s, which no line before it reads" % (where, line, name))
+        return variables[name]
+    out = _VAR_REF.sub(value, word)
+    if "$" in _VAR_REF.sub("", word):
+        raise Refused("%s: the line %r holds an expansion the runner does not read" % (where, line))
+    return out
+
+
+def read_run(run, checkout, where):
+    r"""[("pip" or "check", argv)] of one install step's run text, each argv starting with `python`, CI's name for the
+    cell's interpreter, which the build replaces with the venv's. A line is read only in these shapes: `set -euo
+    pipefail`; `NAME="$(sed -n 's/RE/\1/p' FILE)"`, which read_sed evaluates in the checkout; `[[ "$NAME" =~ ERE ]] ||
+    {` with the lines to its closing `}` (the step's own refusal, which must hold an exit with a nonzero status), whose
+    ERE is applied to NAME's value, so a value the step's check refuses is refused here as the step fails in CI; `python
+    -m pip install WORD...`, each word a plain requirement or one of -U, --upgrade, -q, --quiet, after $NAME and ${NAME}
+    are replaced with values read above; and `python -c "import MODULE"`. Blank and comment lines are skipped. Any other
+    line is Refused, naming it: the runner runs nothing it has not read."""
+    variables, out, lines, i = {}, [], run.split("\n"), 0
+    while i < len(lines):
+        line = lines[i].strip()
+        i += 1
+        if not line or line.startswith("#") or _SET_LINE.fullmatch(line):
+            continue
+        m = _SED_ASSIGN.fullmatch(line)
+        if m:
+            variables[m.group(1)] = read_sed(checkout, m.group(2), m.group(3), where)
+            continue
+        m = _ERE_CHECK.fullmatch(line)
+        if m:
+            end = next((j for j in range(i, len(lines)) if lines[j].strip() == "}"), None)
+            if end is None or not any(re.fullmatch(r"exit [1-9][0-9]*", x.strip()) for x in lines[i:end]):
+                raise Refused("%s: the check %r has no closing } after an exit with a nonzero status" % (where, line))
+            i = end + 1
+            name, ere = m.group(1), m.group(2)
+            if name not in variables:
+                raise Refused("%s: the check %r reads $%s, which no line before it reads" % (where, line, name))
+            if not re.fullmatch(r"(?:[\^$.+*?\[\]0-9A-Za-z{},|()-]|\\[.\[\]()*+?{}|^$\\])+", ere):
+                raise Refused("%s: the check's expression %r is not one the runner reads" % (where, ere))
+            if not re.search(ere, variables[name]):
+                raise Refused("%s reads %r into %s, which the step's own check (%s) refuses, as the step would fail in CI"
+                              % (where, variables[name], name, ere))
+            continue
+        if "`" in line or "$(" in line or ("'" in line and "$" in line):
+            raise Refused("%s: the line %r holds quoting or a substitution the runner does not read" % (where, line))
+        try:
+            words = [_expand(w, variables, where, line) for w in shlex.split(line)]
+        except ValueError as e:
+            raise Refused("%s: the line %r does not parse (%s)" % (where, line, e))
+        if words[:4] == ["python", "-m", "pip", "install"] and len(words) > 4 and all(_PIP_WORD.fullmatch(w) for w in words[4:]):
+            out.append(("pip", words))
+        elif len(words) == 3 and words[:2] == ["python", "-c"] and _IMPORT_CODE.fullmatch(words[2]):
+            out.append(("check", words))
+        else:
+            raise Refused("%s: the line %r is not one the runner reads (python -m pip install of plain requirements, a "
+                          "python -c import, a pin read by sed and its check); it runs nothing it has not read" % (where, line))
+    if not any(kind == "pip" for kind, _cmd in out):
+        raise Refused("%s installs nothing the runner reads" % where)
+    return out
+
+
+def read_install_plan(checkout, sha):
+    """What ci.yml at the swept sha installs for the pytest leg, read from the checkout: {"steps": [{"step", "commands"}],
+    "dist", "pin", "module"}. Each INSTALL_STEPS step of CI_PYTHON_JOB is read by read_run; the SDK is the one
+    NAME==VERSION requirement SDK_STEP installs, and its import check names the module. Refused, naming the file and the
+    step, when the file, the job, a step or its run text is missing or a line is one read_run does not read: a head whose
+    ci.yml predates one of the steps is not swept until it merges main."""
+    where = "%s at %s" % (CI_WORKFLOW, short(sha))
+    try:
+        with open(os.path.join(checkout, CI_WORKFLOW), encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError) as e:
+        raise Refused("%s cannot be read (%s); the pytest leg's environment is built from its %s job's install steps"
+                      % (where, e, CI_PYTHON_JOB))
+    steps = workflow_steps(text, CI_PYTHON_JOB)
+    if steps is None:
+        raise Refused("%s has no %s job; the pytest leg's environment is built from its install steps" % (where, CI_PYTHON_JOB))
+    plan = []
+    for name in INSTALL_STEPS:
+        if name not in steps:
+            raise Refused("%s has no step %r in its %s job; the pytest leg's environment is built from the steps %s, so a head "
+                          "whose ci.yml predates one of them is not swept: merge main into it"
+                          % (where, name, CI_PYTHON_JOB, ", ".join(repr(n) for n in INSTALL_STEPS)))
+        run = steps[name]
+        if not run:
+            raise Refused("%s: the step %r has %s" % (where, name, "no run line" if run is None else
+                                                      "a run the runner does not read (a block style other than |, or "
+                                                      "its name given twice)"))
+        plan.append({"step": name, "commands": read_run(run, checkout, "%s, step %r" % (where, name))})
+    sdk = plan[INSTALL_STEPS.index(SDK_STEP)]["commands"]
+    pinned = [w for kind, cmd in sdk if kind == "pip" for w in cmd[4:] if "==" in w]
+    if len(pinned) != 1:
+        raise Refused("%s: the step %r installs %d requirements pinned with ==, and the runner reads the SDK's pin from "
+                      "exactly one" % (where, SDK_STEP, len(pinned)))
+    dist, pin = pinned[0].split("==", 1)
+    checks = [cmd[2][len("import "):] for kind, cmd in sdk if kind == "check"]
+    return {"steps": plan, "dist": re.sub(r"\[.*\]$", "", dist), "pin": pin, "module": checks[0] if checks else None}
+
+
+def sdk_dir(env=None):
+    return os.path.join(sweeps_dir(env), "sdk")
+
+
+def sdk_key(python, base, plan):
+    """The pytest leg's environment's cache key: sha256 over the SDK's pin, --python's absolute path and whole
+    sys.version, and every command the install steps give (so a ci.yml that adds or changes a package builds anew), in
+    20 hex digits."""
+    doc = {"pin": "%s==%s" % (plan["dist"], plan["pin"]), "python": os.path.abspath(python), "version": base.get("full"),
+           "commands": [[s["step"], [cmd for _kind, cmd in s["commands"]]] for s in plan["steps"]]}
+    return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+
+
+def build_env(python, tmpdir):
+    """The environment of every command the build runs, and of each probe: LEG_ALLOW's names, a PATH of --python's
+    directory and PATH_FLOOR, a private HOME under TMPDIR (pip's cache and user config are the build's own and go with
+    it), TMPDIR, LANG=C.UTF-8, and pip's configuration files, version check and prompts off (PIP_CONFIG_FILE=/dev/null).
+    No index, proxy or PYTHONPATH of the batcher's environment, and no SDK of theirs, reaches the build."""
+    env = {k: os.environ[k] for k in LEG_ALLOW if os.environ.get(k)}
+    home = os.path.join(tmpdir, "sdk-home")
+    os.makedirs(home, mode=0o700, exist_ok=True)
+    env.update(PATH=os.pathsep.join(dict.fromkeys([os.path.dirname(os.path.abspath(python))] + list(PATH_FLOOR))),
+               HOME=home, TMPDIR=tmpdir, LANG="C.UTF-8", PIP_CONFIG_FILE=os.devnull, PIP_DISABLE_PIP_VERSION_CHECK="1",
+               PIP_NO_INPUT="1")
+    return env
+
+
+def _build_sdk(venv, python, base, plan, env, log, tmpdir, where):
+    """Create the venv from --python (with --without-pip and PyPA's get-pip.py when it has no ensurepip) and run every
+    command of the install steps with the venv's python in place of `python`, each logged to `log`; Refused, naming the
+    step, the command and the log, on the first that fails or times out."""
+    vpy = os.path.join(venv, "bin", "python")
+    with open(log, "a") as out:
+        out.write("# build: %s\n# key: %s\n# python: %s (%s)\n" % (now(), os.path.basename(venv), python, base.get("version")))
+        out.flush()
+
+        def step(label, argv):
+            out.write("# %s: %s\n" % (label, " ".join(shlex.quote(a) for a in argv)))
+            out.flush()
+            try:
+                p = subprocess.run(argv, env=env, cwd=tmpdir, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                                   timeout=SDK_STEP_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                raise Refused("%s: the step %r did not finish in %d s (%s); log %s" % (where, label, SDK_STEP_TIMEOUT, argv[-1], log))
+            except OSError as e:
+                raise Refused("%s: the step %r could not start: %s; log %s" % (where, label, e, log))
+            out.write("# rc: %d\n" % p.returncode)
+            out.flush()
+            if p.returncode != 0:
+                raise Refused("%s: the step %r, `%s`, exited %d; log %s" % (where, label, " ".join(argv[1:]), p.returncode, log))
+
+        if base.get("ensurepip"):
+            step("venv", [python, "-m", "venv", venv])
+        else:
+            step("venv", [python, "-m", "venv", "--without-pip", venv])
+            url = os.environ.get("ROMP_GET_PIP_URL") or GET_PIP_URL
+            dest = os.path.join(tmpdir, "get-pip.py")
+            out.write("# get-pip.py from %s (%s has no ensurepip)\n" % (url, python))
+            out.flush()
+            try:
+                import urllib.request
+                with urllib.request.urlopen(url, timeout=120) as r, open(dest, "wb") as f:
+                    shutil.copyfileobj(r, f)
+            except (OSError, ValueError) as e:
+                raise Refused("%s: %s has no ensurepip, and get-pip.py could not be fetched from %s (%s); log %s"
+                              % (where, python, url, e, log))
+            step("get-pip", [vpy, dest, "-q"])
+        for s in plan["steps"]:
+            for _kind, cmd in s["commands"]:
+                step(s["step"], [vpy] + cmd[1:])
+
+
+def sdk_environment(checkout, sha, python, tmpdir):
+    """The pytest leg's interpreter and its record for the result: a venv under <state dir>/sweeps/sdk/<key>, built from
+    --python with the install steps ci.yml holds at the swept sha (read_install_plan: pytest and its plugins,
+    cryptography, and the SDK at its pin), or the venv a finished build left under the same key (sdk_key: the pin,
+    --python's path and version, the commands). The record: key, path, python (the venv's), dist and pin (as ci.yml
+    reads them), version (the SDK's version as the venv's own metadata reports it), built (whether this run built it),
+    build_s, log (the build's log beside the venv), base_python and base_version.
+
+    A pin change is a new key, so a new venv beside the old one; an old one stays until it is removed by hand. The build
+    runs under a lock per key, so two runs never build one venv at once, and writes SDK_MARKER last: a venv without it (a
+    build that died) is removed and built again, and so is one whose probe no longer agrees with its marker. A build
+    that fails (a command exits nonzero or times out, the venv's SDK is not the pin, a module the pytest leg needs is
+    missing) removes the venv and is Refused, naming the step, the command and the log: exit 2, nothing recorded, as for
+    a failed --leg setup."""
+    # An absolute path: the build's commands run in a directory of their own under TMPDIR, removed when this returns,
+    # so nothing the build leaves (pip's cache under its private HOME, get-pip.py) is in TMPDIR while the legs run.
+    python = os.path.abspath(python) if os.sep in python else (shutil.which(python) or python)
+    plan = read_install_plan(checkout, sha)
+    work = tempfile.mkdtemp(prefix="sdk-", dir=tmpdir)
+    try:
+        return _sdk_environment(checkout, sha, python, plan, work)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _sdk_environment(checkout, sha, python, plan, tmpdir):
+    env = build_env(python, tmpdir)
+    base = probe(python, env)
+    key = sdk_key(python, base, plan)
+    root = sdk_dir()
+    os.makedirs(root, mode=0o700, exist_ok=True)
+    venv = os.path.join(root, key)
+    vpy = os.path.join(venv, "bin", "python")
+    log = venv + ".log"
+    where = "the pytest leg's environment %s (%s==%s at %s, from %s)" % (key, plan["dist"], plan["pin"], short(sha), python)
+    rec = {"key": key, "path": venv, "python": vpy, "dist": plan["dist"], "pin": plan["pin"], "version": None, "built": False,
+           "build_s": 0.0, "log": log, "base_python": os.path.abspath(python), "base_version": base.get("version")}
+    lock = open(venv + ".lock", "a+")
+    try:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("sweep %s: waiting for another run's build of the pytest leg's environment %s" % (short(sha), key), flush=True)
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        stale = None
+        try:
+            with open(os.path.join(venv, SDK_MARKER)) as f:
+                marker = json.load(f)
+            if not isinstance(marker, dict) or marker.get("key") != key:
+                stale = "its marker names another key"
+            else:
+                got = probe(vpy, env, [plan["dist"]], what="the pytest leg's environment's interpreter")
+                if got["dists"].get(plan["dist"]) != plan["pin"] or got["missing"]:
+                    stale = "it now has %s %s and lacks %s" % (plan["dist"], got["dists"].get(plan["dist"]),
+                                                               ", ".join(got["missing"]) or "nothing")
+        except (OSError, ValueError, Refused) as e:
+            stale = "no finished build" if isinstance(e, OSError) else str(e)
+        if stale is None:
+            rec["version"] = got["dists"][plan["dist"]]
+            print("sweep %s: the pytest leg's environment: %s %s (ci.yml's pin) in %s, built earlier"
+                  % (short(sha), plan["dist"], rec["version"], venv), flush=True)
+            return rec
+        if os.path.lexists(venv):
+            print("sweep %s: rebuilding the pytest leg's environment %s (%s)" % (short(sha), key, stale), flush=True)
+            shutil.rmtree(venv, ignore_errors=True)
+        print("sweep %s: building the pytest leg's environment %s: %s==%s from %s; log %s" % (
+            short(sha), key, plan["dist"], plan["pin"], python, log), flush=True)
+        t0 = time.monotonic()
+        try:
+            _build_sdk(venv, python, base, plan, env, log, tmpdir, where)
+            got = probe(vpy, env, [plan["dist"]], what="the pytest leg's environment's interpreter")
+            if got["dists"].get(plan["dist"]) != plan["pin"]:
+                raise Refused("%s: after the install steps the venv's %s is %s, not ci.yml's pin %s; log %s"
+                              % (where, plan["dist"], got["dists"].get(plan["dist"]), plan["pin"], log))
+            if got["missing"]:
+                raise Refused("%s: after the install steps the venv lacks %s, which the pytest leg needs; log %s"
+                              % (where, ", ".join(got["missing"]), log))
+            rec.update(version=got["dists"][plan["dist"]], built=True, build_s=round(time.monotonic() - t0, 2))
+            write_result(os.path.join(venv, SDK_MARKER), {"key": key, "dist": plan["dist"], "pin": plan["pin"],
+                                                          "version": rec["version"], "python": rec["base_python"],
+                                                          "python_version": base.get("full"), "built": now()})
+        except BaseException:
+            shutil.rmtree(venv, ignore_errors=True)
+            raise
+        print("sweep %s: the pytest leg's environment: %s %s (ci.yml's pin) in %s, built in %.0f s"
+              % (short(sha), plan["dist"], rec["version"], venv, rec["build_s"]), flush=True)
+        return rec
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
 
 
 def parse_wraps(values):
@@ -1593,12 +2047,8 @@ def cmd_run(args):
     if dirty:
         print("sweep %s: %s has %d uncommitted edit%s (git status); they are not swept: the legs run in a private "
               "checkout of %s" % (short(sha), tree, dirty, "" if dirty == 1 else "s", short(sha)), flush=True)
+    # The interpreter the pytest leg's environment is built from (sdk_environment); the leg runs in that venv.
     python = args.python or sys.executable
-    version, missing = ("", [])
-    if not only or "pytest" in only:
-        version, missing = probe_python(python)
-        if missing:
-            raise Refused("the pytest interpreter %s lacks %s; install it there or pass --python" % (python, ", ".join(missing)))
     d = sweeps_dir()
     os.makedirs(d, mode=0o700, exist_ok=True)
     path = result_path(sha)
@@ -1610,7 +2060,7 @@ def cmd_run(args):
         lock.close()
         raise Refused("a sweep of %s is already running (%s)" % (short(sha), lock_path))
     try:
-        return _run_locked(args, tree, sha, branch, python, version, wraps, only, path, flakes)
+        return _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes)
     finally:
         fcntl.flock(lock, fcntl.LOCK_UN)
         lock.close()
@@ -1655,7 +2105,7 @@ def load_history(path, sha, for_leg):
     return data
 
 
-def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, flakes=None):
+def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None):
     flakes = dict(flakes or {})
     logdir = os.path.join(sweeps_dir(), "logs", sha)
     data = load_history(path, sha, bool(only))
@@ -1667,7 +2117,7 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
     if history and history["dead"]:
         raise Refused("no run at %s can pass: %s; fix it and sweep the new head" % (short(sha), history["dead"]))
     run = {"kind": "leg" if only else "full", "sha": sha, "branch": branch, "tree": tree, "started": now(), "finished": None,
-           "flakes": flakes, "runner": {"script_blob": script_blob(), "python": python, "python_version": version},
+           "flakes": flakes, "runner": {"script_blob": script_blob(), "python": python, "python_version": ""},
            "legs": {}, "verdict": "running", "red": [], "invalid": None}
     if only:
         rec, why = effective(data)
@@ -1748,7 +2198,15 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
         os.makedirs(logdir, mode=0o700, exist_ok=True)
         tmpdir = make_tmpdir()
         run["runner"]["tmpdir"] = tmpdir
-        ctx = leg_context(tmpdir, python)
+        pytest_python = python
+        if "pytest" in run["legs"] and is_owed("pytest", run["legs"]["pytest"]):
+            # The pytest leg runs in a venv at the sha's ci.yml install steps, the SDK at its pin, built or reused before
+            # anything is recorded: a build that fails is a refusal (sdk_environment).
+            sdk = sdk_environment(checkout, sha, python, tmpdir)
+            run["runner"].update(sdk=sdk, python_version=sdk["base_version"])
+            pytest_python = sdk["python"]
+            run["legs"]["pytest"]["cmd"] = pytest_cmd(pytest_python, workers)
+        ctx = leg_context(tmpdir, python, pytest_python=pytest_python)
         prepare_home(ctx)
         run["runner"]["leg_env"] = {"allow": list(LEG_ALLOW), "hash": leg_env_hash(ctx)}
         run["runner"]["tools"] = tool_versions(ctx)
@@ -1828,14 +2286,19 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="subcommand", required=True, metavar="<subcommand>")
     p = sub.add_parser("run", help="sweep the tree's HEAD and record every leg's exit status",
                        description="Sweep the commit the tree's HEAD names: check it out into a private clone under the "
-                                   "state dir and verify it against the sha's tree, run every owed leg there in order (%s), "
+                                   "state dir and verify it against the sha's tree, build or reuse the pytest leg's venv at "
+                                   "the install steps of the sha's ci.yml (the SDK at its pin), run every owed leg there in "
+                                   "order (%s), "
                                    "append the run to the sha's result after every leg, and record it invalid if a leg "
                                    "changed the checkout. The tree need not be clean; its uncommitted edits are not swept. "
                                    "Exit 0 pass, 1 red, 2 refused to start, 3 invalid." % ", ".join(LEGS))
     p.add_argument("--tree", metavar="DIR", help="the repository whose HEAD is swept (default: the one holding the current "
                                                  "directory); read for its HEAD sha and branch only")
-    p.add_argument("--python", metavar="PATH", help="the interpreter for the pytest leg (default: the one running this script); "
-                                                    "it must import %s" % ", ".join(PYTEST_MODULES))
+    p.add_argument("--python", metavar="PATH", help="the interpreter the pytest leg's venv is built from (default: the one running "
+                                                    "this script); the leg runs in that venv, under <state dir>/sweeps/sdk/<key>, "
+                                                    "which holds what the install steps of the sha's ci.yml install (pytest and "
+                                                    "its plugins, cryptography, the Claude Agent SDK at its pin); a build that "
+                                                    "fails refuses the run")
     p.add_argument("--workers", type=int, metavar="N", help="pytest -n (default: the idle cores at launch, clamped to %d..%d)"
                                                             % (WORKERS_MIN, WORKERS_MAX))
     p.add_argument("--wrap", action="append", metavar="LEG=PREFIX",

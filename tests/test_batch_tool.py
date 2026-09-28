@@ -2580,15 +2580,36 @@ os.execv(sys.executable, [sys.executable, fake, *sys.argv[1:]])
 
 
 FAKE_TOOL = r"""#!%(python)s
-import sys
-import os
-# a stand-in for npm, bats, node and the pytest interpreter: the module probe answers, every leg passes and
-# prints the closing counts its real tool prints, which the runner reads to know that tests ran
-if sys.argv[1:2] == ["-c"]:
-    print("3.99.0")
-    print("")
+import json, os, shutil, sys
+# a stand-in for npm, bats, node and the pytest interpreter. As the interpreter the pytest leg's environment is built
+# from: `-m venv DIR` makes DIR a venv whose python is a copy of this file, pip records each requirement there, and the
+# runner's probe and the SDK step's import check read that record. Every leg passes and prints the closing counts its
+# real tool prints, which the runner reads to know that tests ran.
+here, args = os.path.abspath(sys.argv[0]), sys.argv[1:]
+record = os.path.join(os.path.dirname(os.path.dirname(here)), "fake-installs.json")
+installs = json.load(open(record)) if os.path.exists(record) else {}
+if args[:2] == ["-m", "venv"]:
+    os.makedirs(os.path.join(args[-1], "bin"))
+    shutil.copy(here, os.path.join(args[-1], "bin", "python"))
+    open(os.path.join(args[-1], "pyvenv.cfg"), "w").close()
     sys.exit(0)
-print({"fakepython": "1 passed in 0.01s", "bats": "1..1\nok 1 a", "node": "# pass 1\n# fail 0"}.get(os.path.basename(sys.argv[0]), ""))
+if args[:3] == ["-m", "pip", "install"]:
+    for a in args[3:]:
+        if not a.startswith("-"):
+            dist, _eq, version = a.partition("==")
+            installs[dist.lower()] = version or "9.9.9"
+    with open(record, "w") as f:
+        json.dump(installs, f)
+    sys.exit(0)
+if args[:1] == ["-c"]:
+    if "sweep probe" in args[1]:
+        needs = (("pytest", "pytest"), ("xdist", "pytest-xdist"), ("pytest_timeout", "pytest-timeout"))
+        print(json.dumps({"version": "3.99.0", "full": "3.99.0 (fake)", "ensurepip": True,
+                          "missing": [m for m, d in needs if d not in installs], "dists": {d: installs.get(d) for d in args[2:]}}))
+        sys.exit(0)
+    sys.exit(0 if args[1] != "import claude_agent_sdk" or "claude-agent-sdk" in installs else 1)
+print({"fakepython": "1 passed in 0.01s", "python": "1 passed in 0.01s", "bats": "1..1\nok 1 a",
+       "node": "# pass 1\n# fail 0"}.get(os.path.basename(here), ""))
 sys.exit(0)
 """
 
@@ -2600,9 +2621,13 @@ class SweepThenVerify(_Base):
 
     def test_the_runner_writes_what_verify_reads(self):
         fx = self.fx
+        # the runner builds the pytest leg's environment from ci.yml's install steps (this tree's workflow), the SDK
+        # at the pin its SDK step reads from kernel/session_host.py (a synthetic pin here)
         fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n", "tests/a.bats": "@test 'a' { true; }\n",
                         "tests/manager-a.test.js": "// manager\n", "tools/a.test.mjs": "// tools\n",
-                        "vendor/track-changents/hooks/a.test.mjs": "// hooks\n"})
+                        "vendor/track-changents/hooks/a.test.mjs": "// hooks\n",
+                        ".github/workflows/ci.yml": (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"),
+                        "kernel/session_host.py": 'SDK_TESTED_VERSION = "1.2.3"\n'})
         fx.pr(101, "a", title="notes: a fourth line", labels=["fix"], body=TRAILER)
         fx.ok("plan", "--name", "b1")
         fx.ok("assemble", "b1")
@@ -2622,6 +2647,10 @@ class SweepThenVerify(_Base):
         p = fx.ok("verify", "b1")
         self.assertIn("ok   sweep at %s: pass" % head[:10], p.stdout)
         self.assertIn("pytest 0, bats 0, manager 0, tools 0; not owed: deps, ledger, typecheck, npm-test, build", p.stdout)
+        with open(os.path.join(fx.xdg, "romp", "sweeps", head + ".json")) as f:
+            sdk = json.load(f)["runs"][-1]["runner"]["sdk"]
+        self.assertEqual((sdk["dist"], sdk["pin"], sdk["version"]), ("claude-agent-sdk", "1.2.3", "1.2.3"),
+                         "the pytest leg ran in the environment built at ci.yml's pin")
 
 
 class Pull(_Base):
