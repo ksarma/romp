@@ -116,8 +116,212 @@ def env_file_assignments(text, names=None) -> dict:
 def is_op_env_name(name) -> bool:
     """The 1Password CLI's own credential names, the ones the retired reference kind read: romp no longer
     runs `op`, so they are refused at boot like the provider variables (a token beside a retired line was
-    the documented shape, and a token left in the manager's environment would ride into every session)."""
+    the documented shape, and a token left in the manager's environment would ride into every session).
+    Exact, as 1Password spells them: this is the boot check's classifier (check_boot_environment,
+    retired_in_env_file), which refuses what `op` exports, and the judge child's scrub (judge.py's _judge_env
+    strips these exact spellings from a judge child's environment; review round 2 of the env-pick door,
+    2026-09-19, which found that inlined copy unnamed here). The credential SHAPE rule (is_credential_env_name)
+    hands it the upper-cased name, so there a lowercase spelling counts too."""
     return name in OP_ENV_NAMES or str(name).startswith(OP_ENV_PREFIX)
+
+
+# The two suffixes a credential-shaped variable name ends in, beside 1Password's own names, both halves compared
+# on the upper-cased name (is_credential_env_name): the shape the boot notice names
+# (sdk_backend.env_credential_names), the spawn.json writer moves out of the file
+# (sdk_backend.spawn_env_secret_names) and, since 2026-09-18, the per-session env doors refuse.
+CREDENTIAL_ENV_SUFFIXES = ("_API_KEY", "_TOKEN")
+# romp's own control token: a credential, but not a provider's, and legitimately in the kernel's own
+# environment, so the BOOT NOTICE leaves it unnamed (sdk_backend.env_credential_names; the line would otherwise
+# name it at every boot). The shape rule itself does not exclude it (review round 1 of the env-pick door,
+# 2026-09-18): a per-session pick naming it is refused like any other credential-shaped name, and the spawn.json
+# writer moves it, so the doors, the writer and the reference's lister agree and only the boot line differs.
+CONTROL_TOKEN_VAR = "ROMP_SERVE_TOKEN"
+
+
+def is_credential_env_name(name) -> bool:
+    """A variable NAME shaped like a credential: one ending _API_KEY or _TOKEN, or one of 1Password's own
+    (is_op_env_name), in any letter case. The shape only; the value is credential_env_names' business. Both halves
+    are compared on the upper-cased name. The suffixes since the spawn-spec fix's review round 1 (2026-09-18: an
+    exact, case-sensitive suffix let notes_api_token past the spawn.json writer, and the same comparison here let it
+    past the per-session env doors into the registry and the flag-settings file with its value; the writer and the
+    doors judge by this one predicate, so both fold or neither does). The 1Password half since review round 1 of
+    the env-pick door (2026-09-18): that fold had been carried into the suffix half alone, so op_session_<account>,
+    a 1Password session token under a spelling `op` never writes, was refused by neither door nor writer and landed
+    in both files with its value, the hole the suffix fold had closed, left open on the more secret shape. The boot
+    check's own refusal of the retired names (check_boot_environment) keeps is_op_env_name exact: it refuses what
+    `op` exports. The control token is not excluded here (its exclusion is the boot notice's,
+    sdk_backend.env_credential_names, the exact name romp reads)."""
+    n = str(name).upper()
+    return n.endswith(CREDENTIAL_ENV_SUFFIXES) or is_op_env_name(n)
+
+
+def credential_env_names(environ) -> list:
+    """The credential-shaped names (is_credential_env_name) in `environ` that hold a non-empty value, sorted,
+    names only. ONE rule for three readers, so they agree on what a credential looks like: the boot notice
+    over the kernel's environment (sdk_backend.env_credential_names, which alone leaves the control token
+    unnamed), the spawn.json writer over a spawn's env overlay (sdk_backend.spawn_env_secret_names), and the
+    per-session env doors over a pick (sdk_backend.env_request_error and the kernel's _env_error mirror,
+    2026-09-18: the kernel cannot import the SDK backend at its door, and a second spelling of the list there
+    would drift). An empty or whitespace value holds no secret and is not named. Every value must be a str or
+    None: a truthy value of another type raises here (the strip is str's; a falsy one, 0 or an empty list, reads
+    as empty and is not named, the mutation pass of review round 3, 2026-09-19, having found this line claim the
+    raise for every type), and a caller whose values may be of other types coerces them first, as the writer does
+    (sdk_backend._overlay_text; review round 1 of the env-pick door, 2026-09-18, which found the precondition
+    stated nowhere). No name is excluded here: until that round the control token was, for
+    the boot line's sake, so the doors accepted the one credential-shaped name a pick could still write to two
+    files while the reference's lister reported it; the exclusion is the boot notice's now."""
+    return sorted(n for n in environ if (environ.get(n) or "").strip() and is_credential_env_name(n))
+
+
+def credential_env_refusal(names) -> str:
+    """The per-session env doors' refusal of a pick that names a credential-shaped variable (2026-09-18,
+    found by the spawn.json fix's build: the door refused the three login names alone, so a pick of any other
+    credential-shaped name landed in the session registry and the per-sid flag-settings file, against the
+    fork's rule that no credential is ever written to a file). One wording for both copies of the validator
+    (sdk_backend.env_request_error and the kernel's _env_error), pinned in lockstep by tests. It names the
+    variable, never a value, and says where such a value belongs and that nothing was saved: this string
+    reaches the /new reply, `romp new`'s stderr, the kernel log and the problem ring.
+
+    The sentence carries no "env: " head of its own; each door adds that once (review round 1 of the env-pick
+    door, 2026-09-18: set_env's log line put its own head in front of the door's, so the row read "pick refused:
+    env: ..."). Nothing caps it on the surfaces it reaches (the /new reply, `romp new`'s stderr, the kernel log),
+    and naming every offender whole there is deliberate. The problem ring is the capped surface (the feed cuts a
+    row at kernel.SDK_PROBLEM_TEXT_CAP and the error centre at sdk_backend.ERROR_CENTER_TEXT_CAP), and what set_env
+    puts there is credential_env_ring_text, the short form bounded by construction (review round 3 of the env-pick
+    door, 2026-09-19: this docstring had claimed the kernel's cap governed the line set_env logs; the caps govern
+    the ring text only, and the first ring text, the whole line, ran to 414 characters and was clipped mid-word).
+
+    Where the value belongs is said by HALF (review round 2 of the env-pick door, 2026-09-19): the first wording
+    sent every refused name to the process environment romp's service starts with, and for the 1Password half
+    that road is the one check_boot_environment refuses at startup for a name as 1Password spells it (the manager
+    exits 1 on it), so an operator following the printed advice for an OP_* name took the deployment down. The two
+    checks differ on spelling (this door folds case, the boot check does not), so a road that names the boot refusal
+    names that spelling and says so (round 9 of fork PR #781's review, correctness-1: the op road told a user whose
+    pick spelled a 1Password name in lower case that romp refuses it at boot, which for that spelling it does not). A suffix name's value goes in that
+    environment, or a secret manager in the session's shells; a 1Password name's value goes where the boot
+    check's own message sends it, a file of the helper's own, or the session's shells; a mixed pick hears
+    both, each scoped to its half (_env_roads)."""
+    names = sorted(names)
+    return ("%s %s credential-shaped (_API_KEY or _TOKEN suffix, or a 1Password OP_* name, any letter case) and a "
+            "per-session env is written to disk: the pick was not saved. %s"
+            % (", ".join(names), "is" if len(names) == 1 else "are", _env_roads(names)))
+
+
+def _env_roads(names) -> str:
+    """Where a refused pick's values belong, scoped to the half of the shape rule each name matched (review round
+    2 of the env-pick door, 2026-09-19): the process-environment road is named for the suffix half only, since
+    check_boot_environment refuses 1Password's names there at startup, as 1Password spells them (is_op_env_name is
+    exact) while this door folds case, so a road that names the boot refusal names that spelling and says the two
+    checks differ (round 9 of fork PR #781's review, correctness-1); a folded spelling this door refuses would boot,
+    and the road does not tell its user otherwise."""
+    op = any(is_op_env_name(str(n).upper()) for n in names)
+    suffix = any(not is_op_env_name(str(n).upper()) for n in names)
+    if op and suffix:
+        # both halves named, so the fold clause rides here too (closing review of the env-pick door, 2026-09-19: this
+        # was the one statement of the rule naming both halves without it)
+        return ("A _API_KEY or _TOKEN value goes in romp's process environment; a 1Password name is refused there at boot as "
+                "1Password spells it (this door folds case, the boot check does not) and a helper reads it from its own file, "
+                "or a shell loads it; either shape is matched in any letter case")
+    if op:
+        return ("romp refuses a 1Password name in its process environment at boot as 1Password spells it (this door folds "
+                "case, the boot check does not; it no longer runs op): a helper reads the value from its own file, or the "
+                "session's shells load it from a secret manager")
+    return ("Put such a value in the process environment romp's service starts with, which every session inherits, "
+            "or load it from a secret manager in the session's shells")
+
+
+# The pieces every bounded problem row is built from (review round 3 of the env-pick door, 2026-09-19; the shared
+# helpers live here because sdk_backend.py and kernel.py both load this module and neither can import the other):
+# a name or a session name is cut to a budget with the feed's own marker, and a list of names is ONE name, the first
+# in sorted order, plus a count of the rest whose text is bounded too, so a row's length is a function of its format
+# and its budgets, whatever a pick or a stored env carries. The round found the sibling rows of the one row round 2
+# had bounded so still unbounded: the env-pick refusal row joined every refused name with no cut and no count, and
+# its two "cap pins" were measurements taken with a three-character session name.
+CUT_MARK = "\u2026"   # the feed's own marker for a cut (kernel._sdk_problem_text), one character
+RING_NAME_BUDGET = len("OP_SERVICE_ACCOUNT_TOKEN")   # every 1Password name romp spells EXACTLY is whole under it; an
+#                                                       OP_SESSION_<account> longer than it is cut like any other name
+COUNT_CAP = 999                                      # a count of more past this renders as "999+": four characters at most
+
+
+def utf16_units(text) -> int:
+    """The length of `text` in UTF-16 code units, the unit the error centre measures (ui/webview/badge-mirror.ts cuts a
+    row with JavaScript's `s.length` and `s.slice`, which count UTF-16 code units): one per code point up to U+FFFF,
+    two per code point above it (a surrogate pair in UTF-16). Every budget a ring text is cut to derives from that
+    centre's cap, so this is the unit a cut charges (round 7 of the env-pick door's review, 2026-09-20)."""
+    text = str(text)
+    return len(text) + sum(1 for ch in text if ord(ch) > 0xFFFF)
+
+
+def cut_to(text, budget: int) -> str:
+    """`text` whole when it fits `budget` UTF-16 code units, else its head cut to the budget with CUT_MARK as the last
+    character, so the result is never longer than the budget IN THE CONSUMER'S UNIT. Until round 7 of the env-pick
+    door's review (2026-09-20) the budget was charged in Python code points, one per character, while the cap every
+    budget derives from (sdk_backend.ERROR_CENTER_TEXT_CAP) is the error centre's, in UTF-16 code units: a code point
+    above U+FFFF (an emoji in a host's traceback tail) cost the budget one and the centre two, so a row computed to
+    fit the cap exactly overran it by one unit per such character, and a run of them put the centre's own cut inside
+    a surrogate pair. A code point above U+FFFF now costs two, and the head is taken whole code points at a time (a
+    Python slice never splits a pair), so the cut never lands inside one and the centre's cut has nothing left to do.
+    For text within the Basic Multilingual Plane the two units agree and nothing changes."""
+    text = str(text)
+    if utf16_units(text) <= budget:
+        return text
+    room = budget - utf16_units(CUT_MARK)
+    out, used = [], 0
+    for ch in text:
+        w = 2 if ord(ch) > 0xFFFF else 1
+        if used + w > room:
+            break
+        out.append(ch)
+        used += w
+    return "".join(out) + CUT_MARK
+
+
+def count_text(n: int) -> str:
+    """A count for a bounded row: its digits up to COUNT_CAP, else COUNT_CAP with a plus, so the text is at most
+    len(str(COUNT_CAP)) + 1 characters whatever `n` is."""
+    return str(n) if n <= COUNT_CAP else "%d+" % COUNT_CAP
+
+
+def first_and_count(names, budget: int) -> str:
+    """The first of `names` in sorted order, cut to `budget`, and a bounded count of the rest ("X and 3 more"), or
+    the one name alone. `names` has at least one entry. Values never reach here."""
+    names = sorted(str(n) for n in names)
+    who = cut_to(names[0], budget)
+    return who if len(names) == 1 else "%s and %s more" % (who, count_text(len(names) - 1))
+
+
+# The refusal's error-centre form: the named variable and the count, is/are, and the road for the half matched.
+CREDENTIAL_RING_FORMAT = "%s %s credential-shaped: the pick was not saved. %s"
+CREDENTIAL_RING_ROADS = {
+    "mixed": "Suffix values go in the process env; OP_* (as op spells them) refused at boot; door folds case; a helper's file",
+    "op": "An OP_* name (as op spells it) is refused in the process environment at boot; door folds case; a helper's file",
+    "suffix": "Such a value belongs in the process environment, not in a per-session env",
+}
+
+
+def credential_env_ring_text(names) -> str:
+    """credential_env_refusal's short form for the dashboard's error centre, which shows a problem row's first
+    sdk_backend.ERROR_CENTER_TEXT_CAP characters (240; review round 1 of the env-pick door, 2026-09-18): the first
+    name in sorted order, cut to RING_NAME_BUDGET, a bounded count of the rest, that nothing was saved, and where such
+    a value belongs, front-loaded, so the row an admin reads is whole. Bounded by construction (review round 3 of
+    the env-pick door, 2026-09-19: until then every refused name rode whole, so six names, or one long one, pushed
+    the row past the cap and the cut landed inside the name list before the row said the pick was not saved); its
+    length is CREDENTIAL_RING_FORMAT's plus the name budget, the count text and the longest road, and set_env adds a
+    head with the session name cut to its own budget (sdk_backend.REFUSAL_RING_HEAD); tests/test_session_env.py
+    computes the worst case from those pieces. The full sentence, every name whole, stays in the kernel log. Scoped
+    by half like the sentence (review round 2, 2026-09-19): a 1Password name is not sent to the process environment,
+    which refuses it at boot as 1Password spells it (the door folds case, the boot check does not, and the road says
+    so; round 9 of fork PR #781's review). Every road names the half's destination: the mixed road says where a suffix
+    value goes, that an OP_* name as op spells it is refused at boot, that the door folds case, and that the 1Password
+    value belongs in a helper's file (round 9's closing commit, extra10-2: the round-9 rewording had dropped the
+    destination). The mixed road is the longest and sits within the bound the worst-case pin in tests/test_session_env.py
+    derives from this format under the cap; that pin states the roads' lengths and the budget, no figure is typed here
+    (extra7-1: a typed headroom figure was wrong by one), and a reword that grows the road past the budget reds it."""
+    names = sorted(names)
+    op = any(is_op_env_name(str(n).upper()) for n in names)
+    suffix = any(not is_op_env_name(str(n).upper()) for n in names)
+    road = CREDENTIAL_RING_ROADS["mixed" if (op and suffix) else "op" if op else "suffix"]
+    return CREDENTIAL_RING_FORMAT % (first_and_count(names, RING_NAME_BUDGET), "is" if len(names) == 1 else "are", road)
 
 
 def retired_in_env_file(path=None) -> list:

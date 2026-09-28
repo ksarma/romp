@@ -335,7 +335,7 @@ type WorldOpts = { src?: string; mode?: "raw" | "rendered"; intro?: () => El; de
 function world(over: WorldOpts = {}): World {
   const mode = over.mode || "raw";
   const main = new El("div"); main.className = "fileview-main";
-  const body = new El("div"); body.className = "fileview-body";
+  const body = new El("div"); body.className = "fileview-body"; body.rect = { left: 0, top: 100, right: 1000, bottom: 600, width: 1000, height: 500 };   // the pane's clip: the offer refuses a selection whose box lies outside it (onSelection, inBodyBox); every selection rect below sits inside
   main.appendChild(body);
   let text = over.src ?? DOC;
   let code: El | null = null, md: El | null = null;

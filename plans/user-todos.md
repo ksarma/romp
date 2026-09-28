@@ -252,6 +252,13 @@ Precedent: the per-tab ctx gauge and compacting mini-bar (`render.ts:4126-4136`,
 — tabs deliberately carry no counts today and this stays that way; the glyph says "something
 here waits on you", the card says what. Exact character/placement is a build-time UI call.
 
+*As built (2026-09-22):* the glyph has two inputs, because the skeleton diet and the cold-tab
+gate withhold a tab's session payload until the tab is opened. A loaded tab paints it from the
+chat payload's `userTodos` rows; a skeleton or placeholder tab paints it from the `userTodos`
+COUNT on its `tabOrder` row (`_tab_meta`, one row per listed session, built from the same
+open-row predicate and the same ended gate as the payload, with no mute applied to either).
+Presence rides the roster, text the payload; the glyph stays non-numeric on the tab.
+
 **(c) A quiet feed-card marker.** Each of the owning session's feed cards carries a quiet
 marker (todos are session-scoped, not card-scoped). **No feed strip in v1** — the feed's
 banner slot stays single-purpose.
@@ -273,8 +280,9 @@ existing push (`_badge_push`, `kernel.py:22050` → the shell WS `{type:'badge'}
 **Muted sessions — a deliberate asymmetry (review call, 2026-08-22).** A `hideFromFeed` mute
 quiets the feed and every aggregate built from it — the card marker (c), the idle-escalation
 floor, and the badge (d) — because mute means "stop interrupting me about this session". The
-tab glyph (b) stays: it reads the chat payload's `userTodos`, which mute does not touch, so the
-tab remains truthful about what its session holds. Do not "fix" the glyph to match the feed
+tab glyph (b) stays: it reads the chat payload's `userTodos` on a loaded tab and the `tabOrder`
+row's count on a skeleton or placeholder tab (the as-built note under (b)), and mute touches
+neither, so the tab remains truthful about what its session holds. Do not "fix" the glyph to match the feed
 surfaces; the split is the point (quiet the interrupts, never lie on the session's own tab).
 
 ### Dead and dormant sessions
@@ -302,7 +310,8 @@ Three seams, all existing patterns:
   by comparing the serialized payload (`kernel.py:16343-16351`, the `firstSeen` lesson), so
   this field must serialize identically across builds when nothing changed — or every
   connected client re-receives its full transcript about once a second. The tab glyph derives
-  client-side from the same field.
+  client-side from the same field on a loaded tab, and from the `tabOrder` row's count on a
+  skeleton or placeholder tab (the as-built note under (b)).
 - **Feed page**: `build_feed`'s return (`kernel.py:18299`) grows a top-level sid-keyed
   open-count map for the card marker, and the escalation floor + placeholder live in the same
   column mapping the perm floor uses.

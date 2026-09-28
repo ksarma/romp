@@ -438,8 +438,11 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   assert.match(VIEW, /import \{ sanitizeMd, revealFragmentTarget \} from "\.\/md-sanitize";/);   // the sanitizer, and the shared reveal step scrollToFragment runs before its scroll
   assert.doesNotMatch(VIEW, /from "dompurify"/, "the viewer spells no profile of its own: every option comes through md-sanitize.ts");
   // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string); the heading ids are minted
-  // inside the call, as the caller's own pass, so they are read from the text as written, before the math fill (md-url-view.test.ts)
-  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);/);
+  // inside the call, as the caller's own pass, so they are read from the text as written, before the math fill (md-url-view.test.ts);
+  // these two are presence pins; where the figure chain sits relative to the adoption is file-view-seam.test.ts's to check, on
+  // comment-stripped code (the round-1 ruling of the fork PR's review: one order pin, the seam's, not an index compare per module)
+  assert.match(VIEW, /const clean = sanitizeMd\(dirty, mintHeadingIds\);/);
+  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);/);
   // a note's links open a NEW tab rather than navigating the hosting pane's document away. A file on disk hands its
   // anchors to file-view-links.ts (linkMarkdownAnchors, fork PR #347: a web link stamped, a sibling file opened in
   // the viewer); a URL document, or a caller with no location, stamps every link element in mdBlock's own pass. Both
@@ -583,7 +586,7 @@ test("a file opened FROM the listing offers the way back — close only the view
 // kernel.py: the view allowlists are a rendering choice, not a security boundary). ──
 
 test("the title bar offers Download as the lightbox's tray glyph, in the file group beside Copy path, at the same-origin download URL (T367)", () => {
-  // the URL is fileUrl + the download switch: same origin, cookie-authed, and federation-aware for
+  // the URL is fileUrl + the download switch: same origin, capped through fileUrl, and federation-aware for
   // free — fileUrl already routes a remote session's file through the /remote/<host>/file relay
   assert.match(VIEW, /const dlUrl = fileUrl\(path, sid\) \+ "&download=1";/);
   assert.match(VIEW, /dl\.innerHTML = ICON_DOWNLOAD;/, "the one tray drawing (icons.ts), not a word");
@@ -903,8 +906,9 @@ test("SVG renders via <img> ONLY — never innerHTML, never an iframe: its scrip
   const live = mediaBranch.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
   assert.match(live, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\)/,
     "the SVG Source view renders through codeBlock, uncommented (born wrapped, like every code view)");
-  assert.match(VIEW, /isSvgImage = ct === "image\/svg\+xml";/, "the toggle keys on the kernel's verdict too");
-  assert.match(VIEW, /mediaBlob\.text\(\)/, "the source view decodes the SAME fetched bytes — no second request");
+  assert.match(VIEW, /isSvgImage = v\.isImage && ct\.split\(";"\)\[0\]\.trim\(\)\.toLowerCase\(\) === "image\/svg\+xml";/, "the toggle keys on the kernel's verdict too, its media type alone, for an answer the viewer takes as an image (executed: file-view-seam.test.ts, the svg answers with a charset parameter and the answer typed IMAGE/SVG+XML)");
+  assert.match(VIEW, /decodeForSource\(mediaBlob\);/, "the Source toggle's press decodes the fetched bytes it holds, with no second request: a source pin on the press's line; executed in file-view-seam.test.ts (a press of the Source toggle while its bytes decode, and a reload landing in that window, which paint the Source view with no fetch but the reload's)");
+  assert.match(VIEW, /const decodeForSource = \(b: Blob\): void => \{\n\s*srcDecode = b;\n\s*void b\.text\(\)\.then\(/, "the Source view's decode reads the bytes it is handed (the press's, or a landing's while the press waits): a source pin; executed in the same cases");
 });
 
 // executed: the object-URL lifecycle (the Escape-handler test's shape) — every teardown revokes
@@ -992,17 +996,19 @@ test("an image 200 that fails to DECODE swaps to the failure pane: plain words +
   assert.deepEqual(sim(false),
     ["this image failed to decode: it may be mid-write or truncated", "Download"],
     "garbage bytes land on words + the way out");
-  // source: the handler rides the img itself, armed BEFORE src so no event can slip past it
+  // source: the handler rides the img itself, armed BEFORE src so no event can slip past it, and takes the event (imgFailed reads
+  // its target: a picture the body no longer holds paints nothing; executed in file-view-seam.test.ts, "the picture's error paints
+  // nothing once the body no longer holds that picture")
   const imgFn = VIEW.split("function imgBlock")[1].split("// The PDF body")[0];
-  assert.match(imgFn, /^\(objUrl: string, path: string, onDecodeFail: \(\) => void\)/);
-  assert.match(imgFn, /img\.addEventListener\("error", onDecodeFail, \{ once: true \}\);\s*\n\s*img\.src = objUrl;/);
+  assert.match(imgFn, /^\(objUrl: string, path: string, onFail: \(e: Event\) => void\)/, "imgBlock hands its caller the error event: a source pin; executed in file-view-seam.test.ts (the replaced picture's error, the svg's re-ask)");
+  assert.match(imgFn, /img\.addEventListener\("error", onFail, \{ once: true \}\);\s*\n\s*img\.src = objUrl;/, "armed before src: a source pin; the error reaches the pane in file-view-seam.test.ts's decode cases");
   // …and the continuation builds the EXACT failure idiom the 413/415 catch renders: fileview-err
   // words + the path hint + the fileview-err-dl Download wired through startDownload
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   const failFn = (openFn.split("const imgFailed = ")[1] || "").split("\n  };")[0];
   assert.ok(failFn, "imgFailed lives in the open viewer's closure — it needs body and dlUrl");
   assert.match(failFn, /el\("div", "fileview-err"\)/);
-  assert.match(failFn, /why\.textContent = DECODE_FAILED;/, "the sentence is the exported constant (hoisted in the Slice 7 review's round 1 for the guide's pin)");
+  assert.match(failFn, /why\.textContent = isSvgImage \? SVG_PICTURE_FAILED : DECODE_FAILED;/, "the sentence is the exported constant (hoisted in the Slice 7 review's round 1 for the guide's pin), SVG_PICTURE_FAILED over an svg's picture after its re-ask: a source pin; executed in file-view-seam.test.ts, the svg's failed load asking its address again (and the png's DECODE_FAILED)");
   assert.match(VIEW, /\nexport const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";\n/, "its export line, the words the guide's pin reads");
   assert.match(failFn, /el\("div", "fileview-err-hint"\)/);
   assert.match(failFn, /hint\.textContent = path;/);
@@ -1323,7 +1329,8 @@ test("source: mdBlock keeps no try, no catch and no fallback; both viewers' rend
   const recipe = VIEW.split("export function viewerHtml(text: string, walk?: (token: Token) => void): string {")[1].split("\n}\n")[0];
   assert.match(recipe, /\n {2}return marked\.parser\(tokens, opts\);$/, "the parser at the recipe's own level");
   assert.doesNotMatch(recipe, /try \{/, "inside no try: a throw from the lexer or the parser propagates to mdBlock and on to the caller");
-  assert.match(mdFn, /\n {2}box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);\n/, "the sanitize and the adoption at the function's own level: a throw from either propagates");
+  assert.match(mdFn, /\n {2}const clean = sanitizeMd\(dirty, mintHeadingIds\);/, "the sanitize at the function's own level: a throw propagates");
+  assert.match(mdFn, /\n {2}box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);\n/, "the adoption at the function's own level too: a throw from either propagates (a presence pin; its place after the figure chain is file-view-seam.test.ts's to pin)");
   assert.doesNotMatch(mdFn, /\n {2}try \{/, "no try at the function's own level (the fence highlight's and the URL parse's inner ones stand)");
   assert.doesNotMatch(mdFn, /box\.textContent = text;|let rendered|rendered = false|if \(rendered/, "no fallback write and no `rendered` flag: the caller keeps the content, and both link passes run on every render");
   assert.match(mdFn, /\n {4}linkMarkdownAnchors\(box, doc\.path\);\n/, "the anchors' pass, ungated");
@@ -1399,7 +1406,9 @@ test("source: the Slice 7 review's round 2 (plans/markdown-viewer.md, the Slice 
   assert.doesNotMatch(VIEW, /renderFell = err instanceof Error/, "no catch records the raw message, and none records before its fallback swap");
   // the hold's comment above fetchFile: fireRendered wraps every hook in its own try, so a hook's throw never reaches the chain's catch
   assert.match(VIEW, /const fireRendered = \(why: FileViewRenderWhy = "paint"\) => \{ for \(const cb of renderHooks\) \{ try \{ cb\(why\); \} catch \{[^\n]*\} \} \};/, "each hook in its own try");
-  const hold = VIEW.slice(VIEW.indexOf("// The landing runs through the hold's defer"), VIEW.indexOf("const fetchFile = () => {"));
+  const holdFrom = VIEW.indexOf("// The landing runs through the hold's defer"), holdTo = VIEW.indexOf("const fetchFile = (");
+  assert.ok(holdFrom >= 0 && holdTo > holdFrom, "the hold's comment, bounded by fetchFile's own line, whatever its parameters");
+  const hold = VIEW.slice(holdFrom, holdTo);
   assert.match(hold, /the passes after the try that can throw through \(the folds' restore, the width stamp,\n\s*\/\/ the Outline's sync, the seat\)/, "the passes named are the ones whose throw reaches the catch");
   assert.match(hold, /Never a hook's own throw: fireRendered runs each hook in its own\n\s*\/\/ try and swallows it/, "and the hooks are named as the exception");
   assert.doesNotMatch(hold, /the folds' restore, the hooks, the seat/, "round 1's list, which named the hooks as a rejecting pass, is gone (the review's round 2)");

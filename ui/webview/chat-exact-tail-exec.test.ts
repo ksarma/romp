@@ -5,7 +5,8 @@
 // tail or a change inside a window the reader scrolled away from still rebuilds the window, chatTail hands its
 // `from` to the rewind pass as the bound, a gap asks for the full session; and the footer patch adds, removes
 // and re-homes the fork spot by unit, skips a day divider sharing its turn's unit number, maps compact-mode
-// units, and marks the view stale for a reply folded into a run. Synthetic events; epochs are seconds.
+// units, and reaches a reply folded into a run by its row's position when the run is open (PR E; it marked the
+// view stale before). Synthetic events; epochs are seconds.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
@@ -174,27 +175,31 @@ class FakeEl {
   appendChild(c: FakeEl): FakeEl { c.parent?.removeChild(c); c.parent = this; this.children.push(c); return c; }
   removeChild(c: FakeEl): void { this.children = this.children.filter((x) => x !== c); c.parent = null; }
   remove(): void { this.parent?.removeChild(this); }
-  querySelector(sel: string): FakeEl | null {
+  private select(sel: string): FakeEl[] {
     // ':scope > [data-unit="N"]:not(.day-divider)' and ':scope > .cls', the patch's two shapes
     const m = /^:scope > (.+)$/.exec(sel);
     if (!m) throw new Error("unsupported selector " + sel);
     const attr = /\[data-unit="([^"]*)"\]/.exec(m[1]), cls = /^\.([\w-]+)/.exec(m[1]), not = /:not\(\.([\w-]+)\)/.exec(m[1]);
-    return this.children.find((c) => (!attr || c.dataset.unit === attr[1]) && (!cls || c.has(cls[1])) && (!not || !c.has(not[1]))) ?? null;
+    return this.children.filter((c) => (!attr || c.dataset.unit === attr[1]) && (!cls || c.has(cls[1])) && (!not || !c.has(not[1])));
   }
+  querySelector(sel: string): FakeEl | null { return this.select(sel)[0] ?? null; }
+  querySelectorAll(sel: string): FakeEl[] { return this.select(sel); }   // the patch reads a run's nodes by position (PR E)
 }
 type FootHooks = { FakeEl: typeof FakeEl; workedFooterPlan: typeof workedFooterPlan };
-type Patch = (v: any, s: any, from: number, working: boolean, items?: any[] | null) => void;
+type Patch = (v: any, s: any, from: number, working: boolean, items?: any[]) => void;   // the harness defaults `items` to normal mode's list, one item per event (footWorld); production hands a list at every site
 
 function liftPatch(): (hooks: FootHooks) => Patch {
   const js = liftBetween("function patchWorkedFooters(", "// prevEpoch for event i");
+  // itemFirstEvent is LIFTED with the patch, never hand-copied: a copy without the gap case (a gap's first event is its `before`, not an
+  // `index`) mis-modelled the one unit kind whose first event is not `index`, and a window opening on a gap read NaN (the maintainer's round 1 addendum)
+  const first = liftBetween("function itemFirstEvent(", "// The display-unit index");
   const prelude = `
     const H = HOOKS;
     const workedFooterPlan = H.workedFooterPlan;
     const eventEpoch = (ev) => (ev.t == null ? null : ev.t);
-    const itemFirstEvent = (it) => (it.kind === "toolgroup" || it.kind === "retrygroup" ? it.indices[0] : it.index);
     const elapsedFooter = (secs) => { const f = new H.FakeEl("div", "turn-elapsed"); f.textContent = String(secs); return f; };
   `;
-  return new Function("HOOKS", prelude + js + "\nreturn patchWorkedFooters;") as (hooks: FootHooks) => Patch;
+  return new Function("HOOKS", prelude + first + js + "\nreturn patchWorkedFooters;") as (hooks: FootHooks) => Patch;
 }
 
 const user = (t: number) => ({ kind: "user", human: true, t });
@@ -202,7 +207,10 @@ const reply = (t: number) => ({ kind: "assistant", t });
 const tool = (t: number) => ({ kind: "tool", t });
 /** A rendered window: one node per unit tagged data-unit, unit `spotOn` carrying a fork spot. */
 function footWorld(events: any[], units: number, spotOn: number) {
-  const patch = liftPatch()({ FakeEl, workedFooterPlan });
+  const lifted = liftPatch()({ FakeEl, workedFooterPlan });
+  // production hands the unit list at every site since the maintainer's round 5 ruling (regression-1; the no-list arm, which mapped the
+  // event index onto data-unit, is gone): a call here without one gets normal mode's list, one item per event, the world's units
+  const patch: Patch = (v, s, from, working, items) => lifted(v, s, from, working, items ?? events.map((_, index) => ({ kind: "event", index })));
   const el = new FakeEl("div");
   const nodes: FakeEl[] = [];
   for (let u = 0; u < units; u++) { const n = new FakeEl("div", "turn"); n.dataset.unit = String(u); el.appendChild(n); nodes.push(n); }
@@ -253,7 +261,20 @@ test("a day divider shares its turn's unit number and is never the footer's home
   assert.ok(nodes[2].querySelector(":scope > .turn-elapsed"), "the turn did");
 });
 
-test("compact mode: the window start is a unit and the plan wants an event index; the reply's event maps back to its unit; a reply folded into a run marks the view stale", () => {
+test("a window that opens ON a gap: the patch reads the window's first event through production's itemFirstEvent (a gap's `before`), so the footer lands and comes off; the harness's hand copy read the gap's index as undefined, the plan was empty, and neither direction ran (the maintainer's round 1 addendum)", () => {
+  const events = [user(100), tool(110), reply(160)];
+  const items = [{ kind: "gap", lo: 0, hi: 5, before: 0 }, { kind: "event", index: 0 }, { kind: "event", index: 1 }, { kind: "event", index: 2 }];
+  const { patch, v, s, nodes } = footWorld(events, 4, 3);   // unit 0 is the gap element, units 1..3 the three events
+  v.winStart = 0;
+  patch(v, s, 3, false, items);   // idle with the suffix empty: the turn is complete, the reply (event 2, unit 3) gains its footer
+  assert.equal(nodes[3].querySelector(":scope > .turn-elapsed")?.textContent, "60", "the add direction: the footer on the reply behind the gap-headed window");
+  assert.equal(nodes[0].querySelector(":scope > .turn-elapsed"), null, "the gap element got nothing");
+  s.events = [user(100), tool(110), reply(160), reply(170)];   // another reply in the same turn: the footer moves off
+  patch(v, s, 3, true, items);
+  assert.equal(nodes[3].querySelector(":scope > .turn-elapsed"), null, "the remove direction: the stale footer comes off");
+});
+
+test("compact mode: the window start is a unit and the plan wants an event index; the reply's event maps back to its unit; a reply folded into a run is patched by position when the run is open, and left alone (never stale) when it is collapsed", () => {
   const events = [user(100), tool(110), tool(120), reply(160), user(200)];
   // units: the prompt, one folded tool run, the reply, the prompt
   const items = [{ kind: "event", index: 0 }, { kind: "toolgroup", indices: [1, 2] }, { kind: "event", index: 3 }, { kind: "event", index: 4 }];
@@ -261,16 +282,55 @@ test("compact mode: the window start is a unit and the plan wants an event index
   patch(v, s, 4, true, items);
   assert.ok(nodes[2].querySelector(":scope > .turn-elapsed"), "event 3 is unit 2: the footer lands on the reply's unit");
   assert.equal(v.stale, false);
-  // the reply itself folded into a retry run: no unit is addressable → the window path re-renders
-  const folded = [{ kind: "event", index: 0 }, { kind: "retrygroup", indices: [1, 2, 3] }, { kind: "event", index: 4 }];
+  // the reply itself folded into a notice run that is COLLAPSED: its row is not on screen, nothing is patched and the view is not
+  // marked stale (until PR E it was, and in compact mode's incremental tail that made the next paint a full rebuild whenever the
+  // event before the streaming reply sat inside a run: the everyday agentic shape)
+  const folded = [{ kind: "event", index: 0 }, { kind: "noticegroup", indices: [1, 2, 3] }, { kind: "event", index: 4 }];
   const w2 = footWorld(events, 3, 1);
   w2.patch(w2.v, w2.s, 4, true, folded);
-  assert.equal(w2.v.stale, true, "unit < 0: stale, so the window path draws the footer");
-  assert.ok(w2.nodes.every((n) => !n.querySelector(":scope > .turn-elapsed")), "…and nothing was patched by hand");
+  assert.equal(w2.v.stale, false, "a collapsed run shows no row for the reply: nothing to patch, no rebuild asked");
+  assert.ok(w2.nodes.every((n) => !n.querySelector(":scope > .turn-elapsed")), "…and nothing was patched by hand, the head least of all");
+  // the same run OPEN: the head, then a row per member, all carrying the run's unit; member 2 (event 3) is the third row of unit 1
+  const w4 = footWorld(events, 3, 1);
+  const rows = [1, 2, 3].map((i) => { const r = new FakeEl("div", "turn tg-child"); r.dataset.unit = "1"; return r; });
+  const headIdx = w4.v.el.children.indexOf(w4.nodes[1]);
+  w4.v.el.children.splice(headIdx + 1, 0, ...rows); for (const r of rows) r.parent = w4.v.el;
+  w4.patch(w4.v, w4.s, 4, true, folded);
+  assert.ok(rows[2].querySelector(":scope > .turn-elapsed"), "the reply's own row got the footer");
+  assert.ok(!rows[0].querySelector(":scope > .turn-elapsed") && !rows[1].querySelector(":scope > .turn-elapsed") && !w4.nodes[1].querySelector(":scope > .turn-elapsed"), "not the head, not the other members");
+  assert.equal(w4.v.stale, false);
+  // a tool inside a run before the streaming reply (the agentic shape): the plan names it, the collapsed run has no row for it, nothing happens
+  const agentic = [user(100), tool(110), tool(120), reply(160)];
+  const runItems = [{ kind: "event", index: 0 }, { kind: "toolgroup", indices: [1, 2] }, { kind: "event", index: 3 }];
+  const w5 = footWorld(agentic, 3, 1);
+  w5.patch(w5.v, w5.s, 3, true, runItems);   // the reply at 3 streams: the tail re-rendered [3, 4); the plan names the tool at 2
+  assert.equal(w5.v.stale, false, "no rebuild asked for the everyday agentic shape");
   // a window whose start unit is past the items: winEv falls to the event count, so the plan sees no reply before it
   const w3 = footWorld(events, 4, 2); w3.v.winStart = 9;
   w3.patch(w3.v, w3.s, 4, true, items);
   assert.ok(w3.nodes.every((n) => !n.querySelector(":scope > .turn-elapsed")));
+});
+
+test("compact mode: a continuation with no user line (the first changed event is a hidden thinking block, working flips in the same frame) takes the footer off the reply before it when the patch is told the first CHANGED event; told `len`, it names the thinking row and leaves the footer", () => {
+  // the seam's from (the author's pass 0, low): syncViewInner passes Math.min(v.rendered, first re-rendered event); with no unit reaching the
+  // change the second term is `len`, and the plan then scans down from len - 1 to the thinking event, which has no node in compact mode
+  const thinking = (t: number) => ({ kind: "thinking", t });
+  const idle = [user(100), tool(110), reply(160)];
+  const items = [{ kind: "event", index: 0 }, { kind: "event", index: 1 }, { kind: "event", index: 2 }];
+  const w = footWorld(idle, 3, 2);
+  w.patch(w.v, w.s, 3, false, items);
+  assert.equal(w.nodes[2].querySelector(":scope > .turn-elapsed")?.textContent, "60", "the idle session's reply carries its footer");
+  w.s.events = [user(100), tool(110), reply(160), thinking(200)];   // the session resumes the same turn: a thinking atom lands, status working
+  w.patch(w.v, w.s, 3, true, items);                                 // from = the first changed event (v.rendered = 3): the plan names the reply
+  assert.equal(w.nodes[2].querySelector(":scope > .turn-elapsed"), null, "the reply is no longer the turn's last event and the session works: the footer comes off");
+  // the same shape with from = len (the first re-rendered event when no unit reaches the change): the plan names the thinking row, no node
+  const w2 = footWorld(idle, 3, 2);
+  w2.patch(w2.v, w2.s, 3, false, items);
+  w2.s.events = [user(100), tool(110), reply(160), thinking(200)];
+  w2.patch(w2.v, w2.s, 4, true, items);
+  assert.equal(w2.nodes[2].querySelector(":scope > .turn-elapsed")?.textContent, "60", "told `len`, the patch leaves the stale footer: the argument the seam must not pass");
+  assert.deepEqual(workedFooterPlan(w2.s.events, 4, 0, true, (ev: any) => ev.t ?? null), [{ unit: 3, secs: null }], "…because the plan names the hidden event");
+  assert.deepEqual(workedFooterPlan(w2.s.events, 3, 0, true, (ev: any) => ev.t ?? null), [{ unit: 2, secs: null }], "from the first changed event it names the reply");
 });
 
 // ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────

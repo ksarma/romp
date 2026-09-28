@@ -121,7 +121,9 @@ test('the patch series is a numbered sequence with a header naming the reason, t
     const headerEnd = text.indexOf('\ndiff --git ');
     assert.ok(headerEnd > 0, `${name}: has a header before the first diff`);
     const header = text.slice(0, headerEnd);
-    assert.match(header, /^# Patch \d{4} — .+/m, `${name}: title line`);
+    // the title's separator is an em dash on the older patches and a plain dash since 0009's third-pass regeneration
+    // (2026-09-19: a line romp writes carries no em dash; the older titles are left as they stand)
+    assert.match(header, /^# Patch \d{4} (?:\u2014|-) .+/m, `${name}: title line`);
     assert.match(header, /^# Offered back: (yes|no)\b/m, `${name}: says whether it is offered back`);
     assert.match(header, /^# Reason: /m, `${name}: states its reason`);
     const filesLine = header.match(/^# Files: (.+)$/m);

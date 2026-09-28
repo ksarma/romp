@@ -2124,6 +2124,10 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-input:focus { outline: none; border-color: var(--accent); }
 .fc-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .fc-hint { margin-right: auto; }   /* the chord hint at the composer row's left; Save and Cancel keep the right */
+.fc-wait { flex: 1 1 100%; min-width: 0; padding: 0; }   /* the loader and its reason, in place of the chord hint while another comment's save is out (waitLine): a row of its own under Save and Cancel (the full width, so it wraps below them and never between them), one line where it fits, its words wrapping beside the loader where it does not; no padding of its own */
+.fc-held-words { flex: 1 1 100%; min-width: 0; color: var(--fg); font-size: 0.86em; white-space: pre-wrap; overflow-wrap: anywhere; }   /* a refused comment's words in its note (heldRows): whole, wrapped, on their own line; the reference row's .fc-quote keeps its one clipped line */
+.fc-held-save { padding: 6px 0; }   /* a refused comment's note (heldRows): the parts of one note stand 6 px apart (.fc-row's gap), two notes 12 px apart */
+.fc-held-why { flex: 1 1 100%; min-width: 0; }   /* a waiting Bring it back's reason on a coarse pointer, inside its note (heldRows), on a line of its own */
 .fc-cards { display: flex; flex-direction: column; gap: 8px; }
 .fc-empty { color: var(--dim); font-size: 0.86em; font-style: italic; }
 .fc-card { border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 10px; background: var(--bg);

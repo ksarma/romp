@@ -956,7 +956,12 @@ class _PerfStats:
                                    off made wake-only: the awaiting dead-man, plus the debt reminders
                                    while the nudge toggle is on; such a look records and skips under
                                    its own mode tag since jobs stage 1),
-                                   wakeOnlyRecorded (the memo rows those looks recorded), and
+                                   wakeOnlyRecorded (the memo rows those looks recorded), loads
+                                   (the walk's shared goal-store reads: one per look that reaches
+                                   its decision read, whether the read returns a store, returns a
+                                   fault or raises out of the look, none on a skip or a state-gate
+                                   exit, the count fold ruling A condition 7 bounds at one per
+                                   alive session per pass), and
                                    unboundedBy (the refusals per leg); nudgeGate
                                    (the walk's placement gate, _nudge_placement_gate) -> served /
                                    derived (answers served from the memo vs re-derived) / failed
@@ -2312,7 +2317,7 @@ def _thread_kind(name):
     constant names the kernel gives its threads; _THREAD_KIND_PREFIXES, the kinds spelled "<kind>:<payload>"; and the fixed
     forms), or "other" for every name outside it. A registered constant name (pusher, jobs, index, ws-send, ...) is its own
     kind; a name with the convention's separator keeps the part before it when that part is a registered prefix (sdk,
-    sdk-intr, codex, end-host, port-up, peer, romp-refused-mark); Python's default "Thread-N" and "Thread-N (target)" are
+    sdk-intr, codex, end-host, sdk-slot, port-up, peer, romp-refused-mark); Python's default "Thread-N" and "Thread-N (target)" are
     "thread", except the HTTP server's "Thread-N (process_request_thread)", which is "handler" (the target function is the
     row's own fourth frame, so the word loses nothing the row does not carry); MainThread is "main"; a default
     "ThreadPoolExecutor-K_N" is "pool"; a judge pool's worker, "judge-<tier>_N" (judge.py's _TimedPool names its workers after
@@ -2473,7 +2478,7 @@ _PERF_HTTP_ROUTES = {
     "GET": (
         "/", "/analytics", "/api-health", "/api-health/frame", "/busy", "/chat", "/classify",
         "/commands", "/defaults", "/diag/sendvis", "/emoji", "/feed", "/feed.json", "/file", "/files",
-        "/fleet", "/followup-preview", "/handoff", "/healthz", "/logins", "/manifest.webmanifest",
+        "/fleet", "/followup-preview", "/handoff", "/healthz", "/login", "/logins", "/manifest.webmanifest",
         "/mcp", "/models", "/notify-all", "/notify-turns", "/palette", "/perf", "/push/pending",
         "/push/vapid-key", "/session-events", "/sessions", "/sessions/by-fsid", "/settings",
         "/spend/detail", "/ssh-hosts", "/sw.js", "/timeline", "/tunnels", "/tunnels/of",
@@ -2526,6 +2531,7 @@ _THREAD_KIND_PREFIXES = frozenset((  # the kinds spelled "<kind>:<payload>" (_TH
     "sdk", "sdk-intr",               # a host) never reaches the sample; peer is the postal service's, a separate process the census
     "codex", "end-host",             # walks all the same
     "port-up", "romp-refused-mark", "peer",
+    "sdk-slot",                      # the relaunch slot's waiter (sdk_backend.py _take_relaunch_slot, 2026-09-18): one per session waiting for a boot slot
 ))
 _THREAD_KIND_FIXED = frozenset(("main", "handler", "thread", "pool"))   # the words _thread_kind's fixed rules make: MainThread,
 #                                                                        the HTTP server's request threads, Python's default names
@@ -3533,7 +3539,8 @@ CLIENT_DIAG_KEYS = {
                        "writer", "before", "after", "delta", "stick", "gesture", "sh", "ch",
                        "anchor", "proto", "events", "regions", "headKnown", "headFrom", "older", "noframe", "trail",
                        "dh", "last", "cls", "fromTail", "atBottom", "where", "removed", "added", "reAdded", "shBefore", "shAfter", "st",
-                       "top", "bot", "dTop", "dBot", "lo", "hi", "edge", "why", "notice", "nav", "kind", "keep", "reland")),
+                       "top", "bot", "dTop", "dBot", "lo", "hi", "edge", "why", "notice", "nav", "kind", "keep", "reland",
+                       "view")),                                    # a spacer row of a view that was not the element the scroller measured in its frame (switched away before it, or hidden by the section-at-a-glance view): one fixed word, no host name; the table admits the key and CLIENT_DIAG_VALUES below bounds its value to that word, the page's builder's (ui/webview/scroll-write.ts spacerRow), so any other value is refused, not stored (PR E; the owner 2026-09-21, who approved the field; the maintainer's round 5 ruling, tests-1)
     "strip": frozenset(("ok", "tunnels", "err", "open", "base")),
     "feed": frozenset(("id", "from", "to", "ev", "buildId", "predicted", "appeared", "gone", "total")),
     "outline": frozenset(("buildId", "slot", "rev")),
@@ -3541,6 +3548,16 @@ CLIENT_DIAG_KEYS = {
     "kernel": frozenset(("app", "kind", "reconnect", "iid", "cid", "host", "sid", "type", "span", "events", "bytes", "head", "missing",
                          "refused", "reason", "sent", "frames", "ageS",
                          "frame", "withheld", "proto")),                                                   # implicitHandshake (_implicit_handshake)
+}
+# The VALUE an admitted key is bounded to where the key carries one FIXED WORD and not a figure: (surface, key) -> the closed set of values
+# the kernel stores under it. A posted value outside the set is refused at the admit step, the way an unknown key is: the row is stored
+# without the key and one stderr line names the key and the reason, never the value. One entry today, chat's `view`, the spacer row's
+# marker of a view that was not the element the scroller measured in its frame: the one word the owner approved and no host name (the
+# owner 2026-09-21, who approved the field). The set is stated HERE once and read by tests/test_client_diag_allowlist.py, which spells the
+# word nowhere but its fixture row, the page's own spelling (the maintainer's round 5 ruling on PR E, tests-1: a key-only allowlist on a
+# page-to-kernel field admitted any text under the approved key).
+CLIENT_DIAG_VALUES = {
+    ("chat", "view"): frozenset(("inactive",)),
 }
 _client_diag_said = set()      # (surface, key) pairs already said on stderr; one line each per kernel, CLIENT_DIAG_SAID_MAX of them
 _CLIENT_DIAG_SAID_FULL = (None, None)   # the latch's own entry once it is full: the one line past the bound
@@ -3578,9 +3595,19 @@ def _client_diag_scrub(v, depth=0):
     return None
 
 
+def _client_diag_value_admitted(admitted, v):
+    """Whether a posted value is one of a key's closed set (CLIENT_DIAG_VALUES): equality with a member, the value as posted (a
+    long string is compared whole, before the scrub cuts it); a value no set can hold (an object, a list) is outside every set."""
+    try:
+        return v in admitted
+    except TypeError:
+        return False
+
+
 def _client_diag_admit(surface, data):
-    """The row's data with the surface's admitted top-level keys alone (CLIENT_DIAG_KEYS), each value scrubbed;
-    null for a data that is not an object. Every foreign key is dropped; of one row's, at most CLIENT_DIAG_ROW_SAY_MAX
+    """The row's data with the surface's admitted top-level keys alone (CLIENT_DIAG_KEYS), each value scrubbed, less any
+    admitted key whose value is outside the closed set CLIENT_DIAG_VALUES states for it; null for a data that is not an
+    object. Every foreign key is dropped; of one row's, at most CLIENT_DIAG_ROW_SAY_MAX
     are said by name (once each on stderr) and one more line counts the rest, so a single row carrying hundreds of
     foreign keys spends a handful of the kernel-wide latch's entries, not all of them, and the other surfaces are
     still said afterwards (review find, 2026-09-18: one 600-key row used to silence the latch for the kernel's life)."""
@@ -3589,12 +3616,20 @@ def _client_diag_admit(surface, data):
             _client_diag_say(surface, "data", "a row's data is not an object and is stored as null")
         return None
     allowed = CLIENT_DIAG_KEYS.get(surface)
-    out, dropped = {}, []
+    out, dropped, refused = {}, [], []
     for k, v in data.items():
-        if allowed is not None and k in allowed:
-            out[k] = _client_diag_scrub(v)
-        else:
+        if allowed is None or k not in allowed:
             dropped.append(k)
+        elif (surface, k) in CLIENT_DIAG_VALUES and not _client_diag_value_admitted(CLIENT_DIAG_VALUES[(surface, k)], v):
+            refused.append(k)   # an admitted key whose value is outside its closed set, compared as posted, before the scrub
+        else:
+            out[k] = _client_diag_scrub(v)
+    # an admitted key whose value is outside the closed set CLIENT_DIAG_VALUES states for it takes the unknown key's shape: not stored, one
+    # line naming the key and the reason and never the value (the latch is per surface and key, and the value could be any text); at most
+    # one such key per entry of that table, so the per-row bound the dropped keys take below is not needed here (the maintainer's round 5
+    # ruling, tests-1)
+    for k in refused:
+        _client_diag_say(surface, "key %r" % str(k)[:CLIENT_DIAG_STR_MAX], "dropping a key whose value is outside the set the kernel admits for it")
     if dropped:
         why = ("dropping a key the surface's allowlist does not admit" if allowed is not None
                else "dropping a key of a surface no allowlist names")
@@ -3824,11 +3859,14 @@ def _serve_token_read_or_mint(f, who):
 
 def _load_token():
     """The serve token, baked into launch so the human never passes --token: ROMP_SERVE_TOKEN if
-    set, else a stable random token persisted under the state dir at 0600 — file perms are the
-    same-user gate (Jupyter's model). Required on EVERY request, loopback included: loopback is
-    reachable by any local user, so a token-free loopback would let a same-host co-tenant drive
-    sessions. Local clients read the file (same user) and send X-Romp-Token; browsers carry
-    ?token= once and ride the auto-set cookie. The file is read or minted by
+    set, else a stable random token persisted under the state dir at 0600: file perms are the
+    same-user gate (Jupyter's model). Required on EVERY request, loopback included, presented
+    directly or through a browser sign-in made with it: loopback is reachable by any local user, so
+    a token-free loopback would let a same-host co-tenant drive sessions. Local clients read the
+    file (same user) and send X-Romp-Token; a browser presents ?token= (or a one-time ?c= code)
+    once, on a page navigation, which signs it in with a session cookie that opens the page
+    documents and static files, and a page key for every other request (a /file load carries a
+    capability made from it; Handler._authorize). The file is read or minted by
     _serve_token_read_or_mint (locked, born 0600, never rotated by a read fault); a fault there at
     import refuses to start the kernel rather than hand out a token no client holds (under
     bin/romp-manager the respawn backoff repeats that refusal until the file is repaired, then the
@@ -3862,9 +3900,9 @@ def _mint_handoff():
         for k, exp in list(_HANDOFF.items()):    # a browser that never opened must not accumulate
             if exp <= now:
                 _HANDOFF.pop(k, None)
-        # Mint is gated (you must already hold the token/cookie), but the cookie rides from any
-        # same-site loopback page, so a hostile dev server can mint without bound INSIDE the TTL
-        # window — unbounded memory, and an O(n)-under-lock sweep that turns quadratic under a flood.
+        # Mint is gated (the caller presents the serve token, or a signed-in page's session cookie and
+        # page key), but a gated caller can still mint without bound INSIDE the TTL window: unbounded
+        # memory, and an O(n)-under-lock sweep that turns quadratic under a flood.
         # Cap it: drop the soonest-to-expire (oldest, and a real open never leaves one unspent) so the
         # live set never exceeds _HANDOFF_MAX (found on re-review 2026-08-06).
         if len(_HANDOFF) >= _HANDOFF_MAX:
@@ -3933,10 +3971,225 @@ def _ct_eq(a, b):
         return False
 
 
-# Unauthorized browser GET of "/" gets this instead of a bare 403 — Jupyter's login-page flow: paste
-# the token once, the redirect's ?token= sets the year-long cookie, never see this page again. Static,
-# self-contained (every other asset route is token-gated), leaks nothing. Colors follow the UI: the
-# accent button is --accent #9cd2ff on --accent-fg #0c1a2e.
+# ── browser sessions: the login cookie holds a session id, never the serve token ──────────────────
+# The browser's login cookie carries a per-kernel SESSION ID. The kernel accepts that id, on its own,
+# for the PAGE class (the page documents) and the STATIC class (/dist, /media, /sw.js): code, no
+# session data. Every other request needs a second value the cookie never carries. For the full and
+# socket classes that is the PAGE KEY K, held in this origin's localStorage and presented as the
+# X-Romp-Key header (or as k= on a socket dial). For a header-less /file load that is a per-file CAP
+# in the URL. The four values are domain-separated HMACs, each under a DISTINCT FIXED LABEL so a value
+# minted for one role never validates for another: the cookie name, the session id and K derive from
+# the serve token, the cap from K. Nothing is stored, so a restart keeps every browser signed in and
+# rotating the serve token retires every session at once. The serve token itself (X-Romp-Token, the
+# ?token= query, the one-time ?c= code, the 0600 file) authenticates the CLI, hooks, the extension
+# host, the VS Code webview and kernel-to-kernel calls exactly as before. Every credential compare
+# below is constant time (_ct_eq / hmac.compare_digest).
+_SESSION_LABEL = "romp-session\0"       # the session id's HMAC label
+_PAGE_KEY_LABEL = "romp-page-key\0"     # the page key's HMAC label
+_FILE_CAP_LABEL = "romp-file-cap\0"     # the file cap's HMAC label
+_COOKIE_NAME_LABEL = "romp-cookie-name\0"   # the per-kernel cookie name's HMAC label
+_MIGRATION_LABEL = "romp-migration\0"   # the legacy cookie's migration session's HMAC label
+
+
+def _hmac_b64(key, msg, n=32):
+    """base64url(HMAC-SHA256(key, msg)[:n]) with no padding. The one primitive the four derivations
+    below share; ui/webview/file-cap.ts recomputes the cap half of it, and the two are pinned to one
+    shared vector so they cannot drift."""
+    d = hmac.new(key.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).digest()[:n]
+    return base64.urlsafe_b64encode(d).decode().rstrip("=")
+
+
+# The cookie's name is this kernel's own, a function of its serve token that reveals nothing of it:
+# so a second kernel on this host (a kernels.json profile, a peer reached over an ssh forward) keeps
+# its own session under its own name rather than one shared cookie slot.
+_SESSION_COOKIE = "romp_s_" + _hmac_b64(TOKEN or "-", _COOKIE_NAME_LABEL)[:10]
+
+# The header value that clears the legacy romp_token cookie, which a kernel before the session-id design
+# set to the serve token itself. Handler._clears_legacy_cookie decides which responses carry it.
+_LEGACY_COOKIE_CLEAR = "romp_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly"
+
+
+def _mint_session():
+    """A fresh session id: 144 random bits, and their tag under the serve token. The tag is what the
+    kernel checks; the random half only keys the tag so two logins differ."""
+    n = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
+    return n + "." + _hmac_b64(TOKEN, _SESSION_LABEL + n)
+
+
+def _migration_session():
+    """The session a browser signing in with the legacy romp_token cookie gets: one fixed id per serve
+    token. Tabs of one browser that migrate at the same moment (the tabs a browser restores after the
+    upgrade, each request carrying the old cookie) are all handed the same cookie and the same page key,
+    so whichever response lands last leaves the cookie and the stored key in step. Every browser that
+    migrates gets this id; each of them held the serve token itself, so sharing one session grants none
+    of them anything new. Its random half is an HMAC under the serve token under its own label, it
+    validates like any other session id (_session_ok), and it ends, like every session, when the token
+    is rotated."""
+    n = _hmac_b64(TOKEN, _MIGRATION_LABEL, 18)
+    return n + "." + _hmac_b64(TOKEN, _SESSION_LABEL + n)
+
+
+def _session_ok(sess):
+    """True when `sess` is a session id this kernel minted (its tag matches, in constant time)."""
+    n, dot, tag = (sess or "").partition(".")
+    return bool(TOKEN and n and dot and tag) and _ct_eq(tag, _hmac_b64(TOKEN, _SESSION_LABEL + n))
+
+
+def _page_key(sess):
+    """The page key K for one session: the full-class and socket-class credential, handed to the page
+    once at login and kept in its localStorage. Derived from the serve token under its own label, so
+    the session id (which the cookie carries) never equals it."""
+    return _hmac_b64(TOKEN, _PAGE_KEY_LABEL + sess)
+
+
+def _cap_input(host, path, sid):
+    """The cap's MAC message, length-prefixed so the map from (host, path, sid) to bytes is INJECTIVE:
+    each field is its UTF-8 byte length in decimal, a NUL, then the field's bytes. No other triple can
+    produce the same message (a separator moved into a field, a byte shifted across a boundary, or a
+    NUL inside a value all change a declared length), so the cap binds one triple and one only. The
+    fixed label leads, keeping the cap's domain distinct from the session id's and the page key's.
+    ui/webview/file-cap.ts builds the identical bytes; tests/fixtures/file-cap-vectors.json pins the
+    two to one constant so they cannot drift."""
+    return _FILE_CAP_LABEL + "".join(
+        "%d\0%s" % (len(p.encode("utf-8")), p) for p in (host, path, sid))
+
+
+def _file_cap(sess, host, path, sid):
+    """The cap for one /file URL: an HMAC under the session's page key K, bound to exactly this
+    (host, path, sid). `host` is "" for the local /file route and the attached host for a
+    /remote/<host>/file URL; `path` and `sid` are the request's decoded query values. Bound to the
+    decoded spelling through an injective input (_cap_input), so any other host or sid, and any
+    spelling whose decoded path differs (a trailing slash, a dot segment, a percent-encoded dot
+    segment, a symlink to the same file), needs its own cap and this one does not validate for it.
+    Percent-encoding that decodes to the same string is the same path and validates."""
+    return _hmac_b64(_page_key(sess), _cap_input(host, path, sid), 16)
+
+
+def _one_file_term_each(q):
+    """True when a parsed /file query names path, sid and cap at most once each. A cap binds the one
+    (host, path, sid) it was made for, and the route resolves the first path and sid it is given, so a
+    cap-authorized load with a second value of any of the three is refused rather than left to which
+    occurrence each reader takes (parse_qs has already dropped a blank value such as `path=`)."""
+    return all(len(q.get(k) or ()) <= 1 for k in ("path", "sid", "cap"))
+
+
+# The localStorage slot for THIS kernel's page key, named after the session cookie, whose name is a
+# function of the serve token. Site storage is partitioned by origin, port included, so kernels on two
+# ports never share a slot whatever it is named. The name is for one address over time: the same kernel
+# finds its key again after a restart (the same token names the same slot), and a key minted under one
+# serve token is never read under another at the same address (after a rotation, or when a reused port
+# or an ssh forward is answered by another kernel).
+_PAGE_KEY_SLOT = "romp.pageKey." + _SESSION_COOKIE
+
+# The first script in every authorized page document, injected at serve time by _send (so the page
+# renderers are not edited). It reads K from this origin's localStorage (the per-kernel slot above);
+# wraps window.fetch so a request to this origin carries K as X-Romp-Key and a request to any other
+# origin is left untouched; exposes __rompKeyQ() for the socket dials and __rompPageKey() for
+# ui/webview/file-cap.ts. It sends the TOP frame to /login (a pane never navigates itself) in two
+# cases. First, this origin holds no key at all (site data cleared), which the top frame checks as it
+# loads. Second, a same-origin fetch in ANY frame, the top or a pane, comes back with the kernel's
+# distinct re-sign-in 403 (X-Romp-Reauth: a valid session whose stored key no longer matches, as when
+# two sign-ins race and leave the cookie of one beside the key of the other, or a session with no key
+# stored at all), in which case it drops the stale key and hops the top frame. Before either hop it
+# checks that this origin's storage takes a write (stores()). The re-sign-in branch drops the key
+# before that check, so on an origin whose storage is full the check's write fits in the room the key
+# held and the tab still reaches /login, where a sign-in seeds the key into that room again. A browser
+# that keeps cookies but refuses site storage cannot keep the key a sign-in hands it, so each sign-in
+# would come back keyless, be refused and hop to /login again; that browser gets a sentence in the top
+# frame's document instead (refused()) and no hop. The sentence is styled like /login and sets its own
+# background, since this script runs in every top-level page. Neither hop can loop: nothing is sent
+# from /login itself, and /login navigates only when the person submits it.
+_PAGE_KEY_JS = ("(function(){if(window.__rompPageKey)return;var KN=" + json.dumps(_PAGE_KEY_SLOT) + ";"
+    "function key(){try{return localStorage.getItem(KN)||''}catch(e){return ''}}"
+    "function stores(){try{localStorage.setItem(KN+'.probe','1');localStorage.removeItem(KN+'.probe');return true}catch(e){return false}}"
+    "function refused(d){var w=function(){var b=d.body;if(!b)return;d.documentElement.style.background='#101418';"
+    "b.setAttribute('style','margin:0 auto;max-width:30em;min-height:100vh;box-sizing:border-box;display:flex;"
+    "align-items:center;justify-content:center;padding:2em;background:#101418;color:#dfe7ee;"
+    "font:15px/1.5 system-ui,-apple-system,sans-serif;text-align:center');"
+    "b.textContent='romp keeps its sign-in in this site\\'s storage, which this browser refuses: allow site data for this address, then reload.';};"
+    "if(d.readyState==='loading')d.addEventListener('DOMContentLoaded',w);else w();}"
+    "window.__rompPageKey=key;window.__rompKeyQ=function(){var k=key();return k?'&k='+encodeURIComponent(k):''};"
+    "var f=window.fetch;if(f)window.fetch=function(input,init){try{var k=key();if(k){"
+    "var isReq=(typeof Request!=='undefined')&&(input instanceof Request);"
+    "var u=new URL(isReq?input.url:String(input),location.href);"
+    "if(u.origin===location.origin){var h=new Headers((init&&init.headers)||(isReq?input.headers:undefined));"
+    "h.set('X-Romp-Key',k);init=Object.assign({},init||{},{headers:h});}}}catch(e){}"
+    "return f.call(window,input,init).then(function(r){try{"
+    "if(r&&r.status===403&&r.headers&&r.headers.get('X-Romp-Reauth')){var t=window.top;"
+    "if(t.location.pathname!=='/login'){try{localStorage.removeItem(KN)}catch(e){}"
+    "if(stores())t.location.replace('/login');else refused(t.document);}}}catch(e){}return r;});};"
+    "if(!key()&&window===window.top&&location.pathname!=='/login'){if(stores())location.replace('/login');else refused(document);}})();")
+
+
+# The WebSocket handshake headers a peer's 101 may pass back to the browser, each with the spelling
+# this kernel writes it in. The relay rebuilds the peer's response head from THIS allowlist rather than
+# trusting it to send nothing extra: the browser talks to this kernel's origin through the relay, so a
+# Set-Cookie the peer writes would land here, and a Clear-Site-Data or a cache directive would act on
+# this origin too.
+_WS_MIRROR_HEADERS = {b"upgrade": b"Upgrade", b"connection": b"Connection",
+                      b"sec-websocket-accept": b"Sec-WebSocket-Accept",
+                      b"sec-websocket-protocol": b"Sec-WebSocket-Protocol",
+                      b"sec-websocket-extensions": b"Sec-WebSocket-Extensions"}
+# The bounds on reading a peer's 101 head: its status line, its headers and the blank line after them
+# arrive within _WS_HEAD_MAX bytes and within _WS_HEAD_TIMEOUT_S seconds of the relay's first read (one
+# deadline for the whole read, not one per read), or the relay answers 502 and the browser gets none of it.
+# Module constants so a test can lower the time bound.
+_WS_HEAD_MAX = 65536
+_WS_HEAD_TIMEOUT_S = 15.0
+# A control byte: C0 (NUL to US, which takes in CR, LF and HTAB) and DEL. A genuine peer writes none in
+# a header block beyond the CRLF that ends each line, so a head or a mirrored value holding one is
+# refused, not cleaned: browsers differ in which of these bytes they read as the end of a line.
+_CONTROL_BYTE = re.compile(rb"[\x00-\x1f\x7f]")
+_CONTROL_CHAR = re.compile(r"[\x00-\x1f\x7f]")
+_WS_STATUS_101 = re.compile(rb"HTTP/1\.1 101(?: .*)?\Z")
+
+
+def _ws_head_allowlist(head, extra=()):
+    """Rebuild a peer's raw 101 response head for the browser, or None to refuse it. The head is read
+    the way a browser reads one and only what this kernel writes itself goes out: its own status line,
+    each allowlisted handshake header (_WS_MIRROR_HEADERS) as `Name: value` in this kernel's spelling,
+    then the `extra` lines (this kernel's own, such as the legacy cookie's clear), the blank line, and
+    the bytes that came past the peer's blank line (its first frames) unchanged. Every other header line
+    (a Set-Cookie, a Clear-Site-Data, a cache directive) is dropped, and so is a line that starts with
+    whitespace (a folded continuation) or has anything but the bare name before its colon.
+    None, and none of it reaches the browser, when: no blank line (CRLF CRLF) ends the head within
+    _WS_HEAD_MAX bytes; the status line or any header line holds a bare LF, a bare CR or another
+    control byte (_CONTROL_BYTE); or the status is not HTTP/1.1 101. A genuine peer (a romp kernel,
+    whose BaseHTTPRequestHandler writes strict CRLF) is refused by none of these."""
+    sep = head.find(b"\r\n\r\n")
+    if sep < 0 or sep + 4 > _WS_HEAD_MAX:
+        return None
+    lines = head[:sep].split(b"\r\n")
+    if any(_CONTROL_BYTE.search(ln) for ln in lines) or not _WS_STATUS_101.match(lines[0]):
+        return None
+    kept = []
+    for ln in lines[1:]:
+        name, colon, value = ln.partition(b":")
+        spelled = _WS_MIRROR_HEADERS.get(name.lower()) if colon else None
+        if spelled:
+            kept.append(spelled + b": " + value.strip(b" "))
+    return (b"\r\n".join([b"HTTP/1.1 101 Switching Protocols"] + kept + list(extra))
+            + b"\r\n\r\n" + head[sep + 4:])
+
+
+def _peer_header_value_ok(value):
+    """False when a header value a relay read from a peer's reply holds a CR, an LF or another control
+    character (_CONTROL_CHAR). http.client keeps a folded line's CRLF inside the value it returns, and
+    BaseHTTPRequestHandler.send_header writes a value as it is given, so a relay that mirrors such a
+    value would write the peer's line break, and whatever follows it, into this kernel's own response.
+    A relay refuses the reply (502) instead of mirroring it."""
+    return not _CONTROL_CHAR.search(value)
+
+
+# Unauthorized browser GET of "/" gets this instead of a bare 403, Jupyter's login-page flow: paste
+# the token once, and the redirect's ?token= signs this browser in (the session cookie, and the page
+# key in this origin's storage). It is also /login, where the page-key script sends a browser whose
+# saved sign-in is gone: the key lives in site storage, which a browser can lose while the cookie
+# stays, and only the token (or a fresh `romp url` link, or a window `romp` opens) mints a new one.
+# Static and self-contained (every other asset route is token-gated), and it carries no credential.
+# Colors follow the UI: the accent button is --accent #9cd2ff on --accent-fg #0c1a2e. The default view
+# is the one sentence, the form and the `romp url` / `romp` pointer; why a browser is signed out, and
+# what to do when `romp` is not found, sit behind two <details> folds, which open with no script.
 # The login page stays on the SYSTEM stack, deliberately: it renders pre-auth and /media is
 # token-gated (only the install icons ride exempt), so an 'Inter' lead could never load here —
 # it would just misstate the stack (PR-730 review, 2026-08-27).
@@ -3948,18 +4201,26 @@ background:#101418;color:#dfe7ee;font:15px/1.5 system-ui,-apple-system,sans-seri
 <form style="text-align:center;max-width:26em;padding:2em" onsubmit="\
 location.replace('/?token='+encodeURIComponent(document.getElementById('t').value.trim()));return false">
   <div style="font-size:1.6em;letter-spacing:.04em;margin-bottom:.4em">romp</div>
-  <div style="opacity:.8;margin-bottom:1.2em">This dashboard needs its access token &mdash; every
-  request is token-gated, loopback included. If this tab worked before, romp was reinstalled and
-  minted a new token: you are signed out, not broken.</div>
+  <div style="opacity:.8;margin-bottom:1.2em">Sign in with this dashboard's access token. If this
+  tab worked before, you are signed out, not broken.</div>
   <input id="t" autofocus placeholder="paste token"
     style="width:100%;box-sizing:border-box;padding:.55em .7em;border:1px solid #35414d;\
 border-radius:6px;background:#0c1117;color:#dfe7ee">
   <button style="margin-top:.9em;padding:.5em 1.4em;border:0;border-radius:6px;\
 background:#9cd2ff;color:#0c1a2e;font-weight:600;cursor:pointer">Open</button>
-  <div style="opacity:.6;margin-top:1.2em;font-size:.9em">Get a ready-made link with
-  <code>romp url</code> &mdash; in a NEW terminal if romp was just installed, since the old one
-  has a stale <code>PATH</code>. No <code>romp</code> yet?
-  <code>cat ~/.local/state/romp/serve-token</code></div>
+  <div style="opacity:.6;margin-top:1.2em;font-size:.9em">To skip pasting, run <code>romp url</code>
+  on the machine romp runs on and open the link it prints, or run <code>romp</code> there to open a
+  signed-in window.</div>
+  <details style="opacity:.6;margin-top:1em;font-size:.9em;text-align:left">
+  <summary style="cursor:pointer;text-align:center">Why am I signed out?</summary>
+  <p>Either this browser lost its saved sign-in (cleared site data, a private window, a browser that
+  clears a site's storage after a week without a visit, or an app just added to the Home Screen, which
+  keeps storage of its own), or romp's token changed because romp was reinstalled or its token file
+  was replaced. In an app on the Home Screen, paste the token here.</p></details>
+  <details style="opacity:.6;margin-top:.4em;font-size:.9em;text-align:left">
+  <summary style="cursor:pointer;text-align:center"><code>romp</code> not found?</summary>
+  <p>If romp was just installed, use a new terminal: an older one has a stale <code>PATH</code>. No
+  <code>romp</code> yet? <code>cat ~/.local/state/romp/serve-token</code></p></details>
 </form>
 """
 
@@ -6646,6 +6907,63 @@ def _tab_order_frame(order, tabs, live, c=None):
     return fr
 
 
+_TAB_META_GATE_NOTED = set()        # sids whose ended gate raised inside _tab_meta on their last push with open rows (one stderr line per
+                                    #  episode; the episode ends on a push that computes the sid without a raise, open rows or none)
+
+
+def _tab_meta(chat_list):
+    """The `tabs` rows of the tabOrder frame, one per listed session, for its three senders (_push, _push_session_now,
+    _confirm_close_now): id, name, colour, emoji and `userTodos`, the count of the session's open user todos. The rule
+    (the user 2026-09-22, after todos went unseen on tabs the page had not loaded): a todo's presence is strip metadata
+    beside the name, the colour and the emoji, and its text is session content that loads with the tab. The count is
+    what a tab a client holds as a skeleton or a placeholder paints its flag from (the skeleton diet and the cold-tab
+    gate withhold its session payload); a loaded tab paints from the payload's rows, and both derive from the one
+    predicate (_user_todo_open) and the one ended gate (_user_todos_shown, build_session's), so the two inputs cannot
+    disagree. Built once per push, and only where a chat client exists (the strip goes to chat clients alone): the
+    switch is read ONCE here, not per tab (_user_todos_on reads its file on every call), the store once (the
+    mtime-cached dict), and the ended gate runs only for a sid with a nonzero count. Store values only, like every
+    field of the row: the strip is deduped per client on content, so a filed, answered, dismissed, withdrawn or reopened
+    todo re-sends it on the _push_soon() every store mutation ends in (the filing, dismiss, withdraw and recall routes; the
+    answered stamp at its delivery moment, the immediate send or the drain, _stamp_user_todo_answered; the recall's and
+    the answer-lost reopen, _reopen_user_todo), the event and never the pusher's 0.5 s backstop, and an unchanged roster
+    costs nothing. The ended gate is CONTAINED per sid: a raise from it (a reg-less sid's malformed death marker or states
+    row) makes that sid's count read 0, said once on stderr per episode, and the other rows ship, in every sender. An episode
+    runs from the raise until a push computes the sid WITHOUT one: the gate reading clean, or the sid holding no open row (the
+    gate runs only for open rows), so a marker repaired while nothing was open ends the episode there and a later fault under
+    a new todo is said again; a persisting fault is said once per open interval, not per cycle, bounded by todo filings (review
+    round 2; before it the episode ended only on a gate read, and a repair made while nothing was open left the next fault silent);
+    uncontained, one bad marker aborted every client's whole push each cycle in _push, dropped _push_session_now's
+    per-session push and made _confirm_close_now answer False (the board-freeze lesson of 2026-09-06, which _push's
+    per-session catch around build_session already applies; tests/test_user_todos_roster.py drives all three senders)."""
+    on = _user_todos_on()
+    store = _user_todos() if on else {}
+    rows = []
+    for s in chat_list:
+        sid = s["sid"]
+        n = sum(1 for t in (store.get(sid) or []) if _user_todo_open(t)) if on else 0
+        if n:
+            try:
+                shown = _user_todos_shown(sid)       # the one ended gate, run for a sid with open rows alone
+            except Exception as e:
+                shown = False                        # contained per sid (the docstring): this row reads 0, the rest ship
+                if sid not in _TAB_META_GATE_NOTED:
+                    _TAB_META_GATE_NOTED.add(sid)
+                    sys.stderr.write("user-todos: the ended gate for %s raised inside the tab roster; its count reads 0 "
+                                     "until the read succeeds, and the other rows ship (said once per episode): %s: %s\n"
+                                     % (sid[:8], type(e).__name__, e))
+            else:
+                _TAB_META_GATE_NOTED.discard(sid)    # a gate that reads again ends the episode: a later fault speaks again
+            if not shown:
+                n = 0                                # an ended session's todos are hidden, here as on every surface
+        else:
+            _TAB_META_GATE_NOTED.discard(sid)        # nothing open, no gate read: the episode ends here too (review round 2), so a
+                                                     #  marker repaired while nothing was open is not a silent fault at the next todo
+        rows.append({"id": sid, "name": s.get("name", ""), "color": _name_color(sid),
+                     "emoji": _name_emoji(sid),      # the fork's session label (#246)
+                     "userTodos": n})
+    return rows
+
+
 def _alive_sessions(now, live_map):
     """The sessions shown on EVERY surface (feed / timeline / chat tabs): only those alive on a backend
     right now. The hard liveness filter (the user 2026-06-15) — ignore everything that isn't a living
@@ -6943,14 +7261,20 @@ def _refuse_setting(client, exc, what, gesture, sid="", item_id="", flag="", val
     REFUSED because the store it edits could not be read -- or, since the maintainer's fold on PR
     #1019, WRITTEN (_StateUnwritable: the publish itself failed): one stderr line, and the refusal answered
     on the DELIVERING socket as a `settingRefused` frame -- the same targeted _reply idiom the
-    settingStale stand-down and the saveFile acks use, never a broadcast. The frame names the
+    settingStale stand-down and the saveFile acks use, never a broadcast. Two ops answer more causes on
+    this frame, each before a setter runs: a value that is not a JSON boolean, on the setSessionFlag op
+    and on the cardNotify op (the validator's complaint, `value` what the display path paints for that
+    flag or bell), and, on the setSessionFlag op, a flag name outside _LANE_FLAGS (_lane_flag_refusal's
+    sentence, `value` None since no pane paints an unlisted flag, and `flag` the name as str() spells it,
+    the empty string for a falsy name, which never equals a listed name). The frame names the
     `gesture` ("flag" / "bell" / "order" -- the views store's doors answer on their own acks, _ack_views_write, and
     never draw this frame -- so a pane never infers it from which fields are
     empty), the gesture's own address (sid / itemId / flag), and `value`: what the kernel's display
     path still paints for that flag or bell -- the value the next push carries -- so the pane
     repaints the refused toggle to it on THIS event rather than to a value it recorded at the click
     (two clicks before the first refusal made such a record wrong until the next push). None for a
-    gesture with no single value (an order, a whole-blob view write). A `warn` frame did none of
+    gesture with no single value (an order, a whole-blob view write) and for a flag refused by name.
+    A `warn` frame did none of
     this: only the chat page renders `warn`, so a refused bell on the feed page and a refused lane
     flag on the timeline page stayed painted as if they had landed until a reload. A dead socket is
     the client's problem: the refusal already stands. `log`, when given, is what stderr gets INSTEAD of
@@ -10346,7 +10670,11 @@ def _reopen_user_todo(sid, tid):
     corroborated loss of its holder (_user_todo_answer_lost: the entry's echo drop-marked with the
     text provably not in the transcript). Never lifts a dismiss or a withdraw (those clearing
     events had no delivery to fail), and never fires from inference — both callers key on the
-    exact delivery-failure event of the send the stamp recorded, so the authority tier holds."""
+    exact delivery-failure event of the send the stamp recorded, so the authority tier holds.
+
+    A lift ends in _push_soon() (2026-09-22), whichever caller lifted it: the store mutation is the event the strip's
+    count (_tab_meta) and the split card re-send on, never the pusher's 0.5 s backstop (the answer-lost verdict also
+    marks the views dirty, for the feed and the timeline; this wake is the roster's and the card's)."""
     with _user_todos_lock:
         cur = dict(_user_todos())                    # copy: never mutate the cached dict in place
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
@@ -10359,7 +10687,28 @@ def _reopen_user_todo(sid, tid):
         _write_user_todos(cur)
         _log_user_todo_event(sid, tid, "lost", hit.get("text"), hit.get("detail", ""),   # the answer never arrived
                              file=hit.get("file"), link=hit.get("link"))
+    _push_soon()                                     # the event, not the backstop (the docstring)
     return True
+
+
+def _user_todo_open(t):
+    """The ONE spelling of "an open user todo" for every reader that shows, counts or rules on one: a record (a dict)
+    with an id and no clearing stamp (`resolved`). _open_user_todos (the rows the chat payload ships), the boot notice
+    (_user_todos_off_boot_notice), the tab roster's count (_tab_meta) and the answer-lost verdict
+    (_user_todo_answer_lost, whose "open" is this claim about the row it found) all ask this, so a loaded tab's rows
+    and a skeleton tab's count can never disagree on what counts as open (the fix brief of 2026-09-22, requirement 1).
+    The store's mutators keep their own lookups: _resolve_user_todo finds a row by id, and _prune_user_todos keeps
+    every unstamped row, id or not. tests/test_user_todos_roster.py DERIVES the population by an AST walk of this file
+    (every function that reaches the stamp key, "resolved", by .get, .pop, a subscript or `in`) and holds each to this
+    predicate or to a NAMED exemption: the store's mutators (_resolve_user_todo, _reopen_user_todo, _withdraw_user_todo,
+    _prune_user_todos), the log replay (_user_todos_from_log), the boot pass's answered filter
+    (_user_todo_loss_boot_pass) and the settled-phrase reader (_settled_todo_phrase), which read a stamp's kind or
+    presence for their own step and rule on no row's openness. The walk's bound is the key's literal: every other
+    "resolved" literal in this file is held, with the function around it, to the five file-comments functions where
+    the word is a status value, so a function that holds the literal any other way (in a name, a tuple, a .get's
+    default, a conditional's arm, an equality over the keys) is named in that test's red as well; only a key spelled
+    without the literal, a string built at run time, is outside it."""
+    return isinstance(t, dict) and bool(t.get("id")) and not t.get("resolved")
 
 
 def _open_user_todos(sid):
@@ -10378,7 +10727,7 @@ def _open_user_todos(sid):
         return []
     out = []
     for t in _user_todos().get(sid) or []:
-        if not isinstance(t, dict) or t.get("resolved") or not t.get("id"):
+        if not _user_todo_open(t):                       # the one predicate (_tab_meta counts by the same one)
             continue
         rec = {"id": str(t["id"]), "text": str(t.get("text") or ""), "createdT": t.get("createdT") or 0}
         if str(t.get("detail") or "").strip():
@@ -10457,6 +10806,14 @@ def _user_todo_session_ended(sid):
         return False
     last = _last_states_row(sid)
     return not (int((last or {}).get("t") or 0) > int(m.get("t") or 0))
+
+
+def _user_todos_shown(sid):
+    """The ONE ended gate for every surface that shows a session's open user todos: an ENDED session (corroborated,
+    _user_todo_session_ended) hides its todos from every surface, hidden and not cleared, so they return with a revive.
+    build_session's rows, the feed's rows (_feed_session_key) and the tab roster's count (_tab_meta) all ask this, and
+    only when open rows exist, so the common case pays no registry read (the fix brief of 2026-09-22, requirement 1)."""
+    return not _user_todo_session_ended(sid)
 
 
 def _prune_user_todos():
@@ -10886,9 +11243,17 @@ def _stamp_user_todo_answered(sid, tid, text, nonce=None):
         is the stamp's evidence and the callers stamp on it (_deliver_todo_reply, _deliver_send_batch).
 
     `nonce` stays as a parameter for that retired seam's callers and tests (the stand-down it keyed
-    left with the pending-paste marks); nothing reads it."""
+    left with the pending-paste marks); nothing reads it.
+
+    A stamp that lands ends in _push_soon() (2026-09-22): the stamp is the event the strip's count (_tab_meta) and the
+    split card re-send on, so the woken cycle carries it and the pusher's 0.5 s backstop is never what delivers it.
+    Inside the drain (a parked answer, stamped in the pusher cycle ahead of _push_all) the wake costs one more cycle,
+    which the per-client dedup absorbs. A stamp that did not land (False: cleared meanwhile) changes nothing and
+    wakes nothing."""
     with _user_todos_lock:
-        _resolve_user_todo(sid, tid, "answered", reply=text)
+        stamped = _resolve_user_todo(sid, tid, "answered", reply=text)
+    if stamped:
+        _push_soon()                                 # the event, not the backstop (the docstring)
 
 
 def _user_todo_answer_lost(sid, tid, text, wait=False, nonce=None):
@@ -10964,7 +11329,7 @@ def _user_todo_answer_lost(sid, tid, text, wait=False, nonce=None):
         else:
             row = next((t for t in (_user_todos().get(sid) or [])
                         if isinstance(t, dict) and t.get("id") == tid), None)
-            verdict = "open" if row is not None and not row.get("resolved") else "stale"
+            verdict = "open" if _user_todo_open(row) else "stale"   # the one predicate; no row (evicted) is not open
     if verdict == "reopened":
         # the reopened ask is NEWS again (round 2, 2026-08-22): the same id going back under the
         # floor would be eaten by the push latch's set dedup, and this re-floor is the one signal
@@ -12011,7 +12376,7 @@ def _user_todos_off_boot_notice():
     if _user_todos_on():
         return 0
     n = sum(1 for rows in _user_todos().values() if isinstance(rows, list)
-            for t in rows if isinstance(t, dict) and t.get("id") and not t.get("resolved"))
+            for t in rows if _user_todo_open(t))         # the one predicate
     if n:
         sys.stderr.write("romp-kernel: %d user todo(s) are stored but the feature is off. Turn it on in "
                          "the gear (User todos) to see them.\n" % n)
@@ -15100,9 +15465,12 @@ def _tick_job_skips(job, s):
 # 63 s first cycle in this walk, parsing every alive session cold before a single nudge could be due.
 _NUDGE_HORIZON = threading.local()    # the walking thread's collector: .notes (the flips a look's clock legs declined on)
 _NUDGE_WALK_STATS = {"looks": 0, "stats": 0, "served": 0, "skippedParses": 0, "parses": 0, "coldParses": 0, "deferredSessions": 0, "unbounded": 0,
-                     "clockDue": 0, "wakeOnly": 0, "wakeOnlyRecorded": 0, "unboundedBy": {}}   # unboundedBy: the None notes per leg (T401
+                     "clockDue": 0, "wakeOnly": 0, "wakeOnlyRecorded": 0, "loads": 0, "unboundedBy": {}}   # unboundedBy: the None notes per leg (T401
 #                                       follow-up); wakeOnlyRecorded: the memo rows wake-only looks recorded (jobs stage 1), read against
-#                                       wakeOnly and skippedParses on a quiet board with the gear off
+#                                       wakeOnly and skippedParses on a quiet board with the gear off; loads: the walk's shared goal-store
+#                                       reads, one per look that reaches its decision read whatever the read does (a store, a fault or
+#                                       a raise out of the look) and none on a skip or a state-gate exit (fold ruling A condition 7
+#                                       as ruled 2026-09-19: at most one per alive session per pass)
 _NUDGE_LOOK_STATS = {}                # sid -> the stat the pass took before its snapshots, for the look (a side map: the session
 #                                       rows are shared, read-only and memoised per cycle, never written into)
 _NUDGE_LOOK_ASKERS = {}               # sid -> (the asker sids whose registry rows the key carries, the ones beyond the bound)
@@ -15419,10 +15787,200 @@ def _begin_checkpoint_cycle():
     """The pusher cycle's START (T362 round one, lows 2 and 3): the cycle's checkpoint byte budget is whole again, shared by the
     builds' quiescence-drop writes and the converge pass near the cycle's end (the boot's first builds are capped where the
     volume is; before, the pass began the cycle and the first cycle's drops ran uncapped), and the drops an earlier cycle
-    deferred are paid with this cycle's room, oldest first, no fold over their files needed. The pass's off switch
-    (ROMP_CKPT_CONVERGE_MS=0) covers the drop write: the cycle begins with no budget, and the drop pops as before T362."""
+    deferred are paid with this cycle's room, oldest first, no fold over their files needed; then the releases at an agent's
+    end, against the same room (_release_ended_agents: the cycle's live-set events drained, the owed release of an agent whose
+    start that drain carries cancelled while the kernel holds the agent's end, the owed releases paid, the ends an earlier
+    cycle saw while nothing was held released again, then the batch's ends).
+    The order carries a property: each cycle pays what an earlier cycle deferred before any end that is new to it, so the
+    owed quiescent drops and the owed releases are each paid before the batch's ends. They take their writes from one budget,
+    each in one step (em.checkpoint_cycle_take), so whichever runs first gets the room when only one document fits. An owed
+    drop's only other payer is a later fold over its file, which may never come; with the new ends first, a steady stream
+    of them could defer an owed drop or an owed release at every cycle and leave its records resident. The pass's off
+    switch (ROMP_CKPT_CONVERGE_MS=0)
+    covers the drop write: the cycle begins with no budget, and the drop pops as before T362 (with the drop writes off, a
+    release at an agent's end keeps the entry of a file still on disk instead of popping it unwritten)."""
     em.checkpoint_cycle_begin(CKPT_CONVERGE_BYTES if CKPT_CONVERGE_MS > 0 else 0)
     em.checkpoint_pay_owed_drops()
+    _release_ended_agents()
+
+
+_AGENT_RELEASED = {}                # (sid, agent id) -> [path, taken] for the ends _release_ended_agents released an entry for
+#                                     (taken True) or owed a release (taken False until checkpoint_pay_owed_releases takes it; at a
+#                                     cycle that paid any owed release, an owed end whose release was not taken and is no longer
+#                                     owed is dropped, or moved to _AGENT_ENDED_UNHELD when the pay found nothing held), oldest
+#                                     first, at most _AGENT_RELEASED_MAX: a start of the agent that a cycle drains after its
+#                                     release was taken is a false end (recordCache.falseEnds), after a release still owed it
+#                                     cancels that release, and after one never taken it counts nothing. A start dropped past the
+#                                     queue's bound is never drained, and one drained after the end left this table finds nothing,
+#                                     so neither cancels an owed release nor counts a false end. The pusher thread's alone
+_AGENT_RELEASED_MAX = 4096
+_AGENT_ENDED_UNHELD = {}            # (sid, agent id) -> path for the ends seen while the record cache held nothing for the agent's
+#                                     file (release_entry answered "absent", at the batch or at the owed releases' pay: no entry
+#                                     with weight stood for the file, among them an end drained before any read held it, an entry
+#                                     evicted or popped before the release finished, and an agent's later end after its earlier
+#                                     release was taken, as its task's end or its workflow slot's done state after its stop, so
+#                                     the first whole re-read after that end is released at the next cycle), oldest first, at most
+#                                     _AGENT_RELEASED_MAX (past it the oldest is forgotten and not counted: it held nothing when it
+#                                     was last paid). Released again at each cycle, so a read that holds the file after the end is
+#                                     released at the first cycle after it; a start of the agent that a cycle drains, a release
+#                                     that pops the path, and every outcome but absent of the pair's own release forget it (a start
+#                                     queued after the drain of the cycle that releases the file, or dropped past the queue's
+#                                     bound, does not, and a release taken then pops the running agent's entry). The pusher
+#                                     thread's alone
+
+
+def _note_agent_released(pair, path, taken):
+    """Record `pair`'s end in _AGENT_RELEASED as a release taken (a start a later cycle drains while the end is still here
+    is a false end) or owed, newest last."""
+    _AGENT_RELEASED.pop(pair, None)
+    _AGENT_RELEASED[pair] = [path, taken]
+    while len(_AGENT_RELEASED) > _AGENT_RELEASED_MAX:
+        _AGENT_RELEASED.pop(next(iter(_AGENT_RELEASED)), None)
+
+
+def _remember_unheld_end(pair, path):
+    """Remember `pair`'s end, which found nothing held for `path`, newest last (_AGENT_ENDED_UNHELD)."""
+    _AGENT_ENDED_UNHELD.pop(pair, None)
+    _AGENT_ENDED_UNHELD[pair] = path
+    while len(_AGENT_ENDED_UNHELD) > _AGENT_RELEASED_MAX:
+        _AGENT_ENDED_UNHELD.pop(next(iter(_AGENT_ENDED_UNHELD)), None)
+
+
+def _forget_unheld_paths(paths):
+    """Forget every remembered end whose path is in `paths`: a release popped the path."""
+    if paths and _AGENT_ENDED_UNHELD:
+        for pair, p in list(_AGENT_ENDED_UNHELD.items()):
+            if p in paths:
+                _AGENT_ENDED_UNHELD.pop(pair, None)
+
+
+def _release_ended_agents():
+    """The pusher cycle's start (2026-09-24): each agent that left its session's live set since the last cycle has its parsed
+    transcript released from the record cache (em.release_entry, reason agentEnded: the file's checkpoint document written
+    when it lacks what the cache holds, then the records dropped), so a later fold whose cursor the document records restores
+    a tail and reads nothing whole. The events come from the SDK backend's own add and removal sites, queued in arrival order
+    (SdkBackend.drain_agent_live_events), never from a difference of liveness snapshots: three threads take those
+    independently, and a staler one would end an agent a fresher one listed. In order:
+    - The batch is drained. An agent whose last event dropped past the queue's bound was an end comes back as an end ahead
+      of the queued events, so it is released like the batch's own ends below when the batch holds no later event for it;
+      only the ends dropped past the bound of the list the backend keeps them in are releases given up (recordCache.releaseLost).
+      A dropped start is not counted.
+    - An agent that entered the live set in this batch and whose earlier end is still owed its release (an earlier cycle's
+      budget refused the document, or a read raced the pop) has that release cancelled (em.cancel_owed_release, under the
+      path the release was owed for). Its entry was never popped, so that start is not a false end, as for an end and a
+      start in one batch. Its end remembered as unheld (below) is forgotten: the file is live again. A start that is not in
+      the batch (queued after the drain of the cycle that pays the owed release, or dropped past the queue's bound), or one
+      drained after the end left _AGENT_RELEASED, cancels nothing, and a release taken then pops the running agent's entry
+      (em.checkpoint_pay_owed_releases).
+    - The releases still owed are paid (em.checkpoint_pay_owed_releases). An owed end whose release is taken now is marked
+      taken, and every remembered end for that path is forgotten. When any was paid, an owed end whose release was not
+      taken and is no longer owed (paid as absent or lost, raised, given up at the owed table's bound, forgotten at a
+      checkpoint-directory rebind, or cancelled above) is dropped, and one paid as absent is remembered as unheld; one left
+      in the table is still never counted, since its entry was not popped.
+    - Each end remembered as unheld (_AGENT_ENDED_UNHELD: an end seen while the cache held nothing for the file) that this
+      batch does not speak for is released again, oldest first: still absent, it stays remembered; taken, it is recorded as
+      a taken release (a start a later cycle drains while _AGENT_RELEASED still holds the end is a false end); deferred or
+      raced, as an owed one; lost, or raising (counted in releaseLost), it is given up. Every outcome but absent forgets it.
+      So a read that holds the file after the end, before any other event about the agent, is released at the first cycle
+      after the read.
+    - Each agent whose last event in the batch is an end is released. An end followed in the same batch by the agent
+      entering the live set again releases nothing. A start in the batch for an agent whose release was taken, while
+      _AGENT_RELEASED still holds that end, is a false end, counted (recordCache.falseEnds); after a release that was only
+      owed, it is not. An end that finds nothing held is remembered as unheld; any other outcome forgets a remembered end of
+      the agent. That includes an agent's later end acted on after its earlier release was taken (its task's end or its
+      workflow slot's done state after its stop, in a later cycle, or in this cycle after the owed pay took a deferred
+      release): if a re-read holds the file at that end, the end releases it; if nothing is held, the end is remembered, so
+      the first whole re-read after it is released at the next cycle. A whole re-read after that release, with no later end
+      of the agent, stays whole until the count cap, the byte budget or a quiescent drop reaches it (the residual stated
+      beside em.RECORD_CACHE_BUDGET_FLOOR_BYTES).
+    An end, remembered or in the batch, whose resolution or release raises is given up, counted in releaseLost, and
+    written to stderr at every raise with the session, the agent, the file when it resolved and the traceback
+    (em.say_release_raised), as the pusher's other stage failures are; the rest are still released. The release counters
+    count a path once per cycle, so an agent's second end in the cycle adds nothing to them.
+    The file is resolved as the folds resolve it (_path_of, _subagent_file), so the release names the cache key the folds
+    read. Returns the releases taken or owed for this batch's ends."""
+    be = _sdk_backend
+    drain = getattr(be, "drain_agent_live_events", None) if be else None
+    events, lost = drain() if drain is not None else ([], 0)
+    if lost:
+        em.note_release_lost(lost, "overflow")          # ends given up past the backend's bound on the ends it keeps
+    last = {}
+    for i, (sid, aid, _live) in enumerate(events):
+        last[(sid, aid)] = i
+    for sid, aid, live in events:
+        if not live:
+            continue
+        rec = _AGENT_RELEASED.get((sid, aid))
+        if rec is not None and not rec[1]:
+            em.cancel_owed_release(rec[0])             # an end whose release is still owed (the last _AGENT_RELEASED_MAX ends)
+        _AGENT_ENDED_UNHELD.pop((sid, aid), None)      # the agent's file turned live again: its unheld end is over
+    paid = em.checkpoint_pay_owed_releases()           # {path: outcome} of the releases an earlier cycle owed
+    if paid:
+        owed = em.owed_release_paths()
+        for pair, rec in list(_AGENT_RELEASED.items()):
+            if rec[1]:
+                continue
+            got = paid.get(rec[0])
+            if got == "released":
+                rec[1] = True                          # the owed release was taken: a start a later cycle drains while
+                                                       # this table holds the end is a false end
+            elif rec[0] not in owed:
+                _AGENT_RELEASED.pop(pair, None)        # not taken and no longer owed: no entry was popped for this end
+                if got == "absent":
+                    _remember_unheld_end(pair, rec[0])   # nothing held at the pay: a read that holds the file is released later
+        _forget_unheld_paths({p for p, got in paid.items() if got == "released"})
+    popped = set()                                     # the paths a release popped below: their remembered ends are over
+    for pair, p in list(_AGENT_ENDED_UNHELD.items()):
+        if pair in last:
+            continue                                   # the batch speaks for the agent: its own last event governs below
+        try:
+            got = em.release_entry(p, "agentEnded")
+        except Exception as e:                         # given up, like a batch end that raises; the rest are still paid
+            em.say_release_raised("the release of session %s's agent %s (remembered unheld; file %s)" % (pair[0], pair[1], p))
+            em.note_release_lost(1, "a release raised %s" % type(e).__name__, key=p)
+            _AGENT_ENDED_UNHELD.pop(pair, None)
+            continue
+        if got == "absent":
+            continue                                   # still nothing held: remembered for the next cycle
+        _AGENT_ENDED_UNHELD.pop(pair, None)
+        if got in ("released", "deferred", "raced"):
+            _note_agent_released(pair, p, got == "released")
+            if got == "released":
+                popped.add(p)
+    n = 0
+    for i, (sid, aid, live) in enumerate(events):
+        pair = (sid, aid)
+        if live:
+            rec = _AGENT_RELEASED.pop(pair, None)
+            if rec is not None and rec[1]:
+                em.note_false_end()
+            continue
+        if last[pair] != i:
+            continue                                   # the agent entered the live set again later in this batch
+        ap = None
+        try:
+            path = _path_of(sid)
+            ap = _subagent_file(path, aid) if path else None
+            got = em.release_entry(str(ap), "agentEnded") if ap is not None else None
+        except Exception as e:                         # one event that raises must not lose the rest of the drained batch
+            em.say_release_raised("the release of session %s's agent %s (%s)"
+                                  % (sid, aid, "file %s" % ap if ap is not None else "its file not resolved"))
+            em.note_release_lost(1, "a release raised %s" % type(e).__name__, key=None if ap is None else str(ap))
+            _AGENT_ENDED_UNHELD.pop(pair, None)
+            continue
+        if got is None:
+            continue                                   # no transcript for the session or no file for the agent
+        if got == "absent":
+            _remember_unheld_end(pair, str(ap))        # nothing held yet: a read that holds the file is released later
+            continue
+        _AGENT_ENDED_UNHELD.pop(pair, None)
+        if got in ("released", "deferred", "raced"):
+            _note_agent_released(pair, str(ap), got == "released")
+            if got == "released":
+                popped.add(str(ap))
+            n += 1
+    _forget_unheld_paths(popped)
+    return n
 
 
 def _converge_checkpoints(now):
@@ -18750,6 +19308,12 @@ def _auto_nudge_session(s, now, live_map, nudged, waitfor, alive_ids=None, wake_
     # jd.load_goals), and a write through the view raises FrozenStoreError rather than landing, files a
     # frozen-store-write row and switches the cache off for the process, so a writer that forgets is refused
     # and recorded rather than landing a write.
+    # The walk's one shared load of this look, served as memos.nudgeWalk.loads: fold ruling A condition 7 as ruled
+    # 2026-09-19 (at most one per alive session per pass, zero on a skip or a state-gate exit; the placement gate's
+    # currency re-read on a derive is the gate's own and is not counted here). Counted on the line before the read, so a
+    # look that reaches the read counts exactly once whatever the read does: returns a store, returns a fault, or raises
+    # out of the look (_or_fault turns an OSError into a fault and lets any other exception through).
+    _NUDGE_WALK_STATS["loads"] += 1
     store, fault = jd.load_goals_shared_or_fault(sid)
     if fault is not None:
         _nudge_clock(None, "storeFault")                           # a fault heals without a file write (EMFILE, EACCES, EIO): unbounded (round three)
@@ -20068,10 +20632,13 @@ def _env_error(env, auth=""):
     name outside it would be written silently and exported never. The first offender is NAMED and the
     whole request refused (fail-loudly, the user 2026-07-03): a skipped var is a session quietly
     running without the env it was asked to have. The backend validates AGAIN: spawn backs this
-    door with its loud ValueError, but set_env re-checks and refuses with a silent False its
-    callers discard — so on the existing:true path drift between the two copies would be a 200
-    with an env echo and nothing applied. This copy MUST stay in lockstep with
-    sdk_backend.env_request_error, pinned by test_session_env's ValidatorLockstep."""
+    door with its loud ValueError, but set_env re-checks and refuses with a False (logged as a
+    problem row since 2026-09-18; the /new echo and the parked-op drain read it since review round 2
+    of the env-pick door, 2026-09-19), so on the existing:true path drift between the two copies
+    would be a 200 with an `envRefused` echo and nothing applied. This copy MUST stay in lockstep with sdk_backend.env_request_error, pinned by
+    test_session_env's ValidatorLockstep. The credential-shape rule and its wording are read from
+    credentials.py (credential_env_names, credential_env_refusal), which both copies load, so that
+    part is one function rather than a mirrored spelling."""
     if not isinstance(env, dict):
         return "env must be an object of NAME: value pairs"
     for k, v in env.items():
@@ -20093,6 +20660,15 @@ def _env_error(env, auth=""):
             # accepted, it bakes into the reg a var the CLI can only truncate or throw on, either
             # way diverging from what /new echoed as applied.
             return "env: the value for %r contains a NUL byte — no process environment can carry one" % (k,)
+    # A credential-shaped name of any other spelling is refused too, by name (2026-09-18, found by the
+    # spawn.json fix's build; the box admin ruled the door the fix): the pick lands in the registry and the
+    # per-sid flag-settings file, against the fork's rule that no credential is written to a file. The three
+    # login names were refused above whatever their value, so credentials.py's rule over the rest of the pick
+    # is exactly what sdk_backend.spawn_env_secret_names flags for the backend's copy (ValidatorLockstep). The
+    # "env: " head is this door's, added once (review round 1 of the env-pick door, 2026-09-18).
+    secret = jd._cred.credential_env_names(env)
+    if secret:
+        return "env: " + jd._cred.credential_env_refusal(secret)
     return ""
 
 
@@ -20114,7 +20690,18 @@ def _apply_new_session_prefs(sid, body):
     for direct callers. A level the backend REFUSES (a Codex model whose catalog does not offer it) is
     echoed as `refused`, the setter's own words, never as `effort`: the verdict used to be dropped here,
     so `romp new` printed the level as applied and exited 0 while nothing changed (the catch-up fold's
-    review, 2026-09-18)."""
+    review, 2026-09-18). An env pick the backend refuses is echoed as `envRefused` (_env_refusal's
+    generic sentence, names nothing of the pick), never as `env`, for the same reason (review round 2 of
+    the env-pick door, 2026-09-19: the verdict was dropped here too, so a pick the backend refused, a
+    credential-shaped name its own door caught or a session whose registry it could not read, printed as
+    applied). Two refusal fields, one per leg, and this docstring is the one place
+    their relationship is stated (the round-2 addendum, 2026-09-19; the leg comments below point here). The
+    echo is read per asked key: `romp new` tells a refused ask from a dropped one (an older kernel that never
+    answered it) by the presence of that key's own echo, so each leg's refusal sits in its own slot beside the
+    key it answers, and the two differ in scope on purpose: `refused` is the setter's own sentence and names the
+    level, since a level is not a secret; `envRefused` is generic and names nothing of the pick, since its values
+    may be. A third leg that can refuse (model, say) should generalise the shape, one slot per leg under one
+    rule, rather than add a third sibling field with a spelling of its own (the reviewer's note, paraphrased)."""
     out = {}
     m = str((body or {}).get("model") or "").strip()
     e = str((body or {}).get("effort") or "").strip()
@@ -20140,12 +20727,24 @@ def _apply_new_session_prefs(sid, body):
         else:
             # refused (a Codex model whose catalog does not offer the level, or a catalog the backend could not
             # read): the echo carries the refusal in place of the level, so the caller is loud, and stderr says so
-            # once, as the typed route does
+            # once, as the typed route does. Its relationship to the env leg's `envRefused` below (two fields, two
+            # scopes) is stated in this function's docstring, the one place for it (the round-2 addendum, 2026-09-19)
             out["refused"] = _effort_refusal(be, e)
             sys.stderr.write("effort %r for %s refused by %s (POST /new)\n" % (e, sid, type(be).__name__))
     if ev is not None and hasattr(be, "set_env"):
-        _set_env_or_park(be, str(sid), dict(ev))
-        out["env"] = dict(ev)
+        took, _parked = _set_env_or_park(be, str(sid), dict(ev))
+        if took:
+            out["env"] = dict(ev)
+        else:
+            # refused (review round 2 of the env-pick door, 2026-09-19): the verdict used to be dropped here, so a
+            # pick the backend refused (its own door, or a session whose registry it could not read) was echoed as
+            # applied and `romp new` printed it so. The echo carries the refusal in
+            # its own slot, never the `env` key, and stderr says so once with the NAMES of the pick only (the dict
+            # carries values, and a credential-shaped one is what the door refuses). The relationship to the effort
+            # leg's `refused` above is the docstring's
+            out["envRefused"] = _env_refusal()
+            sys.stderr.write("env %s for %s refused by %s (POST /new)\n"
+                             % (" ".join(sorted(ev)) or "(cleared)", sid, type(be).__name__))
     _push_soon()
     return out
 
@@ -22458,10 +23057,18 @@ def _auth_avail():
     refuses it with the same reason). key = an apiKeyHelper is configured in Claude Code's settings (read,
     never run; romp holds no key: see _auth_key_present). acct = the login's display name
     (_claude_account_label), so 'Login' can say WHICH account it means. default = what a fresh session
-    would use absent an explicit pick: the remembered pick when this box can bill it, else the side that
-    exists, in BOTH directions (the user 2026-09-08: a remembered login pick on a box with no login falls
-    to the key, exactly as a remembered key pick on a helper-less box already fell to the login). The
-    reason sentences are credentials.py's, one vocabulary for every surface."""
+    would use absent an explicit pick, the rule the LAUNCH follows (round 1 of the review, 2026-09-18): the
+    machine's EXPLICIT default (sdk-defaults.json `auth` beside `authExplicit`, the Set default billing
+    submenu) when this box can bill it, else the side that exists (the helper rule), in BOTH directions (the
+    user 2026-09-08, who wanted the fall both ways: a login default on a box with no login falls to the key,
+    exactly as a key default on a helper-less box falls to the login; the value read is the explicit default
+    since round 1 of the review, 2026-09-18). A per-session pick's flag-less write preselects
+    nothing: read here and in the spawn's seed, one pick on one session preselected the picker and seeded every
+    later pick-less spawn with a pick of its own, and changing only one of the two readers would have left the
+    picker and the spawn disagreeing, so both read the explicit default. The picker's row sends its selection
+    as the create's `auth` (render.ts pickerAuthChoice), so a session created from the picker carries the
+    preselected default as a pick of its OWN, while one created with no pick follows the default. The reason
+    sentences are credentials.py's, one vocabulary for every surface."""
     key = _auth_key_present()
     d = {}
     try:
@@ -22474,13 +23081,14 @@ def _auth_avail():
     except jd._cred.CredentialError:
         managed = False                        # the settings cannot be read just now: cannot tell, so not "managed"
     # a signed-in account, or an account file that cannot be read just now (cannot tell is never "no login",
-    # review 2026-09-09: a remembered login pick must not fall to the key on a read failure)
+    # review 2026-09-09: an explicit login default must not fall to the key on a read failure)
     login_ok = (bool(_claude_account()) or _claude_account_state() == "unreadable") and not managed
     logins = _login_choices(login_ok, managed)
-    default = d.get("auth") if d.get("auth") in ("login", "key") else ("key" if key else "login")
-    # a remembered pick of a STORED login (T346) stands as "login:<id>" while that login is usable; otherwise
-    # it falls through the machine-login rules below like any remembered login pick
-    dlid = _reg_login(d) if (default == "login" and d.get("auth") == "login") else ""
+    explicit = bool(d.get("authExplicit")) and d.get("auth") in ("login", "key")   # the launch's gate (_explicit_default)
+    default = d.get("auth") if explicit else ("key" if key else "login")
+    # an explicit default of a STORED login (T346) stands as "login:<id>" while that login is usable; otherwise
+    # it falls through the machine-login rules below like any explicit login default
+    dlid = _reg_login(d) if (explicit and default == "login") else ""
     if dlid:
         stored = next((row for row in logins if row.get("id") == dlid), None)
         if stored and stored.get("available"):
@@ -22493,7 +23101,7 @@ def _auth_avail():
            "acct": _claude_account_label(), "default": default, "logins": logins,
            # T380: the default is EXPLICIT (set in the Billing flyout's Default group) or the helper rule; the
            # group marks Automatic otherwise and its sub-line says which
-           "defaultExplicit": bool(d.get("authExplicit")) and d.get("auth") in ("login", "key")}
+           "defaultExplicit": explicit}
     if not login_ok:
         out["loginWhy"] = jd._cred.WHY_MANAGED_HELPER if managed else jd._cred.WHY_NO_LOGIN
     if not key:
@@ -22503,9 +23111,10 @@ def _auth_avail():
 
 def _auth_avail_status():
     """_auth_avail's availability half for the per-session status payload: {login, key, loginWhy?, keyWhy?,
-    default} — no acct (authAcct rides beside it); `default` is the machine's seed, carried since T380 so the
+    default}, with no acct (authAcct rides beside it); `default` is the machine default, carried since T380 so the
     tab menu's Billing flyout can mark it in its "Default for this machine" group (a live session has its own
-    pick; the default is what a NEW one, or one with no pick, launches on). Computed ONCE per
+    pick; the default is what a NEW one, or one with no pick, launches on: the explicit default when this box can
+    bill it, else the helper rule, the same read _auth_avail makes for the new-session picker). Computed ONCE per
     pusher cycle (the cycle's _live_scope memo, the same idiom as its liveness snapshot): build_session asks
     for it per session per push, and each answer re-read sdk-defaults.json and both operator settings files
     (review 2026-09-09). Outside a cycle (a connect push on a handler thread, a test) it computes fresh."""
@@ -22597,7 +23206,15 @@ def _sdk_problem_count():
     return n
 
 
-def _sdk_problem_text(text, cap=400):
+# How many characters of a problem row's text the feed carries (the error centre cuts again at
+# sdk_backend.ERROR_CENTER_TEXT_CAP); what is cut is the ring text a backend row carries (_sdk_problem_rows reads
+# the ring, never the kernel log line), so a ring text under the error centre's cap is under this one too (review
+# round 1 of the env-pick door, 2026-09-18, which found set_env's refusal row 14 characters past it and clipped
+# mid-word; round 3, 2026-09-19, which found docstrings claiming this cap governed the log line).
+SDK_PROBLEM_TEXT_CAP = 400
+
+
+def _sdk_problem_text(text, cap=SDK_PROBLEM_TEXT_CAP):
     """One line naming what broke, out of a message that may be a whole traceback. The head says what
     romp was doing ("boot reconcile failed"), the LAST line says what actually raised ("KeyError: 'x'"),
     and the frames in between are the kernel log's business — so the entry reads as a cause, not as
@@ -22612,7 +23229,7 @@ def _sdk_problem_text(text, cap=400):
     return out[:cap - 1] + "…" if len(out) > cap else out
 
 
-def _sdk_problem_rows(limit=20, cap=400):
+def _sdk_problem_rows(limit=20, cap=SDK_PROBLEM_TEXT_CAP):
     """Recent SDK-backend problems for the feed payload, oldest first. The signature keys the OCCURRENCE
     (this kernel's start + the ring's own sequence number), so a re-render or a page reload never re-logs
     and a repeat of the same failure DOES log again — the bell coalesces a flood into one counted row.
@@ -23882,7 +24499,9 @@ def _drive(msg, client):
         # the machine's DEFAULT billing (T380, the user 2026-09-12): the seed every new session and every
         # session with no pick of its own launches on ("auto" = the helper rule again). Written on THIS kernel
         # (the op routes to the session's owning host, so a remote session's flyout sets that host's default);
-        # no session's own pick is touched, so nothing reconnects. LOUD on refusal, the same reason vocabulary as
+        # no session's own pick is written, and every session following the default whose CLI runs on the other
+        # side is asked to reconnect, as a per-session pick asks (the backend's _reconnect_default_followers, the
+        # user 2026-09-18). LOUD on refusal, the same reason vocabulary as
         # a per-session pick; a backend that keeps no machine default (Codex) is refused by name, never a raise
         # swallowed inside the drive (review). A STORED login ("login:<id>") is a machine default too since
         # 2026-09-14 (the user: the Set default billing submenu offers every billing the picks do); the backend's
@@ -24461,6 +25080,19 @@ class _UnownedBackend(sb.SessionBackend):
     def set_fast(self, sid, value):
         return False
 
+    def set_env(self, sid, value):
+        # the per-session env pick, refused like the other setters (round 9 of fork PR #781's review, kernel-1 and
+        # extra9-1): set_env is not on the ABC (SdkBackend alone takes a per-session env), so without this the
+        # parked-op drain's env arm reached an attribute this class lacked, and its blanket handler dropped the sid's
+        # whole parked queue; the drain guards the call too, and this makes the refusal UNIFORM with set_effort and
+        # set_fast, so the next arm added to that loop inherits the behaviour instead of needing its own guard.
+        # The reason line is send's shape (the closing commit of round 9, kernel-1): every refusal this answers is
+        # echoed with _env_refusal's sentence, which points the user at the backend's log line, and this route
+        # wrote none, so the user was pointed at a line that did not exist. Names nothing of the pick (its dict
+        # carries values) and not the setter's name: the drain's pin reads stderr for no AttributeError naming it
+        sys.stderr.write("per-session env for %s refused: no backend owns this session\n" % sid)
+        return False
+
     def spawn(self, name, cwd, bg="", fg="", sid=None, *a, **kw):
         return None
 
@@ -24749,9 +25381,10 @@ class Sessions:
                                 "authLogin": st.get("authLogin", ""),
                                 "authLabel": st.get("authLabel", ""),
                                 "authLoginLive": st.get("authLoginLive"),   # the init's evidence of which login answered
-                                # whether `auth` is an explicit pick (picker, gear, a remembered pick) rather
-                                # than the seeded default (the fork's wire field; no UI reader since the
-                                # billing label retired for T346's ladders, a later kernel cleanup)
+                                # whether `auth` is this session's own pick (picker, gear) or the machine's EXPLICIT
+                                # default seeded at its spawn, never another session's remembered pick (since
+                                # 2026-09-18), rather than the box's unpicked rule (the fork's wire field; no UI reader
+                                # since the billing label retired for T346's ladders, a later kernel cleanup)
                                 "authPicked": bool(st.get("authPicked")),
                                 # the explicit pick this box cannot bill ("login"|"key"|""): the launch
                                 # fell to the other side, the Billing menu says so (2026-09-08)
@@ -24921,12 +25554,13 @@ def _live_map():
 # of the child ssh procs). ONE ssh per host carries both directions:
 #     -L <local_port>:127.0.0.1:<remote_kernel_port>   this kernel → remote kernel  (dashboard relay)
 #     -R <bus_port>:127.0.0.1:<bus_port>               remote sessions → this bus (postal messaging)
-# The browser reaches a remote kernel via GET /remote/<host>/ws on THIS kernel, which splices the
-# connection onto the -L port byte-for-byte (_remote_ws). It has to be a relay: the forwarded port
+# The browser reaches a remote kernel via GET /remote/<host>/ws on THIS kernel, which relays the
+# connection onto the -L port (_remote_ws): it reads the remote's 101 head and writes the one it
+# rebuilds (_ws_head_allowlist), then splices the frames byte for byte. It has to be a relay: the forwarded port
 # lives on THIS machine's loopback, so when the browser dialed it directly, any dashboard viewed
 # from OFF this machine — the phone, through `tailscale serve` — reached its own loopback instead
 # and every remote host silently vanished, with no disconnected mark (the user 2026-07-30). The
-# kernel still reads nothing (no frame parsing; the remote enforces its own token per connection),
+# kernel parses no frames (the remote enforces its own token per connection),
 # and this registry still just opens the door + reports state. It persists to STATE/remotes.json
 # so attached hosts survive a kernel restart (the supervisor re-spawns their procs).
 
@@ -26154,7 +26788,8 @@ CHECKIN_REFRESH_S = 300      # the slow steady re-announce floor while checked i
 def _checkin_handshake(r):
     """Tell the hub (through our own -L to its kernel) where our reverse forwards landed and hand it
     our token — the PUSH that replaces the hub ever fetching credentials. Authorizes with the HUB's
-    token (r["token"], fetched at attach — the hub requires it on every request, loopback included).
+    token (r["token"], fetched at attach: the hub requires it, or a browser sign-in made with it, on every
+    request, loopback included).
     True on ack; the caller records success per tunnel incarnation and retries otherwise.
 
     A REFUSAL is read, said and held (review find, 2026-09-08: only the reply's status was read, so the
@@ -37996,10 +38631,7 @@ def _chat_postal_relevant(ev):
 #                        d_type, and the stats made in another process by any git child a signature forks (the set
 #                        is pinned by execution in tests/test_chat_build_sig_inputs.py; a fork's wall lands on the
 #                        row of the part that forked it, its CPU on no row, since RUSAGE_THREAD excludes a child).
-#                        A strace over the harness's signatures (a review probe recorded in a review-round commit,
-#                        2026-09-19, with no command kept) found fd fstats from open(), scandir() and the pipes to git
-#                        children beside the counted path stats, every path stat in the count: a reading, not
-#                        recomputed by a test. Per signature:
+#                        Per signature:
 #                        stats / (pre + post + thread), and the same denominator for the three read counts
 #   namesReads           raw names-registry file reads inside a signature (_sdk_transcript_path, _names_parts
 #                        with no snapshot)
@@ -38059,22 +38691,35 @@ def _stat_counting_install():
     constant evaluated before this module loads (tempfile has no gate that runs: on 3.12 its copy sits in an import
     fallback that shutil's presence skips); 3.13's shutil asserts `func is os.lstat` against the current os.lstat (the
     wrapper on both sides); and 3.14's pathlib asks about utime, setxattr, chmod and chflags, not stat. What still
-    differs from the builtin, derived by running every observation a probe could name on the wrapper and on the builtin
-    captured before this module loaded (2026-09-19, on 3.12 and 3.13, which agree): the type (a Python function, not
-    builtin_function_or_method: inspect.isbuiltin False and isfunction True, repr and pydoc's header say function, dis
-    and inspect.getfile work, and the function attributes __code__, __globals__, __closure__, __defaults__,
-    __kwdefaults__, __dict__, __annotations__ and __get__ exist where __self__ and __text_signature__ do not); __get__
-    makes the wrapper a descriptor, so as a CLASS attribute it binds as a method and hands the instance in as `path`,
-    which is why the accessor and the globber above receive a staticmethod; inspect.signature with follow_wrapped=False
-    and inspect.getfullargspec read (path, *a, **kw) (signature's default follows __wrapped__ and reads the builtin's);
-    the TypeError text on a missing argument (a wrong keyword or an extra positional argument raises the builtin's own
-    text, since the wrapper passes both through); one more frame on a traceback through it, a Python call event to a
-    tracer or profiler, and one more level of recursion depth; mock's autospec builds a function-shaped mock where the
-    builtin's is a MagicMock; pickling by name resolves to posix.stat, the wrapper (the builtin kept in __wrapped__ no
-    longer pickles, since posix.stat names another object); the capability sets are one member larger wherever the
-    builtin was a member; and identity, since `is` against a reference taken before this module loaded is False.
-    functools.wraps carries __name__, __qualname__, __module__, __doc__ and sets __wrapped__ to the builtin, so those
-    five read the same."""
+    differs from the builtin, derived by running the same observations on the wrapper and on the builtin it holds in
+    __wrapped__, both in one process (the list is checked by tests/test_kernel_delta_send.py's WrapperDifferential test,
+    which runs the differential on the interpreter under test and reds on a difference this docstring does not name; the
+    set is not constant over the interpreters the suite runs, since 3.10 and 3.11 lack __type_params__ and __annotate__
+    arrives with 3.14): the type (a Python function, not builtin_function_or_method: inspect.isbuiltin False and
+    isfunction True, repr and pydoc's header say function, dis and inspect.getfile work, and the function attributes
+    __code__, __globals__, __closure__, __defaults__, __kwdefaults__, __dict__, __annotations__, __builtins__, __get__
+    and, from 3.12, __type_params__ and, from 3.14, __annotate__ exist where __self__ and __text_signature__ do not, so
+    vars() and dir() read more on the wrapper, vars() raising TypeError on the builtin); the wrapper is mutable (an
+    attribute can be set on it and __name__ reassigned, where the builtin
+    raises AttributeError); sys.getsizeof reads larger, and gc.get_referents reaches its code, its globals (this
+    module's namespace, so any holder of os.stat keeps this module reachable) and its closure, where the builtin's
+    referents are the posix module and its name; __get__ makes the wrapper a descriptor, so as a CLASS attribute it
+    binds as a method and hands the instance in as `path`, which is why the accessor and the globber above receive a
+    staticmethod; inspect.signature with follow_wrapped=False and inspect.getfullargspec read (path, *a, **kw), and
+    Signature.bind puts a keyword into kw (signature's default follows __wrapped__ and reads the builtin's); the
+    TypeError text on a missing argument and on a path given both by position and by name (the wrapper's own "got
+    multiple values for argument 'path'"; a wrong keyword or an extra positional argument raises the builtin's own text,
+    since the wrapper passes both through); one more frame on a traceback through it, a Python call event to a tracer or
+    profiler, and one more level of recursion depth; mock's autospec builds a function-shaped mock where the builtin's
+    is a MagicMock; pickling by name resolves to posix.stat, the wrapper (the builtin kept in __wrapped__ no longer
+    pickles, since posix.stat names another object), the same name unpickles in a process that never loaded this module
+    to the uncounted builtin, so a pickle handed to a spawn-method child names the builtin there unless that child
+    loaded this module first, and __reduce__ inverts the direction (the builtin's returns its name, the wrapper's raises
+    TypeError); each capability set holds the wrapper beside every builtin it held (one more member where one builtin
+    was a member, two where both were, supports_dir_fd from 3.13); and identity, since `is` against a reference taken
+    before this module loaded is False. functools.wraps carries __name__, __qualname__, __module__ and __doc__, so
+    those four read the same; __wrapped__, which wraps sets, and __annotations__, which the builtin lacks, are
+    differences, present on the wrapper alone."""
     tl = getattr(os.stat, "_romp_sig_counting", None)
     if tl is not None:
         return tl
@@ -41032,9 +41677,27 @@ def _set_env_or_park(be, sid, value):
     """Apply a per-session env change (POST /new's "env", the spawn-time slice) now — or park it while
     the session compacts, in the same FIFO as /model and /effort: a CHANGE applies by reconnecting
     (env is connect-time, like effort), which mid-compaction would derail the compaction exactly the
-    way an effort switch would. An unchanged re-assert is a no-op inside set_env either way."""
-    if not _gate_or_park(sid, ("env", value)):
-        be.set_env(sid, value)
+    way an effort switch would. An unchanged re-assert is a no-op inside set_env either way. Returns
+    (took, parked) in _set_effort_or_park's shape (review round 2 of the env-pick door, 2026-09-19):
+    `parked` is True when the change queued, `took` is False when the backend refused it, so the /new
+    echo can carry the verdict. This used to return nothing and drop it, so a set_env that refused (a
+    pick the door refuses, a session whose registry the backend cannot read) was echoed back as applied
+    and `romp new` printed it so while nothing had changed."""
+    if _gate_or_park(sid, ("env", value)):
+        return (True, True)
+    return (bool(be.set_env(sid, value)), False)
+
+
+def _env_refusal():
+    """The sentence a refused per-session env pick is answered with, POST /new's echo and the parked-op
+    drain's alike (review round 2 of the env-pick door, 2026-09-19; the drain's since round 1): generic on
+    purpose, and NAMES nothing of the pick, because the pick's dict carries values and a credential-shaped one
+    is what the door refuses; the backend's own log line says why on every road it refuses: SdkBackend's problem row
+    (a refused name, or a registry it could not read: that road logged nothing until the closing review of 2026-09-19,
+    so the sentence pointed at no line there) and the unowned route's stderr line (_UnownedBackend.set_env, for a sid
+    no backend owns: it refused in silence until the closing commit of round 9 of fork PR #781's review, kernel-1, so
+    the sentence pointed at no line there either; `romp sessions` shows whether the session is listed)."""
+    return "Couldn't set the per-session env: the session's backend refused it (its log line says why)."
 
 
 def _set_auth_or_park(be, sid, value):
@@ -41392,7 +42055,19 @@ def _apply_pending_ops(now=None):
                     elif op[0] == "auth":
                         be.set_auth(sid, op[1])
                     elif op[0] == "env":
-                        be.set_env(sid, op[1])
+                        # the verdict is READ here too (review round 1 of the env-pick door, 2026-09-18): a parked
+                        # pick the door refuses at replay (a queue mirrored before the credential-shape rule and
+                        # drained after a restart) retired its chip as if it had landed, with no line and no frame,
+                        # while the effort and fast arms had been changed to read theirs for exactly that reason.
+                        # GUARDED like the /new door's env leg (round 9 of the review, kernel-1 and extra9-1): set_env
+                        # is SdkBackend's alone, so on a sid Sessions.backend_for routes to _UNOWNED (a queue parked
+                        # before the session died, or restored after a restart for a session no backend owns) or to
+                        # the Codex backend the unguarded call raised AttributeError, the handler below popped the
+                        # sid's WHOLE queue, and a send parked behind the pick was dropped with no frame and no line,
+                        # where the effort and fast arms answer settingRefused and still hand the send over. A backend
+                        # without set_env is a refusal here; _UnownedBackend answers set_env False itself since the
+                        # same round, so this guard is for a backend outside the kernel's own (Codex; a stand-in)
+                        refused = (be.set_env(sid, op[1]) is False) if hasattr(be, "set_env") else True
                     # (an unknown op kind gets no call: it is popped below and dropped — never wedge the queue)
                     with _pending_ops_lock:               # POP the head — only if it is still the op the backend got
                         _inflight_ops.pop(sid, None)      # (a no-op for a cwd op, which was never recorded)
@@ -41424,7 +42099,7 @@ def _apply_pending_ops(now=None):
                             _mark_compacting(sid)         # a TYPED /compact gets the same instant cue as the button's op
                         _after_turn_opening(be, sid, _pending_ops.get(sid) or [])
                         break                             # its turn / compaction must end before anything behind it fires
-                    if op[0] in ("effort", "fast") and refused:
+                    if op[0] in ("effort", "fast", "env") and refused:
                         # the backend refused the parked level or toggle when it fired (a Codex model whose catalog does
                         # not offer the level, a session the backend holds no row for, a Codex session's fast toggle):
                         # the same stderr line the command and compact arms write, and the refusal to the chat on the
@@ -41433,9 +42108,17 @@ def _apply_pending_ops(now=None):
                         # a same-kind replacement delivering next does not unsay this one's refusal. No client is at hand
                         # here, so the chat page is the addressee (_send_to_app). Nothing applies early: the gate lift is
                         # still what fires the op (the catch-up fold's review, 2026-09-18).
-                        what = "/%s %s" % (op[0], op[1] if op[0] == "effort" else v)
-                        why = (_effort_refusal(be, op[1]) if op[0] == "effort"
-                               else "Couldn't toggle fast mode: the session's backend refused it.")
+                        if op[0] == "env":
+                            # NAMES ONLY, through the chip's own renderer (_parked_md): the op's dict carries the values,
+                            # and a credential-shaped one is what the door refuses, so neither the stderr line nor the
+                            # frame may quote the pick; the reason stays generic, the backend's log line says why
+                            # (review round 1 of the env-pick door, 2026-09-18)
+                            what = _parked_md(op)
+                            why = _env_refusal()
+                        else:
+                            what = "/%s %s" % (op[0], op[1] if op[0] == "effort" else v)
+                            why = (_effort_refusal(be, op[1]) if op[0] == "effort"
+                                   else "Couldn't toggle fast mode: the session's backend refused it.")
                         sys.stderr.write("pending ops apply: %s refused %r for %s\n" % (type(be).__name__, what, sid[:8]))
                         _send_to_app("chat", {"type": "settingRefused", "gesture": "command", "sid": sid,
                                               "flag": op[0], "text": why})
@@ -43913,9 +44596,10 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
     # dead tmux session's todos kept a live Reply that fire-and-forgot answers into a nonexistent
     # pane; that backend left 2026-09-11). A dormant session (alive:true, no thread) still shows
     # them: it is addressable, and
-    # answering auto-revives it. Checked only when open todos exist (the common case skips it).
+    # answering auto-revives it. Checked only when open todos exist (the common case skips it). The gate is
+    # _user_todos_shown, the ONE every surface asks (the feed's rows, the tab roster's count), since 2026-09-22.
     _user_todos_open = _open_user_todos(sid)
-    if _user_todos_open and _user_todo_session_ended(sid):
+    if _user_todos_open and not _user_todos_shown(sid):
         _user_todos_open = []
     _todo_ev = None
     if todo is None:                                  # authoritative store unreadable — never silently fold
@@ -44359,8 +45043,9 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
                   # renders it when it disagrees with the intent above (a key found via apiKeyHelper
                   # bills the key while `auth` still reads login; the user 2026-08-15)
                   "authLive": tm.get("authLive", ""),
-                  # whether `auth` above is an EXPLICIT pick (picker, gear, a remembered pick) rather than
-                  # the box default: the Billing row words a disagreement as "picked, but the CLI
+                  # whether `auth` above is this session's own pick (picker, gear) or the machine's EXPLICIT default
+                  # seeded at its spawn, never another session's remembered pick (since 2026-09-18), rather than
+                  # the box's unpicked rule: the Billing row words a disagreement as "picked, but the CLI
                   # reports" only for a pick; an unpicked session shows the CLI's side plainly
                   "authPicked": bool(tm.get("authPicked")),
                   # whether this machine offers BOTH choices. No longer a gate (the user 2026-09-08: the
@@ -46464,7 +47149,7 @@ def _feed_session_key(s, tm, ctx, prev_entry):
       interrupting: _interrupting(fsid, ps or {}, now, tm), computed here (the stamp's 120 s cap and its settle).
       closer: _closer_pending(fsid, path, now, store) under the body's exact gate (live, warm parse, idle, no judge
         call in flight), the settle gap the Analyzing swirl reads.
-      todos: the session's open user todos by value (_open_user_todos after _user_todo_session_ended: id, text,
+      todos: the session's open user todos by value (_open_user_todos behind _user_todos_shown, the ended gate: id, text,
         createdT, detail, file, link), None when none; the floor, the marker map and the Waiting pane rows (the
         fork's plans/user-todos.md, re-applied inside the memo at the 2026-09-15 pull-in). A hidden session reads
         none, as the loop's `continue` skipped them; the read's switch (_user_todos_on) rides the value.
@@ -46547,10 +47232,10 @@ def _feed_session_key(s, tm, ctx, prev_entry):
         # USER TODOS (plans/user-todos.md, slice 2): the open asks this session registered with the person it
         # works for, read here ONCE per build so they ride the key by value (`todos`) and reach the body through
         # ctx; ENDED sessions hide theirs from every surface and aggregate (build_session's exact corroborated
-        # gate, _user_todo_session_ended). Store values only: the component compares equal across builds when
-        # nothing changed.
+        # gate, _user_todos_shown, the ONE every surface asks). Store values only: the component compares equal
+        # across builds when nothing changed.
         ut_open = _open_user_todos(fsid)
-        if ut_open and _user_todo_session_ended(fsid):
+        if ut_open and not _user_todos_shown(fsid):
             ut_open = []
     ctx.update(ps=ps, who_working=who_working, interrupting=interrupting, store=st, closer=closer, hide=hide,
                ut_open=ut_open)
@@ -47146,13 +47831,14 @@ def _feed_session_entry(s, ctx):
         parked_rows = _parked_rows(nodes, children)
     # USER TODOS (plans/user-todos.md, slice 2): the open needs this session registered with the
     # person it works for, read ONCE per build by _feed_session_key (the `todos` component, by value)
-    # and handed here through ctx with the ENDED gate already applied (build_session's exact
-    # corroborated gate, _user_todo_session_ended). The entry's userTodos row (below) feeds the quiet
+    # and handed here through ctx with the ENDED gate already applied (_user_todos_shown: build_session's
+    # gate, and the ONE every surface asks since 2026-09-22). The entry's userTodos row (below) feeds the quiet
     # per-card marker and the widened badge (build_feed aggregates the rows), and a muted session
     # never reaches here (the hideFromFeed return above), so the marker, the floor and the badge all
     # go quiet for it. THE MUTE ASYMMETRY IS DESIGNED
-    # (review call, 2026-08-22 — do not "fix"): the TAB GLYPH reads build_session's userTodos
-    # field, which mute does not touch — mute means "stop interrupting me about this session"
+    # (review call, 2026-08-22; do not "fix"): the TAB GLYPH has two sources, build_session's userTodos
+    # field on a loaded tab and _tab_meta's count on the tabOrder row for a skeleton or placeholder tab
+    # (since 2026-09-22), and mute touches neither: mute means "stop interrupting me about this session"
     # and quiets the feed and its aggregates; the tab stays truthful about what its session
     # holds. Store values only: the row must serialize identically across builds when nothing
     # changed.
@@ -48499,7 +49185,8 @@ def _claude_login_display():
 
 
 def _reg_login(d):
-    """The stored login a reg or the remembered defaults name under `authLogin`, "" when none or junk."""
+    """The stored login a reg or sdk-defaults.json (the explicit default's id beside `auth` login, or the last
+    pick's record) names under `authLogin`, "" when none or junk."""
     v = (d or {}).get("authLogin") if isinstance(d, dict) else None
     return v if isinstance(v, str) and lg.ID_RE.match(v) else ""
 
@@ -55398,6 +56085,8 @@ def _delta_keyer(kind):
             if not isinstance(it, dict):
                 return None
             v = it.get(field)
+            if v is not None and not isinstance(v, str):   # a key field the two languages spell apart (str(1.0) "1.0", String(1.0) "1"): refused at the source, so _delta_parts sends the slot whole for every receiver (2026-09-19)
+                raise ValueError("%s key field %r is a %s, not a str" % (kind, field, type(v).__name__))
             return None if v is None or v == "" else prefix + str(v)   # "" would spell a lane's bare-prefix marker
         return key
     if kind.startswith("bykeys:"):
@@ -55830,8 +56519,15 @@ def _send_chat(c, m, ms, change_from, led_changed):
 # now gets a {type:"feedDelta"} instead: the cards that changed (by itemId), the itemIds that left, the same
 # for ledgers (by sid), and the small top-level fields whole when any of them changed. Nothing changed →
 # nothing sent, exactly as before. A client that has not announced, or has not yet received a full frame on
-# this socket, gets the full {type:"feed"} frame — the legacy path, kept for every consumer that reads it
-# (the VS Code extension's pipes, federation's remote sockets, older bundles). Full frames
+# this socket, gets the full {type:"feed"} frame: the legacy path, kept for the consumers that dial without
+# ?delta=1 too (a bundle before the cap, its local socket; a relay dialed by a dashboard bundle before 2026-09-15;
+# the VS Code extension before 2026-09-16), with its 60 s repost of the unchanged frame. Federation's remote
+# sockets announce the cap since 2026-09-18 (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query
+# whole, so the cap is read at accept like a page's). A client that dials ?delta=1 and no cap is served through the
+# view-delta SLOT path instead (_send_slot: a keyed full frame, then patches; a clock-only patch of about 100 bytes
+# on an idle board), not this path or its repost: the VS Code extension's pipes (client=ext&delta=1 since
+# 2026-09-16, reassembled by their own ViewDeltas) and a relay dialed by a dashboard bundle from 2026-09-15 to
+# 2026-09-18. Full frames
 # still carry each card's `trgb`; deltas never do (an older bundle reads it, a delta client colours from `t`).
 #
 # The parts below are computed ONCE per build and shared by every client (the 2026-08-10 CPU discipline):
@@ -56704,7 +57400,9 @@ def _send_feed_now(c):
     actually goes out: a frame the per-client dedup swallowed changes nothing the client holds.
 
     Two delta protocols meet here as in _push. A page that announced `?delta=1` but not FEED_DELTA_CAP (a
-    pre-2026-09-05 Outline tab — the page announces the cap since then — or any ?delta=1 page without it)
+    pre-2026-09-05 Outline tab, since the page announces the cap; any ?delta=1 page without it; the VS Code
+    extension's pipes, client=ext&delta=1 since 2026-09-16; a relay dialed by a dashboard bundle before
+    federation.ts announced the cap on its remote dial, 2026-09-18)
     takes the view-delta slot path, so it is served THROUGH _send_slot: the frame goes out
     keyed and becomes the slot's held base (dstate["feed"]), and the connect push that follows it (_push_one,
     for the ledgers only that push attaches) finds the base and sends a delta. Served through _send_client
@@ -58203,13 +58901,19 @@ def _html_esc(s):
 def _too_large_page(msg, name, q, route="/file"):
     """The 413 a PDF's OWN TAB shows (2026-09-06): the same sentence the text form carries, plus the way
     out — a link to the download half of the SAME route (`route`: /file, or a federated session's
-    /remote/<host>/file relay) for the same path and sid. Same-origin, so the cookie rides the download
-    exactly as it rode the view. Built from the parsed query, never the raw request line, and every value
-    is escaped; the page has no script and inherits _send's nosniff."""
+    /remote/<host>/file relay) for the same path and sid. The download link carries the request's OWN
+    cap (`q["cap"]`): the browser reached this page over a file-class request that already presented a
+    valid cap, and download is outside the cap's MAC, so the same cap authorizes the download exactly as
+    the view was authorized. Same-origin, so the session cookie rides the download too. Built from the
+    parsed query, never the raw request line, and every value is escaped; the page has no script and
+    inherits _send's nosniff."""
     dq = {"path": (q.get("path") or [""])[0], "download": "1"}
     sid = (q.get("sid") or [""])[0]
     if sid:
         dq["sid"] = sid
+    cap = (q.get("cap") or [""])[0]
+    if cap:
+        dq["cap"] = cap
     href = route + "?" + urlencode(dq)
     return ("<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title>"
             "<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;"
@@ -60632,7 +61336,7 @@ def _path_tokens(md):
 
 _MENTION_PINS = None                                   # resolved lazily: jd.STATE / "mention-pins"
 _PIN_STORE_MAX_BYTES = 500 * 1024 * 1024               # bounded: evict oldest-mtime past this
-_PIN_ID_RE = re.compile(r"^[0-9a-f]{64}\.[a-z0-9]{1,8}$")   # sha256 + the original extension
+_PIN_ID_RE = re.compile(r"^[0-9a-f]{64}\.[a-z0-9]{1,8}\Z")   # sha256 + the original extension (\Z: no trailing newline, which $ admits)
 
 
 def _pin_dir():
@@ -61128,9 +61832,10 @@ def _push(targets, connect=False, live_map=None):
         if want_chat or want_fleet:   # the fleet needs every session's ledger slice (built below, attached to feed)
             # TABS-FIRST (the user 2026-06-26): ship name+color per tab so the client can paint the WHOLE strip
             # as placeholders up front (no tab popping in one-by-one as each build_session lands). The full
-            # session fills the placeholder in when it arrives below.
-            tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
-                             "emoji": _name_emoji(s["sid"])} for s in chat_list]   # emoji: the fork's session label (PR 246)
+            # session fills the placeholder in when it arrives below. The rows come from _tab_meta (the emoji and,
+            # since 2026-09-22, the count of open user todos ride them), built only when a chat client is among the
+            # targets: the strip below goes to chat clients alone, and an Outline-only push has no use for it.
+            tab_meta = _tab_meta(chat_list) if chat_clients else []
             for c in chat_clients:                       # tab strip first → the shell paints before any build
                 _send_client(c, ("globalRetryPaused",), {"type": "globalRetryPaused", "value": _retry_paused_on(),
                                                          "resumeAt": _retry_resume_at(),   # limit reset epoch → the card counts down to the real retry
@@ -61784,8 +62489,7 @@ def _push_session_now(sid):
         if not any(s["sid"] == sid for s in chat_list):
             return                                   # hidden / raced a teardown — the periodic pusher owns the rest
         tab_order = [s["sid"] for s in chat_list]
-        tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
-                             "emoji": _name_emoji(s["sid"])} for s in chat_list]   # emoji: the fork's session label (PR 246)
+        tab_meta = _tab_meta(chat_list)                  # the rows every strip sender ships (targets are chat clients)
         # The cold-tab gate (2026-09-14; see _held_as_skeleton_by_all): at a boot with a browser connected, each of the
         # 27 attach handshakes ran this push, a cold build per session, for tabs the page holds as skeletons; a full
         # here would also release the skeleton and hand the page a tab it did not ask for. Not built: the click or the
@@ -61927,14 +62631,13 @@ def _confirm_close_now(sid):
         live_map = _live_map()
         chat_list = _chat_tab_sessions(now, live_map)
         tab_order = [s["sid"] for s in chat_list]
-        tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
-                             "emoji": _name_emoji(s["sid"])} for s in chat_list]
         with _clients_lock:
             # alive and ready, as _push_session_now filters: a chat page that announced READY_GATE_CAP is
             # held until its bundle says `ready` (_client_ready) — every other tabOrder sender filters on
             # it, and this one sent to every chat client, so a page still behind the gate received a frame
             # before its bundle had asked for one
             targets = [c for c in _clients if c["app"] == "chat" and c.get("alive", True) and _client_ready(c)]
+        tab_meta = _tab_meta(chat_list) if targets else []   # the rows every strip sender ships, for a chat client alone
         for c in targets:
             try:
                 redialed = _resolve_reconnect(c, chat_list)   # a confirmation may be the FIRST strip a redialing page sees
@@ -66216,7 +66919,7 @@ if(awaitLink)return;   // [fork] D3 (review round 2, 2026-09-18): while this ret
 if(returnAt)returnRedialed=true;   // a dial inside a return window (whatever path led here) → the return-fresh row says so
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
 var active="";try{var st0=JSON.parse(localStorage.getItem(SK)||"null");active=(st0&&st0.activeId)||"";}catch(e){}
-ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):"")+((everConnected&&bundleReady&&readyAcked&&!readyQueued)?"&reconnect=1&proto="+readyProto:"")+(COL?"&col="+encodeURIComponent(COL):"")+((SKEL||(RESTART_DIET&&!everConnected))?"&skeleton=1":"")+(APP==="fleet"?"&provrows=1":""));   // skeleton=1: a later chat column, or the main pane's FIRST dial after any reload the reload core fired (RESTART_DIET), served as a view of the session its ?active= names (above). reconnect=1: this page has held a socket before AND its bundle has said ready AND the kernel's caps frame has answered that ready AND the ready is not still waiting in the queue for this open, so it holds the sessions the kernel served it; the kernel skeletons the tabs it is not looking at (2026-09-07). A socket that opened and died before the bundle said ready held nothing for the page, and neither did one whose bundle said ready only after it died (the ready queued, and flushes onto this socket as the bundle's own); a ready that left on an open socket the kernel never answered (the socket died before its caps frame came back) served the page nothing either: all three redials dial as a fresh page, the last for the page's life, since the bundle posts ready once and no later socket carries one for a caps frame to answer (2026-09-10)
+ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):"")+((everConnected&&bundleReady&&readyAcked&&!readyQueued)?"&reconnect=1&proto="+readyProto:"")+(COL?"&col="+encodeURIComponent(COL):"")+((SKEL||(RESTART_DIET&&!everConnected))?"&skeleton=1":"")+(APP==="fleet"?"&provrows=1":"")+(window.__rompKeyQ?window.__rompKeyQ():""));   // the page key (k=): the socket class's credential on this origin, added by the page-key script; skeleton=1: a later chat column, or the main pane's FIRST dial after any reload the reload core fired (RESTART_DIET), served as a view of the session its ?active= names (above). reconnect=1: this page has held a socket before AND its bundle has said ready AND the kernel's caps frame has answered that ready AND the ready is not still waiting in the queue for this open, so it holds the sessions the kernel served it; the kernel skeletons the tabs it is not looking at (2026-09-07). A socket that opened and died before the bundle said ready held nothing for the page, and neither did one whose bundle said ready only after it died (the ready queued, and flushes onto this socket as the bundle's own); a ready that left on an open socket the kernel never answered (the socket died before its caps frame came back) served the page nothing either: all three redials dial as a fresh page, the last for the page's life, since the bundle posts ready once and no later socket carries one for a caps frame to answer (2026-09-10)
 // onopen: flush the queue; a RECONNECT (after a drop) also PROMPTS a reload — the fresh socket resyncs live via
 // the kernel's next push, and the banner offers a full reload for anything a live push doesn't cover. This
 // replaced the old silent location.reload() (the user 2026-07-05: don't foist a reload; let me click). Since T265
@@ -68594,8 +69297,8 @@ return '<div class="ru-tip-row ah-row'+(full?'':' ah-ro')+'"'+(full?' role=butto
 +(bg?'<span class=ah-nm style="color:'+bg+'">':'<span class=ah-nm>')+esc(r.name)+'</span>'   // the name in its colour is the whole cue: no square beside it (T340)
 +'<span class=ah-desc>'+(r.kind==='retrying'?'retrying':'stopped')+' · '+clsWords(r)+(r.since?' · since '+hm(r.since):'')
 +(r.suppressed?' · auto-retry off for this session (you interrupted it)':'')+'</span></div>';}
-// -- History: GET /api-health at show time. The shell authenticates the way its other fetches do (the romp_token
-// cookie; a same-origin GET sends no Origin, which _origin_ok accepts). A failed read is said in the section, in
+// -- History: GET /api-health at show time. The shell authenticates the way its other fetches do (the session
+// cookie and the page key the fetch wrapper adds; a same-origin GET sends no Origin, which _origin_ok accepts). A failed read is said in the section, in
 // place of the rows: never stale numbers, never silence. Painted through the same held / dirty gate as a frame.
 // fresh=true (a show) drops the last answer first, so a hover never paints an earlier hover's numbers while its
 // own read is in flight. A frame on an open card re-reads behind the stamped answer the card shows, and a pin from
@@ -69968,7 +70671,7 @@ shConnT=Date.now();var proto=location.protocol==='https:'?'wss://':'ws://';
 // script mints before any pane connects): an op the shell sends that the kernel answers with a reveal (the API
 // detail's openSession) then lands on THIS dashboard's chat alone (_reveal_chat_for), the way the feed's own session
 // links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
-var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid()));
+var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid())+(window.__rompKeyQ?window.__rompKeyQ():''));   // +k=: the page key the socket class needs, added by the page-key script
 shWs=ws;var shOpened=false;   // [fork] D3: this dial's socket for the liveness machinery, and whether it ever opened (the return probe's attempt count keys on it)
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
@@ -71634,15 +72337,26 @@ def _landing():
             "if(navigator.standalone){document.documentElement.className+=' ios-standalone';"
             "var _vp=document.querySelector('meta[name=viewport]');"
             "_vp.setAttribute('content',_vp.getAttribute('content')+',viewport-fit=cover');}"
-            # The token this page was opened with (`/?token=`: the login page, `romp url`, the CLI's open) is
-            # spent by the time this runs: the response that served the page turned it into the cookie every
-            # later request rides (_authorize, then _send's Set-Cookie). The URL copy would otherwise outlive
-            # it for the page's lifetime, as what a Referer carries, what every same-origin pane iframe reads
-            # as document.referrer, and what the address bar shows. Dropped HERE, in the head, before the
-            # manifest link or the first <iframe> can make a request, so no request this document makes ever
-            # carries it; the other params (panes, wid, a push deep link the reveal script strips later) and
-            # the hash stay, re-serialized by URLSearchParams (a comma becomes %2C, which every reader's
-            # searchParams.get decodes). A reload rides the cookie, as the pane iframes already do.
+            # The token this page was opened with (`/?token=`: the login page, `romp url`, the CLI's open) must
+            # not outlive the response that spent it, as what a Referer carries, what every same-origin pane
+            # iframe reads as document.referrer, and what the address bar shows. On a sign-in navigation the
+            # sign-in seed, which _send puts first in the head, has already dropped token= and c= before this
+            # runs, so this finds nothing there. This is the fallback for a shell served on ?token= without a
+            # sign-in: a load _is_navigation does not count (its Sec-Fetch-Dest names neither a document nor an
+            # iframe or, with no Sec-Fetch headers, its Accept does not name text/html) gets no session and no
+            # seed, and this is the one step that drops the token from that document's address. Which element
+            # loads fall there depends on the engine and on whether the origin gets Sec-Fetch headers. A frame's
+            # load does only where the browser sends Sec-Fetch-Dest: frame. A plain-http origin off loopback gets
+            # no Sec-Fetch headers, and there a same-origin frame's load asks for text/html, counts as a
+            # navigation, and is signed in and seeded like one. frame-ancestors 'self' and X-Frame-Options keep the
+            # shell from showing in a frame on a page of another origin. It runs HERE, in the head, before the
+            # manifest link or the first <iframe> can make a request, so a request this document makes after it
+            # carries no token in its Referer. A speculative preload, which the parser can start before a head
+            # script runs, is outside this step: its Referer is the address the document was opened with, sent
+            # to this origin only (_send's Referrer-Policy: same-origin). The other params (panes, wid, a push
+            # deep link the reveal script strips later) and the hash stay, re-serialized by URLSearchParams (a
+            # comma becomes %2C, which every reader's searchParams.get decodes). After a sign-in, a reload rides
+            # the session cookie, as the pane iframes do.
             "try{var _u=new URL(location.href);if(_u.searchParams.has('token')){_u.searchParams['delete']('token');"
             "history.replaceState(null,'',_u.pathname+(_u.searchParams.toString()?'?'+_u.searchParams.toString():'')+_u.hash);}}"
             "catch(e){}</script>"
@@ -72898,6 +73612,24 @@ _LANE_FLAGS = ("hideFromFeed", "postalServiceOff", "notify")   # the per-session
 #                                    (setSessionFlag in ui/webview/render.ts)
 
 
+def _lane_flag_refusal(flag):
+    """The ONE whitelist of the per-session flags a client may write: None when `flag` is one of _LANE_FLAGS, else
+    the refusal, naming the list and a bounded echo of what arrived. The two flag doors ask it, POST /flag (its 400's
+    error) and the setSessionFlag socket op (its settingRefused frame, which wraps the same sentence), for every flag
+    name a request carries, a falsy one included, so they cannot disagree on which flag names a client may set; a
+    request with no flag key is where they differ, POST /flag answering this refusal ("got null") and the socket op
+    the terminal arm's unknownOp, the kernel's answer for a known op missing a field its arm requires
+    (_note_unknown_op). The saveFile socket op, under the file-editing consent, can write session-flags.json whole,
+    as it can any text file; it is not a flag door and does not ask this. Until the reviewer's ruling in the round-3
+    review of fork PR #897 the socket op wrote any name it was sent: a client could set `threadMail`, the key that
+    turns a comment thread's mail on, or the legacy `postalOff`, while the route refused both. The kernel and the
+    postal bus read those keys; no dashboard, panel or extension sends them. tests/test_obsidian_state_routes.py pins
+    the doors (FlagWriterPopulation) and executes both refusals."""
+    if flag in _LANE_FLAGS:
+        return None
+    return "flag must be one of %s, got %s" % (", ".join(_LANE_FLAGS), _clip_json(flag))
+
+
 def _unknown_keys_error(b, allowed):
     """A typed body's refusal of keys the route does not read (the /restart helper's rule): a typo key
     must never pass as "not asked" while the caller reads ok:true as its field applying."""
@@ -72941,9 +73673,9 @@ def _state_write_route(path, b):
             return 400, {"ok": False, "error": "id (the session's id) required"}
         sid = sid.strip()
         flag = b.get("flag")
-        if flag not in _LANE_FLAGS:
-            return 400, {"ok": False, "error": "flag must be one of %s, got %s"
-                         % (", ".join(_LANE_FLAGS), _clip_json(flag))}
+        err = _lane_flag_refusal(flag)                 # the whitelist the setSessionFlag socket op asks too
+        if err:
+            return 400, {"ok": False, "error": err}
         if b.get("value") is None:
             return 400, {"ok": False, "error": "value (true or false) required"}
         value, ferr = _as_bool(b.get("value"), "value")
@@ -73007,13 +73739,100 @@ def _state_write_route(path, b):
     return 404, {"ok": False, "error": "no such route"}
 
 
+# ── the route table the router and the auth classifier both read ───────────────────────────────────
+# ONE declaration of which GET paths are the PAGE class (a document, served text/html) and which are
+# the STATIC class (the built bundles and assets: code, no session data). do_GET dispatches a page by
+# looking its renderer up here, and Handler._need classifies a request's auth class off the same two
+# structures, so a page or static route added in one place is covered in the other by construction and
+# neither can drift from the other. Everything not named here is the full, socket or file class
+# (Handler._need); the cookie on its own opens the page and static classes and nothing else.
+_PAGE_RENDERERS = {
+    "": _landing, "/": _landing,          # the shell (a bare path classes as "/" the same way _need does)
+    "/chat": _chat_page, "/feed": _feed_page, "/timeline": _timeline_page,
+    "/fleet": _fleet_page, "/waiting": _waiting_page, "/files": _files_page,
+    "/settings": _settings_page,
+}
+_STATIC_EXACT = ("/sw.js",)               # the push service worker
+_STATIC_PREFIXES = ("/dist/", "/media/")  # the built bundles and static assets
+
+
+def _static_route(p):
+    """True for the STATIC class: the service worker and the built-bundle/asset trees. The install
+    manifest and the three home-screen icons are served auth-exempt earlier and are not classed here."""
+    return p in _STATIC_EXACT or p.startswith(_STATIC_PREFIXES)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *a):
         pass
 
+    def handle_one_request(self):
+        # What end_headers reads about a request starts empty before the request's line and headers are
+        # read, so an error the base class answers mid-parse on a keep-alive connection reads nothing from
+        # the request before it. This is also the one reset of the session a sign-in sets (_set_cookie), and
+        # with it of the seed and the no-store, which _send writes only beside that cookie: every request on
+        # a keep-alive connection passes here first, the routes served before the gate included.
+        self._legacy_ours = self._legacy_signed_in = False
+        self._set_cookie = None
+        super().handle_one_request()
+
+    def parse_request(self):
+        """The base parse, then two facts about the request's cookies that every response reads
+        (_clears_legacy_cookie): whether the legacy romp_token cookie holds THIS kernel's token, and
+        whether the request carries a valid session cookie of this kernel. Both are computed for every
+        request, and both compares are constant time (_ct_eq, and _session_ok's)."""
+        ok = super().parse_request()
+        if ok:
+            self._legacy_ours = bool(TOKEN) and _ct_eq(self._cookie("romp_token"), TOKEN)
+            self._legacy_signed_in = bool(self._browser_session())
+        return ok
+
+    def _clears_legacy_cookie(self):
+        """True when this response clears the legacy romp_token cookie (a kernel before the session-id
+        design set it, and its value WAS the serve token). It is cleared only when its value is THIS
+        kernel's token, and only when the browser is signed in without it: this response sets the session
+        cookie (the sign-in that migrates it), or the request already carries a valid session cookie of
+        this kernel beside it (the browser signed in earlier; a request carries both when an earlier
+        version, run after this one, set the old cookie again and this version then came back with the
+        same token). Every response that holds, of any route class, a refusal and a socket upgrade
+        included, carries the clear. Apart from the response that signs the browser in, a request with no
+        valid session is never answered with it, so a dashboard that has not migrated keeps the cookie it
+        still signs in with (its polls and socket redials carry no session, and the reload that migrates
+        it finds the cookie), and a romp_token holding any other value (a second, older kernel on the same
+        host) is never touched."""
+        return bool(getattr(self, "_legacy_ours", False)
+                    and (getattr(self, "_legacy_signed_in", False) or getattr(self, "_set_cookie", None)))
+
+    def end_headers(self):
+        # the one place every response's headers end, so the legacy cookie's clear reaches each response
+        # _clears_legacy_cookie names (the socket relay writes the 101 head it rebuilds without this, and
+        # adds the clear to that head's lines itself)
+        if self._clears_legacy_cookie():
+            self.send_header("Set-Cookie", _LEGACY_COOKIE_CLEAR)
+        super().end_headers()
+
     def _send(self, code, body, ctype, cache=None, headers=None):
+        seeded = False
+        if getattr(self, "_page_ok", False) and isinstance(body, str) and ctype.startswith("text/html") and "<head>" in body:
+            # An authorized page document: the page-key script goes first in its head, before the page
+            # makes any request. On the login response (a session was just minted or kept: _set_cookie
+            # holds it) the SEED goes ahead of it: it stores this origin's page key (in the per-kernel
+            # slot _PAGE_KEY_SLOT) and drops token= and c= from the address. That seed is the one and
+            # only place the page key ever reaches the browser; a page served on the session cookie alone
+            # carries neither the seed nor the key.
+            seed = ""
+            if getattr(self, "_set_cookie", None):
+                seed = ("<script>try{localStorage.setItem(%s,%s)}catch(e){}"
+                        "try{var u=new URL(location.href);u.searchParams['delete']('token');u.searchParams['delete']('c');"
+                        "history.replaceState(history.state,'',u.pathname+(u.searchParams.toString()?'?'+"
+                        "u.searchParams.toString():'')+u.hash)}catch(e){}</script>"
+                        % (json.dumps(_PAGE_KEY_SLOT), json.dumps(_page_key(self._set_cookie))))
+                seeded = True
+            body = body.replace("<head>", "<head>" + seed + "<script>" + _PAGE_KEY_JS + "</script>", 1)
+        if seeded:
+            cache = "no-store"                        # the key-bearing login response is never stored
         body = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -73032,30 +73851,42 @@ class Handler(BaseHTTPRequestHandler):
         # Phone and tailnet frame the kernel's own origin, which 'self' permits.
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
-        # Referrer policy: a document's URL is what its requests send as Referer, and the shell's URL is
-        # `/?token=` on its first load (the address scrub in _landing's head script drops it; a pane page
-        # opened bare as `/chat?token=` keeps it). same-origin sends the full Referer on requests to this
-        # origin and nothing cross-origin (a transcript's <img> from another host, a link out), whatever
-        # the browser's default, on every page the kernel serves: the SECURITY.md claim that a cross-site
-        # page cannot obtain the token then holds by construction. same-origin and not no-referrer: a
-        # same-origin GET carries no Origin header, so the Referer is the one header that names the page
-        # origin behind it to the kernel, and this keeps it.
+        # Referrer policy: a document's URL is what its requests send as Referer, and a page's URL holds
+        # `?token=` (or `?c=`) on the load that signs a browser in. The sign-in seed, which this method puts
+        # first in the head of the page a sign-in response serves (above), drops token= and c= from the
+        # address before the page makes a request, and _landing's head script drops token= from the shell's
+        # address on a load that is not a navigation and so gets no seed. Neither reaches a speculative
+        # preload the parser starts before a head script runs, or a page other than the shell loaded on
+        # `?token=` by a load that is not a navigation; this header covers those. same-origin sends the
+        # full Referer on requests to this origin and nothing cross-origin (a transcript's <img> from
+        # another host, a link out), whatever the browser's default, on every page the kernel serves: the
+        # SECURITY.md claim that a cross-site page cannot obtain the token then holds by construction.
+        # same-origin and not no-referrer: a same-origin GET carries no Origin header, so the Referer is
+        # the one header that names the page origin behind it to the kernel, and this keeps it.
         self.send_header("Referrer-Policy", "same-origin")
+        if getattr(self, "_reauth", False):
+            # A valid session whose stored page key no longer matches: the page-key script reads this
+            # marker off the fetch's own 403 response, drops the stale key and hops to /login. A
+            # denial for any other reason carries no marker, so nothing else triggers the hop.
+            self.send_header("X-Romp-Reauth", "1")
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         if cache:                                     # e.g. "no-cache" — keeps a tab from running a stale bundle
             self.send_header("Cache-Control", cache)
-        if getattr(self, "_set_cookie", None):       # auto-inject the token so a client never 401-loops
-            # Max-Age=1yr so the phone persists the token past its browser session (no re-prompt on
+        if getattr(self, "_set_cookie", None):       # the browser session this login minted or kept (never the serve token)
+            # Max-Age=1yr so the phone persists the session past its browser session (no re-prompt on
             # the tailnet after the tab is closed) — for simplify's auto-serve/permanence work.
             # SameSite=Lax, NOT Strict (the user 2026-08-08): Android launches an installed
             # home-screen app through a launcher INTENT, which Chrome scores as a cross-site
             # top-level navigation — Strict withheld the cookie on every launch and the app opened
             # on the login page each time, a token re-ask per launch. Lax still attaches only on
             # top-level navigations (never on a cross-site POST/subresource, and every
-            # state-changing route here is a POST), so the gate the token provides is unchanged.
-            self.send_header("Set-Cookie", "romp_token=%s; Path=/; Max-Age=31536000; "
-                             "SameSite=Lax; HttpOnly" % self._set_cookie)
+            # state-changing route here is a POST), so the gate the cookie provides is unchanged.
+            # The cookie holds the SESSION ID and its name is this kernel's own (_SESSION_COOKIE); the
+            # serve token is never a cookie value. When the request carried the legacy romp_token cookie
+            # holding this kernel's token, end_headers adds its clear beside this (_clears_legacy_cookie).
+            self.send_header("Set-Cookie", "%s=%s; Path=/; Max-Age=31536000; "
+                             "SameSite=Lax; HttpOnly" % (_SESSION_COOKIE, self._set_cookie))
         # CORS delivery for an AUTHORIZED browser origin (set at the _authorize call sites).
         # A VS Code webview's synthetic origin makes every kernel fetch cross-origin, and
         # without an echoed Access-Control-Allow-Origin the browser withholds the response
@@ -73069,9 +73900,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    # ── serve-layer security (docs/read-side.md): Origin/Host gate always; token required for ALL
-    # access, loopback included (Jupyter's model — loopback is shared by every local user on the
-    # machine, so it is not a trust boundary; the 0600 token file is the same-user gate) ──
+    # ── serve-layer security (docs/read-side.md): Origin/Host gate always; the token, presented directly
+    # or through a browser sign-in made with it, required for ALL access, loopback included (Jupyter's
+    # model: loopback is shared by every local user on the machine, so it is not a trust boundary; the
+    # 0600 token file is the same-user gate) ──
     def _origin_ok(self):
         """Reject cross-site browser origins — the ClawJacked/WS hole (WS isn't covered by CORS, so
         this is the real gate). Allow same-origin, the local kernel origin, vscode-webview, and an
@@ -73088,57 +73920,112 @@ class Handler(BaseHTTPRequestHandler):
             return True                              # same-origin (covers local AND tailnet self-access)
         return o in ("http://127.0.0.1:%d" % PORT, "http://localhost:%d" % PORT)
 
-    def _cookie_token(self):
+    def _cookie(self, name):
         for part in (self.headers.get("Cookie") or "").split(";"):
             k, _, v = part.strip().partition("=")
-            if k == "romp_token":
+            if k == name:
                 return v
         return ""
 
-    def _authorize(self, q):
-        """(ok, cookie_to_set, reason). An EXPLICITLY PRESENTED token is sufficient auth and bypasses
-        the Origin gate. This is what lets the FEDERATED dashboard work: a browser served by ANOTHER
-        kernel opens a tunnel'd /ws (or fetch) here carrying ?token — a foreign Origin, but the
-        unguessable token is the credential, and a cross-site page can't forge it. The token is
-        REQUIRED for every gated route, loopback included (Jupyter's model: loopback is reachable by
-        every local user, so the 0600 token file — not the socket — is the same-user trust boundary).
-        Browsers present ?token once and ride the auto-set cookie; local CLIs/hooks read the file and
-        send X-Romp-Token (a custom header forces a CORS preflight through this same gate, so a
-        cross-site page can't forge it either). Token-less browser traffic still hits the Origin gate
-        first (the ClawJacked/WS hole) so a denial names the real reason.
+    def _browser_session(self):
+        """This browser's session id when its cookie holds one this kernel minted; "" otherwise."""
+        sess = self._cookie(_SESSION_COOKIE)
+        return sess if _session_ok(sess) else ""
 
-        The COOKIE is the one credential that does NOT bypass the Origin gate, because it is the one
-        the browser attaches for you: cookies are scoped by host and NOT by port (RFC 6265 §8.5), so
-        every `http://127.0.0.1:<any-port>` page is same-site with the dashboard and rides this
-        cookie — SameSite=Strict included. Without the Origin check below, any page served by
-        anything else on loopback (an agent-cloned repo's dev server) reached `/ws`, which streams
-        every session and accepts sendMessage. Presenting a token proves you are not a drive-by page;
-        carrying a cookie proves only that the browser had one. Nothing in the shipped UI needs the
-        cookie cross-origin: the dashboard's own socket is same-origin, federation relays through the
-        hub's own origin WITH ?token, and the VS Code webview origin is allowed by _origin_ok."""
+    @staticmethod
+    def _need(p):
+        """The auth class of a route, read off the shared route table (_PAGE_RENDERERS / _static_route):
+        (class, file host). "page" and "static" are the two the session cookie opens on its own; "ws"
+        (a socket upgrade), "file" (/file and /remote/<host>/file, whose header-less loads carry a cap)
+        and "full" (everything else) each need the page key or the cap on top of the cookie. The file
+        host is the attached host a /remote/<host>/file URL names, "" for the local route."""
+        if p in _PAGE_RENDERERS:
+            return "page", ""
+        if _static_route(p):
+            return "static", ""
+        if p == "/ws" or (p.startswith("/remote/") and p.endswith("/ws")):
+            return "ws", ""
+        if p == "/file":
+            return "file", ""
+        if p.startswith("/remote/") and p.endswith("/file"):
+            return "file", unquote(p[len("/remote/"):-len("/file")])
+        return "full", ""
+
+    def _authorize(self, q):
+        """(ok, session_to_set, reason). An EXPLICITLY PRESENTED serve token (?token= or X-Romp-Token)
+        or a one-time ?c= code authorizes from any Origin, as before: it is the credential the CLI,
+        hooks, the extension host, the VS Code webview and kernel-to-kernel calls present, and a
+        cross-site page cannot forge it. The BROWSER's own credential is two parts. The session cookie
+        alone opens only the page and static classes (a page document, /dist, /media, /sw.js: code, no
+        session data). The full and socket classes additionally need the page key (the X-Romp-Key
+        header, or k= on a socket dial); the file class additionally needs a per-file cap. The cookie
+        still passes through the Origin gate (_origin_ok), which refuses a request that names a foreign
+        Origin. A request that names none passes it with the cookie, and a browser names none on a GET
+        navigation (a frame's included) or on a subresource load made without CORS (a script, an image),
+        whichever page made it: that is why the page and static classes carry code and no session data.
+        session_to_set is the session a login mints or keeps: a
+        GET navigation to a page authorized by ?token=, ?c=, or the old romp_token cookie (which held
+        the serve token itself, migrated once here); every other authorized response sets no cookie."""
+        need, fhost = self._need(urlparse(getattr(self, "path", "") or "").path)
+        cmd = getattr(self, "command", "GET")
+        if cmd == "HEAD":
+            if need != "file":
+                need = "full"                         # HEAD serves /file alone (the existence probe); nothing else
+        elif cmd != "GET":
+            need = "full"                             # only GET opens a shell, the socket or the file class; a POST/PUT is full
+        self._page_ok = False
+        self._reauth = False
+        self._trace_ok = False
+        login = migrate = False
         if TOKEN and _ct_eq((q.get("token") or [""])[0], TOKEN):
-            return True, TOKEN, ""                    # valid ?token → authorize (any origin) + set cookie
-        if _spend_handoff((q.get("c") or [""])[0]):
-            return True, TOKEN, ""                    # one-time handoff (the browser we opened) → cookie, once
-        if TOKEN and _ct_eq(self._cookie_token(), TOKEN) and self._origin_ok():
-            return True, None, ""                     # valid token cookie + same-site origin
-        if TOKEN and _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN):
-            return True, None, ""                     # header form — local CLI/hook/daemon clients
-        if not self._origin_ok():
-            return False, None, "cross-site origin"
-        return False, None, "token required (loopback included; token file: ~/.local/state/romp/serve-token)"
+            ok, login = True, True                    # valid ?token → authorize (any origin) + a page navigation seeds a session
+            self._trace_ok = True
+        elif _spend_handoff((q.get("c") or [""])[0]):
+            ok, login = True, True                    # one-time handoff (the browser we opened) → likewise, once
+            self._trace_ok = True
+        elif TOKEN and _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN):
+            ok = True                                 # header form: local CLI/hook/daemon clients; sets no cookie
+            self._trace_ok = True
+        else:
+            ok = False
+            if self._origin_ok():
+                sess = self._browser_session()
+                if sess:
+                    pk = self.headers.get("X-Romp-Key") or ((q.get("k") or [""])[0] if need == "ws" else "")
+                    key_ok = bool(pk and _ct_eq(pk, _page_key(sess)))
+                    ok = (need in ("page", "static")
+                          or key_ok
+                          or (need == "file" and _one_file_term_each(q) and _ct_eq((q.get("cap") or [""])[0], _file_cap(
+                              sess, fhost, (q.get("path") or [""])[0], (q.get("sid") or [""])[0]))))
+                    self._trace_ok = key_ok               # the page key opens every route, so a 500 may carry its traceback
+                    # A VALID session whose key/cap does not match: a DISTINCT refusal (X-Romp-Reauth via
+                    # _send) so the page-key script drops the stale key and hops to /login, rather than a
+                    # plain 403 the page cannot tell from any other denial (the concurrent-login case: the
+                    # cookie of one login with the stored key of another).
+                    self._reauth = not ok
+                elif need == "page" and TOKEN and _ct_eq(self._cookie("romp_token"), TOKEN):
+                    ok, login, migrate = True, True, True   # the old token cookie, once: this response migrates it (and clears it: _clears_legacy_cookie)
+        if not ok:
+            if not self._origin_ok():
+                return False, None, "cross-site origin"
+            if self._reauth:
+                return False, None, "session key required"
+            return False, None, "token required (loopback included; token file: ~/.local/state/romp/serve-token)"
+        self._reauth = False
+        self._page_ok = need == "page"
+        if login and need == "page" and self._is_navigation():
+            # a browser already signed in keeps its session; one migrating from the old cookie gets the
+            # migration session, the same id for every tab that migrates at once (_migration_session)
+            return True, self._browser_session() or (_migration_session() if migrate else _mint_session()), ""
+        return True, None, ""
 
     def _write_token_ok(self, q):
         """An EXPLICITLY PRESENTED serve token — ?token= or the X-Romp-Token header — and nothing
-        else. STRICTER than _authorize on purpose: it does NOT accept the ambient romp_token cookie,
-        because the cookie is the one credential the browser attaches for you, so a drive-by
-        loopback subresource GET (an <img>/<script>/no-cors fetch to this route) rides it with no
-        Origin, and _authorize takes that pair as authorized. A state-changing GET must require
-        proof the caller is not a drive-by page — the reason _authorize's own docstring gives for
-        preferring the token — and only an explicit token clears BOTH the cross-origin-fetch and the
-        cookie-carrying-subresource vectors (a custom header forces a CORS preflight no-cors cannot
-        send, and no subresource load can set it or guess ?token=). Local daemons (the manager) read
-        the 0600 token file and send X-Romp-Token — exactly this."""
+        else. STRICTER than _authorize on purpose: it accepts neither the session cookie nor the page
+        key, only the token itself. The state-changing GETs it gates (the drain arm, the park stamp) are
+        the manager's, and a custom header forces a CORS preflight while no subresource load can set it
+        or name ?token=, so only a caller holding the token reaches them. Local daemons (the manager)
+        read the 0600 token file and send X-Romp-Token, exactly this."""
         return bool(TOKEN) and (_ct_eq((q.get("token") or [""])[0], TOKEN)
                                 or _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN))
 
@@ -73359,6 +74246,9 @@ class Handler(BaseHTTPRequestHandler):
         first). Approve only what the auth gate itself allows — the actual request
         still runs the full _authorize on arrival; this grants delivery, not access."""
         q = parse_qs(urlparse(self.path).query)
+        # Nothing from an earlier request on this keep-alive connection reaches this response, with no reset
+        # here: handle_one_request clears the session cookie before every request, and _authorize, which runs
+        # before either response below, resets the page, re-sign-in and traceback flags itself.
         ok, _, _ = self._authorize(q)
         origin = self.headers.get("Origin")
         if not (ok and origin):
@@ -73379,7 +74269,9 @@ class Handler(BaseHTTPRequestHandler):
         # 501s every HEAD, which the client would read as "gone" and hide a live chip.
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        self._set_cookie = None
+        # No reset of the per-request flags here: handle_one_request clears the session cookie before every
+        # request, and _authorize runs before any response this method writes and resets the page,
+        # re-sign-in and traceback flags itself.
         # CORS delivery baseline: an allowed browser origin echoes on every response,
         # including the auth-EXEMPT routes (/healthz, /version) served before _authorize
         # runs; the _authorize call site then refines it (a valid token authorizes a
@@ -73410,13 +74302,23 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = u.path
         q = parse_qs(u.query)
-        self._set_cookie = None
+        # The routes served before the gate below never run _authorize, so these two resets are the clear of
+        # the re-sign-in marker and the traceback permission an earlier request on this keep-alive connection
+        # set. The session cookie needs none here (handle_one_request clears it before every request), and
+        # the page flag needs none: _authorize sets it on every gated request, and no route before the gate
+        # serves a document with a <head> for _send to put the page-key script in.
+        self._reauth = False
+        self._trace_ok = False
         # CORS delivery baseline: an allowed browser origin echoes on every response,
         # including the auth-EXEMPT routes (/healthz, /version) served before _authorize
         # runs; the _authorize call site then refines it (a valid token authorizes a
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         try:
+            if p == "/login":
+                # the sign-in page, served exempt so a browser holding no page key can reach it (the
+                # page-key script sends the top frame here when this origin's storage was cleared)
+                return self._send(200, _TOKEN_LOGIN_HTML, "text/html", cache="no-cache")
             if p == "/healthz":
                 # liveness probe — exempt from auth. X-Romp-Boot identifies THIS kernel process: the
                 # restart button reloads only when the id flips (a bare 200 can still be the old kernel
@@ -73437,9 +74339,9 @@ class Handler(BaseHTTPRequestHandler):
                 # new turn starts, refreshable forever — so it is GATED on an explicit token
                 # (_write_token_ok), unlike the exempt read. Before this gate it armed in the
                 # exempt block: a drive-by loopback page's no-cors GET or a tailnet client could
-                # loop it and freeze all turn starts (the _authorize docstring's drive-by-loopback
-                # adversary). An unauthorized drain still returns the count (the read stays exempt)
-                # but arms nothing; the manager reads the serve-token file and sends X-Romp-Token.
+                # loop it and freeze all turn starts. An unauthorized drain still returns the count
+                # (the read stays exempt) but arms nothing; the manager reads the serve-token file and
+                # sends X-Romp-Token.
                 be = _sdk()
                 n = be.busy_count() if be and hasattr(be, "busy_count") else 0
                 # the breakdown rides beside the total (T240): the manager defers on EITHER kind of
@@ -73919,31 +74821,13 @@ class Handler(BaseHTTPRequestHandler):
                                   "application/json", cache="no-cache")
             # HTML pages are served no-cache so a reload always gets the freshest markup — which carries
             # the latest ?v= bundle url, so even a cached old bundle is bypassed (stale-client fix).
-            if p in ("/", ""):
-                # combined chat + feed (both ported); the timeline pane joins this layout next.
+            # The PAGE class is dispatched off the shared route table (_PAGE_RENDERERS), the same table
+            # _need reads to class a request, so the router and the classifier can never disagree on
+            # which paths a session cookie opens on its own.
+            _page = _PAGE_RENDERERS.get(p)
+            if _page is not None:
                 _client_seen[0] = time.time()
-                return self._send(200, _landing(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/chat":
-                _client_seen[0] = time.time()
-                return self._send(200, _chat_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/feed":
-                _client_seen[0] = time.time()
-                return self._send(200, _feed_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/timeline":
-                _client_seen[0] = time.time()
-                return self._send(200, _timeline_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/fleet":
-                _client_seen[0] = time.time()
-                return self._send(200, _fleet_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/waiting":
-                _client_seen[0] = time.time()
-                return self._send(200, _waiting_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/files":
-                _client_seen[0] = time.time()
-                return self._send(200, _files_page(), "text/html; charset=utf-8", cache="no-cache")
-            if p == "/settings":
-                _client_seen[0] = time.time()
-                return self._send(200, _settings_page(), "text/html; charset=utf-8", cache="no-cache")
+                return self._send(200, _page(), "text/html; charset=utf-8", cache="no-cache")
             if p == "/sw.js":
                 # the push service worker (see _SW_JS). Behind the gate on purpose: the browser's
                 # register() fetch is same-origin and carries the cookie, and only an authed shell
@@ -74076,7 +74960,7 @@ class Handler(BaseHTTPRequestHandler):
                 # subscription and states where its page runs (its Referer — a same-origin GET carries no Origin)
                 _push_backfill_origin(_pep, _request_page_origin(self.headers))
                 return self._send(200, json.dumps(_push_pending(_pep)), "application/json", cache="no-cache")
-            if p.startswith("/dist/") or p.startswith("/media/"):
+            if p.startswith(_STATIC_PREFIXES):        # the STATIC class's bundle/asset trees (the same prefixes _need reads)
                 base = DIST if p.startswith("/dist/") else MEDIA
                 fp = (base / p.split("/", 2)[2]).resolve()
                 if base.resolve() not in fp.parents or not fp.is_file():
@@ -74100,8 +74984,15 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception:
+            tb = traceback.format_exc()
+            sys.stderr.write("do_GET %s: %s\n" % (p, tb))
+            # A traceback can name an internal path or state, so the 500 carries it only to a caller that
+            # presented the serve token or the page key (_authorize sets _trace_ok): the CLI, the extension,
+            # a signed-in page's own fetch. Every other caller gets a bare 500: a page or static request on
+            # the session cookie alone, a file load on its cap, and the routes served before the gate. The
+            # traceback goes to stderr either way.
             try:
-                self._send(500, traceback.format_exc(), "text/plain")
+                self._send(500, tb if getattr(self, "_trace_ok", False) else b"internal error", "text/plain")
             except Exception:
                 pass
 
@@ -74172,7 +75063,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        self._set_cookie = None
+        # The push ack below is served before the gate and never runs _authorize, so these two resets are the
+        # clear of the re-sign-in marker and the traceback permission an earlier request on this keep-alive
+        # connection set. The session cookie needs none here (handle_one_request clears it before every
+        # request), and the page flag needs none: _authorize sets it on every gated request (a POST is never
+        # the page class), and the ack's answers are plain text or JSON.
+        self._reauth = False
+        self._trace_ok = False
         # CORS delivery baseline: an allowed browser origin echoes on every response,
         # including the auth-EXEMPT routes (/healthz, /version) served before _authorize
         # runs; the _authorize call site then refines it (a valid token authorizes a
@@ -76158,8 +77055,10 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception:
-            try:
-                self._send(500, traceback.format_exc(), "text/plain")
+            tb = traceback.format_exc()
+            sys.stderr.write("do_POST %s: %s\n" % (u.path, tb))
+            try:                                      # the traceback only to a token or page-key caller, as do_GET's
+                self._send(500, tb if getattr(self, "_trace_ok", False) else b"internal error", "text/plain")
             except Exception:
                 pass
 
@@ -76423,10 +77322,23 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             _apih_resend(client)          # and the bottom bar's API cell, from the last frame (same reason)
-        elif msg and msg.get("type") == "setSessionFlag" and msg.get("id") and msg.get("flag"):
+        elif msg and msg.get("type") == "setSessionFlag" and msg.get("id") and "flag" in msg:
             # timeline lane gear → toggle a per-session view flag (e.g. hideFromFeed). Persisted +
             # re-broadcast so the feed drops/restores that session's cards immediately. The notify
             # bell is tri-state (an override on the master default) → its own setter.
+            # The name first, as POST /flag checks it: one of the lane toggles, by the predicate the route asks
+            # (_lane_flag_refusal has the why). Refused on the settingRefused frame like a bad value below, with
+            # `value` null, since no pane paints an unlisted flag; the log names the field's type, never the name.
+            # The arm keys on the flag key's PRESENCE, not its truthiness, so every name a frame carries, null, "",
+            # 0, false, [] and {} included, meets the predicate and draws the refusal a truthy unlisted name draws.
+            # A frame with NO flag key falls to the terminal arm's unknownOp (_note_unknown_op, the answer for a
+            # known op missing a field its arm requires), where POST /flag answers its 400 ("got null")
+            nerr = _lane_flag_refusal(msg["flag"])
+            if nerr:
+                _refuse_setting(client, nerr, "that setting", "flag", sid=msg["id"], flag=msg["flag"], value=None,
+                                log="refused %s: 'flag' is %s, not one of %s"
+                                    % (msg["type"], _json_type_name(msg["flag"]), ", ".join(_LANE_FLAGS)))
+                return
             value, ferr = _as_bool(msg.get("value"), "value")
             if ferr:
                 # the lane gear's own refusal frame (settingRefused, which the timeline page renders and
@@ -77042,8 +77954,10 @@ class Handler(BaseHTTPRequestHandler):
                     # missing, so the old check took it as a yes and created a session that could never
                     # run — silently, which is the whole failure (the user 2026-07-28).
                     if _sdk_ready():
-                        # auth ('login'|'key') is the picker's per-session billing pick; anything else
-                        # (older clients, no pick) means the remembered/ambient default (spawn's seed).
+                        # auth ('login'|'key'|'login:<id>') is the picker's per-session billing pick; anything else
+                        # (older clients, no pick) means the machine default: the explicit one, which spawn seeds,
+                        # else the helper rule the session follows (a remembered per-session pick seeds nothing
+                        # since 2026-09-18).
                         a = msg.get("auth")
                         # the picker's Tags row (prefilled from the active tab, editable) rides `tags`;
                         # `parent` is accepted for API symmetry with /new — applied before the first
@@ -77499,9 +78413,13 @@ class Handler(BaseHTTPRequestHandler):
         # Waiting on you pages — see _shim's `caps`); READY_GATE_CAP is the hold below. Announced on the URL
         # rather than in a first message because it has to be known before the first frame (the `ready`-time
         # frame is the delta stream's base) and it has to survive every reconnect without the bundle
-        # re-announcing. Anything that does not announce — the VS Code extension's pipes (its Outline pipe
-        # among them), federation's remote sockets, an older bundle — keeps receiving the full {type:"feed"}
-        # frame it always did.
+        # re-announcing. A client that announces nothing and dials no ?delta=1 keeps receiving the full {type:"feed"}
+        # frame it always did (a bundle before the cap; a relay dialed by a dashboard bundle before 2026-09-15; the
+        # VS Code extension before 2026-09-16); one that dials ?delta=1 without the cap is served the feed as
+        # view-delta slot patches instead (_send_slot): the VS Code extension's pipes (client=ext&delta=1 since
+        # 2026-09-16, its Outline pipe among them, reassembled by their own ViewDeltas) and a relay dialed by a
+        # dashboard bundle from 2026-09-15 to 2026-09-18. Federation's remote sockets announce it since 2026-09-18
+        # (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query whole, so it is read here like a page's).
         caps = (q.get("caps") or [""])[0]
         reconnect = (q.get("reconnect") or [""])[0] == "1"   # the shim's own statement: this page opened a socket before and its bundle has said ready, with no ready waiting in its queue
         skeleton = (q.get("skeleton") or [""])[0] == "1" and app == "chat"   # the shell's statement (the chat split, 2026-09-11): a later column, a VIEW of the one session its active hint names; a chat socket's alone (round two of PR 1661: the term is meaningless for a feed or a timeline client)
@@ -77665,8 +78583,9 @@ class Handler(BaseHTTPRequestHandler):
         viewed from anywhere else (the phone, through `tailscale serve`) reached its own loopback
         and every remote host's sessions silently vanished (the user 2026-07-30). Relaying under
         the kernel's own origin gives any client that can reach this kernel the whole fleet, with
-        no per-host setup. The kernel stays a dumb pipe: after do_GET's local auth gate the two
-        sockets are spliced byte-for-byte (no frame parsing), and the REMOTE kernel still enforces
+        no per-host setup. The kernel stays a dumb pipe past the handshake: after do_GET's local
+        auth gate, and after the remote's 101 head is read and rebuilt here (_ws_head_allowlist),
+        the two sockets are spliced byte for byte (no frame parsing), and the REMOTE kernel still enforces
         its own token — rewritten into the forwarded query here, so the browser only ever needs
         its local credential — keeping the per-host trust boundary unchanged."""
         with _remotes_lock:
@@ -77677,7 +78596,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.headers.get("Sec-WebSocket-Key"):
             return self._send(400, "expected websocket", "text/plain")
         q = parse_qs(query or "")
-        q.pop("token", None)         # whatever the browser sent never travels — with or without a row token
+        for _k in ("token", "c", "k", "cap"):
+            q.pop(_k, None)          # this kernel's browser credentials never travel to the peer, with or without a row token
         if rtok:
             q["token"] = [rtok]      # the remote's own credential; whatever the browser sent means nothing there
         q["relay"] = ["1"]           # the dial's kind, stated the way the shim states proto, reconnect and skeleton (2026-09-15): the remote
@@ -77704,15 +78624,23 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True             # hijacked socket — no keep-alive after the splice
         down = self.connection
         # The remote's answer decides whether this hub side is an accepted socket at all: its head (the status line and the
-        # headers, up to the blank line) is read here, forwarded byte for byte, and only a 101 files the hub's own wsopen row,
-        # kind hub, naming the host, so the auditor sees the browser's pane here AND its relay dial on the remote; a refusal
-        # (401, 404, a dead tunnel) files nothing, the splice going on as before (2026-09-15). Bytes past the blank line are
-        # the remote's first frames and ride along in the same send. The read is bounded; a remote that answers nothing in
-        # time gets the pumps below as before, and no row.
+        # headers, up to the blank line) is read here, within _WS_HEAD_MAX bytes and _WS_HEAD_TIMEOUT_S seconds. Only a 101
+        # head that _ws_head_allowlist can rebuild reaches the browser, and as that rebuild, never as the remote's bytes: the
+        # browser talks to THIS kernel's origin through the relay, so any header the peer sets beyond the WebSocket handshake
+        # (a Set-Cookie, a Clear-Site-Data, a cache directive) would act on this origin and is dropped. Bytes past the blank
+        # line are the remote's first frames and ride along in the same send. A 101 files the hub's own wsopen row, kind hub,
+        # naming the host, so the auditor sees the browser's pane here AND its relay dial on the remote (2026-09-15).
+        # Anything else (a refusal such as a 401 or a 404, a head with no blank line within the bounds, a remote that closes
+        # or stays silent, a head the rebuild refuses) is this kernel's own 502, with this kernel's headers: the remote's
+        # bytes never reach the browser, no row is filed and the pumps below never start.
         head = b""
+        deadline = time.monotonic() + _WS_HEAD_TIMEOUT_S
         try:
-            up.settimeout(15)
-            while b"\r\n\r\n" not in head and len(head) < 65536:
+            while b"\r\n\r\n" not in head and len(head) < _WS_HEAD_MAX:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                up.settimeout(left)
                 b = up.recv(65536)
                 if not b:
                     break
@@ -77721,14 +78649,31 @@ class Handler(BaseHTTPRequestHandler):
             pass
         finally:
             up.settimeout(None)
-        if head:
+        # this kernel's own clear of the legacy cookie, which end_headers adds to every other response
+        # (_clears_legacy_cookie): the rebuilt head is written here, not through end_headers, so the clear
+        # goes in as one of the lines this kernel writes
+        extra = ([b"Set-Cookie: " + _LEGACY_COOKIE_CLEAR.encode("ascii")] if self._clears_legacy_cookie() else [])
+        rebuilt = _ws_head_allowlist(head, extra)
+        if rebuilt is None:
             try:
-                down.sendall(head)
+                up.close()
             except OSError:
                 pass
-        if head.split(b"\r\n", 1)[0].startswith(b"HTTP/1.1 101"):
-            _note_ws_open({"app": (q.get("app") or ["chat"])[0], "wid": (q.get("wid") or [""])[0], "iid": (q.get("iid") or [""])[0],
-                           "cid": uuid.uuid4().hex[:12], "kind": "hub", "host": host}, reconnect=(q.get("reconnect") or [""])[0] == "1")
+            code, sep = re.match(rb"HTTP/1\.[01] (\d{3})(?: |\r\n)", head), head.find(b"\r\n\r\n")
+            if sep < 0 or sep + 4 > _WS_HEAD_MAX:
+                why = "%s sent no complete socket handshake within %d bytes and %g s" % (
+                    host, _WS_HEAD_MAX, _WS_HEAD_TIMEOUT_S)
+            elif code and code.group(1) != b"101":
+                why = "%s refused the socket (HTTP %s)" % (host, code.group(1).decode("ascii"))
+            else:
+                why = "%s answered the socket with a handshake this kernel does not relay" % host
+            return self._send(502, why, "text/plain")
+        try:
+            down.sendall(rebuilt)
+        except OSError:
+            pass
+        _note_ws_open({"app": (q.get("app") or ["chat"])[0], "wid": (q.get("wid") or [""])[0], "iid": (q.get("iid") or [""])[0],
+                       "cid": uuid.uuid4().hex[:12], "kind": "hub", "host": host}, reconnect=(q.get("reconnect") or [""])[0] == "1")
 
         def _quiet_shutdown(s):
             # shutdown only, never close: `down` still belongs to the base handler (its finish()
@@ -77920,9 +78865,8 @@ class Handler(BaseHTTPRequestHandler):
         the same table and the same 404 the local /file route applies — and the remote's own
         Content-Type header is discarded. Mirroring it let a compromised remote kernel answer
         `text/html` for a path the preview lightbox opens in a SAME-ORIGIN, unsandboxed iframe
-        (ui/webview/preview.ts), i.e. script on the dashboard's origin with the token cookie
-        attached. An attached host is trusted to serve its own files, not to choose how this
-        browser interprets them."""
+        (ui/webview/preview.ts), i.e. script running on the dashboard's own origin. An attached
+        host is trusted to serve its own files, not to choose how this browser interprets them."""
         with _remotes_lock:
             r = _remotes.get(host)
             port, rtok = (r or {}).get("local_port") or 0, (r or {}).get("token") or ""
@@ -77932,6 +78876,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, b"" if head else ("no attached host %r" % host), "text/plain",
                               headers={_FILE_404_REASON_HDR: "detached"})
         q = parse_qs(query or "")
+        _browser_cap = (q.get("cap") or [""])[0]      # kept before the strip: a 413 way-out page rebuilt here for
+        #   THIS browser links back to this relay's download half, which needs the browser's own cap again
+        for _k in ("token", "c", "k", "cap"):
+            q.pop(_k, None)          # this kernel's browser credentials are its own, never the peer's (the peer runs its own gate)
         if (q.get("download") or [""])[0] == "1":
             # The download half rides the same relay (the user 2026-08-09: anything on disk is
             # downloadable — see _file_download). No local extension gate: the gate below exists so the
@@ -77987,6 +78935,16 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             except OSError:
                 pass
+        if not all(_peer_header_value_ok(v) for v in (clen, lastmod, r_ns, r_u8, crange) if v):
+            # Each of these five is written into this response's headers as the remote gave it on one arm or more: the
+            # HEAD arm writes Content-Length, Last-Modified and X-Romp-Mtime-Ns, a GET's 206 arm writes Content-Range,
+            # and a GET's 200 arm writes Last-Modified, X-Romp-Mtime-Ns and X-Romp-Text-Utf8. The check runs ahead of
+            # every arm, so a value that carries a line break or another control character refuses the reply, on an
+            # arm that would not have written it too, rather than writing the remote's bytes as a header of this
+            # kernel's own. The 404's cause needs no check: it is mirrored only when it equals one of this kernel's
+            # own words (_FILE_404_REASONS).
+            return self._send(502, b"" if head else ("%s answered with a header value this kernel does not relay" % host),
+                              "text/plain")
         if len(body) > _MEDIA_MAX_BYTES:       # backstop only — the remote's own cap 413s long before this
             return self._send(413, b"" if head else "too large to preview", "text/plain")
         if status not in (200, 206):
@@ -78004,8 +78962,13 @@ class Handler(BaseHTTPRequestHandler):
             if head:
                 return self._send(status, b"", "text/plain", headers=why)
             if status == 413 and mime == "application/pdf" and self._is_navigation():
+                # q had the browser's cap stripped (it never travels to the peer); restore it here so the
+                # way-out page's download link back to this relay carries the cap the browser must present
+                _pq = dict(q)
+                if _browser_cap:
+                    _pq["cap"] = [_browser_cap]
                 return self._send(413, _too_large_page(_decode_text(body) or "too large to show",
-                                                       os.path.basename(rp), q,
+                                                       os.path.basename(rp), _pq,
                                                        route="/remote/%s/file" % quote(host, safe="")),
                                   "text/html; charset=utf-8", cache="no-cache")
             return self._send(status, body, "text/plain", cache="no-cache", headers=why)
@@ -78087,6 +79050,11 @@ class Handler(BaseHTTPRequestHandler):
                     body = b"" if head else resp.read(_TEXT_MAX_BYTES)
                     return self._send(resp.status, body, "text/plain", cache="no-cache")
                 clen = resp.getheader("Content-Length")
+                if clen is not None and not _peer_header_value_ok(clen):
+                    # passed through below as the remote gave it: a line break or another control character in
+                    # it refuses the reply, like the preview arm's mirrored values (_remote_file)
+                    return self._send(502, b"" if head else ("%s answered with a header value this kernel does not relay"
+                                                             % host), "text/plain")
             except (OSError, http.client.HTTPException):
                 _demand_redial(host, "timeout")
                 return self._send(502, b"" if head else ("tunnel to %s is not answering — re-dialing now" % host),
@@ -78618,11 +79586,11 @@ def main():
     url = "http://127.0.0.1:%d" % PORT
     sys.stderr.write("romp-kernel: serving the ported UI at %s  (Ctrl-C to stop)\n" % url)
     sys.stderr.write("romp-kernel: records under %s ; bundles from %s\n" % (jd.STATE, DIST))
-    sys.stderr.write("romp-kernel: every request needs the serve token (loopback included) — "
-                     "browser entry: `romp`\n")
+    sys.stderr.write("romp-kernel: every request needs the serve token or a browser sign-in made with it "
+                     "(loopback included); browser entry: `romp`\n")
     if BIND != "127.0.0.1":
         # reachable off-box (tailnet/phone): the Origin gate blocks cross-site browsers token-free,
-        # and the token is required everywhere. Open from the phone:
+        # and the token, or a browser sign-in made with it, is required everywhere. Open from the phone:
         sys.stderr.write("romp-kernel: bound %s — open from the phone:\n"
                          "  http://<this-host>:%d/?token=%s\n" % (BIND, PORT, TOKEN))
     if not os.environ.get("ROMP_KERNEL_NO_OPEN"):

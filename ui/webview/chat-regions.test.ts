@@ -2,7 +2,7 @@
 // estimated height, the page a gap asks for at either edge, the anchor's place inside a gap, the one notice's words, the cancel.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_TURN_PX, gapAt, gapFraction, gapHeight, insertRun, landingCancel, landingNotice, pagesToAsk, regionsFromRuns, runsOf, turnsBeforeTail, type Region, type Run } from "./chat-regions";
+import { DEFAULT_TURN_PX, MAX_TURN_PX, gapAt, gapFraction, gapHeight, insertRun, landingCancel, landingNotice, pagesToAsk, regionsFromRuns, runsOf, turnsBeforeTail, type Region, type Run } from "./chat-regions";
 
 const ev = (k: string) => ({ uuid: k });
 const run = (lo: number, hi: number | null, keys: string[]): Run => ({ kind: "run", lo, hi, events: keys.map(ev) });
@@ -57,6 +57,10 @@ test("a gap's height is its turns times the measured row, the default row until 
   assert.equal(gapHeight({ lo: 0, hi: 96 }, null), 96 * DEFAULT_TURN_PX);
   assert.equal(gapHeight({ lo: 128, hi: 200 }, 42.5), Math.round(72 * 42.5));
   assert.equal(gapHeight({ lo: 10, hi: 10 }, 42.5), 43, "an empty span still shows a row's worth of space");
+  // the per-turn figure is capped under every reader (PR E): a backstop at twenty default turns, not the estimate (turn-estimate.ts)
+  assert.equal(MAX_TURN_PX, 20 * DEFAULT_TURN_PX);
+  assert.equal(gapHeight({ lo: 0, hi: 200 }, 7150), 200 * MAX_TURN_PX, "the old estimator's phone figure (1.43M px) is held at the cap");
+  assert.equal(gapHeight({ lo: 0, hi: 200 }, MAX_TURN_PX), 200 * MAX_TURN_PX, "the cap itself passes");
 });
 
 test("the page a gap asks for: scrolling up meets the bottom edge (the last aligned page, clipped to the gap); scrolling down the top edge", () => {

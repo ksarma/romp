@@ -149,6 +149,9 @@ merged on 2026-09-07; fork main, which carries the plan and fork PR #347, was me
    file document's links are dressed by `linkMarkdownAnchors`, a walk over `a`, which an area is not. `LINK_SEL` (item
    8) keeps naming `area[href]` as a second guard. For Slice 4's gate, not fixed here: `<svg><image href>`, `<video
    poster>`, `<img srcset>` and `<source srcset>` also fetch on open and sit outside `img[src]`.
+   The gate itself ran after the sanitized nodes were adopted into the live document until 2026-09-20, and WebKit fetches
+   an img on that adoption, so its placeholder stood over a request already made; the hole, the fix and its measurement are
+   in "Fix: the gate before adoption (2026-09-20)", the section after "Out of scope".
 4. *Decision 6's grammar.* An `uponSanitizeAttribute` hook, installed once behind a module guard, keeps in a `style`
    attribute only `color` and `background-color` declarations whose value is a literal colour: a bare word of letters
    (a named colour, `transparent`, `currentcolor`, or a CSS-wide keyword such as `inherit`, `unset` or `initial`,
@@ -1836,6 +1839,9 @@ as built departs from the text above, why, and which test holds each rule:
    and gear-figure-hosts.test.ts holds them equal to settings.ts's. figure-gate.test.ts covers the pure parts (the
    srcset parse, remoteHost, the allowed set, the normaliser); settings.test.ts and md-config-figure-hosts.test.ts the
    field and its reading; docs/reference.md and the guide's Figures paragraph describe it.
+   Since 2026-09-20 the chain runs on the sanitizer's own body, before the adoption into the live document: a chain after
+   the adoption fetched a gated figure in WebKit while the placeholder stood ("Fix: the gate before adoption (2026-09-20)",
+   the section after "Out of scope", records the hole, the fix, the instrument and the tests).
 10. *Not built here.* Obsidian's `%%comment%%` and `#tag` (the text names them for awareness only) stay literal.
    Slice 5's other items (refusal reasons for the remaining token names) are untouched; its goTo into a closed
    details is delivered here (item 5, the panel's revealMarks), since this slice is what makes a closed fold
@@ -3399,7 +3405,11 @@ re-verifies. Where the code as built departs from the text above, why, and which
    record of the OFFER's ends read as the person's and re-showed a hidden float beside a passage nobody selected; read
    after each paint, the record also holds no node of a swapped-out render, where it used to keep the offer's nodes,
    and the render behind them, until the next offer; the guard compares the four ends first and reads the text once,
-   for ends that match, handing it to onSelection; the review's round 1); a collapsed selection, or one with an end
+   for ends that match, handing it to onSelection; the review's round 1; history since 2026-09-20, the paint-gap fix of
+   upstream/2026-09-20-paint-gap-reoffer.md: a pass reads the selection at its head, before its writes, against the
+   selection the last delivered selectionchange found and the one the previous pass left, and a change of the person's
+   whose event is still to come leaves the record dropped and the float to that event, the mechanics in the offeredFor,
+   lastDelivered, passLeft, pendingChange and afterPaint docblocks of ui/webview/file-comments.ts); a collapsed selection, or one with an end
    outside the body (Ctrl+A puts one at the page's start; a selection in the aside), HIDES a passage's float
    (`passageGone`, the listener's rule), one point beyond what was first designed, which had the outside-body case do
    nothing (the passage the float was offered for is no longer the selection; a picture's float stands), and since the
@@ -7724,3 +7734,378 @@ test family re-verifies. Where the code as built departs from the text above, wh
 Text size, fluid width, table reflow, whole-word cells (fork PR #348); path and http links in files,
 the `:line` suffix (fork PR #347); the PDF viewer; emoji shortcodes; another parser; editing the rendered
 view in place; the two audit items its refuters overturned.
+
+## Fix: the gate before adoption (2026-09-20)
+
+Until this fix the viewer's figure gate did not hold: WebKit requested an HTML img on an unlisted host while the gate's
+placeholder stood, and WebKit and Firefox requested an inline svg's image. The review of the link-navigation follow-on
+found the img hole on main (fork PR 862, round 1, finding extra8-3; two refuters confirmed it with real servers); the
+review of this fix found the svg vectors at the base (round 1, a finder and three refuters, each with its own servers).
+The fix is its own branch, a fix-tier PR and a privacy surface, so it lands on the owner's word.
+
+**The hole.** Under WebKit a figure on an unlisted host was requested while the gate's placeholder, "Image from <host>.
+Click to load.", stood, so the placeholder was a false assurance. `mdBlock` (file-view.ts) adopted the sanitized nodes
+into its live-document box first (`box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes))`)
+and ran the figure chain after: resolveFigureRefs for a URL document, rewriteFigureSrcs for a file, gateRemoteFigures
+for both. WebKit starts an img's fetch synchronously when the element's node document becomes one with a render tree;
+the adoption is enough, a place in the tree is not needed. A figure of the file's own folder was requested against the
+page, as the attribute read before rewriteFigureSrcs repointed it, and then again through /file. In Chromium and Firefox
+the servers' logs held no line for either of those img figures before the chain ran, so for an HTML img only WebKit
+leaked; the engines' scheduling of the fetch was not instrumented, the logs were read. For an inline svg's `<image>` the
+gate held in Chromium alone. Firefox requested a gated svg image, spelt `href` or `xlink:href`, while its placeholder
+stood when the chain's work between the adoption and the gate's strip of that element was long: over the second leg's
+note (3000 paragraphs with a link each, then the two svg images) both figures in 3 of 3 runs at the base, over 400 plain
+paragraphs in 1 of 3; the run counts per note are under "Run counts, the svg vectors" below. WebKit requested the
+`xlink:href` spelling in every run and the `href` spelling in none.
+
+**The fix.** `sanitizeMd` (md-sanitize.ts) returns the body of DOMPurify's own parse document (RETURN_DOM; DOMPurify
+parses the markup with DOMParser, or into `implementation.createDocument` when that fails), a document with no browsing
+context, whose `defaultView` is null, in which nothing loads. The whole figure chain now runs over that body and the
+adoption comes after: `const clean = sanitizeMd(dirty, mintHeadingIds)`, then resolveFigureRefs, rewriteFigureSrcs and
+gateRemoteFigures over `clean`, then `box.replaceChildren(...Array.from(clean.childNodes))`. The rule: every pass of
+mdBlock that sets, repoints, moves or creates a fetching element runs before the adoption. Every pass that writes a
+fetching attribute is in that chain, the fold of an svg image's `xlink:href` into `href` (rewriteFigureSrcs for a file,
+resolveFigureRefs for a URL document) and the gate's move of either spelling aside (figure-gate.ts) included; the fence
+pass, the one pass that re-parses markup (code-block.ts wrapCodeLines serializes each code element through innerHTML and
+parses it back), runs on `clean` before the chain since the fork PR's round-2 push (the branch's fourth round,
+2026-09-20), so the chain judges the elements the re-parse creates (the fence hole, below). The URL document's link
+resolution, which sat between resolveFigureRefs and the gate, stays after the adoption; no pass after the adoption sets,
+repoints or moves a fetching attribute, and none re-parses markup. The rule's domain is mdBlock. The hooks renderBody
+runs after mdBlock returns (folds.restore and restoreHeldFolds, stampBodyWidth, syncOutline, the onRendered hooks, among
+them the Comments panel's regions layer, which wraps each of the box's imgs in a `span.fc-imgwrap` while the panel is
+open (file-comments-regions.ts), and armFigureLabels, which puts a label beside a figure that failed to load, and the
+text-size stamp `data-fv-text`) wrap, move or label elements the chain has already judged, inside the live document, and
+set no fetching attribute. A move is one of an img's relevant mutations in the HTML specification (its insertion and
+moving steps re-run the update of the image data), and what that update reads is the element's own `src` and `srcset`: a
+gated element carries neither (its source is under `data-fv-gated-*`), and an ungated one carries what the chain left
+it, an allowed host's URL or the /file route, so a move after mdBlock can request only what the chain allowed. Those
+hooks are judged by read of the code, in the fork PR review's pre-answer record (its section 1, "Same paint after
+mdBlock returns"), not by a measurement. The chat's `md()` path stays ungated by the recorded ruling; the same order
+applies to any sanitizeMd caller that adopts nodes.
+
+**The instrument.** The claim is about bytes leaving, so the test reads real servers' request logs, never page.route
+or context.route, which answer a request inside the browser and can report one the network never carried or miss one
+the engine issued before the route saw it. file-view-figures-gate-adopt-browser.test.ts runs three servers on
+127.0.0.1: a figure server for `remote.test`; a harness server for `romp.test` that serves the pane page, the Files
+bundle, the notes and a folder figure through /file, with the kernel's Referrer-Policy header on every response; and
+an HTTP forward proxy that logs every request the browser hands it and forwards by hostname. Each engine is launched
+with that proxy, so the browser fetches under the unlisted name without DNS and every request is logged twice, by the
+proxy and by the server it reaches; after each open a drain makes one sentinel round trip through the proxy and waits
+250 ms. Its three scenes: a note with a figure on the unlisted host; a note with a figure of its own folder; a
+document opened from its URL, at /notes/note.md on the harness, with a figure of its own folder, one on the unlisted
+host and a protocol-relative `<img src="//remote.test/proto.png">`. The second leg,
+file-view-figures-gate-adopt-svg-browser.test.ts, is the same instrument with one figure server answering for two
+unlisted hosts, `remote.test` and `other.test`, and one scene: the 3000-paragraph note with an svg image spelt `href`
+on the first host and one spelt `xlink:href` on the second, clicked one at a time.
+
+**Measured.** In Playwright's Chromium, Firefox and WebKit, at the base 2d41e5c9b and after the fix. At the base,
+WebKit: the figure server logged `GET /fig.png` under Host `remote.test` while the placeholder stood, and the harness
+logged a page-relative `GET /fig.png` for the folder figure beside the request through /file; for the URL document the
+figure server logged `GET /fig.png` and `GET /proto.png` under Host `remote.test` while both placeholders stood, and the
+harness a page-relative `GET /rel.png` before `GET /notes/rel.png`; Chromium and Firefox: no such line in any of the
+three scenes. The second leg, copied to the base: Firefox, both svg figures requested while their placeholders stood;
+WebKit, the `xlink:href` figure requested, the `href` one not; Chromium, no line for either. After the fix, in all three
+engines: no line for a gated figure until its click, which makes exactly one request, `GET /fig.png` under Host
+`remote.test` with no Referer; for the svg figures, `GET /drawing-href.png` under Host `remote.test` and
+`GET /drawing-xlink.png` under Host `other.test`, one per click, the other figure unrequested between the clicks. The
+folder figure is requested once, through /file, and never as `/fig.png`; the URL document's folder figure once, as
+`/notes/rel.png`, and never as `/rel.png`. The premise, executed over the real sanitizeMd in each engine: its body's
+ownerDocument is another document with `defaultView` null and an img in it fetches nothing, where an img of the live
+document with a src and no place in the tree fetches in every engine, the control that the instrument sees a fetch the
+page does make.
+
+**Run counts, the svg vectors.** Every count is at the base 2d41e5c9b, 2026-09-20, a request counted only while the
+placeholder stood, read from real servers' logs through a logging proxy; the numbers are the review's records, brought
+together here (the round-1 fixer's runs for the leg and its sizing variants, the round-1 finder's and the three
+refuters' for the rest), and this paragraph is the one place they are stated, the other records pointing here. The
+second leg, in its three runs: Firefox both figures 3 of 3, WebKit the `xlink:href` figure 3 of 3 and the `href` one 0
+of 3, Chromium 0 of 3; a sizing variant of the same note, Firefox alone: the `href` figure 3 of 3. The leg over shorter
+notes, Firefox alone unless said: 400 plain paragraphs 1 of 3 (the `xlink:href` figure; WebKit 3 of 3 `xlink:href` and
+Chromium 0 of 3 in those runs), 2000 plain 1 of 3 (the `href` figure), 400 with a link, code and emphasis each 1 of 3
+(the `xlink:href` figure), 400 plain with forty gated svg figures on a third host before the two 0 of 3. The review's
+finder and three refuters (two reviewing the PR body draft, one reviewing file-view.ts), each with its own servers and
+proxy, Firefox: one svg image spelt `href` followed by 300 gated img figures 4 of 5; the same image alone 0 of 6 and 0
+of 4; beside one img figure 0 of 5, 0 of 5 and 0 of 6; the same image followed by 50 gated img figures 0 of 4; the
+`xlink:href` image alone 0 of 4 and beside one img figure 0 of 4; in a note of about two dozen figure vectors 3 of 3
+(the finder); in a five-figure note (an img, the svg image in both spellings, a folder svg image and a folder img) the
+`href` image 1 of 7 and the `xlink:href` image 2 of 7 (a refuter); the last of two or three svg images in a short note
+2 of 3, 3 of 5 and 1 of 5. WebKit, the refuters: `xlink:href` 4 of 4, 4 of 4 and 3 of 3; `href` 0 of 4, 0 of 4, 0 of 3
+and 0 of 3. Chromium: no svg figure requested in any run by any instrument. After the fix, no request in any engine in
+any run: the leg once per engine at the fix and once per engine in each later run of it (the review's sweep and the
+head runs); the refuters 18 of 18, then 4, 4 and 2 runs, then 3 per engine.
+
+**The fence hole.** Found by the fork PR's review and closed in its round-2 push (the branch's fourth round,
+2026-09-20), on main and open at this fix as filed: mdBlock's fence pass ran after the adoption, over the live box,
+and re-parsed every `pre code` subtree (code-block.ts wrapCodeLines, `code.innerHTML =
+wrapLinesHtml(code.innerHTML)`), whose line splitter carries only `<span>` tags across a newline. An author's raw
+multi-line fence in a plain (unnamed) code block, `<pre><code><svg>` / `<image src="http://<unlisted host>/x.png"/>` /
+`</svg></code></pre>`, survives the sanitizer (`image` is in DOMPurify's svg tag list; `src` and `srcset` are in its
+attribute list), and the chain never judges `src` or `srcset` on an svg image (figure-gate.ts FETCH_ATTRS.image is
+`href` and `xlink:href`), so at the adoption nothing loaded; the re-parse then closed the `<svg>` at the line's end
+and parsed the `<image>` in body, where the HTML parser makes it an HTML `<img>`, and its `src` or `srcset` fetched
+from the unlisted host with no click. Measured 2026-09-20 with the fence pass after the adoption, over three such
+fences (an image with `src`; a gated svg's image with `src` beside its `href`; an image with `srcset`), in
+Playwright's Chromium, Firefox and WebKit: the figure server logged `GET /a-src.png`, `GET /b-src.png` and `GET
+/c-set.png` under Host `remote.test` in every engine, by the review's probe first and then by the fourth scene of
+file-view-figures-gate-adopt-browser.test.ts copied into a scratch copy of that head. Controls, clean: the same svg
+outside a fence, on one line inside a fence, and a `<template><img>` (the review's probe, Chromium), and in a
+`language-js` fence, which hljs escapes to text (the scene's control, all three engines). A side effect of the same
+order: the line splitter counted the gate's own `<span class="fv-gate">` as an open span and repeated it as every
+following line's prefix, so one gated svg image yielded three placeholders. Closed by the move: the fence pass runs on
+`clean` directly after the sanitize and before the chain, so the chain judges the img the re-parse created and gates
+it like any other; the same scene at the moved head, in all three engines: no line for the unlisted host, each of the
+three fences holding one HTML img under exactly one placeholder with its `src` or `srcset` under `data-fv-gated-*` and
+no svg image left, the control holding no img, and one click on a placeholder loading the host, one request per img,
+no Referer. The three-placeholder effect is closed by the same move (one placeholder per fence in the scene's
+assertion). The same move corrected a second product of the re-parse, measured 2026-09-20 in Playwright's three
+engines by the fork PR review's verification (a note with an svg anchor on one line inside such a fence and one split
+across lines, at the moved head and at a copy with the fence pass moved back after the adoption): an svg anchor split
+across lines is re-parsed in body as an HTML `a` whose `xlink:href` is a plain attribute with no namespace. Under the
+old order that anchor was followable (a section link, fv-frag) for exactly the reason the image leaked: the re-parse
+ran after the passes, so its product carried what they had stamped on the element they judged (the post-adoption
+fold's `href="#top"` and the link pass's class, copied into the HTML `a` the re-parse made) and escaped their
+judgment, as the img it made carried a `src` the chain never read. With the re-parse before the passes, they judge its
+product: the img is gated, and the split anchor, an HTML `a` with no `href` that still carries the plain `xlink:href`
+(the fold's `a[*|href]` is a namespaced match and does not select it, so no `href` is written on it), is marked dead
+(fv-dead, the title saying why) by linkMarkdownAnchors (file-view-links.ts) whether or not the author gave it an `id`
+or a `name`. The mark is keyed on that attribute (the fork PR review's round 2, findings correctness-2, extra7-1 and
+tests-4, 2026-09-20): the module exempts an href-less anchor target (an author's `name` or `id`, never a link) from
+the dead dressing, and the split anchor with an author's id sat in that exemption, unclassed and untitled, painted in
+the link ink by the sheet's bare `.fileview-md a` rule and doing nothing on a click, a silent dead link in all three
+engines where this record had said a visible one; the exemption for a target carrying no `xlink:href` is unchanged,
+since narrowing it generally would re-mark every author-written anchor target in every document. The key is the
+attribute and not the fence, so one more anchor population is marked with it: an author's HTML `a` spelled with
+`xlink:href` in the prose, which the sanitizer keeps with that attribute as a plain one and no `href`, never followed
+and read as live in the same way, and is dressed dead too (the fork PR review's pre-landing verification measured it
+in the three engines, and the two pins below hold it). Pinned in file-view-links.test.ts (the split anchor with an id,
+with a name and with neither marked, the prose anchor spelled with `xlink:href` marked, the exempt target unmarked)
+and in the sixth case of file-view-figures-gate-adopt-browser.test.ts (the id-bearing and the bare split anchor and
+the prose anchor spelled with `xlink:href` fv-dead with the title and the sheet's help cursor, the prose's anchor
+target unmarked, in the three engines; red for the id-bearing one at the head before the mark, no class and no title,
+green with it). Closing the leak and making that anchor inert are one effect, a correction and not a cost: a link
+inside a code fence stopped being live and says so, which is what every other link inside a fenced code block already
+does, since the fence shows its markup as text. Behaviour, not privacy: an HTML `a` with no `href` follows and fetches
+nothing. An svg anchor on one line keeps its namespace and folds as before, and an HTML anchor written as raw markup
+in such a `<pre><code>` block is an element the passes read, not text, and is stamped the same under both orders (the
+same probe: a path link, live at both heads). Predating this fix and outside it: an anchor whose `href` the sanitizer
+stripped and that carries an author's `id` with no residue of the link stays exempt and silent, and the sheet's bare
+`a` rule painting every href-less anchor in the link ink is general and untouched here.
+
+**The re-parse population.** The rule needs every write that re-parses or re-serializes markup after the adoption
+enumerated, a different grep from the walk of attribute writes. The verbs are the HTML-parsing entry points an element
+or a document offers (innerHTML and outerHTML writes, insertAdjacentHTML, createContextualFragment, DOMParser,
+document.write; setHTMLUnsafe and parseHTMLUnsafe, which the installed DOM typings, lib.dom.d.ts, carry; setHTML, the
+Sanitizer API's, which they do not yet), insertAdjacentElement, and a template element, whose content is parsed markup.
+Derived 2026-09-20 at the moved head over comment-stripped code by `grep -nE
+'innerHTML\s*[+]?=|outerHTML\s*=|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|\bel\(\s*[^)]*template'`
+over mdBlock's region after the adoption line and over every module a pass in that region reaches (the identifiers
+called there, `keepVideoShape`, `linkHref`, `resolveDocRelative`, `linkMarkdownAnchors` and `linkifyFileText`, resolved
+through file-view.ts's imports to md-links.ts and file-view-links.ts, then each module's `./` imports transitively:
+file-view-links.ts, link-opener.ts, math.ts, md-block-start.ts, md-config.ts, md-links.ts, md-sanitize.ts,
+path-links.ts, url-links.ts): no site. The first spelling of that command lacked setHTML, setHTMLUnsafe and
+parseHTMLUnsafe and matched the double-quoted createElement alone; the fork PR review's verification named the gap, and
+no code line of any ui/webview module matches those three verbs (the same pattern over every comment-stripped module,
+2026-09-20), so the widening is durability. The two sites the grep finds on the road at all are now before the adoption:
+mdBlock's `codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value` (escaped text; hljs creates spans and
+nothing that fetches) and code-block.ts's `code.innerHTML = wrapLinesHtml(code.innerHTML)` (wrapCodeLines, the fence
+pass's re-parse), both inside the fence pass over `clean`. The passes after the adoption write a video's style, a list
+item's class, anchors' attributes (class, title, data-*, target, rel, tabindex, role, an href set, resolved or removed)
+and new anchors and spans in place of the prose's and the code blocks' text nodes (`tn.replaceWith(frag)` over text
+nodes and elements created by `document.createElement`, path-links.ts and url-links.ts), and none re-parses. The same
+grep over the whole of file-view.ts finds twelve sites: eleven outside mdBlock, all the viewer's own constant markup
+(the tray's icon constants, the loading glyph, codeBlock's numbered rows over escaped or hljs text), and the twelfth the
+highlight's write inside the fence pass, judged above; reader-place.ts's two DOMParser reads parse the note's source
+into a document of their own that is read, never adopted. file-view-seam.test.ts derives the callee list (every bare
+call in the region, with no method call on an imported binding and no namespace or default import from `./` in
+file-view.ts or a reached module, so a pass in either form is red there rather than hidden from the list), the module
+set, the two judged sites and the whole file's count of twelve from the code and pins them (its test "no re-parse after
+the adoption"), so a new such site anywhere in file-view.ts, or a new callee or import, is red there until it is judged.
+
+**The namespace table.** One probe in the three engines, 2026-09-20 (the real sanitizeMd and wrapLinesHtml from the
+bundle, a live-document div's innerHTML set to the split, the figure server's log read after three sentinel round
+trips): for each of 108 probe rows, 107 distinct tags (DOMPurify's 47 svg tags, its 25 filter primitives, its 22
+disallowed svg tags, `foreignobject` among them, and img, video, audio, source, track, iframe, embed, object, input,
+link, base, meta and picture written inside an svg, plus `foreignObject` once more under its camel-case spelling, the
+one duplicate), the element on its own line inside `<svg>` with `href`, `xlink:href`, `src`, `srcset`, `poster`, `data`,
+`action`, `background`, `fill="url(...)"`, `ping`, `formaction`, `longdesc`, `cite` and `usemap`, each naming its own
+URL on the unlisted host. The probe printed 46 kept and 62 dropped: its kept filter left out svg elements, so it flagged
+the nested `svg` row dropped while Chromium's log held that row's fill fetch, and it counted `foreignObject` twice; the
+counts below are corrected from its rows (the fork PR review's verification re-derived them, 2026-09-20).
+
+| kept inside an svg by the sanitizer (47 of the 107) | after the re-parse in body | fetched, with no chain | the chain judges it |
+|---|---|---|---|
+| `image` | an HTML `img` (the parser's one tag rename) | its `srcset` (chosen over `src` when both stand): Chromium, Firefox, WebKit | `img`: `src`, `srcset` (FETCH_ATTRS) |
+| `svg` (nested) | an svg element | its paint references: the probe carried `fill="url(...)"` alone, which Chromium fetched and Firefox and WebKit did not; with all eight PAINT_ATTRS on the element (the fork PR review's verification, 2026-09-20) Chromium fetched all eight and Firefox and WebKit fetched `mask` alone | paintRefs (fill, stroke, filter, clip-path, mask, marker-start, marker-mid, marker-end) |
+| `img` (HTML already: the parser breaks it out of an svg on the first parse) | an HTML `img` | its `srcset`: all three | `img`: `src`, `srcset` |
+| `a`, `font`, `title` | the HTML element of that name | nothing, in any engine | not a fetching element |
+| the other 41 of the svg list (`altglyph` to `vkern`) | an HTML element of that name (HTMLUnknownElement) | nothing, in any engine | not a fetching element |
+| dropped by the sanitizer inside an svg (60 of the 107): `style` (forbidden), the 25 filter primitives (`feImage` among them), the 22 disallowed (`use`, `foreignObject`, `script` among them), and video, audio, source, track, iframe, embed, object, input, link, base, meta and picture written inside an svg (DOMPurify's namespace check) | never reach the re-parse | | |
+
+The class is closed by construction by the move, not by the one instance found: every element the re-parse creates
+is judged by the chain over `clean`, because the re-parse runs before it and the created elements are the sanitizer's
+own allowed tags under the HTML parser, whose one rename is `image` to `img`; the chain's FETCH_ATTRS covers the two
+attributes the created img fetches through (`src`, `srcset`) and paintRefs the paint attributes of a re-created svg,
+and no other element the sanitizer keeps inside an svg fetched through any of the fourteen attributes in any engine.
+An HTML fetcher written inside an svg never reaches the re-parse (dropped), and one written outside an svg is HTML on
+the first parse, kept by the html profile and judged by the chain (img, source, video, audio, track are FETCH_ATTRS;
+iframe, embed, object, link, base, meta are not in the profile; input is removed but the disabled checkbox).
+
+**The Copy button after the move.** The fence pass creates each fence's Copy button in the live document
+(code-block.ts addCopyBtn, `document.createElement`), appends it into the sanitizer's `<pre>`, which adopts it into the
+inert document, and the adoption moves it back with the fence; the DOM keeps a node's listeners across an adoption, and
+the Copy case of file-view-figures-gate-adopt-browser.test.ts checks it by a real click (page.click on each of two
+fences' buttons) in Chromium, Firefox and WebKit: the handler handed the clipboard write the fence's text and the
+label read Copied with the `copied` class, then Copy again after the window, 3 of 3 engines, 2026-09-20. The page is
+plain http through the proxy, so `navigator.clipboard` is absent there and a recorder stands in for the write, as
+file-view-copy-source-browser.test.ts does; the click and the listeners are the engine's own.
+
+**The guards after the review's first round.** The fork PR's review ruled its first round on 2026-09-20 (six defects,
+all in the instruments, none in the fix), and this push answers them. The CI-run guard for the contract is keyed on
+the outcome at the boundary and on no list of passes, calls or names: file-view-figures-gate-adopt.test.ts reads the
+Rendered box's end state through figure-gate's own gateRefs and unlistedHosts, against the set the gate itself reads
+(allowedFigureHosts, pinned equal to the scene's own), in two tests standing on their own and again at the end of each
+kind's test, a red naming each leaking element by tag, attribute, value and host (the round-2 review's guards-2: three
+plants named the host alone), so an element any pass wrote, moved or created under the box with a fetching attribute
+on an unlisted host is red there whatever the pass is called (the three-name denylist over `box` in
+file-view-seam.test.ts stays as a second layer). The guard is keyed on figure-gate's own tag table (FIGURE_SEL: img,
+source, video, audio, track, image and feImage, with the attributes the gate reads per tag; the scene's FETCHING table
+names the same seven tags, pinned equal to FIGURE_SEL, and its attributes per tag are the scene's own copy of the
+gate's FETCH_ATTRS, which is not exported and is pinned nowhere until the follow-up PR's fresh-4), so it answers "did
+the gate's model see a leak", not "did anything fetch": an element outside those seven tags (an iframe, an object, an
+embed, a url() in an inline style) is the gate's blind spot and the product's, not this guard's to catch, since a
+guard keyed on the product's own model cannot detect the model's gap, and modelling every fetching element is the
+gate's job and not this fix's (the round-2 review's correctness-3, tests-2 and extra6-2, disclosed here and left to
+the gate; the plan pin derives the seven tags from figure-gate.ts and holds this sentence and the scene's header to
+them). Measured in scratch copies of the head, this scene alone: a post-adoption write of a gated src back into src, a
+created img minted in the sanitizer's document and appended under the box, and a new helper named in no list creating
+a live img under the box each turned both property-guard tests red with unlistedHosts answering the host (4 of 6 red
+each); the base's order turned the two kind tests red on road (a) with the property-guard tests green (2 of 6), an
+adoption-time leak being road (a)'s and the order leg's to see, not the end state's. The same read covers a re-parse
+since the round-2 review (its guards-1): the stand-in's innerHTML and outerHTML are recorded setters and its
+insertAdjacentHTML a recorded method, each write kept with the element's document at that moment whatever spelling
+made it (an assignment, a compound assignment, bracket access and Object.assign all reach the setter), and the
+end-state read is red on a live one under the box; the seam test's re-parse pattern matches the two names bare for the
+same reason. Measured with the scene and the seam test together: `Object.assign(root, { innerHTML: '<img
+srcset="http://evil.test/a.png 1x">' })` at the top of keepVideoShape, an existing post-adoption callee, left both
+green at the head the round reviewed (67 of 67, the round-2 verification's run: the field was plain and the pattern
+matched the assignment spelling alone), and at the head that answered the round the same plant turns the four scene
+tests that read the end state red, each naming `div.innerHTML` at its tick, and the seam test's whole-file count red,
+13 against 12 (62 of 67). The same scene asserts the ORDER by execution (road (e)): one clock over every write, every
+move into the live document and every move-aside the gate makes, and in both kinds the first move of any node of the
+sanitizer's body into the live document, read over all moves and not the box-filtered ones, comes after the gate's
+last move-aside on that body, with every move-aside landed while the element was the sanitizer's and no fetching
+attribute of the body written between the two; a caller pass inside sanitizeMd (mintHeadingIds appending the body to
+document.body) and a second registered post-pass in another module doing the same each turned both kind tests red
+there (2 of 4 at the head that added the leg). file-view-seam.test.ts's premise guard no longer claims every door: it
+derives the registered post-passes from the code (every registerMdPostPass call in the dashboard's comment-stripped
+modules, the name resolved to its defining module through the module's `./` imports, a registration it cannot follow
+refused), pins the derived list (one, md-config.ts registering math.ts's renderMathPlaceholders), sweeps that body and
+mintHeadingIds's for a live-document road, holds md-sanitize.ts's registry to its one writer, and counts importNode
+(four) and adoptNode (none) over the whole of each installed dompurify dist's code; the two mutations above turned it
+red too (the door sweep naming `document` in mintHeadingIds; the derived list showing the new registrant). The comment
+stripper every one of those pins reads through is the TypeScript compiler's comment ranges (ui/test-code-only.ts: the
+source parsed, every token visited, the leading and trailing comment ranges removed and nothing else), in place of a
+hand scanner that read a regex literal's closing backslash-slash-slash as a line comment and deleted the rest of
+settings.ts's hostname line (measured with that scanner before it was replaced); the seam test self-checks the new one
+over that module, over md-sanitize.ts and over a synthetic module holding each construct (a regex literal ending in
+backslash-slash, a string holding //, a template holding /*, a block comment holding a regex, a URL in a string). The
+CI pin in tools/markdown-viewer-plan-gate-adopt.test.mjs reads the property the Tests paragraph states off the block
+of the job that runs npm test, found by that step and not by its key, over the block's steps with its YAML comment
+lines removed, and nothing in it reads the job's key: the paragraph's sentence names the job by the step it runs, so a
+rename of the key alone needs no companion edit (the fork PR review's ruling on its third round's finding pins-2,
+2026-09-20: the round-2 push had held the key to a name in the sentence by a separate check, which pinned an
+arrangement, and that check is gone); in scratch copies of the head, that module alone, an engine install added to
+another job left it green (10 of 10), a Chromium install moved before the job's Test step turned it red with the
+sentence to change named (9 of 10), and a Firefox and WebKit install before that step with the sentence reworded to
+the run form left it green with the held-whole paragraph pin red, as the same-commit rule intends (9 of 10); after the
+round-2 review (its pins-2 and pins-3), a `#` comment in the job's header naming the browser cache green (10 of 10,
+where the pin before it read the raw block and was red, 9 of 10), and a restore step for that cache before the Test
+step red on the property (9 of 10); after that ruling, the job key renamed alone green (10 of 10) and a Chromium
+install moved before the Test step red on the property (9 of 10). Five modules read comment-stripped code (`grep -l
+'from "../test-code-only"' ui/webview/*.test.ts`: file-view-seam.test.ts, md-url-view.test.ts,
+md-sanitize-viewer-links.test.ts, code-block.test.ts and file-view-links.test.ts, the last two since the fence-pass
+pins were re-aimed at the pass's place; the round-2 review's regression-2 found this record and the stripper's header
+naming three, and the plan pin now derives the list from the tree and holds both to it), and outside the first three
+no test of this branch compares where the chain or the fence pass sits relative to the adoption: code-block.test.ts
+reads the fence pass's own shape on the stripped code, file-view-links.test.ts holds an index compare of the fence
+pass against the two link passes over the adopted box and not against the adoption, and file-view.test.ts,
+tools/file-review-viewer-recipe.test.mjs, tools/upstream-ledger-figure-gate-before-adoption.test.mjs and
+tools/markdown-viewer-plan-gate-adopt.test.mjs hold presence pins that name the seam test for it (the round-2 review
+found a raw-text compare in each of the last two, and a `//`-line filter standing in for a stripper in the plan pin),
+and the tools modules, which run in CI's shell job with no node_modules, cannot reach the compiler; the ledger entry's
+file count is derived by `git diff --name-only origin/main...HEAD`, the merge-base form, at the head.
+
+**Scope.** Unreachable through the VS Code panes, whose CSP blocks remote figures (`img-src ${webview.cspSource} data:`,
+extension.ts). Reachable through the kernel-served dashboard and the iOS web app. What leaks is the IP address, the
+time, the user agent and the path; the kernel sends Referrer-Policy same-origin, so no referer. The engine measured is
+Playwright's WebKit build, not literal iOS Safari, so the iOS statement rests on shared engine behaviour and not on a
+device test. In the dashboard, Safari was reachable through an HTML img and through an svg image spelt `xlink:href`,
+Firefox through an svg image in either spelling on a long note; Chromium made no request at the base for any figure
+measured.
+
+**Tests.** file-view-figures-gate-adopt-browser.test.ts, above: red in WebKit at 2d41e5c9b in all three scenes, green
+in Chromium and Firefox there, green in all three engines after the fix. Its fourth scene, the fence hole (three raw
+multi-line fences, an svg image with `src`, with `src` beside a gating `href`, and with `srcset`, and the
+`language-js` control): red in all three engines with the fence pass after the adoption (the figure server's three GET
+lines) and green in all three with the pass before the chain, one placeholder per fence. Its fifth case, the Copy
+button under the moved pass, clicked for real on two fences: green in all three engines. Its sixth case, the svg
+anchor split across lines in a raw fence, with an author's id and without one, and an author's prose anchor spelled
+with `xlink:href`, all three marked dead with the title in the rendered page and the prose's anchor target unmarked:
+red in all three engines at the head before the mark for the id-bearing anchor (no class, no title), green in all
+three with it. file-view-figures-gate-adopt-svg-browser.test.ts, the second leg: red in Firefox and in WebKit at
+2d41e5c9b, green in Chromium there, green in all three after the fix. Both legs skip where Playwright's engines are
+absent. In CI, the job whose step runs npm test has no Playwright browser install and no restore of Playwright's
+browser cache before that step (the job's own steps, the job found by that step and not by its key, read off
+.github/workflows/ci.yml by tools/markdown-viewer-plan-gate-adopt.test.mjs; what another job installs, or this job
+installs after that step, does not bear on it), so in CI the legs skip and the node scene runs:
+file-view-figures-gate-adopt.test.ts drives the real openFileView and openUrlView under plain node over a stand-in
+with two documents, the sanitizer's body inert and the viewer's document live, and pins by execution that no node
+entering the live document carries a fetching attribute on an unlisted host or a page-relative path (an img's src and
+srcset, a source's, a video's src and poster, an audio's src, an svg image's href or xlink:href, an svg paint
+reference, a figure inside details, a folder figure, and for a URL document a relative figure resolved against the
+document's directory; read at every move into the live document whose parent is the viewer's box or stands under it,
+so a node a later pass brings in at any depth is read at its own moment), that no write of such an attribute lands on
+a live-document element across the render, that nothing under the box carries one once the render is done, that the
+gated figures stand as placeholders holding their sources in data-fv-gated-* and a click on the host restores exactly
+them, and that the folder figure is requested through /file. Red on four mutations of file-view.ts in scratch copies
+of the head (2026-09-20): the base's order (the adoption first: 16 leaks at the adoption in the file kind and 4 in the
+URL kind), the gate alone moved after the adoption (13 and 2), one added post-adoption write of a gated src back into
+src (5 live writes and 2), and one added post-adoption line appending an img minted in the sanitizer's document with a
+src on an unlisted host into the box's first paragraph (1 leak at that adoption in each kind, read tree-wide under the
+box; the top-level read alone stayed green in the file kind); green at the head. It sees no bytes: a leak there is an
+attribute the browser would fetch through, judged over the box's end state by figure-gate's own gateRefs and
+unlistedHosts (the property guard, one test per kind on its own, and again at the end of each kind's test) and by the
+scene's own oracle, which alone sees a page-relative leak; the same scene asserts the order by execution, its road
+(e), and the guards paragraph above records both with their mutation runs; the engines' loading is the legs' and
+DOMPurify's document is the seam test's. file-view-seam.test.ts pins the order in mdBlock (sanitize, rewrite, gate on
+`clean`, then the adoption, and no figure pass over `box`) and holds the inertness premise, which no node test can
+execute: its test "the inertness premise, held where CI runs" pins the sanitizer's profile literal and its keys at run
+time, the config the sanitize is handed, sanitizeMd's body, the installed DOMPurify's RETURN_DOM branch with its one
+road into the live document (a clone under an allowed shadowroot attribute, which no profile here allows), the passes
+that run over the body inside sanitizeMd before the chain (mintHeadingIds and every registered post-pass, the list
+derived from the code) opening no door to the live document, the whole of each dist's code holding importNode at four
+sites and adoptNode at none, and `clean` reaching the four chain calls and nothing else before the adoption (the
+review's refuters measured that one added profile key, `ADD_ATTR: ["shadowrootmode"]`, made DOMPurify clone the body
+into the live document with every CI-run module green and WebKit fetching the gated figure again); since the fork PR's
+round-2 push it also pins the fence pass's place (on `clean`, between the sanitize and the chain's first call) and its
+one read of `clean` beside the four chain calls, and, in its test "no re-parse after the adoption", the re-parse
+population above, derived from the code, with the whole file's count, the two property names matched bare since the
+round-2 review. The order pins in file-view-seam.test.ts, md-url-view.test.ts and md-sanitize-viewer-links.test.ts,
+and since the fence-pass pins were re-aimed code-block.test.ts's slice of that pass and file-view-links.test.ts's
+compare of it against the two link passes over the adopted box, five readers of the stripper, read comment-stripped
+code since that push (ui/test-code-only.ts, the TypeScript compiler's comment ranges, since the review's first-round
+ruling; a comment quoting the pinned lines above an adopt-first body satisfied the raw-text pins in the round's
+reversion runs), and the assertion messages in file-view-text-size.test.ts, file-view.test.ts and the recipe pin, and
+the comments in render-sanitize.test.ts and md-sanitize-viewer-links.test.ts, that stated an order the assertion did
+not check now claim presence, the order being the seam test's (file-view-text-size.test.ts's sits in a browser-gated
+test that skips where no engine is installed, so in CI it does not run). md-url-view.test.ts pins the URL kind's
+resolution before the adoption; tools/file-review-viewer-recipe.test.mjs pins the sanitize and adoption statements as
+presence pins; tools/upstream-ledger-figure-gate-before-adoption.test.mjs holds the ledger entry's file list, its
+count and its engine statements to the tree and the legs, with a presence pin for the fence pass's read;
+tools/markdown-viewer-plan-gate-adopt.test.mjs holds this section's sentences to the code, its comment and the leg,
+with presence pins for the chain's calls and the fence pass's read, the order being the seam test's. The remedy for
+the legs' skip in CI is a step in that job installing Playwright's engines (Firefox and WebKit, or all three) before
+npm test; the plan pin reads this paragraph and the job together, so taking that remedy means rewording the sentence
+above to the pin's other sentence, which says the legs run there (CI_RUN in that module, beside CI_SKIP, the sentence
+above), and the pin then holds the job to an install of Firefox and WebKit before its Test step instead of to none;
+the pin does not fight the remedy, it names the sentence to change.

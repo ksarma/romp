@@ -160,12 +160,23 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   Outline and Waiting on you pages do) then receives `{type:"feedDelta"}` frames: changed cards by `itemId`, removed
   ids, the same for ledgers by `sid`, and the small top-level fields whole under
   `top` when any changed — and an unchanged board sends such a client nothing at
-  all. Every other consumer — the VS Code extension's pipes,
-  federation's remote sockets, an older bundle — stays on the full-frame path,
-  which keeps its 60 s repost of the unchanged frame. `federation.ts` applies a
-  delta onto the last full frame it holds for the host and re-emits a merged full
+  all. A federated dashboard's relay sockets announce it too (`federation.ts`
+  `REMOTE_DIAL_CAPS`, since 2026-09-18; the relay forwards the dial's query
+  whole). A consumer that announces nothing and dials no `delta=1` (a bundle
+  before the cap; a relay dialed by a dashboard bundle before 2026-09-15; the
+  VS Code extension before 2026-09-16) stays on the full-frame path, which
+  keeps its 60 s repost of the unchanged frame; one that dials `delta=1`
+  without the cap is served the feed as view-delta slot patches instead: the
+  VS Code extension's pipes (`client=ext&delta=1` since 2026-09-16, reassembled
+  by their own `ViewDeltas`) and a relay dialed by a dashboard bundle from
+  2026-09-15 to 2026-09-18. `federation.ts` applies a local delta onto
+  the frame the merge reads and a remote host's delta onto the raw frame it
+  holds for that host (`applyRemoteFeedDelta`), and re-emits a merged full
   frame, so every consumer still sees whole `feed` frames; a delta it cannot
-  apply gets a `needFullFeed` and a re-base. A build that carries no `ledgers`
+  apply gets a `needFullFeed` to the kernel that sent it and a re-base. A
+  remote host's view-delta patches (the timeline's bars; the feed from a kernel
+  too old to read the caps term) are reassembled per relay socket
+  (`Conn.viewDeltas`) before the merge. A build that carries no `ledgers`
   says nothing about ledgers: the client keeps the ones it holds, and so does the
   kernel's record of them. Card age colours are computed client-side from `t` on
   a live clock (`age-color.ts`, `feed-age.ts`: the payload's `now` plus the local
@@ -947,19 +958,25 @@ The Python kernel (`kernel/kernel.py`) closes it.
   origin plus known local client origins (the browser at the kernel's host, the
   `vscode-webview://` extension, the timeline), reject everything cross-site. This
   kills ClawJacked for free; legit local clients send the right Origin/Host.
-- **Token REQUIRED on every gated route, loopback included** (Jupyter's model:
-  loopback is one network stack shared by every local UID, so the `0600` token
-  file — not the socket — is the same-user trust boundary; the gate keeps a
-  same-host co-tenant out of `/send` and the bus). Accepted forms: `?token=`
-  (browser bootstrap, seeds a `SameSite=Strict` cookie so it never re-prompts),
-  the cookie, and `X-Romp-Token` (CLI/hooks/daemons, read from the file). The
+- **Token REQUIRED on every gated route, loopback included, directly or through
+  a browser sign-in made with it** (Jupyter's model: loopback is one network
+  stack shared by every local UID, so the `0600` token file, not the socket, is
+  the same-user trust boundary; the gate keeps a same-host co-tenant out of
+  `/send` and the bus). Accepted forms: `X-Romp-Token`
+  (CLI/hooks/daemons, read from the file) and `?token=`, from any client; a
+  browser presents `?token=` once, and that response signs it in with a session
+  cookie that opens only the page documents and static files, a page key in site
+  storage sent as `X-Romp-Key` (or `k=` on a socket dial), and a per-file
+  capability in each `/file` URL the page builds (`SECURITY.md` states each). The
   token is baked into how the kernel launches (env/autostart), never a manual
   per-launch flag; a bare browser open of `/` gets a paste-the-token login page
-  (bare `romp` prints the link + opens a browser). Two kinds of route are exempt:
-  the no-side-effect liveness probes (`/healthz`, `/version`, `/busy`; bus
-  `/ping`) so liveness never breaks token-less monitors, and the install files
-  (`/manifest.webmanifest`, plus three icon names under `/media/`, an allowlist
-  rather than a prefix) because a browser fetches a manifest and its icons with
+  (bare `romp` prints the link + opens a browser). The exempt routes: the
+  no-side-effect liveness probes (`/healthz`, `/version`, `/busy`; bus `/ping`)
+  so liveness never breaks token-less monitors; the sign-in page (`/login`, a
+  static form); the push worker's acknowledgement (`POST /push/ack`, admitted by
+  the push's own unguessable id, since a worker's fetch carries no token); and
+  the install files (`/manifest.webmanifest`, plus three icon names under
+  `/media/`, an allowlist rather than a prefix) because a browser fetches a manifest and its icons with
   credentials omitted, so a gated manifest 403s the moment "Add to Home Screen"
   consults it. The install files are static (a JSON literal, three PNG files)
   and read no session state. `tailscale serve` traffic needs the token
@@ -967,7 +984,8 @@ The Python kernel (`kernel/kernel.py`) closes it.
   same proxy) must still never be enabled for this port, since the token would
   then be the only gate with no device identity in front of it.
 - Regression tests: a cross-site `/ws` upgrade with a foreign `Origin` must be
-  rejected, and a token-less loopback request to any gated route must 403
+  rejected, and a loopback request to any gated route that carries neither the
+  token nor a browser sign-in made with it must 403
   (tests/test_kernel_auth_hardening.py, tests/test_kernel_ws_auth.py,
   tests/test_postal_token.py).
 

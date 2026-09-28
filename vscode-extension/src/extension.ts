@@ -24,7 +24,7 @@ import WebSocket from "ws";
 import { chatBody, FEED_BODY, FLEET_BODY, TIMELINE_BODY, ATTACH_TITLE_VSCODE } from "./page-skeleton";
 import { askManagerEnsure, attachFailureToast, ensureThenAttach, parseHealthz, warnAfter } from "./kernel-attach";
 import { intentOp, ReloadHold } from "./pipe-intent";
-import { ViewDeltas } from "./view-deltas";
+import { ViewDeltas } from "../../ui/webview/view-deltas";   // shared with federation.ts's remote sockets (2026-09-18)
 import { routeViewMessage } from "./view-routing";
 import { deriveStatus, freshNeedsYou, renderStatusBar, statusTooltipLines, FleetStatus } from "./fleet-status";
 import { citeText, sessionsForWorkspace, SessionInfo } from "./workspace-sessions";
@@ -36,9 +36,10 @@ import {
 
 const HOST = "127.0.0.1";
 
-// The kernel serve token — required on EVERY kernel request, loopback included (Jupyter's model:
-// the 0600 state file, not the socket, is the same-user trust boundary; /healthz and /version stay
-// exempt). Same resolution order as the kernel's _load_token: env override, else the state file.
+// The kernel serve token: required on EVERY kernel request, loopback included, presented directly
+// or, by a browser, through a sign-in made with it (Jupyter's model: the 0600 state file, not the
+// socket, is the same-user trust boundary; /healthz and /version stay exempt). Same resolution
+// order as the kernel's _load_token: env override, else the state file.
 // Read per call (a tiny local file): a freshly minted token is picked up on the next
 // fetch/reconnect without a window reload.
 function serveToken(): string {

@@ -32,6 +32,7 @@ import tempfile
 import time
 import unittest
 import urllib.request
+import uuid
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -59,27 +60,54 @@ def _free_port():
     return p
 
 
-def _transcript(sid, tag, cwd, pairs):
-    """`pairs` CLOSED user/assistant turns for `sid` (an OPEN turn would invite the boot reconcile to resume it)."""
+SEED_PAIRS = 6         # closed pairs per seed transcript: one bar each on the timeline
+SEED_PAIR_S = 720      # a stamped seed (t0 given): pair i's user row at t0 + SEED_PAIR_S * i, its assistant row SEED_REPLY_S later
+SEED_REPLY_S = 30
+
+
+def _stamp(t):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+
+
+def seed_uuid(tag, i, role="a"):
+    """The uuid _transcript mints for pair `i` of a seed with `tag` ("u" the user row, "a" the assistant row): a later
+    append chains its parentUuid to the seed's last assistant row (the bars lab, the corners' transcript change)."""
+    return "%s-%s%02d" % (tag, role, i)
+
+
+def _transcript(sid, tag, cwd, pairs, t0=None):
+    """`pairs` CLOSED user/assistant turns for `sid` (an OPEN turn would invite the boot reconcile to resume it).
+    Stamped in 2024 by default; with `t0` (epoch seconds) pair i is stamped at t0 + SEED_PAIR_S * i and its reply
+    SEED_REPLY_S later, so a lab's timeline page shows the seed as a board of the last hours in plain time. The
+    kernel filters no bar by time, and the pane's default view collapses idle gaps, so it draws a 2024 seed too
+    (the idle span since is squeezed to a gap); the stamps are for the record's readability and the plain-time
+    view, not a condition of the bars being drawn (tests/test_federated_bars_delta_served.py, driven both ways)."""
     out, parent = [], None
     filler = ["The ranking pass reads its weights from the notes-api config now.",
               "Tokenizer edge cases (hyphens, quotes) are covered by the new fixture set.",
               "Index rebuild time is dominated by the stemmer; caching its table halves it."]
     for i in range(pairs):
-        u, a = "%s-u%02d" % (tag, i), "%s-a%02d" % (tag, i)
+        u, a = seed_uuid(tag, i, "u"), seed_uuid(tag, i, "a")
+        if t0 is None:
+            ts_u, ts_a = "2024-01-01T00:%02d:00Z" % (i % 60), "2024-01-01T00:%02d:30Z" % (i % 60)
+        else:
+            ts_u, ts_a = _stamp(t0 + SEED_PAIR_S * i), _stamp(t0 + SEED_PAIR_S * i + SEED_REPLY_S)
         out.append({"type": "user", "uuid": u, "parentUuid": parent, "sessionId": sid, "cwd": cwd,
-                    "timestamp": "2024-01-01T00:%02d:00Z" % (i % 60), "promptSource": "typed",
+                    "timestamp": ts_u, "promptSource": "typed",
                     "message": {"role": "user", "content": "turn %d: what changed in the notes-api search?" % i}})
         out.append({"type": "assistant", "uuid": a, "parentUuid": u, "sessionId": sid, "cwd": cwd,
-                    "timestamp": "2024-01-01T00:%02d:30Z" % (i % 60),
+                    "timestamp": ts_a,
                     "message": {"role": "assistant", "model": "claude-opus-5", "stop_reason": "end_turn",
                                 "content": [{"type": "text", "text": filler[i % len(filler)]}]}})
         parent = a
     return "".join(json.dumps(r) + "\n" for r in out)
 
 
-def _kernel(lab, name, port, token, sessions):
-    """Boot one hermetic kernel: its own state root and dist, and `sessions` [(sid, name, tag)] with closed-turn transcripts."""
+def _kernel(lab, name, port, token, sessions, bin_dir=BIN, t0=None):
+    """Boot one hermetic kernel: its own state root and dist, and `sessions` [(sid, name, tag)] with closed-turn transcripts.
+    `bin_dir` is the checkout whose bin/romp-kernel runs: this one by default; another vintage's for a mixed-build lab
+    (tests/test_federated_capability_corners_served.py boots an older remote or hub against this checkout's pages).
+    `t0` stamps the seed transcripts from that epoch (see _transcript); None keeps the 2024 stamps."""
     state = os.path.join(lab, name, "xdg", "romp")
     claude = os.path.join(lab, name, "claude")
     cwd = os.path.join(lab, name, "proj")
@@ -94,10 +122,10 @@ def _kernel(lab, name, port, token, sessions):
         Path(state, "names", sid).write_text("%s\t%s\t\t\n" % (sname, cwd))
         Path(state, "sdk", sid + ".json").write_text(json.dumps(
             {"sid": sid, "name": sname, "cwd": cwd, "mode": "auto", "effort": "high", "lastSid": sid, "alive": True}))
-        Path(proj, sid + ".jsonl").write_text(_transcript(sid, tag, cwd, 6))
+        Path(proj, sid + ".jsonl").write_text(_transcript(sid, tag, cwd, SEED_PAIRS, t0=t0))
     env = _lab.kernel_env(os.path.join(lab, name), claude, os.path.join(lab, "dist"), port, token, ROMP_HOST_NAME=name.upper())
     log = os.path.join(lab, name + "-kernel.log")
-    proc = subprocess.Popen([os.path.join(BIN, "romp-kernel")], stdout=open(log, "w"), stderr=subprocess.STDOUT, env=env)
+    proc = subprocess.Popen([os.path.join(bin_dir, "romp-kernel")], stdout=open(log, "w"), stderr=subprocess.STDOUT, env=env)
     for _ in range(120):
         try:
             urllib.request.urlopen("http://127.0.0.1:%d/healthz" % port, timeout=1)
@@ -106,6 +134,53 @@ def _kernel(lab, name, port, token, sessions):
             time.sleep(0.5)
     proc.kill(); proc.wait()
     raise unittest.SkipTest("hermetic kernel %s never served /healthz here" % name)
+
+
+CHANGE_USER_AGO_S = 60    # an appended pair (change_pair): the user row this long before `now`, the reply CHANGE_REPLY_AGO_S before it
+CHANGE_REPLY_AGO_S = 30
+
+
+def change_pair(sid, tag, cwd, prompt, reply, now=None, pairs=SEED_PAIRS):
+    """One CLOSED user/assistant pair to append to a seed transcript as a lab's change: fresh uuids, chained to the seed's
+    last assistant row (seed_uuid), the user row CHANGE_USER_AGO_S before `now` and the reply CHANGE_REPLY_AGO_S before
+    it. Closed, because an open turn on a registry-alive session invites the SDK backend's reconcile; staggered,
+    because the timeline pane culls a bar whose start equals its end; both at or before now, because the pane clips a
+    bar's end to the live edge. Returns the rows as jsonl text."""
+    now = time.time() if now is None else now
+    u, a = str(uuid.uuid4()), str(uuid.uuid4())
+    rows = [{"type": "user", "uuid": u, "parentUuid": seed_uuid(tag, pairs - 1, "a"), "sessionId": sid, "cwd": cwd,
+             "timestamp": _stamp(now - CHANGE_USER_AGO_S), "promptSource": "typed",
+             "message": {"role": "user", "content": prompt}},
+            {"type": "assistant", "uuid": a, "parentUuid": u, "sessionId": sid, "cwd": cwd,
+             "timestamp": _stamp(now - CHANGE_REPLY_AGO_S),
+             "message": {"role": "assistant", "model": "claude-opus-5", "stop_reason": "end_turn",
+                         "content": [{"type": "text", "text": reply}]}}]
+    return "".join(json.dumps(r) + "\n" for r in rows)
+
+
+def checkin(hport, htoken, rport, rtoken, host=HOST):
+    """Check the remote kernel in with the hub (POST /checkin) and wait until the hub reports the peer up with its token
+    (the hub's supervisor probes the peer and reports it up; the browser dials only then). A refusal or a peer that
+    never comes up skips the lab."""
+    body = json.dumps({"host": host, "kernelPort": rport, "busPort": _free_port(), "token": rtoken}).encode()
+    req = urllib.request.Request("http://127.0.0.1:%d/checkin?token=%s" % (hport, htoken), data=body,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        ans = json.loads(resp.read().decode())
+    if not ans.get("ok"):
+        raise unittest.SkipTest("the hub refused the check-in: %r" % ans)
+    rows = []
+    for _ in range(60):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:%d/tunnels?token=%s" % (hport, htoken), timeout=3) as r2:
+                rows = json.loads(r2.read().decode()).get("tunnels") or []
+        except Exception:
+            rows = []
+        row = next((t for t in rows if t.get("host") == host), None)
+        if row and row.get("status") == "up" and row.get("hasToken"):
+            return
+        time.sleep(0.5)
+    raise unittest.SkipTest("the hub never reported the checked-in peer up: %r" % (rows,))
 
 
 # The Chromium driver: hook every socket URL the page dials (window.__dials), persist the watched tab as a
