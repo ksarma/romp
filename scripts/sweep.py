@@ -37,7 +37,8 @@ untracked test the tracked .gitignore covers. The checkout's path is longer than
 length the deepest session-host socket path depends on, is unchanged. TMPDIR and the checkout are removed on every exit path: SIGTERM and SIGHUP stop
 each leg's process group, and on Linux the runner is a child subreaper that kills whatever a leg left
 running, a descendant that left the group included; each checkout records its sha beside it, and every run
-removes the checkouts of runs that are no longer running.
+removes the checkouts of runs that are no longer running. A descendant reparented to the runner that exits
+while its leg runs is reaped then, so no test finds a defunct process in its own process group.
 
 The legs, in order (LEGS): deps (`npm ci` from the sha's lockfile, in every checkout, since a fresh one has
 no node_modules; a --leg re-run runs it first as its setup), pytest, bats, manager and tools (node --test),
@@ -1065,16 +1066,22 @@ def _on_stop(signum, _frame):
     raise Stopped(signum)
 
 
+# Whether install_stop_handlers made this process a child subreaper; wait_leg reads it.
+_subreaper = False
+
+
 def install_stop_handlers():
     """SIGTERM and SIGHUP raise Stopped, so every exit path runs the cleanup; and on Linux the runner becomes a child
     subreaper (PR_SET_CHILD_SUBREAPER), so a leg's descendant that left its process group (setsid: Playwright's
-    browsers, the kernel's session scopes) is reparented to the runner, which kills it, instead of to init."""
+    browsers, the kernel's session scopes) is reparented to the runner instead of to init: the runner reaps it if it
+    exits while the leg runs (wait_leg) and kills it if it is still running when the leg ends (reap_descendants)."""
+    global _subreaper
     for s in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(s, _on_stop)
     if sys.platform.startswith("linux"):
         try:
             import ctypes
-            ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)
+            _subreaper = ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
         except (OSError, AttributeError):
             pass
 
@@ -1118,6 +1125,35 @@ def reap_descendants(timeout=30.0):
         if not kids or time.monotonic() > end:
             return len(killed)
         time.sleep(0.05)
+
+
+def wait_leg(p):
+    """Wait for the leg `p` to exit and return its exit status, as Popen.wait does, reaping every reparented descendant
+    that exits meanwhile; None when the leg's status was lost.
+
+    A subreaper adopts each orphaned descendant of a leg, and an adopted process that exits stays a zombie until the
+    runner reaps it. Left for the leg's end, it shows in the leg's process group as a defunct process (the watchdog
+    tests in tests/romp-node-launch.bats and tests/romp-service.bats list their group and fail on one), and the
+    zombies pile up until the leg ends. So the runner blocks until some child of its has exited, reads which one
+    without reaping it (waitid with WNOWAIT), and reaps it unless it is the leg, whose status Popen reads. The leg is
+    the one child here that the runner will wait for: legs run one at a time on the runner's one thread, and every
+    other child the runner starts comes from subprocess.run, which reaps it before returning (ReapWhileLegRuns in
+    tests/test_sweep_runner.py holds that census). So every other child that exits here was reparented to the
+    runner, and nothing else will wait for it. Without the subreaper nothing is adopted and Popen.wait is exact."""
+    if not _subreaper:
+        return p.wait()
+    while True:
+        try:
+            info = os.waitid(os.P_ALL, 0, os.WEXITED | os.WNOWAIT)
+        except ChildProcessError:
+            # No child at all: something reaped the leg, and Popen would read its status as 0.
+            return None
+        if info is None or info.si_pid == p.pid:
+            return p.wait()
+        try:
+            os.waitpid(info.si_pid, 0)
+        except ChildProcessError:
+            pass
 
 
 def stop_leg(p):
@@ -1474,10 +1510,14 @@ def run_leg(tree, name, rec, wraps, ctx, logdir):
                 p = subprocess.Popen(argv, cwd=cwd, env=dict(os.environ), stdin=subprocess.DEVNULL, stdout=out,
                                      stderr=subprocess.STDOUT, start_new_session=True)
                 try:
-                    rec["rc"] = p.wait()
+                    rc = wait_leg(p)
                 except BaseException:
                     stop_leg(p)
                     raise
+                if rc is None:
+                    rec["error"] = "its exit status was lost: something other than the runner reaped it"
+                else:
+                    rec["rc"] = rc
             # Whatever the leg left running (a daemon a test started, a detached browser) is killed before the next leg.
             rec["left_running"] = reap_descendants()
         except OSError as e:

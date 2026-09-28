@@ -177,11 +177,70 @@ elif act == "spawn":                             # two writers into TMPDIR, one 
 elif act == "home":
     with open(os.path.join(home, ".leftover"), "w") as f:
         f.write("a test that wrote into HOME\n")
+elif act in ("orphan", "orphans"):
+    # Grandchildren the runner adopts: each child of the leg forks one and exits, so the grandchild is reparented to the
+    # runner (a child subreaper), reports its new parent and exits. "orphan": one grandchild, which exits while the leg
+    # runs; the leg then reads its state and lists the defunct processes in its own process group, as the watchdog
+    # tests in tests/romp-node-launch.bats do. "orphans": twenty, the even ones exiting while the leg runs (the leg
+    # reads their state) and the odd ones at the leg's own exit (each waits on a pipe whose one writer is the leg).
+    def proc_stat(pid):
+        try:
+            with open("/proc/%%d/stat" %% pid) as fh:
+                rest = fh.read().rsplit(")", 1)[1].split()
+            return rest[0], int(rest[1]), int(rest[2])        # state, parent, process group
+        except (OSError, IndexError, ValueError):
+            return None
+    hold_r, hold_w = os.pipe()
+    rep_r, rep_w = os.pipe()
+    count = 1 if act == "orphan" else 20
+    for i in range(count):
+        child = os.fork()
+        if child == 0:
+            os.close(hold_w)
+            os.close(rep_r)
+            parent = os.getpid()
+            if os.fork() == 0:
+                end = time.monotonic() + 10
+                while os.getppid() == parent and time.monotonic() < end:
+                    time.sleep(0.005)
+                os.write(rep_w, ("%%d %%d %%d\n" %% (i, os.getpid(), os.getppid())).encode())
+                os.close(rep_w)
+                if i %% 2:
+                    os.read(hold_r, 1)
+                os._exit(0)
+            os._exit(0)
+        os.waitpid(child, 0)
+    os.close(hold_r)
+    os.close(rep_w)
+    reports = b""
+    while True:
+        chunk = os.read(rep_r, 4096)
+        if not chunk:
+            break
+        reports += chunk
+    adopted = sorted([int(x) for x in line.split()] for line in reports.decode().splitlines())
+    end = time.monotonic() + 5
+    early = [pid for i, pid, _parent in adopted if i %% 2 == 0]
+    while any(proc_stat(pid) for pid in early) and time.monotonic() < end:
+        time.sleep(0.01)
+    seen = {"adopted": adopted, "runner": os.getppid(), "early": {str(pid): (proc_stat(pid) or [None])[0] for pid in early}}
+    if act == "orphan":
+        me, defunct = os.getpgrp(), []
+        for n in os.listdir("/proc"):
+            st = proc_stat(int(n)) if n.isdigit() else None
+            if st and st[0] == "Z" and st[2] == me:
+                defunct.append(int(n))
+        seen["defunct_in_group"] = defunct
+    with open(os.path.join(ctl["marks"], act + ".json"), "w") as f:
+        json.dump(seen, f)
 # What each test leg's real tool prints at the end of a run (pytest -q's summary, bats' TAP, node's TAP summary):
 # the runner counts the tests a leg ran from its log, and a test leg with rc 0 and no test counted is red.
 out = {"pytest": "3 passed in 0.01s\n", "bats": "1..1\nok 1 a\n", "manager": "# pass 1\n# fail 0\n",
        "tools": "# pass 2\n# fail 0\n", "npm-test": "# pass 4\n# fail 0\n"}
 sys.stdout.write(ctl.get("out", {}).get(leg, out.get(leg, "")))
+if ctl.get("signal", {}).get(leg):                 # the leg dies by this signal instead of exiting
+    sys.stdout.flush()
+    os.kill(os.getpid(), ctl["signal"][leg])
 sys.exit(ctl.get("rc", {}).get(leg, 0))
 '''
 
@@ -1243,6 +1302,134 @@ class Checkout(_Base):
         self.assertIn("the setup of the checkout of %s (npm ci) rc 1" % w2.head()[:10], p.stderr)
         with open(w2.result_path()) as f:
             self.assertEqual(f.read(), red, "a refused re-run records nothing")
+
+
+# Drives run_leg in a process of its own, which becomes a subreaper as the runner does: the leg's status is taken by
+# another reaper (the stand-in wraps wait_leg and reaps the leg first) before the runner reads it.
+LOST_STATUS_DRIVER = r"""
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("sweep_runner", sys.argv[1])
+sweep = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sweep)
+sweep.install_stop_handlers()
+real = sweep.wait_leg
+
+
+def reaped_first(p):
+    os.waitpid(p.pid, 0)
+    return real(p)
+
+
+sweep.wait_leg = reaped_first
+tmp = sys.argv[2]
+ctx = sweep.leg_context(tmp, sys.executable)
+rec = {"owed": True, "cmd": ["sh", "-c", "exit 3"]}
+sweep.run_leg(tmp, "ledger", rec, {}, ctx, tmp)
+print(json.dumps({"subreaper": sweep._subreaper, "rc": rec.get("rc"), "error": rec.get("error")}))
+"""
+
+
+class ReapWhileLegRuns(unittest.TestCase):
+    """Round 1, A5, and the runner's own sweep: the runner is a child subreaper, so a leg's orphaned descendants are
+    reparented to it. One that exits while its leg runs is reaped then (wait_leg), not left a zombie in the leg's
+    process group until the leg ends: the watchdog tests in tests/romp-node-launch.bats and tests/romp-service.bats
+    list their group and failed on such a zombie. The leg's own exit status, which only Popen may read, is recorded
+    exactly while orphans exit around it; the kill and reap after the leg is held by Checkout's SIGTERM test."""
+
+    def world(self):
+        if not sys.platform.startswith("linux"):
+            self.skipTest("the subreaper and /proc are Linux's")
+        w = World()
+        self.addCleanup(w.close)
+        marks = os.path.join(w.tmp, "marks")
+        os.makedirs(marks)
+        return w, marks
+
+    @staticmethod
+    def seen(marks, act):
+        with open(os.path.join(marks, act + ".json")) as f:
+            return json.load(f)
+
+    def test_an_adopted_orphan_that_exits_during_the_leg_is_reaped_while_the_leg_runs(self):
+        """The bats leg forks a child that forks a grandchild and exits; the grandchild, reparented to the runner, exits
+        while the leg runs. The leg waits up to five seconds for it to be reaped, then lists the defunct processes in
+        its own process group: none, and nothing was left for the kill after the leg."""
+        w, marks = self.world()
+        w.ctl({"action": {"bats": "orphan"}, "marks": marks})
+        p = w.run(check=0)
+        seen = self.seen(marks, "orphan")
+        ((_i, grandchild, parent),) = seen["adopted"]
+        self.assertEqual(parent, seen["runner"], "premise: the grandchild was reparented to the runner, the subreaper")
+        self.assertEqual(seen["early"], {str(grandchild): None},
+                         "the grandchild exited during the leg and the runner reaped it then (Z: a zombie left for the "
+                         "leg's end)")
+        self.assertEqual(seen["defunct_in_group"], [], "no defunct process in the leg's process group")
+        self.assertEqual(w.result()["legs"]["bats"]["left_running"], 0, p.stdout + p.stderr)
+
+    def test_the_legs_own_exit_status_is_recorded_exactly_while_orphans_exit_around_it(self):
+        """Twenty grandchildren of the bats leg are reparented to the runner: ten exit while the leg runs and are reaped
+        then, ten exit at the leg's own exit. The leg's status is recorded exactly for exit codes 0, 1 and 2 and for a
+        death by SIGKILL: a runner that reaped the leg itself would leave Popen reading 0, or nothing."""
+        for rc, sig, expected in ((0, None, 0), (1, None, 1), (2, None, 2), (0, 9, -9)):
+            with self.subTest(expected=expected):
+                w, marks = self.world()
+                w.ctl({"action": {"bats": "orphans"}, "marks": marks, "rc": {"bats": rc},
+                       "signal": {"bats": sig} if sig else {}})
+                p = w.run(check=0 if expected == 0 else 1)
+                seen = self.seen(marks, "orphans")
+                self.assertEqual(len(seen["adopted"]), 20)
+                self.assertEqual({parent for _i, _pid, parent in seen["adopted"]}, {seen["runner"]},
+                                 "premise: every grandchild was reparented to the runner")
+                self.assertEqual(sorted(set(seen["early"].values()), key=str), [None],
+                                 "premise: the ten that exited during the leg were reaped then, so orphans were being "
+                                 "reaped around the leg's exit")
+                bats = w.result()["legs"]["bats"]
+                self.assertEqual((bats["rc"], bats.get("error")), (expected, None), p.stdout + p.stderr)
+
+    def test_a_leg_whose_status_another_reaper_took_is_red_with_the_reason_never_rc_0(self):
+        """If anything but Popen reaped the leg, Popen would read its status as 0 (ECHILD): run_leg records no rc and
+        the reason instead, so the leg is red, never a silent pass."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("the subreaper is Linux's")
+        tmp = tempfile.mkdtemp(prefix="sweep-lost-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        p = subprocess.run([sys.executable, "-c", LOST_STATUS_DRIVER, str(SWEEP), tmp], text=True, stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(json.loads(p.stdout.splitlines()[-1]),
+                         {"subreaper": True, "rc": None,
+                          "error": "its exit status was lost: something other than the runner reaped it"})
+
+    def test_the_leg_is_the_one_child_the_runner_waits_for_while_a_leg_runs(self):
+        """wait_leg reaps every child but the leg while a leg runs. That is right only while the leg is the one child
+        the runner will wait for: the runner has no thread, and run_leg's Popen is its one launcher that returns before
+        its child is reaped. A new such launcher, or a thread (whose subprocess.run child wait_leg could reap, leaving
+        its status read as 0), makes this red: wait_leg must then leave that child alone."""
+        import ast
+        tree = ast.parse(SWEEP.read_text())
+        imported, launchers = set(), []
+        banned_mods = {"threading", "_thread", "concurrent", "multiprocessing", "asyncio"}
+        # Children of these outlive the call that starts them; subprocess.run, call and check_output reap theirs.
+        nowait = {("subprocess", "Popen"), ("os", "popen"), ("os", "fork"), ("os", "forkpty"), ("os", "posix_spawn"),
+                  ("os", "posix_spawnp")}
+        owner = {}  # each node's innermost enclosing function: ast.walk reaches an outer function before an inner one
+        for f in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+            for n in ast.walk(f):
+                owner[id(n)] = f.name
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                imported |= {a.name.split(".")[0] for a in n.names}
+            elif isinstance(n, ast.ImportFrom):
+                imported.add((n.module or "").split(".")[0])
+                for a in n.names:
+                    if ((n.module or ""), a.name) in nowait or a.name.startswith("spawn"):
+                        launchers.append(("from %s import %s" % (n.module, a.name), owner.get(id(n))))
+            elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name):
+                if (n.value.id, n.attr) in nowait or (n.value.id == "os" and n.attr.startswith("spawn")):
+                    launchers.append(("%s.%s" % (n.value.id, n.attr), owner.get(id(n))))
+        self.assertEqual(sorted(imported & banned_mods), [], "the runner has one thread")
+        self.assertEqual(launchers, [("subprocess.Popen", "run_leg")],
+                         "the one launcher whose child outlives the call is run_leg's Popen, the leg wait_leg waits for")
 
 
 # Each road sets one way a batcher's repository, git configuration or environment could make a checkout differ from
