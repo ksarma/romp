@@ -13,10 +13,11 @@ own, and neither does the merge to main: a batch lands only when its head contai
 merged tree is the tree the sweep and CI tested.
 
 The tooling is `scripts/batch.py` (subcommands `plan`, `assemble`, `verify`, `summarize`, `pull`,
-`land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps a worktree's head
-and records the result, `check` reads it back), `scripts/land.sh`, which merges a batch PR by hand
-and nothing else (a single PR lands as a one-member batch), and `scripts/pr-orphans.sh`, which
-reports a merged PR whose content never reached main (it also runs on every push to main).
+`land`, `finish`, `bisect`; `--help` on each), `scripts/sweep.py` (`run` sweeps the commit a
+worktree's HEAD names, in a private checkout of it, and records the result; `check` reads it back),
+`scripts/land.sh`, which merges a batch PR by hand and nothing else (a single PR lands as a
+one-member batch), and `scripts/pr-orphans.sh`, which reports a merged PR whose content never
+reached main (it also runs on every push to main).
 
 ## If you open a PR
 
@@ -154,25 +155,37 @@ subject; `verify` refuses the branch otherwise.
    with the batch, and the body lists it as such under "Read these first" and in its table row.
 3. Run the local sweep at the batch head: `scripts/sweep.py run --tree ../romp-batch-<name>`.
    `--python` names the interpreter for pytest (it needs pytest, pytest-xdist and pytest-timeout);
-   `--wrap LEG=PREFIX` runs a leg under this machine's slot or scope wrapper. It runs pytest, bats,
-   the manager and tooling node tests and the ledger check, plus `npm run typecheck`, `npm test` and
+   `--wrap LEG=PREFIX` runs a leg under this machine's slot or scope wrapper (the wrap keeps your
+   environment; the leg does not see what it sets). The legs run in a private clone of the batch
+   head's exact sha under the state dir, verified against the sha's tree first, never in the batch
+   worktree: the worktree need not be clean, and its uncommitted edits are not swept (the runner
+   prints how many there are). It runs `npm ci` from the sha's lockfile, pytest, bats, the manager
+   and tooling node tests and the ledger check, plus `npm run typecheck`, `npm test` and
    `npm run build` when `kernel/kernel.py`, `ui/` or `vscode-extension/` changed since the merge
-   base with origin/main (the webview rule in CLAUDE.md), and writes every leg's exit status to
-   `<state dir>/sweeps/<full sha>.json`. The state dir is `$ROMP_STATE_DIR`, else
-   `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and `batch.py` with the
-   same environment. It refuses a dirty tree and records the run invalid if HEAD or the tree changes
-   while it runs. When one leg fails on a known flake,
+   base with origin/main (the webview rule in CLAUDE.md). The pane bench
+   (`tests/ui-bench.test.mjs`), the other Python versions and macOS run only in the batch's CI. Each
+   leg gets an allowlisted environment: a private HOME and state dir, a PATH built from the tool
+   directories, CI's switches, and nothing of your shell's (no key, token or session variable, no
+   PYTEST_ADDOPTS or NODE_OPTIONS). A leg that changes the checkout (a tracked file, or an untracked
+   file `.gitignore` does not cover) makes the run invalid. It writes every run to
+   `<state dir>/sweeps/<full sha>.json`, which keeps every run at that sha. The state dir is
+   `$ROMP_STATE_DIR`, else `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and
+   `batch.py` with the same environment. When one leg fails on a known flake,
    `scripts/sweep.py run --tree ../romp-batch-<name> --leg <leg> --flake '<the flake>'` re-runs that
    leg alone at the same head; `--flake` names the failing test and where it is recorded as a known
-   flake. The runner refuses a re-run without `--flake`, of a leg that did not fail, or of a leg
-   already re-run once. The leg's record keeps both runs: the re-run, and the first failure with the
-   flake and the sha each ran at. `verify` counts a re-run only when all three are there and name the
-   batch head's sha, and the body's first block names the first failure and the flake. Any other
-   failure means a full sweep again. `scripts/sweep.py check --tree ../romp-batch-<name>` prints what
-   `verify` will read.
+   flake. A full run at a head whose last run failed a leg also needs it, as
+   `--flake <leg>=<the flake>` for each failed leg: a later green counts over a red run only then. A
+   flake is excused once per leg: a leg that fails again, or that a later run passes without
+   `--flake`, leaves that head unable to pass, and the fix goes on a new head. The runner refuses a
+   run that cannot count, and refuses a re-run of a leg that did not fail. `verify` reads the whole
+   history, and the body's first block names each excused failure and its flake, and each invalid
+   run (an invalid run needs no flake). `scripts/sweep.py check --tree ../romp-batch-<name>` prints
+   what `verify` will read.
 4. `scripts/batch.py verify <name>`. It reads the sweep result for the batch head's full sha and
-   fails by name when it is missing, stale (recorded at another commit), unfinished, red, invalid,
-   incomplete or unreadable. A missing result names the directory verify read and the variable it
+   fails by name when it is missing, stale (recorded at another commit), unfinished, red (a red run
+   no later run excused counts too), invalid (a result recorded under another sweep.py's leg
+   environment is), incomplete or unreadable (a schema-1 result, from the runner that swept the
+   batcher's own tree, is). A missing result names the directory verify read and the variable it
    came from (`ROMP_STATE_DIR`, `XDG_STATE_HOME` or `HOME`): a sweep run with another environment
    wrote its result somewhere else. It also fails as "behind" when the batch head does not contain
    main as origin has it now: CI does not run on the merge to main, so a batch lands only when the
