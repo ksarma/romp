@@ -220,14 +220,17 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `ROMP_STATE_DIR` a bare `TemporaryDirectory`'s name, a path joined onto such a
   mkdtemp, or the shell's value put back, never a bare mkdtemp, which no writer
   uses; `tests/test_state_isolation_order.py` mandates the preamble before a
-  module's first in-process load, of `bin/romp-*` or of any other file, so every
-  new module that loads a file in-process is a new writer of `XDG_STATE_HOME` (or
-  `ROMP_STATE_DIR`) and pops or writes `ROMP_STATE_DIR`, no date bounds the
-  writers of either name, and their licences rest on the value check of every
-  write), `ROMP_SERVE_TOKEN` (a string literal, the shell's value put back, or a
-  string literal joined to `secrets.token_hex(<an int literal>)` through the
-  module's own `import secrets`, its one binding of that name, a random value)
-  and `ROMP_KERNEL_NO_OPEN` (the value "1"), the four of them dated 2026-09-22 and
+  test module's first load as that census counts loads (a call named
+  `load_source`, `SourceFileLoader`, `spec_from_file_location`, `exec_module`,
+  `import_module` or `__import__`, whatever it loads, or an import of the
+  `kernel`, `postal` or `cli` package), so every new test module with such a
+  load is a new writer of `XDG_STATE_HOME` (or `ROMP_STATE_DIR`) and pops or
+  writes `ROMP_STATE_DIR`, no date bounds the writers of either name, and
+  their licences rest on the value check of every write), `ROMP_SERVE_TOKEN`
+  (a string literal, the shell's value put back, or a string literal joined to
+  `secrets.token_hex(<an int literal>)` through the module's own
+  `import secrets`, its one binding of that name, a random value) and
+  `ROMP_KERNEL_NO_OPEN` (the value "1"), the four of them dated 2026-09-22 and
   pointed at the class item filed on the reviewer's ruling from fork PR #871's
   polluter investigation (fork PR #871 merged 2026-09-22; import-time writers
   migrate into fixtures or the floor); the writer modules of these two are
@@ -244,13 +247,17 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   literal tuple included, in a fixture it can show pytest registers, reading
   `tests/conftest.py`'s fixtures and hooks from the module Python imported). That
   reader only refuses. It also refuses every fixture of a conftest whose code
-  names anyio or reads what carries the run's `-p` options (the command line,
-  `-p`'s list, the ini settings, the plugins loaded, `PYTEST_ADDOPTS`) other
-  than by a key it proves names something else, so a conftest with a hook or
-  fixture keyed on `-p no:anyio`, given or not given, has none of its fixtures
-  counted; it reads the conftest's text, so a key built at run time is not
-  read. A name is licensed only when a child pytest over a copy of
-  the conftest writes the name at each probe module's import and, in each probe
+  names anyio or reads what carries the run's `-p` options (`sys.argv`,
+  `sys.orig_argv` and the invocation params, `-p`'s list, the ini settings, the
+  plugins loaded, `PYTEST_ADDOPTS`) other than by a key it proves names
+  something else, so a conftest with a hook or fixture keyed on `-p no:anyio`,
+  given or not given, by a read the reader sees in its text has none of its
+  fixtures counted. It reads the conftest's text, so it does not see a key
+  built at run time, or the command line read from a file such as
+  `/proc/self/cmdline` (the rule's docstring, `_anyio_option_reads` in
+  `tests/test_hermetic_kernel_postal.py`, lists what it does not read). A name
+  is licensed only when a child pytest over a copy of the conftest writes the
+  name at each probe module's import and, in each probe
   test, reads it and sets it again, and sees the counted fixture's own code set or
   pop it in every probe test's setup, with the value re-asserted there. For
   `tests/conftest.py` that child runs in one scratch copy of the checkout per
@@ -341,7 +348,8 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   plugin blocked with no `-k` are granted (planted; no committed test makes a
   real run under either). A road on `-p no:anyio` not given, which no child
   is, is granted by the run, and the reader counts no fixture of a conftest
-  keyed on the flag, so no licence rests on it. Third, unmatchable at any
+  keyed on the flag by a read it sees (above), so no licence rests on such a
+  road where the reader sees its read. Third, unmatchable at any
   cost: a hook condition
   keyed on an open-valued signal (a mark, an environment variable, a host name,
   an option's value such as a `--durations` of 5 where CI's step gives 10, or
