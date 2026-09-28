@@ -243,7 +243,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   pop before the yield of a function-scoped autouse fixture, one in a `for` over a
   literal tuple included, in a fixture it can show pytest registers, reading
   `tests/conftest.py`'s fixtures and hooks from the module Python imported). That
-  reader only refuses. A name is licensed only when a child pytest over a copy of
+  reader only refuses. It also refuses every fixture of a conftest whose code
+  names anyio or reads what carries the run's `-p` options (the command line,
+  `-p`'s list, the ini settings, the plugins loaded, `PYTEST_ADDOPTS`) other
+  than by a key it proves names something else, so a conftest with a hook or
+  fixture keyed on `-p no:anyio`, given or not given, has none of its fixtures
+  counted; it reads the conftest's text, so a key built at run time is not
+  read. A name is licensed only when a child pytest over a copy of
   the conftest writes the name at each probe module's import and, in each probe
   test, reads it and sets it again, and sees the counted fixture's own code set or
   pop it in every probe test's setup, with the value re-asserted there. For
@@ -333,14 +339,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   of this suite may run). Each could be matched by more runs per case, one per
   option or combination. A road on `--rootdir` given and one on the cache
   plugin blocked with no `-k` are granted (planted; no committed test makes a
-  real run under either). Also in this tier is a run without `-p no:anyio`,
-  which a developer's run may be and no child of the proof is: each child
-  passes the flag, since fork PR #872 holds every pytest the suite starts to
-  it, so matching it takes a child without the flag, which that rule admits
-  only as an entry of `LAUNCHERS_LISTED` (in `tests/test_ci_sdk_pin.py`) with
-  a reason, and none is made. A road on CI's
-  `-p no:anyio` not given is granted (planted; no committed test makes a real
-  run under it). Third, unmatchable at any cost: a hook condition
+  real run under either). A road on `-p no:anyio` not given, which no child
+  is, is granted by the run, and the reader counts no fixture of a conftest
+  keyed on the flag, so no licence rests on it. Third, unmatchable at any
+  cost: a hook condition
   keyed on an open-valued signal (a mark, an environment variable, a host name,
   an option's value such as a `--durations` of 5 where CI's step gives 10, or
   another collection-time signal), what each clone keeps for itself, and what

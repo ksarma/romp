@@ -1505,15 +1505,16 @@ _TREE_BUILDERS = (("ast", ".", "parse"), ("PyCF_ONLY_AST",), ("from", "ast", "im
                   ("Bindings", ".", "of"), ("Bindings", "("))
 
 _OWN_TREE_ROADS = (
-    "_conftest_fixture_env_names", "_conftest_fixture_env_writes", "_conftest_import_pops", "_deepest_call_chain", "_expr",
-    "_fixtures_scoped_above_module", "_fresh", "_own_tree", "_parser_singletons", "_proof_facets", "_proof_option_case",
-    "_reassert_sites", "_teardown_only_restore",
+    "_anyio_option_reads", "_conftest_fixture_env_names", "_conftest_fixture_env_writes", "_conftest_import_pops",
+    "_deepest_call_chain", "_expr", "_fixtures_scoped_above_module", "_fresh", "_own_tree", "_parser_singletons",
+    "_proof_facets", "_proof_option_case", "_reassert_sites", "_teardown_only_restore",
     "HermeticKernelPostal._guard_class_source", "HermeticKernelPostal._guard_shape", "HermeticKernelPostal._guard_test",
     "HermeticKernelPostal._the_drops_count_body",
     "HermeticKernelPostal.test_a_bare_name_is_a_call_only_as_a_decorator_or_a_metaclass_and_a_base_runs_its_init_subclass",
     "HermeticKernelPostal.test_a_call_chain_longer_than_the_cap_raises_naming_the_chain_and_a_cycle_is_cut",
     "HermeticKernelPostal.test_a_collect_report_hook_is_admitted_by_the_shape_the_reader_proves_and_any_other_is_refused_naming_why",
     "HermeticKernelPostal.test_a_collect_report_proof_leaves_no_cycle_holding_the_modules_defs",
+    "HermeticKernelPostal.test_a_conftest_whose_code_reads_the_anyio_option_given_or_not_is_refused_on_both_roads_naming_why",
     "HermeticKernelPostal.test_a_fixture_another_modules_code_registers_over_by_name_re_asserts_nothing",
     "HermeticKernelPostal.test_a_hook_that_may_keep_pytest_from_running_a_fixture_refuses_it_on_both_roads",
     "HermeticKernelPostal.test_a_name_is_read_through_its_first_binding_alone_and_a_later_binding_or_a_parameter_makes_it_loud",
@@ -6422,9 +6423,333 @@ def _real_conftest_module():
     return conftest
 
 
+_ANYIO_WORDS = {"anyio": "anyio, the plugin -p no:anyio blocks",
+                "pytest_addopts": "PYTEST_ADDOPTS, whose options pytest reads as the command line's, -p no:anyio among them"}
+#   THE ANYIO RULE's words (_anyio_option_reads), case folded, {word: what a value holding it names}: no value of a
+#   conftest's code may hold either
+_ANYIO_CARRIERS = {
+    "argv": "the command line the run was started with (sys.argv)",
+    "orig_argv": "the interpreter's command line (sys.orig_argv)",
+    "invocation_params": "the arguments pytest was started with",
+    "known_args_namespace": "the options pytest read before it loaded plugins, -p among them",
+    "plugins": "the run's -p options (config.option.plugins)",
+    "inicfg": "the ini file's settings, its addopts among them",
+    "_inicache": "the ini settings read so far, its addopts among them",
+    "get_plugins": "the plugins the run loaded",
+    "list_name_plugin": "the plugins the run loaded, by name",
+    "list_plugin_distinfo": "the plugins the run loaded from an installed distribution",
+    "_name2plugin": "the plugins the run loaded or blocked, by name",
+    "_plugin_distinfo": "the plugins the run loaded from an installed distribution",
+    "get_hookimpls": "the plugins that implement a hook",
+}
+#   THE ANYIO RULE's carriers, {attribute: what it holds}: what holds the run's -p options or the plugins it loaded as a
+#   whole, read in no way the rule can tell from a read of -p no:anyio, so every read of one is refused
+_ANYIO_KEYED = {"getoption": ("plugins",), "getvalue": ("plugins",), "getvalueorskip": ("plugins",),
+                "getini": ("addopts", "markers"),
+                "has_plugin": (), "hasplugin": (), "is_blocked": (), "get_plugin": (), "getplugin": ()}
+#   THE ANYIO RULE's keyed reads, {method: the keys that read the run's -p options or its plugins}: the config's reads of
+#   one option or ini setting by its name (-p's is plugins; the ini's addopts carries options, and its markers the
+#   markers each plugin registers) and the plugin manager's lookups of one plugin by its name, admitted only as a call
+#   with a key the rule folds to strings, none of them one of these
+_ANYIO_BY_NAME = {"getattr": 1, "hasattr": 1, "__getattribute__": 0, "__getattr__": 0, "methodcaller": 0, "attrgetter": None,
+                  "get": 0, "pop": 0, "setdefault": 0, "__getitem__": 0}
+#   the calls that read an attribute or an item by a name handed them, {function or method: the index of the argument
+#   that holds the name, None for every argument (operator.attrgetter's, each a dotted path)}: THE ANYIO RULE reads the
+#   name, so a carrier or a keyed read reached through one is read as that attribute
+_ANYIO_FOLD_CAP = 64
+#   the most values THE ANYIO RULE folds one expression to: a fold past it is refused, since a value beyond it could
+#   name anyio unread
+
+
+def _anyio_option_reads(tree):
+    """[(line, what)] for each read of the anyio option THE ANYIO RULE finds in `tree`, a conftest's text, wherever it
+    stands (the module's import-time code and the body of every def, lambda and class, their decorators and defaults
+    included), sorted; empty when there is none. THE RULE (the reviewer's ruling at fork PR #894's landing merge with
+    main, on the proof's launcher: every child of the proof passes -p no:anyio (_PROOF_CHILD_FLAG), so the execution
+    proof refuses a hook keyed on the flag given and cannot refuse one keyed on it not given): a module's code may neither
+    name anyio nor read what carries the run's -p options, but by a key the rule proves names something else, so no hook
+    or fixture of it keys on -p no:anyio, given or not given, and a module whose code does has every fixture refused on
+    both roads (_registration_refusals). Each read is resolved BY BINDING, not by its spelling:
+    - A VALUE NAMING anyio or PYTEST_ADDOPTS (_ANYIO_WORDS), case folded: every str or bytes literal, and every value
+      the rule folds from literals by +, % or *, or by an f-string, through names, each name resolved by its scope to
+      the declarations that bind it (ast_bindings) and folded to every value they give it: a plain or annotated
+      assignment or a walrus, an augmented assignment, and a for or comprehension over a tuple, list or set display or a
+      name that folds to one. An operand the rule cannot fold (a parameter, an import, a call, a subscript) is read as
+      the empty string beside the values it can, so "an" + x + "yio" names anyio, and a fold past _ANYIO_FOLD_CAP
+      values is refused. So has_plugin, is_blocked or get_plugin asked about anyio, "no:anyio" sought in sys.argv, in
+      the invocation params or in -p's list, "anyio" in sys.modules and os.environ.get("PYTEST_ADDOPTS") are each
+      refused, whichever names hold the key.
+    - AN IDENTIFIER NAMING anyio: a name, an attribute, an import, a def, class or parameter, a keyword (import anyio,
+      a fixture's anyio_backend parameter).
+    - A CARRIER (_ANYIO_CARRIERS), read as an attribute of anything, imported by name, or read through a call of
+      _ANYIO_BY_NAME or a subscript whose key folds to its name: sys.argv and sys.orig_argv, the invocation params, the
+      options read before plugins load, config.option.plugins, the ini settings, and the plugin manager's listings. A
+      carrier holds the flag among the run's other options or plugins, so its read is refused whatever the code does with
+      it, which covers a key built at run time and a road that names no plugin: len(sys.argv), "-p" not in the
+      invocation params, an empty -p list.
+    - A KEYED READ (_ANYIO_KEYED): the config's getoption, getvalue, getvalueorskip and getini and the plugin manager's
+      lookups by name, each admitted only as a call whose key, its first argument or its name=, folds to strings with no
+      part the rule cannot fold, none of them a key of the method's entry (plugins; addopts and markers for getini),
+      and read in no other way (a key the text does not hold); and config.option, admitted only as an attribute of it
+      the text names, none of the names above and no double-underscore name, or through getattr or hasattr with a key
+      that folds so. The first argument of has_plugin and its siblings names a plugin, anyio or another; a literal naming
+      another passes, and one naming anyio is refused by the first rule.
+    LIVE: tests/conftest.py has none (its one keyed read, get_plugin("terminalreporter") in _say_at_run_end, folds to a
+    name that is neither anyio nor a key of the -p options; the refusal test pins the count at 0, and the module road
+    proves every fixture of the conftest).
+    WHAT IT DOES NOT READ, each passing unrefused: a carrier reached through a name the rule cannot fold (a getattr whose
+    name is a parameter, or is built by a call), through a namespace read whole (vars() of the config or its __dict__;
+    tests/conftest.py calls vars() on other objects, so the rule does not refuse the call), or by a private attribute
+    of pytest's that _ANYIO_CARRIERS does not name; a key naming anyio that it cannot fold (built by a call or a subscript,
+    or brought from outside the module's text: another module, the environment, a file) and handed to a read that is
+    no carrier and no keyed read (sys.modules, a fixture's name); PYTEST_ADDOPTS read through a name it cannot fold or
+    in a read of the whole environment, with such a key; and the plugins the run loaded read through what they change
+    elsewhere (how many modules are imported, how many markers or fixtures are registered), the third tier's
+    open-valued signal (_conftest_reasserted_names). Each is code the module road takes on trust, and a review of the
+    conftest reads."""
+    bindings = ast_bindings.Bindings.of(tree)
+    parent = {}
+    for n in ast.walk(tree):
+        for c in ast.iter_child_nodes(n):
+            parent[c] = n
+    out, busy, opened = [], set(), (frozenset([""]), True, False)   # what the rule cannot fold: the empty string, open
+
+    def capped(values, is_open):
+        return (frozenset(), True, True) if len(values) > _ANYIO_FOLD_CAP else (frozenset(values), is_open, False)
+
+    def declared(name_node):
+        """The declarations `name_node` (a Name read) resolves to by its scope; None where no scope binds it."""
+        try:
+            decls, _where = bindings.scope_of(name_node).resolve(name_node.id)
+        except AssertionError:
+            return None
+        return decls or None
+
+    def iterated(decl):
+        """The iterable a loop declaration of decl.name iterates, or None (a tuple target, or no loop)."""
+        loops = [decl.node] if isinstance(decl.node, (ast.For, ast.AsyncFor)) else list(getattr(decl.node, "generators", ()))
+        for loop in loops:
+            if isinstance(loop.target, ast.Name) and loop.target.id == decl.name:
+                return loop.iter
+        return None
+
+    def through(name_node, each):
+        """The union of `each` over the declarations `name_node` resolves to, a name met again while folding read as
+        open."""
+        decls = declared(name_node)
+        key = id(name_node)
+        if decls is None or key in busy:
+            return opened
+        busy.add(key)
+        try:
+            values, is_open = set(), False
+            for d in decls:
+                got = each(d)
+                if got[2]:
+                    return frozenset(), True, True
+                values |= got[0]
+                is_open = is_open or got[1]
+            return capped(values, is_open)
+        finally:
+            busy.discard(key)
+
+    def by_declaration(d):
+        if d.kind in ("assign", "augassign", "unpack") and d.value is not None:
+            return fold(d.value)
+        if d.kind == "loop" and iterated(d) is not None:
+            return elements(iterated(d))
+        return opened
+
+    def fold(n):
+        """(values, open, past the cap) for the expression `n`: the values the rule folds it to, whether it may hold
+        another, and whether the fold passed _ANYIO_FOLD_CAP."""
+        if isinstance(n, ast.Constant):
+            return frozenset([n.value]), False, False
+        if isinstance(n, ast.Name):
+            return through(n, by_declaration)
+        if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Mult, ast.Mod)):
+            left = fold(n.left)
+            if isinstance(n.op, ast.Mod) and isinstance(n.right, ast.Tuple):
+                parts = [fold(e) for e in n.right.elts]
+                combos = [()]
+                for values, _o, over in parts:
+                    combos = [c + (v,) for c in combos for v in values]
+                    if over or len(combos) > _ANYIO_FOLD_CAP:
+                        return frozenset(), True, True
+                right = (frozenset(combos), any(p[1] for p in parts), False)
+            else:
+                right = fold(n.right)
+            if left[2] or right[2]:
+                return frozenset(), True, True
+            values = set()
+            for a in left[0]:
+                for b in right[0]:
+                    if isinstance(n.op, ast.Mult) and any(isinstance(x, int) and not isinstance(x, bool) and x > 4096
+                                                          for x in (a, b)):
+                        continue
+                    try:
+                        values.add(a + b if isinstance(n.op, ast.Add) else a * b if isinstance(n.op, ast.Mult) else a % b)
+                    except Exception:
+                        continue
+            return capped(values, left[1] or right[1])
+        if isinstance(n, ast.JoinedStr):
+            combos, is_open = [""], False
+            for p in n.values:
+                if isinstance(p, ast.Constant):
+                    combos = [c + str(p.value) for c in combos]
+                    continue
+                values, o, over = fold(p.value)
+                specs, so, sover = fold(p.format_spec) if p.format_spec is not None else (frozenset([""]), False, False)
+                if over or sover:
+                    return frozenset(), True, True
+                is_open = is_open or o or so
+                convert = {115: str, 114: repr, 97: ascii}.get(p.conversion, lambda x: x)
+                texts = set()
+                for x in values:
+                    for s in specs:
+                        try:
+                            texts.add(format(convert(x), s))
+                        except Exception:
+                            continue
+                combos = [c + t for c in combos for t in texts]
+                if len(combos) > _ANYIO_FOLD_CAP:
+                    return frozenset(), True, True
+            return frozenset(combos), is_open, False
+        return opened
+
+    def elements(n):
+        """fold's triple for the elements a for over `n` binds its target to."""
+        if isinstance(n, (ast.Tuple, ast.List, ast.Set)):
+            values, is_open = set(), False
+            for e in n.elts:
+                got = opened if isinstance(e, ast.Starred) else fold(e)
+                if got[2]:
+                    return frozenset(), True, True
+                values |= got[0]
+                is_open = is_open or got[1]
+            return capped(values, is_open)
+        if isinstance(n, ast.Name):
+            return through(n, lambda d: elements(d.value) if d.kind == "assign" and d.value is not None else opened)
+        return opened
+
+    def words(values):
+        found = set()
+        for v in values:
+            text = v.decode("latin-1") if isinstance(v, bytes) else v
+            if isinstance(text, str):
+                found.update(w for w in _ANYIO_WORDS if w in text.casefold())
+        return found
+
+    def off(node, why):
+        line = getattr(node, "lineno", None) or getattr(parent.get(node), "lineno", 0)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            text = "%s %s" % ("class" if isinstance(node, ast.ClassDef) else "def", node.name)
+        elif isinstance(node, (ast.expr, ast.stmt)):
+            text = ast.unparse(node).split("\n", 1)[0]
+        elif isinstance(node, ast.alias):
+            text = node.name + (" as " + node.asname if node.asname else "")
+        else:
+            text = "%s %s" % ("the parameter" if isinstance(node, ast.arg) else "the keyword", getattr(node, "arg", None))
+        out.append((line, "%s: %s" % (text if len(text) <= 100 else text[:97] + "...", why)))
+
+    def key_of(call):
+        """(values, open) of the key a keyed read's call passes: its first positional argument, else its name=."""
+        if call.args:
+            got = opened if isinstance(call.args[0], ast.Starred) else fold(call.args[0])
+            return got[0], got[1] or got[2]
+        for k in call.keywords:
+            if k.arg == "name":
+                got = fold(k.value)
+                return got[0], got[1] or got[2]
+        return frozenset(), True
+
+    def names_a_carrier(value):
+        return isinstance(value, str) and any(part in _ANYIO_CARRIERS or part in _ANYIO_KEYED or part == "option"
+                                              for part in value.split("."))
+
+    spelled = {ast.Name: lambda x: [x.id], ast.Attribute: lambda x: [x.attr], ast.arg: lambda x: [x.arg],
+               ast.alias: lambda x: [x.name, x.asname or ""], ast.ImportFrom: lambda x: [x.module or ""],
+               ast.FunctionDef: lambda x: [x.name], ast.AsyncFunctionDef: lambda x: [x.name],
+               ast.ClassDef: lambda x: [x.name], ast.keyword: lambda x: [x.arg or ""],
+               ast.Global: lambda x: list(x.names), ast.Nonlocal: lambda x: list(x.names)}
+    try:
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.Constant, ast.BinOp, ast.JoinedStr)):
+                values, _o, over = fold(n)
+                if over:
+                    off(n, "a value the rule cannot fold within %d values, which may name anyio or PYTEST_ADDOPTS"
+                           % _ANYIO_FOLD_CAP)
+                for w in sorted(words(values)):
+                    off(n, "a value naming %s" % _ANYIO_WORDS[w])
+            spell = spelled.get(type(n))
+            if spell is not None and any("anyio" in s.casefold() for s in spell(n)):
+                off(n, "an identifier naming anyio")
+            if isinstance(n, ast.Attribute) and n.attr in _ANYIO_CARRIERS:
+                off(n, "a read of the carrier %s, %s" % (n.attr, _ANYIO_CARRIERS[n.attr]))
+            if isinstance(n, ast.ImportFrom):
+                for a in n.names:
+                    if a.name in _ANYIO_CARRIERS or a.name in _ANYIO_KEYED:
+                        off(n, "an import of %s by its name, %s" % (
+                            a.name, _ANYIO_CARRIERS.get(a.name) or "a keyed read, whose key its calls hide"))
+            if isinstance(n, ast.Attribute) and n.attr in _ANYIO_KEYED:
+                p = parent.get(n)
+                if not (isinstance(p, ast.Call) and p.func is n):
+                    off(n, "the keyed read %s other than as a call, so the key it reads by is not in the text" % n.attr)
+                else:
+                    values, is_open = key_of(p)
+                    if is_open or not values or any(not isinstance(v, str) or v in _ANYIO_KEYED[n.attr] for v in values):
+                        off(n, "the keyed read %s called with a key the rule cannot fold to strings%s" % (
+                            n.attr, " other than %s" % " and ".join(_ANYIO_KEYED[n.attr]) if _ANYIO_KEYED[n.attr] else ""))
+            if isinstance(n, ast.Attribute) and n.attr == "option":
+                p = parent.get(n)
+                ok = (isinstance(p, ast.Attribute) and p.value is n and not p.attr.startswith("__")
+                      and not names_a_carrier(p.attr))
+                if (not ok and isinstance(p, ast.Call) and len(p.args) >= 2 and p.args[0] is n
+                        and isinstance(p.func, ast.Name) and p.func.id in ("getattr", "hasattr")):
+                    values, is_open, over = fold(p.args[1])
+                    ok = bool(values) and not (is_open or over) and all(
+                        isinstance(v, str) and not v.startswith("__") and not names_a_carrier(v) for v in values)
+                if not ok:
+                    off(n, "a read of option other than by an attribute the text names (config.option holds the run's "
+                           "-p options)")
+            if isinstance(n, ast.Call):
+                called = (n.func.attr if isinstance(n.func, ast.Attribute)
+                          else n.func.id if isinstance(n.func, ast.Name) else None)
+                if called in _ANYIO_BY_NAME:
+                    at = _ANYIO_BY_NAME[called]
+                    for a in (n.args if at is None else n.args[at:at + 1]):
+                        for v in sorted(v for v in fold(a)[0] if names_a_carrier(v)):
+                            off(n, "a read of %s by its name, through %s" % (v, called))
+            if isinstance(n, ast.Subscript):
+                for v in sorted(v for v in fold(n.slice)[0] if names_a_carrier(v)):
+                    off(n, "a read of %s by its name, through a subscript" % v)
+    finally:
+        capped = declared = iterated = through = by_declaration = fold = elements = off = key_of = None   # each holds
+        bindings.release()                  # the next, or the tree, through its closure: a cycle only a collection frees
+    return sorted(set(out))
+
+
 def _registration_refusals(tree, candidates, real, where=None):
     """{id(def): None, or why the reader cannot prove pytest runs it} for each def of `candidates` (the function-scoped
-    autouse fixture defs of `tree`), by the reader's two roads. THE MODULE ROAD, for tests/conftest.py (`real`): the
+    autouse fixture defs of `tree`): the refusals of the reader's two roads (_road_refusals), and on both roads THE
+    ANYIO RULE (_anyio_option_reads, the reviewer's ruling at fork PR #894's landing merge with main, on the proof's
+    launcher): a module whose code names anyio or reads what carries the run's -p options, but by a key the rule proves
+    names something else, has every fixture refused, naming each read, so no hook or fixture of it keys on
+    -p no:anyio, given or not given."""
+    if not candidates:
+        return {}
+    reads = _anyio_option_reads(tree)
+    anyio = ("its module's code names anyio or reads what carries the run's -p options, other than by a key the reader "
+             "proves names something else, so a hook or fixture of it may key on -p no:anyio, given or not given (THE "
+             "ANYIO RULE, _anyio_option_reads): " + "; ".join("line %d: %s" % r for r in reads)) if reads else None
+    return {key: "; ".join(w for w in (why, anyio) if w) or None
+            for key, why in _road_refusals(tree, candidates, real, where).items()}
+
+
+def _road_refusals(tree, candidates, real, where=None):
+    """{id(def): None, or why the reader cannot prove pytest runs it} for each def of `candidates` (the function-scoped
+    autouse fixture defs of `tree`), by the reader's two roads (_registration_refusals adds THE ANYIO RULE on both).
+    THE MODULE ROAD, for tests/conftest.py (`real`): the
     fixtures of the module Python imported (_real_conftest_module), read the way pytest registers them
     (_pytest_registrations, _why_pytest_does_not_run), and its hook implementations, read the way pytest takes them
     (_pytest_hook_impls, _why_a_hook_may_stop_it: a hook off _LISTED_HOOKS, unless it is a hook of _SHAPE_HOOKS whose
@@ -6481,7 +6806,10 @@ def _conftest_reasserted_names(src=None, where=None):
     source handed in its text alone, where every statement, wherever it stands, and every hook implementation must be on
     the proven list and every name the def could be registered under bound once in the module, by the def or its literal
     name=, and registered by no other call; so a road not yet named is refused rather than counted
-    (_registration_refusals has the two roads, and _unproven_statements the list).
+    (_registration_refusals has the two roads, and _unproven_statements the list). On both roads, THE ANYIO RULE (the
+    reviewer's ruling at the PR's landing merge with main, on the proof's launcher; _anyio_option_reads) refuses every
+    fixture of a module whose code names anyio or reads what carries the run's -p options, but by a key the rule
+    proves names something else, so no hook or fixture keyed on -p no:anyio, given or not given, is counted.
     WHY TWO ROADS: before this ruling the reader closed the class one case at a time, each found by a child pytest in
     which a counted fixture never ran (a later binding of the fixture's name, the sixteenth commit; another def given its
     name=, the seventeenth; a name= passed through functools.partial or getattr, the eighteenth; a decorator or a name
@@ -6518,7 +6846,8 @@ def _conftest_reasserted_names(src=None, where=None):
     pytest_generate_tests, or a parametrize mark naming it), and a hook of another conftest or of an installed plugin,
     since the reader reads tests/conftest.py alone. On the module road, what tests/conftest.py's own code does beyond
     what pytest registers from it, which the reader takes on trust since it would refuse the conftest if it read that
-    code by the proven list (the text road refuses it on the statements the registration test prints): its import-time
+    code by the proven list (the text road refuses it on the statements the registration test prints), and reads by
+    THE ANYIO RULE alone (_anyio_option_reads, whose docstring says what that rule does not read): its import-time
     code, its fixtures' bodies and the bodies of its hooks on _LISTED_HOOKS (not its pytest_make_collect_report, whose
     body and every def it calls the reader reads, THE SHAPE of _collect_report_shape_faults) may register a plugin,
     patch pytest's code,
@@ -6619,12 +6948,10 @@ def _conftest_reasserted_names(src=None, where=None):
     cache plugin blocked): each is finite and could be matched by more runs per case, one per option or combination,
     which are not made here. The witness is _proof_option_roads' two roads of this tier, one on --rootdir given and one
     on the cache plugin blocked with no -k given, each granted by the proof in the context test; no committed test
-    makes a real run under either. And a run without -p no:anyio, which a developer's run may be and no child of the
-    proof is: each passes the flag after its run's options (_PROOF_CHILD_FLAG), since fork PR #872 holds every pytest
-    the suite starts to it (tests/test_ci_sdk_pin.py, ChildPytestLaunchers), so matching it takes a child without the
-    flag, which that rule admits only as an entry of LAUNCHERS_LISTED with a reason, and none is made. The witness is
-    _proof_option_roads' road on CI's -p no:anyio not given, granted by the proof in the context test; no committed
-    test makes a real run under it.
+    makes a real run under either. A road keyed on -p no:anyio not given, which no child of the proof is (each passes
+    the flag, _PROOF_CHILD_FLAG), is granted by the proof (_proof_option_roads' road on it, in the context test) where
+    the filter counts it nowhere: THE ANYIO RULE refuses every fixture of a conftest with a hook or fixture keyed on
+    the flag, given or not given, on the filter's two roads, so no licence rests on it.
     THIRD, UNMATCHABLE at any cost: a conftest hook condition keyed on an open-valued signal, a mark of any name, an
     environment variable, a host name, an option's value (a --durations of 5, where CI's step gives 10: the pair
     matches whether an option is given, not its value; _proof_option_roads' road on it is granted), or another
@@ -6834,9 +7161,9 @@ _PROOF_CHILD_FLAG = ("-p", "no:anyio")
 #   (tests/test_ci_sdk_pin.py, ChildPytestLaunchers), so that no child in a CI cell loads the pytest plugin of anyio,
 #   which the SDK step installs there. CI's step passes the same flag among its options, and _proof_option_roads reads
 #   it there as one option of two words, as it reads the developer's -p no:cacheprovider (that ruling, (2);
-#   _proof_ci_option_units). Since each child passes it, every run of the proof has the flag and none lacks it: a road
-#   keyed on it not given is granted, in the proof's second tier (_conftest_reasserted_names), and a developer's run
-#   that does not pass the flag has that fact
+#   _proof_ci_option_units). Since each child passes it, every run of the proof has the flag and none lacks it, so the
+#   proof grants a road keyed on it not given; THE ANYIO RULE refuses that road, and the road on the flag given, on the
+#   filter's two roads (_anyio_option_reads), so no licence rests on either
 
 
 def _proof_developer_options():
@@ -11326,6 +11653,204 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(alive, [], "the defs of tests/conftest.py alive once the proof has ended and the test dropped the "
                                     "tree: a cycle the proof left holds them")
 
+    def test_a_conftest_whose_code_reads_the_anyio_option_given_or_not_is_refused_on_both_roads_naming_why(self):
+        """THE ANYIO RULE (the reviewer's ruling at fork PR #894's landing merge with main, on the proof's launcher: every
+        child of the proof passes -p no:anyio (_PROOF_CHILD_FLAG), so the execution proof refuses a hook keyed on the flag
+        given and grants one keyed on it not given; one syntactic check of the filter, _anyio_option_reads, now refuses
+        both, so no licence rests on either). LIVE: over tests/conftest.py the rule finds no read, and the module road
+        still proves every function-scoped autouse fixture of it. THE PREMISE, run: ONE child pytest, passing
+        -p no:anyio as every child does, over the proof's own two roads on the flag (_proof_option_roads: CI's option
+        -p no:anyio given, and not given), each the condition of a listed pytest_collectreport that takes `_f` out of
+        each test where it holds: `_f`'s pop never ran under the road on the flag given, and ran under the road on it not
+        given, as it would not in a run without the flag. THE POLARITY PINS: those two roads, and each read of the
+        ruling's list keyed on the flag given and on it not given (the invocation params, sys.argv, config.option,
+        config.getoption, the plugin manager's has_plugin, is_blocked and get_plugin, and PYTEST_ADDOPTS), and the ways
+        a key or a carrier is reached by binding (the key bound to a name, split across names and joined by +, by an
+        f-string or by %, bound by a for, beside an operand the rule cannot fold; sys under another name, argv imported
+        from sys, sys.argv through getattr, vars() or operator.attrgetter; -p's list read whole, by getoption, through a
+        name, or with a key the rule cannot fold; the ini settings, the options read before plugins load, the plugin
+        manager's listing; an identifier naming anyio; in an autouse fixture, at import and in a def a hook calls), are
+        each refused ON THE MODULE ROAD (_conftest_reasserted_names over a conftest imported from a scratch file, read
+        as tests.conftest is), naming THE ANYIO RULE, and ON THE TEXT ROAD, where a case that makes a call is refused
+        by the proven list as well; each case is a subtest, the rule's own reads classed by the clause that refuses
+        them (a value, an identifier, a carrier, an import, a keyed read, config.option, a read by name). Red at the
+        commit that added this test under a reader without the rule (every case counted on the module road, and each
+        case with no call on the text road) and under a reader without each one clause (its cases). REFUSED NOTHING:
+        the shapes tests/conftest.py uses (get_plugin of another plugin by a literal, a local named argv, the word argv
+        in a list, a read of the whole environment) and another option read by getoption, by option.<name>, by getattr
+        with a literal or through a name that folds to it, each counted on the module road, and on the text road where
+        it makes no call. THE RULE FREES WHAT IT READ: once the test drops the conftest's tree, no def of it is alive
+        (the nested defs hold one another through their closures, and are cleared when the rule ends)."""
+        from unittest import mock
+        with open(os.path.join(HERE, "conftest.py"), encoding="utf-8") as f:
+            real = ast.parse(f.read())
+        self.assertEqual(_anyio_option_reads(real), [], "LIVE: THE ANYIO RULE finds no read in tests/conftest.py")
+        candidates = [fn for fn in real.body
+                      if isinstance(fn, ast.FunctionDef) and _is_autouse_fixture(fn) and _is_function_scoped_fixture(fn)]
+        self.assertGreater(len(candidates), 5, "tests/conftest.py's function-scoped autouse fixtures")
+        self.assertEqual(set(_registration_refusals(real, candidates, True).values()), {None},
+                         "LIVE: the module road proves every function-scoped autouse fixture of tests/conftest.py")
+        refs = [weakref.ref(d) for d in real.body if isinstance(d, ast.FunctionDef)]
+        real = candidates = None        # dropped: the rule ran twice over the tree above, and nothing of it may hold it
+        self.assertEqual([ref().name for ref in refs if ref() is not None], [],
+                         "THE RULE FREES WHAT IT READ: a def of tests/conftest.py alive once the test dropped the tree")
+        flag = " ".join(_PROOF_CHILD_FLAG)
+        own = [(label, condition, runs) for label, condition, runs in _proof_option_roads() if " %s " % flag in condition]
+        self.assertEqual(sorted(runs is None for _l, _c, runs in own), [False, True],
+                         "the proof's own roads on CI's %s: given, in every run, and not given, granted by the proof: %s"
+                         % (flag, own))
+        head = ("import operator, os, sys\n\nimport pytest\n\n\n"
+                "@pytest.fixture(autouse=True)\ndef _f():\n    os.environ.pop(%r, None)\n    yield\n\n\n")
+        dropping = ("def pytest_collectreport(report):\n    for item in report.result:\n"
+                    "        if (hasattr(item, 'fixturenames') and '_f' in item.fixturenames\n"
+                    "                and str(item.path).startswith(os.path.dirname(os.path.realpath(__file__))) and (%s)):\n"
+                    "            item.fixturenames.remove('_f')\n")
+        polarity = {True: "not given", False: "given"}          # the child reads the label: plain words alone
+        premise = self._registration_cases_run([(polarity[runs is None], head % ("ROMP_PROBE_FLAG_P%d" % i)
+                                                 + dropping % condition, {}, "ROMP_PROBE_FLAG_P%d" % i)
+                                                for i, (_l, condition, runs) in enumerate(own)])
+        self.assertEqual({word: premise[word][0] for word in polarity.values()}, {"given": "45678", "not given": "None"},
+                         "THE PREMISE: in a child that passes %s, `_f`'s pop never ran under the road on the flag given and "
+                         "ran under the road on it not given" % flag)
+
+        def hook(condition):
+            return "def pytest_configure(config):\n    if %s:\n        pass\n" % condition
+
+        def fixture(condition):
+            return ("@pytest.fixture(autouse=True)\ndef _g(request):\n    config = request.config\n"
+                    "    if %s:\n        pass\n    yield\n" % condition)
+        split = "_A = 'an'\n_B = 'yio'\n\n\n"
+        # (label, the conftest's text after _f, the clauses the rule's reads are classed by, whether the text makes no
+        # call, so the text road's proven list alone counts it)
+        cases = [("the proof's road: %s" % label, dropping % condition, {"value", "carrier"}, False)
+                 for label, condition, _r in own]
+        for polarity, sought in (("the flag given", "in"), ("the flag not given", "not in")):
+            cases += [("the invocation params, %s" % polarity, hook("'no:anyio' %s config.invocation_params.args" % sought),
+                       {"value", "carrier"}, True),
+                      ("sys.argv, %s" % polarity, hook("'no:anyio' %s sys.argv" % sought), {"value", "carrier"}, True),
+                      ("config.option, %s" % polarity, hook("'no:anyio' %s config.option.plugins" % sought),
+                       {"value", "carrier", "option"}, True),
+                      ("config.getoption, %s" % polarity, hook("'no:anyio' %s config.getoption('plugins')" % sought),
+                       {"value", "keyed"}, False),
+                      ("has_plugin, %s" % polarity,
+                       hook("%sconfig.pluginmanager.has_plugin('anyio')" % ("not " if sought == "in" else "")),
+                       {"value"}, False),
+                      ("is_blocked, %s" % polarity,
+                       hook("%sconfig.pluginmanager.is_blocked('anyio')" % ("" if sought == "in" else "not ")),
+                       {"value"}, False),
+                      ("get_plugin, %s" % polarity,
+                       hook("config.pluginmanager.get_plugin('anyio') %s None" % ("is" if sought == "in" else "is not")),
+                       {"value"}, False),
+                      ("PYTEST_ADDOPTS, %s" % polarity, hook("'no:anyio' %s os.environ.get('PYTEST_ADDOPTS', '')" % sought),
+                       {"value", "addopts"}, True)]
+        cases += [("the key bound to a name at import",
+                   "_FLAG = 'no:anyio'\n\n\n" + hook("_FLAG not in config.invocation_params.args"),
+                   {"value", "carrier"}, True),
+                  ("the key split across two names and joined by +, sought in sys.modules",
+                   split + hook("_A + _B in sys.modules"), {"value"}, True),
+                  ("the key split across two names and joined by an f-string", split + hook("f'{_A}{_B}' in sys.modules"),
+                   {"value"}, True),
+                  ("the key split across two names and joined by %", split + hook("'%s%s' % (_A, _B) in sys.modules"),
+                   {"value"}, True),
+                  ("the key's first part bound by a for over a tuple",
+                   "def pytest_configure(config):\n    for part in ('an',):\n        if part + 'yio' in sys.modules:\n"
+                   "            pass\n", {"value"}, True),
+                  ("the key beside an operand the rule cannot fold",
+                   hook("'an' + config.rootpath.name + 'yio' in sys.modules"), {"value"}, True),
+                  ("sys under another name, its argv read whole", "import sys as _s\n\n\n" + hook("not _s.argv"),
+                   {"carrier"}, True),
+                  ("argv imported from sys", "from sys import argv as _a\n\n\n" + hook("not _a"), {"import"}, True),
+                  ("sys.argv through getattr and a folded name", hook("not getattr(sys, 'ar' + 'gv')"), {"byname"}, False),
+                  ("sys.argv through vars() and a subscript", hook("not vars(sys)['argv']"), {"byname"}, False),
+                  ("the invocation params through operator.attrgetter",
+                   hook("not operator.attrgetter('invocation_params.args')(config)"), {"byname"}, False),
+                  ("the word -p sought in the invocation params, no plugin named",
+                   hook("'-p' not in config.invocation_params.args"), {"carrier"}, True),
+                  ("-p's list read empty by getoption", hook("not config.getoption('plugins')"), {"keyed"}, False),
+                  ("getoption's key through a name bound to a fold",
+                   "_K = 'plug' + 'ins'\n\n\n" + hook("not config.getoption(_K)"), {"keyed"}, False),
+                  ("has_plugin with a key the rule cannot fold",
+                   hook("config.pluginmanager.has_plugin(config.rootpath.name)"), {"keyed"}, False),
+                  ("getoption read other than as a call", hook("config.getoption is not None"), {"keyed"}, True),
+                  ("config.option's namespace whole", hook("config.option.__dict__"), {"option"}, True),
+                  ("the ini settings", hook("config.inicfg"), {"carrier"}, True),
+                  ("getini's addopts", hook("config.getini('addopts')"), {"keyed"}, False),
+                  ("the options read before plugins load", hook("config.known_args_namespace"), {"carrier"}, True),
+                  ("the plugin manager's listing", hook("config.pluginmanager.get_plugins()"), {"carrier"}, False),
+                  ("PYTEST_ADDOPTS by a folded name", hook("os.environ.get('PYTEST_' + 'ADDOPTS')"), {"addopts"}, True),
+                  ("a fixture's parameter naming anyio",
+                   "@pytest.fixture(autouse=True)\ndef _g(anyio_backend):\n    yield\n", {"identifier"}, True),
+                  ("an import's alias naming anyio", "from sys import modules as anyio_modules\n", {"identifier"}, True),
+                  ("an autouse fixture keyed on the flag not given",
+                   fixture("'no:anyio' not in config.invocation_params.args"), {"value", "carrier"}, True),
+                  ("import-time code keyed on the flag not given", "_FLAGLESS = 'no:anyio' not in sys.argv\n",
+                   {"value", "carrier"}, True),
+                  ("a def a listed hook calls, keyed on the flag not given",
+                   "def _flagless():\n    return 'no:anyio' not in sys.argv\n\n\n" + hook("_flagless()"),
+                   {"value", "carrier"}, False)]
+        controls = [("get_plugin of another plugin by a literal, as tests/conftest.py's _say_at_run_end",
+                     hook("config.pluginmanager.get_plugin('terminalreporter') is None"), False),
+                    ("a local named argv", "def pytest_configure(config):\n    argv = ['x']\n    if argv:\n"
+                     "        pass\n", True),
+                    ("the word argv in a list", "def pytest_configure(config):\n    via = ['argv']\n    if via:\n"
+                     "        pass\n", True),
+                    ("a read of the whole environment", "def pytest_configure(config):\n    for name in os.environ:\n"
+                     "        pass\n", True),
+                    ("another option read by getoption", hook("config.getoption('verbose') > 0"), False),
+                    ("another option read as option.<name>", hook("config.option.verbose > 0"), True),
+                    ("another option read by getattr with a literal", hook("getattr(config.option, 'verbose') > 0"), False),
+                    ("another option read by getoption through a name that folds to it",
+                     "_K = 'verb' + 'ose'\n\n\n" + hook("config.getoption(_K) > 0"), False)]
+        clauses = (("value", "a value naming anyio"), ("addopts", "a value naming PYTEST_ADDOPTS"),
+                   ("cap", "cannot fold within"), ("identifier", "an identifier naming anyio"),
+                   ("carrier", "a read of the carrier"), ("import", "an import of"), ("keyed", "the keyed read"),
+                   ("option", "a read of option other than"), ("byname", "by its name, through"))
+        home = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, home, True)
+        made = []
+
+        def both_roads(text):
+            """(module road, text road): _conftest_reasserted_names over `text` written to a scratch directory, read once
+            as tests.conftest is (the module imported from the file, HERE the file's directory) and once as a source
+            handed in, sitting there."""
+            d = os.path.join(home, "c%02d" % len(made))
+            os.mkdir(d)
+            path = os.path.join(d, "conftest.py")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            spec = importlib.util.spec_from_file_location("_flag_plant_%02d" % len(made), path)
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+            made.append(m)
+            with mock.patch.dict(globals(), {"HERE": d, "_real_conftest_module": lambda: m}):
+                module = _conftest_reasserted_names()
+            return module, _conftest_reasserted_names(text, where=d)
+
+        def refusal(got):
+            mine = [r for r in got.refused if r.startswith("_f (line ")]
+            return mine[0] if len(mine) == 1 else None
+        for i, (label, rest, kinds, _free) in enumerate(cases + [(lab, rest, set(), free) for lab, rest, free in controls]):
+            probe = "ROMP_PROBE_FLAG_%02d" % i
+            text = head % probe + rest
+            with self.subTest(case=label):
+                reads = _anyio_option_reads(ast.parse(text))
+                self.assertEqual({k for k, phrase in clauses if any(phrase in w for _l, w in reads)}, kinds,
+                                 "%s: the clauses the rule's reads are classed by: %s" % (label, reads))
+                module, by_text = both_roads(text)
+                if kinds:
+                    for road, got in (("THE MODULE ROAD", module), ("THE TEXT ROAD", by_text)):
+                        why = refusal(got) or ""
+                        self.assertTrue(probe not in got.removals and "THE ANYIO RULE" in why,
+                                        "%s refuses `_f` beside %s, naming THE ANYIO RULE: counted %s, refusals %s:\n%s"
+                                        % (road, label, probe in got.removals, list(got.refused), text))
+                else:
+                    self.assertEqual((probe in module.removals, refusal(module)), (True, None),
+                                     "THE MODULE ROAD counts `_f` beside %s: %s" % (label, list(module.refused)))
+                    free = dict((c[0], c[2]) for c in controls)[label]
+                    self.assertEqual(probe in by_text.removals, free, "THE TEXT ROAD counts `_f` beside %s where it makes "
+                                     "no call: %s" % (label, list(by_text.refused)))
+                    self.assertNotIn("THE ANYIO RULE", refusal(by_text) or "", "%s: the rule refuses nothing" % label)
+
     def test_a_re_asserted_licence_holds_only_where_a_child_pytest_sees_the_fixtures_own_re_assert(self):
         """THE EXECUTION PROOF (the reviewer's ruling of 2026-09-24 21:09Z on round 2 of fork PR #894, (1): the static
         reader had no closed boundary, each fix closing one facet of the class, a fixture counted that pytest never ran,
@@ -11456,8 +11981,9 @@ class HermeticKernelPostal(unittest.TestCase):
         and another does not, given or not, is refused for the reads of the runs that have its fact and no others (CI's
         -p no:anyio given, for every read: each child passes it, _PROOF_CHILD_FLAG); the roads keyed on an option
         neither form gives (--rootdir), on a combination of options neither form has (the cache plugin not loaded with no
-        -k given), on CI's -p no:anyio not given, which no run of the proof is, and on an option's value (a --durations
-        of 5) are granted. The proof runs
+        -k given) and on an option's value (a --durations of 5) are granted, and so is the road on CI's -p no:anyio not
+        given, which no run of the proof is and THE ANYIO RULE refuses on the filter's two roads
+        (test_a_conftest_whose_code_reads_the_anyio_option_given_or_not_is_refused_on_both_roads_naming_why). The proof runs
         here with this process's environment carrying the variables pytest-xdist sets in a worker, as on a worker of a
         sweep with -n 8, and its runs with no worker drop them (_proof_child_env), so the variable's road is refused for
         the -n 2 runs' reads alone. V5's worker roads and the conjunctions are refused only where the proof makes the
@@ -11517,8 +12043,9 @@ class HermeticKernelPostal(unittest.TestCase):
                          {label: runs is not None for name, (label, runs) in option_roads.items()},
                          "THE PAIR OF FORMS: the proof refuses each road keyed on a run's options leading its command line or "
                          "on an option one run gives and another does not, given or not, and grants the roads keyed on an "
-                         "option neither form gives, on a combination of options neither form has, on CI's -p no:anyio not "
-                         "given, which each child passes, and on an option's value:\n%s"
+                         "option neither form gives, on a combination of options neither form has and on an option's value, "
+                         "and the road on CI's -p no:anyio not given, which each child passes and THE ANYIO RULE "
+                         "refuses:\n%s"
                          % "\n".join("%s: %s" % (label, got["the pair of forms"][name] or "granted")
                                      for name, (label, _f) in option_roads.items()))
         for name, (label, runs) in option_roads.items():
@@ -11633,9 +12160,10 @@ class HermeticKernelPostal(unittest.TestCase):
         road on -p not given fired in no run and the pair-of-forms test failed). From the real ci.yml,
         _proof_ci_option_units reads the flag as one option in each of CI's forms, and _proof_option_roads plants on it
         a road on the flag given, keyed on the two words together as the developer's -p no:cacheprovider is, of every
-        run, since each child passes the flag (_PROOF_CHILD_FLAG), and a road on it not given, granted (None), and no
-        road on the word -p or on no:anyio. Over a copy of ci.yml whose step gives another plugin (-p no:other), or -p
-        alone (at the end of the line, or before --durations=10), -p is read as the word it was before that ruling:
+        run, since each child passes the flag (_PROOF_CHILD_FLAG), and a road on it not given, granted by the proof (None)
+        and refused by THE ANYIO RULE on the filter's two roads, and no road on the word -p or on no:anyio. Over a copy
+        of ci.yml whose step gives another plugin (-p no:other), or -p alone (at the end of the line, or before
+        --durations=10), -p is read as the word it was before that ruling:
         roads on -p given and not given, keyed on the word, the first of every run and the second of none (the
         developer's -p no:cacheprovider and each child's flag give -p too), and no road on a plugin."""
         args = "item.config.invocation_params.args"
@@ -11646,7 +12174,7 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertEqual(flag, "-p no:anyio")
 
         def ci_roads(roads):
-            return sorted(label for label, _c, _r in roads if label.startswith(("CI's option ", "the second tier: CI's option ")))
+            return sorted(label for label, _c, _r in roads if label.startswith("CI's option "))
         for m in ci:
             units = _proof_ci_option_units(_proof_mode_options(m))
             self.assertIn(flag, units, "the real ci.yml, %s: %s" % (m, units))
@@ -11654,7 +12182,7 @@ class HermeticKernelPostal(unittest.TestCase):
         roads = _proof_option_roads()
         by_label = {label: (condition, runs) for label, condition, runs in roads}
         self.assertEqual(by_label["CI's option -p no:anyio given"], ("' -p no:anyio ' in %s" % line, modes))
-        self.assertEqual(by_label["the second tier: CI's option -p no:anyio not given, which each child passes"],
+        self.assertEqual(by_label["CI's option -p no:anyio not given, which each child passes, refused by THE ANYIO RULE"],
                          ("' -p no:anyio ' not in %s" % line, None))
         self.assertEqual([label for label in ci_roads(roads) if "-p" in label and flag not in label], [],
                          "no road on the word -p, from the real ci.yml")
@@ -15736,9 +16264,10 @@ def _proof_option_roads(root=None):
     pytest-timeout is installed and -n only where pytest-xdist is (_proof_mode_options). CI's -p no:anyio is given in
     every run, since each child passes it (_PROOF_CHILD_FLAG), so its road on the flag given is refused in every read.
     What the pair does not match, each road granted (None): an option neither form gives, given (--rootdir, the
-    verifier's X2 negated), a combination of options neither form has (the cache plugin not loaded with no -k given),
-    and CI's -p no:anyio not given, which no run of the proof is, all three in the proof's second tier; and a condition
-    on an option's value (a --durations of 5, where CI's step gives 10), in its third, the open-valued. `root` is
+    verifier's X2 negated), and a combination of options neither form has (the cache plugin not loaded with no -k
+    given), both in the proof's second tier; a condition on an option's value (a --durations of 5, where CI's step gives
+    10), in its third, the open-valued; and CI's -p no:anyio not given, which no run of the proof is, a road THE ANYIO
+    RULE refuses on the filter's two roads (_anyio_option_reads), so no licence rests on it. `root` is
     _proof_mode_options', the checkout whose .github/workflows/ci.yml is read."""
     args = "item.config.invocation_params.args"
     line = "(' ' + ' '.join(%s) + ' ')" % args
@@ -15761,7 +16290,7 @@ def _proof_option_roads(root=None):
         if word == flag:
             words = " %s " % flag
             roads += [("CI's option %s given" % flag, "%r in %s" % (words, line), having(lambda g, w=words: w in " %s " % " ".join(g))),
-                      ("the second tier: CI's option %s not given, which each child passes" % flag,
+                      ("CI's option %s not given, which each child passes, refused by THE ANYIO RULE" % flag,
                        "%r not in %s" % (words, line), None)]
             continue
         roads += [("CI's option %s given" % word, "%r in %s" % (word, args), having(lambda g, w=word: w in g)),
