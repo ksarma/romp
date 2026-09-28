@@ -2406,6 +2406,83 @@ class StampCensusResolvesByBinding(unittest.TestCase):
                     return self._send(200, _page(), "text/html")
                 """)
 
+    # Every binder _bound_names reads and every position scope_of places in the scope around a def, a lambda or a class, one case each,
+    # so removing any one of those rules reds a case here (before these cases, removing any of them left every test green).
+
+    def test_a_del_of_the_table_read_in_the_calling_scope_is_refused(self):
+        # a del binds the name it deletes: a second binding of the variable the call reads
+        with self.assertRaisesRegex(AssertionError, r"_page is bound from _PAGE_RENDERERS and bound again \(2 bindings\)"):
+            self._census("_x_page", """
+                def do_GET(self):
+                    _page = _PAGE_RENDERERS.get(self.path)
+                    if _page is None:
+                        del _page
+                    return self._send(200, _page(), "text/html")
+                """)
+
+    def _refused_table_binder(self, binder):
+        # `binder`, a statement in do_GET before the table read, binds _PAGE_RENDERERS there, so the `.get` reads that object and not the table
+        with self.assertRaisesRegex(AssertionError, r"_PAGE_RENDERERS bound again"):
+            self._census("_x_page", "def do_GET(self):\n" + textwrap.indent(binder, "    ")
+                         + "    _page = _PAGE_RENDERERS.get(self.path)\n    return self._send(200, _page(), \"text/html\")\n")
+
+    def test_an_except_as_binding_of_the_table_name_is_refused(self):
+        self._refused_table_binder("try:\n    pass\nexcept LookupError as _PAGE_RENDERERS:\n    pass\n")
+
+    def test_a_match_capture_of_the_table_name_is_refused(self):
+        self._refused_table_binder("match self.path:\n    case str() as _PAGE_RENDERERS:\n        pass\n")
+
+    def test_a_match_star_capture_of_the_table_name_is_refused(self):
+        self._refused_table_binder("match self.path:\n    case [*_PAGE_RENDERERS]:\n        pass\n")
+
+    def test_a_match_mappings_rest_capture_of_the_table_name_is_refused(self):
+        self._refused_table_binder("match self.path:\n    case {**_PAGE_RENDERERS}:\n        pass\n")
+
+    def test_an_import_from_of_the_table_name_is_refused(self):
+        self._refused_table_binder("from _tables import _PAGE_RENDERERS\n")
+
+    def test_an_import_under_the_table_name_is_refused(self):
+        self._refused_table_binder("import _tables as _PAGE_RENDERERS\n")
+
+    def test_a_dotted_import_binds_its_first_name_and_is_refused(self):
+        self._refused_table_binder("import _PAGE_RENDERERS.pages\n")
+
+    def _header_send(self, header):
+        # do_GET binds `_page` to a page outside the table; the nested def or class `header` opens binds `_page` from the table in its
+        # body, and sends `_page()` in a position Python evaluates in do_GET, so the call reads do_GET's `_page`, never the table's
+        return self._census("_x_page", "def do_GET(self):\n    _page = _x_page\n    " + header
+                            + "\n        _page = _PAGE_RENDERERS.get(self.path)\n    return self\n")
+
+    def test_a_decorators_call_reads_the_scope_around_the_def(self):
+        self.assertEqual(self._header_send("@self._send(200, _page(), \"text/html\")\n    def g():"), ({"_page"}, set()), "a decorator is evaluated in do_GET: its `_page` is do_GET's, a page outside the table")
+
+    def test_a_defaults_call_reads_the_scope_around_the_def(self):
+        self.assertEqual(self._header_send("def g(b=self._send(200, _page(), \"text/html\")):"), ({"_page"}, set()), "a default is evaluated in do_GET")
+
+    def test_a_keyword_only_defaults_call_reads_the_scope_around_the_def(self):
+        self.assertEqual(self._header_send("def g(*, b=self._send(200, _page(), \"text/html\")):"), ({"_page"}, set()), "a keyword-only default is evaluated in do_GET")
+
+    def test_a_parameter_annotations_call_reads_the_scope_around_the_def(self):
+        self.assertEqual(self._header_send("def g(b: self._send(200, _page(), \"text/html\")):"), ({"_page"}, set()), "a parameter's annotation is evaluated in do_GET")
+
+    def test_a_return_annotations_call_reads_the_scope_around_the_def(self):
+        self.assertEqual(self._header_send("def g() -> self._send(200, _page(), \"text/html\"):"), ({"_page"}, set()), "a return annotation is evaluated in do_GET")
+
+    def test_a_class_bases_call_reads_the_scope_around_the_class(self):
+        self.assertEqual(self._header_send("class C(self._send(200, _page(), \"text/html\")):"), ({"_page"}, set()), "a base is evaluated in do_GET, not in the class body")
+
+    def test_a_class_keywords_call_reads_the_scope_around_the_class(self):
+        self.assertEqual(self._header_send("class C(metaclass=self._send(200, _page(), \"text/html\")):"), ({"_page"}, set()), "a class keyword is evaluated in do_GET")
+
+    def test_a_lambdas_default_reads_the_scope_around_the_lambda(self):
+        # the lambda's parameter `_page` shadows do_GET's table read inside the lambda, but the default beside it is evaluated in do_GET
+        calls, _ = self._census("_x_page", """
+            def do_GET(self):
+                _page = _PAGE_RENDERERS.get(self.path)
+                return (lambda _page, b=self._send(200, _page(), "text/html"): b)
+            """)
+        self.assertEqual(calls, {"_chat_page", "_feed_page"}, "the default reads do_GET's variable, the table read, not the lambda's parameter")
+
 
 class LazyPanes(unittest.TestCase):
     """T1 (stage 0, 2026-09-18), the shell side: on the phone an off-screen pane other than the feed has no src, so no document and
