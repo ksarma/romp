@@ -92,6 +92,10 @@ batch = _load_script("batch_tool", "batch.py")
 sweep = _load_script("batch_tool_sweep", "sweep.py")
 
 
+# A row field Fixture.ci leaves out.
+MISSING = object()
+
+
 class Fixture:
     """A bare origin, an author clone, the tool's clone, and the fake gh, all under one temp dir."""
 
@@ -277,18 +281,26 @@ class Fixture:
     def push_batch(self, name):
         self.dev_git("push", "-q", "-u", "origin", "batch/" + name)
 
-    def ci(self, name, conclusion="success", status="completed", sha=None, event="push", branch=None, workflow="ci.yml"):
+    def ci(self, name, conclusion="success", status="completed", sha=None, event="push", branch=None, workflow="ci.yml",
+           **fields):
         """A GitHub Actions run the fake gh lists: by default the batch head's run, ci.yml from a push to batch/<name>
-        at its current head, completed green. Each new run is newer than the last (databaseId and createdAt)."""
+        at its current head, completed green. Each new run is newer than the last (databaseId and createdAt).
+        `fields` replaces row fields (databaseId, createdAt, ...); one given as MISSING is left out of the row."""
         self.gh_state = self.gh()
         runs = self.gh_state.setdefault("runs", [])
         n = len(runs) + 1
-        runs.append({"databaseId": n, "workflow": workflow, "workflowName": {"ci.yml": "CI"}.get(workflow, "PR tier"), "event": event,
-                     "headBranch": branch or "batch/" + name, "headSha": sha or self.dev_git("rev-parse", "batch/" + name),
-                     "status": status, "conclusion": conclusion, "createdAt": "2026-01-01T00:%02d:00Z" % n,
-                     "url": "https://example.invalid/actions/runs/%d" % n})
+        row = {"databaseId": n, "workflow": workflow, "workflowName": {"ci.yml": "CI"}.get(workflow, "PR tier"), "event": event,
+               "headBranch": branch or "batch/" + name, "headSha": sha or self.dev_git("rev-parse", "batch/" + name),
+               "status": status, "conclusion": conclusion, "createdAt": "2026-01-01T00:%02d:00Z" % n,
+               "url": "https://example.invalid/actions/runs/%d" % n}
+        for key, value in fields.items():
+            if value is MISSING:
+                row.pop(key, None)
+            else:
+                row[key] = value
+        runs.append(row)
         self._save_gh()
-        return runs[-1]["url"]
+        return row["url"]
 
     def sweep(self, name, sha=None, webview=False, **over):
         """A sweep result for batch/<name>'s current head (or `sha`), written through scripts/sweep.py's own
@@ -2164,6 +2176,41 @@ class LandReadsTheCI(_Base):
         fx.env["IGNORES_FILTERS_FAKE_GH"] = os.path.join(fx.bin, "gh")
         fx.env["IGNORES_FILTERS_HEAD"] = self.head
         self.refused("the batch head's CI run is missing")
+
+    def test_a_created_time_tie_is_decided_by_the_run_id_whatever_the_order_gh_lists(self):
+        """Round 1, extra4-4: the newest run is the latest createdAt, then the highest databaseId. Two runs at the head
+        created in the same second, served oldest first: the newer, red, decides."""
+        fx = self.fx
+        self.ready()
+        fx.set_gh(runs_as_recorded=True)
+        fx.ci("b1", createdAt="2026-01-01T00:05:00Z")
+        url = fx.ci("b1", conclusion="failure", createdAt="2026-01-01T00:05:00Z")
+        self.refused("the batch head's CI run is red (conclusion failure): %s" % url)
+
+    def test_a_matching_row_that_cannot_be_ordered_is_refused_by_name(self):
+        """Round 1, extra4-4 (decision 14): a matching row with no valid createdAt (none, null, the zero time gh renders
+        for a missing time, the Unix epoch, not RFC 3339) or no valid databaseId would sort oldest or not at all, and an
+        older green run would decide over it. Served newest first as a red run, with a dated green run after it: land
+        refuses by name, where the head merged on the green."""
+        cases = (("no createdAt", {"createdAt": MISSING}, "no createdAt"),
+                 ("a null createdAt", {"createdAt": None}, "no createdAt"),
+                 ("the zero time", {"createdAt": "0001-01-01T00:00:00Z"},
+                  "createdAt '0001-01-01T00:00:00Z', a placeholder before 2000 (the zero time 0001-01-01T00:00:00Z is one)"),
+                 ("the Unix epoch", {"createdAt": "1970-01-01T00:00:00Z"}, "createdAt '1970-01-01T00:00:00Z', a placeholder"),
+                 ("not RFC 3339", {"createdAt": "2026-01-01 00:09:00"}, "createdAt '2026-01-01 00:09:00', not an RFC 3339 time"),
+                 ("no databaseId", {"databaseId": MISSING}, "no databaseId"),
+                 ("a databaseId string", {"databaseId": "9"}, "databaseId '9', not a positive integer"),
+                 ("a databaseId bool", {"databaseId": True}, "databaseId True, not a positive integer"))
+        for label, fields, named in cases:
+            with self.subTest(label):
+                self.setUp()
+                fx = self.fx
+                self.ready()
+                fx.set_gh(runs_as_recorded=True)
+                url = fx.ci("b1", conclusion="failure", **dict({"databaseId": 9, "createdAt": "2026-01-01T00:09:00Z"}, **fields))
+                fx.ci("b1", databaseId=5, createdAt="2026-01-01T00:05:00Z")
+                p = self.refused("the batch head's CI run cannot be chosen: gh run list gave a matching run (%s) with %s" % (url, named))
+                self.assertNotIn("ok   CI", p.stdout)
 
     def test_a_run_list_that_is_not_json_is_refused_by_name(self):
         """Round 1, extra4-8: a `gh run list` that answers with something that is not JSON (an HTML error page) is

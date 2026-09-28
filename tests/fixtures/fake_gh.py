@@ -30,6 +30,8 @@ named so the fake does not pass as evidence):
     dependents to main, as GitHub does).
   - `run list` serves the state's `runs`, filtered by --workflow, --branch, --event and --commit the way gh
     filters them, newest first; there are none unless a test records one (tests/test_batch_tool.py, Fixture.ci).
+    With `runs_as_recorded` in the state it serves them in the order they were recorded instead, so a test can
+    hand the tool rows in an order gh does not promise.
   - FAKE_GH_FAIL (`|`-separated argv prefixes) makes the matching calls fail with an HTTP 502, so
     a test can see what the tool does when a call does not land. `fail` in the state maps an
     endpoint (`rules`, `protection`) to a gh error line the fake prints and exits 1 with, the way a
@@ -410,7 +412,8 @@ def run_list(state, argv):
                 break
         else:
             rows.append(r)
-    rows.sort(key=lambda r: (r.get("createdAt") or "", r.get("databaseId") or 0), reverse=True)
+    if not state.get("runs_as_recorded"):
+        rows.sort(key=lambda r: (r.get("createdAt") or "", r.get("databaseId") or 0), reverse=True)
     rows = rows[:int((o.get("--limit") or o.get("-L") or ["20"])[0])]
     fields = (o.get("--json") or ["databaseId,status,conclusion,url"])[0].split(",")
     print(json.dumps([{f: r.get(f) for f in fields} for r in rows]))

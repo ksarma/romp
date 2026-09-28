@@ -2151,12 +2151,58 @@ def main_protection(root):
     return None, ", and ".join(found)
 
 
+# A run's createdAt as gh prints it (RFC 3339: a date, T, a time with an optional fraction, then Z or an offset).
+_RFC3339 = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|([+-])(\d{2}):(\d{2}))")
+# A creation time before this is a placeholder, not a run's: gh renders a time GitHub did not give as the zero time
+# 0001-01-01T00:00:00Z, and the Unix epoch is the other conventional zero; both would sort oldest.
+RUN_TIME_FLOOR = _dt.datetime(2000, 1, 1, tzinfo=_dt.timezone.utc)
+
+
+def run_created(value):
+    """A run's createdAt as an aware datetime, or None when it is not a time GitHub set: not a string, not RFC 3339,
+    not a real date, or before RUN_TIME_FLOOR (the zero time among them)."""
+    m = _RFC3339.fullmatch(value) if isinstance(value, str) else None
+    if m is None:
+        return None
+    y, mo, d, h, mi, s, frac, _tz, sign, oh, om = m.groups()
+    off = _dt.timedelta(hours=int(oh), minutes=int(om)) * (-1 if sign == "-" else 1) if sign else _dt.timedelta(0)
+    try:
+        t = _dt.datetime(int(y), int(mo), int(d), int(h), int(mi), int(s), int((frac or "0")[:6].ljust(6, "0")),
+                         tzinfo=_dt.timezone(off))
+    except ValueError:
+        return None
+    return t if t >= RUN_TIME_FLOOR else None
+
+
+def run_row_fault(row):
+    """Why a matching `gh run list` row cannot be ordered among the others, or None: its databaseId is not a positive
+    integer, or its createdAt is not a time GitHub set (run_created). The newest run decides, and a row that cannot be
+    placed by time and id would decide by accident, so it is refused rather than guessed at."""
+    rid = row.get("databaseId")
+    if "databaseId" not in row or rid is None:
+        return "no databaseId"
+    if type(rid) is not int or rid <= 0:
+        return "databaseId %r, not a positive integer" % (rid,)
+    created = row.get("createdAt")
+    if "createdAt" not in row or created is None:
+        return "no createdAt"
+    if run_created(created) is None:
+        if isinstance(created, str) and _RFC3339.fullmatch(created):
+            return "createdAt %r, a placeholder before %d (the zero time 0001-01-01T00:00:00Z is one), not a time GitHub set" % (
+                created, RUN_TIME_FLOOR.year)
+        return "createdAt %r, not an RFC 3339 time" % (created,)
+    return None
+
+
 def batch_ci_run(root, name, head):
     """The batch head's one GitHub run, read from GitHub now: the newest run of ci.yml that a push to
     batch/<name> started at exactly `head`. Returns (case, run): case is green (completed, success), pending
     (not completed), red (completed with any other conclusion) or missing (no such run; run None). gh's
     filters are asked for and then checked on every row (the workflow by its name), so a run of another
-    sha, event, branch or workflow never stands in for it. A read that fails raises Fail with gh's error: a failed read is not a missing run."""
+    sha, event, branch or workflow never stands in for it. The newest is the latest createdAt, then the highest
+    databaseId, whatever order gh lists the rows in; a matching row with no valid databaseId or createdAt (the
+    zero time included) raises Fail naming it (round 1, extra4-4). A read that fails raises Fail with gh's error:
+    a failed read is not a missing run."""
     br = branch_of(name)
     proc = gh("run", "list", "--workflow", CI_WORKFLOW, "--branch", br, "--event", "push", "--commit", head, "--limit", "20",
               "--json", "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt", cwd=root, check=False)
@@ -2170,7 +2216,13 @@ def batch_ci_run(root, name, head):
             and r.get("event") == "push" and r.get("headBranch") == br and r.get("workflowName") == CI_WORKFLOW_NAME]
     if not runs:
         return "missing", None
-    run = max(runs, key=lambda r: (str(r.get("createdAt") or ""), r.get("databaseId") if isinstance(r.get("databaseId"), int) else 0))
+    for r in runs:
+        fault = run_row_fault(r)
+        if fault:
+            raise Fail("the batch head's CI run cannot be chosen: gh run list gave a matching run (%s) with %s; the newest run "
+                       "decides, and a row that cannot be ordered by time and id is refused, not guessed at; nothing merged"
+                       % (r.get("url") or "no url", fault))
+    run = max(runs, key=lambda r: (run_created(r["createdAt"]), r["databaseId"]))
     if run.get("status") != "completed":
         return "pending", run
     if run.get("conclusion") != "success":
