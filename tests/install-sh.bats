@@ -15,12 +15,6 @@ setup() {
     TEST_DIR="$(mktemp -d)"
     export HOME="$TEST_DIR/home"
     mkdir -p "$HOME"
-    # install.sh reads the state dir as ROMP_STATE_DIR, else XDG_STATE_HOME/romp, else the fake HOME's, and
-    # prints the dashboard link on ROMP_KERNEL_PORT (ROMP_SERVE_PORT is its other name), else the default port.
-    # A caller that sets them (the local sweep sets a private XDG_STATE_HOME and dead ports for every leg) would
-    # move the token file away from the fake HOME and the link off the port these tests expect, so they go with
-    # the real HOME.
-    unset ROMP_STATE_DIR XDG_STATE_HOME ROMP_KERNEL_PORT ROMP_SERVE_PORT
     export ROMP_NO_SERVICE=1 ROMP_NO_EXT=1 ROMP_NO_SDK=1
     # One try only: the closing dashboard-link block polls for the kernel's token
     # file, which never appears in this hermetic HOME — don't wait 10s for it.
@@ -390,6 +384,12 @@ SH
 # URL that bounces the first-time user to the paste-a-token login page.
 
 @test "install.sh: ends with the tokened dashboard link when the token exists" {
+    # install.sh reads the token from ROMP_STATE_DIR, else XDG_STATE_HOME/romp, else the fake HOME's state dir, and
+    # prints the link on ROMP_KERNEL_PORT (ROMP_SERVE_PORT is its other name), else the default port. This test
+    # writes the token under the fake HOME and expects the default port, so a caller's values go (the local sweep
+    # sets a private XDG_STATE_HOME and dead ports for every leg). Only here: the no-token tests stay open to a
+    # planted state root, which tests/test_bats_bare_negation.py uses as its witness that the plant is live.
+    unset ROMP_STATE_DIR XDG_STATE_HOME ROMP_KERNEL_PORT ROMP_SERVE_PORT
     mkdir -p "$HOME/.local/state/romp"
     printf 'tok123\n' > "$HOME/.local/state/romp/serve-token"
     run "$ROMP_DIR/install.sh"
