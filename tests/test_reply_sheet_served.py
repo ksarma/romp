@@ -44,12 +44,17 @@ flex children of the box, the chat's sit inside the quoted line, and the element
 their selectors in both.
 
 The detail's cap at rest (the maintainer's ruling at the merge with main): with the keyboard down it is the larger of
-12em and 37% of the window's height, with the keyboard up 12em, as before. Asserted at rest at 900, 1080 and the
-installed app's 844 on the composition's todo with its answer box cleared (the viewport term: the cap is 37% of the
-window's height and the long detail shows at it, the sheet fitting with Send under a finger); at 664, mobile Safari's
-height with both toolbars shown (a 390x844 iPhone in Playwright's device registry), where that todo's room is under the
-cap, the cap is the viewport term, the shrink sets the detail's height under it and the sheet fits the same way; and
-under the keyboard at 508 on the other todo's sheet at open (12em). The detail's cap reads the keyboard where the shell
+12em and 34.8% of the window's height, with the keyboard up 12em, as before. Asserted at rest at 900, 1080 and the
+installed app's pane on a 390x844 phone, 732, on the composition's todo with its answer box cleared (the viewport term:
+the cap is 34.8% of the window's height and the long detail is laid out at it, under the room, so in the pane, where
+that todo's two chip rows leave the least room, a share past the band the maintainer ruled (up to 0.354 at 732) is
+its red, the sheet fitting with Send under a finger); at Safari's panes, 709 (the toolbars collapsed), 633 (the common
+one) and 620, where that todo's room in the pane is under the cap, the cap is the viewport term, the shrink sets the
+detail's height under it and the sheet fits the same way; under the keyboard at 508 on the other todo's sheet at open
+(12em); and the stated boundary on a third todo whose detail is the recorded 8-line one (styles.css: in full from a
+720px pane): in full at 732 and at 720, not in full one pixel under the engine's own boundary (719 in Chromium, 716 in
+WebKit and Firefox) and at 633, where it shows the cap and scrolls the rest. The page is served with its webfont, as a
+phone gets it, so these are the geometries styles.css states. The detail's cap reads the keyboard where the shell
 does (restCap; kernel.py kbOpen): these pages are top-level, so the driver stubs the page's visualViewport.height a
 keyboard's height under its innerHeight while the keyboard is up and removes the stub at rest.
 
@@ -113,8 +118,16 @@ LINK = "https://github.com/example-org/notes-api/pull/398"
 DETAIL = "\n".join("Option %d: the summary section leads and the tables follow, with the notes folded under each table." % (i + 1)
                    for i in range(40)) + "\nreport-layout-" + "x" * 90
 LINKED_DETAIL = "The earlier draft is at https://github.com/example-org/notes-api/pull/398 and the reviewers' notes follow.\n" + DETAIL
+# the recorded 8-line detail (the review record's extra10-4, 251px at this width): the stated boundary is read on it
+DETAIL8 = "\n".join("Option %d: the summary section leads and the tables follow, with the notes folded under each table." % (i + 1)
+                    for i in range(8))
 TID = "ut-0000a002"   # the record's id shape: "ut-" + 8 hex (kernel.py _register_user_todo)
 TID_OTHER = "ut-0000a001"   # the short-ask todo: the drag guard is read on its sheet after the composition's send closed the other
+TID_EIGHT = "ut-0000a003"   # a short ask and the 8-line detail: the stated boundary is read on its sheet, last
+REST_SHARE = 0.348   # the detail's cap at rest: max(12em, 34.8% of the window's height) (styles.css, where the share is derived)
+BOUNDARY = 720   # the stated boundary: the 8-line detail shows in full from a 720px pane (a 751px Safari window)
+# one pixel under each engine's own boundary (720 in Chromium; 717 in WebKit and Firefox, whose 8-line detail is 250px, not 250.5)
+BELOW_BOUNDARY = {"chromium": 719, "firefox": 716, "webkit": 716}
 
 
 def _free_port():
@@ -123,10 +136,12 @@ def _free_port():
 
 def _todo_store(now):
     """The store as _register_user_todo writes it: sid to a LIST of records, id, text, createdT, and detail, file, link
-    when present. Two todos: one with a short ask and the forty-line detail, then the composition fixture."""
+    when present. Three todos: one with a short ask and the forty-line detail, the composition fixture, and a short ask with
+    the 8-line detail."""
     return {SID: [
         {"id": TID_OTHER, "text": "Which layout should the quarterly report use?", "createdT": now - 400, "detail": DETAIL},
         {"id": TID, "text": LONG_TEXT, "createdT": now - 300, "detail": LINKED_DETAIL, "file": FILE, "link": LINK},
+        {"id": TID_EIGHT, "text": "Which layout should the quarterly report use?", "createdT": now - 200, "detail": DETAIL8},
     ]}
 
 
@@ -195,7 +210,8 @@ class ReplySheetServed(unittest.TestCase):
             self.skipTest("optional: this runner declares no %s (ROMP_SERVED_TESTS_ENGINES=%s)" % (engine, declared))
         url = "http://127.0.0.1:%d/%s?token=%s" % (self.port, "waiting" if pane == "waiting" else "chat", self.token)
         cfg = {"engine": engine, "pane": pane, "url": url, "healthz": "http://127.0.0.1:%d/healthz" % self.port,
-               "sid": SID, "tid": TID, "tid2": TID_OTHER, "bootTimeoutMs": 30000}
+               "sid": SID, "tid": TID, "tid2": TID_OTHER, "tid3": TID_EIGHT, "belowBoundary": BELOW_BOUNDARY[engine],
+               "bootTimeoutMs": 30000}
         cfg_path = os.path.join(self.lab, "cfg-%s-%s.json" % (pane, engine))
         Path(cfg_path).write_text(json.dumps(cfg))
         try:
@@ -259,41 +275,67 @@ class ReplySheetServed(unittest.TestCase):
         self.assertGreater(tall["inputH"], tall["floorH"] + 60, where + "900px, fourteen lines: the answer box grew well past the floor: %r" % (tall,))
         self.assertLess(t["inputH"], tall["inputH"], where + "900 then 508: the window's shrink re-fitted the answer box (grow ran on the resize): %d at 900, %d at 508: %s" % (tall["inputH"], t["inputH"], rec))
         # the detail's cap at rest (the maintainer's ruling at the merge with main): with the keyboard down it is the larger of
-        # 12em and 37% of the window's height, here the viewport term (333px at 900, 399.6px at 1080 and 312.3px at the
-        # installed app's 844, against 12em's 134px), read on the composition's todo with its answer box cleared, where the
-        # room holds more than the cap (the share holds that room at 844, the maintainer's ruling on the cap pass)
+        # 12em and 34.8% of the window's height, here the viewport term (313.2px at 900, 375.8px at 1080 and 254.7px at the
+        # installed app's 732, against 12em's 134px), read on the composition's todo with its answer box cleared. The share
+        # holds this todo's room at 732 (the maintainer's ruling on the share): the detail is laid out at its cap, not at the
+        # room, which in the pane, under two chip rows, is 4.4px over the cap there
         em12 = lambda m: 12 * m["detailFontPx"]
-        for label, m in (("at rest at 900", r["restTall"]), ("at rest at 1080", r["restTaller"]), ("at rest at 844", r["restPhone"])):
+        for label, m in (("at rest at 900", r["restTall"]), ("at rest at 1080", r["restTaller"]), ("at rest at 732", r["restApp"])):
             with self.subTest(window=label):   # each window its own red or green
-                term = 0.37 * m["frameH"]
+                term = REST_SHARE * m["frameH"]
                 self.assertFalse(m["tight"], where + label + ": no fold: %r" % (m,))
-                self.assertGreater(term, em12(m) + 20, where + label + ": 37%% of the window (%.1fpx) is the larger term against 12em (%.1fpx): %r" % (term, em12(m), m))
-                self.assertAlmostEqual(m["detailMaxH"], term, delta=0.5, msg=where + label + ": the cap is 37%% of the window's height, %.1fpx (the head's cap was 12em at every height, %.1fpx): %r" % (term, em12(m), m))
+                self.assertGreater(term, em12(m) + 20, where + label + ": 34.8%% of the window (%.1fpx) is the larger term against 12em (%.1fpx): %r" % (term, em12(m), m))
+                self.assertAlmostEqual(m["detailMaxH"], term, delta=0.5, msg=where + label + ": the cap is 34.8%% of the window's height, %.1fpx (the head's cap was 12em at every height, %.1fpx): %r" % (term, em12(m), m))
+                self.assertGreaterEqual(m["detailRectH"], m["detailMaxH"] - 0.5, where + label + ": the detail is laid out at its cap (%.2fpx under a %.2fpx cap): the room is the smaller, so the share is past what this todo's room holds here (styles.css: up to 0.354 at 732): %r" % (m["detailRectH"], m["detailMaxH"], m))
                 self.assertAlmostEqual(m["detailH"], term, delta=1.5, msg=where + label + ": the long detail shows at the cap, %.1fpx: %r" % (term, m))
                 self.assertGreaterEqual(m["inputH"], m["floorH"] - 1, where + label + ": three rows: %r" % (m,))
                 self.assertLessEqual(m["boxScrollH"], m["boxClientH"] + 1, where + label + ": the sheet fits with the detail at its cap, nothing is a scroll away: %r" % (m,))
                 for b in ("send", "cancel"):
                     self.assertTrue(self._inside_clip(m, b), where + label + ": %s is inside the box's clip: %r" % (b, m))
                 self.assertEqual(m["hitAtSend"], "target", where + label + ": a finger at Send's painted centre reaches Send: %r" % (m,))
-        # at 664, mobile Safari's height with both toolbars shown: the cap is still the viewport term (245.7px), but this todo's
-        # room is under it (the chips and the wrapped ask leave about 190 to 225px), so the shrink sets the detail's height
-        # under the cap and over its floor; the sheet fits all the same (no share both shows the recorded 8-line detail in
-        # full here and keeps the cap within this room: styles.css)
-        m = r["restSafari"]
-        with self.subTest(window="at rest at 664"):
-            term = 0.37 * m["frameH"]
-            label = "at rest at 664"
-            self.assertEqual(m["frameH"], 664, where + label + ": %r" % (m,))
-            self.assertFalse(m["tight"], where + label + ": no fold: %r" % (m,))
-            self.assertGreater(term, em12(m) + 20, where + label + ": 37%% of the window (%.1fpx) is the larger term against 12em (%.1fpx): %r" % (term, em12(m), m))
-            self.assertAlmostEqual(m["detailMaxH"], term, delta=0.5, msg=where + label + ": the cap is 37%% of the window's height, %.1fpx: %r" % (term, m))
-            self.assertLessEqual(m["detailH"], m["detailMaxH"] + 1.5, where + label + ": the detail is under its cap: %r" % (m,))
-            self.assertGreaterEqual(m["detailH"], floor(m), where + label + ": and over its floor of two lines: %r" % (m,))
-            self.assertGreaterEqual(m["inputH"], m["floorH"] - 1, where + label + ": three rows: %r" % (m,))
-            self.assertLessEqual(m["boxScrollH"], m["boxClientH"] + 1, where + label + ": the sheet fits, nothing is a scroll away: %r" % (m,))
-            for b in ("send", "cancel"):
-                self.assertTrue(self._inside_clip(m, b), where + label + ": %s is inside the box's clip: %r" % (b, m))
-            self.assertEqual(m["hitAtSend"], "target", where + label + ": a finger at Send's painted centre reaches Send: %r" % (m,))
+        # Safari's panes, 709 (the toolbars collapsed), 633 (the common one) and 620: the cap is still the viewport term, but in
+        # the pane this todo's room is under it (the chips and the wrapped ask leave 147 to 236px), so the shrink sets the
+        # detail's height under the cap and over its floor; the sheet fits all the same (no share both shows the recorded 8-line
+        # detail in full at 633 and holds this room at 732: styles.css)
+        for h, key in ((709, "restSafariTop"), (633, "restSafari"), (620, "restSafari16e")):
+            m = r[key]
+            label = "at rest at %d" % h
+            with self.subTest(window=label):
+                term = REST_SHARE * m["frameH"]
+                self.assertEqual(m["frameH"], h, where + label + ": %r" % (m,))
+                self.assertFalse(m["tight"], where + label + ": no fold: %r" % (m,))
+                self.assertGreater(term, em12(m) + 20, where + label + ": 34.8%% of the window (%.1fpx) is the larger term against 12em (%.1fpx): %r" % (term, em12(m), m))
+                self.assertAlmostEqual(m["detailMaxH"], term, delta=0.5, msg=where + label + ": the cap is 34.8%% of the window's height, %.1fpx: %r" % (term, m))
+                self.assertLessEqual(m["detailH"], m["detailMaxH"] + 1.5, where + label + ": the detail is under its cap: %r" % (m,))
+                self.assertGreaterEqual(m["detailH"], floor(m), where + label + ": and over its floor of two lines: %r" % (m,))
+                self.assertGreaterEqual(m["inputH"], m["floorH"] - 1, where + label + ": three rows: %r" % (m,))
+                self.assertLessEqual(m["boxScrollH"], m["boxClientH"] + 1, where + label + ": the sheet fits, nothing is a scroll away: %r" % (m,))
+                for b in ("send", "cancel"):
+                    self.assertTrue(self._inside_clip(m, b), where + label + ": %s is inside the box's clip: %r" % (b, m))
+                self.assertEqual(m["hitAtSend"], "target", where + label + ": a finger at Send's painted centre reaches Send: %r" % (m,))
+        # the stated boundary on the third todo, the recorded 8-line detail (styles.css: in full from a 720px pane, 717 in
+        # WebKit and Firefox): in full at the app's 732 and at 720; not in full one pixel under this engine's own boundary and
+        # at Safari's common 633, where it shows the cap (about 220 of its 251px) and scrolls the rest. Read whole first, so a
+        # share that moves the boundary is named as that
+        e = r.get("eight", {"error": "the boundary step did not run"})
+        with self.subTest(window="the 8-line detail at the stated boundary"):
+            self.assertNotIn("error", e, where + "the boundary step ran to its end: %r" % (e,))
+            below = BELOW_BOUNDARY[engine]
+            for label, m, h in (("at rest at 732", e["app"], 732), ("at rest at the boundary, 720", e["boundary"], BOUNDARY)):
+                self.assertEqual(m["frameH"], h, where + label + ": %r" % (m,))
+                self.assertGreater(m["detailScrollH"], em12(m) + 60, where + label + ": the 8-line detail is longer than 12em: %r" % (m,))
+                self.assertGreaterEqual(m["detailH"], m["detailScrollH"], where + label + ": the recorded 8-line detail shows in full, %s of %spx under a %.2fpx cap (the stated boundary is 720px): %r" % (m["detailH"], m["detailScrollH"], m["detailMaxH"], m))
+                self.assertGreaterEqual(m["inputH"], m["floorH"] - 1, where + label + ": three rows: %r" % (m,))
+                self.assertLessEqual(m["boxScrollH"], m["boxClientH"] + 1, where + label + ": the sheet fits: %r" % (m,))
+                self.assertEqual(m["hitAtSend"], "target", where + label + ": a finger at Send's painted centre reaches Send: %r" % (m,))
+            for label, m, h in (("at rest one pixel under this engine's boundary, %d" % below, e["below"], below), ("at rest at 633", e["safari"], 633)):
+                term = REST_SHARE * m["frameH"]
+                self.assertEqual(m["frameH"], h, where + label + ": %r" % (m,))
+                self.assertLess(m["detailH"], m["detailScrollH"], where + label + ": not in full, %s of %spx under a %.2fpx cap: the pane is under the stated boundary (in full from 720px, %d in this engine); in full here, the share moved the boundary that styles.css and the ledger entry state: %r" % (m["detailH"], m["detailScrollH"], m["detailMaxH"], below + 1, m))
+                self.assertAlmostEqual(m["detailH"], term, delta=1.5, msg=where + label + ": it shows at the cap, %.1fpx: %r" % (term, m))
+                self.assertGreaterEqual(m["inputH"], m["floorH"] - 1, where + label + ": three rows: %r" % (m,))
+                self.assertLessEqual(m["boxScrollH"], m["boxClientH"] + 1, where + label + ": the sheet fits: %r" % (m,))
+                self.assertEqual(m["hitAtSend"], "target", where + label + ": a finger at Send's painted centre reaches Send: %r" % (m,))
         # the tree each builder emits, and the elements the fix's rules key on: the pane's chips are flex children of the
         # box (waiting.ts showReply), the chat's sit inside the quoted line (render.ts showUserTodoReply); the shared
         # skeleton is the title, the quoted line, the detail, the answer box and the buttons, in that order
@@ -358,7 +400,7 @@ class ReplySheetServed(unittest.TestCase):
         k = r["kbCap"]
         self.assertEqual(k["frameH"], 508, where + "the keyboard up at 508: %r" % (k,))
         self.assertFalse(k["tight"], where + "508px: no fold: %r" % (k,))
-        self.assertAlmostEqual(k["detailMaxH"], em12(k), delta=0.5, msg=where + "the keyboard up at 508: the cap is 12em, %.1fpx, no viewport term (37%% of 508 would be %.1fpx): %r" % (em12(k), 0.37 * 508, k))
+        self.assertAlmostEqual(k["detailMaxH"], em12(k), delta=0.5, msg=where + "the keyboard up at 508: the cap is 12em, %.1fpx, no viewport term (34.8%% of 508 would be %.1fpx): %r" % (em12(k), REST_SHARE * 508, k))
         self.assertAlmostEqual(k["detailH"], em12(k), delta=1.5, msg=where + "the keyboard up at 508: the forty-line detail shows 12em, its height before the change; a cap that let the viewport term in would show it taller here: %r" % (k,))
         # the dragged height is a PREFERENCE clamped to the room (the author's pass after the maintainer's round 1,
         # composition-3): written to 215px as the grip leaves it, on this todo's sheet it stands at 508 (the room holds it); the

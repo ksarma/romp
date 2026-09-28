@@ -2975,25 +2975,31 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    eight and a half of its lines (line-height 1.4), and the flex shrink takes the detail down toward its floor from there;
    no viewport term enters (a 35dvh arm once stood beside it as the keyboard-up cap and never bound: at 508px it resolved
    to 177.8px against 12em's 134px at the default font; the maintainer's round 1 ruling). At rest, the keyboard down, it
-   is the larger of 12em and 37% of the pane's height (its innerHeight, which is the visual viewport's height except
+   is the larger of 12em and 34.8% of the pane's height (its innerHeight, which is the visual viewport's height except
    under a pinch zoom), which both builders publish as --ut-rest-h only while the keyboard is down (restCap; with the
    property absent the term is 0px and the cap is 12em; inside the app on Android Chrome that read sees no keyboard, so
    the term applies under it too, a stated residual described at restCap), so a taller pane shows more of a long
-   detail; the term is the larger above about 363px. The share is derived at the pane heights a phone gives (the maintainer's ruling on the cap
-   pass), measured with the cap lifted in Chromium, WebKit and Firefox and in both panes: mobile Safari at 390px wide,
-   about 600 to 740px (664 with both toolbars shown: a 390x844 iPhone 12, 13 or 14 in Playwright's device registry; the
-   phone shell's tab bar takes its own height off that before the pane gets it), and the installed app at 844. The
-   recorded 8-line detail (251px in Chromium, 250 in WebKit and Firefox) would show in full at 664 from a share of
-   0.378, but at 664 the room of the tightest sheet, the todo with both chips (192px in the pane, 224 in the chat), is
-   less than the detail itself, so no share both shows it in full there and keeps the cap within the chip sheet's room.
-   The share is the one that holds that room where the app has it, at 844: at most 0.440 (371px in Firefox's pane), so
-   the cap and not the shrink sets a long detail's height there, and at least 0.297, so the 8-line detail shows in full
-   at 844. 0.37 sits near the middle: at 844 the cap is 312px, 61px above the 8-line detail and 59px under the tightest
-   room. The boundary: the 8-line detail shows in full in a pane from 678px tall (Chromium; 675 in WebKit, 676 in
-   Firefox), so in Safari with both toolbars shown (664) it shows 246px and scrolls the rest. The 20- and 40-line
-   details (626px and about 1300px) are longer than the room at every phone height (510px at 844), so they scroll within
-   the cap whatever the share. At no height and no share does the answer box lose a row or Send leave the box: the flex
-   shrink holds that. A scroll container's overflow-x
+   detail; the term is the larger above about 386px. The share is derived at the pane heights a phone gives (the
+   maintainer's rulings on the cap pass and on the share), measured in the served phone shell with its webfont loaded,
+   in Chromium and in WebKit (the engine of every browser on iOS), in both panes. The shell's tab bar comes off the
+   window before the pane gets it (31px in a browser; 65px in the installed app, which adds the home-indicator inset),
+   so mobile Safari on a 390x844 iPhone gives panes of 620 to 709px (620 in the 651px window of the iPhone 16e and 17e
+   entries in Playwright's device registry, 633 in the common 664px window of the iPhone 12, 13 and 14 entries, both
+   with the toolbars shown, and 709 in a 740px window with the toolbars collapsed), and the installed app a pane of
+   732px: its window is the screen less the status bar (confirmed on a device), and its pane that less the 65px bar.
+   The recorded 8-line detail (250.5px in Chromium, 250 in WebKit) would show in full at the common Safari pane from
+   a share of 0.396, but the tightest sheet, the pane's todo with both chips, keeps the cap within its room (259px) at
+   the app's pane only up to 0.354, so no share does both. The share holds the chip sheet's room at the app's pane:
+   0.348 is the middle of the band that holds it there and shows the 8-line detail in full there too (0.343 to 0.354;
+   from 0.341 in WebKit), and its cap there, 254.7px, is 4.2px over the 8-line detail and 4.4px under the chip sheet's
+   room. In Safari's panes that sheet has less room than the cap (147 to 236px), so the flex shrink, not the cap, sets
+   its detail's height there. The boundary: the 8-line detail shows in full from a 720px pane (a 751px Safari window;
+   from 717px in WebKit), so in the common 664px window (a 633px pane) it shows about 220 of its 251px and scrolls the
+   rest. The 20- and 40-line details (626px and about 1300px) are longer than the room at every phone height (397px
+   under a short ask at the app's pane), so they scroll within the cap whatever the share. At every phone height, 600px
+   and up, and at any share, the answer box keeps its three rows and Send stays in the box: the flex shrink holds that.
+   Below that (at rest at 300px with both chips) the floors alone overflow the box, and the box's own scroll (the fourth
+   rule below) is the backstop. A scroll container's overflow-x
    computes to auto once overflow-y is set, so an unbreakable token (a long identifier, a bare path with no link) made
    the detail a sideways scroller; overflow-wrap: anywhere breaks the token as .pn-detail and .ut-reply-quote already
    do, and overflow-x: hidden is #pinned-notes's companion declaration, kept so a token the wrap cannot break is
@@ -3011,7 +3017,7 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    the grow handlers in both builders cap the answer at the room the box has left (read from the box, never from the
    window), so the scroll is the backstop for the state the floors alone overflow, never the everyday path. */
 #ut-reply-prompt .ut-reply-input { flex: 0 0 auto; min-height: calc(3lh + 16px); }
-#ut-reply-prompt .ut-detail.open { flex: 1 1 auto; min-height: 32px; min-height: 2lh; max-height: max(12em, calc(0.37 * var(--ut-rest-h, 0px))); overflow-y: auto; overflow-x: hidden; overflow-wrap: anywhere; overscroll-behavior: contain; }
+#ut-reply-prompt .ut-detail.open { flex: 1 1 auto; min-height: 32px; min-height: 2lh; max-height: max(12em, calc(0.348 * var(--ut-rest-h, 0px))); overflow-y: auto; overflow-x: hidden; overflow-wrap: anywhere; overscroll-behavior: contain; }
 #ut-reply-prompt.kb-tight { align-items: flex-start; padding: 12px 16px; }
 #ut-reply-prompt .picker-box { overflow-y: auto; }
 

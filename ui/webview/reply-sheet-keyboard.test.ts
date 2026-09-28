@@ -24,7 +24,7 @@
 // on THIS window's own resize (the shell sizes the pane iframe to the visible height, so the keyboard opening or
 // closing IS a resize here; render.ts's picker keys on the same event, at the same 480px), re-runs restCap (the
 // detail's cap at rest, the maintainer's ruling at the merge with main: with the keyboard down the cap is the larger of
-// 12em and 37% of the window's height, which restCap publishes on the overlay; with the keyboard up, read as
+// 12em and 34.8% of the window's height, which restCap publishes on the overlay; with the keyboard up, read as
 // the shell's kbOpen reads it on the parent window, it withdraws it and the cap is 12em) and re-runs grow, and
 // close() removes the listener, which also removes itself when the overlay was replaced by a second Reply; grow lets
 // the box follow the answer up to the room the box has left, never under the three-row floor, and stands down for a
@@ -184,7 +184,7 @@ for (const [name, src] of BUILDERS) {
 
 // ── the detail's cap at rest, executed out of each builder ───────────────────────────────────────
 // restCap publishes THIS window's height (innerHeight) on the overlay (--ut-rest-h) with the keyboard down, which
-// styles.css's max(12em, calc(0.37 * var(--ut-rest-h, 0px))) turns into the cap at rest, and removes it with the keyboard
+// styles.css's max(12em, calc(0.348 * var(--ut-rest-h, 0px))) turns into the cap at rest, and removes it with the keyboard
 // up, where the cap is 12em (the maintainer's ruling at the merge with main). The keyboard is the parent window's visual
 // viewport more than 120px shorter than its layout viewport (kernel.py kbOpen's test, on the window that owns the screen:
 // inside the shell the pane's own two heights agree whatever the keyboard does). Run against stand-ins: the overlay's
@@ -207,7 +207,7 @@ for (const [name, src] of BUILDERS) {
     const restCap = restCapper(name, src, overlay, win);
     // the keyboard down: the shell's two heights agree, and the pane's own height is published
     restCap();
-    assert.equal(props.get("--ut-rest-h"), "800px", "at rest: THIS window's height (the pane's, not the shell's), for styles.css's 37% term");
+    assert.equal(props.get("--ut-rest-h"), "800px", "at rest: THIS window's height (the pane's, not the shell's), for styles.css's 34.8% term");
     // the pane's own visual viewport is not what is published: a pinch zoom that halves it leaves the published height alone
     win.visualViewport.height = 400; win.visualViewport.scale = 2;
     restCap();
@@ -254,7 +254,7 @@ for (const [name, src] of BUILDERS) {
 // it), so the keyboard shrinks the shell's LAYOUT viewport with its visual one, the two agree, and restCap, reading the
 // shell as kbOpen does, sees no keyboard: the pane's height stays published and the at-rest term applies under the
 // keyboard. The browser half is waiting-reply-sheet-browser.test.ts (the pane in a frame inside a shell page whose layout
-// viewport shrinks with the keyboard: at 508 the cap is 188px and the room sets the detail)
+// viewport shrinks with the keyboard: at 508 the cap is 177px and the room sets the detail)
 for (const [name, src] of BUILDERS) {
   test(`${name}: under Android Chrome's resizes-content the keyboard shrinks the shell's layout viewport too, so restCap sees no keyboard and keeps the pane's height published (a stated residual)`, () => {
     const props = new Map<string, string>();
@@ -271,7 +271,7 @@ for (const [name, src] of BUILDERS) {
     // the pane to what is left
     shell.innerHeight = 508; shell.visualViewport.height = 508; win.innerHeight = 508; win.visualViewport.height = 508;
     restCap();
-    assert.equal(props.get("--ut-rest-h"), "508px", "under resizes-content the shell's two heights agree, so restCap sees no keyboard and the term stays: the cap is 37% of 508 (188px), not 12em. Today's behaviour, disclosed at restCap and in the ledger entry; a keyboard signal that survives resizes-content turns this red, and is a design of its own (the shell's kbOpen has the same blind spot)");
+    assert.equal(props.get("--ut-rest-h"), "508px", "under resizes-content the shell's two heights agree, so restCap sees no keyboard and the term stays: the cap is 34.8% of 508 (177px), not 12em. Today's behaviour, disclosed at restCap and in the ledger entry; a keyboard signal that survives resizes-content turns this red, and is a design of its own (the shell's kbOpen has the same blind spot)");
   });
 }
 
@@ -559,7 +559,7 @@ test("the detail is the part that gives way: it shrinks (a scroll container's fl
   assert.match(r, /flex: 1 1 auto;/);
   assert.match(r, /min-height: 32px; min-height: 2lh;/, "the FLOOR: two of the detail's own lines (2lh), the px value ahead of it so an engine without the lh unit falls to two lines at the default size, never to zero; without it the detail resolved to 0px at 390x508 with the answer grown (invisible, unscrollable), the dead end the picker's fold forbids its list with min-height: 52px (one row). The browser legs measure it: the detail's height is at least twice its computed line-height in every deficit state");
   assert.doesNotMatch(r, /min-height: 0;/, "no zero floor beside the real one: the later declaration in a block wins, and the executed legs pin the floor, not this string");
-  assert.match(r, /max-height: max\(12em, calc\(0\.37 \* var\(--ut-rest-h, 0px\)\)\);/, "the cap: the larger of 12em of the detail's own font (about eight and a half of its lines at line-height 1.4) and 37% of the window's height, which restCap publishes only with the keyboard down (executed above); with the property absent the term is 0px and the cap is 12em, the keyboard-up cap, where the flex shrink and the two-line floor govern. This spelling is not the guarantee: the browser legs measure the cap at rest at 844, 900 and 1080 (the viewport term), at rest at 300 (12em, read from the computed max-height), and under the keyboard at 508 (12em), in three engines, and the served leg at 900, 1080 and under the keyboard in CI. A 35dvh arm stood beside 12em in round 1 as the keyboard-up cap and never bound (177.8px against 134px at 508), so it is gone");
+  assert.match(r, /max-height: max\(12em, calc\(0\.348 \* var\(--ut-rest-h, 0px\)\)\);/, "the cap: the larger of 12em of the detail's own font (about eight and a half of its lines at line-height 1.4) and 34.8% of the window's height, which restCap publishes only with the keyboard down (executed above); with the property absent the term is 0px and the cap is 12em, the keyboard-up cap, where the flex shrink and the two-line floor govern. This spelling is not the guarantee: the browser legs measure the cap at rest at the pane heights a phone gives (620, 633, 709 and the installed app's 732) and at 900 and 1080 (the viewport term), the 8-line detail on both sides of the stated boundary (in full from 720), at rest at 300 (12em, read from the computed max-height), and under the keyboard at 508 (12em), in three engines, and the served leg at the same rest heights, the boundary and under the keyboard in CI. A 35dvh arm stood beside 12em in round 1 as the keyboard-up cap and never bound (177.8px against 134px at 508), so it is gone");
   assert.doesNotMatch(r, /dvh/, "no viewport arm presented as the keyboard's mechanism: the keyboard case is the shrink and the floor, measured by execution");
   assert.match(r, /overflow-y: auto;/, "the rest of the detail is a scroll away, never clipped. The spelling pins of this test alone guard the declaration (this one and the sequence pin below): since overflow-x: hidden stands beside it, either half alone makes the detail a scroll container (CSS Overflow: a visible half beside a non-visible half computes to auto, measured in Chromium, Firefox and WebKit), so commenting this one out changes nothing an engine can read and no execution pin reds it; the browser legs' scrollTop pin guards the PAIR, and reds once both halves are gone");
   assert.match(r, /overscroll-behavior: contain;/, "a swipe past its end does not scroll the box or the page under it (#pinned-notes's rule)");

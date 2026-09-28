@@ -10875,7 +10875,7 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   if (todoFile) d.append(" ", todoFileChip(todoFile, sid));   // the file the todo names, as on the row: the body delegate opens it from here too
   if (todoLink) d.append(" ", todoLinkChip(todoLink));   // the address it carries, as on the row: the document's anchor delegate opens it
   // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress, without opening
-  // the fold first: capped (12em, or 37% of the window's height at rest when that is more; restCap below) and
+  // the fold first: capped (12em, or 34.8% of the window's height at rest when that is more; restCap below) and
   // scrolling within itself, never under two of its lines, so the answer box keeps its rows and the buttons stay
   // in reach with the keyboard up (styles.css #ut-reply-prompt .ut-detail.open); a bare ask adds nothing here
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
@@ -10888,7 +10888,7 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   const send = el("button", "picker-action confirm-btn"); send.textContent = "Send";
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
   // THE DETAIL'S CAP AT REST (the maintainer's ruling at the merge with main, on the tall-window cap the pass left open):
-  // with the keyboard down the detail's cap is the larger of 12em and 37% of this window's height, so a tall window shows
+  // with the keyboard down the detail's cap is the larger of 12em and 34.8% of this window's height, so a tall window shows
   // more of a long detail; with the keyboard up it is 12em and the flex shrink governs, as before (styles.css
   // #ut-reply-prompt .ut-detail.open, where the share is derived). This publishes the window's height for that term at
   // rest (--ut-rest-h on the overlay) and withdraws it with the keyboard up. The height is innerHeight, which is this
@@ -10901,10 +10901,10 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   // before grow reads the room. A STATED RESIDUAL (the maintainer's ruling on the cap pass): Android Chrome honours the
   // shell's interactive-widget=resizes-content (kernel.py's viewport meta; iOS ignores the token), so there the keyboard
   // shrinks the shell's LAYOUT viewport, the shell's two heights agree, and this read, like kbOpen itself, sees no
-  // keyboard: the at-rest term applies under the keyboard (at 508, 37% is 188px against 12em's 134, and the room, 174px
+  // keyboard: the at-rest term applies under the keyboard (at 508, 34.8% is 177px against 12em's 134, and the room, 174px
   // for a long detail under a short ask, sets the detail's height; the answer box keeps its three rows and Send stays in
-  // the box). No other keyboard signal is read here (a guess from a height or from focus is the time-free heuristic the
-  // design rule avoids); the shell's blind spot is a follow-up of its own. waiting-reply-sheet-browser.test.ts and
+  // the box). No other keyboard signal is read here (a guess from a height or from focus is a heuristic, which the
+  // authoritative-sources rule avoids); the shell's blind spot is a follow-up of its own. waiting-reply-sheet-browser.test.ts and
   // reply-sheet-keyboard.test.ts pin today's behaviour under that model.
   const restCap = () => { let up = false; try { const p = window.parent, pv = p.visualViewport; up = !!pv && p.innerHeight - pv.height * (pv.scale || 1) > 120; } catch { up = false; } if (up) overlay.style.removeProperty("--ut-rest-h"); else overlay.style.setProperty("--ut-rest-h", window.innerHeight + "px"); };
   // THE KEYBOARD (the user 2026-09-19, a phone screenshot: the detail filled the sheet and the answer box was one squeezed

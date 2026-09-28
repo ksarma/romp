@@ -33,13 +33,16 @@
 // fresh click on the button, and records a button that vanished under it or did not open the sheet as its own failure
 // line naming the element, never a bare exception.
 // The detail's cap at rest (the maintainer's ruling at the merge with main): with the keyboard down it is the larger of
-// 12em and 37% of the window's height, with the keyboard up 12em, as before. Read at rest at 900 and 1080 and at two of the
-// pane heights a phone gives (the installed app's 844, and 664, mobile Safari's with both toolbars shown) on the
-// composition's todo with its answer box cleared (the viewport term), and under the keyboard at 508 on the other todo's
-// sheet at open (12em). The detail's cap reads the keyboard where the shell does (restCap; kernel.py kbOpen): the visual
-// viewport of the window that owns the screen shorter than its layout viewport. These pages are top-level, so that
-// window is the page itself: with the keyboard up the driver stubs its visualViewport.height to its innerHeight less a
-// phone keyboard's 336px, and removes the stub at rest; every window under 900 here is the keyboard up.
+// 12em and 34.8% of the window's height, with the keyboard up 12em, as before. Read at rest at 900 and 1080 and at the
+// pane heights a phone gives (the maintainer's rulings on the cap pass and on the share: the installed app's 732, and
+// Safari's 709, 633 and 620) on the composition's todo with its answer box cleared (the viewport term), and under the
+// keyboard at 508 on the other todo's sheet at open (12em). Last, on a third todo whose detail is the recorded 8-line
+// one, the stated boundary (styles.css: in full from a 720px pane): at the app's 732 and at 720, then one pixel under
+// this engine's own boundary (cfg.belowBoundary) and at Safari's common 633. The detail's cap reads the keyboard where
+// the shell does (restCap; kernel.py kbOpen): the visual viewport of the window that owns the screen shorter than its
+// layout viewport. These pages are top-level, so that window is the page itself: with the keyboard up the driver stubs
+// its visualViewport.height to its innerHeight less a phone keyboard's 336px, and removes the stub at rest; every window
+// under 900 here is the keyboard up.
 // Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip), 4
 // when the LAB kernel is not healthy (cfg.healthz names the lab port, asserted before any request; never a live kernel).
 // Synthetic sessions and todos only.
@@ -52,7 +55,11 @@ const playwright = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
 const engine = cfg.engine || "chromium";
 const out = { engine, pane: cfg.pane, errors: [] };
-const W = 390, KEYBOARD_UP = 508, TIGHT = 420, SHORT = 300, TALL = 900, REST_TALL = 1080, PHONE_REST = 844, SAFARI_BARS = 664, KEYBOARD_H = 336;
+const W = 390, KEYBOARD_UP = 508, TIGHT = 420, SHORT = 300, TALL = 900, REST_TALL = 1080, KEYBOARD_H = 336;
+// the pane heights a phone gives at rest (styles.css, where the share is derived): Safari's panes (a window less the phone
+// shell's 31px tab bar: 651, 664 and 740), the installed app's pane on a 390x844 phone (its window, the screen less the
+// status bar, less the app's 65px tab bar), and the stated boundary, where the recorded 8-line detail starts to show in full
+const SAFARI_16E = 620, SAFARI_BARS = 633, SAFARI_TOP = 709, APP_PANE = 732, BOUNDARY = 720;
 const ANSWER = Array.from({ length: 14 }, (_, i) => `line ${i + 1}`).join("\n");
 
 const healthz = await new Promise((resolve) => {
@@ -132,6 +139,7 @@ const measure = () => page.evaluate(() => {
     detailTextRight: detail ? textRight(detail) : null, detailRight: detail ? +detail.getBoundingClientRect().right.toFixed(1) : null,
     detailLineH: detail ? parseFloat(cs(detail).lineHeight) : null,
     detailFontPx: detail ? parseFloat(cs(detail).fontSize) : null, detailMaxH: detail ? parseFloat(cs(detail).maxHeight) : null,   // the cap the engine resolved
+    detailRectH: detail ? detail.getBoundingClientRect().height : null,   // the detail's laid-out height, unrounded: at its cap it equals the cap; under it, the room set it
     box: rect(box), boxScrollH: box.scrollHeight, boxClientH: box.clientHeight, boxOverflowY: cs(box).overflowY,
     send: rect(send), cancel: rect(cancel), hitAtSend: hit(send), hitAtCancel: hit(cancel),
     kinds: Array.from(box.children).map((c) => (["wt-file", "wt-link", "ut-file", "ut-link"].find((k) => c.classList.contains(k)) || (c.className || c.tagName).split(" ")[0])),
@@ -285,17 +293,21 @@ try {
   await setHeight(TALL);
   await waitTight(false);
   // the keyboard down: the detail's cap at rest with the answer box empty (the answer typed at 420 is cleared, so the room
-  // holds more than the cap), the viewport term at 900 and at 1080, then at the installed app's 844 and at mobile Safari's
-  // 664 with both toolbars shown (a 390x844 iPhone in Playwright's device registry), where this todo's room is under the
-  // cap and the shrink sets its detail; the answer is typed again at 900 below
+  // holds more than the cap), the viewport term at 900 and at 1080, then at the installed app's 732, where the share holds
+  // this todo's room, and at Safari's 709, 633 and 620, where the pane's room is under the cap and the shrink sets its
+  // detail; the answer is typed again at 900 below
   await fill("");
   out.restTall = await measure();
   await setHeight(REST_TALL);
   out.restTaller = await measure();
-  await setHeight(PHONE_REST, false);
-  out.restPhone = await measure();
+  await setHeight(APP_PANE, false);
+  out.restApp = await measure();
+  await setHeight(SAFARI_TOP, false);
+  out.restSafariTop = await measure();
   await setHeight(SAFARI_BARS, false);
   out.restSafari = await measure();
+  await setHeight(SAFARI_16E, false);
+  out.restSafari16e = await measure();
   await setHeight(TALL);
   await fill(ANSWER);
   out.tall = await measure();
@@ -373,6 +385,25 @@ try {
         }
       } catch (e) { out.release = { error: String(e).slice(0, 400) }; }
     }
+  }
+  // the stated boundary, on the third todo (a short ask and the recorded 8-line detail), at rest: whatever sheet the steps above
+  // left up is cancelled first; opened at the app's 732, then resized under it (the resize re-runs restCap) to 720, one pixel
+  // under this engine's own boundary, and Safari's common 633. Its own failure is recorded, never fatal
+  if (cfg.tid3) {
+    try {
+      await page.evaluate(() => { const o = document.getElementById("ut-reply-prompt"); if (o) o.querySelector(".confirm-actions button").click(); });
+      await page.waitForFunction(() => !document.getElementById("ut-reply-prompt"), null, { timeout: 10000 });
+      await setHeight(APP_PANE, false);
+      await openReply(cfg.tid3);
+      const eight = { app: await measure() };
+      await setHeight(BOUNDARY, false);
+      eight.boundary = await measure();
+      await setHeight(cfg.belowBoundary, false);
+      eight.below = await measure();
+      await setHeight(SAFARI_BARS, false);
+      eight.safari = await measure();
+      out.eight = eight;
+    } catch (e) { out.eight = { error: String(e).slice(0, 400) }; }
   }
   await result({ ready: true });
 } catch (e) {
