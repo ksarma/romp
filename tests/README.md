@@ -257,11 +257,15 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   writes to key on the option (`config.getoption`, `config.option`,
   `config.pluginmanager`, `sys.argv`, the invocation params,
   `PYTEST_ADDOPTS`), followed through the aliases and helpers of the
-  conftest's text and of the modules of the repository it imports directly.
-  Through such a module it refuses the conftest's read of a function there
-  that returns a value, or of a name there, whose code reads what the rule
-  refuses; a function that returns nothing, such as `write_owner_marker` in
-  `tests/__init__.py`, is not refused.
+  conftest's text, and through a module of the repository it imports
+  directly in the two shapes the reviewer's ruling names: the conftest's read
+  of a function there that returns a value, or of a name there, whose code
+  reads what the rule refuses. A function that returns nothing, such as
+  `write_owner_marker` in `tests/__init__.py`, is not refused. The rule also
+  refuses an import of a module it finds neither among the directories it
+  reads nor, through the import system, outside the repository (a module on
+  a directory put on the import path, say), and the conftest's read of
+  `sys.path`.
   A road no honest author writes, whose only effect is to escape the check, is
   refused where one syntactic check does it; otherwise it passes and is
   listed. The listed roads include a carrier reached through a name the rule
@@ -270,10 +274,13 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   command line read from outside the interpreter's objects
   (`/proc/self/cmdline`, say). It stops at
   the modules the conftest imports directly: a read reached only through an
-  import of an import passes. The rule claims no more than this. Its
-  docstring, `_anyio_option_reads` in `tests/test_hermetic_kernel_postal.py`,
-  lists in WHAT IT DOES NOT READ the kinds of road no honest author writes
-  that it leaves unrefused, and the read through an import of an import. A name
+  import of an import passes, and so does a road through such a module in
+  neither shape (what a function that returns nothing leaves behind, or an
+  object the module fills at its import). The rule claims no more than this.
+  Its docstring, `_anyio_option_reads` in
+  `tests/test_hermetic_kernel_postal.py`, lists in WHAT IT DOES NOT READ the
+  kinds of road no honest author writes that it leaves unrefused, the read
+  through an import of an import, and the roads in neither shape. A name
   is licensed only when a child pytest over a copy of the conftest writes the
   name at each probe module's import and, in each probe
   test, reads it and sets it again, and sees the counted fixture's own code set or
@@ -368,7 +375,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   is, is granted by the run, and the reader counts no fixture of a conftest
   keyed on the flag by an honest road (above), so a licence rests on such a
   road only where the reader leaves it unrefused: a road no honest author
-  writes, or one reached only through an import of an import. Third,
+  writes, one reached only through an import of an import, or one through a
+  module the conftest imports directly in neither shape the reviewer's ruling
+  names. Third,
   unmatchable at any
   cost: a hook condition
   keyed on an open-valued signal (a mark, an environment variable, a host name,
