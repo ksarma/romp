@@ -31,8 +31,9 @@ origin or on its location.origin, itself, its own dispatch, a sourceless post wi
 over windows that carry the edges a browser gives them (parent, top, opener, and the shell's frames), and reads which
 function the check is when each message is delivered. The other pages' scripts run through the same exercise for their
 census (ServedPagesExecuted). ServedScriptPopulation derives the pages every census here reads (SERVED_BUILDERS) from
-kernel.py's syntax tree, and ui/webview/served-script-scopes.test.ts parses every script on them (_served_scripts) and
-refuses a direct eval or a with statement, the two ways code can add a binding at run time to a scope between a listener
+kernel.py's syntax tree, each read as the kernel's _send writes it (_as_served: a page of the page class carries the
+sign-in seed and the page-key script _send puts first in its head), and ui/webview/served-script-scopes.test.ts parses
+every script on them (_served_scripts) and refuses a direct eval or a with statement, the two ways code can add a binding at run time to a scope between a listener
 and the global scope. Synthetic only: no session data, a loopback origin.
 
 The line after the adopted three is the fork's LOCK (2026-09-26): it makes the check's property read-only and
@@ -44,12 +45,15 @@ What no leg here runs: code behind a condition the stand-in does not meet (a sec
 setting, a key the stand-in event does not carry), an arm keyed other than by comparing a field with a string, and a
 registration through another object's method. A listener registered under a computed name on such a road is caught by
 none of these tests; the text censuses catch only the names they can read. A write of the check on such a road is
-refused by the lock when it runs after the boot script; one that runs before it (the shell's head script and the one
-script between it and the boot script, both run here) would show in the descriptor CheckLocked reads, when it is on a
+refused by the lock when it runs after the boot script; one that runs before it (every script ahead of the boot script
+on the shell as served: the sign-in seed and the page-key script _send puts first in the head, then the shell's own
+scripts before the boot script; all of them run here) would show in the descriptor CheckLocked reads, when it is on a
 road the stand-in drives.
 """
 import ast
+import functools
 import hashlib
+import io
 import json
 import os
 import re
@@ -158,9 +162,9 @@ def _inline_scripts(html):
 
 
 # Every page the kernel writes and serves as a document, by route, and /sw.js (the service worker's script), each by the
-# kernel function or constant that builds it: what every census in this module reads as the kernel's pages.
-# ServedScriptPopulation derives the builders from kernel.py itself, so a page a new builder serves fails there until it
-# is listed here.
+# kernel function or constant that builds it: what every census in this module reads as the kernel's pages, each read as
+# Handler._send writes it (_as_served). ServedScriptPopulation derives the builders from kernel.py itself (a page route's
+# builder through the route table _PAGE_RENDERERS), so a page a new builder serves fails there until it is listed here.
 SERVED_BUILDERS = {"/": "_landing", "/chat": "_chat_page", "/feed": "_feed_page", "/fleet": "_fleet_page",
                    "/waiting": "_waiting_page", "/files": "_files_page", "/settings": "_settings_page",
                    "/timeline": "_timeline_page", "the sign-in page": "_TOKEN_LOGIN_HTML",
@@ -168,14 +172,45 @@ SERVED_BUILDERS = {"/": "_landing", "/chat": "_chat_page", "/feed": "_feed_page"
 _BUILDER_ARGS = {"_too_large_page": ("too large", "a.pdf", {})}
 
 
+# One browser's session, minted once for the module, so a page read twice is read the same: the sign-in response _as_served
+# reads a page renderer's document as carries it (the seed holds its page key).
+_SESSION = km._mint_session()
+
+
+def _as_served(builder, text):
+    """`text`, the document `builder` built, as Handler._send writes it: run through the kernel's own _send on a handler with
+    no socket, under the type the kernel serves `builder`'s document with (_typed_responses), and read back off the bytes
+    it writes. _send puts scripts first in an authorized page's head, a page of the page class (a builder the route table
+    _PAGE_RENDERERS routes to): the page-key script (_PAGE_KEY_JS), and on the response that signs a browser in the seed
+    ahead of it. A page renderer's document is read as that sign-in response, which carries both; every other document
+    as _send writes it outside the page class."""
+    types = _typed_responses()[0][builder]
+    assert len(types) == 1, "%s is served under one type, which _as_served reads it as: %r" % (builder, types)
+    h = km.Handler.__new__(km.Handler)
+    h.request_version, h.command, h.requestline = "HTTP/1.1", "GET", "GET / HTTP/1.1"
+    h.client_address, h.wfile = ("127.0.0.1", 0), io.BytesIO()
+    h._page_ok = builder in {f.__name__ for f in km._PAGE_RENDERERS.values()}
+    h._set_cookie = _SESSION if h._page_ok else None
+    h._send(200, text, next(iter(types)))
+    _head, sep, body = h.wfile.getvalue().partition(b"\r\n\r\n")
+    assert sep, "_send wrote a head and a body"
+    return body.decode("utf-8")
+
+
 def _served_pages():
     """Every page the kernel serves as a document, by route, and /sw.js (the service worker's script): what a script on
-    romp's origin that the kernel writes can be. Built by SERVED_BUILDERS' functions."""
+    romp's origin that the kernel writes can be. Built by SERVED_BUILDERS' functions and read as _send writes each one
+    (_as_served), the scripts _send puts first in a page's head included."""
     out = {}
     for name, builder in SERVED_BUILDERS.items():
         b = getattr(km, builder)
-        out[name] = b(*_BUILDER_ARGS.get(builder, ())) if callable(b) else b
+        out[name] = _as_served(builder, b(*_BUILDER_ARGS.get(builder, ())) if callable(b) else b)
     return out
+
+
+def _served_shell():
+    """The shell as the kernel serves it (_served_pages' "/", read alone): what the shell's tests below read and run."""
+    return _as_served(SERVED_BUILDERS["/"], getattr(km, SERVED_BUILDERS["/"])())
 
 
 class _PageScripts(HTMLParser):
@@ -275,7 +310,7 @@ class AdoptedCheck(unittest.TestCase):
                         "the lock is the line right after the adopted definition")
 
     def test_it_is_defined_once_on_the_served_shell_ahead_of_every_listener(self):
-        html = km._landing()
+        html = _served_shell()
         self.assertEqual(html.count(REGION_HEAD), 1)
         self.assertEqual(html.count("window.__rompPaneSourceOk="), 1, "one definition, no second copy to drift")
         self.assertEqual(html.count(LOCK), 1, "the lock, once")
@@ -364,7 +399,7 @@ class NoOtherWriter(unittest.TestCase):
             with self.subTest(page=name):
                 self.assertGreater(len(page), 100, "the page was built")
                 self.assertNotIn("__rompPaneSourceOk", page)
-        self.assertEqual(km._landing().count("__rompPaneSourceOk"), 2 + 2 * len(LISTENERS))
+        self.assertEqual(_served_shell().count("__rompPaneSourceOk"), 2 + 2 * len(LISTENERS))
 
 
 class ShellListenerCensus(unittest.TestCase):
@@ -372,7 +407,7 @@ class ShellListenerCensus(unittest.TestCase):
     service worker's channel, which no window can post on, is the one listener without it."""
 
     def setUp(self):
-        self.html = km._landing()
+        self.html = _served_shell()
 
     def test_every_window_listener_in_the_shell_is_named_and_gated(self):
         opens = [m.start() for m in re.finditer(re.escape("window." + LISTEN_OPEN), self.html)]
@@ -639,16 +674,55 @@ OTHER_TYPED_RESPONSES = {
 MEDIA_KINDS = {".svg", ".png", ".woff2", ".ttf", ".txt"}
 
 
-def _typed_responses():
-    """({builder of each literal-script-typed _send's body}, {(function, type expression): count} for every other _send or
-    Content-Type header whose type is not a literal, _send's own header aside), read from kernel.py's syntax tree."""
-    with open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8") as f:
-        tree = ast.parse(f.read())
-    builders, other = set(), {}
+def _route_tables(tree):
+    """{name: [value names]} for every module-level assignment in `tree` of a dict literal whose values are all names: a
+    route table, such as _PAGE_RENDERERS."""
+    out = {}
+    for st in tree.body:
+        if (isinstance(st, ast.Assign) and len(st.targets) == 1 and isinstance(st.targets[0], ast.Name)
+                and isinstance(st.value, ast.Dict) and st.value.values
+                and all(isinstance(v, ast.Name) for v in st.value.values)):
+            out[st.targets[0].id] = [v.id for v in st.value.values]
+    return out
 
-    def walk(node, fn):
+
+def _table_reads(fn, tables):
+    """{local name: [value names]} for each name `fn` binds only by reading a route table, `x = TABLE.get(...)` or
+    `x = TABLE[...]` (each value of the table is what it can hold). A name bound any other way as well (another
+    assignment, a parameter, a loop, a with, an import, in `fn` or in a function nested in it) is not here, so a body that
+    calls it stays unresolved."""
+    reads, stores = {}, {}
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+            stores[n.id] = stores.get(n.id, 0) + 1
+        elif isinstance(n, ast.arg):
+            stores[n.arg] = stores.get(n.arg, 0) + 1
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                k = (a.asname or a.name).split(".")[0]
+                stores[k] = stores.get(k, 0) + 1
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+            v, table = n.value, None
+            if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "get" \
+                    and isinstance(v.func.value, ast.Name):
+                table = v.func.value.id
+            elif isinstance(v, ast.Subscript) and isinstance(v.value, ast.Name):
+                table = v.value.id
+            if table in tables:
+                reads.setdefault(n.targets[0].id, []).append(table)
+    return {k: [b for t in ts for b in tables[t]] for k, ts in reads.items() if stores.get(k) == len(ts)}
+
+
+def _typed_responses_of(tree):
+    """_typed_responses over the syntax tree `tree`, the builders' types as sets."""
+    tables = _route_tables(tree)
+    builders, other = {}, {}
+
+    def walk(node, fn, reads):
         for ch in ast.iter_child_nodes(node):
-            inner = ch.name if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)) else fn
+            inner, inner_reads = fn, reads
+            if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner, inner_reads = ch.name, _table_reads(ch, tables)
             if isinstance(ch, ast.Call) and isinstance(ch.func, ast.Attribute) and inner != "_send":
                 typ = None
                 if ch.func.attr == "_send":
@@ -661,32 +735,95 @@ def _typed_responses():
                     other[key] = other.get(key, 0) + 1
                 elif typ is not None and str(typ.value).split(";")[0].strip().lower() in _SCRIPT_TYPES:
                     body = ch.args[1] if ch.func.attr == "_send" else None
-                    if isinstance(body, ast.Call) and isinstance(body.func, ast.Name):
-                        builders.add(body.func.id)
-                    elif isinstance(body, ast.Name):
-                        builders.add(body.id)
-                    else:
-                        builders.add("<%s in %s>" % (ast.unparse(body) if body is not None else ch.func.attr, inner))
-            walk(ch, inner)
+                    name = (body.func.id if isinstance(body, ast.Call) and isinstance(body.func, ast.Name)
+                            else body.id if isinstance(body, ast.Name) else None)
+                    found = (inner_reads.get(name) or [name]) if name is not None else [
+                        "<%s in %s>" % (ast.unparse(body) if body is not None else ch.func.attr, inner)]
+                    for b in found:
+                        builders.setdefault(b, set()).add(typ.value)
+            walk(ch, inner, inner_reads)
 
-    walk(tree, None)
+    walk(tree, None, {})
     return builders, other
+
+
+@functools.lru_cache(maxsize=1)
+def _typed_responses_cached():
+    with open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8") as f:
+        return _typed_responses_of(ast.parse(f.read()))
+
+
+def _typed_responses():
+    """({builder of each literal-script-typed _send's body: {the literal types it is sent with}}, {(function, type
+    expression): count} for every other _send or Content-Type header whose type is not a literal, _send's own header
+    aside), read from kernel.py's syntax tree. A body called or named through a local bound only by reading a route table
+    (`_page = _PAGE_RENDERERS.get(p)`, _table_reads) counts as each builder the table holds; a local bound any other way
+    counts as its own name, which SERVED_BUILDERS lists no builder by."""
+    builders, other = _typed_responses_cached()
+    return {k: set(v) for k, v in builders.items()}, dict(other)
 
 
 class ServedScriptPopulation(unittest.TestCase):
     """The pages the censuses here read, and the scripts ui/webview/served-script-scopes.test.ts parses, are every page and
     script the kernel writes: derived from kernel.py's syntax tree, every response typed as HTML, SVG, XML or JavaScript by a
-    literal is built by a function SERVED_BUILDERS lists, and every response typed by an expression is a listed one
-    (OTHER_TYPED_RESPONSES: files of the user's or a remote's, the popover's answer, /dist and /media). The reader of a
-    page's scripts finds each <script> the other censuses read, and each handler attribute and javascript: URL besides."""
+    literal is built by a function SERVED_BUILDERS lists (a page route's builder read through the route table do_GET
+    dispatches it by, _PAGE_RENDERERS), and every response typed by an expression is a listed one (OTHER_TYPED_RESPONSES:
+    files of the user's or a remote's, the popover's answer, /dist and /media). Each page is read as _send writes it
+    (_as_served), so the scripts _send puts first in a page's head (the sign-in seed and the page-key script) are read with
+    the page's own. The reader of a page's scripts finds each <script> the other censuses read, and each handler attribute
+    and javascript: URL besides."""
 
     def test_every_page_the_kernel_writes_is_read(self):
         builders, other = _typed_responses()
-        self.assertEqual(builders, set(SERVED_BUILDERS.values()), "a response typed as a page or a script whose builder "
-                         "SERVED_BUILDERS does not list, or a listed builder no response serves")
+        self.assertEqual(set(builders), set(SERVED_BUILDERS.values()), "a response typed as a page or a script whose "
+                         "builder SERVED_BUILDERS does not list, or a listed builder no response serves")
         self.assertEqual(other, {k: n for k, (n, _why) in OTHER_TYPED_RESPONSES.items()}, "a response typed by an "
                          "expression that OTHER_TYPED_RESPONSES does not list, or a listed one gone: say what it serves")
         self.assertEqual(set(_served_pages()), set(SERVED_BUILDERS))
+
+    def test_each_page_route_is_listed_with_the_builder_the_route_table_names(self):
+        # do_GET serves a page by looking its renderer up in _PAGE_RENDERERS, so SERVED_BUILDERS names the same builder for
+        # each of its routes (its "" is the shell's bare path, which SERVED_BUILDERS lists as "/")
+        renderers = {f.__name__ for f in km._PAGE_RENDERERS.values()}
+        self.assertEqual({r or "/": f.__name__ for r, f in km._PAGE_RENDERERS.items()},
+                         {r: b for r, b in SERVED_BUILDERS.items() if b in renderers})
+
+    def test_a_body_through_a_route_table_counts_as_each_builder_the_table_holds(self):
+        # the derivation, over sources of our own: a local bound only by a read of a module-level table of names counts as
+        # every name in the table (.get or an index); a local bound any other way as well (a second assignment, a
+        # parameter, a loop) counts as itself, which SERVED_BUILDERS lists no builder by, so the census reds
+        table = "T = {'/a': _a, '/b': _b}\n"
+        for src, want in (
+                ("def f(self, p):\n    g = T.get(p)\n    return self._send(200, g(), 'text/html')\n", {"_a", "_b"}),
+                ("def f(self, p):\n    g = T[p]\n    return self._send(200, g(), 'text/html')\n", {"_a", "_b"}),
+                ("def f(self, p):\n    g = T.get(p)\n    g = h\n    return self._send(200, g(), 'text/html')\n", {"g"}),
+                ("def f(self, g):\n    g = T.get(p)\n    return self._send(200, g(), 'text/html')\n", {"g"}),
+                ("def f(self, p):\n    for g in x: pass\n    g = T.get(p)\n    return self._send(200, g(), 'text/html')\n",
+                 {"g"}),
+                ("def f(self, p):\n    g = U.get(p)\n    return self._send(200, g(), 'text/html')\n", {"g"})):
+            with self.subTest(src=src):
+                builders, _other = _typed_responses_of(ast.parse(table + src))
+                self.assertEqual(set(builders), want)
+
+    def test_each_page_is_read_as_send_writes_it(self):
+        # a page of the page class (a builder the route table routes to) carries the sign-in seed and then the page-key
+        # script ahead of its own scripts, as _send writes it on the response that signs a browser in; every other document
+        # is as built, since _send adds nothing outside the page class
+        pages = _served_pages()
+        renderers = {f.__name__ for f in km._PAGE_RENDERERS.values()}
+        self.assertEqual(len(renderers), 8, "the shell, the six pane pages and the timeline")
+        for name, builder in SERVED_BUILDERS.items():
+            b = getattr(km, builder)
+            built = b(*_BUILDER_ARGS.get(builder, ())) if callable(b) else b
+            with self.subTest(page=name):
+                if builder not in renderers:
+                    self.assertEqual(pages[name], built)
+                    continue
+                scripts = _inline_scripts(pages[name])
+                self.assertIn(json.dumps(km._page_key(_SESSION)), scripts[0], "the seed first: it stores the page key")
+                self.assertTrue(scripts[0].startswith("try{localStorage.setItem("), "the seed first")
+                self.assertEqual(scripts[1], km._PAGE_KEY_JS, "then the page-key script")
+                self.assertEqual(scripts[2:], _inline_scripts(built), "then the page's own scripts, as built")
 
     def test_the_media_files_are_svgs_read_as_pages_or_kinds_that_hold_no_script(self):
         files = os.listdir(km.MEDIA)
@@ -1132,7 +1269,7 @@ process.stdout.write('\n' + JSON.stringify(out));
 
 
 def _run_landing(mode):
-    return _run_scripts(_inline_scripts(km._landing()), mode)
+    return _run_scripts(_inline_scripts(_served_shell()), mode)
 
 
 def _without(html, text):
@@ -1245,7 +1382,7 @@ class ShellListenersExecuted(unittest.TestCase):
         # function in effect at every delivery, so a later wrapper that widens it for some senders cannot stand in for it.
         # A write behind a condition the stand-in does not meet is not run here; the lock refuses it (CheckLocked). The
         # lock's own define carries no new value, so it is no second assignment
-        html = km._landing()
+        html = _served_shell()
         i = html.index(REGION_HEAD)
         region = html[i:html.index(REGION_TAIL, i) + len(REGION_TAIL)]
         fn = region[len("window.__rompPaneSourceOk="):-1]
@@ -1320,7 +1457,7 @@ class ShellListenersExecuted(unittest.TestCase):
     }
 
     def test_the_stand_in_hears_a_handler_written_on_every_road_to_a_window(self):
-        base = _inline_scripts(km._landing())
+        base = _inline_scripts(_served_shell())
         for road, plant in self.HANDLER_ROADS.items():
             with self.subTest(road=road):
                 run = _run_scripts(base + [plant], "census")
@@ -1350,7 +1487,7 @@ class ShellListenersExecuted(unittest.TestCase):
 
     def test_the_exercise_reaches_a_write_planted_on_each_road(self):
         fn = self.run_["assigns"][0]
-        unlocked = _inline_scripts(_without_lock(km._landing()))
+        unlocked = _inline_scripts(_without_lock(_served_shell()))
         for road, plant in self.PLANTS.items():
             with self.subTest(road=road):
                 run = _run_scripts(unlocked + [plant.replace("WRITE", self.PLANT_WRITE)], "reads")
@@ -1362,7 +1499,7 @@ class ShellListenersExecuted(unittest.TestCase):
 
     def test_with_the_lock_a_write_planted_on_each_road_leaves_the_adopted_function(self):
         fn = self.run_["assigns"][0]
-        base = _inline_scripts(km._landing())
+        base = _inline_scripts(_served_shell())
         for road, plant in self.PLANTS.items():
             with self.subTest(road=road):
                 run = _run_scripts(base + [plant.replace("WRITE", self.PLANT_REACH + self.PLANT_WRITE)], "reads")
@@ -1372,7 +1509,7 @@ class ShellListenersExecuted(unittest.TestCase):
                 self.assertEqual(run["inEffect"], [fn], "every delivery read the adopted function")
 
     def test_a_listener_registered_from_a_later_road_is_counted(self):
-        run = _run_scripts(_inline_scripts(km._landing()) + [
+        run = _run_scripts(_inline_scripts(_served_shell()) + [
             "window.addEventListener('resize',function(){window['add'+'EventListener']('message',function(e){});});"], "reads")
         self.assertEqual(len(run["listeners"]), len(LISTENERS) + 1, "the listener the resize handler registered is counted")
         self.assertEqual([n for n in (_name_of(l["src"]) for l in run["listeners"]) if n.startswith("unnamed listener")],
@@ -1382,13 +1519,13 @@ class ShellListenersExecuted(unittest.TestCase):
         # a messageerror event carries the sender's origin and source as a message does, and a sender causes one by posting
         # what the page cannot deserialize: the stand-in counts a listener for it, under any name, with the page's message
         # listeners, so the census tests above fail on it
-        run = _run_scripts(_inline_scripts(km._landing()) + ["window['add'+'EventListener']('messageerror',function(e){});"], "reads")
+        run = _run_scripts(_inline_scripts(_served_shell()) + ["window['add'+'EventListener']('messageerror',function(e){});"], "reads")
         self.assertEqual(len(run["listeners"]), len(LISTENERS) + 1, "the messageerror listener is counted")
         self.assertEqual([n for n in (_name_of(l["src"]) for l in run["listeners"]) if n.startswith("unnamed listener")],
                          ["unnamed listener: function(e){}"])
 
     def test_without_the_check_no_listener_reads_anything(self):
-        run = _run_scripts(_inline_scripts(_without_check(km._landing())), "nocheck")
+        run = _run_scripts(_inline_scripts(_without_check(_served_shell())), "nocheck")
         self.assertEqual(len(run["reads"]), len(LISTENERS))
         for l, reads in zip(run["listeners"], run["reads"]):
             with self.subTest(listener=_name_of(l["src"])):
@@ -1464,8 +1601,9 @@ class CheckLocked(unittest.TestCase):
     redefines or deletes it, however it spells the attempt, and every listener still reads the adopted function after
     each. The lock is outside the adopted region (AdoptedCheck); a fold that takes the project's side of
     _LANDING_BOOT_JS keeps it. The same attempts on the shell without its lock each replace the check, so the harness
-    can see a replacement when one lands. A script that runs BEFORE the boot script is not refused by the lock: the
-    served shell's two earlier scripts are run here, and the descriptor read after boot would show what they left."""
+    can see a replacement when one lands. A script that runs BEFORE the boot script is not refused by the lock: every
+    script ahead of it on the shell as served (the sign-in seed and the page-key script _send puts first in the head, then
+    the shell's own earlier scripts) is run here, and the descriptor read after boot would show what they left."""
 
     ATTEMPTS = ("an assignment on window", "an assignment by a computed name", "an assignment to the bare global",
                 "an assignment on self", "an assignment in strict mode", "a var declaration", "Reflect.set", "Object.assign",
@@ -1476,7 +1614,7 @@ class CheckLocked(unittest.TestCase):
     def setUpClass(cls):
         # the served shell, as it is: the pins below read this run alone, so they fail on their own assertions when the
         # lock is missing or weakened (the contrast builds its page in its own test)
-        html = km._landing()
+        html = _served_shell()
         cls.locked = _run_scripts(_inline_scripts(html), "overwrite")
         i = html.index(REGION_HEAD)
         cls.fn = html[i:html.index(REGION_TAIL, i) + len(REGION_TAIL)][len("window.__rompPaneSourceOk="):-1]
@@ -1502,7 +1640,7 @@ class CheckLocked(unittest.TestCase):
         # the contrast: the same page less its lock line. Each attempt runs without an error and lands, and the listeners
         # then read messages from senders the adopted check refuses: so every attempt above is a working replacement,
         # and a replacement that lands is one these tests see
-        unlocked = _run_scripts(_inline_scripts(_without_lock(km._landing())), "overwrite")
+        unlocked = _run_scripts(_inline_scripts(_without_lock(_served_shell())), "overwrite")
         self.assertEqual(unlocked["descriptor"], {"writable": True, "configurable": True, "enumerable": True,
                                                   "value": self.fn, "accessor": False})
         got = unlocked["attempts"]
@@ -1606,7 +1744,7 @@ class AdoptedCheckExecuted(unittest.TestCase):
         node = shutil.which("node")
         if not node:
             raise unittest.SkipTest("node not installed")
-        html = km._landing()
+        html = _served_shell()
         i = html.index(REGION_HEAD)
         region = html[i:html.index(REGION_TAIL, i) + len(REGION_TAIL)]
         fx = tempfile.mkdtemp()

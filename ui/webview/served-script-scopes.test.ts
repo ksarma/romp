@@ -11,8 +11,10 @@
 //
 // The population is tests/test_shell_source_check.py's _served_scripts: every <script> without a src, every event
 // handler attribute and every javascript: URL on each page SERVED_BUILDERS lists (the shell, the six pane pages, the
-// timeline, the sign-in page, the too-large page), /sw.js whole, and each SVG under /media. ServedScriptPopulation there
-// derives that page list from kernel.py's syntax tree. A script the parser cannot read is refused too.
+// timeline, the sign-in page, the too-large page), each read as the kernel's _send writes it (the sign-in seed and the
+// page-key script it puts first in the head of the shell, each pane page and the timeline included), /sw.js whole, and
+// each SVG under /media. ServedScriptPopulation there derives that page list from kernel.py's syntax tree. A script the
+// parser cannot read is refused too.
 //
 // What the census does not read, and why none of it can shadow the shim's check:
 //   - eval reached other than by its name as the callee ((0, eval)(s), window.eval(s), an alias, a computed name), the
@@ -208,6 +210,11 @@ test("the census read every page SERVED_BUILDERS lists and every media SVG, and 
   for (const page of ["/chat", "/feed", "/fleet", "/waiting", "/files", "/settings", "/timeline"])
     assert.ok((pages.get(page) || []).some((p) => p.code.includes("const fromShell=function(e){")), page + ": the shim's check is among the scripts read");
   assert.ok((pages.get("/") || []).some((p) => p.code.includes("window.__rompPaneSourceOk=function(e){")), "the shell's check is among them");
+  for (const page of ["/", "/chat", "/feed", "/fleet", "/waiting", "/files", "/settings", "/timeline"]) {
+    const read = pages.get(page) || [];
+    assert.ok(read.length > 2 && read[0].code.startsWith("try{localStorage.setItem("), page + ": the sign-in seed _send puts first is read");
+    assert.ok(read[1].code.startsWith("(function(){if(window.__rompPageKey)return;"), page + ": the page-key script after it is read");
+  }
   assert.deepEqual((pages.get("the sign-in page") || []).map((p) => p.kind), ["handler"], "the sign-in form's onsubmit");
   assert.ok(got().pages.includes("/sw.js") && (pages.get("/sw.js") || []).length === 1, "/sw.js, read whole");
 });
