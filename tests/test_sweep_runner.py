@@ -2708,7 +2708,7 @@ class ServedLeg(_Base):
         pytest leg's venv is not on it, and the leg carries no SDK switch. The result records the venv: its key, path,
         interpreter, the version ci.yml names, the pip line, every package in it and the pytest plugins they declare."""
         w = self.w
-        w.ctl({"base_dists": {"claude-agent-sdk": "0.0.9"}, "base_found": ["claude_agent_sdk"], "plugins": ["timeout"]})
+        w.ctl({"plugins": ["timeout"]})
         w.run(check=0)
         call = self.by_leg()["served"][0]
         self.assertTrue(call["exe"].startswith(w.served_root() + os.sep), "the served leg ran in a venv under <state dir>/sweeps/served")
@@ -2732,6 +2732,13 @@ class ServedLeg(_Base):
         self.assertEqual([k for k, _a in builds], ["venv", "pip"], "one venv, then the served step's one pip line")
         self.assertEqual(builds[1][1], self.PIP_LINE[1:], "run as ci.yml writes it, the venv's python in place of python")
         self.assertTrue(os.path.exists(os.path.join(served["path"], sweep.SERVED_MARKER)), "the finished build's marker")
+        # --python itself may have the SDK: the venv built from it does not see it
+        w.ctl({"base_dists": {"claude-agent-sdk": "0.0.9"}, "base_found": ["claude_agent_sdk"], "plugins": ["timeout"]})
+        w.change({"README.md": "# notes-api, again\n"})
+        w.run(check=0)
+        again = [c for c in w.calls() if c["leg"] == "served"][-1]
+        self.assertEqual(again["venv_installs"], wanted, "no SDK where --python has one")
+        self.assertEqual((w.result()["runner"]["served"]["sdk"], w.result()["runner"]["served"]["sdk_importable"]), (None, False))
         # a pip line that adds a package is a new key, a new venv beside the old one
         w.change({".github/workflows/ci.yml": SEED_CI.replace("pytest-timeout cryptography\n", "pytest-timeout cryptography rich\n")})
         w.run(check=0)
