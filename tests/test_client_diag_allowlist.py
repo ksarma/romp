@@ -691,13 +691,18 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             for surface, keys in km.CLIENT_DIAG_KEYS.items():
                 self.assertNotIn(marker, keys, "%s: a kernel-written marker is admitted from no poster, or a page could forge one" % surface)
         # the value bound (the maintainer's round 5 ruling, tests-1): every entry names an admitted key of its surface and holds a closed set
-        # of words; the one entry is chat's `view`, a set of exactly one word (the owner's bound: one fixed word, no host name)
+        # of words; two entries, chat's `view`, a set of exactly one word (the owner's bound: one fixed word, no host name), and federation's
+        # `road`, a set of two words, one per writer (the coordinator's ruling at the merge of main 1d591384e: a key that carries a fixed
+        # word is bounded to its words, the allowlist enumerated on the safe side; the federation fixture test derives which two words
+        # from federation.ts's writers and holds the set to them)
         for (surface, key), values in km.CLIENT_DIAG_VALUES.items():
             self.assertIn(key, km.CLIENT_DIAG_KEYS[surface], "a value set bounds an admitted key (%s, %s)" % (surface, key))
             self.assertIsInstance(values, frozenset, (surface, key))
             self.assertTrue(values and all(isinstance(w, str) and w for w in values), (surface, key))
-        self.assertEqual(sorted(km.CLIENT_DIAG_VALUES), [("chat", "view")], "one bounded key today: the spacer row's marker")
+        self.assertEqual(sorted(km.CLIENT_DIAG_VALUES), [("chat", "view"), ("federation", "road")],
+                         "two bounded keys today: the spacer row's marker and the apply-throw row's road")
         self.assertEqual(len(km.CLIENT_DIAG_VALUES[("chat", "view")]), 1, "one fixed word (the owner 2026-09-21, who approved the field)")
+        self.assertEqual(len(km.CLIENT_DIAG_VALUES[("federation", "road")]), 2, "two fixed words, one per writer of the road key")
 
     def assert_shorthand_shapes(self, surface, what, data):
         """Every value a fixture posts under a census row whose reason is a shorthand (_INT, _BOOL, _ENUM) has that shape
@@ -840,6 +845,32 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertEqual(self.rows()[-1]["data"], base, "%s: the row is stored without the key, the other keys whole" % label)
         # said once per kernel, as an unknown key is: the same refusal again, nothing said
         self.assertEqual(self.post("chat", "spacer", dict(base, view=other)), "", "the same refusal again, nothing said (the derived word, so a kernel that adopted a literal could not pass this for the wrong reason)")
+
+    def test_the_road_word_is_bounded_to_its_writers_two_words_and_every_other_value_is_refused(self):
+        # The road key's value bound (the coordinator's ruling at the merge of main 1d591384e, which bounded the key in
+        # CLIENT_DIAG_VALUES: a fixed-word page-to-kernel key admitted by key alone took any text, as chat's `view` did before its bound).
+        # The cell has main's `view` cell's shape: the words are read from the kernel's set and spelled nowhere here (the federation
+        # fixture test holds the set to the two words federation.ts's writers post), each passes whole on the apply-throw row, and every
+        # foreign value is derived from them (a case variant, the two joined, a long string) or is of another type (a number, null, an
+        # object), refused with the unknown key's shape: the row stored without the key, one stderr line naming the key and the reason,
+        # never the value, said once per kernel.
+        words = sorted(km.CLIENT_DIAG_VALUES[("federation", "road")])
+        base = {"host": "TESTHOST", "buildId": 7, "why": "asked"}
+        for w in words:
+            self.assertEqual(self.post("federation", "feedDelta-apply", dict(base, road=w)), "", "%s passes whole, nothing said" % w)
+            self.assertEqual(self.rows()[-1]["data"], dict(base, road=w), "%s: the row stored whole, the word as posted" % w)
+        variant = words[0][:1].upper() + words[0][1:]
+        joined = "".join(words)
+        long = words[0] + "x" * (4 * km.CLIENT_DIAG_STR_MAX)
+        self.assertTrue(variant not in words and joined not in words and len(long) > km.CLIENT_DIAG_STR_MAX, "the rig: three foreign words, derived")
+        line = "[client-diag] dropping a key whose value is outside the set the kernel admits for it: surface 'federation', key 'road'"
+        for label, value in (("a case variant", variant), ("the two words joined", joined), ("a number", 7), ("null", None),
+                             ("an object", {"host": "TESTHOST"}), ("a long string", long)):
+            km._client_diag_said.clear()
+            err = self.post("federation", "feedDelta-apply", dict(base, road=value))
+            self.assertEqual(err.splitlines(), [line], "%s: refused with the kernel's line naming the key and the reason, never the value" % label)
+            self.assertEqual(self.rows()[-1]["data"], base, "%s: the row is stored without the key, the other keys whole" % label)
+        self.assertEqual(self.post("federation", "feedDelta-apply", dict(base, road=joined)), "", "the same refusal again, nothing said")
 
     def test_every_surface_in_the_table_admits_every_key_it_names(self):
         for surface, keys in sorted(km.CLIENT_DIAG_KEYS.items()):
@@ -1566,6 +1597,11 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         road_reason = CENSUS["federation"]["road"][1]
         for lit in roads:
             self.assertIn(lit, road_reason, "the road reason names the writer literal %r" % lit)
+        # the kernel's bound on the key (CLIENT_DIAG_VALUES, the coordinator's ruling at the merge of main 1d591384e) is the writers' words,
+        # both ways: a writer's new word is refused by the kernel until the set names it, and a word in the set no writer posts widens
+        # the bound past what the page sends
+        self.assertEqual(km.CLIENT_DIAG_VALUES.get(("federation", "road")), frozenset(roads),
+                         "the kernel bounds road to exactly the words federation.ts's writers post: %r" % (roads,))
         apply_rows = [d for what, d in rows if what == "feedDelta-apply"]
         self.assertEqual(sorted(set(d["road"] for d in apply_rows)), roads, "the fixture rows post both roads")
         self.assertEqual(sorted(set(d["why"] for d in apply_rows)), ["asked", "stopped"], "and both words")

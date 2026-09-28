@@ -3613,7 +3613,7 @@ CLIENT_DIAG_KEYS = {
                         "decision", "hiddenMs", "quietMs", "attempts", "firstFailMs", "ms")),                    # D3 (2026-09-18): the shell socket's return-probe row (all fixed identifiers / enum members)
     "federation": frozenset(("host", "ev", "why", "quietMs", "foreground", "msgType", "rs", "flushed", "held", "unread", "endedUnread",
                              "code", "clean", "detached", "pendingDropped", "buildId", "counts", "gt", "superseded",
-                             "road")),   # feedDelta-apply (the maintainer's round 5 of wsBytesByHost, refusals-2): which road the throwing delta arrived on, wire or local, a fixed word
+                             "road")),   # feedDelta-apply (the maintainer's round 5 of wsBytesByHost, refusals-2): which road the throwing delta arrived on, wire or local, a fixed word; CLIENT_DIAG_VALUES below bounds it to the two
     "chat": frozenset(("sid", "error", "held", "got", "distVer", "path", "mdLen", "queuedLeft", "ids", "n", "active", "ts", "len", "route",
                        "id", "load", "first", "recovered", "hadRestore", "perMinute",
                        "writer", "before", "after", "delta", "stick", "gesture", "sh", "ch",
@@ -3631,13 +3631,16 @@ CLIENT_DIAG_KEYS = {
 }
 # The VALUE an admitted key is bounded to where the key carries one FIXED WORD and not a figure: (surface, key) -> the closed set of values
 # the kernel stores under it. A posted value outside the set is refused at the admit step, the way an unknown key is: the row is stored
-# without the key and one stderr line names the key and the reason, never the value. One entry today, chat's `view`, the spacer row's
+# without the key and one stderr line names the key and the reason, never the value. Two entries today. Chat's `view`, the spacer row's
 # marker of a view that was not the element the scroller measured in its frame: the one word the owner approved and no host name (the
-# owner 2026-09-21, who approved the field). The set is stated HERE once and read by tests/test_client_diag_allowlist.py, which spells the
-# word nowhere but its fixture row, the page's own spelling (the maintainer's round 5 ruling on PR E, tests-1: a key-only allowlist on a
-# page-to-kernel field admitted any text under the approved key).
+# owner 2026-09-21, who approved the field). Federation's `road` on the feedDelta-apply row: wire or local, the one word each of its two
+# writers posts (federation.ts refuseRemoteApply and refuseLocalApply; the coordinator's ruling at the merge of main 1d591384e, which
+# bounded the key as the table's rule states). Each set is stated HERE once and read by tests/test_client_diag_allowlist.py, which spells
+# the words nowhere but its fixture rows, the page's own spelling, and holds road's set to the words the writers post (the maintainer's
+# round 5 ruling on PR E, tests-1: a key-only allowlist on a page-to-kernel field admitted any text under the approved key).
 CLIENT_DIAG_VALUES = {
     ("chat", "view"): frozenset(("inactive",)),
+    ("federation", "road"): frozenset(("wire", "local",)),
 }
 _client_diag_said = set()      # (surface, key) pairs already said on stderr; one line each per kernel, CLIENT_DIAG_SAID_MAX of them
 _CLIENT_DIAG_SAID_FULL = (None, None)   # the latch's own entry once it is full: the one line past the bound

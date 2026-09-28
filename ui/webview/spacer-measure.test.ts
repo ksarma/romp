@@ -1322,7 +1322,7 @@ function parseValuesTable(body: string): { entries: Array<{ surface: string; key
   return { entries, frozensets: (stripped.match(/frozenset\s*\(/g) || []).length };
 }
 
-test("the page's guard literal is a member of the set the kernel admits for the marker, both read from their sources: kernel.py states the set once (CLIENT_DIAG_VALUES, one entry, chat's `view`, one word) and scroll-write.ts's spacerRow compares its `view` parameter with that word and types the parameter by it, so a change to either side alone reds here (the author's fixer pass over the pass after the maintainer's round 5, its verifier (b): until then the tie between the page's spelling and the kernel's set was two hand-written literals, the allowlist module's fixture row and the census's guard pin above)", () => {
+test("the page's guard literal is a member of the set the kernel admits for the marker, both read from their sources: kernel.py states the set once (CLIENT_DIAG_VALUES, chat's `view` entry, one word) and scroll-write.ts's spacerRow compares its `view` parameter with that word and types the parameter by it, so a change to either side alone reds here (the author's fixer pass over the pass after the maintainer's round 5, its verifier (b): until then the tie between the page's spelling and the kernel's set was two hand-written literals, the allowlist module's fixture row and the census's guard pin above)", () => {
   // WHAT IS READ: kernel.py's CLIENT_DIAG_VALUES table literal, by text (every `(surface, key): frozenset((words,))` entry between its
   // braces, the way the webview tests that read kernel.py read it), and scroll-write.ts's tree (the string literal spacerRow's guard
   // compares `view` with, and the parameter's literal type). Neither word is spelled here: the kernel's set is the one statement.
@@ -1336,7 +1336,7 @@ test("the page's guard literal is a member of the set the kernel admits for the 
   // count of `frozenset(` in the body, and the two reads must agree entry for entry, so an entry the regex cannot read (a hyphenated surface
   // or key, a surface or key that is not a string literal, named by position, a set or list literal, a single word in parentheses with no
   // trailing comma) is a red here NAMING the entry, never a silent miss
-  // that leaves the one-entry assertion below green. tests/test_client_diag_allowlist.py reads the runtime object and reds on a second entry
+  // that leaves the entries assertion below green. tests/test_client_diag_allowlist.py reads the runtime object and reds on a third entry
   // whatever its spelling (its sorted-keys equality), on a value that is not a frozenset (its assertIsInstance) and on a frozenset of a bare
   // string, whose members are the string's letters, by its one-word length assertion; the spelling of a frozenset's argument (a tuple, a
   // list, a set) is the same runtime object and reds nowhere in Python, which is why this cell reads the text.
@@ -1348,8 +1348,10 @@ test("the page's guard literal is a member of the set the kernel admits for the 
     assert.ok(r && p, "the regex and the balanced parse disagree on the entry " + nm + ": the regex read " + (r ? JSON.stringify(r.words) : "nothing") + ", the parse read " + (p ? JSON.stringify(p.words) + " in " + p.container : "nothing") + " (a spelling one read cannot see: a hyphenated surface or key, a surface or key that is not a string literal, a set or list literal, a tuple with no trailing comma, a bare string)");
     assert.deepEqual(r!.words, p!.words, "the entry " + nm + ": the two reads agree on its words (" + p!.container + ")");
   }
-  assert.deepEqual(entries.map((e) => e.surface + "/" + e.key), ["chat/view"], "one bounded key, chat's `view` (every entry of the table is read: a second is named here)");
-  const words = entries[0].words;
+  // two bounded keys: chat's `view` and federation's `road` (the coordinator's ruling at the merge of main 1d591384e), whose words
+  // tests/test_client_diag_allowlist.py holds to federation.ts's writers; this cell reads the `view` entry
+  assert.deepEqual(entries.map((e) => e.surface + "/" + e.key), ["chat/view", "federation/road"], "two bounded keys, chat's `view` and federation's `road` (every entry of the table is read: a third is named here)");
+  const words = entries.find((e) => e.surface === "chat" && e.key === "view")!.words;
   assert.equal(words.length, 1, "one fixed word, no host name (the owner 2026-09-21, who approved the field): " + JSON.stringify(words));
   const sw = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "scroll-write.ts"), "utf8");
   const swf = ts.createSourceFile("scroll-write.ts", sw, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);

@@ -5104,8 +5104,9 @@ frames it received is measured in the panes themselves, by
   under the kernel's own surface `kernel`, and appends the row to
   `client-diag.jsonl` under the state directory with the dashboard id (`wid`)
   and its own clock. An admitted key whose value lies outside the closed set
-  `CLIENT_DIAG_VALUES` states for it (today chat's `view`, one fixed word;
-  compared as posted, before the 64-character cut) is refused the way an
+  `CLIENT_DIAG_VALUES` states for it (today chat's `view`, one fixed word,
+  and federation's `road`, `wire` or `local`; compared as posted, before the
+  64-character cut) is refused the way an
   unknown key is: the row is stored without it, and one stderr line per
   surface and key names the key and the reason, never the value.
   A frame whose whole synchronous handling ran 100 ms or
