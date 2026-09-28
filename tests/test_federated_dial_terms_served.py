@@ -1042,11 +1042,11 @@ class HeldPairRule(unittest.TestCase):
         # The two call censuses count the wrapper's name at a word boundary before its parenthesis over comment-stripped code
         # (_ts_code), never the substring, which a comment naming the call also holds
         remote_code = _ts_code(m2.group(1))
-        self.assertEqual(len(re.findall(r"\btryApplyFeedDelta\(", remote_code)), 1, "the checked apply, one call in applyRemoteFeedDelta's code, before the pair write")
+        self.assertEqual(len(re.findall(r"\btryApplyFeedDelta\s*(?:\?\.\s*)?\(", remote_code)), 1, "the checked apply, one call in applyRemoteFeedDelta's code, before the pair write")
         self.assertRegex(remote_code, r"\bconst r = tryApplyFeedDelta\(raw, d\);", "that one call's statement: its result is the r the refusal below reads")
         self.assertEqual(m2.group(1).count("if (!r.ok) { this.refuseRemoteApply(c, host, d, r.error); return; }"), 1, "a throw is the remote road's refusal, before any write")
-        self.assertEqual(len(re.findall(r"[^A-Za-z]applyFeedDelta\(", fed)), 0, "federation.ts calls the bare apply nowhere (the local arm and the remote road both go through tryApplyFeedDelta)")
-        self.assertEqual(len(re.findall(r"\btryApplyFeedDelta\(", _ts_code(fed))), 2, "the two roads, one call each in federation.ts's code: the local feedDelta arm and applyRemoteFeedDelta")
+        self.assertEqual(len(re.findall(r"(?<![\w$])applyFeedDelta\s*(?:\?\.\s*)?\(", _ts_code(fed))), 0, "federation.ts calls the bare apply nowhere (the local arm and the remote road both go through tryApplyFeedDelta)")
+        self.assertEqual(len(re.findall(r"\btryApplyFeedDelta\s*(?:\?\.\s*)?\(", _ts_code(fed))), 2, "the two roads, one call each in federation.ts's code: the local feedDelta arm and applyRemoteFeedDelta")
         # the try census by the keyword over comment-stripped code (_try_statements), never the substring, which the checked apply's
         # name above and a comment word such as entry or retry also hold
         self.assertEqual(_try_statements(remote_code), 0, "no try statement in applyRemoteFeedDelta's code: the checked apply's throw is caught in feed-delta.ts's tryApplyFeedDelta, and a catch of the road's own reds here until classified")
