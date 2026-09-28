@@ -37,8 +37,9 @@ untracked test the tracked .gitignore covers. The checkout's path is longer than
 length the deepest session-host socket path depends on, is unchanged. TMPDIR and the checkout are removed on every exit path: SIGTERM and SIGHUP stop
 each leg's process group, and on Linux the runner is a child subreaper that kills whatever a leg left
 running, a descendant that left the group included; each checkout records its sha beside it, and every run
-removes the checkouts of runs that are no longer running. A descendant reparented to the runner that exits
-while its leg runs is reaped then, so no test finds a defunct process in its own process group.
+removes the checkouts of runs that are no longer running. Every orphaned descendant of a leg, in its process group
+or not, is reparented to the runner and reaped as soon as it exits while the leg runs, so it does not stay in the
+leg's group as a defunct process.
 
 The legs, in order (LEGS): deps (`npm ci` from the sha's lockfile, in every checkout, since a fresh one has
 no node_modules; a --leg re-run runs it first as its setup), pytest, bats, manager and tools (node --test),
@@ -1071,11 +1072,18 @@ _subreaper = False
 
 
 def install_stop_handlers():
-    """SIGTERM and SIGHUP raise Stopped, so every exit path runs the cleanup; and on Linux the runner becomes a child
-    subreaper (PR_SET_CHILD_SUBREAPER), so a leg's descendant that left its process group (setsid: Playwright's
-    browsers, the kernel's session scopes) is reparented to the runner instead of to init: the runner reaps it if it
-    exits while the leg runs (wait_leg) and kills it if it is still running when the leg ends (reap_descendants)."""
+    """SIGTERM and SIGHUP raise Stopped, so every exit path runs the cleanup; SIGCHLD gets its default action; and on
+    Linux the runner becomes a child subreaper (PR_SET_CHILD_SUBREAPER), so every orphaned descendant of a leg, in its
+    process group or not (setsid: Playwright's browsers, the kernel's session scopes), is reparented to the runner
+    instead of to init: the runner reaps it as soon as it exits while the leg runs (wait_leg), so it does not stay in
+    the leg's group as a defunct process, and kills it if it is still running when the leg ends (reap_descendants).
+
+    An ignored SIGCHLD survives exec, so a parent that ignores it hands the runner a disposition under which the kernel
+    reaps every child itself: every exit status, the leg's and each subprocess.run's, would read 0, and wait_leg, which
+    blocks until some child is waitable, would wait until the runner had no child left (a leg's daemon kept it waiting
+    until it exited). The default action is set here, before the runner starts any child, and the legs inherit it."""
     global _subreaper
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     for s in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(s, _on_stop)
     if sys.platform.startswith("linux"):

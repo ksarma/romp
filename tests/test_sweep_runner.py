@@ -233,6 +233,44 @@ elif act in ("orphan", "orphans"):
         seen["defunct_in_group"] = defunct
     with open(os.path.join(ctl["marks"], act + ".json"), "w") as f:
         json.dump(seen, f)
+elif act == "daemon":                            # a daemon under setsid, still running when the leg exits
+    subprocess.Popen([sys.executable, "-c", "import time; time.sleep(%%d)" %% ctl["daemon_seconds"]], start_new_session=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+elif act == "idle":
+    # One grandchild the runner adopts stays running while the leg sleeps two seconds; the leg reads the runner's CPU
+    # time (utime + stime in /proc/<runner>/stat) before and after. A runner that blocks until a child exits uses
+    # almost none; one that polls for exited children spins.
+    hold_r, hold_w = os.pipe()
+    rep_r, rep_w = os.pipe()
+    child = os.fork()
+    if child == 0:
+        os.close(hold_w)
+        os.close(rep_r)
+        parent = os.getpid()
+        if os.fork() == 0:
+            end = time.monotonic() + 10
+            while os.getppid() == parent and time.monotonic() < end:
+                time.sleep(0.005)
+            os.write(rep_w, str(os.getppid()).encode())
+            os.close(rep_w)
+            os.read(hold_r, 1)                   # until the leg, the one writer, exits
+            os._exit(0)
+        os._exit(0)
+    os.waitpid(child, 0)
+    os.close(hold_r)
+    os.close(rep_w)
+    adopted_parent = int(os.read(rep_r, 64) or 0)
+    runner = os.getppid()
+
+    def cpu():
+        with open("/proc/%%d/stat" %% runner) as fh:
+            rest = fh.read().rsplit(")", 1)[1].split()
+        return (int(rest[11]) + int(rest[12])) / os.sysconf("SC_CLK_TCK")
+    before = cpu()
+    time.sleep(2)
+    seen = {"runner": runner, "adopted_parent": adopted_parent, "cpu": cpu() - before}
+    with open(os.path.join(ctl["marks"], act + ".json"), "w") as f:
+        json.dump(seen, f)
 # What each test leg's real tool prints at the end of a run (pytest -q's summary, bats' TAP, node's TAP summary):
 # the runner counts the tests a leg ran from its log, and a test leg with rc 0 and no test counted is red.
 out = {"pytest": "3 passed in 0.01s\n", "bats": "1..1\nok 1 a\n", "manager": "# pass 1\n# fail 0\n",
@@ -1328,6 +1366,58 @@ sweep.run_leg(tmp, "ledger", rec, {}, ctx, tmp)
 print(json.dumps({"subreaper": sweep._subreaper, "rc": rec.get("rc"), "error": rec.get("error")}))
 """
 
+# Runs the rest of its argv (an interpreter's arguments) with SIGCHLD ignored, which exec keeps.
+IGNORE_SIGCHLD = ("import os, signal, sys; signal.signal(signal.SIGCHLD, signal.SIG_IGN); "
+                  "os.execv(sys.executable, [sys.executable] + sys.argv[1:])")
+
+# The modules whose launchers the census below reads, and the launchers whose child outlives the call that starts it
+# (subprocess.run, call and check_output reap theirs). pty.spawn waits for its child, but it is listed too: no child
+# but the leg is started outside subprocess.run.
+LAUNCHER_MODULES = ("subprocess", "os", "pty")
+NOWAIT = {("subprocess", "Popen"), ("os", "popen"), ("os", "fork"), ("os", "forkpty"), ("os", "posix_spawn"),
+          ("os", "posix_spawnp"), ("pty", "fork"), ("pty", "spawn")}
+THREAD_MODULES = {"threading", "_thread", "concurrent", "multiprocessing", "asyncio"}
+
+
+def child_launchers(source):
+    """What the census reads in `source`: (the thread modules it imports, [(launcher, the innermost enclosing function,
+    None at module level)]). A launcher is a NOWAIT name or an os.spawn* name reached as an attribute of its module under
+    any name the module is bound to (`import subprocess as sp`), imported by name (`from os import fork as f`), a star
+    import from a LAUNCHER_MODULES module, or a getattr on one of those modules."""
+    import ast
+    tree = ast.parse(source)
+    owner = {}  # each node's innermost enclosing function: ast.walk reaches an outer function before an inner one
+    for f in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+        for n in ast.walk(f):
+            owner[id(n)] = f.name
+    bound, imported, launchers = {}, set(), []  # bound: a name an import binds -> the module it names
+
+    def is_launcher(mod, name):
+        return (mod, name) in NOWAIT or (mod == "os" and name.startswith("spawn"))
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                imported.add(a.name.split(".")[0])
+                if a.asname:
+                    bound[a.asname] = a.name
+                else:
+                    bound[a.name.split(".")[0]] = a.name.split(".")[0]
+        elif isinstance(n, ast.ImportFrom):
+            mod = n.module or ""
+            imported.add(mod.split(".")[0])
+            for a in n.names:
+                if (a.name == "*" and mod in LAUNCHER_MODULES) or is_launcher(mod, a.name) or a.name.startswith("spawn"):
+                    launchers.append(("from %s import %s" % (mod, a.name), owner.get(id(n))))
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name):
+            mod = bound.get(n.value.id, n.value.id)
+            if is_launcher(mod, n.attr):
+                launchers.append(("%s.%s" % (mod, n.attr), owner.get(id(n))))
+        elif (isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "getattr" and n.args
+              and isinstance(n.args[0], ast.Name) and bound.get(n.args[0].id, n.args[0].id) in LAUNCHER_MODULES):
+            launchers.append(("getattr(%s, ...)" % bound.get(n.args[0].id, n.args[0].id), owner.get(id(n))))
+    return sorted(imported & THREAD_MODULES), launchers
+
 
 class ReapWhileLegRuns(unittest.TestCase):
     """Round 1, A5, and the runner's own sweep: the runner is a child subreaper, so a leg's orphaned descendants are
@@ -1405,31 +1495,67 @@ class ReapWhileLegRuns(unittest.TestCase):
         the runner will wait for: the runner has no thread, and run_leg's Popen is its one launcher that returns before
         its child is reaped. A new such launcher, or a thread (whose subprocess.run child wait_leg could reap, leaving
         its status read as 0), makes this red: wait_leg must then leave that child alone."""
-        import ast
-        tree = ast.parse(SWEEP.read_text())
-        imported, launchers = set(), []
-        banned_mods = {"threading", "_thread", "concurrent", "multiprocessing", "asyncio"}
-        # Children of these outlive the call that starts them; subprocess.run, call and check_output reap theirs.
-        nowait = {("subprocess", "Popen"), ("os", "popen"), ("os", "fork"), ("os", "forkpty"), ("os", "posix_spawn"),
-                  ("os", "posix_spawnp")}
-        owner = {}  # each node's innermost enclosing function: ast.walk reaches an outer function before an inner one
-        for f in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
-            for n in ast.walk(f):
-                owner[id(n)] = f.name
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Import):
-                imported |= {a.name.split(".")[0] for a in n.names}
-            elif isinstance(n, ast.ImportFrom):
-                imported.add((n.module or "").split(".")[0])
-                for a in n.names:
-                    if ((n.module or ""), a.name) in nowait or a.name.startswith("spawn"):
-                        launchers.append(("from %s import %s" % (n.module, a.name), owner.get(id(n))))
-            elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name):
-                if (n.value.id, n.attr) in nowait or (n.value.id == "os" and n.attr.startswith("spawn")):
-                    launchers.append(("%s.%s" % (n.value.id, n.attr), owner.get(id(n))))
-        self.assertEqual(sorted(imported & banned_mods), [], "the runner has one thread")
+        threads, launchers = child_launchers(SWEEP.read_text())
+        self.assertEqual(threads, [], "the runner has one thread")
         self.assertEqual(launchers, [("subprocess.Popen", "run_leg")],
                          "the one launcher whose child outlives the call is run_leg's Popen, the leg wait_leg waits for")
+
+    def test_the_census_reads_a_launcher_however_it_is_spelled(self):
+        """The census above is only as good as the spellings it reads: a module bound under another name, pty's forks,
+        a star import and a getattr each start a child the census must see, and subprocess.run must stay unflagged."""
+        cases = {
+            "import subprocess as _sp\ndef f():\n    _sp.Popen(['true'])\n": [("subprocess.Popen", "f")],
+            "import os as o\ndef f():\n    o.fork()\n": [("os.fork", "f")],
+            "import pty\ndef f():\n    pty.fork()\n": [("pty.fork", "f")],
+            "import pty\ndef f():\n    pty.spawn(['true'])\n": [("pty.spawn", "f")],
+            "from subprocess import *\n": [("from subprocess import *", None)],
+            "from os import *\n": [("from os import *", None)],
+            "from pty import *\n": [("from pty import *", None)],
+            "from os import fork as fk\n": [("from os import fork", None)],
+            "import subprocess\ndef f():\n    getattr(subprocess, 'Popen')(['true'])\n": [("getattr(subprocess, ...)", "f")],
+            "import os\ndef f():\n    os.spawnlp(os.P_NOWAIT, 'true', 'true')\n": [("os.spawnlp", "f")],
+            "import subprocess\ndef f():\n    subprocess.run(['true'])\n": [],
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(child_launchers(source), ([], expected))
+        for source in ("import threading as t\n", "from concurrent.futures import ThreadPoolExecutor\n", "import asyncio\n"):
+            with self.subTest(source=source):
+                self.assertEqual(len(child_launchers(source)[0]), 1)
+
+    def test_a_runner_started_with_sigchld_ignored_records_the_legs_status_and_is_not_held_by_its_daemon(self):
+        """An ignored SIGCHLD survives exec. The runner sets the default action first, so a leg that exits 3 and leaves a
+        daemon under setsid is recorded as rc 3 at once, and the daemon is killed after the leg. Under an inherited
+        ignore, the kernel would reap every child itself: the leg's status would read 0 (a silent pass), or the runner
+        would wait in wait_leg until the daemon exited and then record the status as lost."""
+        w, marks = self.world()
+        probe = subprocess.run([sys.executable, "-c", IGNORE_SIGCHLD, "-c",
+                                "import signal; print(signal.getsignal(signal.SIGCHLD) == signal.SIG_IGN)"],
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        self.assertEqual(probe.stdout.strip(), "True", "premise: the stand-in parent's ignore reaches the runner " + probe.stderr)
+        daemon = 60
+        w.ctl({"action": {"bats": "daemon"}, "rc": {"bats": 3}, "marks": marks, "daemon_seconds": daemon})
+        start = time.monotonic()
+        p = subprocess.run([sys.executable, "-c", IGNORE_SIGCHLD, str(SWEEP), "run", "--tree", w.tree, "--python", w.python,
+                            "--workers", "2"], env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           stdin=subprocess.DEVNULL, timeout=daemon * 2)
+        wall = time.monotonic() - start
+        bats = w.result()["legs"]["bats"]
+        self.assertEqual((bats["rc"], bats.get("error")), (3, None), p.stdout + p.stderr)
+        self.assertEqual(bats["left_running"], 1, "the daemon was still running when the leg ended, and was killed")
+        self.assertLess(wall, daemon * 0.75, "the runner did not wait for the leg's daemon to exit")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+
+    def test_the_runner_blocks_while_it_waits_for_a_leg(self):
+        """wait_leg blocks until some child exits; it never polls. The leg sleeps two seconds with an adopted grandchild
+        running and reads the runner's CPU time before and after: a polling runner spins through those two seconds."""
+        w, marks = self.world()
+        w.ctl({"action": {"bats": "idle"}, "marks": marks})
+        p = w.run(check=0)
+        seen = self.seen(marks, "idle")
+        self.assertEqual(seen["adopted_parent"], seen["runner"], "premise: the grandchild was reparented to the runner")
+        self.assertLess(seen["cpu"], 0.5, "the runner used %.2f s of CPU in the leg's two idle seconds" % seen["cpu"])
+        self.assertEqual(w.result()["legs"]["bats"]["rc"], 0, p.stdout + p.stderr)
 
 
 # Each road sets one way a batcher's repository, git configuration or environment could make a checkout differ from
