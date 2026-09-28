@@ -2354,8 +2354,42 @@ class T(unittest.TestCase):
         self.assertIn("w9", mm[1])
         j = _json("/api/state")
         re.search("w10", j)
+        p1, p2 = _gv("/")
+        re.search("w11", p2)
+        t1, t2 = self._attr_tuple("/")
+        re.search("w12", t2)
+        a1, a2 = self._attr_ann("/")
+        re.search("w13", a2)
+        u1, u2 = self._attr_aug("/")
+        re.search("w14", u2)
+        e1, e2 = self._deep("/")
+        re.search("w15", e2)
+        v1, v2 = self._via_name("/")
+        re.search("w16", v2)
+        l1, l2 = self._attr_list("/")
+        re.search("w17", l2)
     def _kept(self, path):
         self.body = urlopen(path).read()
+        return 200, self.body
+    def _attr_tuple(self, path):
+        self.status, self.body = 200, urlopen(path).read()
+        return 200, self.body
+    def _attr_list(self, path):
+        [self.status, self.body] = [200, urlopen(path).read()]
+        return 200, self.body
+    def _attr_ann(self, path):
+        self.body: bytes = urlopen(path).read()
+        return 200, self.body
+    def _attr_aug(self, path):
+        self.body = b""
+        self.body += urlopen(path).read()
+        return 200, self.body
+    def _deep(self, path):
+        self.cache.body = urlopen(path).read()
+        return 200, self.cache.body
+    def _via_name(self, path):
+        raw = urlopen(path).read()
+        self.body = raw.strip()
         return 200, self.body
 class U(unittest.TestCase):
     def _two(self, path):
@@ -2382,6 +2416,8 @@ def _mixed(path, strip=False):
     return 200, urlopen(path).read()
 def _json(path):
     return json.loads(urlopen(path).read())
+def _gv(path):
+    return 200, h.wfile.getvalue().decode().strip()
 def _forv(path):
     for body in fetch_all(path):
         pass
@@ -2437,22 +2473,31 @@ def _outer2(path):
         # read, a whole return so wrapped, a self.<attr> the helper assigns the read) had given no position, so its call was no fetch
         # and the regex over its body in neither census. Every fetch of a page route through such a helper is REFUSED now, an
         # unclassified row at the call (59 to 71, and 73 and 75 for _mixed, whose other return still binds w8 and w9), and the call
-        # binds nothing more than its placed positions give; a fetch of a path that is no page route (_json) is none
+        # binds nothing more than its placed positions give; a fetch of a path that is no page route (_json) is none. The other
+        # forms the containment check claims are each refused the same way (79 to 91; each was unpinned at the check on the census
+        # bounds): a `.getvalue()` read (_gv), an attribute inside a tuple or a list target (_attr_tuple, _attr_list), an annotated
+        # and an augmented attribute assignment (_attr_ann, _attr_aug), a chain deeper than self.<attr> (_deep), and a chain bound
+        # to an expression holding a Name bound to the read (_via_name)
         refused = [(59, "_landing"), (61, "_landing"), (63, "_landing"), (65, "_landing"), (67, "_landing"), (69, "_chat_page"), (71, "_sw_js"),
-                   (73, "_landing"), (75, "_landing")]
+                   (73, "_landing"), (75, "_landing"), (79, "_landing"), (81, "_landing"), (83, "_landing"), (85, "_landing"), (87, "_landing"),
+                   (89, "_landing"), (91, "_landing")]
         self.assertEqual([r[:3] for r in readers], sorted([(18, "assert", "_landing"), (19, "regex", "_landing"), (23, "assert", "_chat_page"),
                                                            (25, "assert", "_landing"), (26, "assert", "_landing")] + [(line, "assert", "_landing") for line, _ in pinned]
                                                           + [(line, "unclassified", text) for line, text in refused]),
                          "the body a helper returns by name is read in both censuses, no status or headers read is a read of the page, and a "
                          "fetch through a helper whose return holds a read the follow cannot place is refused")
         self.assertEqual([r[3].split(":")[0] for r in readers if r[1] == "unclassified"],
-                         ["refused fetch, _%s returns a read the follow cannot place" % h for h in ("strip", "str", "or", "ifexp", "cut", "kept", "whole", "mixed", "mixed")])
+                         ["refused fetch, _%s returns a read the follow cannot place" % h for h in ("strip", "str", "or", "ifexp", "cut", "kept", "whole", "mixed", "mixed",
+                                                                                                    "gv", "attr_tuple", "attr_ann", "attr_aug", "deep", "via_name",
+                                                                                                    "attr_list")])
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
                          {"_named": [-2, 1], "_aliased": [-1, 1], "_opaque": ["unknown"], "_echo": [], "test_a": [], "test_b": [], "_two": [-1, -2, 0, 1],
                           "_forv": ["unknown"], "_withv": ["unknown"], "_exc": ["unknown"], "_aug": [-1, 1], "_walrus": [-1, 1], "_ann": [-1, 1],
                           "_tuplepair": [-1, 1], "_listpair": [-1, 1], "_opaque2": ["unknown"], "_outer2": [], "inner": ["whole"], "test_c": [],
                           "_kept": ["refused"], "_strip": ["refused"], "_str": ["refused"], "_or": ["refused"], "_ifexp": ["refused"], "_cut": ["refused"],
-                          "_whole": ["refused"], "_mixed": [-1, 1, "refused"], "_json": ["refused"]})
+                          "_whole": ["refused"], "_mixed": [-1, 1, "refused"], "_json": ["refused"], "_gv": ["refused"], "_attr_tuple": ["refused"],
+                          "_attr_ann": ["refused"], "_attr_aug": ["refused"], "_deep": ["refused"], "_via_name": ["refused"],
+                          "_attr_list": ["refused"]})
 
     def test_a_call_is_a_fetch_only_where_its_callee_reads_a_response(self):
         # the rulings at the merge of main's login cookie split (2026-09-28), P2: a call to a Name or a self.<method> whose first
