@@ -539,12 +539,16 @@ class _FoldText(_Elements):
     text other than whitespace inside a refused container (REFUSED_CONTAINERS: its text is inert, foreign content or text to HTML
     whose rendering this reader does not model) but for `title`, whose text is the document's name and in neither part (the default
     style sheet hides it); a numeric character reference in text that html.unescape drops and HTML keeps (_text_reference_divergence);
-    and a NUL in text, which HTML's tree construction drops in body content and the tokenizer keeps. Not read: CSS (a rule or an
+    a NUL in text, which HTML's tree construction drops in body content and the tokenizer keeps; and a page that ends in `&` and one
+    ASCII letter, which html.parser's releases flush differently at the end of the page (read from each build's source: the 3.10.20,
+    3.11.15, 3.12 and 3.14.0 builds here drop the `&` and hand the letter over as data, the 3.13.14 and 3.14.4 builds report a
+    reference, and HTML keeps both characters as text; a longer tail such as `&amp` reads the same on every build). Not read: CSS (a rule or an
     inline style that hides or reveals text, a `display` on a summary), rendering (a `<br>` or a block boundary adds nothing to the
     text), and the script-driven opening of a fold."""
 
     def __init__(self, html):
         self.marks, self.parts, self.fold_list, self.attr_list, self.decls = [], {"shown": [], "folded": []}, [], [], []
+        assert not re.search(r"&[A-Za-z]\Z", html), "the page ends in %r, which html.parser's releases flush differently at the end of a page (some drop the &); this reader refuses it" % html[-2:]
         super().__init__(html)
         first = len(html) - len(html.lstrip(_ASCII_WS))
         self.result = FoldText("".join(self.parts["shown"]), "".join(self.parts["folded"]), tuple(self.fold_list), tuple(self.attr_list),

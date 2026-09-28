@@ -1938,7 +1938,8 @@ def _fits(case, ceiling):
                     ("<svg><text>x</text></svg>", "inside <svg>"),
                     ("<p>&#x0b;</p>", "control or noncharacter"),
                     ("<p>a\x00b</p>", "a NUL in text"),
-                    ("<![CDATA[x]]><p>y</p>", "CDATA"))
+                    ("<![CDATA[x]]><p>y</p>", "CDATA"),
+                    ("<p>x</p>&a", "flush differently"))
         for page, message in refusals:
             with self.assertRaises(AssertionError, msg=page) as cm:
                 served_css.fold_text(page)
