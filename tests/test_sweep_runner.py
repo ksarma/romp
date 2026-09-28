@@ -749,10 +749,10 @@ class LegEnvironment(_Base):
                 self.assertEqual(c["values"]["USER"], user, "USER passes to the leg")
                 with open(r["legs"][c["leg"]]["log"]) as f:
                     header = "".join(f.readline() for _ in range(3))
-                self.assertTrue(header.startswith("# leg: %s\n# cwd: " % c["leg"]), header)
-                self.assertIn("PATH=... ", header)
                 for value in (c["values"]["PATH"], c["values"]["HOME"], c["values"]["TMPDIR"], user, home):
                     self.assertNotIn(value, header)
+                self.assertTrue(header.startswith("# leg: %s\n# cwd: " % c["leg"]), header)
+                self.assertIn("PATH=... ", header, "each pair is shown by its name")
 
     def test_the_recorded_hash_is_the_readers_constant_across_runs(self):
         w = self.w
