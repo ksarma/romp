@@ -83,7 +83,7 @@ function assertLabels(figs: Fig[], labels: number, what: string): void {
   }
 }
 
-test("in a browser: a missing figure and a text file named as a figure each wear a label naming their authored src (and the alt when there is one), the svg that loads wears none, the img stays untouched, the heading's Outline row reads the alt and the words alone; on the pane a Raw switch from the failed figure's paragraph seats on its row; with the Comments panel open every figure takes a layer, the labels follow the wraps and a comment on the failed figure's paragraph paints; under styles.css (pane, chat) and feed.css", { timeout: 300000 }, async (t) => {
+test("in a browser: a missing figure and a text file named as a figure each wear a label naming their authored src (and the alt when there is one), the svg that loads wears none, the img stays untouched, the heading's Outline row reads the alt and the words alone; on the pane a Raw switch from the failed figure's paragraph seats on its row; with the Comments panel open every figure takes a layer, the labels follow the wraps and a comment on the failed figure's paragraph paints; under styles.css (pane, chat) and feed.css", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     for (const mode of ["pane", "chat", "feed"] as Mode[]) {
       const { page, errors } = await openViewer(browser, mode, 900, 700, { docs: { [REPORT]: NOTE }, serve });
@@ -164,7 +164,7 @@ const parks = (page: any): Promise<Park[]> => page.evaluate(() => (Array.from(do
   return { src: i.hasAttribute("src"), parked: i.classList.contains("md-img-failed"), mdSrc: u, mdRoute, mdPath, alt: i.getAttribute("alt") };
 }));
 
-test("in a browser, the chat modal: the page's heal (installMdImgHeal, before the open) parks each failed figure at its error event beside the viewer's label (no src, md-img-failed, the URL in data-md-src; the svg that loaded is untouched), and a dispatched romp:wsup probes each parked URL off the DOM: the probes fail again, no error reaches an img on the page, the figures stay parked as they were and the three labels stand, the same elements with the same words, never rewritten or doubled", { timeout: 240000 }, async (t) => {
+test("in a browser, the chat modal: the page's heal (installMdImgHeal, before the open) parks each failed figure at its error event beside the viewer's label (no src, md-img-failed, the URL in data-md-src; the svg that loaded is untouched), and a dispatched romp:wsup probes each parked URL off the DOM: the probes fail again, no error reaches an img on the page, the figures stay parked as they were and the three labels stand, the same elements with the same words, never rewritten or doubled", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const before = async (page: any): Promise<void> => {
       await page.evaluate(() => {
@@ -270,7 +270,7 @@ const figures2 = (page: any): Promise<{ figs: Fig2[]; labels: number }> => page.
   return { figs: out, labels: md.querySelectorAll("[data-fv-figerr]").length };
 }, FIGS);
 
-test("in a browser (the Slice 7 review's round 1): a <picture>'s label names the source candidate the browser asked for and an img's its srcset candidate, never the src the browser skipped (a file that is there); an inline data: figure's label is its head with an ellipsis, one line tall, not the payload; a linked figure's label stands after the link, not inside it, with no pointer; the plain figure of the same file loads with no label; the sheet dresses every label", { timeout: 240000 }, async (t) => {
+test("in a browser (the Slice 7 review's round 1): a <picture>'s label names the source candidate the browser asked for and an img's its srcset candidate, never the src the browser skipped (a file that is there); an inline data: figure's label is its head with an ellipsis, one line tall, not the payload; a linked figure's label stands after the link, not inside it, with no pointer; the plain figure of the same file loads with no label; the sheet dresses every label", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     asked.length = 0;
     const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: NOTE2 }, serve: serve2 });
@@ -325,7 +325,7 @@ const fromRemote = (port: number, p: string): Promise<{ status: number; type: st
   http.get({ host: "127.0.0.1", port, path: p }, (res) => { let b = ""; res.on("data", (c) => { b += c; }); res.on("end", () => resolve({ status: res.statusCode || 0, type: String(res.headers["content-type"] || ""), body: b })); }).on("error", reject);
 });
 
-test("in a browser: a failed figure's label never prints a path, a userinfo, a query or a fragment for a source with a scheme other than data:, or a protocol-relative one: a source with a sign-in part (an http userinfo, a userinfo plus a query, a protocol-relative one in HTML and in markdown, a srcset candidate the browser chose, an ftp source, an out-of-range port, a tab inside the scheme, a refused source whose password holds a / or a ?) shows the withheld address and no part of itself (the file review's round 15, correctness-1), and any other (a query token, an S3 presigned pair, a fragment's access token, an out-of-range port with a query alone) its origin alone, a refused one cut at its authority (the same round's extra9-2); a loaded picture's title shows its origin alone, and a data: head and a workspace path print as they did (a property pin over the page, red at the head the round read, where each label printed its path and the title kept its path)", { timeout: 300000 }, async (t) => {
+test("in a browser: a failed figure's label never prints a path, a userinfo, a query or a fragment for a source with a scheme other than data:, or a protocol-relative one: a source with a sign-in part (an http userinfo, a userinfo plus a query, a protocol-relative one in HTML and in markdown, a srcset candidate the browser chose, an ftp source, an out-of-range port, a tab inside the scheme, a refused source whose password holds a / or a ?) shows the withheld address and no part of itself (the file review's round 15, correctness-1), and any other (a query token, an S3 presigned pair, a fragment's access token, an out-of-range port with a query alone) its origin alone, a refused one cut at its authority (the same round's extra9-2); a loaded picture's title shows its origin alone, and a data: head and a workspace path print as they did (a property pin over the page, red at the head the round read, where each label printed its path and the title kept its path)", { timeout: 120000 }, async (t) => {
   const TOK = "tok" + "en", UI = "u" + "ser" + ":" + "p" + "w" + String(4 * 4) + "@";
   const V = (k: string): string => k + "TOK" + String(k.length * 37);
   const S3C = "AKID" + "EXAMPLE" + "%2F20260923%2Fus-east-1%2Fs3%2Faws4_request", S3S = "abc" + "def0123456789" + "fedcba";

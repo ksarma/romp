@@ -91,7 +91,7 @@ const serve = (u: URL): Served | null => {
   return DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: DOCS[p] } : null;
 };
 
-test("in a browser: a FAILED figure (missing file, empty alt) wears no control, so the click at the link's last letters is the link's; a FETCHING <picture> wears none and its plain click opens nothing until the source lands, then the control opens the source's file; a srcset figure whose chosen candidate is a data: URI wears none once loaded", { timeout: 240000 }, async (t) => {
+test("in a browser: a FAILED figure (missing file, empty alt) wears no control, so the click at the link's last letters is the link's; a FETCHING <picture> wears none and its plain click opens nothing until the source lands, then the control opens the source's file; a srcset figure whose chosen candidate is a data: URI wears none once loaded", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     // the slow figure's hold: a page route registered after the harness's, so it wins the match, holding the response until released
     let release: (() => void) | null = null;
