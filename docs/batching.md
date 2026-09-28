@@ -214,7 +214,14 @@ subject; `verify` refuses the branch otherwise.
    `node_modules` or a browser (1 test in 1 file when measured on 2026-09-28, the build guard in
    `tests/test_landing_bundles_built.py`). Neither of CI's jobs runs those tests, and the sweep
    ran them before its pytest leg moved ahead of `npm ci`, so the runner reads them from the pytest
-   leg's own log, by the reasons their skips give, and runs them with the deps present. The runner
+   leg's own log, by the reasons their skips give, and runs them with the deps present. That covers
+   the skips whose reasons the runner's rule reads, and three cases fall outside it: a skip for want
+   of the deps in other words runs in no leg (the pytest leg's record lists every other skip outside
+   the served files with its reason, so it can be seen); two real-tree pins in
+   `tests/test_lab_dist.py` and `tests/test_kernel_bundle_staleness.py` do not skip without
+   `node_modules` but read `esbuild.js` under a stand-in for the missing package, where they used
+   to run after `npm ci` with the real one; and the tests the served leg adds run in its venv,
+   without the SDK, so one that needed both the deps and the SDK would skip there. The runner
    refuses a served step it does not read in full: an expression in its `env:`, an `env:` on its
    job or the workflow, a line in its `run:` other than a pip install and the one pytest line, or a
    job whose setup-python step before it names no quoted `python-version:`. The served leg runs
@@ -233,7 +240,8 @@ subject; `verify` refuses the branch otherwise.
    credential file, an agent's socket), and a leg can read `/proc/<pid>/environ` of the runner and
    of your other processes, your shell and sessions included. A leg that changes the checkout (a tracked file; a file no rule of a
    tracked `.gitignore` covers, whatever the clone's own git state says; after `npm ci`, any
-   ignored file outside `vscode-extension/node_modules`) makes the run invalid. It writes every run to
+   ignored file outside `vscode-extension/node_modules` that `npm ci` added or changed) makes the
+   run invalid. It writes every run to
    `<state dir>/sweeps/<full sha>.json`, which keeps every run at that sha. The state dir is
    `$ROMP_STATE_DIR`, else `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and
    `batch.py` with the same environment. When one leg fails on a known flake,
