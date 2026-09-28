@@ -88,7 +88,8 @@ marker = ctl.get("marker")
 home = os.path.expanduser("~")
 # every file the runner put in the leg's private state root (names and contents), read without naming any
 state_root = os.path.join(os.environ.get("XDG_STATE_HOME", "/nonexistent"), "romp")
-state = {n: open(os.path.join(state_root, n)).read() for n in sorted(os.listdir(state_root))} if os.path.isdir(state_root) else None
+state = ({n: open(os.path.join(state_root, n)).read() for n in sorted(os.listdir(state_root))
+          if os.path.isfile(os.path.join(state_root, n))} if os.path.isdir(state_root) else None)
 
 
 def checkout_root(d):
