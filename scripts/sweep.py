@@ -353,12 +353,12 @@ def read_history(runs):
                                     % (num, n, n))
             if not ok and k + 1 < len(seq):
                 nnum, nok, nflake, _nrec = seq[k + 1]
-                if nok and nflake is None and not out["dead"]:
+                if nok and nflake is not None:
+                    out["flaked"].append((n, num, rec, nflake))
+                elif nok and not out["dead"]:
                     out["dead"] = ("run %d failed %s (%s; log %s), and run %d passed it with no --flake naming it; a later run "
                                    "turns a failed leg green only with --flake naming the leg and its known-flake entry"
                                    % (num, n, _rc_text(n, rec), rec.get("log"), nnum))
-                elif nok:
-                    out["flaked"].append((n, num, rec, nflake))
         if seq and not seq[-1][1]:
             out["need"][n] = (seq[-1][0], seq[-1][3])
     return out
