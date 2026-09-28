@@ -3424,13 +3424,16 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // and, on the chat and the Files pane, under a gate without the slot's pointerId test (a click typed as the slot's pointerup was
 // must carry that pointerup's pointerId), the reads a private witness kept out of the tree. In WebKit, and in Firefox where the
 // element is laid out before the tap's compatibility mousemove and no mouse rests in the viewer, whose clicks carry the fields of
-// the viewer's own tap's and whose input events here are that tap's, the element's shapes are the residual, measured by the closing
-// check at 142ade155 opening in Firefox 16 of 16 times and in WebKit 7 of 7, and the second finger's by reading, while in Chromium
+// the viewer's own tap's and whose input events here are that tap's, the element's shapes are the residual, and the second
+// finger's by reading (the closing check at 142ade155 measured the class's element shapes its probe drove, opening in Firefox 16
+// of 16 times in the shape the mouseout's rule now closes, the element first hit at the compatibility mousedown, and in WebKit 7
+// of 7, the residual), while in Chromium
 // it opened 0 of 36 times in that check's measurements under a candidate of this gate with the slot's pointerId test, and 0 of 51
 // under the gate at ddb446fae in the same probe; where the tap's compatibility events start in the viewer, Firefox sends the viewer
 // a mouseout to no element and the gate empties the slot (the file review's round 19, extra8-2; the engines leg's cells of it), and
-// a probe of that round under this gate's rules read Firefox's laid-out shape with no mouse in the viewer 12 of 12 and its other
-// shapes 0 of 48, WebKit 24 of 24 and Chromium 0 of 16; whether to accept the residual is the owner's decision. Two more orders of the class outside the residual, found
+// a probe of that round under this gate's rules read Firefox's laid-out shape with no mouse in the viewer 12 of 12 with the
+// element hidden at the covered tap's pointerup (0 of 12 hidden at its pointerdown) and the shapes whose compatibility events start
+// in the viewer 0 of 48, WebKit 24 of 24 and Chromium 0 of 16; whether to accept the residual is the owner's decision. Two more orders of the class outside the residual, found
 // by a check of these fixes, opened in Firefox and WebKit and not in Chromium, at 142ade155, at 1a6470e72 and at 09f58bec6: the
 // first, a mouse's press whose pointerup the viewer never heard and then another document's tap, is closed by the gate's refusal of
 // a record still standing at a click (the engines leg's cells of it), and the second, in Firefox alone, by the gate's refusal of a
@@ -3445,11 +3448,12 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // of that check's own probe refused, where 343ee2eb5's gate opened all 11. The later check
 // found a third order of the class outside the residual: the mouse held on the control while the top page hides the viewer's
 // frame and shows it again, then another document's mouse click on an element over the control that hides at that click's press,
-// open at this head in WebKit and in one shape in Chromium, for the owner (the gate comment states it), WebKit opening it at every
+// open at this head in WebKit and in one shape in Chromium in the timings measured, for the owner (the gate comment states it), WebKit opening it at every
 // timing, 3,700 of 3,700 in a later probe of these fixes, Chromium 1,526 of 3,700 in that probe under the gate at ddb446fae and 0 of
 // 3,700 under this gate's rules, its moved-click and redraw shapes refused by the leave's arm for no button (the frame-hide cells
-// below), and opening it only in its still shape, 85 of 225 still clicks of a mouse and 64 of 180 of a pen with the frame shown at
-// the release, with no cell, and Firefox never, 0 of 2,600 on the Files pane and the chat. The
+// below), and opening it, in the timings measured, only in its still shape, 85 of 225 still clicks of a mouse and 64 of 180 of a
+// pen with the frame shown at the release, with no cell, runs of several short hides with the pointer still not measured under
+// these rules, and Firefox never, 0 of 2,600 on the Files pane and the chat. The
 // shape whose compatibility mousedown alone the
 // element takes is not in the residual: there Firefox and WebKit send the viewer that tap's mouseup of detail 0, and a mouseup other
 // than a

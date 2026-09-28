@@ -73,12 +73,15 @@
 // red at ddb446fae, whose gate heard no mouseout, and under a gate without the mouseout listener, the cell with no button down
 // also under one whose mouseout needs a button down (the file review's round 19, extra8-2), the reads a private witness kept out of
 // the tree. The residual, an element of another same-origin document shown over the picture during the viewer's own tap and then
-// a tap on that element (the closing check at 142ade155 measured Firefox 16 of 16 and WebKit 7 of 7), has no cell: in WebKit, and
+// a tap on that element (the closing check at 142ade155 measured the class's element shapes its probe drove, Firefox 16 of 16 in
+// the shape the mouseout's rule now closes, the element first hit at the compatibility mousedown, and WebKit 7 of 7, the
+// residual), has no cell: in WebKit, and
 // in Firefox where that element is laid out before the tap's compatibility mousemove and no mouse rests in the viewer, no input
 // event the viewer hears tells that tap from the viewer's own, and whether to accept it is the owner's decision; under the gate at
 // ddb446fae the same check's probe read Firefox 16 of 16, WebKit 7 of 7 and Chromium 0 of 51, and every other order of the class
 // it drives opened nothing, and a probe of the file review's round 19 under this gate's rules read Firefox's laid-out shape with
-// no mouse in the viewer 12 of 12 and its other shapes 0 of 48, WebKit 24 of 24 and Chromium 0 of 16; a check of
+// no mouse in the viewer 12 of 12 with the element hidden at the covered tap's pointerup (0 of 12 hidden at its pointerdown) and
+// the shapes whose compatibility events start in the viewer 0 of 48, WebKit 24 of 24 and Chromium 0 of 16; a check of
 // these fixes drove orders that probe does not and found two more of the class outside the residual, open at 142ade155, at 1a6470e72
 // and at 09f58bec6 (file-view.ts's gate comment states them): the first, the cells of a mouse's press whose pointerup the viewer
 // never heard above, whose click read the mouse's record (WebKit 22 of 22, Firefox 7 of 7), is closed by the gate's refusal of a
@@ -97,15 +100,16 @@
 // that pointerout with the button down, and opened otherwise (168 of 168 such presses refused and none of the 232 others in a
 // later probe of these fixes that stamped that redraw, and all 11 of that check's own probe refused, where 343ee2eb5's gate opened
 // all 11), while WebKit sends no such pointerout there and opens it. The later check found a third order of the class outside the
-// residual, open at this head in WebKit and in one shape in Chromium and, in WebKit, at 142ade155, 09f58bec6 and 343ee2eb5, with no
+// residual, open at this head in WebKit and in one shape in Chromium in the timings measured and, in WebKit, at 142ade155, 09f58bec6 and 343ee2eb5, with no
 // cell here, for the owner (file-view.ts's gate comment states it): the mouse held on the control while the top page hides the
 // viewer's frame and shows it again, then another document's mouse click on an element over the control that hides at that click's
 // mousedown or its pointerdown, whose pointerup hands the held press's record to the slot (WebKit, which sends no pointerout
 // there, opening it at every timing, 3,700 of 3,700 in a later probe of these fixes and 60 of 60 in that check's probe; Chromium,
 // which after such a release sends the mouse's pointerout with no button down when a redraw finds the frame hidden or when a redraw
 // or a pointer move comes between the element's appearing and the click, 1,526 of 3,700 in the later probe under the gate at
-// ddb446fae and 0 of 3,700 under this gate's rules, the Chromium leg's frame-hide cells, and opening it only in its still shape, 85
-// of 225 still clicks of a mouse and 64 of 180 of a pen with the frame shown at the release; Firefox never, 0 of 2,600 on the Files
+// ddb446fae and 0 of 3,700 under this gate's rules, the Chromium leg's frame-hide cells, and opening it, in the timings measured,
+// only in its still shape, 85 of 225 still clicks of a mouse and 64 of 180 of a pen with the frame shown at the release, runs of
+// several short hides with the pointer still not measured under these rules; Firefox never, 0 of 2,600 on the Files
 // pane and the chat). The gate's
 // cost measured in WebKit, the same at 142ade155: WebKit's
 // cost cell, the viewer's own tap whose pointerup an

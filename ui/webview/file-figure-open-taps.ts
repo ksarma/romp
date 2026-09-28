@@ -93,15 +93,18 @@
 //   control or on the picture and in Firefox the mouse pressed on the control and released in the other pane, so the viewer hears
 //   that tap's mouseup of detail 1 and its click alone, the click under the mouse's own pointerId in WebKit (1, typed mouse) and
 //   under Firefox's 0 typed touch. The residual, an element of another document shown over the picture during the viewer's own
-//   tap and then a tap on that element, which opened in Firefox 16 of 16 times and in WebKit 7 of 7 in the measurements of the
-//   closing check at 142ade155, and in Chromium 0 of 36 under a candidate of this gate with the slot's pointerId test, has no
-//   cell: in WebKit, and in Firefox where that element is laid out before the tap's compatibility mousemove and no mouse rests
+//   tap and then a tap on that element, has no cell (the closing check at 142ade155 measured the class's element shapes its
+//   probe drove, Firefox 16 of 16 in the shape the mouseout's rule now closes, the element first hit at the compatibility
+//   mousedown, WebKit 7 of 7, the residual, and Chromium 0 of 36 under a candidate of this gate with the slot's pointerId
+//   test): in WebKit, and in Firefox where that element is laid out before the tap's compatibility mousemove and no mouse rests
 //   in the viewer, no input event the viewer hears tells it from the viewer's own tap (where that tap's compatibility events
 //   start in the viewer, Firefox's mouseout to no element empties the slot, the cells below), and whether to accept it is the
 //   owner's decision; under the gate at ddb446fae the same check's probe read Firefox 16 of 16, WebKit 7 of 7 and Chromium 0 of
-//   51, and every other order of the class it drives opened nothing, and a probe of the file review's round 19 under this gate's
-//   rules read Firefox's laid-out shape with no mouse in the viewer 12 of 12 and its other shapes 0 of 48, WebKit 24 of 24 and
-//   Chromium 0 of 16; a check of these fixes drove orders that probe does not and found two more of the class
+//   51, and every other order of the class it drives opened nothing, and a probe of the file review's round 19 under this
+//   gate's rules read Firefox's laid-out shape with no mouse in the viewer 12 of 12 with the element hidden at the covered
+//   tap's pointerup (0 of 12 hidden at its pointerdown) and the shapes whose compatibility events start in the viewer 0 of 48,
+//   WebKit 24 of 24 and Chromium 0 of 16; a check of these fixes drove orders that probe does not and found two more of the
+//   class
 //   outside the residual, open at 142ade155, at 1a6470e72 and at 09f58bec6 (file-view.ts's gate comment states them): the first,
 //   the cells of a mouse's press whose pointerup the viewer never heard above, whose click read the mouse's record (WebKit 22 of
 //   22, Firefox 7 of 7), is closed by the gate's refusal of a record still standing at a click; the second, in Firefox, after
@@ -118,17 +121,18 @@
 //   redraw came while it was hidden and opened otherwise (168 of 168 such presses refused and none of the 232 others in a later
 //   probe of these fixes that stamped that redraw, and all 11 of that check's own probe refused, where 343ee2eb5's gate opened all
 //   11). The later check found a third order of the class outside the residual, open at this head in WebKit and in one shape in
-//   Chromium and, in WebKit, at 142ade155, at 09f58bec6 and at 343ee2eb5, for the owner (file-view.ts's gate comment states
+//   Chromium in the timings measured and, in WebKit, at 142ade155, at 09f58bec6 and at 343ee2eb5, for the owner (file-view.ts's gate comment states
 //   it): the mouse held on the control while the top page hides the viewer's frame and shows it again, then another document's
 //   mouse click on an element over the control that hides at that click's mousedown or its pointerdown, whose pointerup hands
 //   the held press's record to the slot (WebKit, which sends no pointerout there, opening it at every timing, 3,700 of 3,700 in
 //   a later probe of these fixes and 60 of 60 in that check's probe, with no cell; Chromium, after such a release of a mouse or
 //   a pen, sending the mouse's pointerout with no button down when a redraw finds the frame hidden or when a redraw or a pointer
 //   move comes between the element's appearing and the click, which the gate reads as a release it did not hear, the cells
-//   below, 1,526 of 3,700 in the later probe under the gate at ddb446fae and 0 of 3,700 under this gate's rules, and opening it
-//   only in its still shape, the frame shown again before any redraw finds it hidden, the pointer still and the click in the
-//   frame the element appeared, 85 of 225 still clicks of a mouse and 64 of 180 of a pen with the frame shown at the release,
-//   with no cell; and Firefox never, 0 of 2,600 on the Files pane and the chat). The chain rule's other costs, stated by
+//   below, 1,526 of 3,700 in the later probe under the gate at ddb446fae and 0 of 3,700 under this gate's rules, and opening it,
+//   in the timings measured, only in its still shape, the frame shown again before any redraw finds it hidden, the pointer
+//   still and the click in the frame the element appeared, 85 of 225 still clicks of a mouse and 64 of 180 of a pen with the
+//   frame shown at the release, with no cell, runs of several short hides with the pointer still not measured under these
+//   rules; and Firefox never, 0 of 2,600 on the Files pane and the chat). The chain rule's other costs, stated by
 //   reading, none measured, each a refusal that reveals the control: on a Firefox touchscreen whose tap's click came typed touch under a pointerId other than
 //   its pointerup's every tap, the tab then opening only from the mouse or the keyboard; every tap of a pen in the touch order
 //   whose click comes typed mouse, as WebKit types a touch's click (WPE as measured, and WebKitGTK by analogy), the tab still
