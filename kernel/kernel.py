@@ -74248,8 +74248,10 @@ def _stamp_served_html(code, body, ctype):
     road, or an octet-stream attachment). One road lies outside both censuses (the author's pass-5 verify): _remote_ws writes a response
     head to the client with a raw sendall and then pumps the remote kernel's frames, with no send_response at all. Since main's fork PR
     #919 that head is not the remote's bytes: _ws_head_allowlist rebuilds it from the remote's 101 as this kernel's own status line,
-    `HTTP/1.1 101 Switching Protocols`, and the allowlisted handshake headers, and any other answer is this kernel's own text/plain 502
-    through _send (tests/test_remote_ws_set_cookie_strip.py). No document can arrive by it: the route answers 400 text/plain without a
+    `HTTP/1.1 101 Switching Protocols`, the allowlisted handshake headers (each name in this kernel's spelling, its value the
+    remote's), and any line of this kernel's own (the legacy cookie's clear, when one is due), then the blank line, with the remote's
+    first frame bytes in the same sendall; any other answer is this kernel's own text/plain 502 through _send
+    (tests/test_remote_ws_set_cookie_strip.py). No document can arrive by it: the route answers 400 text/plain without a
     Sec-WebSocket-Key, a header no navigation or fetch can set (tests/test_kernel_remote_ws_proxy.py), and the one status line the
     relay writes raw is that 101. A third census in the same module classifies every raw `sendall(` and `wfile.write(` in this file
     (this writer's, a bypassing block's, that splice's, or a WebSocket frame's), so a new raw writer of an HTTP response reds it. A body

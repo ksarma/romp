@@ -2221,9 +2221,10 @@ _WS_FRAME_WRITERS = {"_ws_sender", "_ws_send", "_ws_pong"}   # WebSocket frames 
 def _raw_socket_writers(src, bypasses):
     """Every raw write to a socket in kernel.py (a `sendall(...)` call, or a `write(...)` on a `wfile`, read off the AST), classified (the author's pass-5 verify, extra6-1's third road):
     the stamping writer (Handler._send's own write), a bypassing `send_response` block's (`bypasses`, the census above: the HEAD roads and
-    the two attachments), the _remote_ws splice (a head _ws_head_allowlist rebuilt from the remote kernel's 101, this kernel's own status
-    line and the allowlisted handshake headers, then the remote's frames pumped to the client byte for byte: the one road bytes leave a
-    handler with no send_response at all), or a WebSocket frame writer (_WS_FRAME_WRITERS). Anything else is
+    the two attachments), the _remote_ws splice (a head _ws_head_allowlist rebuilt from the remote kernel's 101: this kernel's own status
+    line, the allowlisted handshake headers with the remote's values, and any line of this kernel's own, such as the legacy cookie's
+    clear when one is due; then the remote's frames, the first of them in the head's own write, pumped to the client byte for byte: the
+    one road bytes leave a handler with no send_response at all), or a WebSocket frame writer (_WS_FRAME_WRITERS). Anything else is
     `unclassified`, so a new raw writer of an HTTP response reds the census."""
     tree = ast.parse(src)
     spans = _kernel_functions(tree)
@@ -2796,9 +2797,10 @@ class LazyPanes(unittest.TestCase):
         # the author's pass-5 verify (extra6-1's third road): the two censuses above read `_send` calls and `send_response(` sites, and neither
         # sees bytes that leave a handler with NO send_response: _remote_ws writes a response head to the client with a raw sendall and
         # pumps the remote kernel's frames byte for byte. Since main's fork PR #919 the head is the one _ws_head_allowlist rebuilds from
-        # the remote's 101 (this kernel's own status line and the allowlisted handshake headers; any other answer is a text/plain 502
-        # through _send, pinned by tests/test_remote_ws_set_cookie_strip.py). Today no document can arrive by that road (the route
-        # answers 400 text/plain without a Sec-WebSocket-Key, a header no navigation or fetch can set, pinned by
+        # the remote's 101: this kernel's own status line, the allowlisted handshake headers with the remote's values, and any line of this
+        # kernel's own (the legacy cookie's clear, when one is due), the remote's first frame bytes riding in the same write; any other
+        # answer is a text/plain 502 through _send, pinned by tests/test_remote_ws_set_cookie_strip.py. Today no document can arrive by
+        # that road (the route answers 400 text/plain without a Sec-WebSocket-Key, a header no navigation or fetch can set, pinned by
         # tests/test_kernel_remote_ws_proxy.py, and the one status line the relay writes raw is that 101), so the gap was in the pins,
         # not the behaviour: a future raw writer of a text/html 200 (a second splice, a streaming relay) would have shipped unstamped with
         # both censuses green. This census classifies every `sendall(` and `wfile.write(` in kernel.py: the
