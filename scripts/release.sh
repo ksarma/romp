@@ -254,7 +254,7 @@ else
         if python3 -m pytest --version >/dev/null 2>&1; then
             PYTEST="python3 -m pytest"
         elif command -v uvx >/dev/null 2>&1; then
-            say "no ambient pytest: running the suite through uv's throwaway env (pytest + cryptography), which has no Claude Agent SDK, so the SDK-gated tests may skip"
+            say "no ambient pytest: running the suite through uv's throwaway env (pytest + cryptography), without pytest-timeout, pytest-xdist or the pinned Claude Agent SDK, so the tests that need xdist or the SDK may skip"
             PYTEST="uvx --with pytest --with cryptography pytest"
         else
             die "no way to run the Python suite: python3 has no pytest and uv is not installed.
