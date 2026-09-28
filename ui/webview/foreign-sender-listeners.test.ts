@@ -35,21 +35,22 @@
 // assigned to this page's own window, the receiver resolved by its binding (window, self, globalThis, frames, the bare
 // global, this page's document.defaultView, a local initialised to one of them, the global `this`), must take the event
 // as its one parameter, with no default, have the check, preceded by nothing but reads of the message and early returns
-// whose condition the census judges to run no code (headCheck's docstring lists the forms), judged by form, not by what
-// runs, and be one of the gated sites below, each with an executed leg here. A messageerror event carries the sender's
-// origin and source as a message does, and a sender causes one by posting what the page cannot deserialize, so it is
-// counted as a message. A listener handed over by name is read at the function written in place that a const of that
-// name holds, found by the name's binding; any other name fails. A new window listener anywhere in ui/ fails it until
-// it is gated and given a leg. A second census reads what the name windowSender is bound to: in every ui/ file that
-// calls the check, it is the helper's own import (gear.js: its require), bound once and never written, so a local
-// helper of the same name that lets one more sender through cannot stand in for it. The first census reads the
-// listeners the source spells, so two more hold the source to spellings it can read: a third holds that every
-// addEventListener in ui/ is a call the first can read, and a fourth refuses the roads that spell neither (a method of
-// the window, of the body element or of a prototype read by a computed name, a function run with the window as its
-// `this`, an onmessage handler set other than by an assignment the fourth accepts, a handler or a message listener on a
-// window other than this page's own, code run from a string (a module imported from a data: URL or from a URL built at
-// run time among it), a test or types file imported as a module, a `with` statement, and the name WebSocket anywhere
-// but as the constructor a `new` calls, or in a type). What those cannot see is listed at the fourth.
+// whose condition the census judges to run no code, none holding a destructuring default or a computed key (headCheck's
+// docstring lists the forms), judged by form, not by what runs, and be one of the gated sites below, each with an
+// executed leg here. A messageerror event carries the sender's origin and source as a message does, and a sender causes
+// one by posting what the page cannot deserialize, so it is counted as a message. A listener handed over by name is
+// read at the function written in place that a const of that name holds, found by the name's binding; any other name
+// fails. A new window listener anywhere in ui/ fails it until it is gated and given a leg. A second census reads what
+// the name windowSender is bound to: in every ui/ file that calls the check, it is the helper's own import (gear.js:
+// its require), bound once and never written, so a local helper of the same name that lets one more sender through
+// cannot stand in for it. The first census reads the listeners the source spells, so two more hold the source to
+// spellings it can read: a third holds that every addEventListener in ui/ is a call the first can read, and a fourth
+// refuses the roads that spell neither (a method of the window, of the body element or of a prototype read by a
+// computed name, a function run with the window as its `this`, an onmessage handler set other than by an assignment the
+// fourth accepts, a handler or a message listener on a window other than this page's own, code run from a string (a
+// module imported from a data: URL or from a URL built at run time among it), a test or types file imported as a
+// module, a `with` statement, and the name WebSocket anywhere but as the constructor a `new` calls, or in a type). What
+// those cannot see is listed at the fourth.
 // Synthetic world only: the notes-api demo, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -523,12 +524,16 @@ function uiSources(): string[] {
 }
 /** Where the listener's `if (windowSender(<its event>) === "foreign") return;` is among its body's statements, or why
  *  it does not count: the listener takes one parameter, the event, a plain name with no default (a parameter's default
- *  runs before the body, so a default on it or on a second parameter would run ahead of the check), and every statement
- *  before the check must be a read of the message (a declaration initialised to <event>.data) or an early return whose
- *  condition inert accepts: no call, construct, tagged or substituted template, delete, await, yield, ++/--,
- *  assignment, or binary operator but &&, ||, ??, ===, !== and the comma (every other one can run page code: ==, !=,
- *  <, >, <=, >=, + and the rest convert an operand, in converts its key and can hit a Proxy trap, and instanceof runs
- *  Symbol.hasInstance), and every property or element access reads off the event or a
+ *  runs before the body, so a default on it or on a second parameter would run ahead of the check, and a destructured
+ *  parameter, where a default or a computed key could sit, is no plain name), and every statement before the check must
+ *  hold no destructuring default and no computed key (defaultOrComputed: a default runs its expression when the value
+ *  it binds is undefined, and a computed key, in brackets in a pattern, an object literal or a class, runs its
+ *  expression and converts the result to a key, so either can run page code whatever it spells), and must be a read of
+ *  the message (a declaration initialised to <event>.data) or an early return whose condition inert accepts: no call,
+ *  construct, tagged or substituted template, delete, await, yield, ++/--, assignment, or binary operator but &&, ||,
+ *  ??, ===, !== and the comma (every other one can run page code: ==, !=, <, >, <=, >=, + and the rest convert an
+ *  operand, in converts its key and can hit a Proxy trap, and instanceof runs Symbol.hasInstance), and every property
+ *  or element access reads off the event or a
  *  message read: off the event, its data at any depth (a structured clone, whose own members are plain data) or, one
  *  level and no deeper, its own origin, source, ports or lastEventId; off a name a message read bound to <event>.data,
  *  any depth. A read any further through the event can run a getter the page defined: its target, currentTarget and
@@ -538,11 +543,10 @@ function uiSources(): string[] {
  *  the check: a read of the event's own data, origin, source, ports or lastEventId, whose getters on
  *  MessageEvent.prototype the page can replace (the check reads source and origin the same way); a read of a member the
  *  message's data does not hold itself, which comes from its prototype, where the page can define a getter; in a
- *  message read, a destructuring default or computed key (any expression, a call included) and an array pattern, which
- *  runs the array iterator; and in an early return's condition, a read of a global name the page defines as a getter, a
- *  unary +, - or ~ and a computed or element key, each of which converts an object, a spread (an iterator, or an
- *  object's getters), a class expression (its heritage reads the superclass's prototype, and a decorator is a call) and
- *  a JSX element, a call once compiled. */
+ *  message read, an array pattern, which runs the array iterator; and in an early return's condition, a read of a
+ *  global name the page defines as a getter, a unary +, - or ~ and an element key, each of which converts an object, a
+ *  spread (an iterator, or an object's getters), a class expression (its heritage reads the superclass's prototype, and
+ *  a decorator is a call) and a JSX element, a call once compiled. */
 function headCheck(site: Site): string | null {
   const fn = site.fn;
   if (ts.isIdentifier(fn)) return "the listener is a name no const holding a function written in place binds (sitesIn): " + fn.text;
@@ -596,6 +600,15 @@ function headCheck(site: Site): string | null {
     ts.forEachChild(n, (c: any) => { if (ok && !inert(c, allowed)) ok = false; });
     return ok;
   };
+  /** The first destructuring default (a binding element with an initialiser) or computed key (a computed property name)
+   *  anywhere in `n`, or null: the one syntactic check that refuses both ahead of the check, in a message read's pattern
+   *  and anywhere in an early return's condition alike. */
+  const defaultOrComputed = (n: any): any => {
+    if (ts.isComputedPropertyName(n) || (ts.isBindingElement(n) && n.initializer)) return n;
+    let hit: any = null;
+    ts.forEachChild(n, (c: any) => { if (!hit) hit = defaultOrComputed(c); });
+    return hit;
+  };
   const readsMessage = (s: any) => ts.isVariableStatement(s) && s.declarationList.declarations.every((d: any) =>
     d.initializer && ts.isPropertyAccessExpression(d.initializer) && ts.isIdentifier(d.initializer.expression)
     && d.initializer.expression.text === ev && d.initializer.name.text === "data");
@@ -604,6 +617,9 @@ function headCheck(site: Site): string | null {
   const allowed = new Set<string>([ev]);   // the event, plus each name a message read binds to <event>.data, in body order
   for (let i = 0; i < body.length; i++) {
     if (isGate(body[i])) return null;
+    const dc = defaultOrComputed(body[i]);
+    if (dc) return "statement " + (i + 1) + " holds a " + (ts.isComputedPropertyName(dc) ? "computed key" : "destructuring default")
+      + " ahead of the foreign-sender check: " + dc.getText().slice(0, 80);
     if (readsMessage(body[i])) {
       for (const d of (body[i] as any).declarationList.declarations) if (ts.isIdentifier(d.name)) allowed.add(d.name.text);
       continue;
@@ -2092,6 +2108,23 @@ test("the census rule reads what it claims: a listener that acts before the chec
   assert.match(String(probe('function (e, f) { if (windowSender(e) === "foreign") return; go(f); }')), /more than its one event parameter/);
   assert.match(String(probe('(...e) => { if (windowSender(e[0]) === "foreign") return; }')), /names no event parameter|more than/);
   assert.equal(probe('(e: MessageEvent) => { if (windowSender(e) === "foreign") return; go(e.data); }'), null, "a type on the one parameter is no default");
+  // a destructuring default or a computed key ahead of the check runs an expression, so one syntactic check refuses both
+  // in every statement before it: in a message read's pattern, at any depth and in an array pattern, and anywhere in an
+  // early return's condition (an object literal's key, a class member's). In the parameters both are refused already: the
+  // one parameter is a plain name with no default. What the check leaves: a pattern with neither (a rename, a nested
+  // pattern, a rest element), an element key (m[k]), and every form after the check
+  const gated = (pre: string) => probe("(e) => { " + pre + " if (windowSender(e) === \"foreign\") return; go(e.data); }");
+  const DEFAULT = /holds a destructuring default ahead of the foreign-sender check/, COMPUTED_KEY = /holds a computed key ahead of the foreign-sender check/;
+  for (const [pre, why] of [
+    ["const { a = go() } = e.data;", DEFAULT], ["const { a: { b = kick } } = e.data;", DEFAULT], ["const [a = go()] = e.data;", DEFAULT],
+    ["const m = e.data, { t = 0 } = e.data;", DEFAULT], ["const { [k()]: v } = e.data;", COMPUTED_KEY], ["const { [kick]: v } = e.data;", COMPUTED_KEY],
+    ["const { a: { [\"t\" + kick]: v } } = e.data;", COMPUTED_KEY], ["if ({ [kick]: 1 }) return;", COMPUTED_KEY],
+    ["if (class { static [kick] = 1 }) return;", COMPUTED_KEY], ["const m = e.data; if (!m || ({ [m.k]: 1 })) return;", COMPUTED_KEY],
+  ] as Array<[string, RegExp]>) assert.match(String(gated(pre)), why, pre);
+  for (const pre of ["const { type: t, nested: { a } } = e.data;", "const { ...rest } = e.data;", "const m = e.data; if (!m || m[m.k]) return;", ""])
+    assert.equal(gated(pre), null, "neither a default nor a computed key: " + pre);
+  assert.equal(probe('(e) => { if (windowSender(e) === "foreign") return; const { a = go(), [k()]: v } = e.data; go(a, v); }'), null, "after the check, anything");
+  assert.match(String(probe('({ data: { a = go() } }) => { if (windowSender(arguments[0]) === "foreign") return; }')), /names no event parameter/, "a destructured parameter");
   // a listener handed over by name (sitesIn reads it at the function its const holds): the check at that function's head
   // passes; an arm ahead of it, or a name the census cannot read as such a const, is refused
   const byName = (src: string) => sitesIn("webview/probe.ts", src).map(headCheck);
