@@ -6454,11 +6454,21 @@ _ANYIO_KEYED = {"getoption": ("plugins", "-p"), "getvalue": ("plugins", "-p"), "
 #   -p is declared with dest plugins, so getoption("-p") reads -p's list, as the anyio pin's child pytest shows; the
 #   ini's addopts carries options, and its markers the markers each plugin registers) and the plugin manager's lookups
 #   of one plugin by its name, admitted only as a call with a key the rule folds to strings, none of them one of these
-_ANYIO_BY_NAME = {"getattr": 1, "hasattr": 1, "__getattribute__": 0, "__getattr__": 0, "methodcaller": 0, "attrgetter": None,
-                  "get": 0, "pop": 0, "setdefault": 0, "__getitem__": 0}
+_ANYIO_BY_NAME = {"getattr": 1, "hasattr": 1, "getattr_static": 1, "__getattribute__": None, "__getattr__": None,
+                  "methodcaller": 0, "attrgetter": None, "get": 0, "pop": 0, "setdefault": 0, "__getitem__": 0}
 #   the calls that read an attribute or an item by a name handed them, {function or method: the index of the argument
-#   that holds the name, None for every argument (operator.attrgetter's, each a dotted path)}: THE ANYIO RULE reads the
-#   name, so a carrier or a keyed read reached through one is read as that attribute
+#   that holds the name, None for every argument (operator.attrgetter's, each a dotted path; and __getattribute__'s and
+#   __getattr__'s, whose name is the first argument of a bound method and the second of one called through a type, as
+#   object.__getattribute__(sys, "argv") is)}: THE ANYIO RULE reads the name, so a carrier or a keyed read reached
+#   through one is read as that attribute (inspect.getattr_static reads its second argument, as getattr does)
+_ANYIO_ATTRIBUTE_READERS = frozenset(("getattr", "hasattr", "getattr_static", "attrgetter", "methodcaller",
+                                      "__getattribute__", "__getattr__"))
+#   the calls of _ANYIO_BY_NAME that read an ATTRIBUTE by the name handed them: THE ANYIO RULE admits one only as the
+#   callee of a call whose name it reads, so a read of one in any other way (bound to another name, passed as a value,
+#   an attribute of it read, imported under another name) is refused, and so is a value naming one where a carrier's
+#   name is refused (getattr(builtins, "getattr")); each would call it with a name the rule does not read. The item
+#   readers (get, pop, setdefault, __getitem__) are not among them, so one bound to another name passes (_get =
+#   vars(sys).get: a namespace held whole, a kind of read the rule's docstring lists as passing)
 _ANYIO_FOLD_CAP = 64
 #   the most values THE ANYIO RULE folds one expression to: a fold past it is refused, since a value beyond it could
 #   name anyio unread
@@ -6472,8 +6482,13 @@ def _anyio_option_reads(tree):
     proof refuses a hook keyed on the flag given and cannot refuse one keyed on it not given): a module's code may neither
     name anyio nor read what carries the run's -p options, but by a key the rule proves names something else, so no hook
     or fixture of a module the rule passes keys on -p no:anyio, given or not given, by a read the rule sees in its text
-    (WHAT IT DOES NOT READ, below, names the reads it does not see), and a module whose code does has every fixture
-    refused on both roads (_registration_refusals). Each read is resolved BY BINDING, not by its spelling:
+    (KNOWN TO PASS, below, names kinds of read it does not see; that list is not complete), and a module whose code
+    it finds doing either has every fixture refused on both roads (_registration_refusals). A name read in a value the
+    rule folds is followed BY BINDING, by its scope to the declarations that bind it (ast_bindings), not by its
+    spelling, and a bare name spelled as a carrier or a keyed read is resolved the same way to the scope that binds it
+    (the third clause); a call that reads by a name handed it (_ANYIO_BY_NAME) is known by the name it is called
+    through, and one of those that reads an attribute (_ANYIO_ATTRIBUTE_READERS) is admitted only as the callee of a
+    call whose name the rule reads, so one bound to another name is refused where it is read (the fifth clause):
     - A VALUE NAMING anyio or PYTEST_ADDOPTS (_ANYIO_WORDS), case folded: every str or bytes literal, and every value
       the rule folds from literals by +, % or *, or by an f-string, through names, each name resolved by its scope to
       the declarations that bind it (ast_bindings) and folded to every value they give it: a plain or annotated
@@ -6485,13 +6500,16 @@ def _anyio_option_reads(tree):
       refused, whichever names hold the key.
     - AN IDENTIFIER NAMING anyio: a name, an attribute, an import, a def, class or parameter, a keyword (import anyio,
       a fixture's anyio_backend parameter).
-    - A CARRIER (_ANYIO_CARRIERS), read as an attribute of anything, imported by name, read by a bare name that no
-      declaration of the module's text binds (a star import's binding, so from sys import * and then argv; the same for
-      the name of a keyed read), or read through a call of _ANYIO_BY_NAME or a subscript whose key folds to its name:
-      sys.argv and sys.orig_argv, the invocation params, the options read before plugins load, config.option.plugins,
-      the ini settings, and the plugin manager's listings. A carrier holds the flag among the run's other options or
-      plugins, so its read is refused whatever the code does with it, which covers a key built at run time and a road
-      that names no plugin: len(sys.argv), "-p" not in the invocation params, an empty -p list.
+    - A CARRIER (_ANYIO_CARRIERS), read as an attribute of anything, imported by name, read by a bare name that resolves
+      outside every def, lambda and comprehension (in the module's namespace, a class body's, or in none), whatever the
+      text declares there, since a star import, exec or a write to globals() or to the namespace can bind it there (so
+      from sys import * and then argv, with or without an argv = [] above it, a dead declaration, a def declaring it
+      global or a for binding it; the same for the name of a keyed read; a parameter or a local of a def, lambda or
+      comprehension named argv passes), or read through a call of _ANYIO_BY_NAME or a subscript whose key folds to its
+      name: sys.argv and sys.orig_argv, the invocation params, the options read before plugins load,
+      config.option.plugins, the ini settings, and the plugin manager's listings. A carrier holds the flag among the
+      run's other options or plugins, so its read is refused whatever the code does with it, which covers a key built
+      at run time and a road that names no plugin: len(sys.argv), "-p" not in the invocation params, an empty -p list.
     - A KEYED READ (_ANYIO_KEYED): the config's getoption, getvalue, getvalueorskip and getini and the plugin manager's
       lookups by name, each admitted only as a call whose key, its first argument or its name=, folds to strings with no
       part the rule cannot fold, none of them a key of the method's entry (plugins, and -p, the option string pytest maps
@@ -6500,16 +6518,29 @@ def _anyio_option_reads(tree):
       double-underscore name, or through getattr or hasattr with a key that folds so. The first argument of has_plugin
       and its siblings names a plugin, anyio or another; a literal naming another passes, and one naming anyio is
       refused by the first rule.
+    - A BY-NAME READ OF AN ATTRIBUTE (_ANYIO_ATTRIBUTE_READERS: getattr, hasattr, inspect.getattr_static,
+      operator.attrgetter and methodcaller, __getattribute__ and __getattr__), read other than as the callee of a call
+      (bound to another name, _g = getattr or _g = builtins.getattr; passed as a value, functools.reduce(getattr, ...);
+      an attribute of it read, getattr.__call__) or imported under another name (from operator import attrgetter as
+      _ag), each of which calls it with a name the rule does not read; and a value naming one wherever the third clause
+      refuses a carrier's name (getattr(builtins, "getattr"), operator.methodcaller("__getattribute__", "argv")). Called
+      directly, each is read by its entry in _ANYIO_BY_NAME, so object.__getattribute__(sys, "argv") and
+      inspect.getattr_static(sys, "argv") read argv.
     LIVE: tests/conftest.py has none (its one keyed read, get_plugin("terminalreporter") in _say_at_run_end, folds to a
     name that is neither anyio nor a key of the -p options; the refusal test pins the count at 0, and the module road
     proves every fixture of the conftest).
-    WHAT IT DOES NOT READ, each passing unrefused: a carrier reached through a name the rule cannot fold (a getattr whose
-    name is a parameter, is built by a call or is passed starred), through a namespace read whole (vars() of the config
-    or of sys, their __dict__, or globals() once a star import has filled it; tests/conftest.py calls vars() on other
-    objects, so the rule does not refuse the call), or by a private attribute of pytest's that _ANYIO_CARRIERS does not
-    name; the command line read from a file rather than from the interpreter's objects (/proc/self/cmdline, say;
-    tests/conftest.py's _proc_argv reads /proc/<pid>/cmdline for the processes a test leaves, and the run's own
-    command line read by its pid is spelled the same way, so a refusal by spelling would refuse the live conftest);
+    KNOWN TO PASS, each unrefused (kinds of read, not a complete list: the rule reads the conftest's text, and what its
+    code can reach at run time is open): a carrier reached through a name the rule cannot fold (a getattr whose name is
+    a parameter, is built by a call or a subscript, is read from an attribute, a docstring through __doc__ say, or is
+    passed starred); through a function or method that reads an attribute by a name handed it and that _ANYIO_BY_NAME
+    does not list (pydoc.locate("sys.argv"), pkgutil.resolve_name("sys:argv"), a field of a format string,
+    "{0.argv}".format(sys), and a pickled global each pass); through a namespace held whole (vars() or __dict__ of the
+    config, of sys, of a class or of the module, or globals(), iterated or read through a method of it bound to another
+    name, _get = vars(sys).get say; tests/conftest.py calls vars() on other objects, so the rule does not refuse the
+    call); or by a private attribute of pytest's that _ANYIO_CARRIERS does not name; the command line read from a file
+    rather than from the interpreter's objects (/proc/self/cmdline, say; tests/conftest.py's _proc_argv reads
+    /proc/<pid>/cmdline for the processes a test leaves, and the run's own command line read by its pid is spelled the
+    same way, so a refusal by spelling would refuse the live conftest);
     code the module runs from a string (exec, eval), whose reads the rule does not parse as code (a string naming
     anyio there is still refused as a value); a key naming anyio that it cannot fold (built by a call or a subscript,
     or brought from outside the module's text: another module, the environment, a file) and handed to a read that is
@@ -6676,7 +6707,16 @@ def _anyio_option_reads(tree):
 
     def names_a_carrier(value):
         return isinstance(value, str) and any(part in _ANYIO_CARRIERS or part in _ANYIO_KEYED or part == "option"
-                                              for part in value.split("."))
+                                              or part in _ANYIO_ATTRIBUTE_READERS for part in value.split("."))
+
+    def outside_a_function(name_node):
+        """Whether `name_node` (a Name read) resolves outside every def, lambda and comprehension: in the module's
+        scope, a class body's, or in none (a star import's binding, a builtin)."""
+        try:
+            _decls, where = bindings.scope_of(name_node).resolve(name_node.id)
+        except AssertionError:
+            return True
+        return where is None or where.kind in ("module", "class")
 
     spelled = {ast.Name: lambda x: [x.id], ast.Attribute: lambda x: [x.attr], ast.arg: lambda x: [x.arg],
                ast.alias: lambda x: [x.name, x.asname or ""], ast.ImportFrom: lambda x: [x.module or ""],
@@ -6697,10 +6737,21 @@ def _anyio_option_reads(tree):
                 off(n, "an identifier naming anyio")
             if isinstance(n, ast.Attribute) and n.attr in _ANYIO_CARRIERS:
                 off(n, "a read of the carrier %s, %s" % (n.attr, _ANYIO_CARRIERS[n.attr]))
-            if isinstance(n, ast.Name) and (n.id in _ANYIO_CARRIERS or n.id in _ANYIO_KEYED) and declared(n) is None:
-                off(n, "a read of the name %s, which no declaration of the module's text binds, so its value came from a "
-                       "star import, exec or a write to globals() and may be %s (from sys import * binds argv to sys.argv)"
-                       % (n.id, _ANYIO_CARRIERS.get(n.id) or "a keyed read, whose key its calls hide"))
+            if (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                    and (n.id in _ANYIO_CARRIERS or n.id in _ANYIO_KEYED) and outside_a_function(n)):
+                off(n, "a read of the name %s that resolves outside every def, lambda and comprehension (in the "
+                       "module's namespace, a class body's, or in none), where a star import, exec or a write to "
+                       "globals() can bind it whatever the module's text declares there, so it may be %s (from sys "
+                       "import * binds argv to sys.argv)" % (n.id, _ANYIO_CARRIERS.get(n.id)
+                                                             or "a keyed read, whose key its calls hide"))
+            ident = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else None
+            if (ident in _ANYIO_ATTRIBUTE_READERS and isinstance(n.ctx, ast.Load)
+                    and not (isinstance(parent.get(n), ast.Call) and parent.get(n).func is n)):
+                off(n, "the by-name read %s other than as the callee of a call, so the name it is handed is not in the "
+                       "text" % ident)
+            if isinstance(n, ast.alias) and n.name in _ANYIO_ATTRIBUTE_READERS and n.asname not in (None, n.name):
+                off(n, "the by-name read %s imported under another name, %s, so the name each call of it is handed is "
+                       "not read" % (n.name, n.asname))
             if isinstance(n, ast.ImportFrom):
                 for a in n.names:
                     if a.name in _ANYIO_CARRIERS or a.name in _ANYIO_KEYED:
@@ -6748,10 +6799,10 @@ def _registration_refusals(tree, candidates, real, where=None):
     """{id(def): None, or why the reader cannot prove pytest runs it} for each def of `candidates` (the function-scoped
     autouse fixture defs of `tree`): the refusals of the reader's two roads (_road_refusals), and on both roads THE
     ANYIO RULE (_anyio_option_reads, the reviewer's ruling at fork PR #894's landing merge with main, on the proof's
-    launcher): a module whose code names anyio or reads what carries the run's -p options, but by a key the rule proves
-    names something else, has every fixture refused, naming each read, so no hook or fixture of a module whose fixtures
-    the filter counts keys on -p no:anyio, given or not given, by a read the rule sees in its text (the rule's docstring
-    names the reads it does not see)."""
+    launcher): a module whose code the rule finds naming anyio or reading what carries the run's -p options, but by a
+    key the rule proves names something else, has every fixture refused, naming each read, so no hook or fixture of a
+    module whose fixtures the filter counts keys on -p no:anyio, given or not given, by a read the rule sees in its
+    text (the rule's docstring names kinds of read it does not see, a list it does not claim complete)."""
     if not candidates:
         return {}
     reads = _anyio_option_reads(tree)
@@ -6824,9 +6875,10 @@ def _conftest_reasserted_names(src=None, where=None):
     name=, and registered by no other call; so a road not yet named is refused rather than counted
     (_registration_refusals has the two roads, and _unproven_statements the list). On both roads, THE ANYIO RULE (the
     reviewer's ruling at the PR's landing merge with main, on the proof's launcher; _anyio_option_reads) refuses every
-    fixture of a module whose code names anyio or reads what carries the run's -p options, but by a key the rule
-    proves names something else, so no fixture of a module with a hook or fixture keyed on -p no:anyio, given or not
-    given, by a read the rule sees in its text is counted (the rule's docstring names the reads it does not see).
+    fixture of a module whose code it finds naming anyio or reading what carries the run's -p options, but by a key
+    the rule proves names something else, so no fixture of a module with a hook or fixture keyed on -p no:anyio, given
+    or not given, by a read the rule sees in its text is counted (the rule's docstring names kinds of read it does not
+    see, a list it does not claim complete).
     WHY TWO ROADS: before this ruling the reader closed the class one case at a time, each found by a child pytest in
     which a counted fixture never ran (a later binding of the fixture's name, the sixteenth commit; another def given its
     name=, the seventeenth; a name= passed through functools.partial or getattr, the eighteenth; a decorator or a name
@@ -6864,7 +6916,8 @@ def _conftest_reasserted_names(src=None, where=None):
     since the reader reads tests/conftest.py alone. On the module road, what tests/conftest.py's own code does beyond
     what pytest registers from it, which the reader takes on trust since it would refuse the conftest if it read that
     code by the proven list (the text road refuses it on the statements the registration test prints), and reads by
-    THE ANYIO RULE alone (_anyio_option_reads, whose docstring says what that rule does not read): its import-time
+    THE ANYIO RULE alone (_anyio_option_reads, whose docstring names kinds of read that rule does not see, a list it
+    does not claim complete): its import-time
     code, its fixtures' bodies and the bodies of its hooks on _LISTED_HOOKS (not its pytest_make_collect_report, whose
     body and every def it calls the reader reads, THE SHAPE of _collect_report_shape_faults) may register a plugin,
     patch pytest's code,
@@ -6968,8 +7021,9 @@ def _conftest_reasserted_names(src=None, where=None):
     makes a real run under either. A road keyed on -p no:anyio not given, which no child of the proof is (each passes
     the flag, _PROOF_CHILD_FLAG), is granted by the proof (_proof_option_roads' road on it, in the context test), and
     THE ANYIO RULE refuses, on the filter's two roads, every fixture of a conftest with a hook or fixture keyed on the
-    flag, given or not given, by a read the rule sees in its text (_anyio_option_reads, whose docstring names the reads
-    it does not see), so no licence rests on such a road where the rule sees its read.
+    flag, given or not given, by a read the rule sees in its text (_anyio_option_reads, whose docstring names kinds of
+    read it does not see, a list it does not claim complete), so no licence rests on such a road where the rule sees
+    its read.
     THIRD, UNMATCHABLE at any cost: a conftest hook condition keyed on an open-valued signal, a mark of any name, an
     environment variable, a host name, an option's value (a --durations of 5, where CI's step gives 10: the pair
     matches whether an option is given, not its value; _proof_option_roads' road on it is granted), or another
@@ -7182,7 +7236,7 @@ _PROOF_CHILD_FLAG = ("-p", "no:anyio")
 #   _proof_ci_option_units). Since each child passes it, every run of the proof has the flag and none lacks it, so the
 #   proof grants a road keyed on it not given; THE ANYIO RULE refuses such a road, and a road on the flag given, on the
 #   filter's two roads wherever it sees the road's read in the conftest's text (_anyio_option_reads, whose docstring
-#   names the reads it does not see), so no licence rests on either road there
+#   names kinds of read it does not see, a list it does not claim complete), so no licence rests on either road there
 
 
 def _proof_developer_options():
@@ -11676,36 +11730,56 @@ class HermeticKernelPostal(unittest.TestCase):
         """THE ANYIO RULE (the reviewer's ruling at fork PR #894's landing merge with main, on the proof's launcher: every
         child of the proof passes -p no:anyio (_PROOF_CHILD_FLAG), so the execution proof refuses a hook keyed on the flag
         given and grants one keyed on it not given; one syntactic check of the filter, _anyio_option_reads, now refuses
-        both wherever the conftest's text shows the read, and its docstring names the reads it does not see). LIVE: over
-        tests/conftest.py the rule finds no read, and the module road still proves every function-scoped autouse
-        fixture of it. THE PREMISE, run: ONE child pytest, passing -p no:anyio as every child does, over the proof's own
-        two roads on the flag (_proof_option_roads: CI's option -p no:anyio given, and not given), and over two reads
-        the verifier found the rule passing at the commit that added this test, each keyed on the flag given and on it
-        not given (-p's list read by -p, its option string, which pytest maps to its dest; argv reached through
-        from sys import *), each the condition of a listed pytest_collectreport that takes `_f` out of each test where
-        it holds: `_f`'s pop never ran under each road on the flag given, and ran under each road on it not given, as it
-        would not in a run without the flag. THE POLARITY PINS: those roads, and each read of the ruling's list keyed on
-        the flag given and on it not given (the invocation params, sys.argv, config.option, config.getoption by plugins
-        and by -p, getoption's name=, getvalue and getvalueorskip by -p, argv after from sys import *, the plugin
-        manager's has_plugin, is_blocked and get_plugin, and PYTEST_ADDOPTS), and the ways a key or a carrier is
-        reached by binding (the key bound to a name, split across names and joined by +, by an
-        f-string or by %, bound by a for, beside an operand the rule cannot fold; sys under another name, argv imported
-        from sys, sys.argv through getattr, vars() or operator.attrgetter; -p's list read whole, by getoption, through a
-        name, or with a key the rule cannot fold; getoption by a bare name globals() bound, the word -p sought in argv
-        after a star import, the collect-report hook over -p's list read by -p; the ini settings, the options read before
+        both wherever it sees the read in the conftest's text, and its docstring names kinds of read it does not see, a
+        list it does not claim complete). LIVE: over tests/conftest.py the rule finds no read, and the module road still
+        proves every function-scoped autouse fixture of it. THE PREMISE, run: ONE child pytest, passing -p no:anyio as
+        every child does, over the proof's own two roads on the flag (_proof_option_roads: CI's option -p no:anyio
+        given, and not given), and over the reads the verifier found the rule passing at the commit that added this test
+        (-p's list read by -p, its option string, which pytest maps to its dest; argv reached through from sys import *)
+        and at the eighty-seventh commit (argv after a star import that an argv = [] above it also binds; sys.argv
+        through getattr bound to another name, through object.__getattribute__ and through inspect.getattr_static), each
+        keyed on the flag given and on it not given, each the condition of a listed pytest_collectreport that takes `_f`
+        out of each test where it holds: `_f`'s pop never ran under each road on the flag given, and ran under each road
+        on it not given, as it would not in a run without the flag. THE POLARITY PINS: those roads, and each read of the
+        ruling's list keyed on the flag given and on it not given (the invocation params, sys.argv, config.option,
+        config.getoption by plugins and by -p, getoption's name=, getvalue and getvalueorskip by -p, argv after from sys
+        import *, with an argv = [] above it or a dead declaration of it after, sys.argv through getattr bound to another
+        name, the plugin manager's has_plugin, is_blocked and get_plugin, and PYTEST_ADDOPTS), and the ways a key or a
+        carrier is reached by binding (the key bound to a name, split across names and joined by +, by an f-string or by
+        %, bound by a for, beside an operand the rule cannot fold; sys under another name, argv imported from sys,
+        sys.argv through getattr, vars() or operator.attrgetter; -p's list read whole, by getoption, through a name, or
+        with a key the rule cannot fold; getoption by a bare name globals() bound, the word -p sought in argv after a star
+        import, the collect-report hook over -p's list read by -p; a carrier's bare name that resolves in the module's
+        namespace whatever else binds it there (a never-called def declaring argv global, a for binding it, a module
+        bound to the name above the star import, orig_argv with a dead declaration, getoption with a declaration at
+        import) or in a class body's; a by-name read of an attribute imported under another name, bound to another name,
+        passed as a value or read through an attribute of it (getattr from builtins as _g, operator.attrgetter and
+        methodcaller as other names, getattr.__call__, the invocation params through getattr bound to a name,
+        functools.reduce over getattr, builtins.getattr bound to a name), a value naming one (getattr by its name through
+        getattr, __getattribute__ named to operator.methodcaller), and object.__getattribute__ and
+        inspect.getattr_static called with argv or the invocation params; the ini settings, the options read before
         plugins load, the plugin manager's listing; an identifier naming anyio; in an autouse fixture, at import and in a
         def a hook calls), are each refused ON THE MODULE ROAD (_conftest_reasserted_names over a conftest imported from
         a scratch file, read as tests.conftest is), naming THE ANYIO RULE, and ON THE TEXT ROAD, where a case that
         makes a call is refused by the proven list as well; each case is a subtest, the rule's own reads classed by the
         clause that refuses them (a value, an identifier, a carrier, an import, a keyed read, config.option, a read by
-        name, a bare name no declaration binds). Red at the commit that added this test under a reader without the rule
-        (every case counted on the module road, and each case with no call on the text road) and under a reader without
-        each one clause (its cases); the cases on -p's option string red under a reader whose keyed reads lack it, and
-        the cases on a bare name under a reader without that clause. REFUSED NOTHING: the shapes tests/conftest.py uses
-        (get_plugin of another plugin by a literal, a local named argv, the word argv in a list, a read of the whole
-        environment), another option read by getoption, by option.<name>, by getattr with a literal or through a name
-        that folds to it, a def's parameter named argv, and a star import of a module whose names the conftest reads,
-        none a carrier, each counted on the module road, and on the text road where it makes no call. THE RULE FREES
+        name, a bare name that resolves outside every def, lambda and comprehension, a by-name read of an attribute read
+        other than as a call's callee). Red at the commit that added this test under a reader without the rule (every
+        case counted on the module road, and each case with no call on the text road) and under a reader without each
+        one clause (its cases); the cases on -p's option string red under a reader whose keyed reads lack it, and the
+        cases on a bare name under a reader without that clause. The cases the verifier found at the eighty-seventh
+        commit red at that commit's rule, and at the commit that added them under a reader without the one check that
+        refuses each: the bare name refused only where no declaration binds it, as at the eighty-seventh commit (the
+        cases on a bare name a declaration also binds); no refusal of a by-name read of an attribute read other than as
+        a callee or imported under another name (the cases classed so); no value naming one refused (getattr by its
+        name, __getattribute__ named to methodcaller); __getattribute__ read at its first argument alone (the cases
+        through object.__getattribute__); and getattr_static left out of _ANYIO_BY_NAME (its case). REFUSED NOTHING:
+        the shapes tests/conftest.py uses (get_plugin of another plugin by a literal, a local named argv, the word argv
+        in a list, a read of the whole environment), another option read by getoption, by option.<name>, by getattr
+        with a literal or through a name that folds to it, a def's parameter named argv, a star import of a module whose
+        names the conftest reads, none a carrier, a local named argv in a def of a module with a star import, and
+        another attribute read by inspect.getattr_static, object.__getattribute__ or operator.attrgetter with a
+        literal, each counted on the module road, and on the text road where it makes no call. THE RULE FREES
         WHAT IT READ: once the test drops the conftest's tree, no def of it is alive (the nested defs hold one another
         through their closures, and are cleared when the rule ends)."""
         from unittest import mock
@@ -11737,7 +11811,15 @@ class HermeticKernelPostal(unittest.TestCase):
         # the reads the verifier found the rule passing, each run on the flag given and on it not given: -p's list read by
         # -p, the option string pytest maps to its dest, and argv reached through a star import of sys
         found = {"dash p": ("", "any(p.startswith('no:a') for p in item.config.getoption('-p'))"),
-                 "star argv": (star, "any(a.startswith('no:a') for a in argv)")}
+                 "star argv": (star, "any(a.startswith('no:a') for a in argv)"),
+                 # and the reads the verifier found the rule passing at the eighty-seventh commit: argv after a star
+                 # import that a declaration of the module also binds, getattr bound to another name, __getattribute__
+                 # called through a type (its name the second argument), and inspect.getattr_static
+                 "declared star argv": ("argv = []\n" + star, "any(a.startswith('no:a') for a in argv)"),
+                 "bound getattr": ("_g = getattr\n\n\n", "any(a.startswith('no:a') for a in _g(sys, 'argv'))"),
+                 "getattribute": ("", "any(a.startswith('no:a') for a in object.__getattribute__(sys, 'argv'))"),
+                 "getattr_static": ("import inspect\n\n\n",
+                                    "any(a.startswith('no:a') for a in inspect.getattr_static(sys, 'argv'))")}
         roads = [(polarity[runs is None], "", condition) for _l, condition, runs in own]
         for word, (before, condition) in found.items():
             roads += [("%s given" % word, before, condition), ("%s not given" % word, before, "not " + condition)]
@@ -11791,7 +11873,17 @@ class HermeticKernelPostal(unittest.TestCase):
                       ("-p's list by getvalueorskip('-p'), %s" % polarity,
                        hook("%sany(p.startswith('no:a') for p in config.getvalueorskip('-p'))" % neg), {"keyed"}, False),
                       ("argv after from sys import *, %s" % polarity,
-                       star + hook("%sany(a.startswith('no:a') for a in argv)" % neg), {"unbound"}, False)]
+                       star + hook("%sany(a.startswith('no:a') for a in argv)" % neg), {"bare"}, False)]
+            # the verifier's findings at the eighty-seventh commit, each keyed on the flag given and on it not given:
+            # argv after a star import that a declaration of the module also binds, and getattr bound to another name
+            cases += [("argv after from sys import * that an argv = [] above it binds, %s" % polarity,
+                       "argv = []\n" + star + hook("%sany(a.startswith('no:a') for a in argv)" % neg), {"bare"}, False),
+                      ("argv after from sys import * that a dead declaration binds, %s" % polarity,
+                       star + hook("%sany(a.startswith('no:a') for a in argv)" % neg)
+                       + "\n\nif False:\n    argv = None\n", {"bare"}, False),
+                      ("sys.argv through getattr bound to another name, %s" % polarity,
+                       "_g = getattr\n\n\n" + hook("%sany(a.startswith('no:a') for a in _g(sys, 'argv'))" % neg),
+                       {"aliased"}, False)]
         cases += [("the key bound to a name at import",
                    "_FLAG = 'no:anyio'\n\n\n" + hook("_FLAG not in config.invocation_params.args"),
                    {"value", "carrier"}, True),
@@ -11840,11 +11932,54 @@ class HermeticKernelPostal(unittest.TestCase):
                   ("the collect-report hook over -p's list read by -p, the flag not given",
                    dropping % "not any(p.startswith('no:a') for p in item.config.getoption('-p'))", {"keyed"}, False),
                   ("the word -p sought in argv after from sys import *", star + hook("'-p' not in argv"),
-                   {"unbound"}, True),
+                   {"bare"}, True),
                   ("getoption by a bare name globals() bound, the flag not given",
                    "def pytest_configure(config):\n    globals().update(vars(type(config)))\n"
                    "    if not any(p.startswith('no:a') for p in getoption(config, '-p')):\n        pass\n",
-                   {"unbound"}, False)]
+                   {"bare"}, False)]
+        # the verifier's findings at the eighty-seventh commit, each keyed on the flag not given: a carrier's bare name
+        # that resolves in the module's namespace or a class body's whatever declares it there, a by-name read of an
+        # attribute bound to another name, passed as a value or imported under another name, a value naming one, and
+        # the reads by name the table read at the wrong index or did not list
+        ng = "not any(a.startswith('no:a') for a in %s)"
+        cases += [("argv after from sys import *, a never-called def declaring it global",
+                   star + "def _never():\n    global argv\n    argv = None\n\n\n" + hook(ng % "argv"), {"bare"}, False),
+                  ("argv after from sys import *, a for binding it at import",
+                   star + "for argv in ():\n    pass\n\n\n" + hook(ng % "argv"), {"bare"}, False),
+                  ("argv after from sys import *, a module bound to the name above it",
+                   "import os as argv\n" + star + hook(ng % "argv"), {"bare"}, False),
+                  ("orig_argv after from sys import *, a dead declaration",
+                   star + "if False:\n    orig_argv = None\n\n\n" + hook(ng % "orig_argv"), {"bare"}, False),
+                  ("getoption by a bare name globals() bound, a declaration binding it at import",
+                   "getoption = None\n\n\ndef pytest_configure(config):\n    globals().update(vars(type(config)))\n"
+                   "    if %s:\n        pass\n" % (ng % "getoption(config, '-p')"), {"bare"}, False),
+                  ("a class body's argv, filled by locals().update(vars(sys))",
+                   "class _C:\n    argv = []\n    locals().update(vars(sys))\n"
+                   "    FLAG = any(a.startswith('no:a') for a in argv)\n\n\n" + hook("not _C.FLAG"), {"bare"}, False),
+                  ("getattr imported from builtins under another name",
+                   "from builtins import getattr as _g\n\n\n" + hook(ng % "_g(sys, 'argv')"), {"aliased"}, False),
+                  ("operator.attrgetter imported under another name",
+                   "from operator import attrgetter as _ag\n\n\n" + hook(ng % "_ag('argv')(sys)"), {"aliased"}, False),
+                  ("operator.methodcaller imported under another name, -p's list by getoption through it",
+                   "from operator import methodcaller as _mc\n\n\n" + hook(ng % "_mc('getoption', '-p')(config)"),
+                   {"aliased"}, False),
+                  ("getattr's __call__", hook(ng % "getattr.__call__(sys, 'argv')"), {"aliased"}, False),
+                  ("the invocation params through getattr bound to another name",
+                   "_g = getattr\n\n\n" + hook(ng % "_g(config, 'invocation_params').args"), {"aliased"}, False),
+                  ("getattr handed to functools.reduce", "import functools\n\n\n"
+                   + hook(ng % "functools.reduce(getattr, ('invocation_params', 'args'), config)"), {"aliased"}, False),
+                  ("builtins.getattr bound to another name",
+                   "import builtins\n\n_g = builtins.getattr\n\n\n" + hook(ng % "_g(sys, 'argv')"), {"aliased"}, False),
+                  ("getattr read by its name through getattr",
+                   "import builtins\n\n\n" + hook(ng % "getattr(builtins, 'getattr')(sys, 'argv')"), {"byname"}, False),
+                  ("__getattribute__ named to operator.methodcaller",
+                   hook(ng % "operator.methodcaller('__getattribute__', 'argv')(sys)"), {"byname"}, False),
+                  ("sys.argv through object.__getattribute__", hook(ng % "object.__getattribute__(sys, 'argv')"),
+                   {"byname"}, False),
+                  ("the invocation params through object.__getattribute__",
+                   hook(ng % "object.__getattribute__(config, 'invocation_params').args"), {"byname"}, False),
+                  ("sys.argv through inspect.getattr_static",
+                   "import inspect\n\n\n" + hook(ng % "inspect.getattr_static(sys, 'argv')"), {"byname"}, False)]
         controls = [("get_plugin of another plugin by a literal, as tests/conftest.py's _say_at_run_end",
                      hook("config.pluginmanager.get_plugin('terminalreporter') is None"), False),
                     ("a local named argv", "def pytest_configure(config):\n    argv = ['x']\n    if argv:\n"
@@ -11861,12 +11996,22 @@ class HermeticKernelPostal(unittest.TestCase):
                     ("a def's parameter named argv",
                      "def _count(argv):\n    return len(argv)\n\n\n" + hook("_count([]) == 0"), False),
                     ("a star import whose names the conftest reads, none a carrier",
-                     "from os.path import *\n\n\n" + hook("join('a', 'b') == 'a/b'"), False)]
+                     "from os.path import *\n\n\n" + hook("join('a', 'b') == 'a/b'"), False),
+                    ("a local named argv in a def of a module with a star import",
+                     "from os.path import *\n\n\ndef pytest_configure(config):\n    argv = [join('a', 'b')]\n"
+                     "    if argv:\n        pass\n", False),
+                    ("another attribute read by inspect.getattr_static with a literal",
+                     "import inspect\n\n\n" + hook("inspect.getattr_static(config, 'rootpath') is None"), False),
+                    ("another attribute read by object.__getattribute__ with a literal",
+                     hook("object.__getattribute__(config, 'rootpath') is None"), False),
+                    ("another attribute read by operator.attrgetter with a literal",
+                     hook("operator.attrgetter('rootpath')(config) is None"), False)]
         clauses = (("value", "a value naming anyio"), ("addopts", "a value naming PYTEST_ADDOPTS"),
                    ("cap", "cannot fold within"), ("identifier", "an identifier naming anyio"),
                    ("carrier", "a read of the carrier"), ("import", "an import of"), ("keyed", "the keyed read"),
                    ("option", "a read of option other than"), ("byname", "by its name, through"),
-                   ("unbound", "which no declaration of the module's text binds"))
+                   ("bare", "that resolves outside every def, lambda and comprehension"),
+                   ("aliased", "the by-name read"))
         home = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, home, True)
         made = []

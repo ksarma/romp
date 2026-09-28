@@ -247,15 +247,17 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   literal tuple included, in a fixture it can show pytest registers, reading
   `tests/conftest.py`'s fixtures and hooks from the module Python imported). That
   reader only refuses. It also refuses every fixture of a conftest whose code
-  names anyio or reads what carries the run's `-p` options (`sys.argv`,
+  it finds naming anyio or reading what carries the run's `-p` options (`sys.argv`,
   `sys.orig_argv` and the invocation params, `-p`'s list, the ini settings, the
   plugins loaded, `PYTEST_ADDOPTS`) other than by a key it proves names
   something else, so a conftest with a hook or fixture keyed on `-p no:anyio`,
   given or not given, by a read the reader sees in its text has none of its
   fixtures counted. It reads the conftest's text, so it does not see a key
-  built at run time, or the command line read from a file such as
+  built at run time, an attribute read by name through a function it does
+  not list, or the command line read from a file such as
   `/proc/self/cmdline` (the rule's docstring, `_anyio_option_reads` in
-  `tests/test_hermetic_kernel_postal.py`, lists what it does not read). A name
+  `tests/test_hermetic_kernel_postal.py`, names kinds of read it does not
+  see, a list it does not claim complete). A name
   is licensed only when a child pytest over a copy of the conftest writes the
   name at each probe module's import and, in each probe
   test, reads it and sets it again, and sees the counted fixture's own code set or
