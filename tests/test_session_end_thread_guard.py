@@ -135,6 +135,11 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   still running at the scratch conftest's pytest_sessionfinish (the premise, from its record there). Under an
   xfail-marked last test that leaks no thread, the run passes (2 xfailed) and names no thread on either channel
   (serially); a guard that ran there named the session fixture's thread, a fixture still set up, and failed the run.
+  The check is keyed on that stack and not on the exception's type: when the node the runner stops at is the session's,
+  the last on the stack, the stack is empty and the guard runs. A session fixture torn down last whose teardown raises
+  asyncio.CancelledError, after an xfail-marked last test that leaks a thread, fails the run naming the thread after
+  the raise and the sentence, the body still 1 xfailed (serially); a guard that ran the check only after the exceptions
+  the runner collects left that run green (2 xfailed) with the thread unnamed.
 - The guard is the INNERMOST TEARDOWN WRAPPER (trylast), so its check runs inside the pytest_runtest_teardown wrappers
   of pytest's capture and logging plugins, which are still capturing then. A leaked non-daemon thread writes a line to
   stdout and one to stderr, and logs a warning, when the guard's join first waits for it (the join waits for those
@@ -166,21 +171,22 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   Other timers and threads are still waited for, among them near misses that start like the prefix (a thread named
   pytest-worker, Timers whose functions are in pytest_asyncio and pytest_testmon).
 
-Each child-run pin but one was run with the guard removed from tests/conftest.py and fails there: the leak,
-idle-worker, daemon-started-pool, missing-table, xfail (the fixture-teardown one under xfail among them), redaction (the
-token-first one among them), stderr-header, table-changing and innermost-wrapper runs pass (exit 0, no error), the green
-runs' witness finds the within-cap threads alive at sessionfinish, the TestCase whose body and cleanup both skip passes
-(2 skipped), the run whose fixture skips at teardown passes (1 passed, 1 skipped), and the two-error runs (the
-redaction one among them), the TestCase whose cleanup fails through pytest.fail and the unmarked fixture-teardown run,
-red on the TestCase's or the fixture's own errors, find no thread named in the report. The fixture-teardown runs also
-fail with the guard as it was before it ran after a failing teardown of the runner, on the same outcomes. The two-error
-runs also fail with the guard as it was before it wrote to stderr, on the same missing name.
+Each child-run pin but one was run with the guard removed from tests/conftest.py and fails there: the leak, idle-worker,
+daemon-started-pool, missing-table, xfail (the fixture-teardown one under xfail and the session-node one among them),
+redaction (the token-first one among them), stderr-header, table-changing and innermost-wrapper runs pass (exit 0, no
+error), the green runs' witness finds the within-cap threads alive at sessionfinish, the TestCase whose body and cleanup
+both skip passes (2 skipped), the run whose fixture skips at teardown passes (1 passed, 1 skipped), and the two-error
+runs (the redaction one among them), the TestCase whose cleanup fails through pytest.fail and the unmarked
+fixture-teardown run, red on the TestCase's or the fixture's own errors, find no thread named in the report. The
+fixture-teardown runs also fail with the guard as it was before it ran after a failing teardown of the runner, on the
+same outcomes. The two-error runs also fail with the guard as it was before it wrote to stderr, on the same missing
+name.
 The one that passes with the guard removed is the stopped-teardown run, a pin against a false red, where a guard that
 is not there names nothing. It fails with the guard as it was before its teardown wrapper read the runner's stack, when
 it ran the check after any error of the runner's teardown: both of its runs fail, naming the session fixture's thread.
 With the guard as it was then, the token-first run fails on the raw token on stderr, and the run whose fixture skips at
-teardown, and every run that checks the sentence before the guard's text, fail on that sentence alone, as the report
-step wrote it then.
+teardown, and every run that checks the sentence before the guard's text (the session-node run among them, since that
+guard already ran after any error), fail on that sentence alone, as the report step wrote it then.
 The pins for the exit-join tables, as this file has them, were run serially on 3.12 against the guard as it was before
 it read the tables, when it waited for non-daemon threads only, and every one that reads the guard fails there. Of the
 child runs, the four daemon-started-pool runs (busy and idle, serially and under -n 2) and each missing-table run exit 0
@@ -682,6 +688,31 @@ def test_teardown_stopped_at_the_module_no_leak(stops_the_teardown):
 ABORTED_BY = (("asyncio.CancelledError", 'raise asyncio.CancelledError("plant: cancelled at the module teardown")'),
               ("SystemExit", "sys.exit(3)"))
 
+# the session node's edge of a stopped teardown: an autouse session fixture, appended to the scratch conftest, whose
+# teardown raises asyncio.CancelledError. Autouse fixtures of one scope and one file are set up in name order, so this
+# one, named to sort before plant_session_thread, is set up first and torn down last: its raise comes after every other
+# session finalizer has run, the runner's stack is empty, and the guard runs. The last test is xfail-marked and leaks a
+# thread
+SESSION_NODE_CANCELLED_CONFTEST = '''
+
+import asyncio
+
+
+@pytest.fixture(scope="session", autouse=True)
+def a_session_fixture_cancelled_at_teardown():
+    yield
+    raise asyncio.CancelledError("plant: cancelled at the session teardown")
+'''
+SESSION_NODE_CANCELLED_TEST = '''
+import pytest
+
+
+@pytest.mark.xfail(reason="plant: the body is expected to fail")
+def test_leak_after_a_session_teardown_cancelled():
+    _start("session-node-cancelled", [threading.Thread(target=_leaked, name="plant-leaked")])
+    raise AssertionError("plant: the body failed, as its xfail mark expects")
+'''
+
 # what the thread of WRITES_WHILE_JOINED_TEST writes to stdout and to stderr, and logs, while the guard waits for it
 WROTE_STDOUT = "plant: a line to stdout, written while the guard waits"
 WROTE_STDERR = "plant: a line to stderr, written while the guard waits"
@@ -1063,6 +1094,30 @@ class SessionEndThreadGuard(unittest.TestCase):
                 self.assertRegex(report, r"\b2 xfailed\b", "the body's failure and the teardown's error are each an "
                                  "xfail:\n" + out)
                 self.assertIn(pid, marks["atexit"], "the process exited:\n" + out)
+
+    def test_a_teardown_the_runner_stopped_at_the_session_node_is_checked(self):
+        """The session node's edge of the previous pin, which shows the check is keyed on the runner's stack of set-up
+        nodes and not on the exception's type. A session fixture whose teardown raises asyncio.CancelledError after every
+        other session finalizer has run stops the runner at the session's node, the last on the stack, so the stack is
+        empty and the guard runs (serially). The last test is xfail-marked and leaks a thread: the leak's assertions hold
+        (one error, the thread named once in the report and on stderr, the fixtures' threads named nowhere), the report
+        carries the CancelledError, then the sentence that names the outcome above it, then the thread, and the body's
+        own outcome is still an xfail. A guard whose except path ran the check only after the exceptions the runner
+        collects (an Exception or one of pytest's outcomes) left this run green, 2 xfailed, with the thread unnamed on
+        either channel."""
+        rc, out, started, _ended, finish, marks = self._run(SESSION_NODE_CANCELLED_TEST, cap=LEAK_CAP_S,
+                                                            conftest_extra=SESSION_NODE_CANCELLED_CONFTEST)
+        self._assert_leak_reported(rc, out, started, finish, marks)
+        report, _err = self._channels(out)
+        cancelled = "CancelledError: plant: cancelled at the session teardown"
+        self.assertIn(cancelled, report, "the premise: the teardown report carries the session fixture's raise:\n" + out)
+        self.assertEqual(report.count(APPENDED), 1, "the sentence before the guard's text names the outcome above it (a "
+                         "wording check):\n" + out)
+        self.assertLess(report.index(cancelled), report.index(APPENDED), "the sentence follows the raise:\n" + out)
+        self.assertLess(report.index(APPENDED), report.index("thread 'plant-leaked' ("), "and the guard's text follows "
+                        "the sentence:\n" + out)
+        self.assertRegex(out, r"\b1 xfailed\b", "the body's own outcome is still reported:\n" + out)
+        self.assertNotRegex(out, r"\b2 xfailed\b", "the teardown is not reported as the body is:\n" + out)
 
     # -- the guard is the innermost teardown wrapper: what a thread writes while it waits is captured -------------------
 

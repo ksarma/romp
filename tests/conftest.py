@@ -1611,9 +1611,10 @@ def wait_for_census(before, timeout=5.0):
 # own teardown fails or skips (a fixture's teardown raised, and the runner went on to tear down the rest) is checked
 # too, after the runner's teardown: the report carries that outcome with the guard's text after it, and under an xfail
 # mark, which would make that error an xfail, stays an error. A teardown the runner stopped partway with fixtures of a
-# wider scope still set up (a fixture's teardown below the session's scope raised a BaseException that is not an
-# Exception, asyncio.CancelledError or SystemExit, say) is not checked: those fixtures, and their threads, stay up
-# until pytest_sessionfinish.
+# wider scope still set up (a fixture whose node is not the session's raised, at teardown, a BaseException that is
+# neither an Exception nor one of pytest's outcomes: asyncio.CancelledError or SystemExit, say) is not checked: the
+# stopped node's remaining fixtures are never torn down, and those of wider scopes, and their threads, stay up until
+# pytest_sessionfinish. When that node is the session's, nothing is left on the runner's stack and the guard runs.
 # AFTER THE CHECK, which runs at the last test's teardown. A thread STARTED after it, in a pytest_sessionfinish or
 # pytest_unconfigure hook or an atexit handler, is not checked. A thread STOPPED only after it, by a config.add_cleanup
 # callback, pytest_sessionfinish or pytest_unconfigure, is checked and fails the guard, although the process would exit:
