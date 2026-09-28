@@ -18,6 +18,7 @@ The shim's decision code runs here for REAL: km._shim_core_js() returns the IIFE
 MessageChannel and the timers — the same pattern test_view_deltas.py uses for the delta reassembler, minus the
 regex. Synthetic data only: no real session content, TESTHOST as the host.
 """
+import ast
 import json
 import os
 import re
@@ -1700,10 +1701,11 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
     # name, the window's own handler; None for a chain the census cannot read, one after a call, an index or another
     # member), and each must be one of the shim's own sockets and channel, counted in SHIM_ONMESSAGE_RECEIVERS: park's and
     # abandon's detaches of a dead socket (`var d=ws;`, d.onopen=d.onmessage=...=null), the socket's own handler
-    # (ws.onmessage=function(ev){) and the dispatch channel's (ch.port1.onmessage=flush). These are the shim's entries of
-    # tests/test_shell_source_check.py's ONMESSAGE_RECEIVERS, which counts every such assignment in all of kernel.py and on
-    # every page it serves. Like that table, this one counts receivers by name, not by binding: a listed name rebound to a
-    # window passes it, and only the executed test below catches that, on the roads its stand-in drives
+    # (ws.onmessage=function(ev){) and the dispatch channel's (ch.port1.onmessage=flush). The shim's writes are also held
+    # to a subset of tests/test_shell_source_check.py's ONMESSAGE_RECEIVERS, which counts every such assignment in all of
+    # kernel.py and on every page it serves, read from that module's source (_shell_onmessage_receivers). Like that table,
+    # this one counts receivers by name, not by binding: a listed name rebound to a window passes it, and only the executed
+    # test below catches that, on the roads its stand-in drives
     MESSAGE_LISTEN = re.compile(r"(?:(?<![\w$])addEventListener|\[\s*(['\"`])addEventListener\1\s*\])\s*\(\s*(['\"`])message(?:error)?\2")
     ONMESSAGE_ANY = re.compile(r"(?:(?<![\w$])(onmessage(?:error)?)|\[\s*(['\"`])(onmessage(?:error)?)\2\s*\])\s*=(?!=)")
     CHAIN_BEFORE = re.compile(r"(?<![\w$.)\]])((?:[\w$]+\s*\.\s*)*[\w$]+)\s*$")
@@ -1726,6 +1728,17 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
     UNICODE_ESCAPE = re.compile(r"\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})")
     FROM_SHELL_DECL = "const fromShell=function(e){"
     FROM_SHELL_READ = "if(!fromShell(e))return;"
+
+    @staticmethod
+    def _shell_onmessage_receivers():
+        """tests/test_shell_source_check.py's ONMESSAGE_RECEIVERS, read from that module's syntax tree: importing it would
+        run its import-time setup (a fresh state root in this process's environment)."""
+        with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "test_shell_source_check.py")) as f:
+            tree = ast.parse(f.read())
+        found = [ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
+                 and [getattr(t, "id", None) for t in n.targets] == ["ONMESSAGE_RECEIVERS"]]
+        assert len(found) == 1, "tests/test_shell_source_check.py assigns ONMESSAGE_RECEIVERS once at its top level: %r" % found
+        return found[0]
 
     def _onmessage_writes(self, js):
         """{receiver or "receiver (onmessageerror)": count} for every onmessage or onmessageerror assignment in `js`."""
@@ -1812,6 +1825,12 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
                                     "each opens with the shell check (its spelling; the run test below reads the heads run): " + h)
                 self.assertEqual(self._onmessage_writes(js), self.SHIM_ONMESSAGE_RECEIVERS,
                                  "an onmessage assignment in the shim on a receiver SHIM_ONMESSAGE_RECEIVERS does not list, or a listed one gone")
+                shell = self._shell_onmessage_receivers()
+                over = {r: n for r, n in self._onmessage_writes(js).items() if n > shell.get(r, 0)}
+                self.assertEqual(over, {}, "the shim's onmessage writes are a subset of tests/test_shell_source_check.py's "
+                                 "ONMESSAGE_RECEIVERS %r: a receiver it does not list, or more writes than it counts (their "
+                                 "spelling; test_run_the_shim_registers_exactly_these_two_and_sets_no_handler_on_a_window "
+                                 "runs the shim)" % shell)
 
     def test_the_census_reads_each_spelling(self):
         for src in ('window.addEventListener("message",f)', "window.addEventListener('message',f)",
@@ -1837,12 +1856,14 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
                 self.assertEqual(self._onmessage_writes(src), {})
 
     # The stand-in browser the executed census below boots the shim in, set up before the core runs: an onmessage or
-    # onmessageerror handler written, by a set or a define, on any object a script reaches a window's handler through is
-    # heard. That is the pane's window by every name a script reaches it by (window, self, frames, which in a browser is
-    # the window itself, and document.defaultView, as bare names and as the window's members), the shell above it
-    # (window.parent, top), and the body element, whose
-    # handler is its window's. Not heard: a body reached by a query (the harness's document has no querySelector; the
-    # receiver census above reads that spelling)
+    # onmessageerror handler written, by a set or a define, on one of these objects is heard: the pane's window by the
+    # names the harness gives it (window, self, frames, which in a browser is the window itself, and
+    # document.defaultView, as bare names and as the window's members), the shell above it (window.parent, top), and
+    # document.body, whose handler is its window's. Not heard here: a write through globalThis, the bare global or the
+    # file's top-level this, since the harness's window is a var and not node's global (the receiver census above reads
+    # such a write when it spells onmessage, and tests/test_shell_source_check.py ServedPagesExecuted, which runs every
+    # served page with the window as the global, hears a write through globalThis there); and a body reached by a query
+    # (the harness's document has no querySelector; the receiver census above reads that spelling)
     HEARD_WINDOWS = r"""
 var HEARD=[];
 function heardHandlers(o){return new Proxy(o,{set:function(t,k,v){if(k==="onmessage"||k==="onmessageerror")HEARD.push(String(k));t[k]=v;return true;},
@@ -1852,25 +1873,36 @@ var self=window,frames=window,top=window.parent;window.self=window;window.frames
 document.defaultView=window;document.body=heardHandlers({});
 """
 
+    def _run_heard(self, scenario, plant=""):
+        """The shim run over HEARD_WINDOWS, with `plant` after it and ahead of the core: the one call the executed census
+        and its self-test both make, so the stand-in the self-test's plants are heard on is the one the census runs over."""
+        return _run(scenario, mid=self.HEARD_WINDOWS + plant + "\n")
+
     def test_run_the_shim_registers_exactly_these_two_and_sets_no_handler_on_a_window(self):
         # executed, so a listener in any spelling that reaches the window's addEventListener counts, and a handler written
         # on any road HEARD_WINDOWS hears, whether it happens at boot or on a road a pane's life drives (an open, a frame, a
-        # hide and a return, a watchdog tick, the timers, the dispatch flush, the shell's words)
-        r = _run(r"""
+        # hide and a return, a watchdog tick, the timers, the dispatch flush, the shell's words). Last, after both
+        # readings, the run writes a handler on the window, the shell above it and the body, and counts what HEARD took:
+        # the census ran over a stand-in that hears
+        r = self._run_heard(r"""
 function listeners(){return {n:(winL.message||[]).length,heads:(winL.message||[]).map(function(f){return String(f).slice(0,HEADLEN);}),
 messageerror:(winL.messageerror||[]).length,onmessage:typeof window.onmessage,heard:HEARD.slice()};}
 var atBoot=listeners();
 open();recv({type:"ka"});caps();word({test:true},"up");fireWin("message",{romp:"link",link:"up"});
 hide();NOW+=46000;show();tick();fireTimers();runFlushes();sock().readyState=3;sock().onclose&&sock().onclose({});fireTimers();tick();
-out({atBoot:atBoot,afterLife:listeners()});""".replace("HEADLEN", str(len(self.SHELL_HEAD))), mid=self.HEARD_WINDOWS)
+var afterLife=listeners();
+var armed=(function(){var n=HEARD.length;window.onmessage=null;top.onmessageerror=null;document.body.onmessage=null;return HEARD.length-n;})();
+out({atBoot:atBoot,afterLife:afterLife,armed:armed});""".replace("HEADLEN", str(len(self.SHELL_HEAD))))
+        self.assertEqual(r["armed"], 3, "the stand-in this census ran over heard a handler written on the window, on the shell "
+                                        "above it and on the body (HEARD_WINDOWS armed)")
         for when in ("atBoot", "afterLife"):
             with self.subTest(when=when):
                 self.assertEqual(r[when]["n"], 2, "the shim's window message listeners are these two")
                 self.assertEqual(r[when]["heads"], [self.SHELL_HEAD] * 2, "each opens with the shell check")
                 self.assertEqual(r[when]["messageerror"], 0, "no messageerror listener on the window")
                 self.assertEqual(r[when]["onmessage"], "undefined", "no onmessage handler on the window")
-                self.assertEqual(r[when]["heard"], [], "no onmessage or onmessageerror handler written on the window by any name, "
-                                                        "on the shell above it or on the body element")
+                self.assertEqual(r[when]["heard"], [], "no onmessage or onmessageerror handler written on the window by the names "
+                                                        "the stand-in hears, on the shell above it or on document.body")
 
     def test_the_executed_census_hears_a_handler_on_every_road_its_stand_in_drives(self):
         # each write planted ahead of the shim's core: the stand-in hears it (so the test above reds on it), and hears
@@ -1884,9 +1916,9 @@ out({atBoot:atBoot,afterLife:listeners()});""".replace("HEADLEN", str(len(self.S
                       "Object.defineProperty(window,'on'+'message',{value:function(e){}});",
                       "window.parent['onmessage'+'error']=function(e){};"):
             with self.subTest(plant=plant):
-                r = _run("out({heard:HEARD.slice()});", mid=self.HEARD_WINDOWS + plant + "\n")
+                r = self._run_heard("out({heard:HEARD.slice()});", plant)
                 self.assertNotEqual(r["heard"], [], "the stand-in heard the handler")
-        self.assertEqual(_run("out({heard:HEARD.slice()});", mid=self.HEARD_WINDOWS)["heard"], [], "and nothing unplanted")
+        self.assertEqual(self._run_heard("out({heard:HEARD.slice()});")["heard"], [], "and nothing unplanted")
 
 if __name__ == "__main__":
     unittest.main()
