@@ -286,6 +286,18 @@ class LinkProxy:
     the same port; stop() drops the link, joins every thread the splice started and fails naming any still alive at its
     bound. Every transition is stamped for the record.
 
+    The upstream socket's timeout is cleared once it connects, as the kernel's own relay clears it (kernel.py _remote_ws:
+    create_connection's timeout would otherwise cut the long-lived splice), so a pair stays up however long its remote side
+    is quiet, as it does through an ssh -L forward. Before that line the splice kept create_connection's 5 s timeout: the
+    pump reading the remote timed out after 5 s with no bytes and shut the pair, and under the remote kernel's 10 s
+    keepalive (KEEPALIVE_S, which no lab kernel changes) that cut came 5 to 10 s after the last frame other than a
+    keepalive. Every relay-socket close the old-hub records show outside the drop and the restart was that cut, on all
+    three pages at the same instant, and not the old bundle: each cut was a redial whose whole frame caught the old page
+    up, which is how the old-hub class then passed the visibility waits it now asserts run out. A cut coming up to 10 s
+    after the last frame is also the cause of the phase-B expiry recorded once at 20 s: late frames inside the phase put
+    the cut that would have caught the page up past the 20 s wait. LinkProxyEnds holds that a pair quiet for longer than
+    5 s is kept.
+
     The splice owns its threads and ends them in stop(), which tearDownClass calls on every exit path. The thread-stop
     census on main (tests/test_thread_stop_census.py) reads each start here as object-owned through stop() by the joins
     there, and would read it the same with the drop() call gone, though drop() is what makes the threads return; so
@@ -356,6 +368,7 @@ class LinkProxy:
             except OSError:
                 c.close()
                 continue
+            u.settimeout(None)   # create_connection's timeout would otherwise cut a pair whose remote side is quiet for 5 s (kernel.py _remote_ws clears it too)
             pair = (c, u)
             with self._lock:   # drop() clears _lsock and then sweeps _pairs under this lock: a pair it did not sweep sees it here
                 late = s is not self._lsock
@@ -1421,17 +1434,16 @@ class _LinkDrop(unittest.TestCase):
             self.assertEqual(tail, [], "the %s page kept dialing into the quiet tail before resume (dialing did not cease when the row went down): %r"
                              % (app, [self._kinds(s) or s["url"] for s in tail]))
 
-    def _assert_redialed_once_and_served_whole(self, k0, k1, caps, exactly=True):
-        """A relay socket per page dialed in [k0, k1), a redial by its terms, that opened and received a WHOLE keyed feed
-        as its first feed-family frame (the remote's client dict is per socket: it holds nothing to patch). `exactly`
-        pins ONE such socket (the new bundle's clean redial); False allows the old bundle's socket churn but still
-        pins that the FIRST socket that opened was served whole."""
+    def _assert_redialed_once_and_served_whole(self, k0, k1, caps):
+        """ONE relay socket per page dialed in [k0, k1), a redial by its terms, that opened and received a WHOLE keyed feed
+        as its first feed-family frame (the remote's client dict is per socket: it holds nothing to patch). One on either
+        bundle: the extra sockets the old-hub drives once showed here were the splice's 5 s idle cut (LinkProxy), not the
+        old bundle."""
         for app in self.apps:
             fresh = self._relay_socks(app, k0, k1)
             opened = [s for s in fresh if s["openAt"]]
             self.assertTrue(opened, "the %s page dialed a relay socket that opened between %s and %s: %r" % (app, k0, k1, [(s["url"], s["openAt"], s["closeAt"], s["code"]) for s in fresh]))
-            if exactly:
-                self.assertEqual(len(fresh), 1, "the %s page dialed ONE relay socket between %s and %s: %r" % (app, k0, k1, [(s["url"], s["openAt"], s["closeAt"], s["code"]) for s in fresh]))
+            self.assertEqual(len(fresh), 1, "the %s page dialed ONE relay socket between %s and %s: %r" % (app, k0, k1, [(s["url"], s["openAt"], s["closeAt"], s["code"]) for s in fresh]))
             s = opened[0]
             self._assert_dial_terms(s["url"], app, caps=caps, redial=True)
             f = self._first_feed_family(s)
@@ -1454,7 +1466,7 @@ class _LinkDrop(unittest.TestCase):
             self.assertEqual(bad, [], "every relay socket the %s page opened was served a WHOLE keyed feed first (%d opened, %d received a frame; a patch "
                                       "or feedDelta first is a patch onto a base the socket never held): %r" % (app, len(opened), len(with_frame), bad))
 
-    def _assert_every_wait_was_met(self):
+    def _assert_every_wait_was_met(self, frozen=()):
         """Every wait the driver placed (waitFor: the held sockets closing, the row leaving and returning to up, a fresh
         relay socket per page holding a whole frame, the local sockets reopening; and every visibility wait, waitVisible:
         a phase's card, todo and provisional row, and phase D's after the return) was met inside its timeout. An
@@ -1462,19 +1474,34 @@ class _LinkDrop(unittest.TestCase):
         assertion may still pass (the maintainer's round 1, fresh-3: a forced timeout gave 3 / 0 / 3 / 2 and five green tests). The
         visibility waits' expiries were swallowed until pass 6, so a phase whose cards never came left only a waitedMs
         at about the cap, which the gate legs read as a delivery; the driver now names each in out.timeouts with its
-        phase and in the phase's seen.expired. The driver records quiet()'s give-ups separately and they are not fatal."""
+        phase and in the phase's seen.expired. The driver records quiet()'s give-ups separately and they are not fatal.
+        `frozen` names the phases whose card wait must instead have run to its cap, once each and with budget left (the
+        old page's freeze, LinkDropOldLocal): every other wait was met, and a card wait of those phases that resolved reds
+        here as the change showing."""
         self._driver_ran()
-        self.assertEqual(self.result.get("timeouts"), [], "every wait the driver placed was met; the expired ones: %r (quiet gave up: %r)"
-                         % (self.result.get("timeouts"), self.result.get("quietGaveUp")))
+        timeouts = self.result.get("timeouts")
+        self.assertIsInstance(timeouts, list, "the driver recorded the waits that expired (out.timeouts): %r" % (timeouts,))
+        heads = ["phase %s: the card wait expired: " % p for p in frozen]   # waitVisible's entry; with the budget spent it reads otherwise
+        self.assertEqual([len([t for t in timeouts if t.startswith(h)]) for h in heads], [1] * len(heads),
+                         "the card wait of each of phases %r ran to its cap once, with budget left (the old page shows no change on a socket "
+                         "it holds, so a card wait that resolved is the change showing); the expired waits: %r" % (list(frozen), timeouts))
+        self.assertEqual([t for t in timeouts if not any(t.startswith(h) for h in heads)], [], "every %swait the driver placed was met; the expired ones: %r (quiet gave up: %r)"
+                         % ("other " if frozen else "", timeouts, self.result.get("quietGaveUp")))
 
-    def _assert_seen(self, seen, want_cards, todo=None, prompt=None, what="", waited=False):
+    def _assert_seen(self, seen, want_cards, todo=None, prompt=None, what="", waited=False, expired=()):
         """The visibles a read found. With `waited` the record is one waitVisible produced (a phase's seen, D's seenAfterReturn)
         and its expired list must be present and empty: the driver names there each visibility wait that ran to its cap (pass
         6), and a missing list is refused rather than read as empty, since an older driver's record cannot establish the
         outcome. Scoped to the waited reads (the maintainer's round 3, tests-1: phase D's after-return read was the one waitVisible record no
         reader checked, so a wait that expired with the read catching the cards and nothing in out.timeouts passed every test);
-        a visible() record (seenWhileDown, seenA, seenB, seenD) records no wait and carries no such list."""
-        if waited:
+        a visible() record (seenWhileDown, seenA, seenB, seenD) records no wait and carries no such list. `expired` names the
+        waits a waited read must have run to their cap, and no others: the old page's freeze, whose card wait runs out with no
+        card shown (LinkDropOldLocal), so a wait that resolved there reds as the change showing."""
+        if waited and expired:
+            self.assertEqual(seen.get("expired"), list(expired), "%s: the visibility waits behind this read that ran to their cap are the %s wait and no other (a "
+                                                                 "wait that resolved is the change showing; a record with no expired list cannot say which it was): %r"
+                                                                 % (what, " and ".join(expired), seen))
+        elif waited:
             self.assertEqual(seen.get("expired"), [], "%s: the visibility waits behind this read all resolved before their cap (the driver records each wait that "
                                                       "expired in seen.expired; a record with no expired list cannot say which it was): %r" % (what, seen))
         self.assertEqual(seen.get("cards"), [want_cards] * len(seen.get("cards") or []), "%s: the notice cards on the hub's feed page (per card, in posting order): %r" % (what, seen))
@@ -1579,39 +1606,40 @@ class _LinkDrop(unittest.TestCase):
     def _link_up_phases(self):
         return ("A", "B", "C") if self.local_drop else ("A", "B")
 
+    def _link_up_delivery_ms(self, p):
+        """Phase p's delivery with the link up, the margin leg's yardstick, on this checkout's bundle: the driver's seen.waitedMs,
+        from the change's post returning to the last of its visibles on the pages (waited for concurrently). A phase's waitedMs
+        is a delivery only when every wait behind it RESOLVED: a wait that ran to its cap leaves waitedMs at about wait_ms with
+        the visible absent, and taking that as the yardstick makes the margin pin `dwell >= DOWN_WINDOW_MARGIN x cap`, true by
+        the relation pin's arithmetic and saying nothing about the drive (pass 6: the driver swallowed those timeouts and the
+        leg passed at 42 >= 40). So the phase must record an empty seen.expired (the driver's per-wait outcomes; a record with
+        none cannot establish them and is refused) and show its visibles on every page before its waitedMs is taken; a
+        resolved wait ended before its cap, so a delivery at the cap is then impossible by construction and DOWN_READ_ROOM_MS
+        covers the reads alone. LinkDropOldLocal measures its own (the old page shows nothing on a socket it holds)."""
+        rec = self._phase(p)
+        seen = rec.get("seen") or {}
+        self.assertEqual(seen.get("expired"), [], "phase %s's visibility waits all resolved before their cap (the driver records each wait that expired in "
+                                                  "seen.expired; a wait that ran to its cap is not a delivery, and a record with no expired list cannot say which "
+                                                  "it was), so its waitedMs is a delivery the down window can be measured against: %r" % (p, seen))
+        self._assert_seen(seen, True, todo=("todo" in self.changes) or None, prompt=((rec.get("change") or {}).get("prompt") if "append" in self.changes else None),
+                          what="phase %s's changes on every page (the delivery the down window is measured against)" % p, waited=True)
+        return seen.get("waitedMs")
+
     def _assert_the_down_window_outlasts_the_drives_slowest_delivery(self):
         """The gate's control in TIME (the maintainer's round 2's ruling): the while-down read of phase D came at least DOWN_WINDOW_MARGIN times
-        this drive's own slowest link-up delivery after D's post ended. A phase's delivery is the driver's seen.waitedMs, from
-        the change's post returning to the last of its visibles on the pages (waited for concurrently), taken over EVERY
-        link-up phase (A, B and C with the local drop; which is slowest moves from drive to drive with the churn's timing against
-        the notices, so no one phase stands for the rest), so the yardstick is this drive's
-        and this bundle's: on the old bundle a change shows only at the next churned socket's whole frame, 6 to 19 s. Without
+        this drive's own slowest link-up delivery after D's post ended. A phase's delivery is the class's _link_up_delivery_ms
+        (the visibles' seen.waitedMs on this checkout's bundle; the Outline's feed patch on the old one, whose page shows no
+        change without a redial), taken over EVERY link-up phase (A, B and C with the local drop; which is slowest moves from
+        drive to drive, so no one phase stands for the rest), so the yardstick is this drive's and this bundle's. Without
         this pin the two temporal pins hold for a post at the END of the dwell (an 18 ms window, both of the maintainer's round-2 voters), and
         "absent while down" cannot be told from "no time passed". The span is read to `settled`, the mark the while-down read
-        follows (resume is some 20 ms later). A phase's waitedMs is a delivery only when every wait behind it RESOLVED: a
-        wait that ran to its cap leaves waitedMs at about wait_ms with the visible absent, and taking that as the yardstick
-        makes this pin `dwell >= DOWN_WINDOW_MARGIN x cap`, true by the relation pin's arithmetic and saying nothing about the
-        drive (pass 6: the driver swallowed those timeouts and the leg passed at 42 >= 40). So every phase read here must
-        record an empty seen.expired (the driver's per-wait outcomes; a record with none cannot establish them and is
-        refused) and show the phase's visibles on every page, both classes, before its waitedMs is taken; a resolved wait
-        ended before its cap, so a delivery at the cap is then impossible by construction and DOWN_READ_ROOM_MS covers the
-        reads alone. On the old-hub class this is also where phase A's visibles are asserted, which no test did before.
-        Returns (span_s, deliveries) for the record."""
+        follows (resume is some 20 ms later). Returns (span_s, deliveries) for the record."""
         m = self._marks()
         made = [c for c in self.changes_made if c.get("phase") == "D"]
         self.assertEqual(len(made), 1, "the control door made phase D's change bundle once: %r" % ([c.get("phase") for c in self.changes_made],))
-        todo = ("todo" in self.changes) or None
-        for p in self._link_up_phases():
-            rec = self._phase(p)
-            seen = rec.get("seen") or {}
-            self.assertEqual(seen.get("expired"), [], "phase %s's visibility waits all resolved before their cap (the driver records each wait that expired in "
-                                                      "seen.expired; a wait that ran to its cap is not a delivery, and a record with no expired list cannot say which "
-                                                      "it was), so its waitedMs is a delivery the down window can be measured against: %r" % (p, seen))
-            self._assert_seen(seen, True, todo=todo, prompt=((rec.get("change") or {}).get("prompt") if "append" in self.changes else None),
-                              what="phase %s's changes on every page (the delivery the down window is measured against)" % p, waited=True)
-        deliveries = {p: (self._phase(p).get("seen") or {}).get("waitedMs") for p in self._link_up_phases()}
+        deliveries = {p: self._link_up_delivery_ms(p) for p in self._link_up_phases()}
         self.assertTrue(deliveries and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in deliveries.values()),
-                        "every link-up phase recorded its delivery (seen.waitedMs): %r" % (deliveries,))
+                        "every link-up phase recorded its delivery: %r" % (deliveries,))
         slowest = max(deliveries, key=deliveries.get)
         slowest_s = deliveries[slowest] / 1000.0
         span_s = m["settled"] / 1000.0 - made[0]["t1"]
@@ -1774,36 +1802,43 @@ class LinkDropOldLocal(_LinkDrop):
     change bundle is completed notice cards ALONE (no todo, no needs-you): a todo moves the frame's remainder and the
     size guard would send a whole frame, catching the old page up and hiding the freeze (the corners lab's docstring).
 
+    The freeze, across the link's events: on a relay socket the page holds, the old feed page shows no change. Each
+    link-up phase's cards (A before the drop, B on the socket the link's return dialed, C on the socket the restart's
+    redial dialed) do not show within wait_ms: the card wait runs to its cap with no card on the page, and no relay socket
+    closes or is dialed inside the phase. Only a redial's whole frame catches the page up: phase A's cards show after the
+    return's redial, phase B's after the restart's, phase D's after the return. A card that shows on a held socket reds
+    the class. Until the splice's upstream timeout was cleared (LinkProxy) the lab cut every quiet pair after 5 s, each
+    cut a redial whose whole frame caught the old page up 6 to 19 s after a change, and this class asserted those
+    deliveries; they were the lab's cut, not the bundle's behaviour, and the extra relay sockets its records show are
+    that cut too.
+
     The delta-unapplied rows are the old bundle's storm. This lab reads it across the mid-session events: it is one
     row PER remote feed patch, it STOPS while the link is down (no patch arrives, so no row: the storm is gated on the
-    link, established by phase D, a change due while the link was down that reached no page, crossed as no frame and
-    filed no row until the return's whole frame carried it, the while-down read coming DOWN_WINDOW_MARGIN times this
-    drive's slowest link-up delivery after the post, so the old bundle's own 6 to 19 s catch-up latency cannot pass for
-    the gate), and it RESUMES after each redial's whole frame (the whole
-    frame catches the page up once; the next patch freezes again). The class pins the correspondence, not a count: per
-    window and over the whole drive, the rows equal the Outline's own feed slot patches by rev, non-empty in every
-    phase unless a notice post found the Outline without an open, served relay socket and a whole keyed feed frame then
-    caught it up inside the phase after the bundle's last notice could have been posted (the old bundle's socket churn
-    absorbing the phase's notices: no patch, so no row; the allowance is keyed on that gap and that frame,
-    _outline_caught_up_whole) and empty while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the pass-2
+    link, established by phase D, a change due while the link was down that crossed as no frame and filed no row until
+    the return's whole frame carried it, the while-down read coming DOWN_WINDOW_MARGIN times this drive's slowest link-up
+    patch delivery after the post; on this page a card's absence while down is also the freeze's, so here the gate is
+    read on the frames and the rows), and it RESUMES after each redial's whole frame (the whole frame catches the page
+    up once; the next patch freezes it again). The class pins the correspondence, not a count: per window and over the
+    whole drive, the rows equal the Outline's own feed slot patches by rev, non-empty in every phase unless a notice post
+    found the Outline without an open, served relay socket and a whole keyed feed frame then caught it up inside the phase
+    after the bundle's last notice could have been posted (the allowance _outline_caught_up_whole keys on that gap and
+    that frame; the splice's idle cut made such gaps, and with it gone a socket closing inside a phase reds the freeze
+    test) and empty while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the pass-2
     head): 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C; a reviewer's drive at the head the maintainer's round 1 ruled gave
-    3 / 0 / 1 / 3 when socket churn inside phase B absorbed two notices into whole frames (the module docstring gives
-    the recorded population). A relay redial does not end the storm but restarts it, so with a link that comes and goes
-    the storm looks intermittent and self-healing when it is neither; this class keeps that evidence beside the new
-    bundle's zero. The catch-up half IS asserted on the old feed
-    page: phase B's cards show after the link's return redial and still show after the local restart's, phase C's show
-    after that redial, and phase D's (posted while the link was down) show after the return, so a redial's whole frame
-    catches the old page up and the next patch freezes it again. The steady-state freeze itself (a card that never
-    shows while one socket holds) is the corners lab's job; the storm (the rows) is this lab's observable, and the new
-    bundle (LinkDropBothNew) files ZERO of them across the same drive. The redial helper runs with exactly=False for
-    the old bundle's socket churn."""
+    3 / 0 / 1 / 3 when the splice's idle cut inside phase B absorbed two notices into whole frames (the module docstring
+    gives the recorded population). A relay redial does not end the storm but restarts it, so with a link that comes and
+    goes the storm looks intermittent and self-healing when it is neither; this class keeps that evidence beside the new
+    bundle's zero. The freeze with no link event at all is the corners lab's; the storm (the rows) and the freeze across
+    the link's events are this lab's observables, and the new bundle (LinkDropBothNew) files ZERO rows and shows every
+    phase's change across the same drive."""
     changes = ("notice",)
     caps = False               # the old bundle dials no caps (read from the dial URL)
 
     # What a skip of this class leaves unexecuted, and what still runs in the same CI job: the skip reasons carry it, so a
     # runner reading "skipped" knows which claim went untested (the maintainer's round 1, tests-4).
-    UNEXECUTED = ("the old bundle's storm evidence (one delta-unapplied row per feed slot patch the Outline received, none "
-                  "with a change due while the link was down, restarted by each redial's whole frame) goes unexecuted; the "
+    UNEXECUTED = ("the old bundle's freeze across the link's events (no change shown on a socket the page holds until a redial's "
+                  "whole frame) and its storm evidence (one delta-unapplied row per feed slot patch the Outline received, none "
+                  "with a change due while the link was down, restarted by each redial's whole frame) go unexecuted; the "
                   "mechanisms PR 815 fixed are pinned in the same CI job by ui/webview/federation-remote-view-delta.test.ts, "
                   "federation-remote-feed-delta.test.ts and federation-reconnect.test.ts (npm test), and LinkDropBothNew "
                   "drives the link drop and the hub restart against this checkout")
@@ -1826,22 +1861,66 @@ class LinkDropOldLocal(_LinkDrop):
                                 "from before PR 815, a built checkout named by the first knob or the private clone this class mints at %s under the "
                                 "second, so %s" % (OLD_HUB_SHA[:9], cls.UNEXECUTED))
 
+    def _link_up_delivery_ms(self, p):
+        """Phase p's delivery with the link up on the old bundle, the margin leg's yardstick: from the change's post returning
+        (the change record's t1) to the LAST feed slot patch carrying a card (_carries_cards) that the Outline's relay
+        sockets received in the phase's window (_outline_feed_patches, padded as it pads), floored at 0 (the remote can push
+        a patch before the post's answer reaches the control door). The old page shows no change on a socket it holds
+        (test_without_a_redial_the_old_page_does_not_show_the_change), so no visible has a link-up delivery here to measure:
+        what the link carries to this page is the patch, the one each storm row is filed for, and phase D crossing as no
+        frame and filing no row while the link was down is the gate this yardstick times. A phase with no such patch fails
+        naming it."""
+        made = [c for c in self.changes_made if c.get("phase") == p]
+        self.assertEqual(len(made), 1, "the control door made phase %s's change bundle once: %r" % (p, [c.get("phase") for c in self.changes_made]))
+        patches = [f for f in self._outline_feed_patches(p + "0", p + "1") if self._carries_cards(f)]
+        self.assertTrue(patches, "phase %s: a feed slot patch carrying a card reached the Outline's relay socket (the link-up delivery the down window is measured "
+                                 "against on the old bundle); the Outline's relay frames: %r"
+                                 % (p, [(f["t"], f["slot"], f.get("coll"), f["at"]) for s in self._page("fleet")["socks"] if s["relay"] for f in s["frames"]]))
+        return max(0, int(round(max(f["at"] for f in patches) - made[0]["t1"] * 1000)))
+
     def test_the_link_dropped_and_the_pages_stopped_dialing_while_the_row_was_down(self):
         self._assert_link_dropped_and_the_row_went_down()
 
     def test_dials_carry_no_caps_and_the_redial_is_served_whole(self):
         for app in self.apps:
             self._assert_dial_terms(self._relay_socks(app)[0]["url"], app, caps=False, redial=False)
-        # the old bundle churns its remote socket, so the return's redial is one of several sockets in the window; the
-        # FIRST that opened was served a whole keyed feed (the whole-frame road the old page depends on)
-        self._assert_redialed_once_and_served_whole("resume", "restart" if self.local_drop else "end", caps=False, exactly=False)
+        # the return's redial is one relay socket per page, and its first feed-family frame is a whole keyed feed (the
+        # whole-frame road the old page depends on)
+        self._assert_redialed_once_and_served_whole("resume", "restart" if self.local_drop else "end", caps=False)
         if self.local_drop:
-            # …and the local restart's redial the same: the first socket that opened between the restart and phase C's
-            # first change was served whole (the maintainer's round 1, fresh-3: a partial return in that window went unread)
-            self._assert_redialed_once_and_served_whole("restart", "C0", caps=False, exactly=False)
+            # …and the local restart's redial the same: one socket between the restart and phase C's first change, served
+            # whole (the maintainer's round 1, fresh-3: a partial return in that window went unread)
+            self._assert_redialed_once_and_served_whole("restart", "C0", caps=False)
 
-    def test_every_wait_the_driver_placed_was_met(self):
-        self._assert_every_wait_was_met()
+    def test_every_wait_was_met_but_each_phases_card_wait_which_ran_to_its_cap(self):
+        """Every wait the driver placed was met (_assert_every_wait_was_met) but one per link-up phase: that phase's card
+        wait, which runs to its cap once, with budget left, because the old page shows no change on a socket it holds
+        (test_without_a_redial_the_old_page_does_not_show_the_change reads the same freeze on the page). A card wait that
+        resolved reds here as the change showing."""
+        self._assert_every_wait_was_met(frozen=self._link_up_phases())
+
+    def test_without_a_redial_the_old_page_does_not_show_the_change(self):
+        """The pre-815 defect, exhibited: each link-up phase's cards were posted while every page held one relay socket, which
+        stayed open through the phase with no relay socket dialed inside it, and the old feed page showed none of them: the
+        card wait ran to its cap (seen.expired names it) and no card was on the page at the read. Phase B's is the change
+        after the link's return, on the socket the return dialed; phase A's came before the drop and phase C's after the
+        restart's redial. A card that showed or a card wait that resolved reds here, and so does a relay socket closed or
+        dialed inside a phase (the splice's former 5 s idle cut did both, and its redials caught the page up: LinkProxy). The
+        catch-up is test_each_redials_whole_frame_caught_the_old_page_up's."""
+        m = self._marks()
+        for p in self._link_up_phases():
+            t0, t1 = m[p + "0"], m[p + "1"]
+            for app in self.apps:
+                socks = self._relay_socks(app)
+                held = [s["i"] for s in socks if s["openAt"] and s["openAt"] <= t0 and (s["closeAt"] is None or s["closeAt"] >= t1)]
+                inside = [s["i"] for s in socks if t0 <= s["dialedAt"] <= t1]
+                self.assertEqual((len(held), inside), (1, []), "phase %s on the %s page: one relay socket open from the phase's first change to its end and none "
+                                 "dialed inside it, so no redial could catch the page up (held %r, dialed inside %r): %r"
+                                 % (p, app, held, inside, [(s["i"], s["dialedAt"], s["openAt"], s["closeAt"]) for s in socks]))
+        self._assert_seen(self._phase("A")["seen"], False, what="phase A's cards on the old feed page before the drop, on the socket it held", waited=True, expired=("card",))
+        self._assert_seen(self._phase("B")["seen"], False, what="phase B's cards on the old feed page after the link's return, on the socket the return dialed", waited=True, expired=("card",))
+        if self.local_drop:
+            self._assert_seen(self._phase("C")["seen"], False, what="phase C's cards on the old feed page after the restart, on the socket its redial dialed", waited=True, expired=("card",))
 
     def test_the_old_bundle_drops_every_remote_patch_and_asks_the_local_kernel(self):
         """The freeze signature the corners lab pins, read here in phase A (steady, link up): one outline/delta-unapplied
@@ -1852,10 +1931,10 @@ class LinkDropOldLocal(_LinkDrop):
         ua = self._outline_unapplied(A)
         self.assertTrue(len(ua) >= 1 or self._outline_caught_up_whole("A0", "A1"),
                         "the old Outline filed a delta-unapplied row for the remote feed patches in phase A, or a notice post found it without an open, "
-                        "served relay socket and a whole keyed feed frame caught it up there after the bundle's last notice could have been posted (the "
-                        "old bundle's socket churn absorbing the notices; a frame before that, the ready-time frame included, does not count, nor does "
-                        "one while every post found an open, served socket); rows by kind: %r"
-                        % (self._rows_by_kind(A),))
+                        "served relay socket and a whole keyed feed frame caught it up there after the bundle's last notice could have been posted (a "
+                        "socket closed inside the phase and its retry's whole frame absorbing the notices, as the splice's former idle cut did; a frame "
+                        "before that, the ready-time frame included, does not count, nor does one while every post found an open, served socket); rows "
+                        "by kind: %r" % (self._rows_by_kind(A),))
         self.assertTrue(all((d or {}).get("slot") == "feed" for d in ua), "…each naming the feed slot: %r" % (ua,))
         self.assertTrue(self._sends("fleet", "local", "needSlot"), "…and posted its needSlot to the LOCAL kernel")
         # the remote served that page through the slot path (the corners lab's pin on its old-local class); the counter
@@ -1886,29 +1965,34 @@ class LinkDropOldLocal(_LinkDrop):
             self.assertEqual(self._sends(app, "relay", "needFullFeed"), [])
 
     def test_each_redials_whole_frame_caught_the_old_page_up(self):
-        """The catch-up half of the headline, asserted (the maintainer's round 1, extra7-3): the whole frame each redial is served shows the
-        old feed page the cards, so the old page freezes on patches and is caught up by whole frames, not frozen for
-        good. Phase B's own cards after the link's return redial, still there after the local restart's redial, and
-        phase C's after that one (phase A's would have rendered before the drop, so they say nothing about a redial)."""
-        self._assert_seen(self._phase("B")["seen"], True, what="phase B's cards on the old feed page after the link's return redial", waited=True)
+        """The catch-up half (the maintainer's round 1, extra7-3): the whole frame each redial is served shows the old feed
+        page the cards its held socket froze, so the old page freezes on patches and is caught up by whole frames, not
+        frozen for good. Phase A's cards, which did not show on the socket held before the drop, show after the link's
+        return redial; phase B's, which did not show on the socket that redial dialed, show after the local restart's
+        redial, phase A's still with them; phase D's, posted while the link was down, show after the return (the gate
+        leg's waited read) and still after the restart's redial. Phase C's have no redial after them and stay frozen
+        (test_without_a_redial_the_old_page_does_not_show_the_change)."""
+        self._assert_seen(self._phase("B")["seenA"], True, what="phase A's cards on the old feed page after the link's return redial")
         if self.local_drop:
             C = self._phase("C")
-            self._assert_seen(C["seenB"], True, what="phase B's cards still shown after the local restart's redial")
-            self._assert_seen(C["seen"], True, what="phase C's cards after the local restart's redial", waited=True)
+            self._assert_seen(C["seenB"], True, what="phase B's cards on the old feed page after the local restart's redial")
+            self._assert_seen(C["seenA"], True, what="phase A's cards still shown after the local restart's redial")
+            self._assert_seen(C["seenD"], True, what="phase D's cards still shown after the local restart's redial")
 
     def test_every_relay_socket_that_opened_was_served_whole_first(self):
-        """The old bundle churns its remote socket every few seconds; every socket that opened, churned or lab-caused, was
-        served a whole keyed feed first."""
+        """Every relay socket that opened, the first dials and the two lab-caused redials, was served a whole keyed feed
+        first (the further sockets of the old-hub records made before the splice's upstream timeout was cleared were its
+        idle cut's redials, served whole too)."""
         self._assert_every_opened_relay_socket_was_served_whole_first()
 
     def test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole(self):
-        """The gate's own leg on the old bundle: phase D's cards, posted with the row down, reach no page and file no row
-        while the link is down, read DOWN_WINDOW_MARGIN times this drive's slowest link-up delivery after the post (the old
-        bundle shows a change only at the next churned socket's whole frame, 6 to 19 s, so a shorter read would be the
-        page's latency, not the gate); the return's whole frame carries them (visible after the return, no patch carrying a
-        card and no row for one between the return and phase B's first change; a ledgers attach and the row this bundle
-        files for it are allowed), and phase B's patches then file rows again (the storm test's phase B equality). A
-        pause in the storm with a change due is the link, not the page."""
+        """The gate's own leg on the old bundle: phase D's cards, posted with the row down, cross as no frame and file no row
+        while the link is down, the while-down read taken DOWN_WINDOW_MARGIN times this drive's slowest link-up patch
+        delivery after the post (_link_up_delivery_ms: on this page a card's absence while down is also the freeze's, so the
+        gate is read on the frames and the rows and timed by the Outline's patch, not by a visible); the return's whole frame
+        carries them (visible after the return, no patch carrying a card and no row for one between the return and phase B's
+        first change; a ledgers attach and the row this bundle files for it are allowed), and phase B's patches then file
+        rows again (the storm test's phase B equality). A pause in the storm with a change due is the link, not the page."""
         self._assert_change_due_while_down_crossed_nothing_and_the_return_carried_it_whole()
 
 
@@ -1917,7 +2001,10 @@ class LinkProxyEnds(unittest.TestCase):
     the splice's connect with nobody accepting, so these run wherever the module is collected, CI's Python cells included.
     stop() is held to end every thread the splice started, drop() being the call that releases them (main's thread-stop
     census reads the joins in stop() and would read them the same with the drop() call gone), and to fail naming any
-    thread still alive at its bound."""
+    thread still alive at its bound; and a pair is held to stay up through a quiet spell longer than the 5 s timeout its
+    upstream connect is handed."""
+
+    QUIET_S = 6.0   # a quiet spell longer than the 5 s timeout the splice's upstream connect is handed
 
     def _target(self):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1958,6 +2045,29 @@ class LinkProxyEnds(unittest.TestCase):
         self.assertEqual([t.name for t in threads if t.is_alive()], [], "stop() returned with splice threads alive")
         self.assertEqual(c.recv(1), b"", "the client's end of the pair reads EOF after stop()")
 
+    def test_a_pair_whose_remote_side_is_quiet_past_five_seconds_is_kept(self):
+        """The lab's idle cut, held absent: a pair spliced and carrying bytes both ways, then QUIET_S with nothing from either
+        side, and the pair is still registered and carries a byte each way. The splice's upstream socket kept
+        create_connection's 5 s timeout until it was cleared after the connect, as kernel.py _remote_ws clears the relay's,
+        and with it the pump reading the remote timed out and shut the pair after 5 s of silence; in the old-hub drives that
+        cut made every relay-socket close outside the drop and the restart, and its redials caught the old page up."""
+        srv = self._target()
+        p = LinkProxy(srv.getsockname()[1])
+        self.addCleanup(p.stop)
+        p.listen()
+        c, u = self._spliced(p, srv)
+        with p._lock:
+            ups = [pair[1].gettimeout() for pair in p._pairs]
+        self.assertEqual(ups, [None], "the spliced pair's upstream socket carries no timeout once connected")
+        time.sleep(self.QUIET_S)
+        with p._lock:
+            pairs = len(p._pairs)
+        self.assertEqual(pairs, 1, "the pair is still spliced after %.1f s with nothing from its remote side (an idle cut shut it)" % self.QUIET_S)
+        u.sendall(b"z")
+        self.assertEqual(c.recv(1), b"z", "the remote side's byte crosses after the quiet spell")
+        c.sendall(b"w")
+        self.assertEqual(u.recv(1), b"w", "the client's byte crosses after the quiet spell")
+
     def test_stop_fails_naming_every_thread_alive_at_its_bound(self):
         """With the release skipped (drop() made a no-op on this instance), the accept loop never sees a drop and outlives
         the joins: stop() raises at its bound naming the thread, where a timed join that returned in silence would let the
@@ -1980,7 +2090,7 @@ class LinkProxyEnds(unittest.TestCase):
         srv = self._target()
         p = LinkProxy(srv.getsockname()[1])
         self.addCleanup(LinkProxy.drop, p)
-        p.STOP_BOUND_S = 2.0   # under the upstream socket's 5 s timeout, which would otherwise end the pumps by itself
+        p.STOP_BOUND_S = 2.0   # the failure this test exists to catch comes at the bound: a late pair's pumps block on sockets nobody shuts
         at_lock, swept = threading.Event(), threading.Event()
         p._lock = _GatedLock(at_lock, swept)
         release = p.drop
@@ -2003,7 +2113,8 @@ class LinkProxyEnds(unittest.TestCase):
         """The same window across drop() and resume(): the loop took the connection on the listener the drop closed, and
         when it registers the pair a new listener is live and _down is clear again. The pair belongs to the dead
         listener and is closed, not spliced across the drop (the stray frame the accept loop's comment names). The
-        client's read is bounded under the upstream socket's 5 s timeout, which would end a spliced pair by itself."""
+        client's read is bounded at 2 s: spliced, the pair would carry nothing and the read would time out rather than
+        read EOF."""
         srv = self._target()
         p = LinkProxy(srv.getsockname()[1])
         self.addCleanup(p.stop)

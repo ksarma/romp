@@ -59,7 +59,11 @@ whole keyed feed frame after the bundle's last notice, over a synthetic record, 
 miss with the frame present (the maintainer's round 3: the frame alone excused most recorded phase windows; the census, its figures, its
 population and its drive are in _outline_caught_up_whole's docstring, one derivation, and are not repeated here); and the
 gate's control in time takes a phase's waitedMs as a delivery only when every wait behind it resolved and its visibles
-showed, over a synthetic record for each class (pass 6: a wait that ran to its cap measured as a delivery at the cap).
+showed, over a synthetic record of the new-bundle class (pass 6: a wait that ran to its cap measured as a delivery at the
+cap); and the old-hub class, over a synthetic record shaped as its drives are once the splice keeps a quiet pair, times
+that gate by the Outline's last card-carrying patch in each phase (its page shows no change on a socket it holds) and
+holds the freeze: a card wait that resolved, cards on the page, or a relay socket closed or dialed inside a phase (the
+splice's former 5 s idle cut) reds its freeze and waits tests.
 
 Synthetic: no kernel, no browser; stub classes over scratch directories.
 """
@@ -1120,13 +1124,12 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertGreaterEqual(sum(1 for _, _, w in sites if w), 7, "the waited sites the served module had at the pass-9 head (a site removed is read here): %r" % (sites,))
 
     def test_the_margin_leg_takes_no_expired_or_unshown_wait_as_a_delivery(self):
-        """The gate's control in time (_assert_the_down_window_outlasts_the_drives_slowest_delivery) reads a phase's
-        seen.waitedMs as this drive's delivery. Pass 6 found that a waitVisible wait that TIMED OUT left waitedMs at about
-        wait_ms with no other trace (the driver swallowed the TimeoutError; out.timeouts held only budget.waitFor's
-        expiries), so the yardstick became the cap and the leg passed at 42 >= 2 x 20.0x by the relation pin's arithmetic
-        with the true delivery unknown; on the old-hub class phase A's visibles were asserted nowhere, so an old-hub drive
-        whose phase-A churn came past 20 s was green. Over a synthetic record for each class with a 42.005 s down window
-        (the recorded span): every wait resolved and the slowest delivery 19,900 ms passes and is measured; then in each
+        """The gate's control in time (_assert_the_down_window_outlasts_the_drives_slowest_delivery) reads, on this checkout's
+        bundle, a phase's seen.waitedMs as this drive's delivery (_link_up_delivery_ms). Pass 6 found that a waitVisible wait
+        that TIMED OUT left waitedMs at about wait_ms with no other trace (the driver swallowed the TimeoutError; out.timeouts
+        held only budget.waitFor's expiries), so the yardstick became the cap and the leg passed at 42 >= 2 x 20.0x by the
+        relation pin's arithmetic with the true delivery unknown. Over a synthetic record of LinkDropBothNew with a 42.005 s
+        down window (the recorded span): every wait resolved and the slowest delivery 19,900 ms passes and is measured; then in each
         link-up phase in turn, a wait that expired with the visibles absent (waitedMs 20,012), the same with the visibles
         present (the card attached inside the read gap: an honest 20.0x s, refused all the same, since the leg keys on the
         wait's outcome and not on a read that happened to catch it), an older driver's record with no expired list and the
@@ -1142,55 +1145,158 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         cell is derived from the constant, so it moves with it and catches a deleted or inverted bound but not a lowered constant,
         and the floor on DOWN_WINDOW_MARGIN in test_the_arithmetic_and_the_cap_it_is_chosen_against catches the lowered constant but
         not a deleted bound. No passing sibling at the bound itself: int() truncation of the product would make such a cell red for
-        arithmetic reasons rather than for the property."""
+        arithmetic reasons rather than for the property. The old-hub class measures another delivery, since its page shows no
+        change on a socket it holds: the next test pins it."""
         span_ms = 42005                     # settled less phase D's t1: 42.004 to 42.010 s over the recorded head drives
         d_t1 = 2_000_000.0                  # phase D's post end, in the control door's seconds
         settled = int(d_t1 * 1000) + span_ms
-        for cls in (L.LinkDropBothNew, L.LinkDropOldLocal):
-            self.assertTrue(cls.local_drop, "both classes drive the local drop, so A, B and C are the phases the yardstick reads")
+        cls = L.LinkDropBothNew
+        self.assertTrue(cls.local_drop, "the class drives the local drop, so A, B and C are the phases the yardstick reads")
 
+        class Rec(cls):
+            driver_error = None
+
+        def change(p):
+            return {"phase": p, "prompt": "synthetic prompt %s" % p, "noticeKeys": ["k1", "k2", "k3"], "noticeRevs": [1, 2, 3]}
+
+        def seen(waited, p, shown=True, expired=(), key=True):
+            v = {"cards": [shown] * 3, "waitedMs": waited}
+            if "todo" in cls.changes:
+                v["todo"] = shown
+            if "append" in cls.changes:
+                v["prov"] = change(p)["prompt"] if shown else "the row before the change"
+            if key:
+                v["expired"] = list(expired)
+            return v
+
+        def record(settled=settled, **over):
+            Rec.result = {"marks": {"settled": settled, "resume": settled + 20, "end": settled + 60000}, "died": None, "timeouts": [],
+                          "phases": {p: {"change": change(p), "seen": over.get(p) or seen(1000 * (i + 1), p)} for i, p in enumerate("ABC")}}
+            Rec.changes_made = [change(p) for p in "ABC"] + [{"phase": "D", "t0": d_t1 - 2.0, "t1": d_t1, "noticeKeys": ["k1", "k2", "k3"]}]
+            return Rec("test_every_wait_the_driver_placed_was_met")   # an instance for the helper; the test method is never run
+        span_s, deliveries = record(C=seen(19900, "C"))._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+        self.assertAlmostEqual(span_s, span_ms / 1000.0, places=3, msg="%s: the leg read the window from phase D's post end to settled" % cls.__name__)
+        self.assertEqual(deliveries, {"A": 1000, "B": 2000, "C": 19900}, "%s: every wait resolved and shown, so every phase's waitedMs is a delivery and the slowest is C's" % cls.__name__)
+        for X in "ABC":
+            cells = [("a wait that expired with the visibles absent", seen(20012, X, shown=False, expired=["card"]), "resolved before their cap"),
+                     ("a wait that expired though the read caught the card", seen(20012, X, shown=True, expired=["card"]), "resolved before their cap"),
+                     ("an older driver's record with no expired list, visibles shown", seen(20012, X, shown=True, key=False), "resolved before their cap"),
+                     ("a resolved wait whose read found nothing", seen(20012, X, shown=False, expired=[]), "phase %s's changes" % X)]
+            for why, v, token in cells:
+                with self.assertRaises(AssertionError, msg="%s: %s in phase %s must fail the margin leg instead of measuring the cap" % (cls.__name__, why, X)) as cm:
+                    record(**{X: v})._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+                self.assertIn("phase %s" % X, str(cm.exception), "%s: %s: the failure names the phase: %s" % (cls.__name__, why, cm.exception))
+                self.assertIn(token, str(cm.exception), "%s: %s: the failure says why: %s" % (cls.__name__, why, cm.exception))
+            span_s, deliveries = record(**{X: seen(20012, X, shown=True, expired=[])})._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+            self.assertEqual(deliveries[X], 20012, "%s: a resolved wait at the cap's edge with the visibles shown is a delivery in phase %s (the reads after the wait)" % (cls.__name__, X))
+        # the bound: every wait resolved and shown, the slowest delivery 19,900 ms, the window one millisecond under the margin times it
+        under = int(d_t1 * 1000) + int(L.DOWN_WINDOW_MARGIN * 19900) - 1
+        with self.assertRaises(AssertionError, msg="%s: a window under DOWN_WINDOW_MARGIN times the slowest delivery must fail the inequality" % cls.__name__) as cm:
+            record(settled=under, C=seen(19900, "C"))._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+        self.assertIn("widen down_dwell_ms, never the margin", str(cm.exception), "%s: the inequality's own words: %s" % (cls.__name__, cm.exception))
+        self.assertIn("phase C", str(cm.exception), "%s: the failure names the slowest phase: %s" % (cls.__name__, cm.exception))
+
+    def test_the_old_hub_class_asserts_the_freeze_and_times_its_gate_by_the_outlines_patch(self):
+        """The old-hub class once the splice stopped cutting quiet pairs (LinkProxy clears its upstream timeout), over a
+        synthetic record shaped as the drives with the timeout cleared recorded it: every page holds one relay socket through
+        each link-up phase, each phase's card wait runs to its cap with no card shown, the Outline receives one feed slot
+        patch carrying a card per notice, and a redial's whole frame starts each socket. Three readers, each green on that
+        record and red on the shape it exists to refuse:
+        - the margin leg's yardstick (_link_up_delivery_ms) is the Outline's last card-carrying patch less the phase's post
+          end, floored at 0, and not a visible (none shows on this page): measured per phase with the freeze in every phase's
+          seen, a phase whose only patch carries no card fails naming it, and a window one millisecond under
+          DOWN_WINDOW_MARGIN times the slowest patch delivery fails in the inequality's own words;
+        - the freeze (test_without_a_redial_the_old_page_does_not_show_the_change) reds on a card wait that resolved, on
+          cards the read caught though the wait ran out, and on the splice's former idle cut: a relay socket closing and a
+          fresh one dialed inside a phase;
+        - the waits (test_every_wait_was_met_but_each_phases_card_wait_which_ran_to_its_cap) red on a phase's card wait that
+          resolved, on one that expired with the budget spent, and on any other wait that expired; the new-bundle class's
+          reader, whose frozen list is empty, reds on the same card expiry."""
+        T = 2_000_000_000                   # the browser's milliseconds at the ready mark
+        marks = {"ready": 0, "A0": 4000, "A1": 27600, "drop": 27620, "closed": 27700, "rowDown": 28400, "D0": 28400, "D1": 30400,
+                 "settled": 72400, "resume": 72420, "rowUp": 73400, "redialed": 76200, "B0": 78200, "B1": 101700, "restart": 101720,
+                 "restarted": 105800, "localUp": 105800, "redialed2": 106300, "C0": 108400, "C1": 131900, "end": 131920}
+        posts = {"A": (4045, 6050), "D": (28360, 30365), "B": (78215, 80220), "C": (108354, 110359)}   # (t0, t1), the control door's clock
+        patches = {"A": (4072, 5071, 6072), "B": (79088, 80086, 81084), "C": (109085, 110085, 111085)}
+
+        def frames(whole_at, phase, app, over):
+            out = [{"t": "feed", "slot": "", "len": 20000, "at": T + whole_at, "asks": 8}]
+            if app == "fleet":
+                out += over.get(phase) or [{"t": "delta", "slot": "feed", "len": 932, "at": T + at, "coll": ["asks"], "restAll": False, "rev": n + 1}
+                                           for n, at in enumerate(patches[phase])]
+            return out
+
+        def socks(app, over, cut):
+            s = [{"i": 0, "url": "ws://h/remote/TESTHOST/ws?app=%s&delta=1" % app, "relay": True, "dialedAt": T - 350, "openAt": T - 300,
+                  "closeAt": T + marks["drop"] + 30, "frames": frames(-300, "A", app, over)},
+                 {"i": 1, "url": "ws://h/remote/TESTHOST/ws?app=%s&delta=1&reconnect=1&proto=1" % app, "relay": True, "dialedAt": T + 75600,
+                  "openAt": T + 75655, "closeAt": T + marks["restart"] + 55, "frames": frames(76089, "B", app, over)},
+                 {"i": 2, "url": "ws://h/remote/TESTHOST/ws?app=%s&delta=1&reconnect=1&proto=1" % app, "relay": True, "dialedAt": T + 105550,
+                  "openAt": T + 105605, "closeAt": None, "frames": frames(106086, "C", app, over)}]
+            if cut:   # the splice's former idle cut inside phase A: the held socket closes 10.8 s in and a redial opens at once
+                s[0]["closeAt"] = T + 14800
+                s.insert(1, {"i": 9, "url": s[1]["url"], "relay": True, "dialedAt": T + 14800, "openAt": T + 14850, "closeAt": T + marks["drop"] + 30,
+                             "frames": [{"t": "feed", "slot": "", "len": 20000, "at": T + 14900, "asks": 11}]})
+            return s
+
+        frozen = {"cards": [False, False, False], "waitedMs": 20006, "expired": ["card"]}
+        card_waits = ["phase %s: the card wait expired: TimeoutError: locator.waitFor: Timeout 20000ms exceeded." % p for p in "ABC"]
+
+        def record(cls, name, settled=None, seen=None, timeouts=None, over=None, cut=False):
             class Rec(cls):
                 driver_error = None
+            m = {k: T + v for k, v in marks.items()}
+            if settled is not None:
+                m["settled"] = settled
+            Rec.result = {"marks": m, "died": None, "timeouts": list(card_waits if timeouts is None else timeouts),
+                          "pages": {app: {"socks": socks(app, over or {}, cut), "sends": []} for app in cls.apps},
+                          "phases": {p: {"change": {"phase": p, "noticeKeys": ["k1", "k2", "k3"], "noticeRevs": [1, 1, 1]}, "seen": (seen or {}).get(p) or dict(frozen)}
+                                     for p in "ABC"}}
+            Rec.changes_made = [{"phase": p, "t0": (T + t0) / 1000.0, "t1": (T + t1) / 1000.0, "noticeKeys": ["k1", "k2", "k3"]} for p, (t0, t1) in posts.items()]
+            return Rec(name)
 
-            def change(p):
-                return {"phase": p, "prompt": "synthetic prompt %s" % p, "noticeKeys": ["k1", "k2", "k3"], "noticeRevs": [1, 2, 3]}
+        Old, New = L.LinkDropOldLocal, L.LinkDropBothNew
+        margin = "test_a_change_due_while_the_link_was_down_crossed_nothing_and_the_return_carried_it_whole"
+        span_s, deliveries = record(Old, margin)._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+        self.assertEqual(deliveries, {"A": 22, "B": 864, "C": 726}, "the old-hub yardstick is the last card-carrying patch less the post end, per phase, with every "
+                                                                     "phase's card wait expired (the freeze is no refusal here)")
+        self.assertAlmostEqual(span_s, 42.035, places=3, msg="the window from phase D's post end to settled")
+        early = [{"t": "delta", "slot": "feed", "len": 932, "at": T + 6000, "coll": ["asks"], "restAll": False, "rev": 3}]
+        self.assertEqual(record(Old, margin, over={"A": early})._assert_the_down_window_outlasts_the_drives_slowest_delivery()[1]["A"], 0,
+                         "a patch that reached the Outline before the post's answer reached the door is a delivery of 0, not a negative one")
+        attach = [{"t": "delta", "slot": "feed", "len": 400, "at": T + 79088, "coll": ["ledgers"], "restAll": False, "rev": 1}]
+        with self.assertRaises(AssertionError, msg="a phase whose only feed patch carries no card has no delivery to measure") as cm:
+            record(Old, margin, over={"B": attach})._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+        self.assertIn("phase B: a feed slot patch carrying a card reached the Outline", str(cm.exception), "the failure names the phase and why: %s" % cm.exception)
+        under = int(round((T + posts["D"][1]) + L.DOWN_WINDOW_MARGIN * 864)) - 1
+        with self.assertRaises(AssertionError, msg="a window under DOWN_WINDOW_MARGIN times the slowest patch delivery must fail the inequality") as cm:
+            record(Old, margin, settled=under)._assert_the_down_window_outlasts_the_drives_slowest_delivery()
+        self.assertIn("widen down_dwell_ms, never the margin", str(cm.exception), "the inequality's own words: %s" % cm.exception)
+        self.assertIn("phase B", str(cm.exception), "the failure names the slowest phase: %s" % cm.exception)
 
-            def seen(waited, p, shown=True, expired=(), key=True):
-                v = {"cards": [shown] * 3, "waitedMs": waited}
-                if "todo" in cls.changes:
-                    v["todo"] = shown
-                if "append" in cls.changes:
-                    v["prov"] = change(p)["prompt"] if shown else "the row before the change"
-                if key:
-                    v["expired"] = list(expired)
-                return v
+        freeze = "test_without_a_redial_the_old_page_does_not_show_the_change"
+        getattr(record(Old, freeze), freeze)()
+        for why, kw, token in (("a card wait that resolved (the change showed)", {"seen": {"B": {"cards": [True] * 3, "waitedMs": 9000, "expired": []}}}, "phase B's cards"),
+                               ("cards the read caught though the wait ran out", {"seen": {"C": {"cards": [True] * 3, "waitedMs": 20006, "expired": ["card"]}}}, "phase C's cards"),
+                               ("the idle cut: a socket closed and a redial dialed inside phase A", {"cut": True}, "phase A on the waiting page")):
+            with self.assertRaises(AssertionError, msg="the freeze test must red on %s" % why) as cm:
+                getattr(record(Old, freeze, **kw), freeze)()
+            self.assertIn(token, str(cm.exception), "%s: the failure names the phase: %s" % (why, cm.exception))
 
-            def record(settled=settled, **over):
-                Rec.result = {"marks": {"settled": settled, "resume": settled + 20, "end": settled + 60000}, "died": None, "timeouts": [],
-                              "phases": {p: {"change": change(p), "seen": over.get(p) or seen(1000 * (i + 1), p)} for i, p in enumerate("ABC")}}
-                Rec.changes_made = [change(p) for p in "ABC"] + [{"phase": "D", "t0": d_t1 - 2.0, "t1": d_t1, "noticeKeys": ["k1", "k2", "k3"]}]
-                return Rec("test_every_wait_the_driver_placed_was_met")   # an instance for the helper; the test method is never run
-            span_s, deliveries = record(C=seen(19900, "C"))._assert_the_down_window_outlasts_the_drives_slowest_delivery()
-            self.assertAlmostEqual(span_s, span_ms / 1000.0, places=3, msg="%s: the leg read the window from phase D's post end to settled" % cls.__name__)
-            self.assertEqual(deliveries, {"A": 1000, "B": 2000, "C": 19900}, "%s: every wait resolved and shown, so every phase's waitedMs is a delivery and the slowest is C's" % cls.__name__)
-            for X in "ABC":
-                cells = [("a wait that expired with the visibles absent", seen(20012, X, shown=False, expired=["card"]), "resolved before their cap"),
-                         ("a wait that expired though the read caught the card", seen(20012, X, shown=True, expired=["card"]), "resolved before their cap"),
-                         ("an older driver's record with no expired list, visibles shown", seen(20012, X, shown=True, key=False), "resolved before their cap"),
-                         ("a resolved wait whose read found nothing", seen(20012, X, shown=False, expired=[]), "phase %s's changes" % X)]
-                for why, v, token in cells:
-                    with self.assertRaises(AssertionError, msg="%s: %s in phase %s must fail the margin leg instead of measuring the cap" % (cls.__name__, why, X)) as cm:
-                        record(**{X: v})._assert_the_down_window_outlasts_the_drives_slowest_delivery()
-                    self.assertIn("phase %s" % X, str(cm.exception), "%s: %s: the failure names the phase: %s" % (cls.__name__, why, cm.exception))
-                    self.assertIn(token, str(cm.exception), "%s: %s: the failure says why: %s" % (cls.__name__, why, cm.exception))
-                span_s, deliveries = record(**{X: seen(20012, X, shown=True, expired=[])})._assert_the_down_window_outlasts_the_drives_slowest_delivery()
-                self.assertEqual(deliveries[X], 20012, "%s: a resolved wait at the cap's edge with the visibles shown is a delivery in phase %s (the reads after the wait)" % (cls.__name__, X))
-            # the bound: every wait resolved and shown, the slowest delivery 19,900 ms, the window one millisecond under the margin times it
-            under = int(d_t1 * 1000) + int(L.DOWN_WINDOW_MARGIN * 19900) - 1
-            with self.assertRaises(AssertionError, msg="%s: a window under DOWN_WINDOW_MARGIN times the slowest delivery must fail the inequality" % cls.__name__) as cm:
-                record(settled=under, C=seen(19900, "C"))._assert_the_down_window_outlasts_the_drives_slowest_delivery()
-            self.assertIn("widen down_dwell_ms, never the margin", str(cm.exception), "%s: the inequality's own words: %s" % (cls.__name__, cm.exception))
-            self.assertIn("phase C", str(cm.exception), "%s: the failure names the slowest phase: %s" % (cls.__name__, cm.exception))
+        waits = "test_every_wait_was_met_but_each_phases_card_wait_which_ran_to_its_cap"
+        getattr(record(Old, waits), waits)()
+        spent = [card_waits[0].replace("expired: ", "expired (the driver's wait budget was spent): ", 1)] + card_waits[1:]
+        for why, timeouts, token in (("phase B's card wait resolved", card_waits[:1] + card_waits[2:], "ran to its cap once"),
+                                     ("phase A's card wait expired with the budget spent", spent, "ran to its cap once"),
+                                     ("another wait expired", card_waits + ["every page holds one open relay socket before the drop"], "every other wait the driver placed was met")):
+            with self.assertRaises(AssertionError, msg="the waits test must red when %s" % why) as cm:
+                getattr(record(Old, waits, timeouts=timeouts), waits)()
+            self.assertIn(token, str(cm.exception), "%s: the failure says why: %s" % (why, cm.exception))
+        met = "test_every_wait_the_driver_placed_was_met"
+        getattr(record(New, met, timeouts=[]), met)()
+        with self.assertRaises(AssertionError, msg="the new-bundle class's waits reader reds on a card wait that expired") as cm:
+            getattr(record(New, met, timeouts=card_waits[1:2]), met)()
+        self.assertIn("every wait the driver placed was met", str(cm.exception), "the new class's own words: %s" % cm.exception)
 
     def test_a_waited_read_requires_an_empty_expired_list_and_an_unwaited_read_none(self):
         """_assert_seen's `waited` (the maintainer's round 3, tests-1): a record waitVisible produced (a phase's seen, D's seenAfterReturn) must carry
