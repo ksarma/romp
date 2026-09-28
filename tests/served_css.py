@@ -144,7 +144,7 @@ hides, with each fold's summary, every attribute name with whether its element i
 DOCTYPE (FoldText). It runs on the element layer, so it makes every refusal that layer makes, and adds its own where the split
 would part from what HTML shows by the fold structure (an open fold, a summary that is not its fold's first summary child, a
 self-closing details or summary, a hidden element, text inside a refused container, a numeric reference or a NUL HTML reads
-otherwise); _FoldText names each and what the reader does not read (CSS, rendering). It exists because a test of the token
+otherwise, a page ending in `&` and one letter, which the tokenizer's releases flush differently); _FoldText names each and what the reader does not read (CSS, rendering). It exists because a test of the token
 login page read the page's folds with an HTMLParser of its own, the parser beside this one that the served-pins census refuses;
 its cases are in tests/test_served_pins_read_elements.py.
 
@@ -526,9 +526,9 @@ class _FoldText(_Elements):
     character reference outside script and style content (a reference as written, its `;` included where the page has one),
     decoded by html.unescape, HTML's text rule but for the refusals below, its newlines normalized as HTML normalizes its input (CR
     LF and CR to LF); the runs of each part are concatenated as they stand, the DOM's textContent, with nothing added at an element
-    boundary. A run is SHOWN when it sits
-    outside every details element, or inside the summary of every details it sits in (a fold's summary shows while the fold is
-    closed; a details nested in a closed fold is hidden whole, its summary included); every other run is FOLDED. A summary is its
+    boundary. A run is SHOWN when it sits outside every details element, or inside the summary of every details it sits in (a
+    fold's summary shows while the fold is closed; a details nested in a closed fold is hidden whole, its summary included); every
+    other run is FOLDED. A summary is its
     fold's only where it is the first summary child of the details, read on this reader's container stack, which pushes a start tag,
     pops an end tag to its nearest open match and takes no implied end tag, so it can over-report an ancestor and never loses one.
     Refuses, where the split would part from what HTML shows by the fold structure: a details carrying `open` (its content shows on
@@ -542,9 +542,9 @@ class _FoldText(_Elements):
     a NUL in text, which HTML's tree construction drops in body content and the tokenizer keeps; and a page that ends in `&` and one
     ASCII letter, which html.parser's releases flush differently at the end of the page (read from each build's source: the 3.10.20,
     3.11.15, 3.12 and 3.14.0 builds here drop the `&` and hand the letter over as data, the 3.13.14 and 3.14.4 builds report a
-    reference, and HTML keeps both characters as text; a longer tail such as `&amp` reads the same on every build). Not read: CSS (a rule or an
-    inline style that hides or reveals text, a `display` on a summary), rendering (a `<br>` or a block boundary adds nothing to the
-    text), and the script-driven opening of a fold."""
+    reference, and HTML keeps both characters as text; a longer tail such as `&amp` reads the same on every build). Not read: CSS
+    (a rule or an inline style that hides or reveals text, a `display` on a summary), rendering (a `<br>` or a block boundary adds
+    nothing to the text), and the script-driven opening of a fold."""
 
     def __init__(self, html):
         self.marks, self.parts, self.fold_list, self.attr_list, self.decls = [], {"shown": [], "folded": []}, [], [], []
