@@ -1207,8 +1207,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
           seen, a phase whose only patch carries no card fails naming it, and a window one millisecond under
           DOWN_WINDOW_MARGIN times the slowest patch delivery fails in the inequality's own words;
         - the freeze (test_without_a_redial_the_old_page_does_not_show_the_change) reds on a card wait that resolved, on
-          cards the read caught though the wait ran out, and on the splice's former idle cut: a relay socket closing and a
-          fresh one dialed inside a phase;
+          cards the read caught though the wait ran out, on the splice's former idle cut (a relay socket closing and a
+          fresh one dialed inside a phase), and on each half of its socket check alone: a second socket dialed inside a
+          phase while the held one stays open, which only the dialed-inside half sees, and the held socket closing inside
+          a phase with nothing dialed before its end, which only the held half sees;
         - the waits (test_every_wait_was_met_but_each_phases_card_wait_which_ran_to_its_cap) red on a phase's card wait that
           resolved, on one that expired with the budget spent, and on any other wait that expired; the new-bundle class's
           reader, whose frozen list is empty, reds on the same card expiry."""
@@ -1226,15 +1228,19 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                                            for n, at in enumerate(patches[phase])]
             return out
 
-        def socks(app, over, cut):
+        def socks(app, over, cut=None):
             s = [{"i": 0, "url": "ws://h/remote/TESTHOST/ws?app=%s&delta=1" % app, "relay": True, "dialedAt": T - 350, "openAt": T - 300,
                   "closeAt": T + marks["drop"] + 30, "frames": frames(-300, "A", app, over)},
                  {"i": 1, "url": "ws://h/remote/TESTHOST/ws?app=%s&delta=1&reconnect=1&proto=1" % app, "relay": True, "dialedAt": T + 75600,
                   "openAt": T + 75655, "closeAt": T + marks["restart"] + 55, "frames": frames(76089, "B", app, over)},
                  {"i": 2, "url": "ws://h/remote/TESTHOST/ws?app=%s&delta=1&reconnect=1&proto=1" % app, "relay": True, "dialedAt": T + 105550,
                   "openAt": T + 105605, "closeAt": None, "frames": frames(106086, "C", app, over)}]
-            if cut:   # the splice's former idle cut inside phase A: the held socket closes 10.8 s in and a redial opens at once
+            # inside phase A: "idle" is the splice's former idle cut (the held socket closes 10.8 s in and a redial opens at
+            # once); "dialed" keeps the held socket open and dials a second one there; "closed" closes the held socket
+            # there and dials nothing before A1
+            if cut in ("idle", "closed"):
                 s[0]["closeAt"] = T + 14800
+            if cut in ("idle", "dialed"):
                 s.insert(1, {"i": 9, "url": s[1]["url"], "relay": True, "dialedAt": T + 14800, "openAt": T + 14850, "closeAt": T + marks["drop"] + 30,
                              "frames": [{"t": "feed", "slot": "", "len": 20000, "at": T + 14900, "asks": 11}]})
             return s
@@ -1242,7 +1248,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         frozen = {"cards": [False, False, False], "waitedMs": 20006, "expired": ["card"]}
         card_waits = ["phase %s: the card wait expired: TimeoutError: locator.waitFor: Timeout 20000ms exceeded." % p for p in "ABC"]
 
-        def record(cls, name, settled=None, seen=None, timeouts=None, over=None, cut=False):
+        def record(cls, name, settled=None, seen=None, timeouts=None, over=None, cut=None):
             class Rec(cls):
                 driver_error = None
             m = {k: T + v for k, v in marks.items()}
@@ -1278,7 +1284,13 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         getattr(record(Old, freeze), freeze)()
         for why, kw, token in (("a card wait that resolved (the change showed)", {"seen": {"B": {"cards": [True] * 3, "waitedMs": 9000, "expired": []}}}, "phase B's cards"),
                                ("cards the read caught though the wait ran out", {"seen": {"C": {"cards": [True] * 3, "waitedMs": 20006, "expired": ["card"]}}}, "phase C's cards"),
-                               ("the idle cut: a socket closed and a redial dialed inside phase A", {"cut": True}, "phase A on the waiting page")):
+                               ("the idle cut: a socket closed and a redial dialed inside phase A", {"cut": "idle"}, "phase A on the waiting page"),
+                               ("the held socket open through phase A and a second socket dialed inside it", {"cut": "dialed"}, "phase A on the waiting page: "
+                                "one relay socket open from the phase's first change to its end and none dialed inside it, so no redial could catch "
+                                "the page up (held [0], dialed inside [9])"),
+                               ("the held socket closed inside phase A and nothing dialed before its end", {"cut": "closed"}, "phase A on the waiting page: "
+                                "one relay socket open from the phase's first change to its end and none dialed inside it, so no redial could catch "
+                                "the page up (held [], dialed inside [])")):
             with self.assertRaises(AssertionError, msg="the freeze test must red on %s" % why) as cm:
                 getattr(record(Old, freeze, **kw), freeze)()
             self.assertIn(token, str(cm.exception), "%s: the failure names the phase: %s" % (why, cm.exception))
