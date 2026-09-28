@@ -213,9 +213,12 @@
 // marks the mouse's records alone and that reads no blur, and Firefox's cells of a tap whose compatibility events went to
 // another document are red at ddb446fae, whose gate heard no mouseout, and under a gate without the mouseout listener and
 // without the blur's rule, the cell with no button down also under one whose mouseout needs a button down and that reads no
-// blur; the blur's rule refuses both sets of cells too, the viewer's window holding the focus in them, so they read the same
-// under a gate without the arm or without the mouseout listener alone, the node guards' rows red under either alone; the reads
-// of each of these reds are a private witness kept out of the tree. file-view-outline.test.ts drives the same orders over the
+// blur; the blur's rule refuses both sets of cells too, the viewer's window holding the focus in them and hearing a blur, both
+// asserted, so they read the same under a gate without the arm or without the mouseout listener alone, while each set's shapes
+// run again with an element that cancels its mousedown, where no blur comes (asserted), are red under a gate without the arm or
+// without the mouseout listener alone, the pen's cell also under one whose arm marks the mouse's records alone and the cells
+// with no button down also under one whose mouseout needs a button down, and so are the node guards' rows; the reads of each of
+// these reds are a private witness kept out of the tree. file-view-outline.test.ts drives the same orders over the
 // stand-in in CI, where these legs launch no browser.
 import * as assert from "node:assert/strict";
 import { openViewer, frames, pageHtml, PARA, REPORT, ORIGIN, SID } from "./real-viewer-leg";
@@ -1144,6 +1147,9 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
     await s.fr.evaluate(() => {
       const w = window as any; w.__tch = [];
       for (const type of ["pointerdown", "pointerup", "pointercancel", "mousedown", "mouseup", "click", "touchstart", "touchend", "touchcancel"]) window.addEventListener(type, (e: any) => { w.__tch.push({ type: e.type, pid: e.pointerId, ptype: e.pointerType, button: e.button, detail: e.detail, trusted: e.isTrusted }); }, true);
+      w.__tblur = 0; w.__tblurAtClick = -1;
+      window.addEventListener("blur", (e: Event) => { if (e.target === window) w.__tblur++; }, true);   // the blurs of the viewer's window, read by the cells of round 19's two rules
+      window.addEventListener("click", () => { w.__tblurAtClick = w.__tblur; }, true);   // and their count at the last click here, before any tab an open brings to the front blurs it
     });
     await s.page.evaluate(() => {
       const w = window as any; w.__tcv = [];
@@ -1214,6 +1220,23 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
       vw.addEventListener(o, f, true);
     }, [box, on, how, id, flush]);
     const upOver = (pts: Array<{ x: number; y: number }>): Promise<boolean[]> => s.page.evaluate((ps: Array<{ x: number; y: number }>) => { const d = document.getElementById("tcover"); return ps.map((p) => !!d && document.elementFromPoint(p.x, p.y) === d); }, pts);
+    /** The keyboard focus in the viewer's document after the settling click, asserted, and the count of the viewer's window's blurs
+     *  started from there: an element that cancels nothing takes the focus at the mousedown it takes, so the viewer's window hears a
+     *  blur and the blur's rule refuses that cell too, while one that cancels its mousedown takes no focus, so no blur comes and the
+     *  blur's rule refuses nothing in that cell (the file review's round 19, with the blur's rule built). */
+    const focusKept = async (what: string): Promise<void> => {
+      await s.fr.evaluate(() => { (window as any).__tblur = 0; (window as any).__tblurAtClick = -1; });
+      const f = await s.fr.evaluate(() => document.hasFocus());
+      assert.ok(f, at + what + ": the keyboard focus in the viewer's document after the settling click (a precondition)");
+    };
+    /** The blurs of the viewer's window between focusKept and the covered click here, recorded, and asserted: one or more where the
+     *  element cancels nothing, none where it cancels its mousedown (a tab the click opens, under a gate that lets it, blurs the
+     *  window after the click, which this count leaves out). */
+    const blurs = async (what: string, cancels: boolean, rec0: Record<string, unknown>): Promise<void> => {
+      const b = await s.fr.evaluate(() => (window as any).__tblurAtClick);
+      rec0.blurs = b;
+      assert.ok(cancels ? b === 0 : b > 0, at + what + ": " + (cancels ? "no blur of the viewer's window came before the covered click" : "the viewer's window heard a blur before the covered click") + " (a precondition): " + b);
+    };
     /** The next click of the mouse on the picture (a tap on a phone's pages, or where `byTap`), the element gone: its opens. */
     const next = async (what: string, byTap = device === "phone"): Promise<[number, number]> => {
       const r2 = await s.read("w490");
@@ -1431,18 +1454,22 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
        * compatibility mousedown, mouseup and click land in the viewer. Firefox sends the viewer a mouseout to no element after the first
        * tap's pointerup, before that click: with a button down where the element is first hit at the compatibility mousedown (appended
        * with no layout read, the mouse off the viewer), and with none where a mouse rests in the viewer and the element is laid out at
-       * its append, each cell's precondition. The gate empties the slot there, so the click opens nothing and reveals the control. */
+       * its append, each cell's precondition. The gate empties the slot there, so the click opens nothing and reveals the control. Each
+       * shape runs twice: with an element that cancels nothing, which takes the focus at that tap's compatibility mousedown, so the
+       * viewer's window, focused by the settling click, hears a blur (asserted), and with an element that cancels its mousedown, so
+       * the focus stays in the viewer and no blur of the viewer's window comes (asserted), and the mouseout's rule alone refuses. */
       await s.fr.evaluate(() => {
         const w = window as any; w.__tmo = [];
         window.addEventListener("mouseout", (e: any) => { if (e.relatedTarget === null) w.__tmo.push(e.buttons); }, true);
       });
       const mouseouts = (): Promise<number[]> => s.fr.evaluate(() => (window as any).__tmo.splice(0));
-      for (const [flush, buttons] of [[false, 1], [true, 0]] as Array<[boolean, number]>) {
-        const what = "the viewer's own tap on the picture, an element appearing at its pointerup " + (flush ? "and laid out there, a mouse resting in the viewer" : "with no layout read, the mouse off the viewer") + ", then a tap on that element over the control, which hides at its own pointerup";
+      for (const [flush, buttons, cancels] of [[false, 1, false], [true, 0, false], [false, 1, true], [true, 0, true]] as Array<[boolean, number, boolean]>) {
+        const what = "the viewer's own tap on the picture, an element appearing at its pointerup " + (flush ? "and laid out there, a mouse resting in the viewer" : "with no layout read, the mouse off the viewer") + ", then a tap on that element over the control, which hides at its own pointerup" + (cancels ? ", the element cancelling its mousedown, so the focus stays in the viewer and no blur of the viewer's window comes" : "");
         await settle();
         if (!flush) { await s.page.mouse.move(1100, 650); await frames(s.fr, 2); }
         const g = await shown(what);
-        await appear("pointerup", g.box, "pointerup:hide", "tcover", flush);
+        await focusKept(what);
+        await appear("pointerup", g.box, cancels ? "pointerup:hide,mousedown:prevent" : "pointerup:hide", "tcover", flush);
         await mouseouts();
         await tap(g.tapAt);
         await new Promise((r) => setTimeout(r, 100));
@@ -1461,6 +1488,7 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
         const c = evs.find((e) => e.type === "click");
         assert.ok(c!.pid === 0 && c!.ptype === "touch" && evs.some((e) => e.type === "mouseup" && e.button === 0 && (e.detail ?? 0) > 0), at + what + ": that tap's mouseup is the primary button's of detail above 0 and its click carries pointerId 0, typed touch (a precondition): " + word(evs));
         const tapOpens = await s.opens();
+        await blurs(what, cancels, rec[what] as Record<string, unknown>);
         cell("in Firefox, " + what + ": [the viewer's tap's opens, the other document's click's, the next click's]", want3, [stepOpens, tapOpens, await next(what)]);
       }
     }
@@ -1506,18 +1534,22 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
          * the control (Playwright's click moves the pointer first), or a pen's still click where its press was (CDP). This window hears
          * the press's pointerdown and mousedown and then that click's pointerup, mouseup and click, and before that click Chromium sends
          * it the mouse's pointerout with no relatedTarget and no button down, each cell's precondition, which the gate reads as a
-         * release it did not hear. */
+         * release it did not hear. Each shape runs twice: with an element that cancels nothing, which takes the focus at that click's
+         * mousedown, so the viewer's window, focused by the settling click, hears a blur (asserted), and with an element that cancels
+         * its mousedown, so the focus stays in the viewer and no blur of the viewer's window comes (asserted), and the leave's arm for
+         * no button alone refuses. */
         await s.fr.evaluate(() => {
           const w = window as any; w.__tlo = [];
           window.addEventListener("pointerout", (e: any) => { if (e.relatedTarget === null) w.__tlo.push(e.pointerType + " " + e.pointerId + " buttons " + e.buttons); }, true);
         });
         const outs = (): Promise<string[]> => s.fr.evaluate(() => (window as any).__tlo.splice(0));
         const pen = (type: string, x: number, y: number, buttons: number): Promise<unknown> => cdp!.send("Input.dispatchMouseEvent", { type, x, y, button: type === "mouseMoved" && !buttons ? "none" : "left", buttons, clickCount: 1, pointerType: "pen" });
-        for (const [by, showMs] of [["mouse", 0], ["mouse", 300], ["pen", 300]] as Array<["mouse" | "pen", number]>) {
-          const what = (by === "mouse" ? "the mouse" : "a pen") + " pressed on the control and held while the top page hides the viewer's frame, released at once on the top page, the frame shown again " + (showMs ? showMs + " ms later" : "at once") + ", then another document's " + (by === "mouse" ? "mouse click moved onto" : "still pen click on") + " an element over the control that hides at that click's mousedown";
+        for (const [by, showMs, cancels] of [["mouse", 0, false], ["mouse", 300, false], ["pen", 300, false], ["mouse", 0, true], ["mouse", 300, true], ["pen", 300, true]] as Array<["mouse" | "pen", number, boolean]>) {
+          const what = (by === "mouse" ? "the mouse" : "a pen") + " pressed on the control and held while the top page hides the viewer's frame, released at once on the top page, the frame shown again " + (showMs ? showMs + " ms later" : "at once") + ", then another document's " + (by === "mouse" ? "mouse click moved onto" : "still pen click on") + " an element over the control that hides at that click's mousedown" + (cancels ? " and cancels it, so the focus stays in the viewer and no blur of the viewer's window comes" : "");
           await settle();
           const g = await shown(what);
           const at0 = { x: Math.round(g.ctl.x), y: Math.round(g.ctl.y) };
+          await focusKept(what);
           await heard(); await topHeard(); await outs(); await s.opens();
           if (by === "mouse") { await s.page.mouse.move(at0.x, at0.y); await s.page.mouse.down(); }
           else { await pen("mouseMoved", at0.x, at0.y, 0); await pen("mousePressed", at0.x, at0.y, 1); }
@@ -1528,7 +1560,7 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
           await s.page.evaluate(() => { (document.getElementById("tview") as HTMLElement).style.display = "block"; });
           const c2 = await s.ctlBox();
           const at2 = { x: Math.round(c2.l + c2.w / 2), y: Math.round(c2.t + c2.h / 2) };
-          const over = await element({ x: Math.round(c2.l - 120), y: Math.round(c2.t - 10), w: Math.round(c2.w + 140), h: Math.round(c2.h + 90) }, [at2], "mousedown:hide");
+          const over = await element({ x: Math.round(c2.l - 120), y: Math.round(c2.t - 10), w: Math.round(c2.w + 140), h: Math.round(c2.h + 90) }, [at2], cancels ? "mousedown:hide+prevent" : "mousedown:hide");
           assert.ok(over[0] && (by === "mouse" || (at2.x === at0.x && at2.y === at0.y)), at + what + ": the element over the control" + (by === "pen" ? ", the control where the press was" : "") + " (a precondition): " + JSON.stringify({ over, at0, at2 }));
           if (by === "mouse") await s.page.mouse.click(at2.x, at2.y); else { await pen("mousePressed", at2.x, at2.y, 1); await pen("mouseReleased", at2.x, at2.y, 0); }
           await new Promise((r) => setTimeout(r, 150));
@@ -1543,6 +1575,7 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
           assert.ok(top.includes("pointerup") && top.includes("mousedown") && el === "tcover:none", at + what + ": the release's pointerup and that click's mousedown went to the top page, the element hidden at it (a precondition): " + JSON.stringify({ top, el }));
           assert.ok(lo.includes("mouse 1 buttons 0"), at + what + ": Chromium sent the viewer the mouse's pointerout with no relatedTarget and no button down before that click (a precondition): " + JSON.stringify(lo));
           const clickOpens = await s.opens();
+          await blurs(what, cancels, rec[what] as Record<string, unknown>);
           cell("in Chromium, " + what + ": [that click's opens, the next click's]", [[0, 0], [1, 1]], [clickOpens, await next(what)]);
         }
       }
