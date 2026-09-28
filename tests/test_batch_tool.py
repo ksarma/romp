@@ -2488,6 +2488,8 @@ class LandReadsTheCI(_Base):
         self.assertEqual(fx.gh()["prs"]["101"]["state"], "MERGED")
         self.assertEqual(fx.state("b1")["ci"]["excused"], [
             {"run": 2, "attempt": 1, "status": "completed", "conclusion": "failure", "url": red, "flake": self.FLAKE}])
+        self.assertIn("observed: the batch head's CI run was green after an earlier run at the same head: attempt 1 of run 2 "
+                      "concluded failure (%s) and land excused it as a known flake: %s" % (red, self.FLAKE), p.stdout)
 
     def test_every_older_run_at_the_head_is_read_like_an_earlier_attempt(self):
         """An older run's own earlier attempts are read too, a cancelled older run did not pass either, and one excuse

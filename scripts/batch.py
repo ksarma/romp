@@ -2673,9 +2673,12 @@ def cmd_finish(args):
     ci_rec = state.get("ci") or {}
     same_run = ci_found.get("databaseId") is not None and ci_rec.get("id") == ci_found.get("databaseId")
     for e in (ci_rec.get("excused") or []) if same_run else []:
-        report["observations"].append("the batch head's CI run was green on a re-run: attempt %d concluded %s (%s) and land "
-                                      "excused it as a known flake: %s" % (e["attempt"], e.get("conclusion") or e.get("status"),
-                                                                            e.get("url"), e.get("flake")))
+        rerun = e.get("run", ci_found.get("databaseId")) == ci_found.get("databaseId")
+        report["observations"].append("the batch head's CI run was green %s: attempt %d%s concluded %s (%s) and land "
+                                      "excused it as a known flake: %s" % (
+                                          "on a re-run" if rerun else "after an earlier run at the same head",
+                                          e["attempt"], "" if rerun else " of run %s" % e.get("run"),
+                                          e.get("conclusion") or e.get("status"), e.get("url"), e.get("flake")))
     report["first_parent"] = first_parent
     report["landed_head"] = landed
     state["finished"] = {"at": now(), "report": report}
