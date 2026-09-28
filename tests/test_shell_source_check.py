@@ -29,7 +29,10 @@ nested in a pane, sandboxed or on its origin, a same-origin window that replaced
 window it opened, on another origin or on its own, itself, its own dispatch, a sourceless post with the opaque origin)
 and from a pane, over windows that carry the edges a browser gives them (parent, top, opener, and the shell's frames),
 and reads which function the check is when each message is delivered. The other pages' scripts run through the same
-exercise for their census (ServedPagesExecuted). Synthetic only: no session data, a loopback origin.
+exercise for their census (ServedPagesExecuted). ServedScriptPopulation derives the pages every census here reads
+(SERVED_BUILDERS) from kernel.py's syntax tree, and ui/webview/served-script-scopes.test.ts parses every script on them
+(_served_scripts) and refuses a direct eval or a with statement, the two ways code can add a binding at run time to a
+scope between a listener and the global scope. Synthetic only: no session data, a loopback origin.
 
 The line after the adopted three is the fork's LOCK (2026-09-26): it makes the check's property read-only and
 non-configurable once defined, so a later write of it, under any name and on any road (a road the stand-in does not
@@ -44,6 +47,7 @@ refused by the lock when it runs after the boot script; one that runs before it 
 script between it and the boot script, both run here) would show in the descriptor CheckLocked reads, when it is on a
 road the stand-in drives.
 """
+import ast
 import hashlib
 import json
 import os
@@ -52,6 +56,8 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from html.parser import HTMLParser
+from urllib.parse import unquote
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -150,13 +156,85 @@ def _inline_scripts(html):
     return re.findall(r"<script(?![^>]*\bsrc\s*=)[^>]*>(.*?)</script>", html, re.S | re.I)
 
 
+# Every page the kernel writes and serves as a document, by route, and /sw.js (the service worker's script), each by the
+# kernel function or constant that builds it: what every census in this module reads as the kernel's pages.
+# ServedScriptPopulation derives the builders from kernel.py itself, so a page a new builder serves fails there until it
+# is listed here.
+SERVED_BUILDERS = {"/": "_landing", "/chat": "_chat_page", "/feed": "_feed_page", "/fleet": "_fleet_page",
+                   "/waiting": "_waiting_page", "/files": "_files_page", "/settings": "_settings_page",
+                   "/timeline": "_timeline_page", "the sign-in page": "_TOKEN_LOGIN_HTML",
+                   "the too-large page": "_too_large_page", "/sw.js": "_sw_js"}
+_BUILDER_ARGS = {"_too_large_page": ("too large", "a.pdf", {})}
+
+
 def _served_pages():
     """Every page the kernel serves as a document, by route, and /sw.js (the service worker's script): what a script on
-    romp's origin that the kernel writes can be."""
-    return {"/": km._landing(), "/chat": km._chat_page(), "/feed": km._feed_page(), "/fleet": km._fleet_page(),
-            "/waiting": km._waiting_page(), "/files": km._files_page(), "/settings": km._settings_page(),
-            "/timeline": km._timeline_page(), "the sign-in page": km._TOKEN_LOGIN_HTML,
-            "the too-large page": km._too_large_page("too large", "a.pdf", {}), "/sw.js": km._sw_js()}
+    romp's origin that the kernel writes can be. Built by SERVED_BUILDERS' functions."""
+    out = {}
+    for name, builder in SERVED_BUILDERS.items():
+        b = getattr(km, builder)
+        out[name] = b(*_BUILDER_ARGS.get(builder, ())) if callable(b) else b
+    return out
+
+
+class _PageScripts(HTMLParser):
+    """Every script a document's markup carries, in order, as (where, kind, code): the body of each <script> with no src
+    ("script"; a src loads a /dist bundle, whose sources are the ui/ census's), each event handler attribute ("handler",
+    run as the body of a function), each javascript: URL in an attribute ("url", the code after the scheme, decoded as a
+    browser decodes it), and the same again inside an srcdoc attribute's document."""
+
+    def __init__(self, where=""):
+        super().__init__(convert_charrefs=True)
+        self.where, self.found, self._script = where, [], None
+
+    def handle_starttag(self, tag, attrs):
+        for name, value in attrs:
+            name, value = name.lower(), value or ""
+            if name.startswith("on"):
+                self.found.append(("%s<%s %s>" % (self.where, tag, name), "handler", value))
+            m = re.match(r"[\x00-\x20]*javascript:", value, re.I)
+            if m:
+                self.found.append(("%s<%s %s>" % (self.where, tag, name), "url", unquote(value[m.end():])))
+            if name == "srcdoc":
+                inner = _PageScripts("%sthe srcdoc of <%s> " % (self.where, tag))
+                inner.feed(value)
+                inner.close()
+                self.found.extend(inner.found)
+        if tag == "script" and not any(n.lower() == "src" for n, _v in attrs):
+            self._script = []
+
+    def handle_data(self, data):
+        if self._script is not None:
+            self._script.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self._script is not None:
+            self.found.append(("%s<script> %d" % (self.where, sum(k == "script" for _w, k, _c in self.found) + 1), "script",
+                               "".join(self._script)))
+            self._script = None
+
+
+def _page_scripts(html):
+    """[(where, kind, code)] for every script `html` carries (_PageScripts)."""
+    p = _PageScripts()
+    p.feed(html)
+    p.close()
+    return p.found
+
+
+def _served_scripts():
+    """Every script the kernel serves on its origin that it writes itself, as {page, where, kind, code}: the scripts of
+    each page SERVED_BUILDERS builds, /sw.js whole, and the scripts of each SVG under /media (a document a browser runs
+    script in when it is opened). ui/webview/served-script-scopes.test.ts parses each one."""
+    out = []
+    for name, page in _served_pages().items():
+        pieces = [("the script", "script", page)] if name == "/sw.js" else _page_scripts(page)
+        out.extend({"page": name, "where": w, "kind": k, "code": c} for w, k, c in pieces)
+    for f in sorted(os.listdir(km.MEDIA)):
+        if f.endswith(".svg"):
+            with open(os.path.join(km.MEDIA, f), encoding="utf-8") as fh:
+                out.extend({"page": "/media/" + f, "where": w, "kind": k, "code": c} for w, k, c in _page_scripts(fh.read()))
+    return out
 
 
 def _kernel_code():
@@ -522,6 +600,95 @@ class KernelListenerCensus(unittest.TestCase):
                     "for(var k=0;k<END.length;k++)document.addEventListener(END[k],ended,true);"):
             with self.subTest(src=src):
                 self.assertEqual(_loose_add_tokens(src), [], "accepted")
+
+
+# The types a response can carry that a browser runs script in, or that are script: a _send with one of these as a literal
+# type serves a page SERVED_BUILDERS must list.
+_SCRIPT_TYPES = {"text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml", "text/javascript",
+                 "application/javascript"}
+# Every _send, and every Content-Type header outside _send, whose type is not a literal, by the function it sits in and
+# the type's expression: how many there are, and why none is a script the kernel writes.
+OTHER_TYPED_RESPONSES = {
+    ("_file_slice", "ctype"): (1, "the file popover's answer, JSON or a text slice (_slice_body)"),
+    ("_file_preview", "mime"): (4, "a file of the user's, typed by the view allowlists (_PREVIEW_MIME, text as text/plain; an "
+                                   "SVG with a sandbox policy)"),
+    ("_remote_file", "ctype"): (3, "a remote's file, typed by the same allowlists"),
+    ("do_GET", "ct + '; charset=utf-8'"): (2, "/dist and /media: the bundles a page loads by src, whose sources the ui/ "
+                                               "census reads, and the media files, whose SVGs _served_scripts reads"),
+}
+# The files under /media, by extension: none but the SVGs can hold script, and _served_scripts reads those.
+MEDIA_KINDS = {".svg", ".png", ".woff2", ".ttf", ".txt"}
+
+
+def _typed_responses():
+    """({builder of each literal-script-typed _send's body}, {(function, type expression): count} for every other _send or
+    Content-Type header whose type is not a literal, _send's own header aside), read from kernel.py's syntax tree."""
+    with open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    builders, other = set(), {}
+
+    def walk(node, fn):
+        for ch in ast.iter_child_nodes(node):
+            inner = ch.name if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)) else fn
+            if isinstance(ch, ast.Call) and isinstance(ch.func, ast.Attribute) and inner != "_send":
+                typ = None
+                if ch.func.attr == "_send":
+                    typ = ch.args[2] if len(ch.args) > 2 else next((k.value for k in ch.keywords if k.arg == "ctype"), None)
+                elif (ch.func.attr == "send_header" and len(ch.args) == 2 and isinstance(ch.args[0], ast.Constant)
+                      and str(ch.args[0].value).lower() == "content-type"):
+                    typ = ch.args[1]
+                if typ is not None and not isinstance(typ, ast.Constant):
+                    key = (inner, ast.unparse(typ))
+                    other[key] = other.get(key, 0) + 1
+                elif typ is not None and str(typ.value).split(";")[0].strip().lower() in _SCRIPT_TYPES:
+                    body = ch.args[1] if ch.func.attr == "_send" else None
+                    if isinstance(body, ast.Call) and isinstance(body.func, ast.Name):
+                        builders.add(body.func.id)
+                    elif isinstance(body, ast.Name):
+                        builders.add(body.id)
+                    else:
+                        builders.add("<%s in %s>" % (ast.unparse(body) if body is not None else ch.func.attr, inner))
+            walk(ch, inner)
+
+    walk(tree, None)
+    return builders, other
+
+
+class ServedScriptPopulation(unittest.TestCase):
+    """The pages the censuses here read, and the scripts ui/webview/served-script-scopes.test.ts parses, are every page and
+    script the kernel writes: derived from kernel.py's syntax tree, every response typed as HTML, SVG, XML or JavaScript by a
+    literal is built by a function SERVED_BUILDERS lists, and every response typed by an expression is a listed one
+    (OTHER_TYPED_RESPONSES: files of the user's or a remote's, the popover's answer, /dist and /media). The reader of a
+    page's scripts finds each <script> the other censuses read, and each handler attribute and javascript: URL besides."""
+
+    def test_every_page_the_kernel_writes_is_read(self):
+        builders, other = _typed_responses()
+        self.assertEqual(builders, set(SERVED_BUILDERS.values()), "a response typed as a page or a script whose builder "
+                         "SERVED_BUILDERS does not list, or a listed builder no response serves")
+        self.assertEqual(other, {k: n for k, (n, _why) in OTHER_TYPED_RESPONSES.items()}, "a response typed by an "
+                         "expression that OTHER_TYPED_RESPONSES does not list, or a listed one gone: say what it serves")
+        self.assertEqual(set(_served_pages()), set(SERVED_BUILDERS))
+
+    def test_the_media_files_are_svgs_read_as_pages_or_kinds_that_hold_no_script(self):
+        files = os.listdir(km.MEDIA)
+        self.assertEqual(sorted(f for f in files if os.path.splitext(f)[1] not in MEDIA_KINDS), [])
+        self.assertGreater(sum(f.endswith(".svg") for f in files), 0, "the census reads the media SVGs")
+
+    def test_the_reader_finds_the_scripts_the_other_censuses_read_on_every_page(self):
+        for name, page in _served_pages().items():
+            if name == "/sw.js":
+                continue
+            with self.subTest(page=name):
+                self.assertEqual([c for _w, k, c in _page_scripts(page) if k == "script"], _inline_scripts(page))
+        self.assertEqual([k for _w, k, _c in _page_scripts(km._TOKEN_LOGIN_HTML)], ["handler"], "the sign-in form's onsubmit")
+
+    def test_the_reader_finds_every_kind_of_script_markup_carries(self):
+        page = ('<script>a()</script><script src="/dist/x.js">x()</script><SCRIPT type="module">b()</SCRIPT>'
+                '<form onsubmit="c();return false"><a href="javascript:d(%27x%27)">x</a><a HREF=" JavaScript:e()">y</a>'
+                '<iframe srcdoc="&lt;script&gt;f()&lt;/script&gt;&lt;b OnClick=&quot;g()&quot;&gt;"></iframe></form>')
+        self.assertEqual([(k, c) for _w, k, c in _page_scripts(page)],
+                         [("script", "a()"), ("script", "b()"), ("handler", "c();return false"), ("url", "d('x')"),
+                          ("url", "e()"), ("script", "f()"), ("handler", "g()")])
 
 
 # A stand-in browser for the shell's inline scripts: node's vm runs them in a context whose global answers every name
