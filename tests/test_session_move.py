@@ -474,8 +474,10 @@ class Helpers(MoveBase):
 
 
 def _executor_workers():
-    """The concurrent.futures workers alive now: the keys of the stdlib's exit-join table. A worker another
-    thread starts mid-read changes the table's size, so the read is retried, as conftest's guard does."""
+    """The threads in the stdlib's exit-join table (concurrent.futures.thread._threads_queues): the
+    ThreadPoolExecutor workers, including ended ones until their Thread objects are collected, so the
+    caller keeps only the threads threading.enumerate lists. A worker another thread starts mid-read
+    changes the table's size, so the read is retried, as conftest's guard does."""
     import concurrent.futures.thread as cft
     for _ in range(100):
         try:
