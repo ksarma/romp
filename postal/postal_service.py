@@ -5711,23 +5711,23 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     closed there. Safe while no thread's mail crosses a host: a thread's mail is off by default since T356
     (_mail_off_why answers "thread" for a session whose durable record carries threadOf, unless session-flags.json
     carries `threadMail` at the literal True), and the /send handler (Handler.do_POST) refuses a thread's own send
-    with 403 before resolve_recipient and any relay, so its sid never reaches a far host as a sender. ONE road
-    writes that key today: the kernel's WebSocket setSessionFlag arm (Handler._dispatch_ws), which accepts ANY flag
-    name from an authenticated dashboard client, while POST /flag (_state_write_route), the kernel's one other
-    route that writes a session flag, applies the _LANE_FLAGS whitelist and refuses it (no control of the UI sends
-    the key; a hand edit of the file writes the same bytes). The consequence, in one sentence: a client that sets
-    threadMail on a comment thread lets that thread's mail relay while every roster still omits its sid, so a far
-    host's mirror can presume the live thread closed, a false rule 5 that a user reaches only by hand-crafting a
-    WebSocket message (or by editing the file). The fix is a separate fix-tier PR, fork PR #909, that makes the
-    WebSocket arm apply the same whitelist as POST /flag; a hand edit of the file stays open after it.
-    tests/test_postal_isolation.py ThreadOwnSendRefused pins the current
-    truth as a set: the kernel's routes that write a session flag, derived from kernel/kernel.py, are exactly POST
-    /flag and the WebSocket arm; and through the real handlers the roster omits the thread, its send is refused
-    before the relay, POST /flag refuses the key and the send is still refused, and the key written through the
-    WebSocket arm lets the same send be parked (the fix flips that last half, and the witness moves with it). If
-    thread mail is ever re-enabled, the shape is a separate exchange field carrying the mirror-relevant thread
-    sids, read by this writer alone; never _local_presence with thread rows, which would list threads to every
-    remote consumer with no filter."""
+    with 403 before resolve_recipient and any relay, so its sid never reaches a far host as a sender. Both of the
+    kernel's routes that write a session flag refuse that key: POST /flag (_state_write_route) holds the name to the
+    _LANE_FLAGS whitelist, and the WebSocket setSessionFlag arm (Handler._dispatch_ws) applies the same whitelist
+    since fork PR #909, answering one settingRefused frame and writing nothing (until fork PR #909 the arm accepted
+    any flag name from an authenticated dashboard client and wrote the key; no control of the UI sends it). The road
+    left is a direct write of session-flags.json, such as a hand edit or the kernel's saveFile socket op under the
+    file-editing consent (which can write an existing session-flags.json whole, as it can any text file, and is no
+    flag door). The consequence, in one sentence: the key written into that file directly for a comment thread lets
+    that thread's mail relay while every roster still omits its sid, so a far host's mirror can presume the live
+    thread closed, a false rule 5. tests/test_postal_isolation.py ThreadOwnSendRefused pins the current truth as a
+    set: the kernel's routes that write a session flag, derived from kernel/kernel.py, are exactly POST /flag and
+    the WebSocket arm. Through the real handlers: the roster omits the thread; its send is refused before the relay;
+    POST /flag refuses the key and the send is still refused; the WebSocket arm answers the key with one
+    settingRefused frame, the file stays absent, and the send is still refused with nothing parked; and the key
+    written into the file directly lets the same send be parked. If thread mail is ever re-enabled, the shape is a
+    separate exchange field carrying the mirror-relevant thread sids, read by this writer alone; never
+    _local_presence with thread rows, which would list threads to every remote consumer with no filter."""
     hosts = {}
     for sid, (name, ts) in list(HEARTBEATS.items()):
         if str(sid) in owned:
