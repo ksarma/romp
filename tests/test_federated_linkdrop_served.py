@@ -283,13 +283,17 @@ class LinkProxy:
     ssh -L forward, so the link can be dropped and restored while both kernels stay up. listen() listens and splices each
     accepted connection to the target; drop() closes the listener (a dial is refused, as at a dead -L listener) and
     shuts every spliced pair (both ends read EOF: the hub's upstream, the remote's client); resume() listens again on
-    the same port; stop() drops the link and joins every thread the splice started. Every transition is stamped for the
-    record.
+    the same port; stop() drops the link, joins every thread the splice started and fails naming any still alive at its
+    bound. Every transition is stamped for the record.
 
-    The splice owns its threads and ends them in stop(), which tearDownClass calls on every exit path (main's
-    tests/test_thread_stop_census.py reads each start here as object-owned through stop()). The opener is named listen()
-    and not start() because that census reads every `.start()` call as a thread start and cannot resolve an instance of
-    this class, which is not a Thread."""
+    The splice owns its threads and ends them in stop(), which tearDownClass calls on every exit path. The thread-stop
+    census on main (tests/test_thread_stop_census.py) reads each start here as object-owned through stop() by the joins
+    there, and would read it the same with the drop() call gone, though drop() is what makes the threads return; so
+    LinkProxyEnds runs stop() over a live pair and holds that every thread has ended when it returns, and stop() itself
+    fails naming any thread its joins did not end. The opener is named listen() and not start() because that census
+    reads every `.start()` call as a thread start and cannot resolve an instance of this class, which is not a Thread."""
+
+    STOP_BOUND_S = 10.0   # stop()'s one bound over every join; LinkProxyEnds shortens it on an instance to reach the failure
 
     def __init__(self, target_port):
         self.target = int(target_port)
@@ -402,16 +406,25 @@ class LinkProxy:
         return self.listen()
 
     def stop(self):
-        """End the splice for good. drop() closes the listener, so the accept loop returns at its next select, and shuts
-        every spliced pair down, so both pumps of each read EOF and return; then every thread started is joined, all of
-        them within one 10 s bound, so a pump a late accept left running cannot hold the teardown past it (the threads
-        are daemons, and the kernels killed after this end any such pump's peer)."""
+        """End the splice for good, and fail if it did not end. drop() is the release: it sets _down and closes the
+        listener, so the accept loop returns at its next select, and it shuts every spliced pair, so both pumps of each
+        read EOF and return. Every thread the splice started is then joined, all of them within one bound
+        (STOP_BOUND_S), the list re-read after each round of joins so that a pump an accept loop started while this
+        joined it is joined too. A thread still alive at the bound fails the teardown with an AssertionError naming it,
+        where a timed join that returned in silence would let a splice that never ended pass (tearDownClass still kills
+        the kernels and removes the lab when this raises)."""
         self.drop()
-        with self._lock:
-            threads = list(self._threads)
-        deadline = time.time() + 10.0
-        for t in threads:
-            t.join(max(0.0, deadline - time.time()))
+        deadline = time.monotonic() + self.STOP_BOUND_S
+        while True:
+            with self._lock:
+                live = [t for t in self._threads if t.is_alive()]
+            if not live or time.monotonic() >= deadline:
+                break
+            for t in live:
+                t.join(max(0.0, deadline - time.monotonic()))
+        if live:
+            raise AssertionError("the link splice's threads outlived stop()'s %.1f s bound: %s"
+                                 % (self.STOP_BOUND_S, ", ".join(sorted(t.name for t in live))))
 
 
 class _Control(threading.Thread):
@@ -1100,17 +1113,19 @@ class _LinkDrop(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        if getattr(cls, "ctl", None):
-            cls.ctl.stop()
-        if getattr(cls, "proxy", None):
-            cls.proxy.stop()
-        for p in getattr(cls, "procs", []):
-            try:
-                p.kill()
-                p.wait()
-            except Exception:
-                pass
-        shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)   # the minted checkout, if any, is under the lab
+        try:
+            if getattr(cls, "ctl", None):
+                cls.ctl.stop()
+            if getattr(cls, "proxy", None):
+                cls.proxy.stop()   # raises naming any splice thread still alive at its bound; the kernels end below regardless
+        finally:
+            for p in getattr(cls, "procs", []):
+                try:
+                    p.kill()
+                    p.wait()
+                except Exception:
+                    pass
+            shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)   # the minted checkout, if any, is under the lab
 
     # ---- the readers ----
     def _driver_ran(self):
@@ -1876,6 +1891,67 @@ class LinkDropOldLocal(_LinkDrop):
         files for it are allowed), and phase B's patches then file rows again (the storm test's phase B equality). A
         pause in the storm with a change due is the link, not the page."""
         self._assert_change_due_while_down_crossed_nothing_and_the_return_carried_it_whole()
+
+
+class LinkProxyEnds(unittest.TestCase):
+    """The splice's own ends, driven with no kernel and no browser: the target is a listening socket whose backlog completes
+    the splice's connect with nobody accepting, so these run wherever the module is collected, CI's Python cells included.
+    stop() is held to end every thread the splice started, drop() being the call that releases them (main's thread-stop
+    census reads the joins in stop() and would read them the same with the drop() call gone), and to fail naming any
+    thread still alive at its bound."""
+
+    def _target(self):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.addCleanup(srv.close)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(8)
+        return srv
+
+    def _spliced(self, p, srv):
+        """Dial the splice and carry one byte each way, so the pair is registered and both of its pumps run."""
+        c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.addCleanup(c.close)
+        c.settimeout(5)
+        c.connect(("127.0.0.1", p.port))
+        srv.settimeout(5)
+        u, _ = srv.accept()
+        self.addCleanup(u.close)
+        u.settimeout(5)
+        c.sendall(b"x")
+        self.assertEqual(u.recv(1), b"x")
+        u.sendall(b"y")
+        self.assertEqual(c.recv(1), b"y")
+        return c, u
+
+    def test_stop_ends_the_accept_loop_and_both_pumps_of_a_live_pair(self):
+        """A pair spliced and carrying bytes both ways, then stop(): every thread the splice started has ended when it
+        returns, and the client reads EOF. A stop() that joins without calling drop() first leaves the accept loop
+        running, and fails here at its bound."""
+        srv = self._target()
+        p = LinkProxy(srv.getsockname()[1])
+        self.addCleanup(p.drop)
+        p.listen()
+        c, _ = self._spliced(p, srv)
+        with p._lock:
+            threads = list(p._threads)
+        self.assertEqual(sorted(t.name for t in threads), ["linkproxy-accept", "linkproxy-pump", "linkproxy-pump"])
+        p.stop()
+        self.assertEqual([t.name for t in threads if t.is_alive()], [], "stop() returned with splice threads alive")
+        self.assertEqual(c.recv(1), b"", "the client's end of the pair reads EOF after stop()")
+
+    def test_stop_fails_naming_every_thread_alive_at_its_bound(self):
+        """With the release skipped (drop() made a no-op on this instance), the accept loop never sees a drop and outlives
+        the joins: stop() raises at its bound naming the thread, where a timed join that returned in silence would let the
+        teardown pass with the splice still running."""
+        srv = self._target()
+        p = LinkProxy(srv.getsockname()[1])
+        self.addCleanup(LinkProxy.drop, p)   # the real release, once the test is done
+        p.listen()
+        p.STOP_BOUND_S = 0.5
+        p.drop = lambda: None
+        with self.assertRaises(AssertionError) as cm:
+            p.stop()
+        self.assertIn("linkproxy-accept", str(cm.exception))
 
 
 if __name__ == "__main__":
