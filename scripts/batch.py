@@ -39,7 +39,9 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     alone (a single PR lands as a one-member batch), refusing a number that is not an open PR;
   - plan excludes a candidate whose pinned head has no passing sweep result of its own (read through the
     reader verify uses, so a member's head owes every leg, the webview legs included, as a batch head does),
-    naming the case, and its dependents with it; assemble --repin refuses a re-read head without one;
+    naming the case, and its dependents with it; assemble --repin refuses a re-read head without one; both record
+    on the member the pass they read, and the body's members table shows that record, never the author's trailer
+    (a member recorded without one reads "not recorded");
   - assemble refuses when any other `batch/*` ref exists on origin;
   - provenance fails on an undeclared commit and passes on a `batch:` commit;
   - every merge on the chain (a member's or origin/main's) equals the clean merge of its parents,
@@ -504,7 +506,7 @@ def cmd_plan(args):
     # with it, through the fixpoint below).
     sweep = sweep_reader()
     for n, m in list(cands.items()):
-        why = member_sweep_fault(root, sweep, m)
+        why, m["sweep"] = member_sweep(root, sweep, m)
         if why:
             excluded[n] = "no passing sweep at its head (%s)" % why
             del cands[n]
@@ -1238,11 +1240,12 @@ def cmd_assemble(args):
             pr = gh_json("pr", "view", str(k), "--json", "headRefOid,title,body,labels,baseRefName", cwd=root)
             # The re-read head is taken in like plan's: it owes a passing sweep of its own. Refused before anything
             # is re-pinned or rebuilt (nothing is saved until the assembly runs).
-            why = member_sweep_fault(root, sweep, dict(members[k], head=pr["headRefOid"]))
+            why, record = member_sweep(root, sweep, dict(members[k], head=pr["headRefOid"]))
             if why:
                 raise Fail("#%d's head %s has no passing sweep of its own (%s); nothing re-pinned" % (k, short(pr["headRefOid"]), why))
             old = members[k]["head"]
             members[k]["head"] = pr["headRefOid"]
+            members[k]["sweep"] = record
             members[k]["title"] = pr["title"]
             members[k]["labels"] = label_names(pr)
             members[k]["tier"] = tier_of(members[k]["labels"])
@@ -1547,19 +1550,36 @@ def excuse_contradiction(root, sweep, result, head, subject="the batch head"):
     return sweep.excuse_contradiction(root, result, head, subject=subject)
 
 
-def member_sweep_fault(root, sweep, m):
+def sweep_record(sweep, a, head):
+    """The pass a reader read (`a`, from assess), as the state records it: verify's state['sweep'] for the batch head
+    and each member's 'sweep' for its own head. The head, the result's path and finish, each leg's rc or "not owed",
+    the runner's display summaries, the failed runs the history excused with a known flake, and its invalid runs."""
+    legs = a["result"]["legs"]
+    return {"head": head, "path": a["path"], "verdict": "pass", "finished": a["result"].get("finished"),
+            "legs": [[n, legs[n].get("rc") if sweep.is_owed(n, legs[n]) else "not owed"] for n in sweep.LEGS],
+            "summary": {n: legs[n]["summary"] for n in sweep.LEGS if sweep.is_owed(n, legs[n]) and legs[n].get("summary")},
+            # the result's whole history as the reader read it: each failed run a later run's known flake excused, and
+            # each invalid run (it needs no flake, but it is named)
+            "reruns": list(a["result"].get("flake_notes") or []),
+            "invalid_runs": list(a["result"].get("invalid_notes") or [])}
+
+
+def member_sweep(root, sweep, m):
     """A member PR owes a passing sweep of its own head before its review round and before its closing check
-    (docs/batching.md), so the steps that take a member in (plan, assemble --repin) read it: None when the result
-    at the member's pinned head is a pass (every leg owed, the webview legs included, as at a batch head: the
-    reader refuses a webview leg marked not owed for any reason but a missing extension) and any leg it marks not
-    owed for a missing vscode-extension/package.json is one the head's tree lacks, else the reader's line naming
-    the case. The result is read from this machine's state dir; one recorded on another machine is missing here."""
+    (docs/batching.md), so the steps that take a member in (plan, assemble --repin) read it. Returns (fault, record):
+    (None, the pass as sweep_record has it) when the result at the member's pinned head is a pass (every leg owed, the
+    webview legs included, as at a batch head: the reader refuses a webview leg marked not owed for any reason but a
+    missing extension) and any leg it marks not owed for a missing vscode-extension/package.json is one the head's
+    tree lacks, else (the reader's line naming the case, None). The caller records the pass on the member, and the
+    body's members table shows that record (round 1, fresh-3). The result is read from this machine's state dir; one
+    recorded on another machine is missing here."""
     subject = "#%d's head" % m["n"]
     a = sweep.assess(m["head"], subject=subject, branch=m["head_ref"])
     if a["case"] != "pass":
-        return a["line"]
+        return a["line"], None
     ensure_object(root, m["head"], m["head_ref"])
-    return excuse_contradiction(root, sweep, a["result"], m["head"], subject=subject)
+    fault = excuse_contradiction(root, sweep, a["result"], m["head"], subject=subject)
+    return (fault, None) if fault else (None, sweep_record(sweep, a, m["head"]))
 
 
 def cmd_verify(args, quiet=False):
@@ -1641,14 +1661,7 @@ def cmd_verify(args, quiet=False):
         state["sweep"] = None
         lines.append("FAIL " + contradiction)
     elif a["case"] == "pass":
-        legs = a["result"]["legs"]
-        state["sweep"] = {"head": head, "path": a["path"], "verdict": "pass", "finished": a["result"].get("finished"),
-                          "legs": [[n, legs[n].get("rc") if sweep.is_owed(n, legs[n]) else "not owed"] for n in sweep.LEGS],
-                          "summary": {n: legs[n]["summary"] for n in sweep.LEGS if sweep.is_owed(n, legs[n]) and legs[n].get("summary")},
-                          # the result's whole history as the reader read it: each failed run a later run's known
-                          # flake excused, and each invalid run (it needs no flake, but it is named)
-                          "reruns": list(a["result"].get("flake_notes") or []),
-                          "invalid_runs": list(a["result"].get("invalid_notes") or [])}
+        state["sweep"] = sweep_record(sweep, a, head)
         lines.append("ok   " + a["line"])
     else:
         ok = False
@@ -1670,19 +1683,17 @@ def _cell(s):
     return str(s if s is not None else "").replace("|", "\\|").replace("\n", " ")
 
 
-def sweep_cell(trailer):
-    if not trailer:
-        return "not stated"
-    sw = trailer.get("sweep")
-    if not isinstance(sw, dict):
-        return "not stated"
-    parts = []
-    for k in ("pytest", "bats", "npm", "typecheck"):
-        if k in sw:
-            parts.append("%s %s" % (k, sw[k]))
-    if trailer.get("sweep_head"):
-        parts.append("@%s" % short(str(trailer["sweep_head"])))
-    return ", ".join(parts) if parts else "not stated"
+def member_sweep_cell(m):
+    """The members table's "Sweep at own head" cell: the pass plan (or assemble --repin) read at the member's pinned
+    head and recorded on the member (member_sweep), never the author's trailer, whose sweep fields are self-reported
+    and may name another sha (round 1, fresh-3); the trailer still gives the Rounds column. A member recorded by a plan
+    from before this record existed, or one whose record is for another head, renders "not recorded"."""
+    rec = m.get("sweep")
+    if not (isinstance(rec, dict) and rec.get("verdict") == "pass" and isinstance(rec.get("legs"), list)):
+        return "not recorded"
+    if rec.get("head") != m.get("head"):
+        return "not recorded (the pass read was at %s, the pinned head is %s)" % (short(rec.get("head")), short(m.get("head")))
+    return "pass @%s: %s" % (short(rec["head"]), pass_legs_phrase(rec))
 
 
 def resolution_reason(resolved):
@@ -1734,13 +1745,19 @@ def sweep_phrase(sw):
     if not sw:
         return "sweep not recorded"
     if sw.get("verdict") == "pass" and isinstance(sw.get("legs"), list):
-        summary = sw.get("summary") or {}
-        ran = ["%s rc %s%s" % (n, rc, (" (%s)" % summary[n]) if summary.get(n) else "") for n, rc in sw["legs"] if rc != "not owed"]
-        skipped = [n for n, rc in sw["legs"] if rc == "not owed"]
-        notes = list(sw.get("reruns") or []) + ["an earlier " + t for t in sw.get("invalid_runs") or []]
-        return "sweep pass: %s%s%s" % (", ".join(ran), ("; not owed: " + ", ".join(skipped)) if skipped else "",
-                                       ("; " + "; ".join(notes)) if notes else "")
+        return "sweep pass: " + pass_legs_phrase(sw)
     return sw.get("text") or "sweep not recorded"
+
+
+def pass_legs_phrase(sw):
+    """A recorded pass's legs in words (sweep_record's shape): every owed leg with its rc and the runner's display
+    summary, the legs not owed, each failed run a known flake excused, and each invalid run."""
+    summary = sw.get("summary") or {}
+    ran = ["%s rc %s%s" % (n, rc, (" (%s)" % summary[n]) if summary.get(n) else "") for n, rc in sw["legs"] if rc != "not owed"]
+    skipped = [n for n, rc in sw["legs"] if rc == "not owed"]
+    notes = list(sw.get("reruns") or []) + ["an earlier " + t for t in sw.get("invalid_runs") or []]
+    return "%s%s%s" % (", ".join(ran), ("; not owed: " + ", ".join(skipped)) if skipped else "",
+                       ("; " + "; ".join(notes)) if notes else "")
 
 
 def land_line(name):
@@ -1897,7 +1914,7 @@ def render_body(state, inputs, cap=BODY_CAP):
         rows.append("| #%d | %s | %s | %s | %s | %s | %s |" % (
             m["n"], _cell(m["title"]), _cell(m.get("tier") or "unlabeled"),
             _cell(t.get("rounds", "not stated")) if t else "not stated",
-            _cell(sweep_cell(m.get("trailer"))),
+            _cell(member_sweep_cell(m)),
             _cell(", ".join(flags) or "-"), ("+%d" % ledger_n) if ledger_n else "-"))
     members_table = "\n".join(rows)
 

@@ -601,6 +601,31 @@ class PlanReadsTheMemberSweep(_Base):
         self.assertEqual(excl[104], "depends on #103 (%s)" % excl[103], "the dependent goes with it")
         self.assertIn("excluded #103: no passing sweep at its head (sweep missing", p.stdout)
 
+    def test_the_members_table_shows_the_pass_plan_read_at_each_head_not_the_trailer(self):
+        """Round 1, fresh-3, end to end: #101 has no trailer and #102 a trailer whose sweep_head is another sha. plan
+        records the pass it read at each pinned head, the body's column shows it, and assemble --repin records the pass
+        at the new head. At the frozen head the column read "not stated" for #101 and the trailer's sha for #102."""
+        fx = self.fx
+        a = fx.branch("a", {"a.txt": "a\n"})
+        b = fx.branch("b", {"b.txt": "b\n"})
+        fx.pr(101, "a", labels=["fix"])
+        fx.pr(102, "b", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        fx.ok("assemble", "b1")
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        legs = "pytest rc 0, bats rc 0, manager rc 0, tools rc 0, ledger rc 0, typecheck rc 0, npm-test rc 0, build rc 0; not owed: deps"
+        self.assertIn("| #101 | PR 101 on a | fix | not stated | pass @%s: %s |" % (a[:10], legs), body)
+        self.assertIn("| #102 | PR 102 on b | fix | 3 | pass @%s: %s |" % (b[:10], legs), body)
+        self.assertNotIn("@0123456789", body, "the trailer's sweep_head, another sha, is not shown")
+        self.assertNotIn("12 passed", body, "nor its self-reported counts")
+        rec = fx.state("b1")["members"]["101"]["sweep"]
+        self.assertEqual((rec["head"], rec["path"]), (a, sweep.result_path(a, env=fx.env)))
+        new = fx.commit("b", {"b.txt": "b two\n"}, "a fix after review")
+        fx.ok("assemble", "b1", "--repin", "102")
+        self.assertEqual(fx.state("b1")["members"]["102"]["sweep"]["head"], new, "--repin records the pass at the new head")
+
     def test_a_member_whose_result_excuses_deps_for_a_package_json_its_head_holds_is_left_out(self):
         """Round 1's excuse rule: the runner marks deps not owed only for having no vscode-extension/package.json, and
         plan accepts that reason only when the member's head really has no such file."""
@@ -2976,10 +3001,30 @@ class Body(unittest.TestCase):
         st = self.state([self.member(10, tier=None, trailer=None, touches=("kernel/k.py",))])
         body = batch.render_body(st, {"resolutions": [], "entries": []})
         self.assertIn("- #10 br10: unlabeled; touches kernel/; trailer not stated.", body)
-        self.assertIn("| #10 | t | unlabeled | not stated | not stated | unlabeled, kernel/, no trailer | - |", body)
+        self.assertIn("| #10 | t | unlabeled | not stated | not recorded | unlabeled, kernel/, no trailer | - |", body)
         self.assertIn("| # | Title | Tier | Rounds | Sweep at own head | Flags | Ledger |", body)
         self.assertNotIn("Own CI", body)
         self.assertNotIn("own CI", body)
+
+    def test_the_sweep_column_is_the_pass_recorded_at_the_members_head_never_the_trailer(self):
+        """Round 1, fresh-3: the column rendered the author's trailer (self-reported, and its sweep_head may be another
+        sha) while plan had read the result at the member's pinned head. It renders the record plan or --repin wrote on
+        the member; a member with no record (a plan from before it) or a record for another head reads "not recorded",
+        never the trailer."""
+        recorded = self.member(1)
+        recorded["sweep"] = {"head": recorded["head"], "verdict": "pass", "legs": [[n, "not owed" if n == "deps" else 0] for n in sweep.LEGS],
+                             "summary": {"bats": "4 ok, 0 not ok"}, "reruns": [], "invalid_runs": []}
+        older = self.member(2)                                   # a trailer, and no record: an older plan
+        other = self.member(3)
+        other["sweep"] = dict(recorded["sweep"], head="ab" * 20)
+        body = batch.render_body(self.state([recorded, older, other]), {"resolutions": [], "entries": []})
+        self.assertIn("| #1 | t | fix | 2 | pass @%s: pytest rc 0, bats rc 0 (4 ok, 0 not ok), manager rc 0, tools rc 0, ledger rc 0, "
+                      "typecheck rc 0, npm-test rc 0, build rc 0; not owed: deps |" % recorded["head"][:10], body)
+        self.assertIn("| #2 | t | fix | 2 | not recorded |", body)
+        self.assertIn("| #3 | t | fix | 2 | not recorded (the pass read was at %s, the pinned head is %s) |"
+                      % ("ab" * 5, other["head"][:10]), body)
+        self.assertNotIn("abcdef0123", body, "the trailer's sweep_head is never shown")
+        self.assertNotIn("1 passed, bats 1", body, "nor its sweep counts")
 
     def test_held_back_lines_follow_the_template(self):
         """Whether the owner was told is what hold_back RECORDED, never assumed."""

@@ -41,9 +41,12 @@ reached main (it also runs on every push to main).
    without one. Both read the batcher's state dir, so a result recorded on another machine is
    missing there: say so, and the batcher sweeps your head.
 4. Optionally end the body with a trailer the batch body reads:
-   `<!-- romp-pr: {"tier":"fix","rounds":8,"sweep":{"pytest":"8461 passed","bats":528,"npm":3013,"typecheck":"clean"},"sweep_head":"<sha>","flakes":[]} -->`.
-   A missing trailer is not a failure; the member is listed under "Read these first" with "not
-   stated", which costs the maintainer a look.
+   `<!-- romp-pr: {"tier":"fix","rounds":8,"flakes":[]} -->`. The body takes your review rounds
+   from it. Your sweep is not taken from it: the members table shows the passing result `plan`
+   (or `assemble --repin`) read at your pinned head, so sweep counts or a sweep sha in the trailer
+   are ignored. A missing trailer is not a failure; the member is listed under "Read these first"
+   with "trailer not stated" and its Rounds column reads "not stated", which costs the maintainer
+   a look.
 5. For an upstream-worthy change, add the ledger entry file and commit it with the change. Do not
    edit UPSTREAM.md.
 6. Do not click merge. If a change must land now, say so in the body; it lands as a one-member
@@ -89,8 +92,10 @@ Per batch, in order:
    is the only code no one else has reviewed. When one side was taken outright, the line says
    whose version. For a kernel-touching or unlabeled member, open the member PR only if its row
    does not answer your question.
-3. Skim the members table. A row saying "not stated" is a session that skipped the trailer; pull it
-   or accept it.
+3. Skim the members table. "Sweep at own head" is the passing result `plan` (or `assemble
+   --repin`) read at the member's pinned head, not what the author wrote; it reads "not recorded"
+   for a member planned before `plan` recorded it. A Rounds cell saying "not stated" is a session
+   that skipped the trailer; pull it or accept it.
 4. Read "Upstream entries this batch adds or changes". Prune or promote later by editing `status:`
    in the entry file.
 5. To drop a member, comment `pull #N`. The batch is rebuilt without it (and without anything that
