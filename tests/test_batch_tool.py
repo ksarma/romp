@@ -96,7 +96,9 @@ class Fixture:
     """A bare origin, an author clone, the tool's clone, and the fake gh, all under one temp dir."""
 
     def __init__(self):
-        self.tmp = tempfile.mkdtemp(prefix="batchtool-")
+        # Resolved once, here: batch.py names paths under its repository's real path (git's show-toplevel follows
+        # symlinks), so a root under a symlinked TMPDIR (macOS's /var -> /private/var) must be compared resolved.
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="batchtool-"))
         self.bare = os.path.join(self.tmp, "origin.git")
         self.author = os.path.join(self.tmp, "author")
         self.dev = os.path.join(self.tmp, "dev")
@@ -1941,6 +1943,18 @@ class VerifyBehind(_Base):
         p = fx.ok("verify", "b1")
         self.assertIn("ok   main: origin/main at %s is in the batch head" % moved[:10], p.stdout)
 
+    def test_verify_refuses_when_origin_has_no_main(self):
+        """Round 1, extra4-8: with no main on origin there is nothing to compare the batch head with, and verify fails by
+        name, with --no-fetch too (a plain fetch would drop the tracking ref and fail earlier, in provenance)."""
+        fx = self.fx
+        self.ready()
+        fx._git("update-ref", "-d", "refs/heads/main", cwd=fx.bare)
+        self.assertTrue(fx.dev_git("rev-parse", "origin/main"), "the dev clone keeps its stale tracking ref")
+        p = fx.run("verify", "b1", "--no-fetch")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL behind: origin has no main branch to compare the batch head with", p.stdout)
+        self.assertFalse(fx.state("b1")["verified"]["ok"])
+
     def test_land_refuses_a_batch_behind_main_and_merges_nothing(self):
         fx = self.fx
         self.ready(summarize=True)
@@ -2151,6 +2165,21 @@ class LandReadsTheCI(_Base):
         fx.env["IGNORES_FILTERS_HEAD"] = self.head
         self.refused("the batch head's CI run is missing")
 
+    def test_a_run_list_that_is_not_json_is_refused_by_name(self):
+        """Round 1, extra4-8: a `gh run list` that answers with something that is not JSON (an HTML error page) is
+        refused by name, not read as a missing run, and nothing is merged or retargeted."""
+        fx = self.fx
+        self.ready()
+        fx.ci("b1")
+        wrapper = os.path.join(fx.tmp, "gh-not-json")
+        with open(wrapper, "w") as f:
+            f.write(NOT_JSON_GH % {"python": sys.executable})
+        os.chmod(wrapper, 0o755)
+        fx.env["ROMP_GH"] = wrapper
+        fx.env["NOT_JSON_FAKE_GH"] = os.path.join(fx.bin, "gh")
+        p = self.refused("gh run list returned something that is not JSON")
+        self.assertNotIn("is missing", p.stderr)
+
     def test_the_newest_run_at_the_head_decides(self):
         fx = self.fx
         self.ready()
@@ -2193,6 +2222,18 @@ if sys.argv[1:3] == ["run", "list"]:
                      "event": event, "workflowName": name, "url": "https://example.invalid/actions/runs/%%d" %% n,
                      "createdAt": "2026-02-01T00:00:%%02dZ" %% n})
     print(json.dumps(rows))
+    sys.exit(0)
+os.execv(sys.executable, [sys.executable, fake, *sys.argv[1:]])
+"""
+
+
+# A gh for one test: `run list` answers with an HTML error page, as a proxy in the way would; every other call goes to
+# the fake gh.
+NOT_JSON_GH = r"""#!%(python)s
+import os, sys
+fake = os.environ["NOT_JSON_FAKE_GH"]
+if sys.argv[1:3] == ["run", "list"]:
+    print("<html><body>502 Bad Gateway</body></html>")
     sys.exit(0)
 os.execv(sys.executable, [sys.executable, fake, *sys.argv[1:]])
 """
