@@ -3,10 +3,12 @@
 maintainer's round 1 ruling: a layout fix with no executed leg in CI cannot be reviewed).
 
 The two node browser legs (ui/webview/waiting-reply-sheet-browser.test.ts, render-reply-sheet-browser.test.ts) measure
-the sheet in three engines where a box has them, and skip where it does not: `npm test` runs before CI's extension job
-installs its browser, so in CI both legs skipped and the fix ran nowhere. This leg runs in the step that HAS the browser
-(ci.yml, "Browser-backed served-page tests", ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), against the pages
-as the kernel serves them from a private dist, with the REAL builders (waiting.ts showReply in /waiting, render.ts
+the sheet in three engines where a box has them, and skip where it does not. CI's extension job has two browser steps,
+and neither runs them: the job's Test step (`npm test`) runs them before the job installs its browser, so they skip
+there, and they are not on the roster of "Browser legs (node --test over ci-browser-legs.txt)" (each launches its own
+engines and skips an absent one, which that step's roster rule refuses). This leg runs in the other browser step,
+"Browser-backed served-page tests (pytest)" (ci.yml, ROMP_SERVED_TESTS_REQUIRE=1: a skip here is a failure), against the
+pages as the kernel serves them from a private dist, with the REAL builders (waiting.ts showReply in /waiting, render.ts
 showUserTodoReply in /chat), so it is the guard the node legs name where they skip.
 
 The composition the ruling asked for, per pane, asserted FIRST so that on a tree without the fix the tap's own outcome

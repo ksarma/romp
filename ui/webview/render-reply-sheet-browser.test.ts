@@ -39,7 +39,9 @@
 // not to its content, and the keyboard closing returns it to 215px; before, the dragged height stood through the resize
 // and Send lay below the frame.
 // Where they skip, the served leg tests/test_reply_sheet_served.py runs the same composition against the served chat
-// page in CI's browser step. Synthetic fixtures only: a placeholder sid, an invented path.
+// page in CI's "Browser-backed served-page tests (pytest)" step. These legs run in neither of the job's two browser steps:
+// the Test step runs them before the job installs its browser, so they skip there, and they are not on the roster of
+// "Browser legs (node --test over ci-browser-legs.txt)". Synthetic fixtures only: a placeholder sid, an invented path.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -367,10 +369,10 @@ function assertFits(m: Sheet, what: string) {
 
 for (const name of ["chromium", "firefox", "webkit"]) {
   test(`in ${name}: the chat's Reply sheet holds three rows with the keyboard up, the detail scrolls within its cap, the buttons stay in view; the fold follows the window's height; a tap where Send is painted sends`, async (t) => {
-    if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; the served leg tests/test_reply_sheet_served.py runs this composition in CI's browser step"); return; }
+    if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; the served leg tests/test_reply_sheet_served.py runs this composition in CI's Browser-backed served-page tests (pytest) step"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
-    catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
+    catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's Browser-backed served-page tests (pytest) step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
       const { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, errors } = await boot(browser);
       await openReply(TODOS[0]);
@@ -552,10 +554,10 @@ for (const name of ["chromium", "firefox", "webkit"]) {
   // below the box's clip, so the finger found the backdrop and the sheet closed with nothing posted, and that is the
   // assertion that goes red there, not a geometry read before it. The geometry follows, as the explanation of the outcome
   test(`in ${name}: THE COMPOSITION at 390 by 508 with the keyboard up: a tap where Send is painted sends the answer, and the sheet closes by the send, never by the backdrop`, async (t) => {
-    if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; the served leg tests/test_reply_sheet_served.py runs this composition in CI's browser step"); return; }
+    if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; the served leg tests/test_reply_sheet_served.py runs this composition in CI's Browser-backed served-page tests (pytest) step"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
-    catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
+    catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's Browser-backed served-page tests (pytest) step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
       const { measure, openReply, fill, tapSend, errors } = await boot(browser);
       await openReply(TODOS[1]);
