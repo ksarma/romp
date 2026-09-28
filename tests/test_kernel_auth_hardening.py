@@ -471,35 +471,66 @@ class TokenLeavesTheUrl(unittest.TestCase):
                 self.assertEqual(sent.get("Referrer-Policy"), "same-origin")
 
 
-def _wire_get(port, path, headers=None):
-    """GET `path` from a live kernel on `port` over a real socket: (status, the response's header message, body bytes). The
-    headers are read off the wire, every copy of each (message.get_all, which matches names without regard to case),
-    whatever wrote them: _send, a route's own send_header calls, or an override of send_response or end_headers."""
+def _wire_get(port, path, headers=None, method="GET"):
+    """GET `path` (or another `method`) from a live kernel on `port` over a real socket: (status, the response's header
+    message, body bytes). The headers are read off the wire, every copy of each (message.get_all, which matches names
+    without regard to case), whatever wrote them: _send, a route's own send_header calls, or an override of
+    send_response, end_headers or send_error."""
     import http.client
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
     try:
-        conn.request("GET", path, headers=dict(headers or {}))
+        conn.request(method, path, headers=dict(headers or {}))
         r = conn.getresponse()
         return r.status, r.msg, r.read()
     finally:
         conn.close()
 
 
+def _wire_raw(port, request):
+    """Send `request`, bytes exactly as written, to a live kernel on `port` over a plain socket and read until it closes:
+    (the status code, or None for a reply with no status line; the header message, read as _wire_get reads it, or None;
+    the body bytes). For requests http.client would not send as written (a space in the path) or that are refused while
+    their headers are still being read (a header line over 65536 bytes, more than 100 headers), and for a reply in
+    HTTP/0.9's shape, which has no status line and no headers for http.client to parse."""
+    import http.client
+    s = socket.create_connection(("127.0.0.1", port), timeout=15)
+    try:
+        s.sendall(request)
+        data = b""
+        while True:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+    finally:
+        s.close()
+    if not data.startswith(b"HTTP/"):
+        return None, None, data
+    head, _sep, body = data.partition(b"\r\n\r\n")
+    status, _sep, fields = head.partition(b"\r\n")
+    return int(status.split()[1]), http.client.parse_headers(io.BytesIO(fields + b"\r\n\r\n")), body
+
+
 class OpenerIsolation(unittest.TestCase):
-    """Every document the kernel serves declares Cross-Origin-Opener-Policy: same-origin (2026-09-25), so a page on
-    another origin that opens a dashboard page gets no live handle to it, and a handle is what a window message
-    needs. It rides _send, so every page carries it, and so do the dashboard's own tabs: a /file image or PDF it opens
-    with window.open is a same-origin document with the same policy, so window.open still returns a handle
-    (ui/webview/preview.ts openFileTab reads only that). Executed on the shell, every pane page, the sign-in page, a
-    static asset, and each document shape the /file route builds: an image, every shape that hands _send extra headers
-    of its own (an SVG, with its sandbox policy; a PDF, with its name; a text file, with its mtimes; a 404, with its
-    reason), the 413 page a PDF's own tab shows, and both 415 refusals (a file no view shows, a text-named file that is
-    not text). Each shape is served once per entry of NAVIGATIONS (tests/document_navigations.py): bare, and with the
-    headers a browser sends on a navigation typed, opened by the dashboard, and opened by another origin, which is where
-    a browser reads the policy, signed in by the romp_token cookie as a browser's navigation is. Read off a live socket (_wire_get), so a header written anywhere, a send_response or
-    end_headers override included, is seen, and each carries it exactly once: a second copy, even of the same value,
-    leaves a browser with a header it cannot parse and so with no policy. The /remote/<host>/file relay's shapes are
-    tests/test_kernel_remote_file_relay.py's, read the same way."""
+    """Every document the kernel serves a browser declares Cross-Origin-Opener-Policy: same-origin (2026-09-25), so a
+    page on another origin that opens a dashboard page gets no live handle to it, and a handle is what a window message
+    needs. It rides _send, and http.server's own refusals, which it writes outside _send, carry it through Handler's
+    send_error override (the 414 a page on another origin can open with a long URL, both 431s, the 501 and a 400:
+    test_each_refusal_http_server_writes_itself_carries_it_once). So every page carries it, and so do the dashboard's
+    own tabs: a /file image or PDF it opens with window.open is a same-origin document with the same policy, so
+    window.open still returns a handle (ui/webview/preview.ts openFileTab reads only that). Executed on the shell, every
+    pane page, the sign-in page, a static asset, and each document shape the /file route builds: an image, every shape
+    that hands _send extra headers of its own (an SVG, with its sandbox policy; a PDF, with its name; a text file, with
+    its mtimes; a 404, with its reason), the 413 page a PDF's own tab shows, and both 415 refusals (a file no view
+    shows, a text-named file that is not text). Each shape is served once per entry of NAVIGATIONS
+    (tests/document_navigations.py): bare, and with the headers a browser sends on a navigation typed, opened by the
+    dashboard, and opened by another origin, which is where a browser reads the policy, signed in by the romp_token
+    cookie as a browser's navigation is. Read off a live socket (_wire_get), so a header written anywhere, a
+    send_response or end_headers override included, is seen, and each carries it exactly once: a second copy, even of
+    the same value, leaves a browser with a header it cannot parse and so with no policy. The /remote/<host>/file
+    relay's shapes are tests/test_kernel_remote_file_relay.py's, read the same way. The one reply without it is one in
+    HTTP/0.9's shape, to a request line that does not end in an HTTP/1.x version, which no browser sends: it has no
+    status line and no headers at all (test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all)."""
 
     @classmethod
     def setUpClass(cls):
@@ -536,6 +567,41 @@ class OpenerIsolation(unittest.TestCase):
         # an unauthorized browser load of the shell gets the token sign-in page: a top-level document as well
         for how, (_msg, body) in self._coop("/", 200, signed_in=False).items():
             self.assertEqual(body.decode("utf-8"), km._TOKEN_LOGIN_HTML, how + ": no credential, the sign-in page, not the dashboard")
+
+    def test_each_refusal_http_server_writes_itself_carries_it_once(self):
+        # http.server writes these with send_error, outside _send; Handler's send_error override adds the policy. The 414
+        # is the one a page on another origin can open as a top-level document (a URL past 65536 bytes is enough). It is
+        # refused before any header is read, so a navigation's headers would change nothing and it is sent bare.
+        host = "Host: 127.0.0.1:%d\r\n" % self.port
+        refusals = (
+            ("a request line over 65536 bytes", 414, lambda: _wire_get(self.port, "/chat?x=" + "a" * 70000)),
+            ("a method no route takes", 501, lambda: _wire_get(self.port, "/", method="PUT")),
+            ("a header line over 65536 bytes", 431,
+             lambda: _wire_raw(self.port, ("GET / HTTP/1.1\r\n%sX-Big: %s\r\n\r\n" % (host, "b" * 70000)).encode())),
+            ("more than 100 headers", 431,
+             lambda: _wire_raw(self.port, ("GET / HTTP/1.1\r\n%s%s\r\n" % (host, "".join("X-H%d: v\r\n" % i for i in range(120)))).encode())),
+            ("a request line that ends in a version but has a word too many", 400,
+             lambda: _wire_raw(self.port, ("GET /a b HTTP/1.1\r\n%s\r\n" % host).encode())))
+        for what, code, send in refusals:
+            with self.subTest(what=what):
+                status, msg, body = send()
+                self.assertIsNotNone(msg, what + ": a reply with headers: %r" % body[:80])
+                self.assertEqual(status, code, what)
+                self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], what + ": one header, same-origin")
+
+    def test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all(self):
+        # The one reply without the policy (Handler.send_error's comment names it): a request line that does not end in an
+        # HTTP/1.x version is answered in HTTP/0.9's shape, the body alone, so no header can ride it. No browser sends one.
+        # A bare "GET <path>" is answered with the page itself, here the sign-in page, as bare as http.server's refusals.
+        for what, line in (("a word after the version", "GET /chat HTTP/1.1 extra"), ("a malformed version", "GET / HTTP/x.y"),
+                           ("HTTP/2.0", "GET / HTTP/2.0"), ("two words, not a GET", "PUT /"), ("a bare GET", "GET /")):
+            with self.subTest(what=what):
+                status, msg, body = _wire_raw(self.port, (line + "\r\n\r\n").encode())
+                self.assertIsNone(status, what + ": no status line")
+                self.assertIsNone(msg, what + ": no headers")
+                self.assertTrue(body.lstrip().lower().startswith(b"<!doctype html"), what + ": the body alone: %r" % body[:60])
+                if what == "a bare GET":
+                    self.assertEqual(body.decode("utf-8"), km._TOKEN_LOGIN_HTML, "the sign-in page, served with no headers")
 
     def _file_coop(self, name, data, want_status, cap=None):
         """Serve `data`, written to a file called `name`, through /file once per NAVIGATIONS entry (_coop). Returns

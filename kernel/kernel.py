@@ -73544,9 +73544,31 @@ def _state_write_route(path, b):
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    _in_send_error = False   # True only while send_error below runs: end_headers adds the opener policy then
 
     def log_message(self, *a):
         pass
+
+    # http.server writes its own refusals with send_error, outside _send: a request line over 65536 bytes (414), a
+    # header line over 65536 bytes or more than 100 headers (431), a method no do_ handler takes (501), and a request
+    # line that ends in an HTTP/1.x version but has too many words (400). A page on another origin can open the 414 as
+    # a top-level document (a long URL is enough), so these carry the opener policy _send's comment describes.
+    # send_error writes its headers in end_headers, so the header is added there, and only while send_error runs:
+    # _send writes its own copy, and a second copy leaves a browser with no policy. A request line that does not end
+    # in an HTTP/1.x version, which no browser sends (no version, a malformed one, HTTP/2.0 or later, a word after
+    # it), is answered in HTTP/0.9's shape, a body with no status line and no headers: http.server's 400 or 505, or
+    # for a bare "GET <path>" the page itself. No header can ride those replies.
+    def send_error(self, code, message=None, explain=None):
+        self._in_send_error = True
+        try:
+            super().send_error(code, message, explain)
+        finally:
+            self._in_send_error = False
+
+    def end_headers(self):
+        if self._in_send_error:
+            self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        super().end_headers()
 
     def _send(self, code, body, ctype, cache=None, headers=None):
         body = body.encode("utf-8") if isinstance(body, str) else body
@@ -73568,9 +73590,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
         # Opener isolation (2026-09-25): a page on another origin that opens a dashboard page with window.open keeps
-        # a handle to it, and a handle is what lets that page post window messages to it. same-origin puts every
-        # top-level document this origin serves in a browsing context group of its own: an opener on another origin
-        # gets a closed handle and the page gets no opener. The dashboard's own tabs (a /file image or PDF it opens
+        # a handle to it, and a handle is what lets that page post window messages to it. same-origin puts a
+        # top-level document in a browsing context group of its own: an opener on another origin gets a closed handle
+        # and the page gets no opener. It rides every response _send builds, and http.server's own refusals through
+        # the send_error override above, so every document this origin serves carries it once, except a reply in
+        # HTTP/0.9's shape, which carries no headers at all (that override's comment names the request lines that
+        # get one; no browser sends them). The dashboard's own tabs (a /file image or PDF it opens
         # with window.open) are documents on this origin carrying the same policy, so window.open still returns a
         # handle and the in-app view does not take over (preview.ts openFileTab reads only whether it got one).
         # Browsers enforce it only on secure contexts (https, localhost); on a plain-http tailnet address it is
