@@ -15,6 +15,8 @@ import { cssRules, renderRule, underScreen } from "./css-rules.mjs";
 import { hostSheets } from "./host-sheets.mjs";
 import { codeOnly } from "../test-code-only";   // the comment stripper the count pin and the Mouse-call census read through (the compiler's ranges; file-view-seam.test.ts self-checks it)
 import * as ts from "typescript";   // the Mouse-call census's compiler walk (mouseCalls; the test build keeps typescript a runtime require, esbuild.js testBuild)
+import { ownFileRoute } from "./file-view";
+import { hostOf } from "./host-prefix";   // the host-prefix rule ownFileRoute writes out, held to one answer with it below   // the classifier of a figure at this origin's /file route, run over its forms below (the coordinator's ruling on the same-origin figure after the file review's round 19)
 
 const ROOT = path.resolve(process.cwd(), "..");
 const web = (f: string) => fs.readFileSync(path.join(ROOT, "ui", "webview", f), "utf8");
@@ -108,6 +110,45 @@ test("what it opens (figureTarget): the model's figurePath for a source on the s
   assert.match(fn, /const p = figurePath\(filePath, dest\);\n\s*if \(p !== null\) return \{ kind: "file", path: p \};/);
   assert.match(fn, /if \(\/\^https\?:\/i\.test\(dest\) \|\| dest\.startsWith\("\/\/"\)\) return \{ kind: "web", href: absUrl\(dest\), src: dest \};/, "an http source: a tab, resolved as the browser resolved the fetch, with the source as the author wrote it beside it, which the words read for the sign-in rule");
   assert.match(fn, /return null;\n\}/, "a data: URL or any other scheme: nothing to open");
+  assert.match(fn, /const own = ownFileRoute\(dest, document\.baseURI, location\.origin\);\n\s*if \(own !== null\) return \{ kind: "file", path: own\.path, sid: own\.sid \};\n(?:\s*\/\/[^\n]*\n)*\s*if \(\/\^https\?:/, "this origin's /file route is read before the web arm, against the page's base and origin, and is a file in the session its address names (the coordinator's ruling on the same-origin figure after the file review's round 19; the next test runs the classifier over its forms, and file-figure-open-engines-browser.test.ts opens each form in the three engines)");
+});
+
+test("what it opens for a figure at this origin's /file route (ownFileRoute, the coordinator's ruling on the same-origin figure after the file review's round 19): a source with a scheme or a leading // parsed against the page, its origin the page's own and its path /file once its escapes are decoded and its dot segments resolved, is the file its query names in the session it names, the plain, escaped, .. and . spellings alike; another origin, this host at another port, another path, a path figure, an address naming no path and a sid with a host prefix are none, and stay what they were", () => {
+  const PAGE = "http://notes-api.test/files", HERE = "http://notes-api.test";
+  const P = "/repo/notes-api/docs/figs/b.svg", S = "11111111-2222-3333-4444-555555555555";
+  const q = "?path=" + encodeURIComponent(P) + "&sid=" + S;
+  const FILE = { path: P, sid: S };
+  const rows: Array<[string, string, { path: string; sid: string | null } | null]> = [
+    ["the plain spelling", HERE + "/file" + q, FILE],
+    ["an escaped route", HERE + "/%66ile" + q, FILE],
+    ["a .. segment", HERE + "/x/../file" + q, FILE],
+    ["a . segment", HERE + "/./file" + q, FILE],
+    ["escaped dots, a .. segment to the URL parser", HERE + "/x/%2e%2e/file" + q, FILE],
+    ["an escaped slash beside dots, decoded before the dots resolve", HERE + "/x%2F..%2Ffile" + q, FILE],
+    ["a protocol-relative source", "//notes-api.test/file" + q, FILE],
+    ["the scheme and the host in upper case", "HTTP://NOTES-API.TEST/file" + q, FILE],
+    ["this page's scheme written with no slashes", "http:/file" + q, FILE],
+    ["no sid", HERE + "/file?path=" + encodeURIComponent(P), { path: P, sid: null }],
+    ["a blank path before the named one, which the kernel's parse_qs drops", HERE + "/file?path=&path=" + encodeURIComponent(P) + "&sid=" + S, FILE],
+    ["another origin", "http://other.test/file" + q, null],
+    ["this host at another port", "http://notes-api.test:8080/file" + q, null],
+    ["this host under another scheme", "https://notes-api.test/file" + q, null],
+    ["another path", HERE + "/files" + q, null],
+    ["a trailing slash", HERE + "/file/" + q, null],
+    ["a trailing . segment, which leaves a trailing slash", HERE + "/file/." + q, null],
+    ["an escaped slash before a trailing ., decoded before the dots resolve", HERE + "/file%2F." + q, null],
+    ["a path figure, the model's join", "figs/file" + q, null],
+    ["a root-relative figure, a path of the disk", "/file" + q, null],
+    ["no path", HERE + "/file?sid=" + S, null],
+    ["a sid with a host prefix, which the viewer's URL would relay", HERE + "/file?path=" + encodeURIComponent(P) + "&sid=gpu1:" + S, null],
+    ["a malformed escape", HERE + "/%E0%A4%A" + q, null],
+  ];
+  const got = rows.map(([what, dest]) => [what, ownFileRoute(dest, PAGE, HERE)]);
+  assert.deepEqual(got, rows.map(([what, , want]) => [what, want]), "each form's file, or none: this origin's /file route after its escapes are decoded and its dot segments resolved, and nothing else");
+  assert.equal(ownFileRoute(HERE + "/file" + q, PAGE, ""), null, "a page with no origin to compare (a stand-in outside a browser) reads no source as its own");
+  // the host prefix: ownFileRoute refuses a sid exactly where hostOf, the rule the viewer's URL routes by, names a host
+  const sids = [S, "gpu1:" + S, ":" + S, "a:b:" + S, "gpu1:", "x"];
+  assert.deepEqual(sids.map((s) => ownFileRoute(HERE + "/file?path=" + encodeURIComponent(P) + "&sid=" + encodeURIComponent(s), PAGE, HERE) === null), sids.map((s) => hostOf(s) !== ""), "a sid is refused where hostOf reads a host in it, and only there: " + JSON.stringify(sids));
 });
 
 test("where it is decided: mdBlock's file arm after the anchors are sorted; a figure the browser answers for after the paint through one capture-phase load and error pair on the body, armed per open and dropped with the viewer; a URL document adds none", () => {
@@ -139,8 +180,9 @@ test("the click: a listener of its own on the body beside the links'; the contro
   assert.match(open, /const target = figureTarget\(img, path\);\n\s*if \(!target\) return;/);
   assert.match(open, /if \(wantsOwnTab\(ev\)\) ev\.stopPropagation\(\);/, "a modified click stops before the row's delegate, as a link's does");
   assert.match(open, /if \(target\.kind === "web"\) \{ if \(webGestureShown\(img, ev\)\) openUrlTab\(target\.href\); return; \}/, "a remote picture: a tab, never the viewer, and only through the one gate (the file review's round 16, extra5-1; a sentence pin, whose property file-view-outline.test.ts's gate guards and file-figure-open-browser.test.ts's gate cells execute)");
-  assert.match(open, /if \(wantsOwnTab\(ev\) && openFileTab\(target\.path, sid \|\| null\)\) return;/, "the /file URL in a tab; a blocked popup falls through");
-  assert.match(open, /openFigureInViewer\(target\.path, sid \|\| null\);/, "the viewer through the figure's own door, with no target: the trail's push, and no Recent row (file-view-figure-recent-browser.test.ts)");
+  assert.match(open, /const fileSid = target\.sid !== undefined \? target\.sid : sid \|\| null;/, "the session a figure at this origin's /file route names (ownFileRoute's sid, null for none), else the shown file's (the coordinator's ruling on the same-origin figure after the file review's round 19)");
+  assert.match(open, /if \(wantsOwnTab\(ev\) && openFileTab\(target\.path, fileSid\)\) return;/, "the /file URL in a tab; a blocked popup falls through");
+  assert.match(open, /openFigureInViewer\(target\.path, fileSid\);/, "the viewer through the figure's own door, with no target: the trail's push, and no Recent row (file-view-figure-recent-browser.test.ts)");
   assert.match(VIEW, /\nfunction openFigureInViewer\(path: string, sid: string \| null\): void \{\n  trailNext = "push";\n  try \{ openFileView\(path, sid, \{ at: null \}\); \} finally \{ trailNext = null; \}\n\}\n/, "the door: the tag set and cleared as openFromViewer sets and clears it, openFileView itself and not the host's opener");
   assert.doesNotMatch(fig + open, /ev\.stopPropagation\(\)(?!;\s*\/\/ a modified)/, "a plain click is never stopped");
   // the links' listener is as it was: its pins in file-view-links.test.ts read the first listener's text

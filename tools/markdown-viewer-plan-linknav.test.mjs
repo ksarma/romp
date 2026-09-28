@@ -276,8 +276,8 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   for (const line of ['if (ev.defaultPrevented) return;', 'if (!img || figureLinkOf(img)) return;', 'if (panelMark(t) && !wantsOwnTab(ev)) return;', 'if (asideOpen && !wantsOwnTab(ev)) return;', 'if (selectionOpenIn(box)) return;', 'openFigure(img, ev);']) assert.ok(fig.includes(line), 'the figure listener: ' + line);
   const openFig = between(viewer, 'const openFigure = (img: Element, ev: MouseEvent): void => {', '\n  };\n');
   assert.ok(openFig.includes('if (target.kind === "web") { if (webGestureShown(img, ev)) openUrlTab(target.href); return; }'), 'the web arm opens through the one gate (the file review\'s round 16, extra5-1) (a sentence pin; file-view-outline.test.ts\'s gate guards and file-figure-open-browser.test.ts\'s gate cells execute the gate)');
-  assert.ok(openFig.includes('if (wantsOwnTab(ev) && openFileTab(target.path, sid || null)) return;'));
-  assert.ok(openFig.includes('openFigureInViewer(target.path, sid || null);'), 'the plain click is the trail\'s push with no target, through the figure\'s own door (no Recent row)');
+  assert.ok(openFig.includes('if (wantsOwnTab(ev) && openFileTab(target.path, fileSid)) return;'));
+  assert.ok(openFig.includes('openFigureInViewer(target.path, fileSid);'), 'the plain click is the trail\'s push with no target, through the figure\'s own door (no Recent row)');
   assert.ok(section.includes('the figure\'s own click yields to a figure inside a link'));
   assert.ok(section.includes('the floor is read again at each change of the figure\'s own laid-out box (`watchFigureBoxes`'), 'the re-read at each reflow of the figure, by its function');
   assert.ok(viewer.includes('const figureWatch = watchFigureBoxes(body, path, ctx.onRendered);'), 'which the open sets up once, armed at each text paint through the seam\'s onRendered, the first paint\'s included (nothing is observed at the open: the body is empty then)');

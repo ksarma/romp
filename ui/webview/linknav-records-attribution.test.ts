@@ -796,9 +796,11 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
  *  dropStackClasses takes off a figure's ancestors, each names that round); forty since the fixes for the file review's round 18,
  *  extra6-3 (the comment in the figures' observer's callback, which says why its decision runs at the next animation frame, names
  *  that round); forty-one since the fixes for the file review's round 19, ui-1 (the comment over keyStepNext, the tag a key on Back
- *  or Forward sets so the step's landing keeps the keyboard on the new bar's button, names that round).
+ *  or Forward sets so the step's landing keeps the keyboard on the new bar's button, names that round); forty-three since the
+ *  coordinator's ruling on the same-origin figure after that round (the docstring of ownFileRoute, which reads a figure at this
+ *  origin's /file route as a file, and the comment over its call in figureTarget, each names that round).
  *  A property pin: the count is compared to the derived list, whose lines the message prints. */
-const VIEWER_UNITS = 41;
+const VIEWER_UNITS = 43;
 
 test("road 1, every checkout, a rule over the tree: every file git lists at the repo root, tracked or untracked and not ignored, whose text names the file review or carries an id of the author's family, plus the files the branch created, the plan's section, the guide's Links paragraph and the browser plan's pointer; the created files and the three records in full, the rest keyed on the review named, so another review's rounds are left alone; no round outside the convention and no finding of the author's outside a pass; road 2, on the open PR branch where main has moved past its last merge (the merge-base off origin/main and the diff adding this module): every unit the branch added or touched, the working tree against the merge-base", (t) => {
   const reviews = convention();

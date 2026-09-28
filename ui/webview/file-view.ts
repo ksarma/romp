@@ -2923,7 +2923,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // Cmd/Ctrl-click, Enter or Space on a picture from the web opens its tab only while the picture's outbound sign (figureSign: its
   // web control, or on a picture that wears none its mark) is in view and uncovered (signShown), read at the gesture's start;
   // otherwise the gesture opens nothing and reveals the sign (revealSign: a scroll, never a focus), so the next gesture opens;
-  // a sign partly in view counts as in view. Before it, a tap or a click on the visible part of a loaded web picture opened the tab while its control stood off the
+  // a sign partly in view counts as in view. A figure whose source is this origin's /file route written with its scheme is no
+  // picture from the web: its target is a file (ownFileRoute), opened as a local picture is, so the gate never reads it (the
+  // coordinator's ruling on the same-origin figure after the file review's round 19). Before it, a tap or a click on the visible part of a loaded web picture opened the tab while its control stood off the
   // screen, with nothing shown, on every device. A pointer's or a finger's press is read here, in the window's capture phase,
   // before any listener of the page runs: the Outline popover closes itself in its own capture listener on the document, so a
   // read on the body came after that close and saw the sign uncovered, and a click on the picture under the popover opened the
@@ -3549,7 +3551,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // of them, the key's click on the control among them, only through the one gate above: while the picture's sign is in view and
   // uncovered at the gesture's start, and otherwise it opens nothing and reveals the sign, so the next one opens, a sign partly in
   // view counting as in view (the file review's round 16, extra5-1).
-  // A local picture is not gated. A failed figure opens nothing on any gesture (figureTarget).
+  // A local picture is not gated, and neither is a figure whose source is this origin's /file route written with its scheme,
+  // which opens as a local picture, the viewer or its own tab off the /file route in the session its address names, and never a
+  // web tab at that address (ownFileRoute; the coordinator's ruling on the same-origin figure after the file review's round 19).
+  // A failed figure opens nothing on any gesture (figureTarget).
   // The control's click is the figure's own wherever it stands (and it never stands inside a link whose click is the link's:
   // decideFigureControl puts it after a link holding the figure alone and adds none inside a link of FIGURE_LINK_SET holding
   // more, linkAbove). The figure's own click yields where another gesture owns it: a figure inside a link of FIGURE_LINK_SET
@@ -3572,8 +3577,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (!target) return;
     if (wantsOwnTab(ev)) ev.stopPropagation();                                    // a modified click is the figure's alone: the row's delegate never sees it
     if (target.kind === "web") { if (webGestureShown(img, ev)) openUrlTab(target.href); return; }   // a remote picture: a tab, never the viewer, and only through the one gate
-    if (wantsOwnTab(ev) && openFileTab(target.path, sid || null)) return;      // its own tab off the /file route; a blocked popup falls through to the viewer
-    openFigureInViewer(target.path, sid || null);                                // the picture in this viewer: the shown file goes onto the trail (moveTrail) and the picture enters no Recent list
+    const fileSid = target.sid !== undefined ? target.sid : sid || null;        // the session a figure at this origin's /file route names (ownFileRoute), else the shown file's
+    if (wantsOwnTab(ev) && openFileTab(target.path, fileSid)) return;           // its own tab off the /file route; a blocked popup falls through to the viewer
+    openFigureInViewer(target.path, fileSid);                                    // the picture in this viewer: the shown file goes onto the trail (moveTrail) and the picture enters no Recent list
   };
   body.addEventListener("click", (ev) => {
     // a click another listener already answered stands down here: the gate listener, first on this body, prevents default as
@@ -6321,7 +6327,14 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // read from the src alone, the control opened a file the paint never requested, and a remote picture's tab was an address
 // the page never fetched). For a remote candidate (an http or https source, a protocol-relative one), the address in a tab,
 // never the viewer, read FIRST; else the file the candidate names on the session's disk (the model's figurePath, the join
-// rewriteFigureSrcs fetched through, so the open's request is the paint's). A figure with nothing to open gets no control:
+// rewriteFigureSrcs fetched through, so the open's request is the paint's). A candidate of that remote kind that names THIS
+// origin's /file route (ownFileRoute: the address parsed against the page, its origin the page's own, its path /file once its
+// escapes are decoded and its dot segments resolved) is no remote picture but a file of a session, read before the web arm:
+// the file the address's query names, in the session it names, opened as a local picture is opened (the viewer, or its own
+// tab off the /file route on a Cmd/Ctrl-click), never a web tab at the address. The cap pass (capAuthoredFileUrls) caps such
+// a figure's src so the picture loads under a page key, and a tab at the address as written carries no cap, so the kernel
+// refused it (the coordinator's ruling on the same-origin figure after the file review's round 19; a /file address on another
+// origin, or on this host at another port, stays a web target). A figure with nothing to open gets no control:
 // no source, a `data:` URL (inline bytes, which a tab will not show), any other scheme. A figure still fetching has no
 // target yet (figureState): its control waits for the load and its plain click opens nothing, since the candidate the
 // browser will show is not known (currentSrc is empty while the source is on the wire, and chosenSource read that as the
@@ -6333,15 +6346,54 @@ function resolveFigureRefs(root: ParentNode, base: string): void {
 // figure's click opened a tab at a host whose image request had answered 404, while the control was already withheld; the
 // two readers of "is there something to open" now answer alike). The target is read again at the click. A gated
 // placeholder (figure-gate.ts) gets none until its figure is loaded: armFigureControls hears the load on the body.
+/** The file a figure's source names when that source is THIS origin's /file route written with its scheme or a leading `//`
+ *  (the population figureTarget's web arm reads), else null (the coordinator's ruling on the same-origin figure after the file
+ *  review's round 19). `dest` is parsed against `base`, the page's base, as the browser resolved the figure's fetch; its
+ *  origin must be `origin`, the page's own, so a /file path on another origin, or on this host at another port, is none;
+ *  and its path, with its percent-escapes decoded first and its `.` and `..` segments resolved after, must be `/file`, so
+ *  `/%66ile`, `/x/../file` and `/./file` count. The kernel routes the path as the browser sends it, which resolves the dot
+ *  segments and leaves the escapes as written, so an escaped spelling reaches no /file route there and its picture does not
+ *  load; it counts here all the same, on the side where a picture opens in the viewer and never in a tab. The file is the
+ *  query's first `path` value that is not empty, as the kernel's parse_qs reads it, with the `sid` beside it (null when the
+ *  address names none). An address naming no path is none, and so is one whose sid carries a host prefix, which the
+ *  viewer's own URL (preview.ts fileUrl) would send through another host's relay in place of this origin's route; the prefix
+ *  is read by hostOf's rule (host-prefix.ts: a colon after the first character), written out here, and file-figure-open.test.ts
+ *  holds the two to one answer over its sids. */
+export function ownFileRoute(dest: string, base: string, origin: string): { path: string; sid: string | null } | null {
+  if (!/^https?:/i.test(dest) && !dest.startsWith("//")) return null;   // a path figure is the model's join, never this
+  let u: URL;
+  try { u = new URL(dest, base); } catch { return null; }
+  if (!origin || u.origin !== origin) return null;
+  let decoded: string;
+  try { decoded = decodeURIComponent(u.pathname); } catch { return null; }   // a malformed escape: no route of this origin
+  const segs: string[] = [];
+  const parts = decoded.split("/").slice(1);
+  parts.forEach((s, i) => {                            // the URL parser's dot-segment rule: `..` pops, `.` stays out, and either one last leaves a trailing slash
+    if (s === ".." || s === ".") { if (s === "..") segs.pop(); if (i === parts.length - 1) segs.push(""); }
+    else segs.push(s);
+  });
+  if ("/" + segs.join("/") !== "/file") return null;
+  const first = (name: string): string => { for (const v of u.searchParams.getAll(name)) if (v !== "") return v; return ""; };
+  const path = first("path"), sid = first("sid");
+  if (!path || sid.indexOf(":") > 0) return null;   // a host-prefixed sid, by hostOf's rule
+  return { path, sid: sid || null };
+}
 /** What "Open the picture" opens for a figure, or null when there is nothing to open. `filePath` is the shown file's. A web
  *  target carries the resolved address its tab opens (`href`) and the source as the author wrote it (`src`, chosenSource's
- *  answer), which the words read for the sign-in rule (figureSourceCredentialed, in dressFigureTitle and dressFigureControl). */
-type FigureTarget = { kind: "file"; path: string } | { kind: "web"; href: string; src: string };
+ *  answer), which the words read for the sign-in rule (figureSourceCredentialed, in dressFigureTitle and dressFigureControl).
+ *  A file target carries the path and, for a figure at this origin's /file route (ownFileRoute), the session its address
+ *  names (`sid`, null for none); with no `sid` it is a file of the shown file's session. */
+type FigureTarget = { kind: "file"; path: string; sid?: string | null } | { kind: "web"; href: string; src: string };
 function figureTarget(img: Element, filePath: string): FigureTarget | null {
   const state = figureState(img);
   if (!figureHasPicture(state)) return null;   // the rule, not a list: a target only for a state with a picture to name (loaded; a stand-in outside a browser). Fetching (the browser has not answered, no candidate to name until the load or the error decides) and failed (no picture to open) are the refused states today, and a state the type gains later is refused with them; the control is withheld on the same rule (figureWantsControl), so the click and the control agree (the file review's round 2 made the two readers agree; the guard became a rule before its round 3)
   const dest = chosenSource(img);                      // the candidate the browser chose, as the author wrote it: the picture's source or the srcset candidate in currentSrc, else the src by pictureDest's rule
   if (dest === null) return null;
+  // This origin's /file route before the web arm: a file of a session, opened as a local picture is, never a tab at the
+  // address, which carries no cap (ownFileRoute; the coordinator's ruling on the same-origin figure after the file review's
+  // round 19).
+  const own = ownFileRoute(dest, document.baseURI, location.origin);
+  if (own !== null) return { kind: "file", path: own.path, sid: own.sid };
   // The web address FIRST, before the model's join: figurePath reads a protocol-relative source (`//host/pic.svg`) as an
   // absolute path of the disk (its one test is for a scheme, and `//` has none), where rewriteFigureSrcs left it alone as a
   // web address and the browser fetched it from the web (file-view-figures-absolute.test.ts). Read after the join, the web

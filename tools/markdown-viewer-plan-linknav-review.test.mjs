@@ -245,7 +245,7 @@ test('the file review: L3 names the one decision, its verdict and the state it r
   assert.ok(!L3.includes('which is also the paint-time read, before the browser has picked, that decides whether the control exists'), 'the false paint-time sentence is gone');
   assert.ok(viewer.includes('function openFigureInViewer(path: string, sid: string | null): void {\n  trailNext = "push";\n  try { openFileView(path, sid, { at: null }); } finally { trailNext = null; }\n}'), 'the figure\'s own door');
   const openFig = between(viewer, 'const openFigure = (img: Element, ev: MouseEvent): void => {', '\n  };\n');
-  assert.ok(openFig.includes('openFigureInViewer(target.path, sid || null);') && !openFig.includes('openFromViewer('), 'openFigure takes the door, not the host\'s opener');
+  assert.ok(openFig.includes('openFigureInViewer(target.path, fileSid);') && !openFig.includes('openFromViewer('), 'openFigure takes the door, not the host\'s opener');
   assert.ok(L3.includes('through the figure\'s own door, `openFigureInViewer` (openFileView itself with the trail tag set to push and cleared in a `finally`'), 'L3 names the door and its shape');
   assert.ok(!L3.includes('`openFromViewer("push", path, sid, null)`'), 'and no longer the host\'s opener for the figure');
   assert.ok(L3.includes('the picture takes NO Recent row'), 'L3 records the Recent default');
@@ -266,7 +266,7 @@ test('the file review: L3 and L6 record the remote picture\'s tab as the one new
   // the three gestures share openFigure's web arm, which runs before the /file-tab branch (extra5-3: the record had named two and
   // given the modified click the /file URL); the control's click takes openFigure with the same event
   const openFig = between(viewer, 'const openFigure = (img: Element, ev: MouseEvent): void => {', '\n  };\n');
-  inOrder(openFig, ['if (target.kind === "web") { if (webGestureShown(img, ev)) openUrlTab(target.href); return; }', 'if (wantsOwnTab(ev) && openFileTab(target.path, sid || null)) return;'], 'openFigure: the web arm, through the one gate (the file review\'s round 16, extra5-1), before the /file tab (a sentence pin; file-view-outline.test.ts\'s gate guards and file-figure-open-browser.test.ts\'s gate cells execute the gate)');
+  inOrder(openFig, ['if (target.kind === "web") { if (webGestureShown(img, ev)) openUrlTab(target.href); return; }', 'if (wantsOwnTab(ev) && openFileTab(target.path, fileSid)) return;'], 'openFigure: the web arm, through the one gate (the file review\'s round 16, extra5-1), before the /file tab (a sentence pin; file-view-outline.test.ts\'s gate guards and file-figure-open-browser.test.ts\'s gate cells execute the gate)');
   assert.ok(viewer.includes('if (control) { const img = figureOfControl(control); if (img) openFigure(img, ev); return; }'), 'the control\'s click takes openFigure too');
   assert.ok(L3.includes('a plain click on a LOADED remote picture, its control, and a Cmd/Ctrl-click on it, three gestures through one arm, all call `openUrlTab`'), 'L3 names the three gestures');
   assert.ok(L3.includes('The modified click opens the picture\'s own address and never the kernel\'s /file URL, since openFigure\'s web arm runs before its /file-tab branch'), 'L3 corrects the modified click');
