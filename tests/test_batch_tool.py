@@ -34,6 +34,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 # The batch tool reads sweep results under the state root (each Fixture points XDG_STATE_HOME at a
@@ -1734,6 +1735,28 @@ class VerifyReadsTheSweep(_Base):
         p = self.refused("FAIL sweep missing: no result for the batch head %s in %s (the state dir from XDG_STATE_HOME"
                          % (head, sweep.sweeps_dir(env=fx.env)))
         self.assertIn("run `scripts/sweep.py run --tree %s` with the same ROMP_STATE_DIR and XDG_STATE_HOME" % fx.wt("b1"), p.stdout)
+
+    def test_the_no_result_case_compares_the_same_under_a_linked_temp_dir(self):
+        """Frozen-head ruling 5: the no-result case above failed on macOS, where the temp dir is reached through a link
+        (/var is /private/var): batch.py names the worktree under its repository's real path (git's show-toplevel
+        resolves links), and the test built the path it expected from the unresolved temp dir. The Fixture resolves its
+        root once, so every path it hands out is in the form batch.py prints. This runs the same case on any OS with
+        the temp dir reached through a link, and shows the comparison does not depend on the path's form."""
+        real = os.path.realpath(tempfile.mkdtemp(prefix="batchtool-linked-"))
+        self.addCleanup(shutil.rmtree, real, True)
+        link = real + "-link"
+        os.symlink(real, link)
+        self.addCleanup(os.unlink, link)
+        self.assertNotEqual(os.path.realpath(link), link, "premise: the temp dir is reached through a link")
+        with unittest.mock.patch.object(tempfile, "tempdir", link):
+            self.fx = fx = Fixture()
+        self.addCleanup(fx.close)
+        head = self.assembled()
+        p = self.refused("FAIL sweep missing: no result for the batch head %s in %s (the state dir from XDG_STATE_HOME"
+                         % (head, sweep.sweeps_dir(env=fx.env)))
+        self.assertIn("run `scripts/sweep.py run --tree %s` with the same ROMP_STATE_DIR and XDG_STATE_HOME" % fx.wt("b1"), p.stdout)
+        self.assertEqual(os.path.realpath(fx.wt("b1")), fx.wt("b1"), "the Fixture hands out resolved paths")
+        self.assertTrue(fx.tmp.startswith(real + os.sep), fx.tmp)
 
     def test_a_pass_at_the_head_is_ok_and_recorded(self):
         fx = self.fx
