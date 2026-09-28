@@ -1318,8 +1318,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 " function that declares the name `global` (as the target of an assignment, an augmented assignment, a loop, a comprehension, a "
                 "with or a walrus, or by an import, a def or class statement or an except clause) or a module-level augmented assignment), "
                 "through a local whose every binding is read (a walrus in a nested def's, class's or lambda's header is a binding it does not "
-                "read) and through a dict literal's values (a call or a Content-Type write inside a lambda's body is refused before its type "
-                "is read, below); the part before any `;`, stripped and lower-cased, is compared with the types a "
+                "read) and through a dict literal's values (refused before its type is read, below: a call inside a lambda's body, a Content-Type write inside one that is no `_send` definition's own write, and a call whose definition binds the parameter one of its own writes names other than as that parameter); the part before any `;`, stripped and lower-cased, is compared with the types a "
                 "browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a `+xml` "
                 "suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript, "
                 "application/javascript among them). A script-running route's page body is the call's second positional argument, read only when "
@@ -1358,11 +1357,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "methodcaller imported from a module other than its own, a name built at run time, gc or ctypes among them, and through "
                 "a module reached by a tuple or list unpacking, an inline walrus, `sys.modules.__getitem__`, a for-loop target, a "
                 "parameter default or a starred argument) is outside the list and not seen, and a module name or a builtin so "
-                "rewritten is read as the file's text binds it. A `_send` definition in a class that a function defines, a page "
-                "function that a "
-                "function encloses, and a `_send` call or a Content-Type write inside a lambda's body fail the run by name: the "
-                "census does not read the enclosing function's or lambda's scope, so it would take a name that scope binds (a builtin or a "
-                "module name it shadows) for the module's. "
+                "rewritten is read as the file's text binds it. A `_send` definition in a class that a function defines, a page function that a function encloses, a `_send` call inside a lambda's body, and a Content-Type write inside one that is no `_send` definition's own write fail the run by name: the census does not read the enclosing function's or lambda's scope, so it would take a name that scope binds (a builtin or a module name it shadows) for the module's. A `_send` definition's own Content-Type writes (each write whose innermost def is the definition, or a def in it itself named `_send`) are typed at each call. A call fails the run by name where one of them names a parameter whose argument the census reads as the type and the definition binds that name other than as that parameter anywhere in its body (in its own scope or in a lambda, a comprehension, a nested def or a class body in it) and in any form (an assignment, augmented or annotated, or an annotation; a loop, with, walrus or match target; an except name; a del; an import; a def or class statement; a global or nonlocal declaration; a parameter, a comprehension's target, a type statement or a type parameter): the census reads that write's type from the call's argument, which such a binding may replace. "
                 "The page function of each script-running route is followed to the text it returns or inlines, and a "
                 "parameter a followed call omits is read from its default value as that argument would be, in the scope the def statement runs "
                 "in (a default the pass cannot read is refused by name, among them a method's default naming a name its class body binds). A "
@@ -1387,15 +1382,10 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "or one of the seven builtins a page may name, each for what its result is (str, its argument's text or a value's printed form, a call of it with more than one positional argument, a starred argument or a keyword other than `object`, any of which may be an encoding or an errors argument that decodes its first, refused by name, an honest decode of bytes failing closed with it; int and float, a number's digits; dict, a mapping of its arguments' keys and values; max, one of its arguments, or, handed one iterable, an element of it; getattr, an attribute of its first argument; and chr, the character a code point names: getattr and chr give text their arguments "
                 "do not hold, and max over one iterable returns an element its argument holds, whose join with the text beside the call the census does not compute, so each falls under the call limit below, getattr and chr as its witnesses) that no module-level binding shadows and that is not rebound, any other builtin refused by name, and a call of super() refused by name as well, its methods being a base class's (the names the import system binds in every module, `__doc__`, "
                 "`__name__`, `__package__`, `__spec__` and "
-                "`__loader__`, are no builtins here: a page that reads one the file does not bind is refused by name); a parameter, an except "
-                "name, or a name the function binds from one of those), reading as text the arguments a call of such a base or of a method on one is handed, never the text it computes from them: text a call computes from its arguments is not read, a stated limit (`dict(X).get(k)` and `json.loads(json.dumps(X))[0]` read X; the limit's witnesses are `chr(n)`, whose character is not n's text, `getattr(o, name)`, whose attribute is not its arguments' text, and a decoder, `base64.b64decode(X).decode()` or zlib or gzip over an embedded bundle (`zlib.decompress(base64.b64decode(X)).decode()`), each read only as its arguments' own text; an encoded asset kept ASCII and decoded "
-                "where the page is built is such a shape, and can be honest; max handed one iterable, which returns an element of it, is such a call too: `max(\"af\")` gives the character f), and over a bare module name that is such an import or one of the seven builtins a page may name, or, in such a "
+                "`__loader__`, are no builtins here: a page that reads one the file does not bind is refused by name wherever the pass reads it, as a bare name, the base of a receiver, a container or an attribute, a callee or a call's argument, but never inside the index of a subscript over a container whose text the pass does not read: below); a parameter, an except name, or a name the function binds from one of those, where no attribute is read on the path to it: `q.get(k)` passes, and `q.X` is refused, below), reading as text the arguments a call of such a base or of a method on one is handed, never the text it computes from them: text a call computes from its arguments is not read, a stated limit (`dict(X).get(k)` and `json.loads(json.dumps(X))[0]` read X; the limit's witnesses are `chr(n)`, whose character is not n's text, `getattr(o, name)`, whose attribute is not its arguments' text, and a decoder, `base64.b64decode(X).decode()` or zlib or gzip over an embedded bundle (`zlib.decompress(base64.b64decode(X)).decode()`), each read only as its arguments' own text; an encoded asset kept ASCII and decoded "
+                "where the page is built is such a shape, and can be honest; max handed one iterable, which returns an element of it, is such a call too: `max(\"af\")` gives the character f; and so is a method called on a parameter whose name is no route class's method (below), a method of a class that holds no route among them), and over a bare module name that is such an import or one of the seven builtins a page may name, or, in such a "
                 "module, a top-level def or class"
-                " statement that is its name's one module-level binding and is not rebound. Text such a base holds is not read, as with code behind a name on self (a method called on self): a constant that a sibling module defines and the page imports, an attribute set before the call on a parameter other than self and other than a classmethod's first parameter, and an attribute of a class the pass reaches as a value without resolving it as the class (among them a class passed to a parameter or given as its default, a loop, comprehension or unpacking target bound to one, an if-expression over classes standing as the attribute's base, and a subscript of a container of "
-                "classes); an "
-                "attribute read on self (`self.X` as a value, a receiver or a container, `self.X.get(k)`, `self.X[0]` and `self.__doc__` among them) is refused by name, whatever sets it, and so is an attribute read on a class, as a value, a receiver or a container, through the class's own name (a name a class statement binds, in the innermost function scope around the read that binds the name or, where none does, at the top level of the file, whatever else binds it at module level) or through a name the census resolves to such a class (a classmethod's first parameter in that method, `cls.X`, or a local or a module constant bound to one, `h = Handler` and then `h.X`), or "
-                "through a method call on a name whose value holds such a class (a local or a module constant bound to a list, tuple, set or dict literal with one among its elements, keys or values, `_REG.get(k).X`, or a local or a module constant bound to such a call), and so is a text method called on such a name (`Handler.format(...)`) and a replacement field in a `.format` or `.format_map` that reaches an attribute of its argument (below): no class attribute is read as page text. A call of a name the census resolves to such a class, the class's own name among them, is refused by name (a classmethod's first parameter, `cls()`, as a call), so no attribute of the "
-                "instance it makes is read either. A name "
+                " statement that is its name's one module-level binding and is not rebound. Text such a base holds is not read, as with code behind a name on self (a method called on self is read through the def statement the census follows, below, unless the file may replace it at run time in a way the census reads, below; code that replaces that method in any other way, a setattr or delattr whose name argument is no string constant, a write to an instance's `__dict__`, a reassigned `__class__`, a class decorator or a metaclass among them, is not read; its witness: a method the route class defines that a module function replaces through setattr, the method's name handed to it as an argument): a constant that a sibling module defines and the page imports, and a class reached through an import's attribute (its witness: a class that a sibling module defines, read as an attribute of that module, which the page imports by name) or through a call's return, under the call limit. An attribute read in a page position, as a value or anywhere on the path of a receiver or a container (but never inside the index of a subscript over a container whose text the pass does not read: below), is refused by name unless the root its base reaches by binding is a module constant, an import, one of the seven builtins a page may name, a value slot or a literal the pass reads (the census follows the base down that path, through a call's callee, a BoolOp's operands, an if-expression's branches and a walrus's value as well, and through a local's values, a loop, comprehension or with target's source, a list, tuple, set or dict literal's elements, keys and values, and a module constant's value, but never through a call's argument or a parameter's default): an attribute read on self (`self.X` as a value, a receiver or a container, `self.X.get(k)`, `self.X[0]` and `self.__doc__` among them), on a local bound to it or on a method's first parameter however spelled, where the method's def carries no decorator and, for a route handler, the file binds neither staticmethod nor classmethod, is refused by name, whatever sets it; one read on any other parameter (a module helper's parameter, any other method's first parameter, and a parameter that a class is passed to or has as its default among them) or on an except name is refused by name with a reason of its own; a base whose root is one the pass refuses (a function's or a method's return, a call it does not follow, a builtin other than the seven, `__file__` in a file that binds it, a run-time memo) is refused with the reason the pass gives that root; and an attribute read on a class, a method called on one among them, is refused by name too, as a value, a receiver or a container, through the class's own name (a name a class statement binds, in the innermost function scope around the read that binds the name or, where none does, at the top level of the file, whatever else binds it at module level) or through a name the census resolves to such a class (a local or a module constant bound to one, `h = Handler` and then `h.X`), or through a method call on, or a subscript of, a name whose value holds such a class (a local or a module constant bound to a list, tuple, set or dict literal with one among its elements, keys or values, `_REG.get(k).X`, or to a call of the builtin dict with one among its arguments, a keyword's value among them, `_REG = dict(a=Handler)` and then `_REG[\"a\"].X`, or a local or a module constant bound to such a method call or subscript), or of such a literal or call itself (`dict(a=Handler).get(k).X`), or through any other base whose root by binding is such a class (a loop, comprehension or with target over classes, an if-expression or a walrus over classes, and a literal container holding one, `_REG[\"a\"].X` and `_REG[\"a\"].render()` among them), and so is a text method called on such a class through any of those roads (`Handler.format(...)`, `_REG.get(k).format(...)`, `(A or B).replace(...)`, `t.strip()` in a loop over classes), save one on a subscript refused as a join's operand (below), and a replacement field in a `.format` or `.format_map` that reaches an attribute of its argument (below): no class attribute is read as page text. A call of a name the census resolves to such a class, the class's own name among them, is refused by name as a call, so no attribute of the instance it makes is read either. A name "
                 "is rebound when a function binds it under `global` or a statement at module level "
                 "writes it, in one of the forms listed above for a route's type; every name is rebound, as under a star import, in a "
                 "file that writes its module namespace through a computed name (globals() or vars() used any way but for a `.get` read, "
@@ -1412,10 +1402,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "closes every write through the name by one arm; an attribute named `__globals__`, `__builtins__`, f_globals, "
                 "f_builtins or f_locals, on any receiver; a listed callable (locals, exec, eval, compile, `__import__`, import_module "
                 "or _getframe) reached in the first three ways; or one of those callables or attributes, globals, vars, setattr, "
-                "delattr or `__dict__` reached in the fourth; or, in a position of the fourth, a key that is a join the census does "
-                "not fold, whatever it spells: a `.join`, `.format`, `.format_map` or `.replace` called on the name str, bytes or "
-                "bytearray (`str.join(\"\", [...])`), or a `%`, `.format` or `.format_map` on a string constant that is not expanded "
-                "(below). The four ways, the whole of the reach the census reads for each of these "
+                "delattr or `__dict__` reached in the fourth; or, in a position of the fourth, a key the POSITIVE ALLOWLIST does not prove by its binding. The allowlist accepts only a constant string spelling no listed name; a parameter; a call's return whose callee reaches neither text nor the str, bytes or bytearray type nor a method of one; a name that is a loop or comprehension target inside a function over a literal of constants, a once-bound module tuple constant no code can mutate or an attribute whose base reaches no text and whose name the file never writes (it binds and declares no such name, uses an attribute so named only as such a source or an item read, never storing, deleting, augmenting or calling a method on one, spells the name in no string constant or keyword and in no setattr, delattr, `__setattr__` or `__delattr__` name folded from string constants, and names no globals, vars, locals or `__dict__` and holds no star import; such a setter whose name is not so folded is not read for it); a name that is such a target, or an unpacking target, over a parameter or such a call's return, directly or through names an assignment, such a target or an unpacking binds to one; a boolean operation or an if-expression each of whose values the allowlist accepts where it stands; and a name an assignment binds to any of these but a constant string. Every other key refuses by name, the reason naming what the walk met: a join, format, format_map or replace call, a `%`, a `+` or an f-string a string constant does not fold; a method of the name str, bytes or bytearray, however reached; any method called on, or attribute read on, constant text or anything not proven to reach no text; a direct attribute key or a name bound to one, an attribute proven only as a loop or comprehension source; such a source whose name the file may write, as above; a name bound to a constant string; a with target, or a name bound to one; a walrus, or a name a walrus binds anywhere, a comprehension's included; a subscript; an augmented assignment; a loop target bound at module level; a name a function or a class body declares global or a scope declares nonlocal; a name a class body binds; a name bound only in another form or by no statement; a list, set or dict module constant; and any other node kind. A name read at module level or as a builtin refuses where the file may rewrite its namespace. The four ways, the whole of the reach the census reads for each of these "
                 "names (`__dict__` in the fourth alone, beside the attribute the computed-name forms above name): by its own name, in "
                 "any context; by a name an import anywhere in the file binds to it from its module (locals, exec, eval, compile, "
                 "`__import__`, globals, vars, setattr and delattr from builtins, import_module and `__import__` from importlib, "
@@ -1442,19 +1429,10 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "binds to one of these; or an if-expression or a boolean operation with one of these among its operands. A function's `X = []` of a local of the same name, or its `X.append(...)`, does not rebind it. It follows a "
                 "call whose callee is a"
                 " module function (a top-level def statement that is its name's one module-level binding, not rebound, in a module with no star "
-                "import, and bound by no function scope of the page), a function defined in the page function or a method of the route's class "
-                "(to what it returns, any decorator on it not applied), a text method or a file read, or any other method (through its receiver, "
-                "as above, so `_K.__call__(t)` on a module constant `_K` that holds a lambda reads `_K` and the lambda's body, whose parameters "
-                "are value slots), and it reads every call's arguments; a call to any other callee passes when the callee is such an import, one of the seven builtins a page may name or a parameter other than a classmethod's first parameter, and is refused by name for any other builtin, for str handed more than one positional argument, a starred argument or a keyword other than `object`, and, as a call, for a classmethod's first parameter, its class. It "
-                "reads both operands of a `/`, a path join. `__file__`, wherever a page reads it (as a bare name, the base of a "
-                "receiver, a container or an attribute, or a callee), is refused by name in a file where a statement binds it, in any "
+                "import, and bound by no function scope of the page), a function defined in the page function or a method called on the calling method's own first parameter (self by binding, however it is spelled, the first parameter of a method whose def carries no decorator, never rebound in the method, and read so in a closure, a lambda or a comprehension of the method that does not bind the name; the first parameter of a route handler that carries a decorator, whatever it is bound to, or that stands in a file binding staticmethod or classmethod in any scope and by any form, a star import among them, is not classified, and a method called on it, or it called, is refused by name), resolved through the route class's method resolution order to the first class that binds the name, where that is a class of the file whose body itself binds it by one def statement and nothing else, carrying no decorator at all (staticmethod and classmethod among them), since Python calls a decorator's return in the def's place, and that no file class deriving from the route class, directly or through file classes, overrides in its own body, a text method or a file read, or any other method (through its receiver, as above, so `_K.__call__(t)` on a module constant `_K` that holds a lambda reads `_K` and the lambda's body, whose parameters are value slots), and it reads every call's arguments. A method called on self that no def statement of a class of the file defines first in that order (the order reaching a base whose names the census does not read, an imported one, before any class of the file that binds the name; the first class that binds it binding it any other way; or no class binding it) is refused by name, and so is a method the follow arm would take that a file class deriving from the route class, directly or through file classes, defines in its own body: the server may instantiate that subclass, whose override Python runs in place of the def the order resolves the name to. So too is a call of a route class's method (a name a def statement binds in the body of a route class or of a class of the file it derives from, the names read once per file) on self through anything else (a local, a loop, comprehension or with target, a container, an if-expression, a BoolOp or a walrus bound to it), on any other parameter, or on a name spelled self that is not the calling method's own first parameter, and a call of any other name on self through anything else, and a method the census would follow whose def carries any decorator (staticmethod and classmethod among them), whose return Python calls in its place, and a method the census would follow that the file may replace at run time (below), each before the file-read and text-call arms and wherever such a call stands on the path of a receiver or a container; a call to any other callee passes when the callee is such an import, one of the seven builtins a page may name or a parameter other than such an unclassified first parameter, and is refused by name for any other builtin, for str handed more than one positional argument, a starred argument or a keyword other than `object`, and for such a first parameter. For that refusal the file may replace a method at run time where it stores or deletes an attribute of the method's name on any object (the target of an assignment of any kind, a for, with or comprehension target, or a del), names the method by a string constant, or a join of them, as the second argument of setattr or delattr (by that name or as an attribute so named) or of `__setattr__` or `__delattr__` called unbound (by that name, or as an attribute of `object`, of `type`, of a class a top-level class statement of the file binds or of a call of type()), or as the first argument of `__setattr__` or `__delattr__` called bound on any other receiver (`self.__setattr__(\"name\", f)`, `super().__setattr__(...)`), or holds a class in the route class's method resolution order that binds `__getattribute__`. It "
+                "reads both operands of a `/`, a path join. `__file__`, wherever a page reads it (as a bare name, the base of a receiver, a container or an attribute, or a callee, but never inside the index of a subscript over a container whose text the pass does not read: below), is refused by name in a file where a statement binds it, in any "
                 "scope and by any form, before any scope's or module-level binding of it is read, and there a file read whose path the "
-                "census builds from `Path(__file__)` or `open(__file__)` is refused as a file the walk does not scan; where no "
-                "statement binds it, it is a value slot as a bare name (the argument of `Path(__file__)` among them) when the file "
-                "neither writes a name of its module namespace through a computed name nor may rewrite it at run time and the module "
-                "holds no star import, and is refused by name in every other case, with that file's reason in a file that writes its "
-                "namespace through a computed name or may rewrite it at run time and with no reason in a module that holds a star "
-                "import. It reads a lambda's body, its "
+                "census builds from `Path(__file__)` or `open(__file__)` is refused as a file the walk does not scan; where no statement binds it, the file neither writes a name of its module namespace through a computed name nor may rewrite it at run time, no module-level statement writes it and the module holds no star import, it is the file's own path: a value slot as a bare name (the argument of `Path(__file__)` among them) and the path of a file read the census builds from `Path(__file__)` or `open(__file__)`; in every other case it is refused by name as a bare name, with that file's reason in a file that writes its namespace through a computed name or may rewrite it at run time and with no reason otherwise, and such a file read is refused as a file the walk does not scan, as in a file where a statement binds it. It reads a lambda's body, its "
                 "parameters value slots, and its defaults where "
                 "the lambda stands. It reads a subscript's container only under a constant index: a slice of any shape, or an index that is "
                 "no constant (a name, a call, a parameter, a tuple, or a negative number, which parses as a unary expression), over a "
@@ -1462,17 +1440,15 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "attribute, a subscript or a method call on one of those, or a boolean operation with one of those among its operands) is "
                 "refused by name, since it reads the container whole and does not compute what the index selects; honest forms fail closed "
                 "with it (`_PAGE[1:]`, a template's leading newline cut; `PAGES[key]` over a dict constant, the key no constant; `_P[-1]`), "
-                "and a container that is a base whose own text it does not read, or a call of one or of a method on one, passes whatever "
-                "its index. "
-                "A None, bool or int constant, the empty bytes constant and a `*` or `<<` over int constants are value slots the pass reads as no text; one that stands directly as a `%` operand (bare, a tuple element or a dict literal's value, an int modulo such as `n % 60` among them), as a `.format` argument (an element of a starred list or tuple literal and a value of a `**` dict literal among them) or as a value of the dict literal a `.format_map` is handed is refused by name, whether or not a conversion takes it, since a conversion can turn it into characters (a `%c`, a `%x`, a `{:c}`, a `%.1s` over the empty bytes), and one held deeper there (a name or a local "
+                "and a container that is a base whose own text it does not read, or a call of one or of a method on one, passes whatever its index. The index of such a subscript, over a container whose text the pass does not read, is not read at all, whatever it holds (a name the import system binds, `__file__`, an attribute read on self, on a parameter or on a class, a call): the item it selects is text such a base holds (above). "
+                "A None, bool or int constant, the empty bytes constant and a `*` or `<<` over int constants are value slots the pass reads as no text; one that stands directly as the right operand of a `%` (bare, a tuple element or a dict literal's value, an int modulo such as `n % 60` among them), as a `.format` argument (an element of a starred list or tuple literal and a value of a `**` dict literal among them) or as a value of the dict literal a `.format_map` is handed is refused by name, whether or not a conversion takes it, since a conversion can turn it into characters (a `%c`, a `%x`, a `{:c}`, a `%.1s` over the empty bytes), and one held deeper there (a name or a local "
                 "bound to one, an if-expression's branch, a list's element, or a call's argument, one of the seven builtins' among them) is read as a value slot and not refused. The run fails by name (SERVED) on any other reference to `_send` (a read of it that is not a call's function, a "
                 "store or delete of an attribute so named, or a string equal to `_send`), a content type the pass cannot read, a script-running "
                 "type written outside `_send`, a function that"
-                " answers outside `_send` more often than it writes a Content-Type header, a container the module writes at run time, an attribute read on self, a class attribute (an attribute read on a class through the class's own name, a name the census resolves to it or a method call on a name whose value holds it), a replacement field reaching an attribute or an index of its argument in a `.format` or `.format_map`, a name the import system binds in every module that the file does not bind, a subscript by a slice or an index other than a constant over a container whose text the pass reads, a subscript by a constant index over such a container that stands as an "
-                "operand of a `+`, a `%`, an f-string, a `.join`, a `.format`, a `.format_map` or a `.replace`, a value slot that "
-                "stands directly as a `%` operand, a `.format` argument or a `.format_map` value, a builtin other than the seven a page may name, a call of str with more than one positional argument, a starred argument or a keyword other than `object`, a join, format, format_map or replace called on the name str, bytes or "
+                " answers outside `_send` more often than it writes a Content-Type header, a container the module writes at run time, an attribute read on self, on any other parameter or on an except name, each judged by the root its base reaches by binding (so one read on a local bound to self, or on a method's first parameter however spelled under the conditions above, is one read on self), a class attribute (an attribute read on a class, a method called on one among them, through the class's own name, a name the census resolves to it, a method call on or a subscript of a name whose value holds it or of such a value itself, or any other base whose root by binding is a class), a method called on self that no def statement of a class of the file defines first in the route class's method resolution order, a method called on self that a file class deriving from the route class overrides, a route class's method called other than on the calling method's own first parameter, a method called on self that the file may replace at run time, a call of, or a method called on, a route handler's first parameter the census does not classify, a replacement field reaching an attribute or an index of its argument in a `.format` or `.format_map`, a `.format` or `.format_map` whose format string the receiver reaches other than as a string constant, a join of them or a name bound to one, a name the import system binds in every module that the file does not bind, a subscript by a slice or an index other than a constant over a container whose text the pass reads, a subscript by a constant index over such a container that stands as an "
+                "operand of a `+`, a `%`, an f-string, a `.join`, a `.format`, a `.format_map` or a `.replace`, a value slot that stands directly as the right operand of a `%`, a `.format` argument or a `.format_map` value, a builtin other than the seven a page may name, a call of str with more than one positional argument, a starred argument or a keyword other than `object`, a join, format, format_map or replace called on the name str, bytes or "
                 "bytearray, a `%`, `.format` or `.format_map` on a string constant that is not expanded, `__file__` in a file where a "
-                "statement binds it, any other receiver or container, any other callee (a module constant, a local, a class, a classmethod's first parameter, a subscript, a call and a lambda among them), any "
+                "statement binds it, any other receiver or container, any other callee (a module constant, a local, a class, a subscript, a call and a lambda among them), any "
                 "other bare module name (one bound other than by one assignment, one bound by an annotated, unpacking or chained assignment, one "
                 "annotated at module level beside its assignment, one no module-level statement binds that a function or a class body binds "
                 "under a `global` declaration, an "
@@ -1483,7 +1459,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "builtin in a file that may rewrite the builtins, and a rebound import, "
                 "builtin, function or class among them), any other kind of expression in a page (a non-empty bytes, float, complex or "
                 "Ellipsis constant, an f-string's format "
-                "spec, any other operator, a comparison and a unary expression among them), and a route whose body yields no piece and no file slot, unless the served allowlist, SERVED_ALLOW, names the place by its function and expression, with the number of places the entry "
+                "spec, any other operator, a comparison and a unary expression among them), and a route whose body yields no piece and no file slot (each refusal of page text applies where the pass reads that text, never inside the index of a subscript over a container whose text the pass does not read: above), unless the served allowlist, SERVED_ALLOW, names the place by its function and expression, with the number of places the entry "
                 "covers and the reason (the two answers with no body, the CORS preflight's 204 and the websocket upgrade's 101, are named there);"
                 " an entry that names nothing in the run, or covers a different number of places, fails the run too. In served text every "
                 "`fetch(` and `import(` on a line is read by its own argument, and no comment skip applies, since a joined constant is one line "
@@ -1497,8 +1473,7 @@ SERVED_PAGES = ("The pages the kernel serves and its service worker's script, fr
                 "`.format_map` on a string constant or on one of these joins is not expanded when a field or precision is wider than a "
                 "million characters (a `%` conversion's width or precision, or any run of digits in a format field's own spec) or when "
                 "a format spec holds a replacement field, whose width is computed at run time; each such call refuses by name, whatever its arguments. A tool's name, a tag, an attribute, an import or a fetch URL split across such a join is therefore read whole, and a site both reads "
-                "find is listed once; a fetch URL cut at the join is listed as the joined text reads it, whole. A `.format` or `.format_map` whose format string holds a replacement field whose name reaches an attribute or an index of its argument (`{0.CSS}`, `{h.CSS}`, `{self.body}`, `{0[k]}`) refuses by name, since the text such a field reads is the argument's attribute or item, which the pass does not read: the census looks for such a field where the format string is the receiver's text, a string constant or one of these joins, or the value of a module constant or a local bound to one, and a format string the pass reaches any other way (a function's return among them) "
-                "is text a call computes from its arguments, the call limit. Text a page joins through anything but a string constant (a name, a call, an attribute, a subscript of a container whose text the pass does not read, or a field or a `%` slot holding one) is read piece by piece: a tool's name, a tag or an attribute split there is not seen, and a fetch URL cut there is classed by the part before the cut. A subscript by a constant index over a container whose text the pass reads (the containers named above for a slice) that stands as an operand of one of these joins, a `+`, a `%` or an f-string, or the receiver or an argument of "
+                "find is listed once; a fetch URL cut at the join is listed as the joined text reads it, whole. A `.format` or `.format_map` whose format string holds a replacement field whose name reaches an attribute or an index of its argument (`{0.CSS}`, `{h.CSS}`, `{self.body}`, `{0[k]}`) refuses by name, since the text such a field reads is the argument's attribute or item, which the pass does not read: the census looks for such a field where the format string is the receiver's text, a string constant or one of these joins, or the value of a module constant or a local bound to one, and a `.format` or `.format_map` whose format string the receiver reaches any other way (a function's or a method's return, a parameter, an attribute, an if-expression, a `+` over a name among them) is refused by name too, since the pass does not read that format string's fields, unless the receiver is a class (above), refused as a class attribute, a subscript whose join the pass does not compute, refused as that, or one the pass refuses by name, in whole or in part, as it reads it (`self.X.format(...)`, `Handler.X.format(...)`), that line standing for the text the receiver holds. Text a page joins through anything but a string constant (a name, a call, an attribute, a subscript of a container whose text the pass does not read, or a field or a `%` slot holding one) is read piece by piece: a tool's name, a tag or an attribute split there is not seen, and a fetch URL cut there is classed by the part before the cut. A subscript by a constant index over a container whose text the pass reads (the containers named above for a slice) that stands as an operand of one of these joins, a `+`, a `%` or an f-string, or the receiver or an argument of "
                 "a `.join`, `.format`, `.format_map` or `.replace` (an element of a list, tuple or set literal or a key of a dict literal handed to `.join`, an element of a starred list or tuple literal handed to `.format`, and a value of a dict literal handed to `.format` or `.format_map`, among them), is refused by name, since the pass reads its container whole and not the text the join makes of the pieces the indexes select; the refusal is keyed on such a container, and a subscript of any other container is read piece by piece, as above; a subscript read through a function falls under the call limit above. "
                 "A `.join` over a set literal or a set comprehension, its one argument or, unbound as in `str.join(\"\", {...})`, its "
                 "second, refuses by name, its iteration order not fixed, so its join is no one text. A "
@@ -1541,7 +1516,8 @@ ROUND_FOUR_SENTENCES = (("the echo rule", ECHO_RULE), ("the served pages", SERVE
 # records (a `+`, f-string or `%` of string constants, or a `.format`, `.format_map`, `.replace`, or `.join` over a list, tuple or dict
 # literal, each called on a string constant or on such a join) beside each literal's own read, and SERVED_PAGES states a join through anything but a string constant as a limit and a `.join` over a set as a
 # refusal, bound or unbound (the (j) plants hold the limit, the (x) plants jvs, jvt and jvq the refusal). Since the ninth round's
-# review SERVED_PAGES names a `_send` call and a Content-Type write inside a lambda's body among the refusals, the names the
+# review SERVED_PAGES names a `_send` call and a Content-Type write inside a lambda's body among the refusals (since the tenth
+# round's review, R1.3, a write inside one that is no `_send` definition's own write, below), the names the
 # import system binds in every module as no builtins, an attribute read on self as refused, and a class attribute, read through
 # the class's own name, a name the census resolves to it or a method call on a name whose value holds it, as refused, with a call
 # of such a name and a `.format` or `.format_map` field that reaches an attribute or an index of its argument, no class attribute
@@ -1550,7 +1526,8 @@ ROUND_FOUR_SENTENCES = (("the echo rule", ECHO_RULE), ("the served pages", SERVE
 # reads a subscript's container only under a constant index,
 # a slice or any other index over a container whose text the pass reads refused, the honest forms that fail closed with it named
 # (the (z) plants hold each). Since that round's review, C, SERVED_PAGES also names a value slot that stands directly as a `%`
-# operand, a `.format` argument or a `.format_map` value refused whatever the letter (one held deeper read), a builtin other than
+# operand (since the tenth round's review, R2, the right operand), a `.format` argument or a `.format_map` value refused whatever the
+# letter (one held deeper read), a builtin other than
 # the seven a page may name (str, int, dict, max, float, getattr, chr, each with its reason) refused, a call of str with more than
 # one positional argument, a starred argument or a keyword other than object refused, a subscript over a container
 # whose text the pass reads that stands as an operand of any join the paragraph names (a `+`, `%`, f-string, `.join`, `.format`,
@@ -1562,9 +1539,56 @@ ROUND_FOUR_SENTENCES = (("the echo rule", ECHO_RULE), ("the served pages", SERVE
 # on such a join, names a join, format, format_map or replace called on the name str, bytes or bytearray refused in a page and a
 # run-time form as a lookup key, and a `%` or format call on a string constant it does not expand (a field wider than a million
 # characters, or a replacement field in a format spec) refused in a page and a run-time form as a lookup key, `__file__` refused
-# wherever a page reads it in a file where a statement binds it (its decision 4(a)), the forms that take a file's builtin allowance
+# wherever a page reads it in a file where a statement binds it (its decision 4(a); since the tenth round's review, R2, never inside
+# the index of a subscript over a container whose text the pass does not read, which is not read at all), the forms that take a file's builtin allowance
 # away as the code reads them, and the codec rebinding's admitted set as the eighth round's review words it in group B's table (the
-# (o) plants hold each refusal)
+# (o) plants hold each refusal). Since the tenth round's review, R1.1, SERVED_PAGES refuses an attribute read in a page position, as
+# a value or on a receiver's or a container's path, unless the root its base reaches by binding is a module constant, an import, one
+# of the seven builtins, a value slot or a literal the pass reads: self on a local bound to it or on a method's first parameter
+# however spelled, any other parameter and an except name, each by name, and a class reached as a value refused as a class
+# attribute, in place of the ninth round's limit for a class the census reached without resolving it as one; it scopes the pass
+# list's parameter clause to a base with no attribute read on its path, and leaves under the limit for text such a base holds a
+# constant a sibling module defines and a class reached through an import's attribute or a call's return, its witness a class a
+# sibling module defines (the (r1.1) plants hold each). Since that review's decision 2 (the 21:39Z items 1 and 3), SERVED_PAGES
+# follows a method called on the calling method's own first parameter, self by binding however spelled, through the route class's
+# method resolution order to the def statement of a class of the file that binds the name first, in place of a method of the route's
+# class called on the name self; refuses by name a method called on self that no such def statement defines first, a route class's
+# method called on self through anything else, on any other parameter or on a name spelled self that is not that first parameter,
+# and any other name called on self through anything else; puts a method of a class that holds no route, called on a parameter,
+# under the call limit; narrows code behind a name on self to code that replaces a followed method at run time or runs on its
+# lookup; and refuses by name a method it would follow where the file may replace it (an attribute of its name stored or deleted on
+# any object, the name handed as a string constant to setattr or delattr, to `__setattr__` or `__delattr__` called unbound as their
+# second argument and called bound on a receiver that is not a class as their first, or `__getattribute__` bound in a class of the
+# route class's order), leaving under that limit code that replaces it in any other way, its witness a method a module function
+# replaces through setattr with the name handed in (the (d2) plants hold each; (y)'s ywm and the former witness rmr move to
+# refusals); refuses by name a method it would follow whose def carries any decorator or that a file class deriving from the route
+# class overrides (the (dec) plants and hvt hold these); and takes self by binding as the first parameter of a method whose def
+# carries no decorator, leaving unclassified the first parameter of a route handler that carries a decorator or stands in a file
+# binding staticmethod or classmethod, and refusing by name a method called on that parameter or the parameter called (the (uc)
+# plants hold each). Since
+# that review's R1.2, SERVED_PAGES takes `__file__` as the file's own path, a value slot as a bare name and the path of a file read
+# through `Path(__file__)` or `open(__file__)`, only where no statement binds it, the file writes no name of its module namespace
+# through a computed name and may not rewrite it at run time, no module-level statement writes it and the module holds no star
+# import, and refuses such a file read in every other file as a file the walk does not scan (the (r1.2) plants hold each); and
+# since its R1.3, it scopes the lambda refusal of a Content-Type write to one that is no `_send` definition's own write, and refuses
+# a `_send` call whose definition binds the parameter one of its own writes names other than as that parameter, anywhere in its
+# body and in any form (the (r1.3) plants hold each). Since its R1.4 with the 17:31Z choice (c), SERVED_PAGES reads a replacement
+# field nested in a field's format spec as it reads one at the top level, and refuses a `.format` or `.format_map` whose format
+# string the receiver reaches other than as a string constant, a join of them or a name bound to one, save where the receiver is a
+# class, stands as a subscript operand or is refused by name as the pass reads it, whose line then stands for that text (the (r1.4)
+# plants hold each, and the (fd) plants hold the receiver's one line); since its decision 3, as the owner rebuilt it and the
+# reviewer accepted, a lookup key is a run-time form unless a positive allowlist proves its shape by the binding (the shapes
+# SERVED_PAGES lists, which take an attribute only as a loop or comprehension source whose name the file never writes and neither
+# a with target nor a walrus), every other shape refused by name (the (d3) plants hold each);
+# since its R2,
+# SERVED_PAGES states that the index of a subscript over a container whose text the pass does not read is not read at all, whatever it holds, and scopes the import system's names, `__file__` in a file
+# that binds it, the attribute reads and the SERVED list's refusals of a page's text to the positions the pass reads, and it names
+# the right operand of a `%` alone where a value slot stands as its operand; and since the 17:31Z choice (d), it refuses a text
+# method called on a class the class walk resolves its receiver to, not only on a bare name, and reads a registry the builtin dict
+# builds as it reads a container literal, a subscript of such a registry and such a registry built inline among it (the (cd) plants
+# hold each). And under R1's class ruling (every acceptance keys on the binding), SERVED_PAGES refuses as a class attribute a method,
+# a text method among them, called with no attribute read on the way on a class reached as a value, its root by binding read through
+# R1.1's walk (the (cv) plants hold each)
 SERVED_LINE_RESIDUAL = ("A site in served text is listed at the first line of the string part that carries it. Text joined across implicitly "
                         "concatenated literals is one part, listed at its first line, and a site that only a join of string constants holds "
                         "(the join's text, read beside its literals' own reads) is listed at the join's first literal's line. On Python 3.10 "
@@ -2989,7 +3013,11 @@ FGH_READ = (("G1 .encode on a function's return", "g1"), ("G1b .encode on a modu
             ("G2 .get with a default on a module dict", "g2"),
             ("G4 .format_map on a module constant", "g4"), ("G4b .format_map on a function's return", "g4b"),
             ("G9 a chain two calls deep on a module dict", "g9"), ("G15 same-named locals in two functions", "g15"))
-FGH_REFUSED = (("G3 a module dict's subscript joined with a literal", "g3",
+FGH_REFUSED = (("G4b's receiver, a function's return, refused as a format string reached other than as a string constant, a join of "
+                "them or a name bound to one since the tenth round's review (its fetch still listed)", "g4b_route",
+                "SERVED kernel/kernel.py:%d builds a served page from _probe_g4b().format_map({'a': 'b'}) (a format string reached other than as "
+                "a string constant, a join of them or a name bound to one, whose fields the census does not read), text the census did not read"),
+               ("G3 a module dict's subscript joined with a literal", "g3",
                 "SERVED kernel/kernel.py:%d builds a served page from _PROBE_G3S['/probe-g3'] (a subscript as an operand of +, %%, an f-string, .join, .format, .format_map or .replace, whose joined text the census does not compute), text the census did not read"),
                ("G6 a subscript of a module dict, a + operand", "g6",
                 "SERVED kernel/kernel.py:%d builds a served page from _PROBE_G6S['x'] (a subscript as an operand of +, %%, an f-string, .join, .format, .format_map or .replace, whose joined text the census does not compute), text the census did not read"),
@@ -3000,14 +3028,16 @@ FGH_REFUSED = (("G3 a module dict's subscript joined with a literal", "g3",
                ("G10 a chain two deep through a function's return", "g10",
                 "SERVED kernel/kernel.py:%d builds a served page from _probe_g10().get('x', '') (a function's return), text the census did not read"),
                ("G11 a receiver a method returns", "g11",
-                "SERVED kernel/kernel.py:%d builds a served page from self._probe_g11().get('x', '') (a method's return), text the census did not read"),
+                "SERVED kernel/kernel.py:%d builds a served page from self._probe_g11().get('x', '') (a call of, or a method called on, the first "
+                "parameter of a route handler that carries a decorator or stands in a file that binds staticmethod or classmethod, which the "
+                "census does not take for self, the class or any other parameter), text the census did not read"),
                ("G5 a class attribute read on self", "g5",
-                "SERVED kernel/kernel.py:%d builds a served page from self._PROBE_G5 (an attribute read on self, which any code may set before the "
-                "call), text the census did not read"))
+                "SERVED kernel/kernel.py:%d builds a served page from self._PROBE_G5 (an attribute read on a parameter, which any code may set "
+                "before the call), text the census did not read"))
 FGH_PLANT_LINES = (tuple((tag, _fgh_mark(tag)) for tag in [t for _, t in FGH_TYPED + FGH_READ] + ["f12", "h2", "h5"])
                    + (("f7", 'self.send_header("Content-Type", "text/html")'), ("f9", 'open("/nonexistent")'), ("f10", "_probe_f10_type())"),
                       ("g3", '_PROBE_G3S["/probe-g3"] + "\\n"'), ("g6", '"<html>" + _PROBE_G6S["x"]'),
-                      ("g7", "_probe_g7().get("), ("g8", '_PROBE_G8_MEMO["k"], "text/html"'), ("g10", "_probe_g10().get("),
+                      ("g4b_route", "_probe_g4b().format_map("), ("g7", "_probe_g7().get("), ("g8", '_PROBE_G8_MEMO["k"], "text/html"'), ("g10", "_probe_g10().get("),
                       ("g11", "self._probe_g11().get("), ("g5", '"<html>" + self._PROBE_G5'), ("h4", "import(location.hash.slice(1))"), ("drift_js", "_RDRIFT_JS = ("),
                       ("h5_open", 'f"""<html>'), ("slice", SLICE_LITERAL), (("h6_first", "h6_second"), _fgh_mark("h6")),
                       ("h7", _fgh_mark("h7")), ("r1", _fgh_mark("r1")), ("r1_open", 'self._send(200, f"""<p>{p'), ("r2", _fgh_mark("r2")),
@@ -3590,7 +3620,7 @@ B_KERNEL_SEND = ("    def _send(self, code, body, ctype, cache=None, headers=Non
 # or a name the list does not hold (through `__self__` of a builtin, a container or a copy of a namespace mapping, a module's own
 # `__setattr__` or `__delattr__` method, a listed name, attrgetter or methodcaller imported from a module other than its own, a name
 # built at run time, gc or ctypes among them, and through a module reached by a tuple or list unpacking, an inline walrus,
-# `sys.modules.__getitem__`, a for-loop target, a parameter default or a starred argument), are (u)'s ugc and (x)'s xkbn, xkcn, zg4,
+# `sys.modules.__getitem__`, a for-loop target, a parameter default or a starred argument), are (u)'s ugc and (x)'s xkbn, zg4,
 # zvp, zs4, qq5, qq8 and qqw
 B_TG_SEND = A_SEND % ("        for k, v in (headers or {}).items():\n            self.send_header(k, v)\n")
 # The order of the kernel's definition: its one end_headers stands directly before the write, its last statement, since end_headers
@@ -3967,12 +3997,12 @@ U_TEXTS = dict(U_FILES)
 # and serves a page from each; each gate module rewrites getattr and tests it in the gate. The stated limit's witnesses, a listed name
 # reached any other way or a name the list does not hold, held at their outcome though Python serves their fetch: a namespace mapping
 # reached through a name (xkbn, `_probe_b = builtins.__dict__; _probe_b["exec"]`; __file__ and the constant silent, the value slot
-# restored, its str page still refused, since it imports builtins), a listed attribute fetched by a name built at run time (xkcn,
-# `getattr(f, "__" + n + "__")`), globals and vars reached through `__self__` of a builtin (zg4 `print.__self__.globals()`, zvp
+# restored, its str page still refused, since it imports builtins; xkcn, a listed attribute fetched by a name built at run time,
+# `getattr(f, "__" + n + "__")`, was a witness here until the tenth round's decision 3 refused its `+` key and moved it to (d3)), globals and vars reached through `__self__` of a builtin (zg4 `print.__self__.globals()`, zvp
 # `print.__self__.vars(print.__self__)["exec"]`), and the module's own `__setattr__` method (zs4
 # `sys.modules[__name__].__setattr__(...)`), attrgetter and globals imported from a module other than their own (qq5 `from inspect
 # import attrgetter`, qq8 `from timeit import _globals`), and a module reached by an inline walrus (qqw `setattr((_probe_m :=
-# sys.modules[__name__]), ...)`): xkcn, zg4, zvp, zs4, qq5 and qqw fully silent, qq8 silent but for the import gate's line for timeit.
+# sys.modules[__name__]), ...)`): zg4, zvp, zs4, qq5 and qqw fully silent, qq8 silent but for the import gate's line for timeit.
 def _x_served(tag, head, wf, wc, wb):
     """A served (x) module: `head` establishes the form, then the constant, _EXTRA and the run-time rewrites of __file__ (wf), the
     constant (wc) and str (wb); a page from each name."""
@@ -4109,16 +4139,14 @@ X_SERVED_FILES = tuple((s, _x_served(s, head, wt % ("__file__", "_EXTRA"), wt % 
 X_GATE_FILES = tuple((g, _x_gate(g, head.replace(s, g), _XGATE_WRITE.get(g, wt % ("getattr", "_probe_getattr"))))
                      for s, g, head, _f, _a, wt in X_SPEC if g is not None)
 # the stated limit's witnesses, a listed name reached any other way or a name the list does not hold: xkbn, a namespace mapping reached
-# through a name (import builtins, so its str page still refused); xkcn, a listed attribute fetched by a name built at run time; zg4
+# through a name (import builtins, so its str page still refused); xkcn (a listed attribute fetched by a name built at run time) is refused as a `+` since the tenth round's decision 3, in (d3), not a witness here; zg4
 # and zvp, globals and vars reached through `__self__` of a builtin; zs4, the module's own `__setattr__` method; qq5 and qq8,
 # attrgetter and globals imported from a module other than their own (inspect's attrgetter, timeit's _globals); qqw, a module reached
-# by an inline walrus (xkcn, zg4, zvp, zs4, qq5 and qqw fully silent, qq8 with the import gate's line for timeit alone). Each holds
+# by an inline walrus (zg4, zvp, zs4, qq5 and qqw fully silent, qq8 with the import gate's line for timeit alone). Each holds
 # __file__ silent (the value slot restored) and Python serves its fetch. jvs, jvt and jvq: a `.join` over a set,
 # bound, unbound over a set literal and unbound over a set comprehension.
 X_WITNESS_FILES = (
     ("xkbn", _x_served("xkbn", "import builtins\n\n_probe_b = builtins.__dict__", '_probe_b["exec"]("__file__ = _EXTRA")', '_probe_b["exec"]("_PROBE_XKBNC = _EXTRA")', '_probe_b["exec"]("str = lambda x: _EXTRA")')),
-    ("xkcn", _x_served("xkcn", 'def _probe_f():\n    return 0\n\n\n_probe_n = "globals"', 'getattr(_probe_f, "__" + _probe_n + "__")["__file__"] = _EXTRA',
-                       'getattr(_probe_f, "__" + _probe_n + "__")["_PROBE_XKCNC"] = _EXTRA', 'getattr(_probe_f, "__" + _probe_n + "__")["str"] = lambda x: _EXTRA')),
     ("zg4", _x_served("zg4", "", 'print.__self__.globals()["__file__"] = _EXTRA', 'print.__self__.globals()["_PROBE_ZG4C"] = _EXTRA',
                       'print.__self__.globals()["str"] = lambda x: _EXTRA')),
     ("zvp", _x_served("zvp", "", 'print.__self__.vars(print.__self__)["exec"]("__file__ = _EXTRA")', 'print.__self__.vars(print.__self__)["exec"]("_PROBE_ZVPC = _EXTRA")',
@@ -4139,9 +4167,13 @@ X_FILES = X_SERVED_FILES + X_GATE_FILES + X_WITNESS_FILES + tuple(
 X_TEXTS = dict(X_FILES)
 # The ninth round's review, A (correctness-1, extra10-1, extra10-2) with its decisions 4(b) and 8: the (y) plants, each a probe
 # module's do_GET branch, silent at that round's reviewed head (its script is the one the merge after it carries) and refused by
-# name here, unless named below as read or as a limit's witness. Each page's hidden text is a fetch tagged with its plant, which
-# Python serves and no reader scans at either head.
-# correctness-1, a `_send` call or a Content-Type write inside a lambda's body, whose parameters are no scope the census reads
+# name here, unless named below as read or as a limit's witness. Where Python serves a page's hidden text it is a fetch, tagged with
+# its plant or with the text its module's code puts there (ydb, yds and ydr serve the module's docstring, tagged ydoc; ywm the method
+# set at run time, ywmx; yanc and yafc their self twins' attributes, yann and yaft), and no reader scans it at either head, save the
+# control hclsc's, read at both, and ycok's, yxf's and hsta's, read at that round's reviewed head; ydc raises TypeError, ydn serves
+# the module's name, ysub serves the base class's text with no fetch, and ygl and ysubn raise AttributeError, each pinning a refusal.
+# correctness-1, a `_send` call or a Content-Type write inside a lambda's body (a write that is no `_send` definition's own write,
+# since the tenth round's review's R1.3), whose parameters are no scope the census reads
 # (probe_ylam.py): a parameter shadowing the page's module constant (ylp), one named str (yls), a class-body lambda whose default
 # shadows it (ylc), a called lambda's default (ylk), a lambda map() calls (ylm), a parameter named getattr (ylg), a parameter
 # shadowing the type's module constant, application/json there and text/html served (ylt), a default holding the type, which the
@@ -4172,8 +4204,10 @@ Y_DOC_BRANCHES = (("ydb", 'return self._send(200, "<p>ydb</p>" + __doc__, "text/
                   ("ydn", 'return self._send(200, "<p>ydn</p>" + __name__, "text/html")'))
 # decisions 4(b) and 8, an attribute read on self (probe_ysf.py): set in the handler and served, the honest shape the decision names
 # (ysv), as a receiver (ysr), as a container (ysc), as a receiver under a method call on it (ysk) and under a BoolOp in the chain
-# (ysb), and the class's docstring, which holds a fetch (ysd); beside them the witness of the limit that stays, code behind a name
-# on self: a method the class body does not define, set on the class at run time (ywm), held silent
+# (ysb), and the class's docstring, which holds a fetch (ysd); beside them a method the class body does not define, set on the class
+# at run time (ywm), at the ninth round's reviewed head the witness of the limit for code behind a name on self, held silent, and
+# since the tenth round's review (its decision 2, the 21:39Z item 3) refused as a method called on self that no def statement of a
+# class of the file defines first in the route class's method resolution order; that limit's witness is now (d2)'s rplx
 Y_SELF_SEND = '    """%s"""\n\n' % (FGH_PAGE % "ysd") + A_SEND % ""
 Y_SELF_BRANCHES = (
     ("ysv", 'self._probe_ysv = "%s"\n            return self._send(200, "<p>ysv</p>" + self._probe_ysv, "text/html")' % (FGH_PAGE % "ysv")),
@@ -4238,15 +4272,17 @@ Y_MUT_TAIL = ('Handler.PARTS_APP.append("%s")\nHandler.PARTS_EXT.extend(["%s"])\
               % (FGH_PAGE % "happ", FGH_PAGE % "hext", FGH_PAGE % "hlst", FGH_PAGE % "hdmap", FGH_PAGE % "nal", FGH_PAGE % "nmd"))
 # A class read through a name the census resolves to it, or through its own name from a followed method (probe_hcls.py, each
 # attribute's class-body value a fetch, which Python serves and no reader scans at the ninth round's reviewed head, where each
-# passes over its base, save hsta, read there from the class body): a classmethod's first parameter, reached through self (hcls),
-# a local bound to the class (hcal), a module constant bound to it (hmal), a staticmethod that reads the attribute through the
-# class's own name (hsta), and a text method a class defines, called on the class's own name (hcfm, `_ThF.format(...)`, a
-# classmethod that returns its class's attribute), each refused as a class attribute; a classmethod's first parameter called, its
-# attribute read on the instance (pdci, `cls().X`) or through a local bound to it (pdcv, `inst = cls()`), each refused as "a call",
-# silent at the ninth round's reviewed head; beside them the control, read at that head and
-# here, its fetch listed: a classmethod that returns a module constant (hclsc); and the witness of the stated limit for a class the
-# census reaches as a value without resolving it as the class: a loop over a module tuple of classes that reads each one's
-# attribute (nlmc), held silent, its fetch served by Python.
+# passes over its base, save hsta, read there from the class body): a local bound to the class (hcal), a module constant bound to
+# it (hmal) and a text method a class defines, called on the class's own name (hcfm, `_ThF.format(...)`, a classmethod that returns
+# its class's attribute), each refused as a class attribute; the route class's classmethods and staticmethod called on self, each
+# refused at the call as a decorated def the follow arm does not follow since the tenth round's decorator ruling, its body not
+# read: a classmethod that reads an attribute on its first parameter (hcls), a staticmethod that reads the attribute through the
+# class's own name (hsta), a classmethod that calls its first parameter and reads an attribute on the instance (pdci, `cls().X`) or
+# through a local bound to it (pdcv, `inst = cls()`), and the ninth round's read control, a classmethod that returns a module
+# constant (hclsc); and a loop over a module tuple of classes that reads each one's attribute (nlmc), silent at the tenth round's
+# reviewed head, where it was the witness of a stated limit for a class the census reached as a value without resolving it as the
+# class, and since that round's review (R1.1) refused as a class attribute at its read, the loop's target read by binding through the
+# tuple the module constant holds; its fetch served by Python.
 Y_REF_HEAD = ('_PROBE_HCLSC = "%s"\n\n\nclass _ThF(object):\n    CSS = "%s"\n\n    @classmethod\n    def format(cls, x):\n'
               '        return cls.CSS + x\n\n\nclass _TC(object):\n    CSS = "%s"\n\n\n_THEMES = (_TC,)'
               % (FGH_PAGE % "hclsc", FGH_PAGE % "hcfm", FGH_PAGE % "nlmc"))
@@ -4269,11 +4305,12 @@ Y_REF_BRANCHES = (_y_page("hcls", "self._probe_cls_page()"),
 
 # A `.format` or `.format_map` whose format string holds a replacement field reaching an attribute or an index of its argument
 # (probe_yfmt.py, each page's hidden text a fetch tagged with its plant, which Python serves): a class attribute through a
-# positional field (pafmc), a keyword field (pafmk) and a classmethod's first parameter, the method reached through self (pafcm);
-# an attribute set on self in the handler through a positional field (pafsf) and a keyword field (pafsk); a class through
-# `.format_map` (pefm) and a starred argument (pefp), and self through `.format_map` (pefs); an index field over a module constant
-# holding a fetch split across two values (pafix); and the format string a module constant holds (pafnt) or a local (paflc).
-# Each is refused as "a replacement field reaching an attribute or an index of its argument, which the census does not read".
+# positional field (pafmc) and a keyword field (pafmk); an attribute set on self in the handler through a positional field (pafsf)
+# and a keyword field (pafsk); a class through `.format_map` (pefm) and a starred argument (pefp), and self through `.format_map`
+# (pefs); an index field over a module constant holding a fetch split across two values (pafix); and the format string a module
+# constant holds (pafnt) or a local (paflc). Each is refused as "a replacement field reaching an attribute or an index of its
+# argument, which the census does not read". Beside them pafcm, a classmethod called on self whose body formats its first
+# parameter, refused at the call as a decorated def the follow arm does not follow (the tenth round's decorator ruling).
 Y_FMT_HEAD = ('_PF_IX = {"a": "%s", "b": "%s"}\n_PF_TPL = "<p>pafnt</p>{0.CSS_NT}"\n\n\nclass _PfTh(object):\n    CSS_FM = "%s"\n'
               '    CSS_FP = "%s"' % (_j_cut("pafix", "<script>fe") + (FGH_PAGE % "pefm", FGH_PAGE % "pefp")))
 Y_FMT_SEND = A_SEND % "" + ('    CSS_MC = "%s"\n    CSS_MK = "%s"\n    CSS_CM = "%s"\n    CSS_NT = "%s"\n    CSS_LC = "%s"\n\n'
@@ -4295,7 +4332,8 @@ Y_FMT_BRANCHES = (
 # (the tag, the plant, the call its SERVED line shows)
 Y_FMT_SHOWN = (("pafmc", "a class attribute through a positional format field", '"<p>pafmc</p>{0.CSS_MC}".format(Handler)'),
                ("pafmk", "a class attribute through a keyword format field", '"<p>pafmk</p>{h.CSS_MK}".format(h=Handler)'),
-               ("pafcm", "a class attribute through a classmethod's first parameter in a format field", '"<p>pafcm</p>{0.CSS_CM}".format(cls)'),
+               # pafcm's page calls the @classmethod _probe_cm_page, refused as a decorated def (the tenth round's decorator ruling)
+               # before its format string is reached; its two SERVED lines are stated with the (y) decorator plants below
                ("pafsf", "an attribute set on self, through a positional format field", '"<p>pafsf</p>{0.title}".format(self)'),
                ("pafsk", "an attribute set on self, through a keyword format field", '"<p>pafsk</p>{s.body}".format(s=self)'),
                ("pefm", "a class attribute through a .format_map field", '"<p>pefm</p>{t.CSS_FM}".format_map({"t": _PfTh})'),
@@ -4401,9 +4439,9 @@ Z_FILES = (("zsl", _a_module("zsl", Z_SEND, head=Z_HEAD, branches=Z_BRANCHES)),)
 # hidden text (a value slot a conversion emits, a builtin's transformed output, a decoded escape, a subscript's join, or the two
 # decoders and the three witness reads the census does not follow), and at the reviewed head no reader scans it, save wsfull's,
 # whose whole fetch is read there (a site), and wsfun's, whose page is refused there as "a function's return". In one probe module
-# (kernel/probe_wcl.py): extra5-1 / decision 2, a value slot (a None, bool or int constant, the empty bytes constant, or a Mult
-# over int constants) that stands directly as a `%` operand, a `.format` argument or a `.format_map` value, refused whatever the
-# letter (a `%c`, wipc; `%x`, whx; `%.1s` over the empty bytes, wbb; a `%` tuple element, wtup; a `%` dict value, wdct; int
+# (kernel/probe_wcl.py): extra5-1 / decision 2, a value slot (a None, bool or int constant, the empty bytes constant, or a Mult or
+# LShift over int constants) that stands directly as the right operand of a `%` (bare, a tuple element or a dict literal's value),
+# a `.format` argument or a `.format_map` value, refused whatever the letter (a `%c`, wipc; `%x`, whx; `%.1s` over the empty bytes, wbb; a `%` tuple element, wtup; a `%` dict value, wdct; int
 # arithmetic, wari; a `{:c}`.format positional argument, wfmp; a `.format` keyword argument, wfmk; a value in `.format_map`'s
 # dict, wfmm), and an honest int through a Name held read (wvn); extra5-3 / decision 1, a builtin other than the seven a page may
 # call refused by name as a callee (reversed through join, wrev; map, wmap; sorted, wsort; len, wlen), as a receiver's base (a
@@ -4415,8 +4453,9 @@ Z_FILES = (("zsl", _a_module("zsl", Z_SEND, head=Z_HEAD, branches=Z_BRANCHES)),)
 # decision 9, a subscript as a `+` operand (wsad), a `%` operand (wsmo), an f-string field (wsfs), a `.join` argument (wsjo), a
 # `.format` argument (hsfm), a `.format_map` value (hsfmm), the receiver and an argument of `.replace` (hsrp) and the receiver of
 # `.format` (hsfr), of `.format_map` (hsfmr) and of `.join` (hsjr), each split across two indexed pieces, refused by name, and a
-# subscript operand whose value is a whole fetch, refused and read no further (wsfull), with a subscript through a function's
-# return held under the call limit (wsfun). And in a module of its own (kernel/probe_wfb.py), decision 7: `from os
+# subscript operand whose value is a whole fetch, refused and read no further (wsfull), with a subscript of a function's return
+# refused as "a function's return", as at the reviewed head (wsfun); a subscript read through a function, which falls under the call
+# limit, is the (cd) plants' witness cdsf. And in a module of its own (kernel/probe_wfb.py), decision 7: `from os
 # import __builtins__ as B` loses the file's builtin allowance, so a page built through a builtin is refused (wfb).
 _WB64 = __import__("base64").b64encode((FGH_PAGE % "wb64").encode()).decode()
 _WZIP = __import__("base64").b64encode(__import__("zlib").compress((FGH_PAGE % "wzip").encode())).decode()
@@ -4480,7 +4519,10 @@ W_FILES = (("wcl", _a_module("wcl", A_SEND % "", head=W_HEAD, branches=W_BRANCHE
            ("wfb", _a_module("wfb", A_SEND % "", head='from os import __builtins__ as _B\n_B["str"] = lambda x: "%s"' % (FGH_PAGE % "wfb"),
                              call='return self._send(200, "<p>wfb</p>" + str(1), "text/html")')))
 # The ninth round's review, D (extra7-1, extra7-2, correctness-2) with its decisions 3 and 4(a), the (o) plants, each page's hidden
-# text a fetch tagged with its plant, which Python serves. extra7-1 with decision 3, in a page (kernel/probe_oub.py): a join,
+# text, where Python serves one, a fetch tagged with its plant or its module (the ox* modules' pages serve the text their key
+# rewrites, tagged with the module and x, and ofdc's and ofdr's the def's, tagged ofd), while owd and owf raise ValueError (they pin
+# the census's crash guard), ofs raises FileNotFoundError, and ofib, ofir and ofp serve no fetch (each pins a refusal). extra7-1 with
+# decision 3, in a page (kernel/probe_oub.py): a join,
 # format, format_map or replace called on the name str, bytes or bytearray is refused by name, the fetch split across its string
 # arguments, where _const_text folds only a method called on a string constant or on a join it folds: str.join (ouj, the ruling's
 # page probe), str.format (ouf), str.format_map (oum), str.replace (our) and bytes.join inside str() (oub, whose str() with an
@@ -4491,8 +4533,8 @@ W_FILES = (("wcl", _a_module("wcl", A_SEND % "", head=W_HEAD, branches=W_BRANCHE
 # `__builtins__` (oxs), of a `.get` on a `__dict__` (oxk) and as attrgetter's argument (oxa), each a run-time form; and a `%` or
 # `.format` of string constants _const_text does not expand as getattr's key (oxn, a replacement field nested in the spec; oxw, a
 # precision over a million), a run-time form of their own. extra7-2 with decision 4(a), one probe module each, since the binding
-# decides the name file-wide: `__file__` in a file where a statement binds it is refused by name wherever a page reads it, before
-# any binding is read: an import alias as a bare name (ofib) and as a method's receiver (ofir), a class so named as an attribute's
+# decides the name file-wide: `__file__` in a file where a statement binds it is refused by name wherever a page reads it (never
+# inside the index of a subscript over a container whose text the pass does not read, which is not read at all), before any binding is read: an import alias as a bare name (ofib) and as a method's receiver (ofir), a class so named as an attribute's
 # base (ofc), a module def so named as a callee (ofdc) and as a receiver's callee (ofdr), a local of the page function (ofl), a
 # followed function's parameter (ofp), and a file read whose path starts from `Path(__file__)` (ofs), which has no path, refused
 # as a file the walk does not scan. correctness-2 (kernel/probe_owf.py): a `.format_map` with a field wider than a million
@@ -4553,7 +4595,821 @@ O_FILES = ((("oub", _a_module("oub", A_SEND % "", branches=O_UNBOUND_BRANCHES)),
            + (("owf", _a_module("owf", A_SEND % "", branches=tuple(_y_page(tag, join) for tag, join, _ in O_WIDE))),
               ("owd", _a_module("owd", A_SEND % "", branches=tuple(_y_page(tag, join) for tag, join in O_DIGITS)))))
 O_TEXTS = dict(O_FILES)
-A_STAR_HEAD = ("from .pages import *\n\n_PROBE_BSP = \"%s\"\n_PROBE_BST = \"application/json\"\n\n\ndef _probe_bsf():\n    return \"%s\""
+# The tenth round's review, R3 (correctness-5, extra5-2, extra6-5 and extra9-2, one defect; correctness-6), the (r3) plants, each
+# page's hidden text a fetch tagged with its plant (for the key's module, with the module: zpkx), which Python serves. The width:
+# the ninth round's fix counted a field's digits after its leading zeros and then converted the whole digit string, so a
+# zero-padded width or precision of at most seven significant digits whose digits run past the 4300 int() converts stopped the
+# census with a ValueError; the digits after the zeros are converted now. In a module of its own (kernel/probe_zpf.py), since the
+# reviewed head's census stops on each, a page whose format or `%` of string constants carries a field 5000 digits long,
+# zero-padded, each read at its value, its join expanded and its fetch listed: a `.format` width of 5 (zpf), a `.format_map`
+# precision of 99 (zpm) and a `%` precision of 99 (zpp); a `%` width's leading zeros are flags, so no `%` width reaches the
+# conversion. And as a lookup key (kernel/probe_zpk.py, _x_served's shape): getattr's key a `%` whose precision of 4 runs to 5000
+# digits, read at its value, "exec", so __file__, a module constant and str each rewritten through it are refused with that form
+# and its line. The class walk: a class reached through a long alias chain
+# and through a short one (kernel/probe_mdf.py): 32 local aliases, c0 bound to c1 and so on to c31, end in a local bound to the
+# class, and an if-expression over c0 and c31 stands as a `.format`'s receiver (mdf, the class's classmethod format returning the
+# fetch) or as an attribute's base (mdb, the class attribute holding it), and the same chain ending in a local bound to a class a
+# module constant's dict registry returns, `_MG_REG.get("a")`, under a `.format` (mdg). Each is refused as a class attribute here,
+# mdf and mdb at the reviewed head too, mdg silent there (that head's class walk read no registry the builtin dict builds); a visited
+# set beside the reviewed head's depth bound of 32 would expand c31 first at the end of the long path, cut its value there and skip
+# it on the short one, so the class walk drops all three. mdf and mdb stay refused as a class attribute through R1.1's walk from the
+# receiver's or the attribute's base (_value_class and _attr_root, which have no bound), which does not read a registry the builtin
+# dict builds, so neither reds under that memo; the ruled shape (mdf red under the memo) is a disclosed departure, mdg the substitute
+# that reds (a class R1.1's walk does not reach, so with the class walk cut its `.format` falls to the text-call arm and is refused as
+# a format string reached other than as a string constant, its class-attribute line becoming that format-string line, not silent).
+R3_PAD = "0" * 4998   # zero padding ahead of a two-digit value, or with one more zero ahead of a one-digit one: 5000 digits in all
+R3_READ_SPEC = (("zpf", "a zero-padded .format width of 5, 5000 digits long", '"<script>fet{:0%s5}".format("%s")' % (R3_PAD, _j_cut("zpf", "<script>fet")[1])),
+                ("zpm", "a zero-padded .format_map precision of 99, 5000 digits long",
+                 '"<script>fet{t:.%s99}".format_map({"t": "%s"})' % (R3_PAD, _j_cut("zpm", "<script>fet")[1])),
+                ("zpp", "a zero-padded % precision of 99, 5000 digits long", '"<script>fet%%.%s99s" %% "%s"' % (R3_PAD, _j_cut("zpp", "<script>fet")[1])))
+R3_KEY_FORM = 'getattr(builtins, "%%.0%s4s" %% "execx")' % R3_PAD   # the key "exec", its precision of 4 zero-padded to 5000 digits
+R3_KEY_ANCHOR = R3_KEY_FORM + '("__file__'   # the form's first line, the line its reason names
+_R3_KEY = R3_KEY_FORM.replace("%", "%%") + '("%s = %s")'
+
+
+def _r3_chain(c, base, cls, page):
+    """A (r3) do_GET branch: `base` bound to the class `cls`, the 32 local aliases <c>31 (bound to base) down to <c>0 (bound to
+    <c>1), then `page`, its receiver or base an if-expression over <c>0 and <c>31."""
+    return "\n            ".join(["%s = %s" % (base, cls), "%s31 = %s" % (c, base)] + ["%s%d = %s%d" % (c, i, c, i + 1) for i in range(30, -1, -1)] + [page])
+
+
+R3_MD_HEAD = ('class _ProbeMf(object):\n    @classmethod\n    def format(cls, text):\n        return "%s"\n\n\nclass _ProbeMb(object):\n    CSS = "%s"'
+              '\n\n\nclass _ProbeMg(object):\n    @classmethod\n    def format(cls, text):\n        return "%s"\n\n\n_MG_REG = dict(a=_ProbeMg)'
+              % (FGH_PAGE % "mdf", FGH_PAGE % "mdb", FGH_PAGE % "mdg"))
+R3_MD_BRANCHES = (("mdf", _r3_chain("c", "z", "_ProbeMf", 'x = c0 if p else c31\n            return self._send(200, x.format("<p>mdf</p>"), "text/html")')),
+                  ("mdb", _r3_chain("d", "v", "_ProbeMb", 'w = d0 if p else d31\n            return self._send(200, "<p>mdb</p>" + w.CSS, "text/html")')),
+                  ("mdg", _r3_chain("g", "zg", '_MG_REG.get("a")', 'xg = g0 if p else g31\n            return self._send(200, xg.format("<p>mdg</p>"), "text/html")')))
+R3_FILES = (("zpf", _a_module("zpf", A_SEND % "", branches=tuple(_y_page(tag, join) for tag, _, join in R3_READ_SPEC))),
+            ("zpk", _x_served("zpk", "import builtins", _R3_KEY % ("__file__", "_EXTRA"), _R3_KEY % ("_PROBE_ZPKC", "_EXTRA"), _R3_KEY % ("str", "lambda x: _EXTRA"))),
+            ("mdf", _a_module("mdf", A_SEND % "", head=R3_MD_HEAD, branches=R3_MD_BRANCHES)))
+R3_TEXTS = dict(R3_FILES)
+# The tenth round's review, R1.1 (correctness-3, extra4-1, extra9-1) with its decisions 1 and 9, and the 17:31Z choice (a): an
+# attribute read in a page position, as a value or on a receiver's or a container's path, is refused by name unless its base's root,
+# read by binding, is a module constant, an import, one of the seven builtins, a value slot or a literal the pass reads. The (r1.1)
+# plants, each page's hidden text a fetch tagged with its plant, which Python serves (the controls and the holds as their notes
+# say). Silent at the reviewed head, where the self refusal read the name self as it is spelled and any other parameter's attribute
+# passed, and refused here as an attribute read on self (probe_ral.py): a local alias (ral), an if-expression over self (rie), `None
+# or self` (rbo), a walrus in an if test (rwl) and a walrus as a local's value (rwv), the receiver form `h._rrc.get("k")` (rrc) and
+# one under a subscript, `h._rsb["k"].get("j")` (rsb), the container form `h._rct["k"]` under an if-expression (rct), a method call
+# on the alias's attribute bound to a local (rmc), a loop over a tuple, a set and a dict's keys holding self (rlt, rse, rdk),
+# `[self][0]` (rls), a starred element (rst), a comprehension's target over `(self,)` (rgc), a method's first parameter spelled
+# `this`, the method reached through self (rsp), a closure alias read in a nested def (c10n), an alias beside a class the page
+# function defines (r2cn), a local alias inside a followed method (c10i) and an alias read in an f-string's field (qsg); refused as
+# a parameter's attribute (probe_rhp.py): a module helper's parameter (rhp), its alias (rhd), a parameter the helper also assigns
+# (rpa, `h = h or None`), a parameter called (rhc), and a class
+# passed to a parameter (rcp) or given as its default (rcd); as an except name's attribute (rex); as a class attribute
+# (probe_rcl.py): a loop over a tuple of classes (rcl), an if-expression over classes as the base (rci) and a subscript of a module
+# constant dict of classes (rrg, the 17:31Z choice (a)); at the call, as a decorated def the follow arm does not follow (the tenth
+# round's decorator ruling, probe_ral.py): a staticmethod called on self and handed self that reads an attribute on its first
+# parameter (rstm) and a classmethod called on self that reads one through a loop over its first parameter (rcc); and, with the
+# reason _base names for a root reached as a name's value, a local bound to a module function's
+# return (rft) and to a method's return (rfm). Held at their outcome at both heads: a method call on a helper's parameter, no
+# attribute read (rok, its fetch listed), a module constant bound to a function's return, read as the constant (rkc, its fetch
+# listed), a method's return on self as the base (rsm, refused as "a method's return"), a BoolOp holding a function's return,
+# standing under an attribute (rbh, refused as "a BoolOp"), a container the module writes, bound to a local whose item's attribute
+# is read (rmm, refused as that container at the local's value), a module helper's parameter spelled self (rsh, refused at the
+# reviewed head by that spelling and here as a parameter's attribute), `__file__` in a file that binds it, bound to a local whose
+# attribute is read (rfb, probe_rfb.py, refused with that reason, at the reviewed head at the local's value and here at the read),
+# and a local bound to `__file__` where it is a value slot, its attribute read (rfv, no line; Python serves str's docstring). And
+# the class limit's witness (decision 9): a class a sibling module defines (probe_rsx.py), reached as that module's attribute from a
+# page that imports it by its bare name (probe_rsw.py, kernel/ running as a script), no line and no site, its fetch served by
+# Python; the import gate names the sibling, a module KNOWN_IMPORTS does not list.
+
+
+def _r1_self(tag, bind, expr):
+    """A (r1.1) self branch: the page's fetch set on self, `bind` (each line ending in its indentation), then
+    `"<p><tag></p>" + <expr>` served as text/html."""
+    return (tag, 'self.page_%s = "%s"\n            %sreturn self._send(200, "<p>%s</p>" + %s, "text/html")' % (tag, FGH_PAGE % tag, bind, tag, expr))
+
+
+def _r1_call(tag, call):
+    """A (r1.1) branch whose page a followed method or a module helper builds: the page's fetch set on self, then `call` served."""
+    return (tag, 'self.page_%s = "%s"\n            return self._send(200, %s, "text/html")' % (tag, FGH_PAGE % tag, call))
+
+
+_R1_IN = "\n                "   # a line inside a block of a do_GET branch
+R1_SELF_SEND = A_SEND % "" + ('\n    def _probe_rsp_page(this):\n        return "<p>rsp</p>" + this.page_rsp\n\n'
+                              '    def _probe_c10i_page(self):\n        gc10i = self\n        return "<p>c10i</p>" + gc10i.page_c10i\n\n'
+                              '    def _probe_rsm_meth(self):\n        return self\n\n    def _probe_rfm_meth(self):\n        return self\n\n'
+                              '    @staticmethod\n    def _probe_rstm_page(h):\n        return "<p>rstm</p>" + h.page_rstm\n\n'
+                              '    CSS_RCC = "%s"\n\n    @classmethod\n    def _probe_rcc_page(cls):\n        for c in (cls,):\n'
+                              '            return "<p>rcc</p>" + c.CSS_RCC\n' % (FGH_PAGE % "rcc"))
+R1_SELF_BRANCHES = (
+    _r1_self("ral", "hral = self\n            ", "hral.page_ral"),
+    _r1_self("rie", "hrie = self if p else None\n            ", "hrie.page_rie"),
+    _r1_self("rbo", "hrbo = None or self\n            ", "hrbo.page_rbo"),
+    _r1_self("rwl", "if (hrwl := self):" + _R1_IN, "hrwl.page_rwl"),
+    _r1_self("rwv", "hrwv = (grwv := self)\n            ", "hrwv.page_rwv"),
+    ("rrc", 'self._rrc = {"k": "%s"}\n            hrrc = self\n            return self._send(200, "<p>rrc</p>" + hrrc._rrc.get("k"), "text/html")'
+     % (FGH_PAGE % "rrc")),
+    ("rsb", 'self._rsb = {"k": {"j": "%s"}}\n            hrsb = self\n            return self._send(200, "<p>rsb</p>" + hrsb._rsb["k"].get("j"), '
+     '"text/html")' % (FGH_PAGE % "rsb")),
+    ("rct", 'self._rct = {"k": "%s"}\n            hrct = self\n            return self._send(200, "<p>rct</p>" + (hrct._rct["k"] if p else ""), '
+     '"text/html")' % (FGH_PAGE % "rct")),
+    _r1_self("rmc", 'self._rmc = {"k": self}\n            hrmc = self\n            xrmc = hrmc._rmc.get("k")\n            ', "xrmc.page_rmc"),
+    _r1_self("rlt", "for hrlt in (self,):" + _R1_IN, "hrlt.page_rlt"),
+    _r1_self("rse", "for hrse in {self}:" + _R1_IN, "hrse.page_rse"),
+    _r1_self("rdk", "for hrdk in {self: 0}:" + _R1_IN, "hrdk.page_rdk"),
+    _r1_self("rdv", 'hrdv = {"k": self}\n            ', 'hrdv["k"].page_rdv'),
+    _r1_self("rls", "hrls = [self][0]\n            ", "hrls.page_rls"),
+    _r1_self("rst", "hrst = [*(self,)][0]\n            ", "hrst.page_rst"),
+    _r1_self("rgc", "", '"".join(hrgc.page_rgc for hrgc in (self,))'),
+    _r1_call("rsp", "self._probe_rsp_page()"),
+    ("c10n", 'self.page_c10n = "%s"\n            hc10n = self\n\n            def _probe_c10n_render():\n                return "<p>c10n</p>" + '
+     'hc10n.page_c10n\n            return self._send(200, _probe_c10n_render(), "text/html")' % (FGH_PAGE % "c10n")),
+    _r1_self("r2cn", "hr2cn = self\n\n            class _ProbeR2cnInner(object):\n                pass\n            ", "hr2cn.page_r2cn"),
+    _r1_call("c10i", "self._probe_c10i_page()"),
+    ("qsg", 'self.page_qsg = "%s"\n            hqsg = self\n            return self._send(200, f"<p>qsg</p>{hqsg.page_qsg}", "text/html")'
+     % (FGH_PAGE % "qsg")),
+    _r1_self("rsm", "", "self._probe_rsm_meth().page_rsm"),
+    _r1_self("rfm", "xrfm = self._probe_rfm_meth()\n            ", "xrfm.page_rfm"),
+    _r1_call("rstm", "self._probe_rstm_page(self)"),
+    ("rcc", 'return self._send(200, self._probe_rcc_page(), "text/html")'),
+    ("rfv", 'xrfv = __file__\n            return self._send(200, "<p>rfv</p>" + xrfv.__doc__, "text/html")'))
+R1_PARAM_HEAD = ('import argparse\n\n\nclass _RcpTheme(object):\n    CSS_RCP = "%s"\n\n\nclass _RcdTheme(object):\n    CSS_RCD = "%s"\n\n\n'
+                 'class _RbhX(object):\n    page_rbh = "%s"\n\n\nclass _RbhObj(object):\n    x = _RbhX\n\n\n_PROBE_ROK = {"k": "%s"}\n\n\n'
+                 'def _probe_rhp_page(h):\n    return "<p>rhp</p>" + h.page_rhp\n\n\n'
+                 'def _probe_rhd_page(h):\n    g = h\n    return "<p>rhd</p>" + g.page_rhd\n\n\n'
+                 'def _probe_rpa_page(h):\n    h = h or None\n    return "<p>rpa</p>" + h.page_rpa\n\n\n'
+                 'def _probe_rhc_page(h):\n    return "<p>rhc</p>" + h().page_rhc\n\n\n'
+                 'def _probe_rsh_page(self):\n    return "<p>rsh</p>" + self.page_rsh\n\n\n'
+                 'def _probe_rcp_page(k):\n    return "<p>rcp</p>" + k.CSS_RCP\n\n\n'
+                 'def _probe_rcd_page(k=_RcdTheme):\n    return "<p>rcd</p>" + k.CSS_RCD\n\n\n'
+                 'def _probe_rft_make(o):\n    return o\n\n\n'
+                 'def _probe_rok_page(q):\n    return "<p>rok</p>" + q.get("k")\n\n\n'
+                 'def _probe_rkc_make():\n    return argparse.Namespace(page_rkc="%s")\n\n\n_PROBE_RKC = _probe_rkc_make()\n\n\n'
+                 'def _probe_rbh_make():\n    return _RbhObj\n\n\nclass _RmmTheme(object):\n    CSS_RMM = "%s"\n\n\n'
+                 '_PROBE_RMM = [_RmmTheme]\n_PROBE_RMM.append(_RmmTheme)'
+                 % tuple(FGH_PAGE % t for t in ("rcp", "rcd", "rbh", "rok", "rkc", "rmm")))
+R1_PARAM_BRANCHES = tuple(_r1_call(tag, "_probe_%s_page(self)" % tag) for tag in ("rhp", "rhd", "rpa", "rsh")) + (
+    _r1_call("rhc", "_probe_rhc_page(lambda: self)"),
+    ("rcp", 'return self._send(200, _probe_rcp_page(_RcpTheme), "text/html")'),
+    ("rcd", 'return self._send(200, _probe_rcd_page(), "text/html")'),
+    ("rex", "try:" + _R1_IN + "raise ValueError(self.PAGE_REX)\n            except ValueError as exrex:" + _R1_IN
+     + 'return self._send(200, "<p>rex</p>" + exrex.args[0], "text/html")'),
+    _r1_self("rft", "xrft = _probe_rft_make(self)\n            ", "xrft.page_rft"),
+    ("rok", 'return self._send(200, _probe_rok_page(_PROBE_ROK), "text/html")'),
+    _y_page("rkc", "_PROBE_RKC.page_rkc"),
+    _y_page("rbh", '(_probe_rbh_make() or "").x.page_rbh'),
+    ("rmm", 'xrmm = _PROBE_RMM\n            return self._send(200, "<p>rmm</p>" + xrmm[0].CSS_RMM, "text/html")'))
+R1_CLASS_HEAD = ('class _RclA(object):\n    CSS_RCL = "%s"\n\n\nclass _RclB(object):\n    CSS_RCL = "<p>ok</p>"\n\n\n'
+                 'class _RciA(object):\n    CSS_RCI = "%s"\n\n\nclass _RciB(object):\n    CSS_RCI = "<p>ok</p>"\n\n\n'
+                 'class _RrgA(object):\n    CSS_RRG = "%s"\n\n\n_REG_RRG = {"a": _RrgA}\n\n\n'
+                 'class _RdbA(object):\n    CSS_RDB = "%s"\n\n\n_D1_RDB = {"k": _RdbA}\n_D2_RDB = {"k": _RdbA}'
+                 % tuple(FGH_PAGE % t for t in ("rcl", "rci", "rrg", "rdb")))
+# rdb pins R1.1's dict-values edge: a class reached through a dict literal's values in a shape the class walk's
+# arms do not take (a subscript of a boolean operation over two dict constants, whose value the class walk reads as neither a name
+# nor a container it holds), so receiver's _attr_root walk decides it alone, through the boolean operation to each dict and its
+# values (rrg is decided first by the class walk's subscript arm; rdb is the escape pin the dict-values edge owns)
+R1_CLASS_BRANCHES = (("rcl", "for trcl in (_RclA, _RclB):" + _R1_IN + 'return self._send(200, "<p>rcl</p>" + trcl.CSS_RCL, "text/html")'),
+                     _y_page("rci", "(_RciA if p else _RciB).CSS_RCI"), _y_page("rrg", '_REG_RRG["a"].CSS_RRG'),
+                     _y_page("rdb", '(_D1_RDB or _D2_RDB)["k"].CSS_RDB'))
+R1_FILES = (("ral", _a_module("ral", R1_SELF_SEND, branches=R1_SELF_BRANCHES)),
+            ("rhp", _a_module("rhp", A_SEND % "" + '    PAGE_REX = "%s"\n' % (FGH_PAGE % "rex"), head=R1_PARAM_HEAD, branches=R1_PARAM_BRANCHES)),
+            ("rcl", _a_module("rcl", A_SEND % "", head=R1_CLASS_HEAD, branches=R1_CLASS_BRANCHES)),
+            ("rfb", _a_module("rfb", A_SEND % "", branches=(("rfb", '__file__ = self\n            xrfb = __file__\n            self.page_rfb = "%s"\n'
+                                                                        '            return self._send(200, "<p>rfb</p>" + xrfb.page_rfb, "text/html")'
+                                                                        % (FGH_PAGE % "rfb")),))),
+            ("rsw", _a_module("rsw", A_SEND % "", head="import probe_rsx", branches=(_y_page("rsw", "probe_rsx.RswTheme.CSS"),))),
+            ("rsx", 'class RswTheme(object):\n    CSS = "%s"\n' % (FGH_PAGE % "rsw")))
+R1_TEXTS = dict(R1_FILES)
+# The tenth round's review, its decision 2 as the 21:39Z items 1 and 3 rule it: a method call in a page position, on resolve's Call
+# arm before its file-read and text-call arms or on a receiver's or a container's path, is followed only where its receiver is the
+# calling method's own first parameter (self by binding, however spelled, never rebound in its scope), to the def statement the
+# route class's method resolution order resolves the name to in a class of the file. The (d2) plants, each page's hidden text a
+# fetch tagged with its plant, which Python serves (the controls and the holds as their notes say). Silent at the reviewed head,
+# whose follow arm read the name self as it is spelled and the route class's own body, and refused here as a route class's method
+# called other than on the calling method's own first parameter (probe_rma.py): on self through a local alias (rma), an
+# if-expression (rmie), `None or self` (rmbo), a local bound to a walrus (rmwl), `[self][0]` (rmls), a loop over a tuple, a set and a dict's keys
+# holding self (rmlt, rmse, rmdk), a dict literal's value (rmdv), a starred element (rmst) and a comprehension's target over
+# `(self,)` (rmgc), a self alias under `.strip()` (rmp) and one on a receiver's path, under `.get` (rmq); and on a parameter
+# (probe_rmh.py): a module helper's parameter handed self (rmh), its alias (rmhd), a parameter the helper also assigns (rmpa), a
+# module helper's parameter spelled self (rmsp) and one on a receiver's path (rmhp); refused at the call as a decorated def the
+# follow arm does not follow (the tenth round's decorator ruling): a staticmethod called on self and handed self (rmstm, silent at
+# the reviewed head) and a classmethod called on self (rmcl, refused there as a class attribute); and refused as a method called on
+# self that no def statement of a class of the file defines first in the route class's
+# method resolution order: a name the class body binds by a lambda (i3b), one set on the class at run time and called on a
+# receiver's path (i3p) or through a self alias (i3a), and in probe_i3i.py dict's get, the route class deriving from dict (i3i).
+# Followed here, each fetch listed: a method whose first parameter is spelled this, reached through self (rmt), a route-class
+# method named format called on self, taken before the text-call arm (probe_rtxt.py, rtxt), and in probe_rbase.py a method a base
+# class of the file defines (rbase) and one two bases define, resolved by the C3 order to the second (rmro, where the first base's
+# base defines it too). Refused here as "a method's return": a method's return on the respelled first parameter, on a receiver's
+# path (rmtp). Held at their outcome at both heads: a method called on self and followed (rms), the same in a closure the page
+# function defines (rcf), and a method of a class that holds no route, called on a helper's parameter (d2ok, the call limit, its
+# argument read and its fetch listed). Refused here as a method called on self the file may replace at run time, each silent at the
+# reviewed head, which followed its def statement: a method the route class defines that a module-level store on the class replaces
+# (rmr, until this refusal the witness of the limit below), that a setattr naming it by a string constant replaces (rpls), and that a
+# store on the instance shadows (rpli), all three in probe_rma.py, and in probe_rplg.py one a base class of the file answers through
+# __getattribute__ (rplg). The limit that stays, code behind a name on self: a method the route class defines, replaced at run time
+# by a module function through setattr with the method's name handed in as an argument, which the census reads through its def
+# statement (rplx, no line and no site, its fetch served by Python). Read at the reviewed head, its fetch listed, and refused here by
+# the ruled spelling: a module helper's local spelled self, bound to a string, calling format, which the route class defines (rmss,
+# probe_rtxt.py).
+
+
+def _d2_page(tag, expr, bind=""):
+    """A (d2) branch: `bind` (each line ending in its indentation), then `"<p><tag></p>" + <expr>` served as text/html."""
+    return (tag, '%sreturn self._send(200, "<p>%s</p>" + %s, "text/html")' % (bind, tag, expr))
+
+
+D2_SELF_PAGES = ("rma", "rmie", "rmbo", "rmwl", "rmls", "rmlt", "rmse", "rmdk", "rmdv", "rmst", "rmgc", "rmp", "rms", "rmt", "rcf", "rmrb")
+D2_SELF_SEND = A_SEND % "" + "".join('\n    def _probe_%s_page(self):\n        return "%s"\n' % (t, FGH_PAGE % t) for t in D2_SELF_PAGES) + (
+    '\n    def _probe_rmq_meth(self):\n        return {"k": "%s"}\n' % (FGH_PAGE % "rmq")
+    + '\n    def _probe_rmt_via(this):\n        return "<p>rmt</p>" + this._probe_rmt_page()\n'
+    + '\n    def _probe_rmtp_via(this):\n        return "<p>rmtp</p>" + this._probe_rmtp_meth().get("k")\n'
+    + '\n    def _probe_rmtp_meth(self):\n        return {"k": "%s"}\n' % (FGH_PAGE % "rmtp")
+    + '\n    def _probe_rmrb_via(self):\n        self = self or None\n        return "<p>rmrb</p>" + self._probe_rmrb_page()\n'
+    + '\n    @classmethod\n    def _probe_rmcl_page(cls):\n        return "<p>rmcl</p>" + cls._probe_rmcl_meth()\n'
+    + '\n    @classmethod\n    def _probe_rmcl_meth(cls):\n        return "%s"\n' % (FGH_PAGE % "rmcl")
+    + "".join('\n    def _probe_%s_page(self):\n        return "<p>ok</p>"\n' % t for t in ("rmr", "rpls", "rpli", "rplx"))
+    + '\n    _probe_i3b_page = lambda self: "%s"\n' % (FGH_PAGE % "i3b")
+    + '\n    def _probe_i3d_page(self):\n        return "<p>ok</p>"\n\n    _probe_i3d_page = lambda self: "%s"\n' % (FGH_PAGE % "i3d")
+    + '\n    global _probe_i3g_page\n\n    def _probe_i3g_page(self):\n        return "<p>ok</p>"\n'
+    + '\n    if True:\n        def _probe_i3k_page(self):\n            return "%s"\n' % (FGH_PAGE % "i3k")
+    + '\n    def _probe_rpsa_page(self):\n        return "<p>ok</p>"\n\n    def _probe_rpsb_page(self):\n        return "<p>ok</p>"\n'
+    + '\n    def _probe_rps_install(self):\n        self.__setattr__("_probe_rpsa_page", lambda: "%s")\n'
+      '        super().__setattr__("_probe_rpsb_page", lambda: "%s")\n' % (FGH_PAGE % "rpsa", FGH_PAGE % "rpsb"))
+D2_SELF_BRANCHES = (
+    _d2_page("rma", "hrma._probe_rma_page()", "hrma = self\n            "),
+    _d2_page("rmie", "(self if p else None)._probe_rmie_page()"),
+    _d2_page("rmbo", "(None or self)._probe_rmbo_page()"),
+    _d2_page("rmwl", "hrmwl._probe_rmwl_page()", "hrmwl = (grmwl := self)\n            "),
+    _d2_page("rmls", "[self][0]._probe_rmls_page()"),
+    _d2_page("rmlt", "hrmlt._probe_rmlt_page()", "for hrmlt in (self,):" + _R1_IN),
+    _d2_page("rmse", "hrmse._probe_rmse_page()", "for hrmse in {self}:" + _R1_IN),
+    _d2_page("rmdk", "hrmdk._probe_rmdk_page()", "for hrmdk in {self: 0}:" + _R1_IN),
+    _d2_page("rmdv", '{"k": self}["k"]._probe_rmdv_page()'),
+    _d2_page("rmst", "[*(self,)][0]._probe_rmst_page()"),
+    ("rmgc", 'return self._send(200, "<p>rmgc</p>" + "".join(hrmgc._probe_rmgc_page() for hrmgc in (self,)), "text/html")'),
+    _d2_page("rmp", "hrmp._probe_rmp_page().strip()", "hrmp = self\n            "),
+    _d2_page("rmq", 'hrmq._probe_rmq_meth().get("k")', "hrmq = self\n            "),
+    ("rmrb", 'return self._send(200, self._probe_rmrb_via(), "text/html")'),
+    _d2_page("rms", "self._probe_rms_page()"),
+    ("rmt", 'return self._send(200, self._probe_rmt_via(), "text/html")'),
+    ("rmtp", 'return self._send(200, self._probe_rmtp_via(), "text/html")'),
+    ("rcf", 'def _probe_rcf_render():\n                return "<p>rcf</p>" + self._probe_rcf_page()\n            '
+     'return self._send(200, _probe_rcf_render(), "text/html")'),
+    ("rmcl", 'return self._send(200, self._probe_rmcl_page(), "text/html")'),
+    _d2_page("rmr", "self._probe_rmr_page()"),
+    _d2_page("rpls", "self._probe_rpls_page()"),
+    _d2_page("rpli", "self._probe_rpli_page()", 'self._probe_rpli_page = lambda: "%s"\n            ' % (FGH_PAGE % "rpli")),
+    _d2_page("rplx", "self._probe_rplx_page()"),
+    _d2_page("i3b", "self._probe_i3b_page()"),
+    _d2_page("i3d", "self._probe_i3d_page()"),
+    _d2_page("i3g", "self._probe_i3g_page()"),
+    _d2_page("i3k", "self._probe_i3k_page()"),
+    _d2_page("i3p", 'self._probe_i3p_page().get("k")'),
+    _d2_page("i3a", "hi3a._probe_i3a_page()", "hi3a = self\n            "),
+    _d2_page("rpsa", "self._probe_rpsa_page()", "self._probe_rps_install()\n            "),
+    _d2_page("rpsb", "self._probe_rpsb_page()", "self._probe_rps_install()\n            "))
+D2_SELF_TAIL = ('Handler._probe_rmr_page = lambda self: "%s"\nHandler._probe_i3p_page = lambda self: {"k": "%s"}\n'
+                'Handler._probe_i3a_page = lambda self: "%s"\nHandler._probe_i3g_page = lambda self: "%s"\n'
+                'setattr(Handler, "_probe_rpls_page", lambda self: "%s")\n\n\ndef _probe_rplx_patch(n):\n    setattr(Handler, n, lambda self: "%s")\n\n\n'
+                '_probe_rplx_patch("_probe_rplx_page")\n'
+                % (FGH_PAGE % "rmr", FGH_PAGE % "i3p", FGH_PAGE % "i3a", FGH_PAGE % "i3g", FGH_PAGE % "rpls", FGH_PAGE % "rplx"))
+# probe_rplg.py: a base class of the file that binds __getattribute__, which answers the route class's method with its own function
+D2_RPLG_HEAD = ('class _ProbeRplgBase(object):\n    def __getattribute__(self, name):\n        if name == "_probe_rplg_page":\n'
+                '            return lambda: "%s"\n        return object.__getattribute__(self, name)' % (FGH_PAGE % "rplg"))
+D2_PARAM_METHS = ("rmh", "rmhd", "rmpa", "rmsp", "rmstm")
+D2_PARAM_SEND = A_SEND % "" + "".join('\n    def _probe_%s_meth(self):\n        return "%s"\n' % (t, FGH_PAGE % t) for t in D2_PARAM_METHS) + (
+    '\n    def _probe_rmhp_meth(self):\n        return {"k": "%s"}\n' % (FGH_PAGE % "rmhp")
+    + '\n    def _probe_rmhs_meth(self):\n        return {"k": {"j": "%s"}}\n' % (FGH_PAGE % "rmhs")
+    + '\n    @staticmethod\n    def _probe_rmstm_page(h):\n        return "<p>rmstm</p>" + h._probe_rmstm_meth()\n')
+D2_PARAM_HEAD = ('class _ProbeD2okView(object):\n    def get(self, k):\n        return k\n\n\n_PROBE_D2OK = {"k": "%s"}\n\n\n' % (FGH_PAGE % "d2ok")
+                 + 'def _probe_rmh_page(h):\n    return "<p>rmh</p>" + h._probe_rmh_meth()\n\n\n'
+                 + 'def _probe_rmhd_page(h):\n    g = h\n    return "<p>rmhd</p>" + g._probe_rmhd_meth()\n\n\n'
+                 + 'def _probe_rmpa_page(h):\n    h = h or None\n    return "<p>rmpa</p>" + h._probe_rmpa_meth()\n\n\n'
+                 + 'def _probe_rmsp_page(self):\n    return "<p>rmsp</p>" + self._probe_rmsp_meth()\n\n\n'
+                 + 'def _probe_rmhp_page(h):\n    return "<p>rmhp</p>" + h._probe_rmhp_meth().get("k")\n\n\n'
+                 + 'def _probe_rmhs_page(h):\n    return "<p>rmhs</p>" + h._probe_rmhs_meth()["k"].get("j")\n\n\n'
+                 + 'def _probe_d2ok_page(q):\n    return "<p>d2ok</p>" + q.get("k")')
+D2_PARAM_BRANCHES = tuple((t, 'return self._send(200, _probe_%s_page(self), "text/html")' % t) for t in ("rmh", "rmhd", "rmpa", "rmsp", "rmhp", "rmhs")) + (
+    ("rmstm", 'return self._send(200, self._probe_rmstm_page(self), "text/html")'),
+    ("d2ok", 'return self._send(200, _probe_d2ok_page(_PROBE_D2OK), "text/html")'))
+D2_TXT_SEND = A_SEND % "" + ('\n    def format(self, x):\n        return x + "%s"\n\n    def read(self):\n        return "%s"\n'
+                             % (FGH_PAGE % "rtxt", FGH_PAGE % "rrd"))
+D2_TXT_BRANCHES = (("rtxt", 'return self._send(200, self.format("<p>rtxt</p>"), "text/html")'), _d2_page("rrd", "self.read()"),
+                   ("rmss", 'return self._send(200, _probe_rmss_page(), "text/html")'))
+D2_BASES = "_ProbeRbaseBase, _ProbeRmroB, _ProbeRmroC"   # the route class's bases in probe_rbase.py: C3 orders Handler, _ProbeRbaseBase,
+# _ProbeRmroB, _ProbeRmroC, _ProbeRmroA, object, so _probe_rmro_page resolves to _ProbeRmroC's (a depth-first order would take _ProbeRmroA's)
+D2_BASE_HEAD = ('class _ProbeRbaseBase(object):\n    CSS_RBDF = "%s"\n\n    def _probe_rbase_page(self):\n        return "%s"\n\n'
+                '    def _probe_rbdf_page(self, x=CSS_RBDF):\n        return x\n\n    def _probe_rmhb_meth(self):\n        return "%s"\n\n\n'
+                % (FGH_PAGE % "rbdf", FGH_PAGE % "rbase", FGH_PAGE % "rmhb")
+                + 'class _ProbeRmroA(object):\n    def _probe_rmro_page(self):\n        return "<p>ok</p>"\n\n\n'
+                + 'class _ProbeRmroB(_ProbeRmroA):\n    pass\n\n\n'
+                + 'class _ProbeRmroC(_ProbeRmroA):\n    def _probe_rmro_page(self):\n        return "%s"\n\n\n' % (FGH_PAGE % "rmro")
+                + 'def _probe_rmhb_page(h):\n    return "<p>rmhb</p>" + h._probe_rmhb_meth()')
+D2_BASE_BRANCHES = (_d2_page("rbase", "self._probe_rbase_page()"), _d2_page("rmro", "self._probe_rmro_page()"),
+                    _d2_page("rbdf", "self._probe_rbdf_page()"),
+                    ("rmhb", 'return self._send(200, _probe_rmhb_page(self), "text/html")'))
+# probe_i3i.py: dict ahead of a base of the file that defines get too (Python's order takes dict's, which the census does not read);
+# probe_i3r.py: a base name a class statement and a later assignment both bind, the class statement's own def not the one Python calls
+D2_I3I_HEAD = 'class _ProbeI3iBase(object):\n    def get(self, k):\n        return "<p>ok</p>"'
+D2_I3R_HEAD = ('class _ProbeI3rOther(object):\n    def _probe_i3r_page(self):\n        return "%s"\n\n\n' % (FGH_PAGE % "i3r")
+               + 'class _ProbeI3rBase(object):\n    def _probe_i3r_page(self):\n        return "<p>ok</p>"\n\n\n_ProbeI3rBase = _ProbeI3rOther')
+D2_FILES = (("rma", _a_module("rma", D2_SELF_SEND, tail=D2_SELF_TAIL, branches=D2_SELF_BRANCHES)),
+            ("rmh", _a_module("rmh", D2_PARAM_SEND, head=D2_PARAM_HEAD, branches=D2_PARAM_BRANCHES)),
+            ("rtxt", _a_module("rtxt", D2_TXT_SEND, head='def _probe_rmss_page():\n    self = "%s"\n    return "<p>rmss</p>" + self.format()'
+                               % (FGH_PAGE % "rmss"), branches=D2_TXT_BRANCHES)),
+            ("rbase", _a_module("rbase", A_SEND % "", head=D2_BASE_HEAD, branches=D2_BASE_BRANCHES).replace(
+                "class Handler(object):", "class Handler(%s):" % D2_BASES)),
+            ("i3i", _a_module("i3i", A_SEND % "", head=D2_I3I_HEAD, branches=(
+                ("i3i", 'self["k"] = "%s"\n            return self._send(200, "<p>i3i</p>" + self.get("k"), "text/html")' % (FGH_PAGE % "i3i")),)).replace(
+                "class Handler(object):", "class Handler(dict, _ProbeI3iBase):")),
+            ("i3r", _a_module("i3r", A_SEND % "", head=D2_I3R_HEAD, branches=(_d2_page("i3r", "self._probe_i3r_page()"),)).replace(
+                "class Handler(object):", "class Handler(_ProbeI3rBase):")),
+            ("rplg", _a_module("rplg", A_SEND % "" + '\n    def _probe_rplg_page(self):\n        return "<p>ok</p>"\n', head=D2_RPLG_HEAD,
+                               branches=(_d2_page("rplg", "self._probe_rplg_page()"),)).replace("class Handler(object):", "class Handler(_ProbeRplgBase):")),
+            # probe_hvt.py, this commit's pin for the file-subclass override: the route class holds the `_send` call and defines the
+            # followed method, and a file class deriving from it overrides that method, whose override the server runs on its instance
+            ("hvt", 'class _ProbeHvtBase(object):\n' + A_SEND % "" + '\n    def _probe_hvt_page(self):\n        return "<p>ok</p>"\n\n'
+             '    def do_GET(self):\n        p = self.path\n        if p == "/probe-hvt":\n'
+             '            return self._send(200, "<p>hvt</p>" + self._probe_hvt_page(), "text/html")\n        return None\n\n\n'
+             'class Handler(_ProbeHvtBase):\n    def _probe_hvt_page(self):\n        return "%s"\n' % (FGH_PAGE % "hvt")))
+# probe_dec.py, the owner's additions past the rulings' letter, each page's hidden text a fetch Python serves: a def under
+# ANY decorator is not followed, whatever the decorator is bound to, since Python calls the decorator's return in the def's place,
+# refused as _DECORATED (the tenth round's decorator ruling applied literally). A wrapping decorator on the route class (xdcr) or a
+# file base reached through the method resolution order (xdcb). Each page is a bare unread call, so it takes a second
+# serves-text/html line, and each goes silent under a mutant that drops the decorator refusal (the follow arm reads the undecorated
+# body) while Python serves the fetch. And the replacement check's unbound form on a class, `type.__setattr__(Handler, "name", f)`,
+# whose attribute name is its second argument, read so the method it replaces refuses as _REPLACED (xtsa). The file binds neither
+# staticmethod nor classmethod, so its route handler's first parameter is self (the staticmethod and classmethod plants are
+# probe_zre.py's, below)
+D2_FILES = D2_FILES + (("dec",
+    'def _probe_banner(f):\n    def _probe_w(self):\n        return "%s" + f(self)\n    return _probe_w\n\n\n' % (FGH_PAGE % "xdcrb")
+    + 'class _ProbeXdcbBase(object):\n    @_probe_banner\n    def _probe_xdcb_page(self):\n        return "<p>ok</p>"\n\n\n'
+    + 'class Handler(_ProbeXdcbBase):\n' + A_SEND % ""
+    + '\n    @_probe_banner\n    def _probe_xdcr_page(self):\n        return "<p>ok</p>"\n'
+    + '\n    def _probe_xtsa_page(self):\n        return "<p>ok</p>"\n'
+    + '\n    def do_GET(self):\n        p = self.path\n'
+    + '        if p == "/probe-xdcr":\n            return self._send(200, self._probe_xdcr_page(), "text/html")\n'
+    + '        if p == "/probe-xdcb":\n            return self._send(200, self._probe_xdcb_page(), "text/html")\n'
+    + '        if p == "/probe-xtsa":\n            return self._send(200, self._probe_xtsa_page(), "text/html")\n        return None\n\n\n'
+    + 'type.__setattr__(Handler, "_probe_xtsa_page", lambda self: "%s")\n' % (FGH_PAGE % "xtsa")),)
+D2_TEXTS = dict(D2_FILES)
+# A route handler's first parameter the census does not classify (the tenth round's decorator ruling carried to the handler itself):
+# where the handler carries a decorator, whatever it is bound to, or the file binds staticmethod or classmethod in any scope and by
+# any form, the handler's first parameter is neither self nor any other parameter to the census, and a method called on it, or it
+# called, refuses by name as _UNCLASSIFIED. Each page's hidden text a fetch Python serves. probe_zdg.py: a do_GET under staticmethod,
+# which the file rebinds to a function that returns its argument, so Python calls do_GET as a method and its first parameter is the
+# handler, whose page calls a method set on the class at module level (zdg), silent at the reviewed head while Python serves the
+# method's fetch. probe_zdw.py: a do_GET under a decorator that calls it with another object in the handler's place, whose own
+# method the page calls (zdw), silent at the reviewed head, which followed the route class's def of that name, while Python serves
+# the other object's fetch. probe_zcl.py: a do_GET under a decorator that returns its argument, whose page calls its first
+# parameter (zcl, `self()`, the route class's `__call__`), silent at the reviewed head, which passed the call as a parameter's,
+# while Python serves. probe_zre.py:
+# a staticmethod (zst) and a classmethod (zct), each rebound at module level to a fetch-prepending wrapper, and an alias of
+# staticmethod (zal, `_probe_alias = staticmethod`), each called on self from an undecorated do_GET in a file that binds both names,
+# so refused as _UNCLASSIFIED at the call before the decorator refusal is asked, each page a bare unread call with its second
+# serves-text/html line
+UC_FILES = (("zdg", 'def _probe_id(f):\n    return f\n\n\nstaticmethod = _probe_id\n\n\nclass Handler(object):\n' + A_SEND % ""
+             + '\n    @staticmethod\n    def do_GET(self):\n        p = self.path\n'
+             + '        if p == "/probe-zdg":\n            return self._send(200, "<p>zdg</p>" + self._probe_zdg_page(), "text/html")\n'
+             + '        return None\n\n\nHandler._probe_zdg_page = lambda self: "%s"\n' % (FGH_PAGE % "zdg")),
+            ("zdw", 'class _ProbeAlt(object):\n    def __init__(self, h):\n        self.h = h\n\n    def __getattr__(self, n):\n'
+             + '        return getattr(self.h, n)\n\n    def _probe_zdw_page(self):\n        return "%s"\n\n\n' % (FGH_PAGE % "zdw")
+             + 'def _probe_swap(f):\n    def _probe_w(self):\n        return f(_ProbeAlt(self))\n    return _probe_w\n\n\n'
+             + 'class Handler(object):\n' + A_SEND % "" + '\n    def _probe_zdw_page(self):\n        return "<p>ok</p>"\n'
+             + '\n    @_probe_swap\n    def do_GET(self):\n        p = self.path\n'
+             + '        if p == "/probe-zdw":\n            return self._send(200, "<p>zdw</p>" + self._probe_zdw_page(), "text/html")\n'
+             + '        return None\n'),
+            ("zcl", 'def _probe_pass(f):\n    return f\n\n\nclass Handler(object):\n' + A_SEND % ""
+             + '\n    def __call__(self):\n        return "%s"\n' % (FGH_PAGE % "zcl")
+             + '\n    @_probe_pass\n    def do_GET(self):\n        p = self.path\n'
+             + '        if p == "/probe-zcl":\n            return self._send(200, "<p>zcl</p>" + self(), "text/html")\n'
+             + '        return None\n'),
+            ("zre", 'def _probe_smb(f):\n    def _probe_w(self):\n        return "%s" + f(self)\n    return _probe_w\n\n\n' % (FGH_PAGE % "zst")
+             + 'def _probe_cmb(f):\n    def _probe_w(self):\n        return "%s" + f(self)\n    return _probe_w\n\n\n' % (FGH_PAGE % "zct")
+             + 'staticmethod = _probe_smb\nclassmethod = _probe_cmb\n_probe_alias = staticmethod\n\n\n'
+             + 'class Handler(object):\n' + A_SEND % ""
+             + '\n    @staticmethod\n    def _probe_zst_page(self):\n        return "<p>ok</p>"\n'
+             + '\n    @classmethod\n    def _probe_zct_page(self):\n        return "<p>ok</p>"\n'
+             + '\n    @_probe_alias\n    def _probe_zal_page(self):\n        return "<p>ok</p>"\n'
+             + '\n    def do_GET(self):\n        p = self.path\n'
+             + '        if p == "/probe-zst":\n            return self._send(200, self._probe_zst_page(), "text/html")\n'
+             + '        if p == "/probe-zct":\n            return self._send(200, self._probe_zct_page(), "text/html")\n'
+             + '        if p == "/probe-zal":\n            return self._send(200, self._probe_zal_page(), "text/html")\n        return None\n'))
+UC_TEXTS = dict(UC_FILES)
+# The tenth round's review, R1.2 (correctness-4, extra5-1): `__file__` is the file's own path only where no statement of the file
+# binds it, the file writes no name of its module namespace through a computed name and may not rewrite it at run time, no function
+# binds it under a global declaration and no module-level statement writes it, and the module holds no star import (_file_slot, one
+# predicate for the bare name and for `Path(__file__)` and `open(__file__)`); in any other file a file read whose path the census
+# builds from either is refused as a file the walk does not scan. The (r1.2) plants, each the page `open(__file__).read()`: silent at
+# the reviewed head, whose _path took it as this file wherever no statement bound `__file__`, and refused here as a file the walk
+# does not scan: a file that points `__file__` through globals() (fpg) or through exec, a run-time form (fpr), at a sibling module
+# whose comments hold each plant's fetch (probe_fpt.py), and a module that star-imports a sibling whose `__all__` names `__file__`
+# (fps, from probe_fpu.py, which points it at the same module); Python serves that module's text, the plant's fetch in it, from
+# each. Read at both heads, with no line: the same page in a file that does none of those (fpc), its path this file, a file the walk
+# covers. fps's import of its sibling, a module KNOWN_IMPORTS does not list, is the import gate's line at both heads.
+R12_CALL = 'return self._send(200, open(__file__).read(), "text/html")'
+R12_POINT = '__file__.replace("probe_%s.py", "probe_fpt.py")'   # `__file__` pointed at the sibling module holding the fetches
+R12_FILES = (("fpg", _a_module("fpg", A_SEND % "", head='globals()["__file__"] = ' + R12_POINT % "fpg", call=R12_CALL)),
+             ("fpr", _a_module("fpr", A_SEND % "", head="exec('__file__ = %s')" % (R12_POINT % "fpr"), call=R12_CALL)),
+             ("fps", _a_module("fps", A_SEND % "", head="from probe_fpu import *", call=R12_CALL)),
+             ("fpc", _a_module("fpc", A_SEND % "", call=R12_CALL)),
+             ("fpt", "".join("# %s\n" % (FGH_PAGE % t) for t in ("fpg", "fpr", "fps"))),
+             ("fpu", '__all__ = ["__file__"]\n__file__ = %s\n' % (R12_POINT % "fpu")))
+# The tenth round's review, R1.3 (correctness-1): a `_send` call is refused by name, before any typing, where one of the definition's
+# own Content-Type writes (its innermost def the definition, or a def in it itself named `_send`: the writes the Content-Type loop
+# skips) names a parameter the typing reads from the call and the definition binds that name other than as that parameter anywhere
+# in its body, in its own scope or a nested one (_type_rebinding). The (r1.3) plants, each a module of its own (a file binds `_send`
+# once), each a `_send` whose own write takes text/html from a binding of `ctype` while the call passes text/plain, so Python serves
+# the page, a fetch tagged with its plant, as text/html, where the reviewed head typed it text/plain and did not read it (silent
+# there): a lambda's parameter (srl), a comprehension's target (sro), an assignment (srs), a loop target (srf), a walrus (srw), an
+# except name, the exception's text the type written (sre), a match capture (srm), a keyword-only parameter assigned (srq), and a
+# def nested in the definition, itself named `_send`, whose parameter binds the name and which a module-level decorator calls (srn,
+# its write one the Content-Type loop skips); and, on the interpreters that parse the form (3.12 and later), a type parameter of a
+# class statement in the definition (srt), whose write Python serves as the type parameter's name, no script type (a refusal that
+# fails closed). Held at both heads: a write in a def nested in the definition under another name, called with text/html (srd),
+# refused by the Content-Type loop alone, its type unresolved, with no second line here; and a lambda in the definition around the
+# write that binds another name (srk, the call passing text/plain, which Python serves), no line at either head.
+R13_WRITE = '        self.send_header("Content-Type", ctype)\n'   # A_SEND's own Content-Type write
+
+
+def _r13_module(tag, lines, head="", sig=None, call=None):
+    """A (r1.3) module: A_SEND with its Content-Type write replaced by `lines` (and its signature by `sig`), its page, the fetch
+    tagged `tag`, served through self._send with the type text/plain (or `call`)."""
+    send = (A_SEND % "").replace(R13_WRITE, lines)
+    if sig: send = send.replace("(self, code, body, ctype)", sig)
+    return _a_module(tag, send, head=head, call=call or 'return self._send(200, "%s", "text/plain")' % (FGH_PAGE % tag))
+
+
+# (tag, the binding form, which the SERVED line names, the lines in place of the write)
+R13_SPEC = (("srl", "a lambda's parameter", '        (lambda ctype: self.send_header("Content-Type", ctype))("text/html")\n'),
+            ("sro", "a comprehension's target", '        [self.send_header("Content-Type", ctype) for ctype in ("text/html",)]\n'),
+            ("srs", "an assignment", '        ctype = "text/html"\n' + R13_WRITE),
+            ("srf", "a loop target", '        for ctype in ("text/html",):\n    ' + R13_WRITE),
+            ("srw", "a walrus", '        if (ctype := "text/html"):\n    ' + R13_WRITE),
+            ("sre", "an except name", '        try:\n            raise ValueError("text/html")\n        except ValueError as ctype:\n    ' + R13_WRITE),
+            ("srm", "a match capture", '        match "text/html":\n            case ctype:\n        ' + R13_WRITE))
+R13_FILES = tuple((tag, _r13_module(tag, lines)) for tag, _, lines in R13_SPEC) + (
+    ("srq", _r13_module("srq", '        ctype = "text/html"\n' + R13_WRITE, sig="(self, code, body, *, ctype)",
+                        call='return self._send(200, "%s", ctype="text/plain")' % (FGH_PAGE % "srq"))),
+    ("srn", _r13_module("srn", '        @_probe_srn_call\n        def _send(ctype="text/html"):\n    ' + R13_WRITE,
+                        head="def _probe_srn_call(f):\n    f()\n    return f")),
+    ("srd", _r13_module("srd", "        def _probe_srd_w(ctype):\n    " + R13_WRITE + '        _probe_srd_w("text/html")\n')),
+    ("srk", _r13_module("srk", '        (lambda t: self.send_header("Content-Type", ctype))(0)\n'))) + (
+    # later alone, gated as hyt is
+    (("srt", _r13_module("srt", "        class _ProbeSrt[ctype]:\n    " + R13_WRITE)),) if sys.version_info >= (3, 12) else ())
+# The tenth round's review, R1.4 (correctness-2) with the 17:31Z choice (c), landing together with R3's walk: a `.format` or
+# `.format_map` whose format string, read through its receiver (_format_texts), holds a replacement field reaching an attribute or an
+# index of its argument, at its top level or nested in a field's format spec (_reaches), is refused by name as such a field
+# (_FIELD_REACH); and one whose receiver reaches anything but a string constant, a join of them or a name bound to one is refused as a
+# format string reached so (_TEMPLATE), where no field it reads reaches, the receiver is no class, stands as no subscript operand
+# and is refused by name nowhere as the pass reads it (the (fd) plants hold that one line). The (r1.4) plants, each page's
+# hidden text a fetch tagged with its plant, which Python serves. Nested fields (probe_c2a.py), each argument 0 a datetime.date, whose
+# __format__ hands its spec to strftime, so the nested field's text is the page's: an attribute through a module constant (c2a), the
+# `.format_map` twin (c2m), an index through a module constant, a class's `__class_getitem__` answering it (c2i), and the format
+# string a local holds (c10l), each silent at the reviewed head, which read top-level field names alone; and a nested field at the end
+# of a chain of 40 local aliases (ndp), silent at the reviewed head and under a depth bound on the walk. The literal form (c2l) is
+# refused as a format spec holding a replacement field at both heads, one line. Format strings reached any other way (probe_tst.py),
+# each silent at the reviewed head, which dropped such a value without a word: a module constant bound to a template's `.strip()`,
+# read on a class (tst) and on self after the handler sets the attribute (tss), a function's return (tfn), an if-expression (tie) and
+# a local bound to one (til), a `.replace` on a module constant (trp), a module constant bound to a `+` of a module constant and a
+# literal (tcat), a local bound so, read through a keyword field on self (tfs), a followed method's parameter (tpm), a local with one
+# constant value whose fields reach nothing and one call value (tmix, which a refusal only where no format string is read at all
+# would leave silent), a loop target over a tuple of templates (tlp) and the end of a chain of 40 local aliases bound to a function's
+# return (tdp, silent under a depth bound on the walk). Held at both heads: tmr, a local with one constant value whose field reaches
+# and one call value, refused as such a field and not as a format string reached otherwise; and the control tok, a format string a
+# module constant holds, no field reaching, read, its argument's fetch listed.
+R14_CHAIN = 40   # the alias chains' depth, past the reviewed head's walk bound of 32
+R14_DATE = "datetime.date(2020, 1, 1)"
+
+
+def _r14_chain(value, page):
+    """A (r1.4) do_GET branch: `z` bound to `value`, the 40 local aliases c39 (bound to z) down to c0 (bound to c1), then `page`."""
+    return "\n            ".join(["z = %s" % value, "c%d = z" % (R14_CHAIN - 1)] + ["c%d = c%d" % (i, i + 1) for i in range(R14_CHAIN - 2, -1, -1)] + [page])
+
+
+def _r14_page(tag, expr):
+    """A (r1.4) branch serving `expr` as text/html."""
+    return (tag, 'return self._send(200, %s, "text/html")' % expr)
+
+
+R14_NEST_HEAD = ('import datetime\n\n_R14_TA = "<p>c2a</p>{0:{1.W}}"\n_R14_TM = "<p>c2m</p>{a:{b.W}}"\n_R14_TI = "<p>c2i</p>{0:{1[0]}}"'
+                 + "".join('\n\n\nclass _R14W%s(object):\n    W = "%s"' % (t.upper(), FGH_PAGE % t) for t in ("c2a", "c2m", "c10l", "c2l", "ndp"))
+                 + '\n\n\nclass _R14Ix(object):\n    def __class_getitem__(cls, k):\n        return "%s"' % (FGH_PAGE % "c2i"))
+# (tag, the refused call as its SERVED line shows it, the do_GET branch)
+R14_NEST = (("c2a", "_R14_TA.format(%s, _R14WC2A)" % R14_DATE, _r14_page("c2a", "_R14_TA.format(%s, _R14WC2A)" % R14_DATE)),
+            ("c2m", '_R14_TM.format_map({"a": %s, "b": _R14WC2M})' % R14_DATE, _r14_page("c2m", '_R14_TM.format_map({"a": %s, "b": _R14WC2M})' % R14_DATE)),
+            ("c2i", "_R14_TI.format(%s, _R14Ix)" % R14_DATE, _r14_page("c2i", "_R14_TI.format(%s, _R14Ix)" % R14_DATE)),
+            ("c10l", "t.format(%s, _R14WC10L)" % R14_DATE,
+             ("c10l", 't = "<p>c10l</p>{0:{1.W}}"\n            return self._send(200, t.format(%s, _R14WC10L), "text/html")' % R14_DATE)),
+            ("c2l", '"<p>c2l</p>{0:{1.W}}".format(%s, _R14WC2L)' % R14_DATE, _r14_page("c2l", '"<p>c2l</p>{0:{1.W}}".format(%s, _R14WC2L)' % R14_DATE)),
+            ("ndp", "c0.format(%s, _R14WNDP)" % R14_DATE,
+             ("ndp", _r14_chain('"<p>ndp</p>{0:{1.W}}"', 'return self._send(200, c0.format(%s, _R14WNDP), "text/html")' % R14_DATE))))
+R14_TPL_TAGS = ("tst", "tfn", "tie", "til", "trp", "tcat", "tpm", "tmix", "tlp", "tdp", "tmr")   # each a class whose CSS holds its fetch
+R14_TPL_HEAD = ('_R14_TST = " <p>tst</p>{0.CSS} ".strip()\n_R14_TSS = " <p>tss</p>{0.title} ".strip()\n_R14_TRP = "<p>TITLE</p>{0.CSS}"\n'
+                '_R14_TH = "<p>tcat</p>"\n_R14_TCAT = _R14_TH + "{0.CSS}"\n_R14_TK = "<p>tok</p>{0}"\n\n\n'
+                'def _r14_tfn():\n    return "<p>tfn</p>{0.CSS}"\n\n\ndef _r14_tmix():\n    return "<p>tmix</p>{0.CSS}"\n\n\n'
+                'def _r14_tdp():\n    return "<p>tdp</p>{0.CSS}"'
+                + "".join('\n\n\nclass _R14A%s(object):\n    CSS = "%s"' % (t.upper(), FGH_PAGE % t) for t in R14_TPL_TAGS))
+R14_TPL_SEND = A_SEND % "" + "\n    def _r14_render(self, tpl, obj):\n        return tpl.format(obj)\n"
+R14_TPL = (("tst", "_R14_TST.format(_R14ATST)", _r14_page("tst", "_R14_TST.format(_R14ATST)")),
+           ("tss", "_R14_TSS.format(self)",
+            ("tss", 'self.title = "%s"\n            return self._send(200, _R14_TSS.format(self), "text/html")' % (FGH_PAGE % "tss"))),
+           ("tfn", "_r14_tfn().format(_R14ATFN)", _r14_page("tfn", "_r14_tfn().format(_R14ATFN)")),
+           ("tie", '("<p>tie</p>{0.CSS}" if p else "<p>x</p>").format(_R14ATIE)', _r14_page("tie", '("<p>tie</p>{0.CSS}" if p else "<p>x</p>").format(_R14ATIE)')),
+           ("til", "t_il.format(_R14ATIL)",
+            ("til", 't_il = "<p>til</p>{0.CSS}" if p else "<p>x</p>"\n            return self._send(200, t_il.format(_R14ATIL), "text/html")')),
+           ("trp", '_R14_TRP.replace("TITLE", "trp").format(_R14ATRP)', _r14_page("trp", '_R14_TRP.replace("TITLE", "trp").format(_R14ATRP)')),
+           ("tcat", "_R14_TCAT.format(_R14ATCAT)", _r14_page("tcat", "_R14_TCAT.format(_R14ATCAT)")),
+           ("tfs", "t_fs.format(s=self)",
+            ("tfs", 'self.body = "%s"\n            t_fs = _R14_TH + "<p>tfs</p>{s.body}"\n            return self._send(200, t_fs.format(s=self), "text/html")'
+             % (FGH_PAGE % "tfs"))),
+           ("tpm", "tpl.format(obj)", _r14_page("tpm", 'self._r14_render("<p>tpm</p>{0.CSS}", _R14ATPM)')),
+           ("tmix", "t_mix.format(_R14ATMIX)",
+            ("tmix", 't_mix = "<p>x</p>"\n            if p:\n                t_mix = _r14_tmix()\n            return self._send(200, t_mix.format(_R14ATMIX), "text/html")')),
+           ("tlp", "t_lp.format(_R14ATLP)", ("tlp", 'for t_lp in ("<p>tlp</p>{0.CSS}",):\n                return self._send(200, t_lp.format(_R14ATLP), "text/html")')),
+           ("tdp", "c0.format(_R14ATDP)", ("tdp", _r14_chain("_r14_tdp()", 'return self._send(200, c0.format(_R14ATDP), "text/html")'))),
+           ("tmr", "t_mr.format(_R14ATMR)",
+            ("tmr", 't_mr = "<p>tmr</p>{0.CSS}"\n            if p:\n                t_mr = t_mr.strip()\n            return self._send(200, t_mr.format(_R14ATMR), "text/html")')),
+           ("tok", None, _r14_page("tok", '_R14_TK.format("%s")' % (FGH_PAGE % "tok"))))
+R14_FILES = (("c2a", _a_module("c2a", A_SEND % "", head=R14_NEST_HEAD, branches=tuple(b for _, _, b in R14_NEST))),
+             ("tst", _a_module("tst", R14_TPL_SEND, head=R14_TPL_HEAD, branches=tuple(b for _, _, b in R14_TPL))))
+R14_TEXTS = dict(R14_FILES)
+# The tenth round's decision 3 (extra6-2) as the owner rebuilds it, the default the reviewer accepted: the lookup-key
+# evaluator is a POSITIVE ALLOWLIST (Scan._unfolded holds each non-constant key for _key_settle, which reads it once the file's walk
+# is done; _key_form, _key_binding). A key is a run-time form of its file UNLESS the allowlist proves its shape, and every shape it
+# does not prove refuses by name, the reason naming in words what the walk met. Accepted, keyed on the binding: a constant string
+# spelling no listed name; a parameter; a call's return whose callee reaches neither text nor the str, bytes or bytearray type nor a
+# method of one; a name that is a loop or comprehension target inside a function over a literal of constants, a once-bound module
+# tuple constant no code can mutate or an attribute whose base reaches no text and whose name the file never writes (an attribute only
+# as such a source, no name bound to an attribute; Scan._key_attr reads the facts _key_const reads for a module constant, keyed on the
+# attribute's name); a name that is such a target, or an unpacking target, over a parameter or such a call's return, directly or through
+# names an assignment, such a target or an unpacking binds to one; a boolean operation or an if-expression each of whose values the
+# allowlist accepts where it stands; and a name an assignment binds to any of these but a constant string. No with target and no
+# walrus is accepted: a with target or a name bound to one, a walrus, and a name a walrus binds anywhere, a comprehension's included,
+# each refuses. The (d3) plants, a
+# probe module each (_x_served's shape: getattr of builtins keyed so runs exec, which rewrites __file__, a module constant and str,
+# and a page reads each). The refused plants (D3_SPEC), each silent at the reviewed head but for its str page (refused there as a
+# builtin in a file that imports builtins) and refused here with its key's form and its line: the direct unfolded forms, a join over
+# a generator (kgj), a `%` (kpc), a `+` (kpl), an f-string (kfs), a format (kfm), a format_map (kfn) and a replace (krp); through the
+# walk's edges and scopes, an if-expression (kie), a boolean operation (kbo), a module constant bound to a `+` (kname), a function's
+# local (klocal), a name a function declares global (kgd), a name a nested function declares nonlocal (knl), a class body's name read
+# in the class body (kcb) and an augmented assignment (xaug); a key that reaches a folded constant spelling a listed name, refused by
+# name (xcon a constant, xplf a folded `+`, xjf a folded join, kfold a `+` of string constants); a text-type method, a method on
+# constant text (mlow), a name bound to one (mnam), an unbound str.lower (munb) and a constant-text method bound to a name (mbnd);
+# node kinds named in words, a `*` (wml), a list comprehension (wlc), a lambda's call (xlam) and a class's call (xcls); subscripts,
+# all refused (ksb a module list's, xsl a constant slice, xmut a dict literal's); and the honest shapes the ninth round's pass read,
+# refused now and recorded as the allowlist's cost (0 live), a name bound to a constant not through a loop (hint), a dict's read-only
+# calls (hget, hgdf, hgit), a dict iterated (hitm, hkey, hval), a list after a sort, reverse or item delete (hsrt, hrev, hdel), a
+# dict after an update (hupd) and an unpacking (hunp). The rebinding and order-independent shapes, each refused: a module constant the file
+# writes through the module object, read by a subscript refused whatever the write (xkms an item store, xkma an
+# insert); a name a class body writes under a nonlocal declaration (xncl) and a nested function does (knw); a name a function or a
+# class body writes under a global declaration read by a function defined later in the file, order-independent (xgl, xglc); a str
+# or bytes method bound to a name or reached through the type, refused whatever binds it (xub1 str.lower, xub2 str.join, xub3
+# bytes.decode, xub4 the str type bound then `.lower`, xub5 bytearray.decode, xub6 str imported from builtins, xub7 builtins.str); and
+# the tenth round's tightening (an attribute accepted only as a loop or comprehension source, a loop target accepted only inside a
+# function): an attribute of an import as a direct key (aatt) and through a name (aatn), their from-import twins (aftd, aftn), and a
+# module-level loop target read by a function while the file rewrites the global through an alias of sys.modules (almt); and no with
+# target and no walrus: a with target over a parameter's call, whose `__enter__` returns the listed name (awth), a name a walrus binds
+# inside a comprehension to the comprehension's own target, which shadows a parameter (awlp) or a local bound to a call's return
+# (awlc), and a walrus as the key (awnd); and no attribute source whose name the file writes: the attribute stored on its base at
+# module level (xawm) and in a function the key's function calls first (xawf), set by setattr with its name as a string constant
+# (xaws) and as a `+` of two (xawj), bound in a class body whose class is stored on the base (xawb), and written through vars()
+# of the base with a computed key (xawv). The accepted plants (D3_ACCEPT), each proved by one accept clause, its __file__ and
+# module-constant pages with no line: a direct constant (adir), a parameter (apar), a call's return (acal), a loop target over a
+# tuple literal (aloop), a comprehension's target (acmp), a loop target over a module tuple constant (amod) and an unpacking target
+# over a call's return (aunp). Each refused plant is silent at the reviewed head, its __file__ and module-constant
+# pages read as value slots while Python serves the exec's fetch, and refused at the fix (its str page refused at both heads by the
+# builtins import); each accept clause reds when it is removed, refusing its plant and the live keys it proves.
+D3_A = 'import builtins\n\n_probe_a = "ex"'   # the name several forms read
+# (tag, module head, the key's run-time form as the allowlist's reason names it, the needle locating the form's line, the rewrite
+# template taking (name, value)): the refused plants, each key a shape the positive allowlist does not prove
+D3_SPEC = (
+    ('kgj', 'import builtins', 'spells a name by a join the census does not fold', 'getattr(builtins, "".join((p for p in ("ex", "ec"))))("__file__ = _EXTRA")', 'getattr(builtins, "".join((p for p in ("ex", "ec"))))("%s = %s")'),
+    ('kpc', 'import builtins\n\n_probe_a = "ex"', 'spells a name by a % the census does not fold', 'getattr(builtins, "%sec" % _probe_a)("__file__ = _EXTRA")', 'getattr(builtins, "%%sec" %% _probe_a)("%s = %s")'),
+    ('kpl', 'import builtins\n\n_probe_a = "ex"', 'spells a name by a + the census does not fold', 'getattr(builtins, _probe_a + "ec")("__file__ = _EXTRA")', 'getattr(builtins, _probe_a + "ec")("%s = %s")'),
+    ('kfs', 'import builtins\n\n_probe_a = "ex"', 'spells a name by an f-string the census does not fold', 'getattr(builtins, f"{_probe_a}ec")("__file__ = _EXTRA")', 'getattr(builtins, f"{_probe_a}ec")("%s = %s")'),
+    ('kfm', 'import builtins\n\n_probe_a = "ex"', 'spells a name by a format the census does not fold', 'getattr(builtins, "{}ec".format(_probe_a))("__file__ = _EXTRA")', 'getattr(builtins, "{}ec".format(_probe_a))("%s = %s")'),
+    ('kfn', 'import builtins\n\n_probe_a = "ex"', 'spells a name by a format_map the census does not fold', 'getattr(builtins, "{a}ec".format_map({"a": _probe_a}))("__file__ = _EXTRA")', 'getattr(builtins, "{a}ec".format_map({"a": _probe_a}))("%s = %s")'),
+    ('krp', 'import builtins\n\n_probe_r = "eXec"', 'spells a name by a replace the census does not fold', 'getattr(builtins, _probe_r.replace("X", "x"))("__file__ = _EXTRA")', 'getattr(builtins, _probe_r.replace("X", "x"))("%s = %s")'),
+    ('kie', 'import builtins\n\n_probe_a = "ex"', "spells a name by _probe_a + 'ec' if _probe_a else 'id', which holds a + the census does not fold", 'getattr(builtins, _probe_a + "ec" if _probe_a else "id")("__file__ = _EXTRA")', 'getattr(builtins, _probe_a + "ec" if _probe_a else "id")("%s = %s")'),
+    ('kbo', 'import builtins\n\n_probe_a = "ex"', "spells a name by _probe_a + 'ec' or 'id', which holds a + the census does not fold", 'getattr(builtins, _probe_a + "ec" or "id")("__file__ = _EXTRA")', 'getattr(builtins, _probe_a + "ec" or "id")("%s = %s")'),
+    ('kname', 'import builtins\n\n_probe_a = "ex"\n_probe_k = _probe_a + "ec"', 'spells a name by _probe_k, bound to a + the census does not fold', 'getattr(builtins, _probe_k)("__file__ = _EXTRA")', 'getattr(builtins, _probe_k)("%s = %s")'),
+    ('klocal', 'import builtins\n\n\ndef _probe_run(v):\n    _probe_k = v + "ec"\n    return getattr(builtins, _probe_k)', 'spells a name by _probe_k, bound to a + the census does not fold', 'return getattr(builtins, _probe_k)', '_probe_run("ex")("%s = %s")'),
+    ('kgd', 'import builtins\n\n_probe_a = "ex"\n_probe_k = _probe_a + "ec"\n\n\ndef _probe_run():\n    global _probe_k\n    return getattr(builtins, _probe_k)', 'spells a name by _probe_k, which a function or a class body declares global, so the census does not evaluate it', 'return getattr(builtins, _probe_k)', '_probe_run()("%s = %s")'),
+    ('knl', 'import builtins\n\n\ndef _probe_mk(v):\n    _probe_k = v + "ec"\n\n    def _probe_g():\n        nonlocal _probe_k\n        return getattr(builtins, _probe_k)\n    return _probe_g', 'spells a name by _probe_k, which a scope of the file declares nonlocal, so the census does not evaluate it', 'return getattr(builtins, _probe_k)', '_probe_mk("ex")()("%s = %s")'),
+    ('kcb', 'import builtins\n\n_probe_a = "ex"\n\n\nclass _ProbeKcb(object):\n    _k = _probe_a + "ec"\n    _f = getattr(builtins, _k)', 'spells a name by _k, which a class body binds, so the census does not evaluate it', '_f = getattr(builtins, _k)', '_ProbeKcb._f("%s = %s")'),
+    ('xaug', 'import builtins\n\n_probe_k = "ex"\n_probe_k += "ec"', 'spells a name by _probe_k, bound by an augmented assignment the census does not evaluate', 'getattr(builtins, _probe_k)("__file__ = _EXTRA")', 'getattr(builtins, _probe_k)("%s = %s")'),
+    ('xcon', 'import builtins\n\n_probe_k = "exec"', 'spells exec as a string', 'getattr(builtins, _probe_k)("__file__ = _EXTRA")', 'getattr(builtins, _probe_k)("%s = %s")'),
+    ('xplf', 'import builtins\n\n_probe_k = "ex" + "ec"', 'spells exec as a string', 'getattr(builtins, _probe_k)("__file__ = _EXTRA")', 'getattr(builtins, _probe_k)("%s = %s")'),
+    ('xjf', 'import builtins\n\n_probe_k = "".join(["ex", "ec"])', 'spells exec as a string', 'getattr(builtins, _probe_k)("__file__ = _EXTRA")', 'getattr(builtins, _probe_k)("%s = %s")'),
+    ('kfold', 'import builtins', 'spells exec as a string', 'getattr(builtins, "ex" + "ec")("__file__ = _EXTRA")', 'getattr(builtins, "ex" + "ec")("%s = %s")'),
+    ('mlow', 'import builtins', "spells a name by 'EXEC'.lower(), which holds a .lower() call on constant text the census does not fold", 'getattr(builtins, "EXEC".lower())("__file__ = _EXTRA")', 'getattr(builtins, "EXEC".lower())("%s = %s")'),
+    ('mnam', 'import builtins\n\n_probe_k = "EXEC".lower()', 'spells a name by _probe_k, bound to a .lower() call on constant text the census does not fold', 'getattr(builtins, _probe_k)("__file__ = _EXTRA")', 'getattr(builtins, _probe_k)("%s = %s")'),
+    ('munb', 'import builtins', 'spells a name by an unbound str.lower the census does not fold', 'getattr(builtins, str.lower("EXEC"))("__file__ = _EXTRA")', 'getattr(builtins, str.lower("EXEC"))("%s = %s")'),
+    ('mbnd', 'import builtins\n\n_probe_f = "EXEC".lower', 'spells a name by _probe_f(), which holds a .lower() call on constant text the census does not fold', 'getattr(builtins, _probe_f())("__file__ = _EXTRA")', 'getattr(builtins, _probe_f())("%s = %s")'),
+    ('wml', 'import builtins', 'spells a name by a * the census does not evaluate', 'getattr(builtins, "exec" * 1)("__file__ = _EXTRA")', 'getattr(builtins, "exec" * 1)("%s = %s")'),
+    ('wlc', 'import builtins', 'spells a name by a list comprehension the census does not evaluate', 'getattr(builtins, [k for k in ("exec",)])("__file__ = _EXTRA")', 'getattr(builtins, [k for k in ("exec",)])("%s = %s")'),
+    ('xlam', 'import builtins', "spells a name by %s, which holds a lambda the census does not evaluate" % ast.unparse(ast.parse('(lambda: "exec")()', mode="eval").body)[:40], 'getattr(builtins, (lambda: "exec")())("__file__ = _EXTRA")', 'getattr(builtins, (lambda: "exec")())("%s = %s")'),
+    ('xcls', 'import builtins\n\n\nclass _ProbeXcls(str):\n    pass', 'spells a name by _ProbeXcls, bound by a class statement, which the census does not read in a lookup key', 'getattr(builtins, _ProbeXcls("exec"))("__file__ = _EXTRA")', 'getattr(builtins, _ProbeXcls("exec"))("%s = %s")'),
+    ('ksb', 'import builtins\n\n_probe_a = "ex"\n_probe_ks = [_probe_a + "ec"]', 'spells a name by a subscript the census does not evaluate', 'getattr(builtins, _probe_ks[0])("__file__ = _EXTRA")', 'getattr(builtins, _probe_ks[0])("%s = %s")'),
+    ('xsl', 'import builtins', 'spells a name by a subscript the census does not evaluate', 'getattr(builtins, "exexec"[2:])("__file__ = _EXTRA")', 'getattr(builtins, "exexec"[2:])("%s = %s")'),
+    ('xmut', 'import builtins\n\n_probe_d = {"a": "exec"}', 'spells a name by a subscript the census does not evaluate', 'getattr(builtins, _probe_d["a"])("__file__ = _EXTRA")', 'getattr(builtins, _probe_d["a"])("%s = %s")'),
+    ('xkms', 'import builtins\nimport sys\n\n_probe_ks = ["sep"]\nsys.modules[__name__]._probe_ks[0] = "exec"', 'spells a name by a subscript the census does not evaluate', 'getattr(builtins, _probe_ks[0])("__file__ = _EXTRA")', 'getattr(builtins, _probe_ks[0])("%s = %s")'),
+    ('xkma', 'import builtins\nimport sys\n\n_probe_ks = ["sep"]\nsys.modules[__name__]._probe_ks.insert(0, "exec")', 'spells a name by a subscript the census does not evaluate', 'getattr(builtins, _probe_ks[0])("__file__ = _EXTRA")', 'getattr(builtins, _probe_ks[0])("%s = %s")'),
+    ('xncl', 'import builtins\n\n\ndef _probe_mk():\n    for _probe_k in ("sep",):\n        class _ProbeX(object):\n            nonlocal _probe_k\n            _probe_k = "exec"\n        return getattr(builtins, _probe_k)', 'spells a name by _probe_k, which a scope of the file declares nonlocal, so the census does not evaluate it', 'return getattr(builtins, _probe_k)', '_probe_mk()("%s = %s")'),
+    ('knw', 'import builtins\n\n\ndef _probe_mk(v):\n    _probe_k = "id"\n\n    def _probe_g():\n        nonlocal _probe_k\n        _probe_k = v + "ec"\n    _probe_g()\n    return getattr(builtins, _probe_k)', 'spells a name by _probe_k, which a scope of the file declares nonlocal, so the census does not evaluate it', 'return getattr(builtins, _probe_k)', '_probe_mk("ex")("%s = %s")'),
+    ('xgl', 'import builtins\n\nfor _probe_k in ("id",):\n    pass\n\n\ndef _probe_rd():\n    return getattr(builtins, _probe_k)\n\n\ndef _probe_wr(v):\n    global _probe_k\n    _probe_k = v + "ec"', 'spells a name by _probe_k, which a function or a class body declares global, so the census does not evaluate it', 'return getattr(builtins, _probe_k)', '(_probe_wr("ex"), _probe_rd())[1]("%s = %s")'),
+    ('xglc', 'import builtins\n\nfor _probe_k in ("id",):\n    pass\n\n\ndef _probe_rd():\n    return getattr(builtins, _probe_k)\n\n\nclass _ProbeW(object):\n    global _probe_k\n    _probe_k = "exec"', 'spells a name by _probe_k, which a function or a class body declares global, so the census does not evaluate it', 'return getattr(builtins, _probe_k)', '_probe_rd()("%s = %s")'),
+    ('xub1', 'import builtins\n\n_probe_k = str.lower', "spells a name by _probe_k('EXEC'), which holds an unbound str.lower the census does not fold", 'getattr(builtins, _probe_k("EXEC"))("__file__ = _EXTRA")', 'getattr(builtins, _probe_k("EXEC"))("%s = %s")'),
+    ('xub2', 'import builtins\n\n_probe_k = str.join', "spells a name by _probe_k('', ['ex', 'ec']), which holds an unbound str.join the census does not fold", 'getattr(builtins, _probe_k("", ["ex", "ec"]))("__file__ = _EXTRA")', 'getattr(builtins, _probe_k("", ["ex", "ec"]))("%s = %s")'),
+    ('xub3', 'import builtins\n\n_probe_k = bytes.decode', "spells a name by _probe_k(b'exec'), which holds an unbound bytes.decode the census does not fold", 'getattr(builtins, _probe_k(b"exec"))("__file__ = _EXTRA")', 'getattr(builtins, _probe_k(b"exec"))("%s = %s")'),
+    ('xub4', 'import builtins\n\n_probe_s = str', "spells a name by _probe_s.lower('EXEC'), which holds an unbound str.lower the census does not fold", 'getattr(builtins, _probe_s.lower("EXEC"))("__file__ = _EXTRA")', 'getattr(builtins, _probe_s.lower("EXEC"))("%s = %s")'),
+    ('xub5', 'import builtins\n\n_probe_k = bytearray.decode', "spells a name by _probe_k(bytearray(b'exec')), which holds an unbound bytearray.decode the census does not fold", 'getattr(builtins, _probe_k(bytearray(b"exec")))("__file__ = _EXTRA")', 'getattr(builtins, _probe_k(bytearray(b"exec")))("%s = %s")'),
+    ('xub6', 'import builtins\nfrom builtins import str as _probe_s', "spells a name by _probe_s.lower('EXEC'), which holds an unbound str.lower the census does not fold", 'getattr(builtins, _probe_s.lower("EXEC"))("__file__ = _EXTRA")', 'getattr(builtins, _probe_s.lower("EXEC"))("%s = %s")'),
+    ('xub7', 'import builtins', "spells a name by builtins.str.lower('EXEC'), which holds the str type reached as an attribute, which the census does not fold", 'getattr(builtins, builtins.str.lower("EXEC"))("__file__ = _EXTRA")', 'getattr(builtins, builtins.str.lower("EXEC"))("%s = %s")'),
+    ('hint', 'import builtins\n\n_probe_k = "notaname" if builtins else 0', "spells a name by _probe_k, bound to constant text outside a loop's literal source", 'getattr(builtins, _probe_k)("__file__ = _EXTRA")', 'getattr(builtins, _probe_k)("%s = %s")'),
+    ('hget', 'import builtins\n\n_probe_d = {"a": "notaname"}', "spells a name by _probe_d.get('a'), which holds a dict the census does not evaluate", 'getattr(builtins, _probe_d.get("a"))("__file__ = _EXTRA")', 'getattr(builtins, _probe_d.get("a"))("%s = %s")'),
+    ('hgdf', 'import builtins\n\n_probe_d = {"a": "notaname"}', "spells a name by _probe_d.get('b', 'notaname'), which holds a dict the census does not evaluate", 'getattr(builtins, _probe_d.get("b", "notaname"))("__file__ = _EXTRA")', 'getattr(builtins, _probe_d.get("b", "notaname"))("%s = %s")'),
+    ('hgit', 'import builtins\n\n_probe_d = {"a": "notaname"}', "spells a name by _probe_d.__getitem__('a'), which holds a dict the census does not evaluate", 'getattr(builtins, _probe_d.__getitem__("a"))("__file__ = _EXTRA")', 'getattr(builtins, _probe_d.__getitem__("a"))("%s = %s")'),
+    ('hitm', 'import builtins\n\n\ndef _probe_run():\n    for _probe_k, _probe_v in {"a": "notaname"}.items():\n        return getattr(builtins, _probe_v)', 'spells a name by _probe_v, bound to a dict the census does not evaluate', 'return getattr(builtins, _probe_v)', '_probe_run()("%s = %s")'),
+    ('hkey', 'import builtins\n\n\ndef _probe_run():\n    for _probe_k in {"notaname": 1}.keys():\n        return getattr(builtins, _probe_k)', 'spells a name by _probe_k, bound to a dict the census does not evaluate', 'return getattr(builtins, _probe_k)', '_probe_run()("%s = %s")'),
+    ('hval', 'import builtins\n\n\ndef _probe_run():\n    for _probe_v in {"a": "notaname"}.values():\n        return getattr(builtins, _probe_v)', 'spells a name by _probe_v, bound to a dict the census does not evaluate', 'return getattr(builtins, _probe_v)', '_probe_run()("%s = %s")'),
+    ('hsrt', 'import builtins\n\n_probe_ks = ["notaname", "curdir"]\n_probe_ks.sort()', 'spells a name by a subscript the census does not evaluate', 'getattr(builtins, _probe_ks[0])("__file__ = _EXTRA")', 'getattr(builtins, _probe_ks[0])("%s = %s")'),
+    ('hrev', 'import builtins\n\n_probe_ks = ["curdir", "notaname"]\n_probe_ks.reverse()', 'spells a name by a subscript the census does not evaluate', 'getattr(builtins, _probe_ks[0])("__file__ = _EXTRA")', 'getattr(builtins, _probe_ks[0])("%s = %s")'),
+    ('hdel', 'import builtins\n\n_probe_ks = ["curdir", "notaname"]\ndel _probe_ks[0]', 'spells a name by a subscript the census does not evaluate', 'getattr(builtins, _probe_ks[0])("__file__ = _EXTRA")', 'getattr(builtins, _probe_ks[0])("%s = %s")'),
+    ('hupd', 'import builtins\n\n_probe_d = {"a": "notaname"}\n_probe_d.update({"b": "curdir"})', 'spells a name by a subscript the census does not evaluate', 'getattr(builtins, _probe_d["b"])("__file__ = _EXTRA")', 'getattr(builtins, _probe_d["b"])("%s = %s")'),
+    ('hunp', 'import builtins\n\n(_probe_x, (_probe_y, _probe_z)) = ("q", ("notaname", "r"))', "spells a name by _probe_y, bound to constant text outside a loop's literal source", 'getattr(builtins, _probe_y)("__file__ = _EXTRA")', 'getattr(builtins, _probe_y)("%s = %s")'),
+    # the tenth round's allowlist tightening (an attribute accepted only as a loop or comprehension source, a loop target accepted only
+    # inside a function): an attribute of an import as a direct key (aatt) and through a name (aatn), each refused; their from-import
+    # twins (aftd, aftn), refused by binding not spelling; and a module-level loop target read by a function while the file rewrites the
+    # global through an alias of sys.modules (almt), refused whatever the write. Each 0 live, silent at the reviewed head and refused at the fix
+    ('aatt', 'import builtins\nimport os\n\n\ndef _probe_k():\n    return getattr(builtins, os.curdir)', 'spells a name by an attribute .curdir the census does not evaluate, accepted only as a loop or comprehension source', 'return getattr(builtins, os.curdir)', '_probe_k()("%s = %s")'),
+    ('aatn', 'import builtins\nimport os\n\n_probe_k = os.curdir', 'spells a name by _probe_k, bound to an attribute .curdir the census does not evaluate, accepted only as a loop or comprehension source', 'getattr(builtins, _probe_k)("__file__ = _EXTRA")', 'getattr(builtins, _probe_k)("%s = %s")'),
+    ('aftd', 'import builtins\nfrom os import curdir', 'spells a name by curdir, bound by an import, which the census reads in a lookup key only as a receiver or a callee', 'getattr(builtins, curdir)("__file__ = _EXTRA")', 'getattr(builtins, curdir)("%s = %s")'),
+    ('aftn', 'import builtins\nfrom os import curdir\n\n_probe_k = curdir', 'spells a name by curdir, bound by an import, which the census reads in a lookup key only as a receiver or a callee', 'getattr(builtins, _probe_k)("__file__ = _EXTRA")', 'getattr(builtins, _probe_k)("%s = %s")'),
+    ('almt', 'import builtins\nimport sys\n\nfor _probe_k in ("id",):\n    pass\n\n\ndef _probe_rd():\n    return getattr(builtins, _probe_k)\n\n_probe_m = sys.modules\n_probe_m[__name__]._probe_k = "exec"', 'spells a name by _probe_k, a loop target bound at module level, which the census does not evaluate', 'return getattr(builtins, _probe_k)', '_probe_rd()("%s = %s")'),
+    # no with target and no walrus is an accepted shape: a with target over a parameter's call, whose __enter__ returns the listed name
+    # (awth); a name a walrus binds inside a comprehension, over a parameter the comprehension's own target shadows (awlp) and over a
+    # local bound to a call's return so shadowed (awlc), the walrus binding the enclosing function's name to the comprehension's value;
+    # and a walrus as the key itself (awnd, a parameter's value through it). Each 0 live, silent at the reviewed head and refused at the fix
+    ('awth', 'import builtins\nimport contextlib\n\n\ndef _probe_k(cm):\n    with cm() as n:\n        return getattr(builtins, n)', 'spells a name by n, bound as a with target, which the census does not evaluate', 'return getattr(builtins, n)', '_probe_k(lambda: contextlib.nullcontext("exec"))("%s = %s")'),
+    ('awlp', 'import builtins\n\n\ndef _probe_k(_probe_x):\n    [(_probe_n := _probe_x) for _probe_x in ("exec",)]\n    return getattr(builtins, _probe_n)', 'spells a name by _probe_n, bound by a walrus, which the census does not evaluate', 'return getattr(builtins, _probe_n)', '_probe_k("id")("%s = %s")'),
+    ('awlc', 'import builtins\nimport os\n\n\ndef _probe_k():\n    _probe_x = os.getcwd()\n    [(_probe_n := _probe_x) for _probe_x in ("exec",)]\n    return getattr(builtins, _probe_n)', 'spells a name by _probe_n, bound by a walrus, which the census does not evaluate', 'return getattr(builtins, _probe_n)', '_probe_k()("%s = %s")'),
+    ('awnd', 'import builtins\n\n\ndef _probe_k(_probe_x):\n    return getattr(builtins, (_probe_n := _probe_x))', 'spells a name by a walrus the census does not evaluate', 'return getattr(builtins, (_probe_n := _probe_x))', '_probe_k("exec")("%s = %s")'),
+    # an attribute accepted as a loop's source only where the file writes no attribute so named (Scan._key_attr, the facts _key_const
+    # reads for a module constant): the attribute stored on its base at module level (xawm) and in a function the key's function calls
+    # first (xawf), set by setattr with its name as a string constant (xaws) and as a `+` of two (xawj), bound in a class body whose
+    # class is stored on the base as another attribute (xawb), and written through vars() of the base with a computed key (xawv).
+    # Each 0 live, silent at the reviewed head and refused at the fix
+    ('xawm', 'import builtins\nimport os\n\nos._probe_x = ("exec",)\n\n\ndef _probe_k():\n    for k in os._probe_x:\n        return getattr(builtins, k)',
+     "spells a name by k, bound to an attribute ._probe_x as a loop's source that the file writes or uses other than as a loop's source or an item read, so the census does not evaluate it",
+     'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
+    ('xawf', 'import builtins\nimport os\n\n\ndef _probe_w():\n    os._probe_x = ("exec",)\n\n\ndef _probe_k():\n    _probe_w()\n    for k in os._probe_x:\n        return getattr(builtins, k)',
+     "spells a name by k, bound to an attribute ._probe_x as a loop's source that the file writes or uses other than as a loop's source or an item read, so the census does not evaluate it",
+     'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
+    ('xaws', 'import builtins\nimport os\n\nsetattr(os, "_probe_x", ("exec",))\n\n\ndef _probe_k():\n    for k in os._probe_x:\n        return getattr(builtins, k)',
+     "spells a name by k, bound to an attribute ._probe_x as a loop's source whose name the file spells as a string or a keyword, which may write it through setattr or a namespace, so the census does not evaluate it",
+     'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
+    ('xawj', 'import builtins\nimport os\n\nsetattr(os, "_probe" + "_x", ("exec",))\n\n\ndef _probe_k():\n    for k in os._probe_x:\n        return getattr(builtins, k)',
+     "spells a name by k, bound to an attribute ._probe_x as a loop's source whose name the file spells as a string or a keyword, which may write it through setattr or a namespace, so the census does not evaluate it",
+     'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
+    ('xawb', 'import builtins\nimport os\n\n\nclass _ProbeE(object):\n    _probe_x = ("exec",)\n\n\nos._probe_e = _ProbeE\n\n\ndef _probe_k():\n    for k in os._probe_e._probe_x:\n        return getattr(builtins, k)',
+     "spells a name by k, bound to an attribute ._probe_x as a loop's source whose name the file binds, which may set it on a class or a module a base reaches, so the census does not evaluate it",
+     'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
+    ('xawv', 'import builtins\nimport os\n\nvars(os)["_probe" + "_x"] = ("exec",)\n\n\ndef _probe_k():\n    for k in os._probe_x:\n        return getattr(builtins, k)',
+     "spells a name by k, bound to an attribute ._probe_x as a loop's source in a file that names globals, vars, locals or __dict__, so the census does not evaluate it",
+     'return getattr(builtins, k)', '_probe_k()("%s = %s")'),
+    )
+# the accepted plants (D3_ACCEPT): a key the allowlist proves, so its __file__ and module-constant pages have no line; its str
+# page is refused by the builtins import alone (str shadowed), as every plant here imports builtins
+D3_ACCEPT = (
+    ('adir', 'import builtins', 'getattr(builtins, "notaname")("%s = %s")'),
+    ('apar', 'import builtins\n\n\ndef _probe_k(n):\n    return getattr(builtins, n)', '_probe_k("notaname")("%s = %s")'),
+    ('acal', 'import builtins\n\n\ndef _probe_g():\n    return "notaname"\n\n\ndef _probe_k():\n    return getattr(builtins, _probe_g())', '_probe_k()("%s = %s")'),
+    ('aloop', 'import builtins\n\n\ndef _probe_k():\n    for n in ("noa", "nob"):\n        return getattr(builtins, n)', '_probe_k()("%s = %s")'),
+    ('acmp', 'import builtins\n\n\ndef _probe_k():\n    return [getattr(builtins, n) for n in ("noa", "nob")][0]', '_probe_k()("%s = %s")'),
+    ('amod', 'import builtins\n\n_PROBE_NAMES = (("x", "noa"),)\n\n\ndef _probe_k():\n    for a, n in _PROBE_NAMES:\n        return getattr(builtins, n)', '_probe_k()("%s = %s")'),
+    ('aunp', 'import builtins\nimport os\n\n\ndef _probe_k():\n    a, b = os.path.split("x")\n    return getattr(builtins, a)', '_probe_k()("%s = %s")'),
+    )
+
+
+def _d3_rewrites(tag, wt):
+    """The (d3) rewrites of __file__, the module constant and str through the template `wt`, which takes (name, value)."""
+    return wt % ("__file__", "_EXTRA"), wt % ("_PROBE_%sC" % tag.upper(), "_EXTRA"), wt % ("str", "lambda x: _EXTRA")
+
+
+D3_FILES = tuple((tag, _x_served(tag, head, *_d3_rewrites(tag, wt))) for tag, head, _r, _a, wt in D3_SPEC) + tuple(
+    (tag, _x_served(tag, head, *_d3_rewrites(tag, wt))) for tag, head, wt in D3_ACCEPT)
+D3_TEXTS = dict(D3_FILES)
+D3_ACCEPT_TAGS = tuple(tag for tag, _, _ in D3_ACCEPT)
+D3_HONEST_TAGS = ("hint", "hget", "hgdf", "hgit", "hitm", "hkey", "hval", "hsrt", "hrev", "hdel", "hupd", "hunp")
+# The 17:31Z choice (d), two of the eight known lows of the tenth round's reviewed head, each closed by one check at 0 live, and a
+# third's missing witness: the (cd) plants, each page's hidden text a fetch tagged with its plant, which Python serves. A text method
+# called on a class the class walk resolves the receiver to (_class_value), where the reviewed head's text-call arm tested a bare
+# name alone (probe_cdt.py, each class's classmethod returning its fetch): a registry's `.get` (cdrf, `.format`), a boolean operation
+# over classes (cdbr, `.replace`), an if-expression over them (cdif, `.format`) and a walrus over one (cdwl, `.join`), each silent at
+# the reviewed head and refused as a class attribute, as receiver refuses any other method called on those bases (receiver's own
+# test, and _value_class for the if-expression and the walrus: the (cv) plants). A registry the builtin dict builds (probe_cdd.py),
+# where the reviewed head's class walk read list, tuple, set and dict literals alone: a module constant bound to dict with the class
+# as a keyword's value (cddk), a local so bound (cddl), and dict handed a dict literal (cddp) and a list of pairs (cddt), each read
+# through `.get` to an attribute of the class, a method (cddm) and a text method (cddf) called on the class the first registry's
+# `.get` returns, the registry built inline, `dict(a=Cls).get(k).X` (cddi, the class walk reading such a call itself as it reads a
+# name bound to one), and a subscript of the first registry (cddu, `_CD_REGD["a"].X`) and of one built inline (cddv), each silent at
+# the reviewed head and refused as a class attribute. Held silent at both heads: a registry built by a module function named dict
+# (probe_cds.py, cdds), which the check does not read as the builtin. And decision 9's subscript read through a function
+# (probe_cdw.py): a fetch split across two indexed pieces of a module constant, each handed to a function that returns it (cdsf),
+# silent at both heads, the call limit's witness for that shape.
+CD_TEXT_HEAD = ('class _CdR(object):\n    CSS = "%s"\n\n    @classmethod\n    def format(cls, x):\n        return cls.CSS + x\n\n\n'
+                'class _CdQ(object):\n    CSS = "%s"\n\n    @classmethod\n    def replace(cls, x, y):\n        return cls.CSS + x\n\n\n'
+                'class _CdF(object):\n    CSS = "%s"\n\n    @classmethod\n    def format(cls, x):\n        return cls.CSS + x\n\n\n'
+                'class _CdW(object):\n    CSS = "%s"\n\n    @classmethod\n    def join(cls, parts):\n        return cls.CSS + "".join(parts)\n\n\n'
+                'class _CdB(object):\n    pass\n\n\n_CD_REG = {"a": _CdR}' % tuple(FGH_PAGE % t for t in ("cdrf", "cdbr", "cdif", "cdwl")))
+# (tag, the plant, the page expression, which its SERVED line shows and which locates its line)
+CD_TEXT = (("cdrf", "a text method called on a class a registry's .get returns", '_CD_REG.get("a").format("<p>cdrf</p>")'),
+           ("cdbr", "a text method called on a boolean operation over classes", '(_CdB and _CdQ).replace("<p>cdbr</p>", "")'),
+           ("cdif", "a text method called on an if-expression over classes", '(_CdF if p else _CdB).format("<p>cdif</p>")'),
+           ("cdwl", "a text method called on a walrus over a class", '(_cd_w := _CdW).join(["<p>cdwl</p>"])'))
+CD_DICT_HEAD = ('class _CdD(object):\n' + "".join('    CSS_%s = "%s"\n' % (t[2:].upper(), FGH_PAGE % t) for t in ("cddk", "cddl", "cddp", "cddt", "cddi", "cddu", "cddv"))
+                + '\n    @classmethod\n    def render(cls):\n        return "%s"\n\n    @classmethod\n    def format(cls, x):\n        return "%s" + x\n\n\n'
+                % (FGH_PAGE % "cddm", FGH_PAGE % "cddf")
+                + '_CD_REGD = dict(a=_CdD)\n_CD_REGP = dict({"a": _CdD})\n_CD_REGT = dict([("a", _CdD)])')
+# (tag, the plant, the refused expression as its SERVED line shows it and as it locates the line, the do_GET branch's page)
+CD_DICT = (("cddk", "an attribute of a class a module constant's dict registry returns, the class a keyword's value", '_CD_REGD.get("a").CSS_DK',
+            '"<p>cddk</p>" + _CD_REGD.get("a").CSS_DK'),
+           ("cddl", "an attribute of a class a local's dict registry returns", 'reg.get("a").CSS_DL', '"<p>cddl</p>" + reg.get("a").CSS_DL'),
+           ("cddp", "an attribute of a class a dict registry handed a dict literal returns", '_CD_REGP.get("a").CSS_DP',
+            '"<p>cddp</p>" + _CD_REGP.get("a").CSS_DP'),
+           ("cddt", "an attribute of a class a dict registry handed a list of pairs returns", '_CD_REGT.get("a").CSS_DT',
+            '"<p>cddt</p>" + _CD_REGT.get("a").CSS_DT'),
+           ("cddm", "a method called on a class a dict registry returns", '_CD_REGD.get("a").render()', '"<p>cddm</p>" + _CD_REGD.get("a").render()'),
+           ("cddf", "a text method called on a class a dict registry returns", '_CD_REGD.get("a").format("<p>cddf</p>")',
+            '_CD_REGD.get("a").format("<p>cddf</p>")'),
+           ("cddi", "an attribute of a class a dict registry built inline returns", 'dict(a=_CdD).get("a").CSS_DI',
+            '"<p>cddi</p>" + dict(a=_CdD).get("a").CSS_DI'),
+           ("cddu", "an attribute of a class a subscript of a module constant's dict registry selects", '_CD_REGD["a"].CSS_DU',
+            '"<p>cddu</p>" + _CD_REGD["a"].CSS_DU'),
+           ("cddv", "an attribute of a class a subscript of a dict registry built inline selects", 'dict(a=_CdD)["a"].CSS_DV',
+            '"<p>cddv</p>" + dict(a=_CdD)["a"].CSS_DV'))
+CD_FILES = (("cdt", _a_module("cdt", A_SEND % "", head=CD_TEXT_HEAD,
+                              branches=tuple((tag, 'return self._send(200, %s, "text/html")' % page) for tag, _, page in CD_TEXT))),
+            ("cdd", _a_module("cdd", A_SEND % "", head=CD_DICT_HEAD, branches=tuple(
+                (tag, ('reg = dict(a=_CdD)\n            ' if tag == "cddl" else "") + 'return self._send(200, %s, "text/html")' % page)
+                for tag, _, _, page in CD_DICT))),
+            ("cds", _a_module("cds", A_SEND % "", head='def dict(**kw):\n    return kw\n\n\nclass _CdS(object):\n    CSS = "%s"\n\n\n'
+                              '_CD_REGS = dict(a=_CdS)' % (FGH_PAGE % "cdds"),
+                              branches=(("cdds", 'return self._send(200, "<p>cdds</p>" + _CD_REGS.get("a").CSS, "text/html")'),))),
+            ("cdw", _a_module("cdw", A_SEND % "", head='_CD_WP = ("%s", "%s")\n\n\ndef _cd_id(x):\n    return x' % _j_cut("cdsf", "<script>fe"),
+                              branches=(("cdsf", 'return self._send(200, "<p>cdsf</p>" + _cd_id(_CD_WP[0]) + _cd_id(_CD_WP[1]), "text/html")'),))))
+CD_HOLDS = (("cdds", "cds", "a registry a module function named dict builds, not the builtin"),
+            ("cdsf", "cdw", "a subscript read through a function, the call limit"))
+CD_TAGS = tuple(t for t, _, _ in CD_TEXT) + tuple(t for t, _, _, _ in CD_DICT) + tuple(t for t, _, _ in CD_HOLDS)
+# R1's class ruling of the tenth round's review (every acceptance keys on the binding) carried to a method called on a class: a method,
+# a text method among them, called with no attribute read on the way on a class reached as a value, which receiver and resolve's
+# text-call arm read through R1.1's walk from the receiver's root by binding (_value_class, _attr_root) and refuse as a class
+# attribute, as they refuse one called on a class through its own name, a name bound to one or a method call on a name whose value
+# holds one. The (cv) plants (probe_cvm.py), each class's classmethod returning its fetch, which Python serves: a method (render) and
+# a text method (strip) called on a subscript of a module constant dict of classes (vmsb, vtsb), on an if-expression over classes
+# (vmif, vtif), on a loop target over a tuple of classes (vmlp, vtlp), on a comprehension's target over one (vmcp, vtcp), on a with
+# target over a subscript of such a dict, the class a context manager through its metaclass (vmwt, vtwt), and on a walrus over a
+# class (vmwl, vtwl), each refused here as a class attribute. At the reviewed head all are silent but vmwl, refused there by the
+# walrus's node kind (NamedExpr); the other eleven were silent there while Python served their fetch.
+CV_HEAD = ('class _CvMeta(type):\n    def __enter__(cls):\n        return cls\n\n    def __exit__(cls, *a):\n        return False\n\n\n'
+           'class _CvOk(object):\n    CSS = "<p>ok</p>"\n\n    @classmethod\n    def render(cls):\n        return cls.CSS\n\n    @classmethod\n'
+           '    def strip(cls):\n        return cls.CSS\n\n\n'
+           + "".join('class _Cv%s(object%s):\n    CSS = "%s"\n\n    @classmethod\n    def %s(cls):\n        return cls.CSS\n\n\n'
+                     % (t[1:].capitalize(), ", metaclass=_CvMeta" if t.endswith("wt") else "", FGH_PAGE % t, "strip" if t[1] == "t" else "render")
+                     for t in ("vmsb", "vmif", "vmlp", "vmcp", "vmwt", "vmwl", "vtsb", "vtif", "vtlp", "vtcp", "vtwt", "vtwl"))
+           + '_CV_MREG = {"a": _CvMsb}\n_CV_TREG = {"a": _CvTsb}\n_CV_MWREG = {"a": _CvMwt}\n_CV_TWREG = {"a": _CvTwt}')
+# (tag, the plant, the refused expression as its SERVED line shows it, the line before the page's return, if any, the page)
+CV_PAGES = (("vmsb", "a method called on a subscript of a module constant dict of classes", '_CV_MREG["a"].render()', "", None),
+            ("vmif", "a method called on an if-expression over classes", "(_CvMif if p else _CvOk).render()", "", None),
+            ("vmlp", "a method called on a loop target over a tuple of classes", "tvmlp.render()", "for tvmlp in (_CvMlp, _CvOk):", None),
+            ("vmcp", "a method called on a comprehension's target over a tuple of classes", "tvmcp.render()", "",
+             '"".join(tvmcp.render() for tvmcp in (_CvMcp,))'),
+            ("vmwt", "a method called on a with target over a subscript of a dict of classes", "tvmwt.render()", 'with _CV_MWREG["a"] as tvmwt:', None),
+            ("vmwl", "a method called on a walrus over a class", "(tvmwl := _CvMwl).render()", "", None),
+            ("vtsb", "a text method called on a subscript of a module constant dict of classes", '_CV_TREG["a"].strip()', "", None),
+            ("vtif", "a text method called on an if-expression over classes", "(_CvTif if p else _CvOk).strip()", "", None),
+            ("vtlp", "a text method called on a loop target over a tuple of classes", "tvtlp.strip()", "for tvtlp in (_CvTlp, _CvOk):", None),
+            ("vtcp", "a text method called on a comprehension's target over a tuple of classes", "tvtcp.strip()", "",
+             '"".join(tvtcp.strip() for tvtcp in (_CvTcp,))'),
+            ("vtwt", "a text method called on a with target over a subscript of a dict of classes", "tvtwt.strip()", 'with _CV_TWREG["a"] as tvtwt:', None),
+            ("vtwl", "a text method called on a walrus over a class", "(tvtwl := _CvTwl).strip()", "", None))
+CV_FILES = (("cvm", _a_module("cvm", A_SEND % "", head=CV_HEAD, branches=tuple(
+    (tag, (before + _R1_IN if before else "") + 'return self._send(200, "<p>%s</p>" + %s, "text/html")' % (tag, page or shown))
+    for tag, _, shown, before, page in CV_PAGES))),)
+# A refused `.format` or `.format_map` receiver takes one line: the tenth round's 17:31Z choice (c) refuses a format string reached
+# other than as a string constant, a join of them or a name bound to one (_TEMPLATE), save where the pass's own read of the receiver
+# refuses it by name, whose line names that text's gap already. The (fd) plants (probe_fdl.py), each format string holding its
+# fetch, which Python serves: on a class attribute (fdc, `Handler.PAGE_FDC.format(...)`), an attribute of self (fds) and an
+# attribute of a module helper's parameter (fdp), each with the one line its attribute read takes; fdc and fds take that one line at
+# the reviewed head too, while fdp had no line at the reviewed head (no parameter-attribute refusal existed there, R1.1's _PARAM_ATTR being
+# a tenth-round arm); and a format string a module function returns (fdk), read, its fetch listed, and refused as such a format
+# string, the control.
+FD_SEND = A_SEND % "" + '\n    PAGE_FDC = "%s{0}"\n    PAGE_FDS = "%s{0}"\n    PAGE_FDP = "%s{0}"\n' % tuple(FGH_PAGE % t for t in ("fdc", "fds", "fdp"))
+FD_HEAD = ('def _probe_fdp_page(h):\n    return h.PAGE_FDP.format("<p>fdp</p>")\n\n\ndef _probe_fdk():\n    return "%s{0}"' % (FGH_PAGE % "fdk"))
+# (tag, the plant, the refused expression as its SERVED line shows it, the root its attribute read is refused by, the page)
+FD_PAGES = (("fdc", "a class attribute's format string", "Handler.PAGE_FDC", "class", 'Handler.PAGE_FDC.format("<p>fdc</p>")'),
+            ("fds", "an attribute of self as the format string", "self.PAGE_FDS", "self", 'self.PAGE_FDS.format("<p>fds</p>")'),
+            ("fdp", "an attribute of a module helper's parameter as the format string", "h.PAGE_FDP", "param", "_probe_fdp_page(self)"))
+FD_FILES = (("fdl", _a_module("fdl", FD_SEND, head=FD_HEAD, branches=tuple(
+    (tag, 'return self._send(200, %s, "text/html")' % page) for tag, _, _, _, page in FD_PAGES) + (
+    ("fdk", 'return self._send(200, _probe_fdk().format("<p>fdk</p>"), "text/html")'),))),)
+A_STAR_HEAD =("from .pages import *\n\n_PROBE_BSP = \"%s\"\n_PROBE_BST = \"application/json\"\n\n\ndef _probe_bsf():\n    return \"%s\""
                % (A_PAGE_NONE, A_PAGE_NONE))
 A_FILES = tuple((_a_rel(tag), text) for tag, text in (
     ("c3p", "class _ProbeC3(object):\n    def _send(self, code, ctype, body):\n        self.send_header(\"Content-Type\", ctype)\n"
@@ -4695,7 +5551,8 @@ A_FILES = tuple((_a_rel(tag), text) for tag, text in (
     ("jsp", _a_module("jsp", A_SEND % "", head=J_HEAD, branches=J_BRANCHES)),
     ("jxw", _a_module("jxw", A_SEND % "", call='return self._send(200, %s, "text/html")' % J_WIDE))) + N_FILES + S_FILES + U_FILES + X_FILES + tuple(
     (tag, _a_h_module(tag, extra, head)) for tag, _, extra, head, _ in A_H_ROADS) + tuple((tag, text) for tag, _, text, _ in A_H_OTHER)
-    + tuple((tag, _a_h_module(tag, extra, head)) for tag, _, extra, head, _ in B_ROADS) + B_FILES + Y_FILES + Z_FILES + W_FILES + O_FILES)
+    + tuple((tag, _a_h_module(tag, extra, head)) for tag, _, extra, head, _ in B_ROADS) + B_FILES + Y_FILES + Z_FILES + W_FILES + O_FILES + R3_FILES + R1_FILES + D2_FILES + R12_FILES
+    + R13_FILES + R14_FILES + D3_FILES + CD_FILES + CV_FILES + FD_FILES + UC_FILES)
 A_STAR = _a_rel("star")
 # The plants' lines, by content: kernel/kernel.py's join SERVED_PLANT_LINES; each probe module's are located in its own text
 A_KERNEL_LINES = (tuple((tag, "+ _PROBE_%s," % tag.upper()) for tag, _ in A_HEADER)
@@ -4735,6 +5592,70 @@ A_FILE_LINES.update((_a_rel(tag), tuple((b[0], '"<p>%s</p>" + ' % b[0]) for b, _
 A_FILE_LINES[_a_rel("ofs")] = (("ofs", ".read_text()"),)
 A_FILE_LINES[_a_rel("owf")] = tuple((tag, '"<p>%s</p>" + ' % tag) for tag, _, _ in O_WIDE)
 A_FILE_LINES[_a_rel("owd")] = tuple((tag, '"<p>%s</p>" + ' % tag) for tag, _ in O_DIGITS)
+# (r3)'s plants: each read page at its line, each page of the key's module at its line, and mdf and mdb at their page's line
+A_FILE_LINES[_a_rel("zpf")] = tuple((tag, '"<p>%s</p>" + ' % tag) for tag, _, _ in R3_READ_SPEC)
+A_FILE_LINES[_a_rel("zpk")] = tuple(("zpk" + k, '"<p>zpk%s</p>" + ' % k) for k in "fcb")
+A_FILE_LINES[_a_rel("mdf")] = (("mdf", 'x.format("<p>mdf</p>")'), ("mdb", '"<p>mdb</p>" + w.CSS'), ("mdg", 'xg.format("<p>mdg</p>")'))
+# (r1.1)'s plants: each refusal at its attribute read's line (a followed method's or a helper's at its return, rex at its page's
+# subscript, rrc and rct at their receiver's and container's), each read control at its fetch, and the witness at its page's line;
+# the sibling module (probe_rsx.py) at no line
+R1_LINES = (("ral", "hral.page_ral"), ("rie", "hrie.page_rie"), ("rbo", "hrbo.page_rbo"), ("rwl", "hrwl.page_rwl"), ("rwv", "hrwv.page_rwv"),
+            ("rrc", 'hrrc._rrc.get("k")'), ("rsb", 'hrsb._rsb["k"].get("j")'), ("rct", 'hrct._rct["k"]'), ("rmc", "xrmc.page_rmc"), ("rlt", "hrlt.page_rlt"), ("rse", "hrse.page_rse"),
+            ("rdk", "hrdk.page_rdk"), ("rdv", 'hrdv["k"].page_rdv'), ("rls", "hrls.page_rls"), ("rst", "hrst.page_rst"), ("rgc", "hrgc.page_rgc for"), ("rsp", "this.page_rsp"),
+            ("c10n", "+ hc10n.page_c10n"), ("r2cn", "hr2cn.page_r2cn"), ("c10i", "gc10i.page_c10i"), ("qsg", "{hqsg.page_qsg}"),
+            ("rsm", "self._probe_rsm_meth().page_rsm"), ("rfm", "xrfm.page_rfm"), ("rstm", "self._probe_rstm_page(self)"), ("rcc", "self._probe_rcc_page()"),
+            ("rfv", "xrfv.__doc__"))
+A_FILE_LINES[_a_rel("ral")] = R1_LINES
+A_FILE_LINES[_a_rel("rhp")] = (("rhp", "h.page_rhp"), ("rhd", "g.page_rhd"), ("rpa", "h.page_rpa"), ("rsh", "+ self.page_rsh"), ("rhc", "h().page_rhc"),
+                               ("rcp", "k.CSS_RCP"), ("rcd", "k.CSS_RCD"), ("rex", "exrex.args[0]"), ("rft", "xrft.page_rft"), ("rok", _fgh_mark("rok")),
+                               ("rkc", _fgh_mark("rkc")), ("rbh", '"<p>rbh</p>" + '), ("rmm", "xrmm = _PROBE_RMM"))
+A_FILE_LINES[_a_rel("rcl")] = (("rcl", "trcl.CSS_RCL"), ("rci", '"<p>rci</p>" + '), ("rrg", '"<p>rrg</p>" + '), ("rdb", '"<p>rdb</p>" + '))
+A_FILE_LINES[_a_rel("rfb")] = (("rfb", "xrfb.page_rfb"),)
+A_FILE_LINES[_a_rel("rsw")] = (("rsw", '"<p>rsw</p>" + '),)
+A_FILE_LINES[_a_rel("rsx")] = ()
+# (d2)'s plants: each refusal at its call's line (rmq, rmhp and i3p at their receiver's path, rmtp in the followed method's return),
+# each followed or read plant at its fetch, rmr, rpls and rpli at their call, and the witness (rplx) at its page's line
+A_FILE_LINES[_a_rel("rma")] = (("rma", "hrma._probe_rma_page()"), ("rmie", "(self if p else None)._probe_rmie_page()"),
+                               ("rmbo", "(None or self)._probe_rmbo_page()"), ("rmwl", "hrmwl._probe_rmwl_page()"), ("rmls", "[self][0]._probe_rmls_page()"),
+                               ("rmlt", "hrmlt._probe_rmlt_page()"), ("rmse", "hrmse._probe_rmse_page()"), ("rmdk", "hrmdk._probe_rmdk_page()"),
+                               ("rmdv", "._probe_rmdv_page()"), ("rmst", "._probe_rmst_page()"), ("rmgc", "hrmgc._probe_rmgc_page() for"),
+                               ("rmp", "hrmp._probe_rmp_page()"), ("rmq", "hrmq._probe_rmq_meth()"), ("rmrb", "self._probe_rmrb_page()"),
+                               ("rmtp", "this._probe_rmtp_meth()"), ("rmcl", "self._probe_rmcl_page()"), ("i3b", "self._probe_i3b_page()"),
+                               ("i3d", "self._probe_i3d_page()"), ("i3g", "self._probe_i3g_page()"), ("i3k", "self._probe_i3k_page()"),
+                               ("i3p", "self._probe_i3p_page()"), ("i3a", "hi3a._probe_i3a_page()"), ("rms", _fgh_mark("rms")),
+                               ("rmt", _fgh_mark("rmt")), ("rcf", _fgh_mark("rcf")), ("rmr", '"<p>rmr</p>" + '), ("rpls", '"<p>rpls</p>" + '),
+                               ("rpli", '"<p>rpli</p>" + '), ("rplx", '"<p>rplx</p>" + '), ("rpsa", '"<p>rpsa</p>" + '), ("rpsb", '"<p>rpsb</p>" + '))
+A_FILE_LINES[_a_rel("hvt")] = (("hvt", '"<p>hvt</p>" + '),)
+A_FILE_LINES[_a_rel("dec")] = (("xdcr", "self._probe_xdcr_page(), "), ("xdcb", "self._probe_xdcb_page(), "), ("xtsa", "self._probe_xtsa_page(), "))
+A_FILE_LINES[_a_rel("zdg")] = (("zdg", '"<p>zdg</p>" + '),)
+A_FILE_LINES[_a_rel("zdw")] = (("zdw", '"<p>zdw</p>" + '),)
+A_FILE_LINES[_a_rel("zcl")] = (("zcl", '"<p>zcl</p>" + '),)
+A_FILE_LINES[_a_rel("zre")] = (("zst", "self._probe_zst_page(), "), ("zct", "self._probe_zct_page(), "), ("zal", "self._probe_zal_page(), "))
+A_FILE_LINES[_a_rel("rmh")] = (("rmh", "h._probe_rmh_meth()"), ("rmhd", "g._probe_rmhd_meth()"), ("rmpa", "h._probe_rmpa_meth()"),
+                               ("rmsp", "self._probe_rmsp_meth()"), ("rmhp", "h._probe_rmhp_meth()"), ("rmhs", "h._probe_rmhs_meth()"),
+                               ("rmstm", "self._probe_rmstm_page(self)"), ("d2ok", _fgh_mark("d2ok")))
+A_FILE_LINES[_a_rel("rtxt")] = (("rtxt", _fgh_mark("rtxt")), ("rrd", _fgh_mark("rrd")), ("rmss", "self.format()"))
+A_FILE_LINES[_a_rel("rbase")] = (("rbase", _fgh_mark("rbase")), ("rmro", _fgh_mark("rmro")), ("rbdf", "x=CSS_RBDF"), ("rmhb", "h._probe_rmhb_meth()"))
+A_FILE_LINES[_a_rel("i3i")] = (("i3i", 'self.get("k")'),)
+A_FILE_LINES[_a_rel("i3r")] = (("i3r", "self._probe_i3r_page()"),)
+A_FILE_LINES[_a_rel("rplg")] = (("rplg", '"<p>rplg</p>" + '),)
+# (r1.2)'s pages at their file read, the control's too, and the sibling modules, which hold no page; (r1.3)'s plants at their call,
+# each page's fetch, but the hold, srd, at its nested def's Content-Type write
+A_FILE_LINES.update((_a_rel(tag), ((tag, "open(__file__).read()"),)) for tag in ("fpg", "fpr", "fps", "fpc"))
+A_FILE_LINES[_a_rel("fpt")] = A_FILE_LINES[_a_rel("fpu")] = ()
+A_FILE_LINES[_a_rel("srd")] = (("srd", 'self.send_header("Content-Type", ctype)'),)
+# (r1.4)'s plants at their refused call (tpm at its followed method's return), the control at its argument's fetch; (d3)'s pages
+A_FILE_LINES[_a_rel("c2a")] = tuple((tag, shown if tag != "ndp" else "c0.format(") for tag, shown, _ in R14_NEST)
+A_FILE_LINES[_a_rel("tst")] = tuple((tag, {"tpm": "return tpl.format(obj)", "tdp": "c0.format(", "tok": _fgh_mark("tok")}.get(tag, shown)) for tag, shown, _ in R14_TPL)
+A_FILE_LINES.update((_a_rel(t), tuple((t + k, '"<p>%s</p>" + ' % (t + k)) for k in "fcb")) for t in D3_TEXTS)
+# (cd)'s plants at their refused expression, the holds' modules at no line (each hold has none)
+A_FILE_LINES[_a_rel("cdt")] = tuple((tag, page) for tag, _, page in CD_TEXT)
+A_FILE_LINES[_a_rel("cdd")] = tuple((tag, shown) for tag, _, shown, _ in CD_DICT)
+A_FILE_LINES[_a_rel("cds")] = A_FILE_LINES[_a_rel("cdw")] = ()
+# (cv)'s and (fd)'s plants at their page's line, the control fdk at its format call
+A_FILE_LINES[_a_rel("cvm")] = tuple((tag, '"<p>%s</p>" + ' % tag) for tag, _, _, _, _ in CV_PAGES)
+A_FILE_LINES[_a_rel("fdl")] = (("fdc", 'Handler.PAGE_FDC.format('), ("fds", 'self.PAGE_FDS.format('), ("fdp", 'h.PAGE_FDP.format('),
+                               ("fdk", '_probe_fdk().format('))
 # the plants whose SERVED line stands at another line than their page's fetch: the store (wats), the route's receiver (wspg, xgo,
 # xgm, xgs, xgr, xgc) and a refused default (zdc, zdu); zdf's read defaults at the line of each fetch
 A_FILE_LINES[_a_rel("wats")] = (("wats", "Handler._send = _probe_html_send"),)
@@ -4763,8 +5684,8 @@ A_FILE_LINES.update((_a_rel(tag), ((tag, '"<p>%s</p>" + ' % tag),)) for tag in [
 # (x)'s served modules and the witnesses, each page at its line; the gate modules and jvs, jvt and jvq use the default (their route's fetch URL)
 A_FILE_LINES.update((_a_rel(s), tuple((s + k, '"<p>%s</p>" + ' % (s + k)) for k in "fcb")) for s in [t for t, _g, _h, _f, _a, _w in X_SPEC] + list(X_WITNESS_TAGS))
 # (y)'s plants: each lambda plant at its call's or its write's line, each other refused plant at its page's line (hcls and hsta at
-# their method's return), the control (hclsc) at its fetch in the module constant, the witness (nlmc) at its page's line, and the
-# other file's store (yxg) at no line
+# their method's return; nlmc at its loop's attribute read and pdcv at its return's, each read by binding since the tenth round's
+# review), the control (hclsc) at its fetch in the module constant, and the other file's store (yxg) at no line
 A_FILE_LINES[_a_rel("ylam")] = Y_LAMBDA_LINES
 A_FILE_LINES.update((_a_rel(rel), tuple((tag, '"<p>%s</p>" + ' % tag) for tag, _ in branches))
                     for rel, branches in (("ydoc", Y_DOC_BRANCHES), ("ysf", Y_SELF_BRANCHES), ("ycls", Y_CLS_PAGES)))
@@ -4772,11 +5693,11 @@ A_FILE_LINES[_a_rel("ycsa")] = (("ycsa", '"<p>ycsa</p>" + '), ("ycsn", '"<p>ycsn
 A_FILE_LINES.update((_a_rel(tag), ((tag, '"<p>%s</p>" + ' % tag),)) for tag in ("ycrb", "yccm", "ycl", "yxf"))
 A_FILE_LINES[_a_rel("yxg")] = ()
 A_FILE_LINES[_a_rel("hmut")] = tuple((tag, '"<p>%s</p>" + ' % tag) for tag, _, _ in Y_MUT_PAGES)
-A_FILE_LINES[_a_rel("hcls")] = (("hcls", "return cls.PAGE_CLS"), ("hcal", '"<p>hcal</p>" + '), ("hmal", '"<p>hmal</p>" + '),
-                                ("hsta", "return Handler.PAGE_STA"), ("hclsc", _fgh_mark("hclsc")), ("hcfm", '"<p>hcfm</p>" + '),
-                                ("nlmc", '"<p>nlmc</p>" + '), ("pdci", "return cls().PAGE_DCI"), ("pdcv", "inst = cls()"))
+A_FILE_LINES[_a_rel("hcls")] = (("hcls", '"<p>hcls</p>" + '), ("hcal", '"<p>hcal</p>" + '), ("hmal", '"<p>hmal</p>" + '),
+                                ("hsta", '"<p>hsta</p>" + '), ("hclsc", '"<p>hclsc</p>" + '), ("hcfm", '"<p>hcfm</p>" + '),
+                                ("nlmc", "css.append(t.CSS)"), ("pdci", '"<p>pdci</p>" + '), ("pdcv", '"<p>pdcv</p>" + '))
 A_FILE_LINES[_a_rel("yfmt")] = tuple((tag, {"pafnt": "_PF_TPL.format(Handler)", "paflc": "t.format(Handler)"}.get(tag, '"<p>%s</p>' % tag))
-                                     for tag, _, _ in Y_FMT_SHOWN)
+                                     for tag, _, _ in Y_FMT_SHOWN) + (("pafcm", "self._probe_cm_page()"),)
 A_FILE_LINES[_a_rel("ypc")] = tuple((tag, '"<p>%s</p>" + ' % tag) for tag, _, _ in Y_PC_SHOWN)
 # (z)'s plants: each refused plant at its subscript's line, the read constant index (slz) at its fetch in the constant
 A_FILE_LINES[_a_rel("zsl")] = tuple((tag, needle) for tag, _, needle in Z_SHOWN) + (("slz", _fgh_mark("slz")),)
@@ -4809,6 +5730,21 @@ _LAMBDA = "a lambda around the call, whose scope the census does not read"
 _IMPORT_WHY = "a name the import system binds in every module"
 _SELF_ATTR = "an attribute read on self, which any code may set before the call"
 _CLASS_ATTR = "a class attribute, which the census does not read as page text"
+_PARAM_ATTR = "an attribute read on a parameter, which any code may set before the call"
+_EXCEPT_ATTR = "an attribute read on an except name, which the code that raised it sets"
+_METHOD_CALL = "a route class's method called other than on the calling method's own first parameter, which the census does not follow"
+_METHOD_OVERRIDE = ("a method called on self that a file class deriving from the route class overrides, whose override the server would run, "
+                    "which the census does not follow")
+_REPLACED = ("a method called on self whose name the file stores or deletes as an attribute or names as a string to setattr, delattr, "
+             "__setattr__ or __delattr__, or whose route class's method resolution order binds __getattribute__, so code may replace it at "
+             "run time")
+_SELF_METHOD = ("a method called on self that no def statement of a class of the file defines first in the route class's method resolution "
+                "order, which the census does not follow")
+_DECORATED = ("a method called on self whose def statement carries a decorator, staticmethod and classmethod among them, whose return "
+              "Python calls in its place, which the census does not follow")   # _Served._method_call's, a decorated followed def
+_UNCLASSIFIED = ("a call of, or a method called on, the first parameter of a route handler that carries a decorator or stands in a file "
+                 "that binds staticmethod or classmethod, which the census does not take for self, the class or any other parameter")
+_A_SERVES = "SERVED %s:%%d serves text/html from %s, text the census did not read"   # the second line a bare unread method-call page takes
 _SLICED = "a subscript by a slice or an index other than a constant, whose result the census does not compute"
 _SLOT_FORMAT = "a value slot a % or a format call takes, which a conversion can turn into characters"
 _SUB_OPERAND = ("a subscript as an operand of +, %, an f-string, .join, .format, .format_map or .replace, whose joined text the census does "
@@ -4817,6 +5753,8 @@ _BUILTIN_OTHER = "a builtin other than the seven a page may call (str, int, dict
 _STR_DECODE = ("str with more than one positional argument, a starred argument or a keyword other than object, which may decode its "
                "first argument")
 _FIELD_REACH = "a replacement field reaching an attribute or an index of its argument, which the census does not read"
+_TYPE_REBOUND = ("a definition that binds %s, the parameter its own Content-Type write names, other than as that parameter (%s), so the "
+                 "type it writes need not be the call's")
 
 
 def _a_body(rel, via, why, where):
@@ -5045,7 +5983,9 @@ A_REFUSED += tuple(("(y) %s" % label, tag, _A_REACH % (_a_rel("ylam"), "self._se
         ("ysr", "an attribute of self as a receiver", "self._probe_ysr.get('k')"), ("ysc", "an attribute of self as a container", "self._probe_ysc['k']"),
         ("ysk", "an attribute of self under a method call on it, as a receiver", "self._probe_ysk.copy().get('k')"),
         ("ysb", "an attribute of self in a BoolOp under a method call, as a receiver", "(self._probe_ysb or dict()).copy().get('k')"),
-        ("ysd", "the class's docstring through self", "self.__doc__"))) + tuple(
+        ("ysd", "the class's docstring through self", "self.__doc__"))) + (
+    ("(y) a method called on self that the class body does not define, set on the class at run time, refused since the tenth round's "
+     "review", "ywm", _A_TEXT % (_a_rel("ysf"), "self._probe_extra()", _SELF_METHOD)),) + tuple(
     ("(y) %s" % label, tag, _A_TEXT % (_a_rel("ycls"), shown, why)) for tag, label, shown, why in (
         ("ycat", "a class attribute a module-level store rebinds", "Handler.PAGE_CAT", _CLASS_ATTR),
         ("ysat", "a class attribute a setattr naming it rebinds", "Handler.PAGE_SAT", _CLASS_ATTR),
@@ -5074,16 +6014,21 @@ A_REFUSED += tuple(("(y) %s" % label, tag, _A_REACH % (_a_rel("ylam"), "self._se
         "a class attribute a module-level alias changes in place",
         "a class attribute whose nested element a module-level append changes in place, served through json.dumps"))) + tuple(
     ("(y) %s" % label, tag, _A_TEXT % (_a_rel("hcls"), shown, _CLASS_ATTR)) for tag, label, shown in (
-        ("hcls", "a class attribute read through a classmethod's first parameter, the method reached through self", "cls.PAGE_CLS"),
         ("hcal", "a class attribute read through a local bound to the class", "h.PAGE_CAL"),
         ("hmal", "a class attribute read through a module constant bound to the class", "_HA.PAGE_MAL"),
-        ("hsta", "a class attribute a staticmethod reads through the class's own name", "Handler.PAGE_STA"),
-        ("hcfm", "a text method a class defines, called on the class's own name", "_ThF.format('<p>x</p>')"))) + tuple(
-    ("(y) %s" % label, tag, _A_TEXT % (_a_rel("hcls"), shown, "a call")) for tag, label, shown in (
-        ("pdci", "a classmethod's first parameter called, an attribute read on the instance", "cls().PAGE_DCI"),
-        ("pdcv", "a classmethod's first parameter called, the instance bound to a local", "cls()"))) + tuple(
+        ("hcfm", "a text method a class defines, called on the class's own name", "_ThF.format('<p>x</p>')"),
+        ("nlmc", "a class attribute read through a loop over a module tuple of classes", "t.CSS"))) + tuple(
+    ("(y) %s" % label, tag, _A_TEXT % (_a_rel("hcls"), shown, _DECORATED)) for tag, label, shown in (
+        ("hcls", "a classmethod called on self, refused as a decorated def the follow arm does not follow", "self._probe_cls_page()"),
+        ("hsta", "a staticmethod called on self, refused as a decorated def the follow arm does not follow", "self._probe_sta_page()"),
+        ("hclsc", "a classmethod returning a module constant, called on self, refused as a decorated def the follow arm does not follow", "self._probe_clsc_page()"),
+        ("pdci", "a classmethod called on self whose body reads an attribute on the instance, refused as a decorated def the follow arm does not follow", "self._probe_dci_page()"),
+        ("pdcv", "a classmethod called on self whose body binds the instance to a local, refused as a decorated def the follow arm does not follow", "self._probe_dcv_page()"))) + tuple(
     ("(y) %s" % label, tag, _A_TEXT % (_a_rel("yfmt"), ast.unparse(ast.parse(shown, mode="eval").body)[:60], _FIELD_REACH))
-    for tag, label, shown in Y_FMT_SHOWN) + tuple(
+    for tag, label, shown in Y_FMT_SHOWN) + (
+    ("(y) a classmethod's page reached through a format field, refused as a decorated def the follow arm does not follow", "pafcm",
+     _A_TEXT % (_a_rel("yfmt"), "self._probe_cm_page()", _DECORATED)),
+    ("(y) the pafcm page's bare unread call serves line", "pafcm", _A_SERVES % (_a_rel("yfmt"), "self._probe_cm_page()"))) + tuple(
     ("(y) %s" % label, tag, _A_TEXT % (_a_rel("ypc"), ast.unparse(ast.parse(shown, mode="eval").body)[:60], _CLASS_ATTR))
     for tag, label, shown in Y_PC_SHOWN)
 # (z) since the ninth round's review, B with its decision 10: each refused plant's line, the reason naming the subscript by a slice or
@@ -5131,7 +6076,7 @@ A_REFUSED += tuple(("(w) %s" % label, tag, _A_TEXT % (_WCL, shown, reason.replac
     ("str with an encoding argument, which decodes its first", "wsd", "str(_PROBE_WE.encode(), 'unicode_escape')", _STR_DECODE),
     ("str with a starred argument, which may hold an encoding", "wss", "str(*[_PROBE_WES.encode(), 'unicode_escape'])", _STR_DECODE),
     ("str with a keyword other than object", "wsk", "str(_PROBE_WEK.encode(), encoding='unicode_escape')", _STR_DECODE),
-    ("a subscript through a function, under the call limit", "wsfun", "_probe_wf()['k']", "a function's return"))) + tuple(
+    ("a subscript of a function's return, refused as a function's return", "wsfun", "_probe_wf()['k']", "a function's return"))) + tuple(
     ("(w) %s yields no piece" % tag, tag, _A_SERVES % (_WCL, body)) for tag, body in (
         ("whex", "bytes.fromhex(_PROBE_WH).decode()"), ("wsad", "_TW_AD[0] + _TW_AD[1]"), ("wsfs", "f'{_TW_FS[0]}{_TW_FS[1]}'"),
         ("wsfun", "_probe_wf()['k']"))) + (
@@ -5162,13 +6107,234 @@ A_REFUSED += tuple(("(o) %s, refused" % _O_LABELS[tag], tag, _A_TEXT % (_a_rel("
      "SERVED %s:%%d reads Path(__file__).parent / 'kernel.py' for a served page, a file the walk does not scan" % _a_rel("ofs")),) + tuple(
     ("(o) %s, refused" % _O_LABELS[tag], tag, _A_TEXT % (_a_rel("owf"), _O_SHOWN(join), why)) for tag, join, why in O_WIDE if why) + tuple(
     ("(o) %s, refused" % _O_LABELS[tag], tag, _A_TEXT % (_a_rel("owd"), _O_SHOWN(join), _WIDE)) for tag, join in O_DIGITS)
+# (r3) since the tenth round's review, R3: the key's module's pages, each refused with the key's run-time form read at its value and
+# its line, and mdf and mdb, each refused as a class attribute
+A_REFUSED += tuple(
+    ("(r3) a page from %s, the file's key a zero-padded precision read at its value" % _U_LABEL[k], "zpk" + k, _A_TEXT % (
+        _a_rel("zpk"), _U_NAME[k] % "ZPK" if k == "c" else _U_NAME[k], _RUNTIME % ("spells exec as a string at line %d" % _a_line(R3_TEXTS["zpk"], R3_KEY_ANCHOR))))
+    for k in "fcb") + (
+    ("(r3) a class reached through a long alias chain and a short one, as a .format's receiver", "mdf",
+     _A_TEXT % (_a_rel("mdf"), "x.format('<p>mdf</p>')", _CLASS_ATTR)),
+    ("(r3) a class reached through a long alias chain and a short one, as an attribute's base", "mdb", _A_TEXT % (_a_rel("mdf"), "w.CSS", _CLASS_ATTR)),
+    ("(r3) a class a dict registry returns at the end of a long alias chain and a short one, as a .format's receiver", "mdg",
+     _A_TEXT % (_a_rel("mdf"), "xg.format('<p>mdg</p>')", _CLASS_ATTR)))
+# (r1.1) since the tenth round's review, R1.1: each plant at its attribute read, refused by its base's root read by binding (self, a
+# parameter, an except name, a class, or the reason _base names for a root reached as a name's value), and the holds at their reason
+R1_SHOWN = {"rrc": "hrrc._rrc.get('k')", "rsb": "hrsb._rsb['k'].get('j')", "rct": "hrct._rct['k']", "rgc": "hrgc.page_rgc", "rsp": "this.page_rsp", "c10n": "hc10n.page_c10n",
+            "r2cn": "hr2cn.page_r2cn", "c10i": "gc10i.page_c10i", "qsg": "hqsg.page_qsg", "rmc": "xrmc.page_rmc", "rfm": "xrfm.page_rfm",
+            "rsm": "self._probe_rsm_meth().page_rsm", "rdv": "hrdv['k'].page_rdv"}
+A_REFUSED += tuple(("(r1.1) %s, refused as an attribute read on self" % label, tag, _A_TEXT % (_a_rel("ral"), R1_SHOWN.get(tag, "h%s.page_%s" % (tag, tag)),
+                                                                                             _SELF_ATTR)) for tag, label in (
+    ("ral", "a local alias of self"), ("rie", "an if-expression over self"), ("rbo", "None or self"), ("rwl", "a walrus in an if test"),
+    ("rwv", "a walrus as a local's value"), ("rrc", "a receiver on the alias's attribute"),
+    ("rsb", "a receiver under a subscript of the alias's attribute"),
+    ("rct", "a container on the alias's attribute, under an if-expression"), ("rmc", "a method call on the alias's attribute, bound to a local"),
+    ("rlt", "a loop over a tuple holding self"), ("rse", "a loop over a set holding self"), ("rdk", "a loop over a dict's keys holding self"),
+    ("rdv", "an item of a local dict literal whose value is self"),
+    ("rls", "an index of a list holding self"), ("rst", "a starred element"), ("rgc", "a comprehension's target over a tuple holding self"),
+    ("rsp", "a method's first parameter spelled this, the method reached through self"), ("c10n", "a closure alias read in a nested def"),
+    ("r2cn", "an alias beside a class the page function defines"), ("c10i", "a local alias inside a followed method"),
+    ("qsg", "an alias read in an f-string's field"))) + tuple(
+    ("(r1.1) %s, refused as an attribute read on a parameter" % label, tag, _A_TEXT % (_a_rel("rhp"), shown, _PARAM_ATTR)) for tag, label, shown in (
+        ("rhp", "a module helper's parameter handed self", "h.page_rhp"), ("rhd", "a module helper's parameter's alias", "g.page_rhd"),
+        ("rpa", "a parameter the helper also assigns", "h.page_rpa"), ("rhc", "a parameter called", "h().page_rhc"),
+        ("rcp", "a class passed to a parameter", "k.CSS_RCP"), ("rcd", "a class given as a parameter's default", "k.CSS_RCD"),
+        ("rsh", "a module helper's parameter spelled self, refused by that spelling at the reviewed head", "self.page_rsh"))) + (
+    ("(r1.1) a staticmethod called on self handed self, refused as a decorated def the follow arm does not follow", "rstm", _A_TEXT % (_a_rel("ral"), "self._probe_rstm_page(self)", _DECORATED)),
+    ("(r1.1) the rstm page's bare unread call serves line", "rstm", _A_SERVES % (_a_rel("ral"), "self._probe_rstm_page(self)")),
+    ("(r1.1) a classmethod called on self, refused as a decorated def the follow arm does not follow", "rcc", _A_TEXT % (_a_rel("ral"), "self._probe_rcc_page()", _DECORATED)),
+    ("(r1.1) the rcc page's bare unread call serves line", "rcc", _A_SERVES % (_a_rel("ral"), "self._probe_rcc_page()")),
+    ("(r1.1) hold: a container the module writes, bound to a local whose item's attribute is read, refused as that container at both heads",
+     "rmm", _A_MEMO % (_a_rel("rhp"), "_PROBE_RMM")),
+    ("(r1.1) hold: __file__ in a file that binds it, bound to a local whose attribute is read, refused at the attribute read (at the reviewed "
+     "head at the local's value)", "rfb", _A_TEXT % (_a_rel("rfb"), "xrfb.page_rfb", _FILE_BOUND))) + (
+    ("(r1.1) an except name's attribute, refused as one", "rex", _A_TEXT % (_a_rel("rhp"), "exrex.args[0]", _EXCEPT_ATTR)),
+    ("(r1.1) a local bound to a module function's return, refused with that reason", "rft", _A_TEXT % (_a_rel("rhp"), "xrft.page_rft", "a function's return")),
+    ("(r1.1) a local bound to a method's return, refused with that reason", "rfm", _A_TEXT % (_a_rel("ral"), R1_SHOWN["rfm"], "a method's return")),
+    ("(r1.1) hold: a method's return on self as the base, refused as one at both heads", "rsm", _A_TEXT % (_a_rel("ral"), R1_SHOWN["rsm"], "a method's return")),
+    ("(r1.1) hold: a BoolOp holding a function's return under an attribute, refused as a BoolOp at both heads", "rbh",
+     _A_TEXT % (_a_rel("rhp"), "(_probe_rbh_make() or '').x.page_rbh", "a BoolOp"))) + tuple(
+    ("(r1.1) %s, refused as a class attribute" % label, tag, _A_TEXT % (_a_rel("rcl"), shown, _CLASS_ATTR)) for tag, label, shown in (
+        ("rcl", "a loop over a tuple of classes", "trcl.CSS_RCL"), ("rci", "an if-expression over classes as the base", "(_RciA if p else _RciB).CSS_RCI"),
+        ("rrg", "a subscript of a module constant dict of classes", "_REG_RRG['a'].CSS_RRG"),
+        ("rdb", "a subscript of a boolean operation over dict constants whose values hold a class", "(_D1_RDB or _D2_RDB)['k'].CSS_RDB")))
+# (d2) since the tenth round's review, its decision 2: each plant at its call, refused as a route class's method called other than on
+# the calling method's own first parameter or as a method called on self that no def statement of a class of the file defines first
+# in the route class's method resolution order, and rmtp at its receiver's path as "a method's return"
+A_REFUSED += tuple(
+    ("(d2) %s, refused as a route class's method called other than on the calling method's own first parameter" % label, tag,
+     _A_TEXT % (_a_rel(rel), shown, _METHOD_CALL)) for tag, rel, label, shown in (
+        ("rma", "rma", "a local alias of self", "hrma._probe_rma_page()"),
+        ("rmie", "rma", "an if-expression over self", "(self if p else None)._probe_rmie_page()"),
+        ("rmbo", "rma", "None or self", "(None or self)._probe_rmbo_page()"),
+        ("rmwl", "rma", "a local bound to a walrus over self", "hrmwl._probe_rmwl_page()"),
+        ("rmls", "rma", "an index of a list holding self", "[self][0]._probe_rmls_page()"),
+        ("rmlt", "rma", "a loop over a tuple holding self", "hrmlt._probe_rmlt_page()"),
+        ("rmse", "rma", "a loop over a set holding self", "hrmse._probe_rmse_page()"),
+        ("rmdk", "rma", "a loop over a dict's keys holding self", "hrmdk._probe_rmdk_page()"),
+        ("rmdv", "rma", "a dict literal's value", "{'k': self}['k']._probe_rmdv_page()"),
+        ("rmst", "rma", "a starred element", "[*(self,)][0]._probe_rmst_page()"),
+        ("rmgc", "rma", "a comprehension's target over a tuple holding self", "hrmgc._probe_rmgc_page()"),
+        ("rmp", "rma", "a self alias under .strip()", "hrmp._probe_rmp_page()"),
+        ("rmq", "rma", "a self alias on a receiver's path", "hrmq._probe_rmq_meth().get('k')"),
+        ("rmrb", "rma", "a method's first parameter the method rebinds, read at the reviewed head", "self._probe_rmrb_page()"),
+        ("rmh", "rmh", "a module helper's parameter handed self", "h._probe_rmh_meth()"),
+        ("rmhd", "rmh", "a module helper's parameter's alias", "g._probe_rmhd_meth()"),
+        ("rmpa", "rmh", "a parameter the helper also assigns", "h._probe_rmpa_meth()"),
+        ("rmsp", "rmh", "a module helper's parameter spelled self", "self._probe_rmsp_meth()"),
+        ("rmhp", "rmh", "a module helper's parameter on a receiver's path", "h._probe_rmhp_meth().get('k')"),
+        ("rmhs", "rmh", "a module helper's parameter under a subscript on a receiver's path", "h._probe_rmhs_meth()['k'].get('j')"),
+        ("rmhb", "rbase", "a module helper's parameter calling a method a base class of the file defines", "h._probe_rmhb_meth()"),
+        ("rmss", "rtxt", "a module helper's local spelled self, bound to a string, read at the reviewed head", "self.format()"))) + tuple(
+    ("(d2) %s, refused as a method called on self that no def statement of a class of the file defines first" % label, tag,
+     _A_TEXT % (_a_rel(rel), shown, _SELF_METHOD)) for tag, rel, label, shown in (
+        ("i3b", "rma", "a name the class body binds by a lambda", "self._probe_i3b_page()"),
+        ("i3d", "rma", "a name the class body binds by a def and then by a lambda", "self._probe_i3d_page()"),
+        ("i3g", "rma", "a name the class body declares global beside its def, set on the class at run time", "self._probe_i3g_page()"),
+        ("i3k", "rma", "a name a def inside an if of the class body binds", "self._probe_i3k_page()"),
+        ("i3p", "rma", "a name set on the class at run time, on a receiver's path", "self._probe_i3p_page().get('k')"),
+        ("i3a", "rma", "a name set on the class at run time, called through a self alias", "hi3a._probe_i3a_page()"),
+        ("i3i", "i3i", "dict's get, dict a base ahead of a base of the file defining get too", "self.get('k')"),
+        ("i3r", "i3r", "a base name a class statement and a later assignment both bind", "self._probe_i3r_page()"))) + (
+    ("(d2) a method's return on the respelled first parameter, on a receiver's path, refused as one", "rmtp",
+     _A_TEXT % (_a_rel("rma"), "this._probe_rmtp_meth().get('k')", "a method's return")),
+    ("(d2) a default of a method a base class of the file defines, naming a name that class's body binds, refused as one", "rbdf",
+     _A_TEXT % (_a_rel("rbase"), "CSS_RBDF", _CLASS_DEFAULT)),
+    ("(d2) a classmethod called on self, refused as a decorated def the follow arm does not follow", "rmcl",
+     _A_TEXT % (_a_rel("rma"), "self._probe_rmcl_page()", _DECORATED)),
+    ("(d2) the rmcl page's bare unread call serves line", "rmcl", _A_SERVES % (_a_rel("rma"), "self._probe_rmcl_page()")),
+    ("(d2) a staticmethod called on self handed self, refused as a decorated def the follow arm does not follow", "rmstm",
+     _A_TEXT % (_a_rel("rmh"), "self._probe_rmstm_page(self)", _DECORATED)),
+    ("(d2) the rmstm page's bare unread call serves line", "rmstm", _A_SERVES % (_a_rel("rmh"), "self._probe_rmstm_page(self)"))) + tuple(
+    ("(d2) %s, refused as a method called on self the file may replace at run time" % label, tag, _A_TEXT % (_a_rel(rel), shown, _REPLACED))
+    for tag, rel, label, shown in (
+        ("rmr", "rma", "a method the route class defines, replaced by a module-level store on the class", "self._probe_rmr_page()"),
+        ("rpls", "rma", "a method the route class defines, replaced by setattr with its name as a string", "self._probe_rpls_page()"),
+        ("rpli", "rma", "a method the route class defines, shadowed by a store on the instance", "self._probe_rpli_page()"),
+        ("rpsa", "rma", "a method the route class defines, replaced by a bound self.__setattr__ naming it in its first argument", "self._probe_rpsa_page()"),
+        ("rpsb", "rma", "a method the route class defines, replaced by a bound super().__setattr__ naming it in its first argument", "self._probe_rpsb_page()"),
+        ("rplg", "rplg", "a method the route class defines, answered by a base class's __getattribute__", "self._probe_rplg_page()"))) + (
+    ("(d2) a method the route class defines, overridden by a file class deriving from the route class, refused", "hvt",
+     _A_TEXT % (_a_rel("hvt"), "self._probe_hvt_page()", _METHOD_OVERRIDE)),)
+# (dec) the owner's additions past the letter: a def under ANY decorator is not followed, whatever the decorator is bound to,
+# refused as _DECORATED at the call, its bare unread page taking a second serves-text/html line: a wrapping decorator on the route
+# class (xdcr) or a file base reached through the method resolution order (xdcb); and type.__setattr__ naming the method in its
+# second argument, refused as _REPLACED (xtsa)
+A_REFUSED += tuple(
+    ("(dec) %s, refused as a decorated def not followed" % label, tag, _A_TEXT % (_a_rel("dec"), expr, _DECORATED)) for tag, label, expr in (
+        ("xdcr", "a wrapping decorator on the route class's method", "self._probe_xdcr_page()"),
+        ("xdcb", "a wrapping decorator on a file base's method reached through the method resolution order", "self._probe_xdcb_page()"))) + tuple(
+    ("(dec) %s, its bare unread page's serves line" % label, tag, _A_SERVES % (_a_rel("dec"), expr)) for tag, label, expr in (
+        ("xdcr", "a wrapping decorator on the route class's method", "self._probe_xdcr_page()"),
+        ("xdcb", "a wrapping decorator on a file base's method", "self._probe_xdcb_page()"),
+        ("xtsa", "type.__setattr__ naming the method in its second argument", "self._probe_xtsa_page()"))) + (
+    ("(dec) type.__setattr__ naming the method in its second argument, refused as replaced", "xtsa",
+     _A_TEXT % (_a_rel("dec"), "self._probe_xtsa_page()", _REPLACED)),)
+# (uc) a route handler's first parameter the census does not classify: each page's call on it refused as _UNCLASSIFIED, a bare
+# unread call's page taking a second serves-text/html line (zst, zct and zal in probe_zre.py; zdg's, zdw's and zcl's pages each
+# hold a constant part)
+A_REFUSED += (("(uc) a do_GET under a staticmethod the file rebinds, a method set on the class called on its first parameter", "zdg",
+               _A_TEXT % (_a_rel("zdg"), "self._probe_zdg_page()", _UNCLASSIFIED)),
+              ("(uc) a do_GET under a decorator that hands it another object, a method called on its first parameter", "zdw",
+               _A_TEXT % (_a_rel("zdw"), "self._probe_zdw_page()", _UNCLASSIFIED)),
+              ("(uc) a do_GET under a decorator that returns its argument, its first parameter called", "zcl",
+               _A_TEXT % (_a_rel("zcl"), "self()", _UNCLASSIFIED))) + tuple(
+    ("(uc) %s, called on self in a file that binds staticmethod and classmethod" % label, tag, _A_TEXT % (_a_rel("zre"), expr, _UNCLASSIFIED))
+    for tag, label, expr in (("zst", "a staticmethod rebound to a fetch-prepending wrapper", "self._probe_zst_page()"),
+                             ("zct", "a classmethod rebound to a fetch-prepending wrapper", "self._probe_zct_page()"),
+                             ("zal", "an alias of staticmethod", "self._probe_zal_page()"))) + tuple(
+    ("(uc) %s, its bare unread page's serves line" % label, tag, _A_SERVES % (_a_rel("zre"), expr))
+    for tag, label, expr in (("zst", "a staticmethod rebound to a fetch-prepending wrapper", "self._probe_zst_page()"),
+                             ("zct", "a classmethod rebound to a fetch-prepending wrapper", "self._probe_zct_page()"),
+                             ("zal", "an alias of staticmethod", "self._probe_zal_page()")))
+# (r1.2) since the tenth round's review, R1.2: each page's file read refused as a file the walk does not scan
+A_REFUSED += tuple(("(r1.2) a file read through open(__file__) in %s, refused" % label, tag,
+                    "SERVED %s:%%d reads open(__file__) for a served page, a file the walk does not scan" % _a_rel(tag)) for tag, label in (
+    ("fpg", "a file that points __file__ elsewhere through globals()"), ("fpr", "a file that points __file__ elsewhere through exec"),
+    ("fps", "a module that star-imports __file__ from a sibling whose __all__ names it")))
+# (r1.3) since the tenth round's review, R1.3: each plant at its call, refused as a definition that binds the name its own
+# Content-Type write takes from the call other than as that parameter, the form named; the hold at its write, the loop's one line
+A_REFUSED += tuple(("(r1.3) %s binding the name the definition's own Content-Type write takes from the call, refused" % label, tag,
+                    _A_REACH % (_a_rel(tag), "self._send", _TYPE_REBOUND % ("ctype", form))) for tag, label, form in (
+    tuple((tag, form, form) for tag, form, _ in R13_SPEC) + (("srq", "an assignment of a keyword-only parameter", "an assignment"),
+                                                          ("srn", "a parameter of a def nested in the definition and named _send", "a nested def's parameter"))
+    + ((("srt", "a type parameter of a class statement in the definition", "a type parameter"),) if sys.version_info >= (3, 12) else ()))) + (
+    ("(r1.3) hold: a Content-Type write in a def nested in the definition, refused by the Content-Type loop alone at both heads", "srd",
+     "SERVED %s:%%d serves a response whose content type the census cannot resolve (ctype in Handler._send._probe_srd_w): spell it so the "
+     "scan reads it, or name the call in SERVED_ALLOW with its reason" % _a_rel("srd")),)
+# (r1.4) since the tenth round's review, R1.4 with the 17:31Z choice (c): each plant at its refused call, a replacement field reaching an
+# attribute or an index of its argument (nested in a field's format spec among them), a format string reached other than as a string
+# constant, a join of them or a name bound to one, and the literal nested form's one line
+_TEMPLATE = ("a format string reached other than as a string constant, a join of them or a name bound to one, whose fields the census "
+             "does not read")
+A_REFUSED += tuple(("(r1.4) %s, refused as a replacement field reaching an attribute or an index of its argument" % label, tag,
+                    _A_TEXT % (_a_rel("c2a"), ast.unparse(ast.parse(dict((t, sh) for t, sh, _ in R14_NEST)[tag], mode="eval").body)[:60], _FIELD_REACH))
+                   for tag, label in (("c2a", "an attribute in a field nested in a format spec, the format string a module constant's"),
+                                      ("c2m", "the .format_map twin"), ("c2i", "an index in a field nested in a format spec"),
+                                      ("c10l", "an attribute in a nested field, the format string a local's"),
+                                      ("ndp", "an attribute in a nested field at the end of a chain of 40 local aliases"))) + (
+    ("(r1.4) hold: the literal nested form, refused as a format spec holding a replacement field at both heads, one line", "c2l",
+     _A_TEXT % (_a_rel("c2a"), ast.unparse(ast.parse(dict((t, sh) for t, sh, _ in R14_NEST)["c2l"], mode="eval").body)[:60], _NESTED)),) + tuple(
+    ("(r1.4) %s, refused as a format string reached other than as a string constant, a join of them or a name bound to one" % label, tag,
+     _A_TEXT % (_a_rel("tst"), ast.unparse(ast.parse(dict((t, sh) for t, sh, _ in R14_TPL)[tag], mode="eval").body)[:60], _TEMPLATE))
+    for tag, label in (("tst", "a module constant bound to a template's .strip(), read on a class"),
+                       ("tss", "a module constant bound to a template's .strip(), read on self"), ("tfn", "a function's return"),
+                       ("tie", "an if-expression"), ("til", "a local bound to an if-expression"), ("trp", "a .replace on a module constant"),
+                       ("tcat", "a module constant bound to a + of a module constant and a literal"),
+                       ("tfs", "a local bound to such a +, read through a keyword field on self"), ("tpm", "a followed method's parameter"),
+                       ("tmix", "a local with one constant value whose fields reach nothing and one call value"),
+                       ("tlp", "a loop target over a tuple of templates"), ("tdp", "a function's return at the end of a chain of 40 local aliases"))) + (
+    ("(r1.4) hold: a local with one constant value whose field reaches and one call value, refused as such a field at both heads, one line",
+     "tmr", _A_TEXT % (_a_rel("tst"), "t_mr.format(_R14ATMR)", _FIELD_REACH)),)
+# (d3) since the tenth round's review, decision 3: each page of each plant's module, refused with the key's run-time form and its line,
+# the hold at the listed name its folded key spells, and the accepted plants' str pages, refused by the builtins import alone
+A_REFUSED += tuple(("(d3) a page from %s, the file's lookup key %s" % (_U_LABEL[k], form), tag + k, _A_TEXT % (
+    _a_rel(tag), _U_NAME[k] % tag.upper() if k == "c" else _U_NAME[k], _RUNTIME % ("%s at line %d" % (form, _a_line(D3_TEXTS[tag], anchor))).replace("%", "%%")))
+    for tag, _h, form, anchor, _w in D3_SPEC for k in "fcb") + tuple(
+    ("(d3) accepted: %s's str page, refused by the builtins import alone at both heads" % tag, tag + "b", _A_TEXT % (_a_rel(tag), "str(1)", _SHADOWED))
+    for tag in D3_ACCEPT_TAGS)
+# (cd) since the 17:31Z choice (d): each plant at its refused expression, a class attribute
+A_REFUSED += tuple(("(cd) %s, refused as a class attribute" % label, tag,
+                    _A_TEXT % (_a_rel("cdt"), ast.unparse(ast.parse(page, mode="eval").body)[:60], _CLASS_ATTR)) for tag, label, page in CD_TEXT) + tuple(
+    ("(cd) %s, refused as a class attribute" % label, tag, _A_TEXT % (_a_rel("cdd"), ast.unparse(ast.parse(shown, mode="eval").body)[:60], _CLASS_ATTR))
+    for tag, label, shown, _ in CD_DICT)
+# (cv): each plant at its call, a class attribute
+A_REFUSED += tuple(("(cv) %s, refused as a class attribute" % label, tag,
+                    _A_TEXT % (_a_rel("cvm"), ast.unparse(ast.parse(shown, mode="eval").body)[:60], _CLASS_ATTR)) for tag, label, shown, _, _ in CV_PAGES)
+# (fd): each plant at its attribute read, the one line its format call takes (the control fdk, read with its fetch listed, is its
+# case's: FD_CONTROL)
+A_REFUSED += tuple(("(fd) %s, refused by its attribute read alone" % label, tag,
+                    _A_TEXT % (_a_rel("fdl"), shown, {"class": _CLASS_ATTR, "self": _SELF_ATTR, "param": _PARAM_ATTR}[root]))
+                   for tag, label, shown, root, _ in FD_PAGES)
+FD_CONTROL = _A_TEXT % (_a_rel("fdl"), "_probe_fdk().format('<p>fdk</p>')", _TEMPLATE)   # at its call, a format string reached otherwise
 # read at the fix and at the ninth round's reviewed head, its page's fetch UNCLASSIFIED at its line in the module constant: (y)'s
 # control, a classmethod that returns a module constant and reads nothing on its class
-Y_READ = (("(y) control: a classmethod that returns a module constant, read", "hclsc", _a_rel("hcls")),)
+Y_READ = ()   # the tenth round's decorator ruling (the follow arm refuses any decorated def) retired the read control hclsc, now refused as a decorated def
 # read at the fix and at the ninth round's reviewed head, its fetch UNCLASSIFIED at its constant's line: (z)'s constant index
 Z_READ = (("(z) a constant index over a module constant, read", "slz", _a_rel("zsl")),)
 # read at the fix and at the ninth round's reviewed head, its fetch UNCLASSIFIED at its page's line: (o)'s zero-padded small width
 O_READ = (("(o) a zero-padded format width of 5, expanded and read", "owz", _a_rel("owf")),)
+# read at the fix, its fetch UNCLASSIFIED at its page's line, where the tenth round's reviewed head stops on its field: (r3)'s
+# zero-padded fields 5000 digits long
+R3_READ = tuple(("(r3) %s, read at its value" % label, tag, _a_rel("zpf")) for tag, label, _ in R3_READ_SPEC)
+# read at the fix and at the tenth round's reviewed head, each fetch UNCLASSIFIED at its line: (r1.1)'s controls, a method call on a
+# helper's parameter with no attribute read, its argument a module constant read at the call, and a module constant bound to a
+# function's return whose attribute is read, the constant accepted and read as it is
+R1_READ = (("(r1.1) control: a method call on a helper's parameter, no attribute read", "rok", _a_rel("rhp")),
+           ("(r1.1) control: a module constant bound to a function's return, its attribute read", "rkc", _a_rel("rhp")))
+# read at the fix, each fetch UNCLASSIFIED at its line: (d2)'s followed plants, silent at the tenth round's reviewed head, whose follow
+# arm read the route class's own body and the name self as spelled; and followed or read at both heads, the holds and the control
+D2_READ = (("(d2) a method whose first parameter is spelled this, reached through self, followed", "rmt", _a_rel("rma")),
+           ("(d2) a route-class method named format called on self, followed before the text-call arm", "rtxt", _a_rel("rtxt")),
+           ("(d2) a route-class method named read called on self, followed before the file-read arm", "rrd", _a_rel("rtxt")),
+           ("(d2) a method a base class of the file defines, followed", "rbase", _a_rel("rbase")),
+           ("(d2) a method two bases define, followed to the one the C3 order takes first", "rmro", _a_rel("rbase")),
+           ("(d2) hold: a method called on self, followed at both heads", "rms", _a_rel("rma")),
+           ("(d2) hold: a method called on self in a closure the page function defines, followed at both heads", "rcf", _a_rel("rma")),
+           ("(d2) control: a method of a class that holds no route, called on a helper's parameter, the call limit", "d2ok", _a_rel("rmh")))
+# read at the fix and at the tenth round's reviewed head, its fetch UNCLASSIFIED at its line: (r1.4)'s control, a format string a
+# module constant holds whose fields reach nothing, its argument's text read
+R14_READ = (("(r1.4) control: a format string a module constant holds, no field reaching, read, its argument's fetch listed", "tok", _a_rel("tst")),)
 # (w) held silent at both heads: an honest int through a Name read (wvn), and the stated limit's witnesses, a call that computes text
 # from its arguments, which the census does not read (chr, getattr, the two decoders and max over one iterable); and the (w) pages
 # Python serves a fetch from whose text no reader scans (a split URL, a class's or a function's value, a decoded asset, the
@@ -5177,13 +6343,14 @@ O_READ = (("(o) a zero-padded format width of 5, expanded and read", "owz", _a_r
 W_SILENT = ("wvn", "wchr", "wgat", "wb64", "wzip", "wmx")
 W_MARKS = tuple(_fgh_mark(t) for t in ("wsad", "wsmo", "wsfs", "wsjo", "wsfull", "wgat", "wsfun", "wb64", "wzip", "wrev", "wmap", "whex", "wfb",
                                         "wchr", "hsfm", "hsfmm", "hsrp", "hsfr", "hsfmr", "hsjr", "wsd", "wss", "wsk", "wmx"))
-# the (o) pages Python serves a fetch from that no reader scans at the fix: each refused page's hidden text, the ox* modules' added
-# text, and vfm's constant, refused since the ninth round's review
+# the (o) texts no reader scans at the fix: each refused page's hidden fetch, where Python serves one, the ox* modules' added text
+# and vfm's constant, refused since the ninth round's review; and owd's and owf's fetches, whose pages Python does not serve (each
+# raises ValueError)
 O_MARKS = tuple(_fgh_mark(t) for t in [tag for tag, _ in O_UNBOUND_SHOWN] + [s + "x" for s, _h, _f, _a, _w in O_X_SPEC]
                 + ["ofc", "ofd", "ofl", "owm", "onf", "onm", "owd", "owf", "vfm"])
 # the (y) texts no reader scans besides each refused plant's own page: the module's docstring, the text the method set at run time
-# returns, the other file's store and the class attribute the witness's loop reads (nlmc)
-Y_UNREAD_MARKS = (_fgh_mark("ydoc"), _fgh_mark("ywmx"), _fgh_mark("yxgx"), _fgh_mark("nlmc"))
+# returns and the other file's store
+Y_UNREAD_MARKS = (_fgh_mark("ydoc"), _fgh_mark("ywmx"), _fgh_mark("yxgx"))
 # (the plant, its tag, the file) whose page's fetch is read, UNCLASSIFIED at the tag's line: (c)'s walrus values read as locals, and the
 # limits' witnesses held at their outcome (the census reads the route through its own class body's definition, and the override in
 # another file, or the stream the end_headers method reaches, is not read; a same-file override in a class a function body defines is
@@ -5421,9 +6588,11 @@ class TheServedPagesAreScanned(_Scope):
     and image/svg+xml, application/xhtml+xml and application/javascript, each page's fetch UNCLASSIFIED; a Content-Type written
     outside _send, a body read from a file the walk does not scan and a type a function returns, each a SERVED line), the
     allowlist's two gates (F11, an entry left naming nothing; F12, a third place under the /dist entry's key), G's pages (read
-    through .encode, .format_map, .get with a default, subscripts, a chain two calls deep and same-named
-    locals in two functions, each fetch UNCLASSIFIED; a receiver a function or a method returns, a run-time memo and, since the
-    ninth round's review, a class attribute read on self, each a SERVED line) and H's reads (a fetch after local ones in a joined constant, a joined constant led by `*{`, a second and
+    through .encode, .format_map, .get with a default, a chain two calls deep and same-named locals in two functions, each fetch
+    UNCLASSIFIED; a receiver a function or a method returns, a run-time memo and, since the ninth round's review, a class attribute
+    read on self and a subscript of a module dict standing as a `+` operand (G3, G6), each a SERVED line; and since the tenth
+    round's review a `.format_map` on a function's return (G4b) a SERVED line as well, as a format string reached other than as a
+    string constant, a join of them or a name bound to one, its fetch still listed) and H's reads (a fetch after local ones in a joined constant, a joined constant led by `*{`, a second and
     computed import( on a line, a multi-line f-string's later part, two identical parts on two lines and two identical
     constants on one line, each at its own line, and the residual's three shapes, each held at the line it is listed at). Since
     the sixth round B and C's plants ride it too, each a SERVED line by name: a route typed through a written module name, a
@@ -5448,14 +6617,15 @@ class TheServedPagesAreScanned(_Scope):
     its line in the reason, beside the witness of the limit on any other form (the (u) plants); and since the review's calls on
     the fix's own checks, the run-time forms' other spellings refused by name, each 0 live, with two witnesses of that limit and a
     `.join` over a set (the (x) plants); and since the ninth round's review, a `_send` call or a Content-Type write inside a
-    lambda's body, a name the import system binds in every module, an attribute read on self and a class attribute, read through
+    lambda's body (a write that is no `_send` definition's own write), a name the import system binds in every module, an attribute read on self and a class attribute, read through
     the class's own name, a name the census resolves to it or a method call on a name whose value holds it, a call of a
     classmethod's first parameter and a `.format` or `.format_map` field that reaches an attribute or an index of its argument,
-    refused by name, with a control read and the witnesses of the limits
-    that stay, code behind a name on self and a class the census reaches without resolving it as one (the (y) plants), and a subscript
+    refused by name, with a control read (the (y) plants; nlmc, there the witness of a limit for a class the census reached without
+    resolving it as one, and ywm, there the witness of the limit for code behind a name on self, are each refused since the tenth
+    round's review), and a subscript
     by a slice or an index other than a constant over a container whose text the pass reads refused by name, the honest forms
     that fail closed with it among them, with a constant index read and a slice of a parameter passing (the (z) plants), and a
-    value slot that stands directly as a `%` operand, a `.format` argument or a `.format_map` value, a builtin other than the
+    value slot that stands directly as the right operand of a `%`, a `.format` argument or a `.format_map` value, a builtin other than the
     seven a page may call, a call of str with more than one positional argument, a starred argument or a keyword other than
     object, a subscript as an operand of a `+`, a `%`, an
     f-string or a `.join`, `.format`, `.format_map` or `.replace` over a container whose text the pass reads, and a builtin in a
@@ -5463,7 +6633,32 @@ class TheServedPagesAreScanned(_Scope):
     limit that stays, chr, getattr, two decoders and max over one iterable, silent (the (w) plants), and a
     join, format, format_map or replace called on the name str, bytes or bytearray, in a page and as a lookup key, `__file__` in
     a file where a statement binds it, and a format the census does not expand refused by name, with a zero-padded small width
-    read (the (o) plants). None
+    read (the (o) plants); and since the tenth round's review, a zero-padded width or precision whose digits run past the 4300
+    int() converts read at its value, in a page and as a lookup key, and a class reached through a long alias chain and a short one
+    refused as a class attribute (the (r3) plants), and an attribute read refused by the root its base reaches by binding, self
+    however spelled or aliased, any other parameter, an except name and a class reached as a value among them, with its controls
+    read and the class limit's witness silent (the (r1.1) plants), and a method call followed only where its receiver is the calling
+    method's own first parameter, through the route class's method resolution order to a def statement of a class of the file, with
+    a route class's method called on self through anything else, on any other parameter or on a name spelled self that is not that
+    parameter, a method called on self that no such def statement defines first, and a method it would follow that the file may
+    replace at run time, refused by name, the holds and a control read, and the limit for code behind a name on self witnessed (the
+    (d2) plants), a method it would follow whose def carries a decorator refused by name (the (dec) plants), and a call of, or a
+    method called on, the first parameter of a route handler that carries a decorator or stands in a file binding staticmethod or
+    classmethod refused by name (the (uc) plants), and a file read through `Path(__file__)` or
+    `open(__file__)` refused as a file the walk does not scan wherever `__file__` may not be the file's own path, with a plain file's
+    read passing (the (r1.2) plants), and a `_send` call refused where the definition binds the parameter its own Content-Type write
+    names other than as that parameter, in any form, with a write in a def nested in it under another name left to the Content-Type
+    loop and a lambda that binds another name passing (the (r1.3) plants), and a `.format` or `.format_map` whose format string,
+    read through its receiver, holds a replacement field reaching an attribute or an index of its argument, or which the receiver
+    reaches other than as a string constant, a join of them or a name bound to one, refused by name, with the literal nested form
+    and a reaching field beside an unreadable value each held at its one line and a control read (the (r1.4) plants), a receiver
+    the pass refuses as it reads it taking that one line (the (fd) plants), and a lookup key refused as a run-time form of its file
+    unless a positive allowlist proves its shape by the binding, the accepted plants read as no run-time form (the (d3) plants); and
+    since the
+    17:31Z choice (d), a text method called on a class the class walk resolves its receiver to and a class a registry the builtin
+    dict builds returns, a subscript of one and one built inline among them, refused as class attributes, with a module function
+    named dict and a subscript read through a function held silent (the (cd) plants), and a method or a text method called on a
+    class reached as a value refused as a class attribute (the (cv) plants). None
     adds a socket or an opener, so the rowed keys' counts move by the boot's two plants alone. At the tree the shim's and the shell's
     sockets, the boot's dead opener and the worker's clients.openWindow list on local-kernel, the four fetches whose route
     literal a caller passes list as computed, and the four pane stylesheets are named, not scanned. The pass is the class's
@@ -5587,7 +6782,7 @@ class TheServedPagesAreScanned(_Scope):
             self.assertIsNone(re.search(r"kernel/kernel\.py:%d(?!\d)" % at["f12"], out),
                               "the key excuses the route and its page is not read: the count gate is the one line that names it\n" + gates(out))
 
-    def test_a_page_is_read_through_encode_format_map_its_containers_and_class_attributes(self):
+    def test_a_page_is_read_through_encode_format_map_and_its_containers_or_refused_by_name(self):
         """G of the fifth round, the receivers and containers a page's text is read through. G1 (.encode on a function's
         return), G1b (.encode on a module constant), G2 (.get with a default on a module dict), G4 (.format_map on a module
         constant), G4b (.format_map on a function's return), G9 (.get, .strip and .encode on a module dict)
@@ -5599,13 +6794,22 @@ class TheServedPagesAreScanned(_Scope):
         through the class body until that round; since that round no class attribute is read as page text, through self or through
         the class, the (y) case); and so, since that round's decision 9, are G3 (`_PROBE_G3S['/probe-g3'] + '\\n'`) and G6 (`'<html>' +
         _PROBE_G6S['x']`), each a subscript of a module dict standing as a `+` operand, whose joined text the census does not
-        compute, read whole through the container until that round. The arm whose removal reds each: the follow of .encode and .format_map for G1 and G4b (a SERVED line for the
+        compute, read whole through the container until that round; and so, since the tenth round's review (its R1.4 with the 17:31Z
+        choice (c)), is G4b's call, its receiver a function's return, a format string reached other than as a string constant, a
+        join of them or a name bound to one, its page's fetch still listed (the arm reads the receiver after refusing the call). The
+        live handler the G routes ride in, Handler.do_GET, carries two decorators, so since that review its first parameter is not
+        classified (_Served._ctx's _Unclassified mark): G5 is refused as an attribute read on a parameter and G11 as a method called on
+        that parameter (_UNCLASSIFIED), where the reviewed head refused G5 as one read on self and G11's receiver as a method's
+        return. The arm whose removal reds each: the template refusal (_TEMPLATE, and the other answer _format_texts gives) for G4b's SERVED
+        line; the follow of .encode and .format_map for G1 and G4b (a SERVED line for the
         function's return in its place) and for G10, whose line names the receiver inside its .encode (without the follow
         the line names the whole chain), that follow and the name read together for G1b and G4 (either alone keeps them
         read), the name read for G2 and G9, the refusal of a subscript operand for G3 and G6 (then read whole again, their
-        fetches listed), resolve's refusal of an attribute read on self for G5 (then silent), the
-        refusal of a receiver the pass does
-        not read for G7, G10 and G11 (each then silent), the memo rule for G8, and holding each function's map of locals for
+        fetches listed), receiver's check of the attribute's base, the root it reaches by binding (_attr_root, its root for the
+        unclassified parameter), for G5 (then silent), _method_call's refusal of a method called on that parameter for G11 (then
+        refused as a route class's method called on a name spelled self), the decorator term of that classification for G5 and G11
+        (the parameter then taken for self, G5 refused as one read on self and G11's receiver as a method's return), the refusal of
+        a receiver the pass does not read for G7 and G10 (each then silent), the memo rule for G8, and holding each function's map of locals for
         the whole pass for G15 (without it a later map can take a freed map's id and the second function's local is skipped,
         which happens on 3.10 and the free-threaded 3.14 and not on 3.11 or 3.12). At the reviewed head G15 is caught or
         silent by interpreter as that says, and the others print none of these lines; at the ninth round's reviewed head G5's,
@@ -5881,7 +7085,7 @@ class TheServedPagesAreScanned(_Scope):
         imported from a module other than its own, a name built at run time, gc or ctypes among them, and through a module reached
         by a tuple or list unpacking, an inline walrus, `sys.modules.__getitem__`, a for-loop target, a parameter default or a
         starred argument) being outside the list (probe_ugc's store through the namespace gc reports among a function's
-        referents, the (u) case, and the (x) case's xkbn, xkcn, zg4, zvp, zs4, qq5, qq8 and qqw). Before that gate, a definition
+        referents, the (u) case, and the (x) case's xkbn, zg4, zvp, zs4, qq5, qq8 and qqw). Before that gate, a definition
         that writes anything besides its page parameter refuses with the road named: a second write of an expression, writelines,
         a sendall on the connection ("a second write"), an alias of the write or of sendall ("a write through an alias"), a
         getattr naming write or sendall ("a write method named by a
@@ -6073,7 +7277,7 @@ class TheServedPagesAreScanned(_Scope):
         them, and through a module reached by a tuple or list unpacking, an inline walrus, `sys.modules.__getitem__`, a for-loop
         target, a parameter default or a starred argument) being outside the list, whose witnesses are probe_ugc's
         store through the namespace gc reports among a function's referents, which the (u) case holds at no line, and the (x)
-        case's xkbn, xkcn, zg4, zvp, zs4, qq5, qq8 and qqw."""
+        case's xkbn, zg4, zvp, zs4, qq5, qq8 and qqw."""
         for plant, tag, rel in B_READ[2:]:
             with self.subTest(plant=plant):
                 self.assertFetchUnclassifiedAt(self.at[tag], tag, "the route is read; what the definition runs outside its text is not", rel)
@@ -6343,7 +7547,7 @@ class TheServedPagesAreScanned(_Scope):
         or ctypes among them, and through a module reached by a tuple or list unpacking, an inline walrus,
         `sys.modules.__getitem__`, a for-loop target, a parameter default or a starred argument) being outside the list, is held
         at its witness here: probe_ugc rewrites its constant through the namespace gc reports among a function's referents, Python
-        serves the added text, and no line names the module (the (x) case holds xkbn, xkcn, zg4, zvp, zs4, qq5, qq8 and qqw). The
+        serves the added text, and no line names the module (the (x) case holds xkbn, zg4, zvp, zs4, qq5, qq8 and qqw). The
         arm whose removal reds each: in Scan.ns_listed, a listed callable's own name for ulo, uex, ulg, ueg, uev, ucp, uit and uty
         (whose call's reason names the call; removing that reason alone leaves each refused as naming the callable) and globals's
         own name for uga; an attribute on any receiver for uim and ugf; the listed attributes for ugl, ufg, ufb, ugg, ufq, ufk,
@@ -6411,11 +7615,11 @@ class TheServedPagesAreScanned(_Scope):
         listed name reached any other way or a name the list does not hold, holds at its witnesses, each at its outcome: a
         namespace mapping reached through a name (xkbn, `_probe_b = builtins.__dict__`; its __file__ and constant pages silent,
         the value slot restored, its str page still refused since it imports builtins), a listed attribute fetched by a name built
-        at run time (xkcn, `getattr(_probe_f, "__" + n + "__")`), globals and vars reached through `__self__` of a builtin (zg4
+        at run time (xkcn, `getattr(_probe_f, "__" + n + "__")`, a witness here until the tenth round's decision 3 refused its `+` key and moved it to (d3)), globals and vars reached through `__self__` of a builtin (zg4
         `print.__self__.globals()`, zvp `print.__self__.vars(print.__self__)["exec"]`), the module's own `__setattr__` method
         (zs4, `sys.modules[__name__].__setattr__(...)`), attrgetter and globals imported from a module other than their own (qq5
         `from inspect import attrgetter`, qq8 `from timeit import _globals`), and a module reached by an inline walrus (qqw,
-        `setattr((_probe_m := sys.modules[__name__]), ...)`): xkcn, zg4, zvp, zs4, qq5 and qqw fully silent, qq8 silent but for
+        `setattr((_probe_m := sys.modules[__name__]), ...)`): zg4, zvp, zs4, qq5 and qqw fully silent, qq8 silent but for
         the import gate's line for timeit. Python serves each plant's and each witness's fetch, so each escape is real. The arm
         whose removal reds each: the own-package import (arm i) for the (i) plants, its bare-stem clause for zbs and zbsg; in
         Scan.ns_listed a listed callable's own name for xklas, xkeas, xkecs and their gate twins (and the Name arm's flag for
@@ -6473,15 +7677,18 @@ class TheServedPagesAreScanned(_Scope):
             with self.subTest(plant="(x) limit: %s holds __file__ silent (the value slot restored)" % tag):
                 self.assertEqual([ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag)) and "__file__" in ln], [],
                                  "outside the list: __file__ is a value slot, no line, though Python serves the fetch")
-        for tag in ("xkcn", "zg4", "zvp", "zs4", "qq5", "qq8", "qqw"):
+        for tag in ("zg4", "zvp", "zs4", "qq5", "qq8", "qqw"):
             with self.subTest(plant="(x) %s (outside the list) has no SERVED line at all" % tag):
                 self.assertEqual([ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag))], [])
 
     def test_the_ninth_rounds_honest_escapes_refuse_by_name(self):
         """A of the ninth round's review (correctness-1, extra10-1, extra10-2) with its decisions 4(b) and 8 and the
-        class-attribute read retired, the (y) plants, each a probe module's branch whose hidden text is a fetch tagged with its
-        plant, which Python serves: each refused plant is its SERVED line at the plant's line, each module's SERVED lines are the
-        ones named here, and no hidden text is a site. A `_send` call inside a lambda's body (probe_ylam.py: a parameter shadowing
+        class-attribute read retired, the (y) plants, each a probe module's branch whose page, where Python serves a hidden text,
+        serves a fetch tagged with its plant or with the text its module's code puts there (ydb, yds and ydr the module's docstring,
+        ywm the method set at run time, yanc and yafc their self twins' attributes), while ydc raises TypeError, ydn serves the
+        module's name, ysub serves the base class's text with no fetch, and ygl and ysubn raise AttributeError, each pinning a
+        refusal: each refused plant is its SERVED line at the plant's line, each module's SERVED lines are the ones named here, and
+        no hidden text is a site. A `_send` call inside a lambda's body (probe_ylam.py: a parameter shadowing
         the page's module constant, ylp; one named str, yls; a class-body lambda whose default shadows it, ylc; a called lambda's
         default, ylk; a lambda map() calls, ylm; a parameter named getattr, ylg; a parameter shadowing the type's module constant,
         ylt; a default holding the type, ytd) is refused as "a lambda around the call, whose scope the census does not read",
@@ -6491,8 +7698,11 @@ class TheServedPagesAreScanned(_Scope):
         a receiver's base (ydr), the loader as a callee (ydc) and the module's name (ydn) are each refused as "a name the import
         system binds in every module". An attribute read on self is refused as "an attribute read on self, which any code may set
         before the call" (probe_ysf.py): set in the handler and served (ysv), a receiver (ysr), a container (ysc), a receiver
-        under a method call on it (ysk) and under a BoolOp in the chain (ysb), and the class's docstring (ysd); a method called on
-        self that the class body does not define (ywm) is code behind a name on self, the limit that stays, held at no line. No
+        under a method call on it (ysk) and under a BoolOp in the chain (ysb), and the class's docstring (ysd). A method called on
+        self that the class body does not define, set on the class at run time (ywm), held at no line at the tenth round's reviewed
+        head as the witness of the limit for code behind a name on self, is refused since that round's review as "a method called on
+        self that no def statement of a class of the file defines first in the route class's method resolution order, which the
+        census does not follow" (its decision 2, the 21:39Z item 3; that limit's witness is now the (d2) plants' rplx). No
         class attribute is read as page text: an attribute read on a class, through the class's own name, a name the census
         resolves to it or a method call on a name whose value holds it, is refused as "a class attribute, which the census does not read as page text", whatever binds, sets or
         changes it. Through the class's own name (probe_ycls.py): a module-level store (ycat), a setattr naming it (ysat), an
@@ -6508,26 +7718,29 @@ class TheServedPagesAreScanned(_Scope):
         append extends (happ), one a module-level extend extends (hext), one a method extends through self, called at import
         (hjoi), one a container type's method extends with it as the first argument (hlst), a dict a module-level item store
         writes, read as a `%` operand (hdmap), a list a module-level alias of the attribute extends (nal) and a list inside a dict
-        attribute that a module-level append extends, the dict served through json.dumps (nmd); and in probe_hcls.py a
-        staticmethod's read (hsta) and a text method a class defines, called on the class's own name (hcfm, `_ThF.format(...)`).
-        Through a name the census resolves to the class (probe_hcls.py): a classmethod's first parameter, the method reached
-        through self (hcls), a local bound to the class (hcal) and a module constant bound to it (hmal). Through a module constant
+        attribute that a module-level append extends, the dict served through json.dumps (nmd); and in probe_hcls.py a text method a
+        class defines, called on the class's own name (hcfm, `_ThF.format(...)`). Through a name the census resolves to the class
+        (probe_hcls.py): a local bound to the class (hcal) and a module constant bound to it (hmal). Through a module constant
         bound to an if-expression over classes (pcif), a boolean operation over them (pcbo) or a walrus whose value is one (pcne),
         a BoolOp over classes as the base under a method call (pbrb), a class attribute under two method calls (pbmc), and a
         method call on a name whose value holds classes (probe_ypc.py): a module constant dict's `.get` (pcrg), a local bound to
         it (pcrl), a module constant bound to it (pcrk), a module constant list's `.copy()` indexed (pcrt) and a local dict
-        literal's `.get` (pcrd), each refused as a class attribute. A call of a classmethod's first parameter (probe_hcls.py:
-        `cls().X`, pdci, and `inst = cls()` then `inst.X`, pdcv) is refused as "a call", as a call of a local or a module constant
-        bound to a class is. A `.format` or `.format_map` whose format string holds a replacement field reaching an attribute or
-        an index of its argument (probe_yfmt.py) is refused as "a replacement field reaching an attribute or an index of its
-        argument, which the census does not read": a class attribute through a positional field (pafmc), a keyword field (pafmk)
-        and a classmethod's first parameter (pafcm), an attribute set on self through a positional field (pafsf) and a keyword
+        literal's `.get` (pcrd), each refused as a class attribute. A method probe_hcls.py's route class decorates with
+        classmethod or staticmethod, called on self, is refused at the call since the tenth round's decorator ruling as a decorated
+        def the follow arm does not follow, its body not read: a classmethod whose body reads an attribute on its first parameter
+        (hcls), a staticmethod whose body reads one through the class's own name (hsta), a classmethod whose body calls its first
+        parameter and reads an attribute on the instance (pdci, `cls().X`) or on a local bound to it (pdcv, `inst = cls()`), and the
+        ninth round's read control, a classmethod that returns a module constant (hclsc); and so is pafcm (probe_yfmt.py), a
+        classmethod called on self whose body formats its first parameter. A `.format` or `.format_map` whose format string holds a
+        replacement field reaching an attribute or an index of its argument (probe_yfmt.py) is refused as "a replacement field
+        reaching an attribute or an index of its argument, which the census does not read": a class attribute through a positional
+        field (pafmc) and a keyword field (pafmk), an attribute set on self through a positional field (pafsf) and a keyword
         field (pafsk), a class through `.format_map` (pefm) and through a starred argument (pefp), self through `.format_map`
         (pefs), an index field over a fetch split across a module constant's values (pafix), and the format string a module
-        constant (pafnt) or a local (paflc) holds. The control is read, its
-        fetch listed: a classmethod that returns a module constant (hclsc). The stated limit for a class the census reaches as a
-        value without resolving it as the class is held by its witness: a loop over a module tuple of classes that reads each
-        one's attribute (nlmc) has no line, and its fetch is no site. At the ninth round's reviewed head every lambda plant, every
+        constant (pafnt) or a local (paflc) holds. A loop over a module tuple of classes that reads each one's attribute (nlmc), at the tenth round's
+        reviewed head the witness of a stated limit for a class the census reached as a value without resolving it as the class, is
+        refused as a class attribute at its read since that round's review (R1.1: the loop's target read by binding through the
+        tuple the module constant holds), and its fetch is no site. At the ninth round's reviewed head every lambda plant, every
         import-system plant, every self plant, ycat, ysat, ycba, ysub, ygl, ycsa, ycrb, yccm, ycl, the hmut plants, hcls, hcal,
         hmal, hcfm, nlmc, pcif, pcbo, pcne, pcrg, pcrl, pcrk, pcrt, pcrd, pdci, pdcv and every probe_yfmt.py plant are silent
         (read, the hidden text never scanned), ycok, yxf, hsta and hclsc are read, each fetch listed, yanc, yafc, ysan, ysubn,
@@ -6537,30 +7750,43 @@ class TheServedPagesAreScanned(_Scope):
         loop for ylw (silent, typed application/json); the import system's names taken out of _Served's builtins and names for
         every import-system plant (put back, each is refused as "a builtin other than the seven a page may call"), and each
         dedicated reason for its arm (resolve's Name arm for ydb, yds and ydn, the reasonless line in its place; _base's Name arm
-        for ydr, _module_why's reason in its place; _base's callee arm for ydc, "a call" in its place); resolve's refusal of an
-        attribute read on self for ysv, ysd, yann and yaft and the G case's G5, and receiver's for ysr, ysc, ysk and ysb (each
-        silent), within _self_root its descent through a method call's receiver for ysk and ysb (whose BoolOp stands under the
-        call) and its BoolOp arm for ysb; receiver's refusal of a base on a class (_class_root) for every class plant but hcfm,
-        the probe_ypc.py plants among them (pdci, pdcv and the probe_yfmt.py plants refused by their own arms), each read through
-        the class's own name then refused as "a function or class object" (ycl as "a name the function binds by a class
-        statement", ycrb and yccm with their module name's reason, pbrb as "a BoolOp") and each read through another name silent
-        again; within _class_name its top-level class statement for every plant read through the class's own name but ycl, for
-        hcal and hmal, whose values name the class, for hcfm and for every probe_ypc.py plant (each then refused as with
+        for ydr, _module_why's reason in its place; _base's callee arm for ydc, "a call" in its place); receiver's check of an
+        attribute's base, the root it reaches by binding (_attr_root's self root, the _SelfParam mark), for ysv, ysd, yann and yaft
+        and the G case's G5, and its check of each attribute read on a receiver's or a container's path (_path_attrs) for ysr, ysc,
+        ysk and ysb (each silent), within _path_attrs its descent through a method call's receiver for ysk and ysb (whose BoolOp
+        stands under the call) and its BoolOp arm for ysb; since the tenth round's review receiver's refusal of a base on a class
+        (_class_root) together with the class root of the attribute's base walk (_attr_root) for every class plant but hcfm, the
+        probe_ypc.py plants among them (pdci, pdcv and the probe_yfmt.py plants refused by their own arms), each read through the
+        class's own name then refused as "a function or class object" (ycl as "a name the function binds by a class statement", ycrb
+        and yccm with their module name's reason, pbrb as "a BoolOp") and each read through another name silent again (with
+        _class_root alone removed each stays refused as a class attribute, the walk reaching the class; with the walk's class root
+        alone removed, nlmc, which _class_root does not reach, goes silent); the follow arm's decorator refusal (_DECORATED) for hcls,
+        hsta, hclsc, pdci, pdcv and pafcm (each then followed to its undecorated body, its first parameter a parameter like any other:
+        hcls, pdci and pdcv refused as an attribute read on a parameter, hsta as a class attribute, pafcm as a replacement field
+        reaching its argument's attribute, and hclsc read, its fetch listed); within _class_name its top-level class statement for
+        every plant read through the class's own name but ycl, for hcal, hmal and nlmc, whose values name the class, for hcfm and
+        for every probe_ypc.py plant (each then refused as with
         receiver's refusal removed, or silent), and the page
-        function's class statement for ycl alone (then refused as "a name the function binds by a class statement"); within
-        _class_ref the classmethod's first parameter (_ctx's mark) for hcls, a local's values for hcal and a module constant's
-        value for hmal (each then silent again); and the text-call arm's refusal of a text method called on a class for hcfm (then
-        silent, the class passed over as a class object). Within _class_value its if-expression arm for pcif, its boolean
-        operation arm for pcbo and its walrus arm for pcne, and its arm for a method call on a name whose value holds classes for
-        pcrg, pcrl, pcrk, pcrt and pcrd (each then silent); within _class_root its BoolOp arm for pbrb (then refused as "a
-        BoolOp"), its descent through a method call's receiver for pbmc (then refused as "a function or class object") and its
-        test of a method call on such a name for pcrg, pcrt and pcrd (each then silent, pcrl and pcrk still refused through
-        _class_ref); within _holds_class a module constant's value for pcrg, pcrl, pcrk and pcrt, a local's values for pcrd, a
-        dict literal for pcrg, pcrl, pcrk and pcrd and a list literal for pcrt (each then silent); _scoped's refusal of a
-        classmethod's first parameter as a callee for pdci and pdcv (each then silent, the parameter a value slot); and the
-        text-call arm's refusal of a format field for every probe_yfmt.py plant (each then silent), within _field_reach its test
-        of a `.` for every plant but pafix and its test of a `[` for pafix, and within _format_texts a module constant's value for
-        pafnt and a local's values for paflc."""
+        function's class statement for ycl alone (then refused as "a name the function binds by a class statement"); and within
+        _binding (the one reading of a name's
+        binding the class walk, the attribute's base walk and _format_texts share) a local's values for hcal and nlmc and a module
+        constant's value for hmal and nlmc (each then silent again); and the text-call arm's refusal of a text method called on a
+        class for hcfm (then silent, the
+        class passed over as a class object). Each arm of the class walk that follows is backed since the tenth round's review by
+        the attribute's base walk (_attr_root), and reds with that walk's own edge beside it: within _class_value its if-expression
+        arm with the walk's if-expression edge for pcif, its boolean operation arm with the walk's BoolOp edge for pcbo and its
+        walrus arm with the walk's walrus edge for pcne, and its arm for a method call on a name whose value holds classes with the
+        walk's edge through a method call's receiver for pcrg, pcrl, pcrk, pcrt and pcrd (each then silent); within _class_root its
+        BoolOp arm with the walk's BoolOp edge for pbrb (then refused as "a BoolOp"), its descent through a method call's receiver
+        with _path_attrs's for pbmc (then refused as "a function or class object") and its test of a method call on such a name with
+        the walk's edge through a method call's receiver for pcrg, pcrt and pcrd (each then silent, pcrl and pcrk still refused
+        through their name's binding, which _class_value reads); within _binding a module constant's value for pcrg, pcrl, pcrk and
+        pcrt and a local's values for pcrd, and within _class_step a dict literal with the walk's dict values for pcrg, pcrl, pcrk
+        and pcrd and a list literal with the walk's list elements for pcrt (each then silent); since the tenth round's review, decision 2's refusal of a method called on the calling method's own first parameter
+        that _definer resolves to no def statement of a class of the file (_method_call) for ywm (then silent again); and the
+        text-call arm's refusal of a format field for every probe_yfmt.py plant but pafcm (each then silent), within
+        _field_reach its test of a `.` for every plant but pafix and its test of a `[` for pafix, and within _binding a module
+        constant's value for pafnt and a local's values for paflc, the format strings _format_texts reads."""
         self.assertARefused(("(y)",))
         for plant, tag, rel in Y_READ:
             with self.subTest(plant=plant):
@@ -6592,8 +7818,9 @@ class TheServedPagesAreScanned(_Scope):
         the ninth round's reviewed head slr, slx, sln, slc, slt, slo, slm and slb are silent (the container read whole, its text
         no load as it stands), sll, slk and slg are read whole, each page's fetch listed, slq is refused as "a function or class
         object", its receiver a class object, slz is read and slp has no line. The arm whose removal reds each: the Subscript arm's refusal for every refused plant but slq
-        (each then silent, or for sll, slk and slg read, its fetch a site); receiver's refusal of a base on a class for slq (then
-        "a function or class object" again); within it the test of an index that is no constant
+        (each then silent, or for sll, slk and slg read, its fetch a site); receiver's refusal of a base on a class (_class_root)
+        together with the class root of the walk from an attribute read on its path (_attr_root) for slq (then "a function or class
+        object" again, either alone keeping it refused as a class attribute); within it the test of an index that is no constant
         for sln, slc, slk and slg (with only an ast.Slice refused, each passes) and the test of an ast.Slice for slr, slx, slt,
         slo, slm, slb and sll (with only an index that is no constant refused, each passes); _carries_text's BoolOp arm for slb
         (then silent, receiver reading each operand); and its read of the container's kind for slp (with every container taken
@@ -6611,13 +7838,14 @@ class TheServedPagesAreScanned(_Scope):
             marks = tuple(_fgh_mark(t) for plant, t, _ in A_REFUSED if plant.startswith("(z)"))
             self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
 
-    def test_the_ninth_rounds_call_and_format_limits_refuse_by_name(self):
+    def test_the_ninth_rounds_value_slots_builtins_decoding_strs_and_subscript_operands_refuse_by_name_and_the_call_limit_holds_its_witnesses(self):
         """C of the ninth round's review (extra5-1, extra5-3) with its decisions 1, 2, 7 and 9, the (w) plants, do_GET branches
         whose hidden text Python serves, which at the reviewed head no reader scans but wsfull's (its whole fetch read there, a
         site): each refused plant is its SERVED line at its own
         line, the read and the witnesses are silent, and no hidden text is a site. extra5-1 with decision 2 (probe_wcl.py): a value
         slot (a None, bool or int constant, the empty bytes constant, or a Mult or LShift over int constants) that stands directly
-        as a `%` operand, a `.format` argument or a `.format_map` value is refused as "a value slot a % or a format call takes,
+        as the right operand of a `%` (bare, a tuple element or a dict literal's value), a `.format` argument or a `.format_map`
+        value is refused as "a value slot a % or a format call takes,
         which a conversion can turn into characters", whatever the letter: a `%c` (wipc), a `%x` (whx), a `%.1s` over the empty bytes (wbb), a `%` tuple
         element (wtup), a `%` dict value (wdct), int arithmetic (wari), a `{:c}`.format positional argument (wfmp), a `.format`
         keyword argument (wfmk) and a value in `.format_map`'s dict (wfmm); an honest int through a Name is read (wvn, no line).
@@ -6637,8 +7865,9 @@ class TheServedPagesAreScanned(_Scope):
         `.replace` (hsrp), the receiver of `.format` (hsfr), of `.format_map` (hsfmr) and of `.join` (hsjr), each a fetch split
         across two indexed pieces of a tuple constant, and a subscript whose value is a whole fetch (wsfull), is refused as "a subscript as an
         operand of +, %, an f-string, .join, .format, .format_map or .replace, whose joined text the census does not compute" and
-        read no further, so neither piece is scanned; a subscript through a function's return (wsfun) falls
-        under the call limit, "a function's return". A page built entirely from a refused expression yields no piece, so its route
+        read no further, so neither piece is scanned; a subscript of a function's return (wsfun) is refused as "a function's
+        return", receiver's refusal of a base the pass does not read, as at the reviewed head (a subscript read through a function,
+        which falls under the call limit, is the (cd) plants' witness cdsf). A page built entirely from a refused expression yields no piece, so its route
         is a second SERVED line (whex, wsad, wsfs, wsfun); a page with a literal beside the refusal has no such line. And in a module
         of its own (probe_wfb.py), decision 7: `from os import __builtins__ as _B` loses the file's builtin allowance, so `str(1)`
         is refused as "a builtin in a file that may rewrite the builtins" (wfb). At the reviewed head every refused plant is
@@ -6672,7 +7901,9 @@ class TheServedPagesAreScanned(_Scope):
 
     def test_the_ninth_rounds_unfolded_joins_a_bound_file_name_and_wide_formats_refuse_by_name(self):
         """D of the ninth round's review (extra7-1, extra7-2, correctness-2) with its decisions 3 and 4(a), the (o) plants, each page's
-        hidden text a fetch tagged with its plant, which Python serves. extra7-1 with decision 3: a join, format, format_map or
+        hidden text, where Python serves one, a fetch tagged with its plant or its module (the ox* modules' pages the text their key
+        rewrites, ofdc's and ofdr's the def's, tagged ofd), while owd and owf raise ValueError (they pin the census's crash guard),
+        ofs raises FileNotFoundError, and ofib, ofir and ofp serve no fetch (each pins a refusal). extra7-1 with decision 3: a join, format, format_map or
         replace called on the name str, bytes or bytearray is refused as "a join, format, format_map or replace called on the name
         str, bytes or bytearray, which the census does not fold", keyed on that spelling, since _const_text folds such a method only
         when it is called on a string constant or on a join it folds: in a page (probe_oub.py, the fetch split across its string
@@ -6687,7 +7918,7 @@ class TheServedPagesAreScanned(_Scope):
         _const_text does not expand is such a key too ("spells a name by a format the census does not expand"): a replacement field
         nested in the spec (oxn) and a precision over a million (oxw). extra7-2 with decision 4(a): `__file__` in a file where a
         statement binds it, in any scope and by any form, is refused as "__file__, which a statement of the file binds" wherever a
-        page reads it, before any binding is read: an import alias as a bare name (ofib) and as a method's receiver (ofir), a class
+        page reads it (never inside the index of a subscript over a container whose text the pass does not read, which is not read at all), before any binding is read: an import alias as a bare name (ofib) and as a method's receiver (ofir), a class
         so named as an attribute's base (ofc), a def so named as a callee (ofdc) and as a receiver's callee (ofdr), the page
         function's local (ofl) and a followed function's parameter (ofp); and a file read whose path starts from `Path(__file__)`
         there has no path, refused as a file the walk does not scan (ofs). The (v) case's vfm and vfg moved to this reason.
@@ -6726,6 +7957,512 @@ class TheServedPagesAreScanned(_Scope):
                 self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
         with self.subTest(plant="(o) no hidden text is a site"):
             self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in O_MARKS)], [])
+
+    def test_the_tenth_rounds_padded_fields_read_at_their_value_and_the_class_walk_keeps_every_path(self):
+        """R3 of the tenth round's review, the (r3) plants, each page's hidden text a fetch tagged with its plant (for the key's
+        module, with the module: zpkx), which Python serves. correctness-5, extra5-2, extra6-5 and extra9-2 (one defect): a
+        zero-padded width or precision of at most seven significant digits whose digits run past the 4300 int() converts is read
+        at its value, since _too_wide converts the digits after the leading zeros, so no width stops the census: in a page (probe_zpf.py) a `.format` width of 5 (zpf), a
+        `.format_map` precision of 99 (zpm) and a `%` precision of 99 (zpp), each 5000 digits long, are expanded and their fetch
+        listed; and as getattr's key (probe_zpk.py) a `%` whose precision of 4 runs to 5000 digits reads as "exec", so __file__, a
+        module constant and str rewritten through it are refused with that run-time form, "spells exec as a string", and its
+        line. correctness-6: the class walk is iterative, with one visited set per query and no depth bound, so it keeps every path
+        to a name: a class reached through 32 local aliases and through the last of them alone is refused as a class attribute as
+        a `.format`'s receiver (mdf) and as an attribute's base (mdb), and so is a class a module constant's dict registry returns at
+        the end of that chain, as a `.format`'s receiver (mdg). At the tenth round's reviewed head the census stops on each of zpf,
+        zpm, zpp and zpk's key (ValueError from int()), mdf and mdb are refused there as here, and mdg is silent there (that head's
+        class walk read no registry the builtin dict builds). The change whose reversal reds
+        each: the conversion put back on the whole digit string for zpf, zpm, zpp and zpk (the census raises ValueError, every case
+        of the class red), and the reviewed head's depth bound of 32 kept beside the class walk's visited set for mdg (the chain's
+        last alias, expanded first at the end of the long path with its value cut there, is skipped on the short one, so the class
+        walk drops mdg's class, and its `.format` falls to the text-call arm, refused as a format string reached other than as a
+        string constant, not silent: mdg's class-attribute line becomes that format-string line, the pin's exact line moving);
+        mdf and mdb stay refused there through R1.1's walk from the receiver's or the attribute's base (_value_class, _attr_root),
+        which has no bound, and which does not read a registry the builtin dict builds, so neither reds under that memo, which is why
+        mdg, not mdf, is the substitute this pin reds on (a disclosed departure from the ruled shape, mdf red under the memo)."""
+        self.assertARefused(("(r3)",))
+        for plant, tag, rel in R3_READ:
+            with self.subTest(plant=plant):
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, "a zero-padded field 5000 digits long reads at its value: expanded, its join read", rel)
+        for tag, _ in R3_FILES:
+            with self.subTest(plant="(r3) the module's SERVED lines (%s)" % tag):
+                got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag)))
+                want = sorted(line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(r3)") and line.startswith("SERVED %s:" % _a_rel(tag)))
+                self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        with self.subTest(plant="(r3) no hidden text is a site"):
+            marks = tuple(_fgh_mark(t) for t in ("mdf", "mdb", "mdg", "zpkx"))
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
+
+    def test_the_tenth_rounds_attribute_reads_refuse_by_their_bases_root_read_by_binding(self):
+        """R1.1 of the tenth round's review (correctness-3, extra4-1, extra9-1) with its decisions 1 and 9 and the 17:31Z choice (a),
+        the (r1.1) plants (probe_ral.py, probe_rhp.py, probe_rcl.py and probe_rfb.py, and the witness's probe_rsw.py and
+        probe_rsx.py), each page's hidden text a fetch tagged with its plant, which Python serves (rfv serves str's docstring and no
+        fetch). An attribute read in a page position, as a value or on a receiver's or a container's path, is refused by name unless
+        the root its base reaches by binding (_attr_root) is a module constant, an import, one of the seven builtins, a value slot
+        or a literal the pass reads. Silent at the reviewed head and refused here: as an attribute read on self, ral, rie, rbo, rwl,
+        rwv, rrc, rsb, rct, rmc, rlt, rse, rdk, rdv, rls, rst, rgc, rsp, c10n, r2cn, c10i and qsg; as one read on a parameter, rhp, rhd,
+        rpa, rhc, rcp and rcd; as one read on an except name, rex; as a class attribute, rcl, rci, rrg and rdb; and with the reason
+        the pass gives a root reached as a name's value, rft ("a function's return") and rfm ("a method's return"). Silent at the
+        reviewed head and refused here at the call as a decorated def the follow arm does not follow (the tenth round's decorator
+        ruling), each page a bare unread call with its serves line: rstm, a staticmethod called on self and handed self, whose body reads an attribute on its first
+        parameter, and rcc, a classmethod called on self whose body reads one through a loop over its first parameter. Held at
+        their outcome: rok and rkc read, each fetch listed; rfv, a local bound to `__file__` where it is a value slot, with no line;
+        rsm refused as "a method's return" and rbh as "a BoolOp" at both heads; rmm refused as the container the module writes, at
+        the local's value, at both heads; rsh refused at the reviewed head as an attribute read on self, by the spelling, and here
+        as one read on a parameter; rfb refused as `__file__` in a file that binds it, here at its attribute read and at the
+        reviewed head at the local's value; and the class limit's witness, rsw, with no line and no site, the import gate's line
+        naming the sibling, a module KNOWN_IMPORTS does not list. The arm whose removal reds each: receiver's check of an
+        attribute's own base for every plant read as a value (each then silent, but rmc refused at its local's value through the
+        path check, and rfb and pdcv back at their local's value); its check of each attribute read on a receiver's or a container's
+        path (_path_attrs) for rrc, rsb, rct and rex (the first three then refused with the attribute or the subscript as the line's
+        expression, rex silent), within _path_attrs its descent through a subscript for rsb; _attr_root's self root for every self
+        plant (each then silent) and the _SelfParam mark for the same (each then refused as a parameter's attribute); the follow arm's
+        decorator refusal (_DECORATED) for rstm and rcc (each then followed to its undecorated body, its first parameter a parameter
+        like any other, and refused as an attribute read on a parameter); the parameter root for rhp, rhd, rpa, rhc, rcp, rcd and
+        rsh (each then silent), with _root_name's parameter beside a local's values for rpa and _root_kind's callee for rhc; the
+        except root for rex (then silent, or refused as a parameter's attribute with _root_slot's except test removed); the class
+        root for rcl, rci and the (y) plant nlmc (each then silent), a class counted inside a module constant's value for
+        nlmc, and _root_name's class name test for rcl and rci (then refused as "a function or class object"), nlmc (then silent); the reason for a root reached as a
+        name's value for rft, rfm and rfb (rft and rfm then silent, rfb and pdcv back at their local's value), that rule taken only
+        for a root reached as a name's value for rbh (then refused as "a function's return") and only outside a module constant for
+        rkc (then refused as "a function's return"); the edges: an attribute's value for rmc, a subscript's container for rls, rst
+        and rdb, a BoolOp's operands for rbo (then refused as "a BoolOp"), a walrus's value for rwv (then as "NamedExpr"), a starred
+        value for rst (then as "Starred"), an if-expression's branches for rie and rci, a list's elements for rls and rst, a tuple's
+        for rlt, rgc, rcl, rst and nlmc, a set's for rse, a dict's keys for rdk and its values for rdb and rdv (rrg is decided first by the class walk's subscript arm at receiver, so removing R1.1's arms alone leaves it refused, and removing that subscript arm alone leaves R1.1's dict-values edge refusing it; rrg reds only when both the class walk's subscript arm and R1.1's dict-values edge are removed; rdb, a class through a dict literal's values in a shape the class walk's arms do not take, changes reason to "a BoolOp" when the dict-values edge is removed, and rdv, an attribute on self read through a local dict literal's value, goes silent there, so rdv is R1.1's dict-values edge's own escape pin), a method call's
+        receiver for rmc (then refused at its local's value through the path check), a local's values for every plant bound through
+        a local (each then silent, pdcv and rfb back at their local's value) and a module constant's value for rdb and nlmc; the
+        stops: a method's return on self for rsm and rfm (each then refused as self's), a run-time memo for rmm (then refused as a
+        class attribute at its read) and `__file__` in a file that binds it for rfb (then refused as self's); and the value slot
+        `__file__` for rfv (then refused with the module name's reason). The skip of the path check where the receiver is the
+        attribute's own base reds nothing and needs no pin: the check on that base reads every attribute further down its path."""
+        self.assertARefused(("(r1.1)",))
+        for plant, tag, rel in R1_READ:
+            with self.subTest(plant=plant):
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, plant, rel)
+        with self.subTest(plant="(r1.1) control: a local bound to __file__, a value slot, its attribute read"):
+            self.assertEqual([ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:%d " % (_a_rel("ral"), self.at["rfv"]))], [],
+                             "an attribute read on a value slot passes: no line")
+        for tag in ("ral", "rhp", "rcl", "rfb"):
+            with self.subTest(plant="(r1.1) the module's SERVED lines (%s)" % tag):
+                got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag)))
+                want = sorted(line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(r1.1)") and line.startswith("SERVED %s:" % _a_rel(tag)))
+                self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        with self.subTest(plant="(r1.1) the class limit's witness: a class a sibling module defines, reached as that module's attribute"):
+            self.assertEqual([ln for ln in self.out.splitlines() if _a_rel("rsw") in ln or _a_rel("rsx") in ln],
+                             ["IMPORT %s:1 imports probe_rsx, a module the census does not know: a client that opens connections takes its "
+                              "primitives into NET or SUB; either way add it to KNOWN_IMPORTS with the reason" % _a_rel("rsw")],
+                             "the served pass writes no line for the page and lists no fetch; the import gate names the sibling")
+        with self.subTest(plant="(r1.1) no hidden text is a site"):
+            marks = tuple(_fgh_mark(t) for plant, t, _ in A_REFUSED if plant.startswith("(r1.1)")) + (_fgh_mark("rsw"),)
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
+
+    def test_the_tenth_rounds_method_calls_follow_only_the_calling_methods_own_first_parameter(self):
+        """Decision 2 of the tenth round's review as the 21:39Z items 1 and 3 rule it, the (d2) plants (probe_rma.py, probe_rmh.py,
+        probe_rtxt.py, probe_rbase.py, probe_i3i.py and probe_i3r.py), each page's hidden text a fetch tagged with its plant, which
+        Python serves. A method call in a page position is followed only where its receiver is the calling method's own first
+        parameter (self by binding, however spelled, never rebound in its scope), to the def statement the route class's method
+        resolution order resolves the name to in a class of the file; a route class's method called on self through anything else,
+        on any other parameter or on a name spelled self that is not that parameter is refused as "a route class's method called
+        other than on the calling method's own first parameter, which the census does not follow"; and a method called on self that
+        no def statement of a class of the file defines first in that order, or any other name called on self through anything else,
+        is refused as "a method called on self that no def statement of a class of the file defines first in the route class's
+        method resolution order, which the census does not follow"; and a method the follow arm would take is refused instead
+        where the file may replace it at run time, as "a method called on self whose name the file stores or deletes as an
+        attribute or names as a string to setattr, delattr, __setattr__ or __delattr__, or whose route class's method resolution
+        order binds __getattribute__, so code may replace it at run time". Silent at the reviewed head, whose follow arm read the name self
+        as spelled and the route class's own body, and refused here as a route class's method called other than on that parameter:
+        rma, rmie, rmbo, rmwl, rmls, rmlt, rmse, rmdk, rmdv, rmst, rmgc, rmp and rmq on self through a binding, rmh, rmhd, rmpa,
+        rmsp, rmhp, rmhs and rmhb on a parameter; read at the reviewed head, its fetch listed, and refused so here: rmrb (a
+        first parameter the method rebinds) and rmss (the ruled spelling, a helper's local named self bound to a string). Silent at
+        the reviewed head and refused as a method called on self that no def statement of a class of the file defines first: i3b,
+        i3d, i3g, i3k, i3p, i3a, i3i and i3r (and (y)'s ywm, its own case). Silent at the reviewed head, which followed the def
+        statement, and refused here as a method the file may replace: rmr (a module-level store on the class, until this refusal the
+        limit's witness), rpls (a setattr naming it by a string constant), rpli (a store on the instance) and rplg (a base class of
+        the file binding __getattribute__). Silent at the reviewed head and refused here as "a
+        method's return", on a receiver's path: rmtp; and with the default's reason, "a method's default naming a name the class
+        body binds", rbdf, a default of a method a base class of the file defines. Followed here, each fetch listed: rmt, rtxt,
+        rbase and rmro, each silent at the reviewed head, and rrd, refused there as a file the walk does not scan. Refused here at
+        the call as a decorated def the follow arm does not follow (the tenth round's decorator ruling), each page a bare unread call
+        with its serves line: rmstm, a staticmethod called on self and handed self, silent at the reviewed head, and rmcl, a
+        classmethod called on self, refused there as a class attribute (its first parameter taken for the class). Held at their
+        outcome at both heads: rms and rcf followed, each fetch listed; d2ok read, its fetch listed (the call limit: a method of a class that holds
+        no route, called on a helper's parameter); and rplx, the witness of the limit for code behind a name on self (a module
+        function that replaces the method through setattr, its name handed in as an argument), with no line and no site. The arm whose removal reds each: the Call arm's decision 2 (_method_call in resolve, before the file-read and
+        text-call arms) for every plant refused or followed at a call (the refusals then silent or read, rrd back to a file the walk
+        does not scan, the followed plants, rms and rcf silent, and rmtp's method no longer reached; rmq, rmhp, rmhs and i3p stay
+        refused on their path), and the path check in receiver (_path_calls) for rmq, rmhp, rmhs and i3p (rmq then refused at the
+        inner call, the others silent); the follow outcome for rmt, rtxt, rrd, rbase, rmro, rms, rcf, rmrb, rmtp and rbdf (each then
+        silent or unread past the call); the follow arm's decorator refusal (_DECORATED) for rmstm and rmcl (each then followed to
+        its undecorated body, its first parameter a parameter like any other, and refused as a route class's method called on it), and the refusal where _definer finds no def for i3b, i3d, i3g, i3k, i3p,
+        i3i, i3r and ywm (each then silent); the refusal where the file may replace the method (_replaced in _method_call) for rmr,
+        rpls, rpli and rplg (each then followed to its def statement and silent), within it the attribute stores for rmr and rpli,
+        the setters' string names for rpls and the __getattribute__ test for rplg; _self_method keyed on the binding for rmtp (with the name self as spelled, silent);
+        _own_self's mark for rmh, rmhp, rmhs, rmsp and rmhb (a parameter then taken for the calling method's first
+        parameter, the tree's eight calls on a parameter among them) and its forms exactly ["param"] for rmrb (then followed, its
+        fetch listed); the refuse arm's name set for i3a (then refused as a route class's method) and the tree's eight calls on a
+        parameter, `q.get`, `raw.decode` and `mm.group` (each then refused), its self root for the self plants (each then refused as
+        a method called on self that no def statement defines first), its parameter root for rmh, rmhd, rmpa, rmhp, rmhs and rmhb
+        (each then silent), its spelling test for rmss (then read), and the refusal of any other name on self through a binding
+        for i3a (then silent); the receiver walk's edges: a subscript's container for rmls, rmdv and rmst, a walrus's value for
+        rmwl, a starred value for rmst, an if-expression's branches for rmie, a BoolOp's operands for rmbo, a list's elements for
+        rmls and rmst, a tuple's for rmlt, rmgc and rmst, a set's for rmse, a dict's keys for rmdk and its values for rmdv, a
+        local's values for rma, rmwl, rmlt, rmse, rmdk, rmgc, rmp, rmq, rmhd and i3a, a parameter a local also binds for rmpa, the
+        parameter and self roots for every plant bound through one, and its skip of a class for rmcl (then refused as a route
+        class's method); _definer's stop at a base the census does not read for i3i (then followed to the file base's get), its step
+        past a class that binds no such name for rbase, rmro and rbdf, its one def statement for i3d, its global declaration for
+        i3g, and its def of the body itself for i3k (the census then stops with a KeyError); the route class's method resolution
+        order in place of its own body for rbase, rmro and rbdf, and C3 in place of a depth-first order for rmro; a base read as a
+        class of the file only as its name's one module-level binding for i3r (then followed to the def a later assignment
+        replaces); the method names of the classes of the file the route classes derive from for rmhb, and the set computed once per
+        file for every plant keyed on it; decision 2 placed before the text-call arm for rtxt and rmss and before the file-read arm
+        for rrd; _path_calls's descent through a subscript for rmhs; and the followed method's defaults read in the scope of the
+        class whose def it is for rbdf. Not red, argued: _path_calls's descent through an attribute and a BoolOp, since an attribute
+        read on the path is refused first by its base's root (_attr_root) and receiver splits a BoolOp receiver before the path is
+        read."""
+        self.assertARefused(("(d2)",))
+        for plant, tag, rel in D2_READ:
+            with self.subTest(plant=plant):
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, plant, rel)
+        with self.subTest(plant="(d2) the limit that stays, code behind a name on self: a method the route class defines, replaced on the class "
+                                "at run time by setattr with its name handed in"):
+            self.assertEqual([ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:%d " % (_a_rel("rma"), self.at["rplx"]))], [],
+                             "the census reads the method's def statement, which serves no fetch: no line")
+        for tag, _ in D2_FILES:
+            if tag == "dec":
+                continue   # probe_dec.py carries the additions past the letter (the (dec) group), checked in its own case
+            with self.subTest(plant="(d2) the module's SERVED lines (%s)" % tag):
+                got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag)))
+                want = sorted(line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(d2)") and line.startswith("SERVED %s:" % _a_rel(tag)))
+                self.assertTrue(want, "the case names the module's refusals")
+                self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        with self.subTest(plant="(d2) no hidden text is a site"):
+            marks = tuple(_fgh_mark(t) for plant, t, _ in A_REFUSED if plant.startswith("(d2)")) + (_fgh_mark("rplx"),)
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
+
+    def test_the_follow_arms_additions_past_the_rulings_letter_refuse(self):
+        """The owner's additions past the rulings' letter, the (dec) plants (probe_dec.py), each page's hidden text a
+        fetch Python serves, refused here for the owner's default the reviewer accepted, each 0 live over the walked files and each
+        listed in the message's additions section with its drop recipe. The follow arm and decorators (the tenth round's decorator
+        ruling applied literally): a def under ANY decorator is not followed, whatever the decorator is bound to, since Python calls
+        the decorator's return in the def's place, refused as _DECORATED, its bare unread call taking a second serves-text/html line
+        (xdcr, a wrapping decorator on the route class's method; xdcb, one on a file base's method reached through the method
+        resolution order). The replacement check's unbound form on a class: `type.__setattr__(Handler, "name", f)` names the attribute
+        in its second argument (the receiver `type` is a class), read so the method it replaces refuses as _REPLACED (xtsa). The
+        module binds neither staticmethod nor classmethod and its do_GET carries no decorator, so the handler's first parameter is
+        self. The reds, proven in the build record over mutants of the fix script, never in the tree: xdcr and xdcb are followed to
+        their undecorated bodies and go silent when the _DECORATED check is removed, while Python serves each decorator's fetch; xtsa
+        is read as the bound setter's first argument and followed to the undecorated def when `type` is dropped from the
+        receiver-is-a-class test."""
+        self.assertARefused(("(dec)",))
+        with self.subTest(plant="(dec) the module's SERVED lines"):
+            got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel("dec")))
+            want = sorted(line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(dec)"))
+            self.assertTrue(want, "the case names the module's refusals")
+            self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        with self.subTest(plant="(dec) no hidden text is a site"):
+            marks = tuple(_fgh_mark(t) for t in ("xdcrb", "xtsa"))
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
+
+    def test_a_route_handlers_first_parameter_is_not_classified_under_a_decorator_or_a_rebound_staticmethod(self):
+        """A route handler's first parameter the census does not classify (the (uc) plants, each page's hidden text a fetch Python
+        serves): where the handler carries a decorator, whatever it is bound to, or a statement of the file binds staticmethod or
+        classmethod, in any scope and by any form, a star import among them, the handler's first parameter is neither self nor any
+        other parameter to the census (_Served._ctx's _Unclassified mark), and a method called on it, or it called, refuses by name as
+        _UNCLASSIFIED. probe_zdg.py: a do_GET under staticmethod, which the file rebinds to a function that returns its argument, so
+        Python calls do_GET as a method and its first parameter is the handler; its page calls a method set on the class at module
+        level (zdg), silent at the reviewed head. probe_zdw.py: a do_GET under a decorator that calls it with another object in the
+        handler's place (zdw), whose page calls that object's own method, silent at the reviewed head, which followed the route
+        class's def of that name. probe_zcl.py: a do_GET under a decorator that returns its argument, whose page
+        calls its first parameter (zcl, `self()`, the route class's `__call__`), passed at the reviewed head as a parameter's call,
+        silent. probe_zre.py: a staticmethod (zst) and a classmethod (zct), each rebound at module level
+        to a fetch-prepending wrapper, and an alias of staticmethod (zal), each called on self from a do_GET with no decorator in a
+        file that binds both names, refused as _UNCLASSIFIED before the decorator refusal is asked, each page a bare unread call with
+        its second serves-text/html line. The reds, proven in the build record over mutants of the fix script, never in the tree: zdg
+        goes silent while Python serves its fetch when the handler's first parameter is classified by its decorator's binding instead
+        (a decorator bound to staticmethod or classmethod through module-level aliases, a name so spelled and rebound taken as the
+        builtin, its first parameter then no self, and any other decorator's first parameter taken for self), and so do zdw and zcl;
+        zdw and zcl go silent when the decorator term is removed (the handler's first parameter then self: zdw followed to the
+        route class's def, zcl's call passed as a parameter's); zdg goes silent when _method_call's refusal is removed (zdw, zst, zct
+        and zal then refused as a route class's method called on a name spelled self), and zcl when _scoped's is; zst, zct and zal are refused as a decorated def when the file term is removed (the handler's first
+        parameter then self) and go silent when the decorator refusal is removed too."""
+        self.assertARefused(("(uc)",))
+        for tag in UC_TEXTS:
+            with self.subTest(plant="(uc) the module's SERVED lines (%s)" % tag):
+                got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag)))
+                want = sorted(line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(uc)") and line.startswith("SERVED %s:" % _a_rel(tag)))
+                self.assertTrue(want, "the case names the module's refusals")
+                self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        with self.subTest(plant="(uc) no hidden text is a site"):
+            marks = tuple(_fgh_mark(t) for t in ("zdg", "zdw", "zcl", "zst", "zct"))
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
+
+    def test_the_tenth_rounds_file_reads_through___file___take_it_as_the_file_only_where_it_is_the_files_own_path(self):
+        """R1.2 of the tenth round's review (correctness-4, extra5-1), the (r1.2) plants (probe_fpg.py, probe_fpr.py, probe_fps.py
+        and probe_fpc.py, each the page `open(__file__).read()`, with the siblings probe_fpt.py and probe_fpu.py): `__file__` is the
+        file's own path only where no statement of the file binds it, the file writes no name of its module namespace through a
+        computed name and may not rewrite it at run time, no function binds it under a global declaration and no module-level
+        statement writes it, and the module holds no star import (_file_slot, the one predicate for the bare name and for
+        `Path(__file__)` and `open(__file__)`); in any other file a file read whose path the census builds from either is refused as
+        a file the walk does not scan. Silent at the reviewed head, whose _path took `open(__file__)` as this file, a file the walk
+        covers, wherever no statement bound `__file__`, and refused here so: fpg, which points `__file__` at probe_fpt.py through
+        globals(), fpr, which does so through exec, and fps, which star-imports it from probe_fpu.py, whose `__all__` names it;
+        Python serves probe_fpt.py's text, each plant's fetch in it, from each. Read at both heads, with no line: fpc, the same page
+        in a file that does none of those. fps's import of its sibling, a module KNOWN_IMPORTS does not list, is the import gate's
+        line at both heads. The change whose reversal reds each: _path's `__file__` arm keyed on _file_slot (with the reviewed head's
+        test, a statement binding `__file__` alone, fpg, fpr and fps each silent), within _file_slot the computed-name and run-time
+        term for fpg and fpr (each then silent, and the bare `__file__` of the computed-name and run-time files of (o), (r3), (s), (u)
+        and (x) then a value slot, each of their `__file__` refusals gone) and the star-import term for fps (then silent), and its
+        statement-binding term for (o)'s ofs (then read as this file).
+        The term for a name Result.rebinds holds reds nothing and needs no pin: every binding of `__file__` that puts it there sets
+        the statement-binding term too, and its other writes (a mutating method or a subscript store on the name) cannot run on the
+        str the import system binds."""
+        self.assertARefused(("(r1.2)",))
+        with self.subTest(plant="(r1.2) control: a file read through open(__file__) in a file that does none of those, read as this file"):
+            self.assertEqual([ln for ln in self.out.splitlines() if _a_rel("fpc") in ln], [],
+                             "its path is this file, a file the walk covers: no line")
+        for tag, _ in R12_FILES:
+            with self.subTest(plant="(r1.2) the module's SERVED lines (%s)" % tag):
+                got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag)))
+                want = sorted(line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(r1.2)") and line.startswith("SERVED %s:" % _a_rel(tag)))
+                self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        with self.subTest(plant="(r1.2) the import gate names fps's sibling, a module the census does not know"):
+            self.assertEqual([ln for ln in self.out.splitlines() if any(_a_rel(t) in ln for t, _ in R12_FILES) and not ln.startswith("SERVED ")],
+                             ["IMPORT %s:1 imports probe_fpu, a module the census does not know: a client that opens connections takes its "
+                              "primitives into NET or SUB; either way add it to KNOWN_IMPORTS with the reason" % _a_rel("fps")])
+        with self.subTest(plant="(r1.2) no hidden text is a site"):
+            marks = tuple(_fgh_mark(t) for t in ("fpg", "fpr", "fps"))
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
+
+    def test_the_tenth_rounds_send_type_writes_refuse_where_the_definition_binds_the_written_name_again(self):
+        """R1.3 of the tenth round's review (correctness-1), the (r1.3) plants (a module each, probe_srl.py to probe_srt.py): a `_send`
+        call is refused by name, before any typing, where one of the definition's own Content-Type writes (its innermost def the
+        definition, or a def in it itself named `_send`: the writes the Content-Type loop skips) names a parameter the typing reads
+        from the call and the definition binds that name other than as that parameter anywhere in its body, in its own scope or a
+        nested one, the line naming the name and the forms (_type_rebinding). Each plant's own write takes text/html from a binding of
+        `ctype` while the call passes text/plain, so Python serves its page, a fetch tagged with the plant, as text/html, where the
+        reviewed head typed it text/plain and read no page (silent there). Refused here: a lambda's parameter (srl), a comprehension's
+        target (sro), an assignment (srs), a loop target (srf), a walrus (srw), an except name (sre), a match capture (srm), a
+        keyword-only parameter assigned (srq), and a def nested in the definition, itself named `_send`, whose parameter binds the
+        name (srn); on 3.12 and later also a type parameter of a class statement in the definition (srt, whose write Python serves as
+        the type parameter's name, no script type: a refusal that fails closed). Held at both heads: srd, a write in a def nested in
+        the definition under another name, refused by the Content-Type loop alone, its type unresolved, with no second line here; and
+        srk, a lambda around the write that binds another name, with no line (the call's text/plain is what Python serves). The
+        change whose reversal reds each: the refusal before any typing (every refused plant then silent, as it is when the check
+        reads only calls typed as a script-running type, the reviewed head's order); the definition's own forms for srs, srf, srw,
+        sre, srm and srq and the forms of the scopes nested in it for srl, sro and srn (each then silent); the type-parameter form
+        for srt (then silent); the keyword-only parameters among the names the typing reads for srq (then silent); the own writes
+        read as the writes the Content-Type loop skips, by the innermost def's name, for srn (keyed on the definition itself, srn is
+        silent) and for srd (every write under the definition read so, srd gains a second line). Keyed on the binding, not on a
+        lambda around the write: a check that refuses every own write in a lambda reds srk. The global or nonlocal declaration
+        reds nothing and needs no pin: a declaration binds nothing by itself, and any binding it lets a nested scope make is a form of
+        that scope, read above."""
+        self.assertARefused(("(r1.3)",))
+        with self.subTest(plant="(r1.3) control: a lambda around the definition's own write that binds another name, no line"):
+            self.assertEqual([ln for ln in self.out.splitlines() if _a_rel("srk") in ln], [], "the written name is the call's: typed text/plain, no line")
+        for tag, _ in R13_FILES:
+            with self.subTest(plant="(r1.3) the module's SERVED lines (%s)" % tag):
+                got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag)))
+                want = sorted(line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(r1.3)") and line.startswith("SERVED %s:" % _a_rel(tag)))
+                self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        with self.subTest(plant="(r1.3) no hidden text is a site"):
+            marks = tuple(_fgh_mark(t) for t, _ in R13_FILES)
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
+
+    def test_the_tenth_rounds_format_fields_read_nested_and_a_format_string_reached_any_other_way_refuses(self):
+        """R1.4 of the tenth round's review (correctness-2) with the 17:31Z choice (c), landing together with R3's walk, the (r1.4)
+        plants (probe_c2a.py and probe_tst.py), each page's hidden text a fetch tagged with its plant, which Python serves. A
+        `.format` or `.format_map` whose format string, read through its receiver (_format_texts, iterative, its step _format_step,
+        no depth bound), holds a replacement field whose name reaches an attribute or an index of its argument, at its top level or
+        nested in a field's format spec at any depth (_reaches), is refused as "a replacement field reaching an attribute or an
+        index of its argument, which the census does not read"; one whose receiver reaches anything but a string constant, a join
+        of them or a name bound to one is refused as "a format string reached other than as a string constant, a join of them or a
+        name bound to one, whose fields the census does not read", where no field it reads reaches, the receiver is no class,
+        stands as no subscript operand and is refused by name nowhere as the pass reads it (the (fd) plants); a call _join refuses
+        as too wide or nested takes neither. Silent at the reviewed head, which
+        read top-level field names alone, and refused here as such a field, each with a datetime.date as argument 0, whose
+        __format__ hands the spec to strftime: c2a (an attribute in a field nested in a format spec, the format string a module
+        constant's), c2m (the `.format_map` twin), c2i (an index so nested), c10l (the format string a local's) and ndp (at the end of
+        a chain of 40 local aliases, past the reviewed head's walk bound of 32). Silent at the reviewed head, which dropped such a
+        format string without a word, and refused here as a format string reached otherwise: tst and tss (a module constant bound to
+        a template's `.strip()`, read on a class and on self), tfn (a function's return), tie (an if-expression), til (a local bound
+        to one), trp (a `.replace` on a module constant), tcat (a module constant bound to a `+` of a module constant and a literal),
+        tfs (a local so bound, read through a keyword field on self), tpm (a followed method's parameter), tmix (a local with one
+        constant value whose fields reach nothing and one call value, which a refusal only where no format string is read at all
+        would leave silent), tlp (a loop target over a tuple of templates) and tdp (a function's return at the end of a chain of 40
+        local aliases). Held at both heads: c2l, the literal nested form, one line as a format spec holding a replacement field; tmr,
+        a local with one constant value whose field reaches and one call value, one line as such a field; and the control tok, a
+        format string a module constant holds whose fields reach nothing, read, its argument's fetch listed. The arm whose removal
+        reds each: the field-reach test on a field's name for c2a, c2m, c2i, c10l, ndp and tmr (and the (y) plants' eleven fields);
+        the descent into a field's format spec for c2a, c2m, c2i, c10l and ndp; the refusal of a format string reached otherwise, and
+        _format_texts's answer that the receiver reaches anything else, each for tst, tss, tfn, tie, til, trp, tcat, tfs, tpm, tmix,
+        tlp and tdp (and G4b, its own case); _format_texts's read of a name's binding for c2a, c2m, c2i, c10l, ndp and tmr (and (y)'s
+        pafnt and paflc); and its step, which expands each name once, for those and for tst, tss, til, tcat, tfs, tmix, tlp and
+        tdp."""
+        self.assertARefused(("(r1.4)",))
+        for plant, tag, rel in R14_READ:
+            with self.subTest(plant=plant):
+                self.assertFetchUnclassifiedAt(self.at[tag], tag, plant, rel)
+        for tag, _ in R14_FILES:
+            with self.subTest(plant="(r1.4) the module's SERVED lines (%s)" % tag):
+                got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag)))
+                want = sorted(line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(r1.4)") and line.startswith("SERVED %s:" % _a_rel(tag)))
+                self.assertTrue(want, "the case names the module's refusals")
+                self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        with self.subTest(plant="(r1.4) no hidden text is a site"):
+            marks = tuple(_fgh_mark(t) for plant, t, _ in A_REFUSED if plant.startswith("(r1.4)"))
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
+
+    def test_the_tenth_rounds_lookup_keys_refuse_unless_the_positive_allowlist_proves_their_shape(self):
+        """Decision 3 of the tenth round's review (extra6-2) as the owner rebuilds it: the lookup-key evaluator is a POSITIVE
+        ALLOWLIST (Scan._unfolded holds each non-constant key for _key_settle; _key_form, _key_binding, _key_step, iterative, one
+        visited set per query keyed on the binding's scope, the name and the context, no depth bound). The (d3) plants, a probe module
+        each (_x_served's shape: getattr of builtins keyed so runs exec, which rewrites `__file__`, a module constant and str, and a
+        page reads each; Python serves each page's fetch). A key is a run-time form of its file unless the allowlist proves its shape,
+        and every shape it does not prove refuses by name. The refused plants (D3_SPEC), each page refused with the key's form and its
+        line, silent at the reviewed head but for the str page of a file that imports builtins (refused there as a shadowed builtin) and
+        kfold, whose direct `+` of two string constants the reviewed head folds to the listed name exec, refused at both heads:
+        the direct unfolded forms kgj, kpc, kpl, kfs, kfm, kfn and krp; through the walk's edges and scopes kie, kbo, kname, klocal,
+        kgd (global), knl (nonlocal), kcb (a class body's name) and xaug; a key that reaches a folded constant spelling a listed name,
+        refused by name (xcon, xplf, xjf, kfold); a text-type method mlow, mnam, munb and mbnd; node kinds named in words wml, wlc,
+        xlam and xcls; subscripts, all refused, ksb, xsl and xmut; the honest shapes the ninth round's pass read, refused now and
+        recorded as the allowlist's cost (0 live), hint, hget, hgdf, hgit, hitm, hkey, hval, hsrt, hrev, hdel, hupd and hunp; and the
+        rebinding and order-independent shapes, each refused: a module constant the file writes through the module object, read by a subscript refused whatever
+        the write (xkms, xkma); a name a class body or a nested function writes under a nonlocal declaration (xncl, knw); a name
+        a function or a class body writes under a global one, read by a function defined later in the file, order-independent (xgl,
+        xglc); a str or bytes method bound to a name or reached through the type (xub1 to xub7); and the tenth round's tightening (an
+        attribute accepted only as a loop or comprehension source, a loop target accepted only inside a function): an attribute of an
+        import as a direct key (aatt) and through a name (aatn), their from-import twins (aftd, aftn), and a module-level loop target
+        read by a function while the file rewrites the global through an alias of sys.modules (almt); and no with target and no walrus
+        is accepted (0 live: no live key is or is bound to a with target or a walrus, and no walrus is met in any live key's walk): a
+        with target over a parameter's call whose `__enter__` returns the listed name (awth), a name a walrus binds inside a
+        comprehension to the comprehension's own target, which shadows a parameter (awlp) or a local bound to a call's return (awlc),
+        and a walrus as the key (awnd, a parameter's value through it); and an attribute is accepted as a loop's source only where the
+        file writes no attribute of its name (Scan._key_attr, the facts _key_const reads for a module constant, keyed on the name; 0
+        live: the one live attribute source, sh.SPEC_FIELDS, is used nowhere else in its file, which holds none of the facts
+        _key_attr reads): the attribute stored on its base at module level (xawm) and in a function the key's function calls first
+        (xawf), set by setattr with its name as a string constant (xaws) and as a `+` of two (xawj), bound in a class body whose
+        class is stored on the base as another attribute (xawb), and written through vars() of the base with a computed key (xawv).
+        The accepted plants (D3_ACCEPT), each proved by one accept clause, its __file__ and module-constant pages with no line and
+        its str page refused by the builtins import alone: a direct constant (adir), a parameter (apar), a call's return (acal), a loop
+        target over a tuple literal (aloop), a comprehension's
+        target (acmp), a loop target over a module tuple constant (amod) and an unpacking target over a call's return (aunp). Each
+        accept CLAUSE the live population needs (0 live refused): the eight live loop-and-comprehension targets over literals or the
+        module tuple constant, the one live loop source that is an attribute (sh.SPEC_FIELDS) and the two that are a call's return
+        (one of them a boolean operation over a call's return and an empty tuple), the two live parameters, and the 603 constant keys
+        are the population these clauses accept; acal (a direct call's return), aunp and the accepted-attribute-and-call-return loop
+        sources are the ruled remainders, proven by an accept clause though no live key holds that exact shape. The reds are
+        proven in the build record over the reviewed head and over mutants of the fix script (never in the tree): each refused plant is
+        silent at the reviewed head, its __file__ and module-constant pages read as value slots while Python serves the
+        exec's fetch, and refused at the fix (its str page refused at both heads by the builtins import); each accept clause reds when
+        it is removed, refusing its plant and the live keys it proves; awth goes silent when the with target is accepted (its
+        context expression walked as a value reaching no text), awlp and awlc when a walrus's name is read as an assignment's, its
+        value resolved in the enclosing scope, and awnd when a walrus node is walked through to its value; the six attribute-source
+        plants go silent when _key_attr is removed, xawm and xawf when its use fact alone is, xaws and xawj when its string fact is,
+        xawj when a setter's folded name is dropped from that fact, xawb when its binding fact is, and xawv when its namespace fact
+        is."""
+        self.assertARefused(("(d3)",))
+        for tag in D3_TEXTS:
+            with self.subTest(plant="(d3) the module's SERVED lines (%s)" % tag):
+                got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag)))
+                want = sorted(line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(d3)") and line.startswith("SERVED %s:" % _a_rel(tag)))
+                self.assertTrue(want, "the case names the module's refusals")
+                self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        for tag in D3_ACCEPT_TAGS:
+            with self.subTest(plant="(d3) accepted: %s's __file__ and constant pages have no line" % tag):
+                self.assertEqual([ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag)) and "str(1)" not in ln], [],
+                                 "the allowlist proves the key: no run-time form, though Python serves the fetch")
+        with self.subTest(plant="(d3) no hidden text is a site"):
+            marks = tuple(_fgh_mark(t + "x") for t in D3_TEXTS)
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
+
+    def test_a_class_a_text_method_or_a_dict_registry_reaches_refuses_and_the_limits_hold_their_witnesses(self):
+        """The 17:31Z choice (d), two of the eight known lows of the tenth round's reviewed head and a third's witness, the (cd)
+        plants, each page's hidden text a fetch tagged with its plant, which Python serves: each refused plant is its SERVED line at
+        the plant's line, each module's SERVED lines are the ones named here, and no hidden text is a site. A text method called on a
+        class the class walk resolves its receiver to (_class_value), in probe_cdt.py: a registry's `.get` (cdrf, `.format`), a
+        boolean operation over classes (cdbr, `.replace`), an if-expression over them (cdif, `.format`) and a walrus over one (cdwl,
+        `.join`), each refused as "a class attribute, which the census does not read as page text", as receiver refuses any other
+        method called on those bases (its own test, and _value_class for the if-expression and the walrus: the (cv) plants); the
+        reviewed head's text-call arm tested a bare name alone, so each was silent there. A registry the builtin dict builds, which
+        the class walk's step now reads as it reads a container literal (_class_step and _held: dict's positional arguments and
+        keywords' values, the callee read as the builtin by _base), in probe_cdd.py: a module constant bound to dict with the class as
+        a keyword's value (cddk), a local so bound (cddl), and dict handed a dict literal (cddp) and a list of pairs (cddt), each read
+        through `.get` to the class's attribute, a method (cddm) and a text method (cddf) called on the class the first registry's
+        `.get` returns, the registry built inline (cddi, `dict(a=_CdD).get("a").CSS_DI`, the class walk reading a method call on such
+        a call itself), and a subscript of the first registry (cddu, `_CD_REGD["a"].CSS_DU`) and of one built inline (cddv, the class
+        walk reading a subscript as it reads a method call), each refused as a class attribute, silent at the reviewed head. Held
+        with no line at both heads: a registry a module function named dict builds (probe_cds.py, cdds), which the check does not read
+        as the builtin; and
+        decision 9's subscript read through a function (probe_cdw.py, cdsf: `_cd_id(_CD_WP[0]) + _cd_id(_CD_WP[1])`, a fetch split
+        across the two indexed pieces), the call limit's witness for that shape. The arm whose removal reds each: the text-call arm's
+        class test put back on a bare name, the reviewed head's, for cdrf, cdbr, cdif, cdwl and cddf (cdrf then refused at its
+        receiver, `_CD_REG.get("a")`, a class reached as a value, cdif and cddf as a format string reached other than as a string
+        constant, a join of them or a name bound to one, cdbr and cdwl silent); the class walk's dict arm (_held) for cddk, cddl,
+        cddp, cddt, cddm, cddf, cddi, cddu and cddv (each then silent, cddf refused as such a format string), within it dict's
+        keywords' values for cddk, cddl, cddm, cddf, cddi, cddu and cddv and its positional arguments for cddp and cddt; that arm's
+        test that the callee is the builtin, which _base reads, for the hold cdds (without it refused as a class attribute); the
+        class walk's reading of a method call on such a call itself for cddi, and of a subscript of a name for cddu and of such a
+        call itself for cddv, with _class_root's subscript test for both (each then silent)."""
+        self.assertARefused(("(cd)",))
+        for tag, _ in CD_FILES[:2]:
+            with self.subTest(plant="(cd) the module's SERVED lines (%s)" % tag):
+                got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel(tag)))
+                want = sorted(line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(cd)") and line.startswith("SERVED %s:" % _a_rel(tag)))
+                self.assertTrue(want, "the case names the module's refusals")
+                self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        for tag, mod, plant in CD_HOLDS:
+            with self.subTest(plant="(cd) hold: %s (%s), no line" % (plant, tag)):
+                self.assertEqual([ln for ln in self.out.splitlines() if tag in ln or (mod != "cdd" and _a_rel(mod) in ln)], [],
+                                 "the hold has no line: no refusal and no site, though Python serves its fetch")
+        with self.subTest(plant="(cd) no hidden text is a site"):
+            marks = tuple(_fgh_mark(t) for t in CD_TAGS)
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
+
+    def test_a_method_called_on_a_class_reached_as_a_value_refuses_as_a_class_attribute(self):
+        """R1's class ruling of the tenth round's review carried to a method called on a class, the (cv) plants (probe_cvm.py), each
+        class's classmethod returning its fetch, which Python serves: a method, a text method among them, called with no attribute
+        read on the way on a class reached as a value is refused as "a class attribute, which the census does not read as page
+        text", read through R1.1's walk from the receiver's root by binding (_value_class over _attr_root), in receiver for a method
+        and in resolve's text-call arm for a text method: on a subscript of a module constant dict of classes (vmsb, vtsb), an
+        if-expression over classes (vmif, vtif), a loop target over a tuple of classes (vmlp, vtlp), a comprehension's target over
+        one (vmcp, vtcp), a with target over a subscript of such a dict (vmwt, vtwt) and a walrus over a class (vmwl, vtwl). Each is
+        silent at the reviewed head but vmwl, refused there by the walrus's node kind (NamedExpr). The arm whose removal reds each:
+        receiver's (_value_class in receiver) for vmif, vmlp, vmcp and vmwl (the first three then silent, vmwl refused by its node
+        kind); the text-call arm's for vtlp and vtcp (each then silent); receiver's together with the class walk's reading of a
+        subscript (_class_value's two subscript arms and _class_root's subscript test), either of which reads them, for vmsb and vmwt
+        (each then silent); the text-call arm's together with that reading for vtsb and vtwt (each then refused at the subscript it
+        reads, `_CV_TREG["a"]`, a container whose root by binding is a class); and the text-call arm's whole class test
+        (_class_value with _value_class) for vtif and vtwl (each then silent), which the class walk reads too."""
+        self.assertARefused(("(cv)",))
+        with self.subTest(plant="(cv) the module's SERVED lines"):
+            got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel("cvm")))
+            want = sorted(line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(cv)"))
+            self.assertTrue(want, "the case names the module's refusals")
+            self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        with self.subTest(plant="(cv) no hidden text is a site"):
+            marks = tuple(_fgh_mark(t) for t, _, _, _, _ in CV_PAGES)
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
+
+    def test_a_format_call_whose_receiver_the_pass_refuses_takes_that_one_line(self):
+        """The 17:31Z choice (c)'s refusal of a format string reached other than as a string constant, a join of them or a name bound
+        to one, taken only where the pass's own read of the receiver refuses nothing, the (fd) plants (probe_fdl.py), each format
+        string holding its fetch, which Python serves: a class attribute (fdc, `Handler.PAGE_FDC.format(...)`), an attribute of self
+        (fds) and an attribute of a module helper's parameter (fdp) as the receiver, each refused by its attribute read alone, one
+        line; fdc and fds take that one line at the reviewed head too, while fdp had no line at the reviewed head (no parameter-attribute
+        refusal existed there); the control, a format string a module function returns (fdk), read
+        with its fetch listed and refused as such a format string. With the condition on the receiver's read removed, fdc, fds and
+        fdp each take a second line, the format call refused as such a format string."""
+        self.assertARefused(("(fd)",))
+        with self.subTest(plant="(fd) the module's SERVED lines"):
+            got = sorted(ln for ln in self.out.splitlines() if ln.startswith("SERVED %s:" % _a_rel("fdl")))
+            want = sorted([line % self.at[t] for plant, t, line in A_REFUSED if plant.startswith("(fd)")] + [FD_CONTROL % self.at["fdk"]])
+            self.assertTrue(want, "the case names the module's refusals")
+            self.assertEqual(got, want, "each SERVED line of the module is one the case names, and each it names stands")
+        with self.subTest(plant="(fd) control: its format string's fetch is listed"):
+            self.assertFetchUnclassifiedAt(_a_line(dict(FD_FILES)["fdl"], _fgh_mark("fdk")), "fdk", "(fd) control", _a_rel("fdl"))
+        with self.subTest(plant="(fd) no hidden text of a refused plant is a site"):
+            marks = tuple(_fgh_mark(t) for t, _, _, _, _ in FD_PAGES)
+            self.assertEqual([ln for ln in self.out.splitlines() if SITE_LINE.match(ln) and any(m in ln for m in marks)], [])
 
     def test_the_served_texts_own_sites_are_rowed_or_computed_and_its_stylesheets_named(self):
         rc, out, _ = tree_run()
@@ -6769,6 +8506,328 @@ class TheServedPagesAreScanned(_Scope):
         for rel, text in A_FILES:   # the seventh round's probe modules, the files the pass scans beside kernel/kernel.py
             self.plant(rel, text)
         self.assertCommandLine(scope_copy(), self.rc, self.out, timeout=300)
+
+
+# The walks' two pins, decisions 10 and 11 of the tenth round's review as the reviewer's 21:39Z item 2 rules them. Every walk the
+# round builds or converts is iterative (an explicit worklist and one visited set per query, no Python recursion over a chain and no
+# depth bound) and calls one named step once for each name it expands. WALKS names each walk, its entry (called once per query) and
+# its step. The pins read both by wrapping them from outside the script, in a child interpreter that runs the served pass over one
+# synthetic module per run (WALK_DRIVER), so no instrument of the script's own is read. The child sets the recursion limit before
+# each run (WALK_LIMIT) and enters every run at the same stack depth, so a chain's completion depth there is a figure of the
+# interpreter alone. A wrapped function called more than WALK_CAP times in one run ends that run, and the child's timeout
+# (WALK_BACKSTOP) ends a run that loops without calling what the pins count; the timeout is a backstop, never the pass condition.
+WALKS = (("the class walk", "_Served", "_class_value", "_class_step"),
+         ("the format strings' walk", "_Served", "_format_texts", "_format_step"),
+         ("R1.1's walk from an attribute's base", "_Served", "_attr_root", "_base_step"),
+         ("decision 2's walk from a method call's receiver", "_Served", "_recv_roots", "_recv_step"),
+         ("decision 2's method resolution order", "_Served", "_mro", "_mro_step"),
+         ("decision 3's walk from a lookup key", "Scan", "_key_form", "_key_step"))
+WALK_BY = {w[0]: w for w in WALKS}
+WALK_LIMIT = 1000
+WALK_CAP = 100000
+WALK_BACKSTOP = 300
+WALK_REL = "kernel/probe_wlk.py"
+WALK_DRIVER = r'''
+import ast, collections, importlib.util, json, sys, traceback
+
+
+class _Cap(BaseException):
+    """A wrapped function past the cap: a BaseException, so no handler of the script's takes it."""
+
+
+def _one(mod, rel, text):
+    res = mod.Result()
+    res.files, res.skipped = [rel], []
+    tree = ast.parse(text, filename=rel)
+    sc = mod.Scan(rel, res)
+    sc.visit(tree)
+    mod.served_texts(rel, tree, sorted(sc.routes, key=lambda r: r[0].lineno), res)
+    return res
+
+
+def _main():
+    job = json.loads(sys.stdin.read())
+    spec = importlib.util.spec_from_file_location("network_inventory_walks", job["script"])
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    counts, cap, out = {}, job["cap"], []
+    for owner, name in job["count"]:
+        cls = getattr(mod, owner)
+        if name not in vars(cls):
+            continue
+        held = vars(cls)[name]
+        fn = held.__func__ if isinstance(held, staticmethod) else held
+
+        def counted(*a, _fn=fn, _name=name, **k):
+            counts[_name] = counts.get(_name, 0) + 1
+            if counts[_name] > cap:
+                raise _Cap("%s was called more than %d times" % (_name, cap))
+            return _fn(*a, **k)
+        setattr(cls, name, staticmethod(counted) if isinstance(held, staticmethod) else counted)
+    for run in job["runs"]:
+        counts.clear()
+        rec = {"label": run["label"], "outcome": "completed"}
+        sys.setrecursionlimit(job["limit"])
+        try:
+            res = _one(mod, run["rel"], run["text"])
+            rec["served"] = list(res.problems)
+            rec["sites"] = [[s.file, s.line, s.head] for s in res.sites]
+        except _Cap as e:
+            rec["outcome"] = "stopped: %s" % e
+        except RecursionError as e:
+            names = [f.name for f in traceback.extract_tb(e.__traceback__) if f.filename == job["script"]]
+            rec["outcome"] = "RecursionError"
+            rec["innermost"], rec["frames"] = names[-3:], collections.Counter(names).most_common(3)
+        finally:
+            sys.setrecursionlimit(1000)
+        rec["counts"] = dict(counts)
+        out.append(rec)
+    sys.stdout.write(json.dumps(out))
+
+
+_main()
+'''
+
+# resolve's completion depth under WALK_LIMIT in the child: the deepest local alias chain (x0 bound to the page's literal, then
+# x1 = x0 through xN = x(N-1), the page `"<p>d</p>" + xN`, the tenth round's reference shape) whose served pass completes. Measured
+# when the walks were made iterative, and equal to the tenth round's reviewed head's on every interpreter the suite runs on: 992
+# (RecursionError in resolve at 993) on 3.12, 3.13 and 3.14t, 991 (at 992) on 3.10 and 3.11. The same chain through the census's own
+# entry at the default limit completes at the same depths (992 on 3.12.3, the tenth round's figure, and 991 on 3.10.20).
+WALK_DEPTH = 992 if sys.version_info >= (3, 12) else 991
+WALK_PAST = 1100   # past resolve's edge for every chain shape below on every interpreter the suite runs on (993 at most)
+WALK_PAGE = '    def _probe_page(self):\n        return "%s"\n' % (FGH_PAGE % "wpg")
+
+
+def _walk_module(lines, head="", send="", bases=None):
+    """A synthetic module for the walks' pins: `head`, then class Handler (deriving from `bases`, object by default) holding
+    `_send` and `send`, and a do_GET whose /probe-wlk branch runs `lines`, the last of them its return."""
+    text = _a_module("wlk", A_SEND % "" + send, head=head, call="\n            ".join(lines))
+    return text.replace("class Handler(object):", "class Handler(%s):" % bases, 1) if bases else text
+
+
+def _walk_ring(n, two):
+    """n names x0 to x(n-1) in a rotation, each bound to the next two in turn, through an if-expression or by two assignments:
+    at n = 3 the tenth round's three-line class rotation and its two-value rotation, a, b and c spelled x0, x1 and x2."""
+    if two:
+        return ["x%d = x%d" % (i, (i + j) % n) for i in range(n) for j in (1, 2)]
+    return ["x%d = x%d if p else x%d" % (i, (i + 1) % n, (i + 2) % n) for i in range(n)]
+
+
+def _walk_counted(shape, n):
+    """The module of one of the count pin's shapes: "rot", the class rotation of n names under the page `"<p>x</p>" + x0.X`;
+    "fmt", the two-value rotation under the page `x0.format("x")`; "fan", the tenth round's fan-out, a list of n names each bound
+    to a copy of the list, under the page `"<p>x</p>" + a.copy().X`; "key", the two-value rotation in a function whose lookup key
+    is x0; "cycle", three classes whose bases run in a cycle, the route class deriving from the first; "lattice", n levels above a
+    first level of two classes, each class deriving from both classes of the level below, the route class from the top two."""
+    call = 'return self._send(200, "<p>m</p>" + self._probe_page(), "text/html")'
+    if shape == "rot":
+        return _walk_module(_walk_ring(n, False) + ['return self._send(200, "<p>x</p>" + x0.X, "text/html")'])
+    if shape == "fmt":
+        return _walk_module(_walk_ring(n, True) + ['return self._send(200, x0.format("x"), "text/html")'])
+    if shape == "fan":
+        return _walk_module(["a = [%s]" % ", ".join("b%d" % i for i in range(n))] + ["b%d = a.copy()" % i for i in range(n)]
+                            + ['return self._send(200, "<p>x</p>" + a.copy().X, "text/html")'])
+    if shape == "key":
+        fn = "def _probe_key(p):\n%s    return getattr(builtins, x0)" % "".join("    %s\n" % ln for ln in _walk_ring(n, True))
+        return _walk_module(['return self._send(200, "<p>ok</p>", "text/html")'], head="import builtins\n\n\n" + fn)
+    if shape == "cycle":
+        head = "class _ProbeA(_ProbeB):\n    pass\n\n\nclass _ProbeB(_ProbeC):\n    pass\n\n\nclass _ProbeC(_ProbeA):\n    pass"
+        return _walk_module([call], head=head, send=WALK_PAGE, bases="_ProbeA")
+    if shape == "lattice":
+        head = "class _ProbeL0a(object):\n    pass\n\n\nclass _ProbeL0b(object):\n    pass\n" + "".join(
+            "\n\nclass _ProbeL%da(_ProbeL%da, _ProbeL%db):\n    pass\n\n\nclass _ProbeL%db(_ProbeL%da, _ProbeL%db):\n    pass\n"
+            % (i, i - 1, i - 1, i, i - 1, i - 1) for i in range(1, n + 1))
+        return _walk_module([call], head=head, send=WALK_PAGE, bases="_ProbeL%da, _ProbeL%db" % (n, n))
+    raise ValueError("no count shape %r" % shape)
+
+
+def _walk_chain(shape, n):
+    """The module of one of the depth pin's chains, n names deep: "local", the reference chain (WALK_DEPTH); "const", the same
+    through module constants; "format", a format string through local aliases, the page a `.format` on the last; "class", a
+    class through local aliases, the page an attribute read on the last; "holds", a class held in a list, reached through n
+    levels of a list holding a name bound to a method call on the next list; "self", self through local aliases, the page an
+    attribute read on the last; "recv", the same aliases, the page a route class's method called on the last; "mro", n + 1
+    classes each deriving from the one before, the first defining the page's method, the route class deriving from the last and
+    calling the method on self; "key", a lookup key bound to a set join, then n local aliases, the last the key."""
+    def alias(first, value):
+        return ["%s0 = %s" % (first, value)] + ["%s%d = %s%d" % (first, i, first, i - 1) for i in range(1, n + 1)]
+    cls = "class _ProbeK(object):\n    X = \"%s\"" % (FGH_PAGE % "wdk")
+    if shape == "local":
+        return _walk_module(alias("x", '"%s"' % (FGH_PAGE % "wdl")) + ['return self._send(200, "<p>d</p>" + x%d, "text/html")' % n])
+    if shape == "const":
+        head = '_PROBE_D0 = "%s"\n' % (FGH_PAGE % "wdc") + "".join("_PROBE_D%d = _PROBE_D%d\n" % (i, i - 1) for i in range(1, n + 1))
+        return _walk_module(['return self._send(200, "<p>d</p>" + _PROBE_D%d, "text/html")' % n], head=head)
+    if shape == "format":
+        return _walk_module(alias("f", '"%s"' % (FGH_PAGE % "wdf{}")) + ['return self._send(200, f%d.format("x"), "text/html")' % n])
+    if shape == "class":
+        return _walk_module(alias("x", "_ProbeK") + ['return self._send(200, "<p>x</p>" + x%d.X, "text/html")' % n], head=cls)
+    if shape == "holds":
+        lines = ["r%d = [y%d]" % (n, n), "y%d = _ProbeK" % n]
+        for i in range(n - 1, -1, -1):
+            lines += ["r%d = [y%d]" % (i, i), "y%d = r%d.copy()" % (i, i + 1)]
+        return _walk_module(lines + ['return self._send(200, "<p>x</p>" + r0.copy().X, "text/html")'], head=cls)
+    if shape == "self":
+        return _walk_module(alias("h", "self") + ['return self._send(200, "<p>x</p>" + h%d.X, "text/html")' % n])
+    if shape == "recv":
+        return _walk_module(alias("h", "self") + ['return self._send(200, "<p>x</p>" + h%d._probe_page(), "text/html")' % n], send=WALK_PAGE)
+    if shape == "mro":
+        head = "class _ProbeC0(object):\n%s" % WALK_PAGE + "".join("\n\nclass _ProbeC%d(_ProbeC%d):\n    pass\n" % (i, i - 1) for i in range(1, n + 1))
+        return _walk_module(['return self._send(200, "<p>m</p>" + self._probe_page(), "text/html")'], head=head, bases="_ProbeC%d" % n)
+    if shape == "key":
+        fn = "def _probe_key():\n%s    return getattr(builtins, k%d)" % ("".join("    %s\n" % ln for ln in alias("k", '"".join({"ex", "ec"})')), n)
+        return _walk_module(['return self._send(200, "<p>k</p>" + _PROBE_WDK, "text/html")'], head='import builtins\n\n_PROBE_WDK = "<p>ok</p>"\n\n\n' + fn)
+    raise ValueError("no chain shape %r" % shape)
+
+
+def _walk_runs(runs):
+    """The child's records, one per run in order: WALK_DRIVER over ROOT's script with WALKS's entries and steps wrapped, each run
+    (label, module text) under WALK_LIMIT, the child ended at WALK_BACKSTOP seconds."""
+    job = {"script": os.path.join(ROOT, INVENTORY), "limit": WALK_LIMIT, "cap": WALK_CAP,
+           "count": [[owner, name] for _, owner, entry, step in WALKS for name in (entry, step)],
+           "runs": [{"label": label, "rel": WALK_REL, "text": text} for label, text in runs]}
+    try:
+        p = subprocess.run([sys.executable, "-c", WALK_DRIVER], input=json.dumps(job), capture_output=True, text=True, timeout=WALK_BACKSTOP)
+    except subprocess.TimeoutExpired:
+        raise AssertionError("the child ran past its %d s backstop: a walk that loops without calling its entry or its step (the "
+                             "backstop ends it; it is never the pass condition)" % WALK_BACKSTOP)
+    if p.returncode:
+        raise AssertionError("the child failed (exit %d): %s" % (p.returncode, p.stderr[-2000:]))
+    return {r["label"]: r for r in json.loads(p.stdout)}
+
+
+# the walks each ring shape reads: its every name once per query
+_RING_WALKS = {"rot": ("the class walk", "R1.1's walk from an attribute's base"),
+               "fmt": ("the class walk", "the format strings' walk", "decision 2's walk from a method call's receiver"),
+               "key": ("decision 3's walk from a lookup key",)}
+
+
+def _fan_figures(k):
+    """The fan-out's figures at width k, {the walk: (its queries, its expansions)}: the pass reads the page's `a.copy()` and each
+    of the k copies the list holds, so the class walk is asked k + 3 times and expands the list's name and each copy's name, 2k + 3
+    in all; R1.1's walk is asked once from the attribute's base and once from the receiver a of each of the k + 1 method calls
+    resolve reads past it (the page's and each copy's, a class reached as a value being refused there: _value_class), and the
+    receiver's walk at each of the k + 2 method calls the pass reads, each expanding the k + 1 names, since a visited set is per
+    query."""
+    return {"the class walk": (k + 3, 2 * k + 3), "R1.1's walk from an attribute's base": (k + 2, (k + 1) * (k + 2)),
+            "decision 2's walk from a method call's receiver": (k + 2, (k + 1) * (k + 2))}
+
+
+# (the run's label, the count shape, n, {the walk: (its queries, its expansions)}): the tenth round's two rotations (n = 3) and each
+# at 24 names, where every name reaches every other, so a walk that expands each name once per query makes n expansions in its one
+# query, a figure of the input; the two-value rotation read as a lookup key; R3's fan-out at four names, the width the tenth round
+# measured, and at sixteen (_fan_figures); and the order over a base cycle (the cycle's first class closes unexpanded, its order
+# unreadable, so the other two and the route class expand) and over a lattice (each of its 2n + 2 classes and the route class once
+# in the file, which reads the order twice: its route methods' set and the method's definer)
+WALK_COUNT_RUNS = tuple((label, shape, n, {w: (1, n) for w in _RING_WALKS[shape]}) for label, shape, n in (
+    ("the tenth round's three-line class rotation", "rot", 3), ("the class rotation of 24 names", "rot", 24),
+    ("the tenth round's two-value rotation under a .format", "fmt", 3), ("the two-value rotation of 24 names", "fmt", 24),
+    ("the two-value rotation as a lookup key", "key", 3), ("the two-value rotation of 24 names as a lookup key", "key", 24))) + (
+    ("the tenth round's fan-out of a list's copies, four names", "fan", 4, _fan_figures(4)),
+    ("the fan-out of sixteen names", "fan", 16, _fan_figures(16)),
+    ("a cycle of three bases", "cycle", 3, {"decision 2's method resolution order": (2, 3)}),
+    ("a lattice of ten levels of two classes", "lattice", 10, {"decision 2's method resolution order": (2, 23)}))
+
+
+# (the chain's label, its shape, what the chain ends in: ("site", the fetch's tag) where the page's fetch is listed, or ("served", the
+# reason, the page expression) where it is refused, {the walk: its expansions as a function of the depth}, whether resolve reads the
+# chain, so that past its own edge the run raises RecursionError in resolve)
+WALK_CHAINS = (
+    ("resolve itself, a local alias chain", "local", ("site", "wdl"), {}, True),
+    ("resolve through module constants", "const", ("site", "wdc"), {}, True),
+    ("a format string's aliases under a .format", "format", ("site", "wdf{}"),
+     {"the class walk": lambda n: n + 1, "the format strings' walk": lambda n: n + 1, "decision 2's walk from a method call's receiver": lambda n: n + 1}, True),
+    ("a class's aliases", "class", ("served", "a class attribute, which the census does not read as page text", "x%d.X"),
+     {"the class walk": lambda n: n + 1}, False),
+    ("a class held through a list's copies", "holds", ("served", "a class attribute, which the census does not read as page text", "r0.copy().X"),
+     {"the class walk": lambda n: 2 * (n + 1)}, False),
+    ("self's aliases, an attribute read", "self", ("served", "an attribute read on self, which any code may set before the call", "h%d.X"),
+     {"the class walk": lambda n: n + 1, "R1.1's walk from an attribute's base": lambda n: n + 1}, False),
+    ("self's aliases, a route class's method called", "recv",
+     ("served", "a route class's method called other than on the calling method's own first parameter, which the census does not follow", "h%d._probe_page()"),
+     {"decision 2's walk from a method call's receiver": lambda n: n + 1}, False),
+    ("a chain of base classes, the page's method on the first", "mro", ("site", "wpg"), {"decision 2's method resolution order": lambda n: n + 2}, False),
+    ("a lookup key's aliases from a set join", "key", ("served", None, "_PROBE_WDK"), {"decision 3's walk from a lookup key": lambda n: n + 1}, False))
+
+
+class TheWalksExpandEachNameOnceAndStopNoChainResolveCompletes(unittest.TestCase):
+    """Decisions 10 and 11 of the tenth round's review, as the reviewer's 21:39Z item 2 rules them, read from outside the script
+    (WALKS, WALK_DRIVER): each walk the round builds or converts expands each name once per query, and no walk stops the census on
+    a chain whose depth resolve completes."""
+
+    def assertOutcome(self, rec, text, n, end):
+        if end[0] == "site":
+            line = _text_line(text, _fgh_mark(end[1]).rstrip("'"))
+            self.assertEqual([tuple(s[:2]) for s in rec["sites"]], [(WALK_REL, line)], "the page's fetch listed at its literal's line, alone")
+            self.assertEqual(rec["served"], [], "no SERVED line")
+            return
+        expr = end[2] % n if "%d" in end[2] else end[2]
+        self.assertEqual(rec["sites"], [], "no site: the page is refused")
+        self.assertEqual(len(rec["served"]), 1, "one SERVED line: %r" % rec["served"])
+        head = "SERVED %s:%d builds a served page from %s (" % (WALK_REL, _text_line(text, "+ %s," % expr), expr)
+        self.assertTrue(rec["served"][0].startswith(head), "the page refused at its line: %r" % rec["served"][0])
+        if end[1] is not None:
+            self.assertEqual(rec["served"][0], head + end[1] + "), text the census did not read")
+        else:   # the lookup key's run-time form, read at the key's line
+            self.assertIn("(a module name in a file that spells a name by k%d, bound to a join the census does not fold at line %d, " % (
+                n, _text_line(text, "return getattr(builtins, k%d)" % n)), rec["served"][0])
+
+    def test_the_tenth_rounds_walks_expand_each_name_once_per_query_on_the_rotations(self):
+        """Decision 10: each walk's step, wrapped with its entry from outside the script (WALKS), runs once for each name the walk
+        expands, so on a rotation of n names in which every name reaches every other the walk makes n expansions in its one query,
+        a bound linear in the input, asserted as an equality (WALK_COUNT_RUNS: the class rotation and the two-value rotation under
+        a `.format`, the tenth round's two at n = 3 and each again at 24, the two-value rotation read as a lookup key, R3's fan-out
+        of a list's copies at four names and at sixteen, whose figures are per query (_fan_figures), and the method resolution
+        order over a base cycle and over a lattice). The count is the assertion; the child's timeout is only a backstop. At the
+        tenth round's reviewed head the class walk and the format strings' walk recurse with no visited set, and each rotation's
+        and fan-out's run stops on the count, `_class_value` passing WALK_CAP calls on the class rotation (in 0.2 s) and on the
+        fan-out, and `_format_texts` on the two-value one; that head has no lookup key's walk and no order, so those runs count
+        nothing and differ from the figure. At this head each walk with its visited check removed loops on its rotation until its step passes
+        the cap; the order with its per-file memo dropped expands the lattice's classes once per query (46 expansions for 23), and
+        with no memo at all, recursing as the reviewed head's walks do, 8190 times. The backstop ends none of these runs."""
+        recs = _walk_runs([(label, _walk_counted(shape, n)) for label, shape, n, _ in WALK_COUNT_RUNS])
+        for label, shape, n, want in WALK_COUNT_RUNS:
+            rec = recs[label]
+            for walk, (queries, expansions) in sorted(want.items()):
+                _, _, entry, step = WALK_BY[walk]
+                with self.subTest(run=label, walk=walk):
+                    self.assertEqual(rec["outcome"], "completed", "the run: %s (counts %r)" % (rec["outcome"], rec["counts"]))
+                    got = (rec["counts"].get(entry, 0), rec["counts"].get(step, 0))
+                    self.assertEqual(got, (queries, expansions), "%s (%s, %s): %d queries and %d expansions, where %d and %d were due"
+                                     % (walk, entry, step, got[0], got[1], queries, expansions))
+
+    def test_the_tenth_rounds_walks_complete_every_chain_resolve_completes(self):
+        """Decision 11: under the recursion limit the child sets (WALK_LIMIT), every chain of WALK_CHAINS completes at WALK_DEPTH,
+        resolve's own completion depth for the local alias chain (measured at this head, and equal to the reviewed head's on each
+        interpreter), with the outcome its shape has at any depth and each of its walks expanding every name of the chain once:
+        resolve itself through locals and through module constants; the format strings' walk, the class walk and the receiver's
+        walk over a format string's aliases, which resolve reads as well; the class walk over a class's aliases and over a class
+        held through n copies of a list; R1.1's walk over self's aliases; decision 2's receiver walk over self's aliases calling a
+        route class's method, and its method resolution order over n base classes; and decision 3's walk over a lookup key's
+        aliases. Past resolve's edge (WALK_PAST) a loud RecursionError comes only where resolve raises it: the three chains resolve
+        reads raise there, resolve's frames the most and no walk's among the three innermost, and every other chain completes as
+        at WALK_DEPTH. At the reviewed head the class, holds, self and receiver chains raise RecursionError at WALK_DEPTH, in
+        resolve or in its class walk (that head's walks cut at depth 32, and resolve reads on), the order does not follow the
+        method (that head's follow arm reads the route class's own body alone) and the key is not walked; resolve's three chains
+        complete there as here, the format chain's case red there only on its walks' named steps, which that head does not have
+        (its format and class walks, cut at depth 32, make 34 calls each on the chain). Red at this head under each walk made
+        recursive with its visited set kept and no depth bound (the chains that walk reads raise in it at WALK_DEPTH), and under
+        resolve given one more frame per alias level (its three chains raise at WALK_DEPTH)."""
+        runs = [("%s at %d" % (label, n), _walk_chain(shape, n)) for label, shape, _, _, _ in WALK_CHAINS for n in (WALK_DEPTH, WALK_PAST)]
+        recs, texts = _walk_runs(runs), dict(runs)
+        steps = {w[0]: w[3] for w in WALKS}
+        for label, shape, end, walks, resolves in WALK_CHAINS:
+            for n in (WALK_DEPTH, WALK_PAST):
+                rec, text = recs["%s at %d" % (label, n)], texts["%s at %d" % (label, n)]
+                with self.subTest(chain=label, depth=n):
+                    if n == WALK_PAST and resolves:
+                        self.assertEqual(rec["outcome"], "RecursionError", "past its edge resolve raises, loudly (counts %r)" % rec["counts"])
+                        self.assertEqual(rec["frames"][0][0], "resolve", "resolve's frames are the most: %r" % rec["frames"])
+                        self.assertFalse(set(rec["innermost"]) & {f for w in WALKS for f in w[2:]}, "no walk raised: %r" % rec["innermost"])
+                        continue
+                    self.assertEqual(rec["outcome"], "completed", "the run: %s %s (counts %r)" % (rec["outcome"], rec.get("innermost"), rec["counts"]))
+                    self.assertOutcome(rec, text, n, end)
+                    for walk, due in sorted(walks.items()):
+                        self.assertEqual(rec["counts"].get(steps[walk], 0), due(n), "%s expands each of the chain's names once" % walk)
 
 
 class TheChatMediaRoadIsRowed(_Scope):

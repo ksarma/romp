@@ -241,9 +241,12 @@ name `global` (as the target of an assignment, an augmented assignment, a loop,
 a comprehension, a with or a walrus, or by an import, a def or class statement
 or an except clause) or a module-level augmented assignment), through a local
 whose every binding is read (a walrus in a nested def's, class's or lambda's
-header is a binding it does not read) and through a dict literal's values (a
-call or a Content-Type write inside a lambda's body is refused before its type
-is read, below); the part before any `;`, stripped and lower-cased, is compared
+header is a binding it does not read) and through a dict literal's values
+(refused before its type is read, below: a call inside a lambda's body, a
+Content-Type write inside one that is no `_send` definition's own write, and a
+call whose definition binds the parameter one of its own writes names other than
+as that parameter); the part before any `;`, stripped and lower-cased, is
+compared
 with the types a
 browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml,
 application/xml, text/xsl and any type with a `+xml` suffix, image/svg+xml and
@@ -308,10 +311,22 @@ argument) is outside the list and not seen,
 and a module
 name or a builtin so rewritten is read as the file's text binds it. A `_send`
 definition in a class that a function defines, a page function that a function
-encloses, and a `_send` call or a Content-Type write inside a lambda's body fail
-the run by name: the census does not read the enclosing function's or lambda's
-scope, so it would take a name that scope binds (a builtin or a module name it
-shadows) for the module's. The page
+encloses, a `_send` call inside a lambda's body, and a Content-Type write inside
+one that is no `_send` definition's own write fail the run by name: the census
+does not read the enclosing function's or lambda's scope, so it would take a
+name that scope binds (a builtin or a module name it shadows) for the module's.
+A `_send` definition's own Content-Type writes (each write whose innermost def
+is the definition, or a def in it itself named `_send`) are typed at each call.
+A call fails the run by name where one of them names a parameter whose argument
+the census reads as the type and the definition binds that name other than as
+that parameter anywhere in its body (in its own scope or in a lambda, a
+comprehension, a nested def or a class body in it) and in any form (an
+assignment, augmented or annotated, or an annotation; a loop, with, walrus or
+match target; an except name; a del; an import; a def or class statement; a
+global or nonlocal declaration; a parameter, a comprehension's target, a type
+statement or a type parameter): the census reads that write's type from the
+call's argument, which such a binding may replace. The
+page
 function of each script-running route is followed to the text it returns or
 inlines, and a
 parameter a followed call omits is read from its default value as that argument
@@ -362,9 +377,13 @@ other builtin refused by name, and a call of super() refused by name as well,
 its methods being a base class's (the names the import system
 binds in every module, `__doc__`, `__name__`, `__package__`, `__spec__` and
 `__loader__`, are no builtins here: a page that reads one the file does not bind
-is refused by name); a parameter, an except name,
-or a name the function binds from one of those),
-reading as text the arguments a call of such a base or of a method on one is handed, never
+is refused by name wherever the pass reads it, as a bare name, the base of a
+receiver, a container or an attribute, a callee or a call's argument, but never
+inside the index of a subscript over a container whose text the pass does not
+read: below); a parameter, an except name, or a name the function binds
+from one of those, where no attribute is read on the path to it: `q.get(k)`
+passes, and `q.X` is refused, below), reading as text the arguments a call of
+such a base or of a method on one is handed, never
 the text it computes from them: text a call computes from its arguments is not
 read, a stated limit (`dict(X).get(k)` and `json.loads(json.dumps(X))[0]` read
 X; the limit's witnesses are `chr(n)`, whose character is not n's text,
@@ -373,34 +392,72 @@ X; the limit's witnesses are `chr(n)`, whose character is not n's text,
 (`zlib.decompress(base64.b64decode(X)).decode()`), each read only as its
 arguments' own text; an encoded asset kept ASCII and decoded where the page is
 built is such a shape, and can be honest; max handed one iterable, which returns
-an element of it, is such a call too: `max("af")` gives the character f), and over a bare module name that is such an import or one of the seven builtins a page may name, or, in such a module, a
+an element of it, is such a call too: `max("af")` gives the character f; and so
+is a method called on a parameter whose name is no route class's method (below),
+a method of a class that holds no route among them), and over a bare module name
+that is such an import or one of the seven builtins a page may name, or, in such
+a module, a
 top-level def or class statement that is its name's one module-level binding and
 is not rebound. Text such a base holds is not read, as with code behind a name
-on self (a method called on self): a constant that a sibling module defines and
-the page imports, an attribute set before the call on a parameter other than
-self and other than a classmethod's first parameter, and an attribute of a class
-the pass reaches as a value without resolving it as the class (among them a
-class passed to a parameter or given as its default, a loop, comprehension or
-unpacking target bound to one, an if-expression over classes standing as the
-attribute's base, and a subscript of a container of classes); an attribute read
-on self (`self.X` as a
-value, a receiver or a container, `self.X.get(k)`, `self.X[0]` and
-`self.__doc__` among them) is refused by name, whatever sets it, and so is an
-attribute read on a class, as a value, a receiver or a container, through the
-class's own name (a name a class statement binds, in the innermost function
+on self (a method called on self is read through the def statement the census
+follows, below, unless the file may replace it at run time in a way the census
+reads, below; code that replaces that method in any other way, a setattr or
+delattr whose name argument is no string constant, a write to an instance's
+`__dict__`, a reassigned `__class__`, a class decorator or a metaclass among
+them, is not read; its witness: a method the route class defines that a module
+function replaces through setattr, the method's name handed to it as an
+argument): a constant that a sibling module defines and
+the page imports, and a class reached through an import's attribute (its
+witness: a class that a sibling module defines, read as an attribute of that
+module, which the page imports by name) or through a call's return, under the
+call limit. An attribute read in a page position, as a value or anywhere on the
+path of a receiver or a container (but never inside the index of a subscript
+over a container whose text the pass does not read: below), is refused by name
+unless the root its base reaches by
+binding is a module constant, an import, one of the seven builtins a page may
+name, a value slot or a literal the pass reads (the census follows the base down
+that path, through a call's callee, a BoolOp's operands, an if-expression's
+branches and a walrus's value as well, and through a local's values, a loop,
+comprehension or with target's source, a list, tuple, set or dict literal's
+elements, keys and values, and a module constant's value, but never through a
+call's argument or a parameter's default): an attribute read on self (`self.X`
+as a value, a receiver or a
+container, `self.X.get(k)`, `self.X[0]` and `self.__doc__` among them), on a
+local bound to it or on a method's first parameter however spelled, where the
+method's def carries no decorator and, for a route handler, the file binds
+neither staticmethod nor classmethod, is refused by name, whatever sets it; one
+read on any other parameter (a module helper's parameter, any other method's
+first parameter, and a parameter that a class is passed to or has as its default
+among them) or on an except name is refused by name with a reason of its own; a
+base whose root is one the pass
+refuses (a function's or a method's return, a call it does not follow, a builtin
+other than the seven, `__file__` in a file that binds it, a run-time memo) is
+refused with the reason the pass gives that root; and an attribute read on a
+class, a method called on one among them, is refused by name too, as a value, a
+receiver or a container, through the class's own name (a name a class statement
+binds, in the innermost function
 scope around the read that binds the name or, where none does, at the top level
 of the file, whatever else binds it at module level) or through a name the
-census resolves to such a class (a classmethod's first parameter in that method,
-`cls.X`, or a local or a module constant bound to one, `h = Handler` and then
-`h.X`), or through a method call on a name whose value holds such a class (a
-local or a module constant bound to a list, tuple, set or dict literal with one
-among its elements, keys or values, `_REG.get(k).X`, or a local or a module
-constant bound to such a call), and so is a text method called on such a name
-(`Handler.format(...)`) and a replacement field in a `.format` or `.format_map`
+census resolves to such a class (a local or a module constant bound to one, `h =
+Handler` and then `h.X`), or through a method call on, or a subscript of, a name
+whose value holds
+such a class (a local or a module constant bound to a list, tuple, set or dict
+literal with one among its elements, keys or values, `_REG.get(k).X`, or to a
+call of the builtin dict with one among its arguments, a keyword's value among
+them, `_REG = dict(a=Handler)` and then `_REG["a"].X`, or a local or a module
+constant bound to such a method call or subscript), or of such a literal or call
+itself (`dict(a=Handler).get(k).X`), or through any other base whose root by
+binding is such a class (a loop, comprehension or with target over classes, an
+if-expression or a walrus over classes, and a literal container holding one,
+`_REG["a"].X` and `_REG["a"].render()` among them), and so is a text method
+called on such a class through any of those roads (`Handler.format(...)`,
+`_REG.get(k).format(...)`, `(A or B).replace(...)`, `t.strip()` in a loop over
+classes), save one on a subscript refused as a join's operand (below), and a
+replacement field in a `.format` or `.format_map`
 that reaches an attribute of its argument (below): no class attribute is read as
 page text. A call of a name the census resolves to such a class, the class's own
-name among them, is refused by name (a classmethod's first parameter, `cls()`,
-as a call), so no attribute of the instance it makes is read either. A name is
+name among them, is refused by name as a call, so no attribute of the instance
+it makes is read either. A name is
 rebound
 when a function binds it under `global` or a statement at module level writes
 it, in one of the forms listed above for a route's type; every name is rebound,
@@ -427,10 +484,41 @@ write through the name by one arm; an attribute named `__globals__`,
 callable (locals, exec, eval, compile, `__import__`, import_module or _getframe)
 reached in the first three ways; or one of those callables or attributes,
 globals, vars, setattr, delattr or `__dict__` reached in the fourth; or, in a
-position of the fourth, a key that is a join the census does not fold, whatever
-it spells: a `.join`, `.format`, `.format_map` or `.replace` called on the name
-str, bytes or bytearray (`str.join("", [...])`), or a `%`, `.format` or
-`.format_map` on a string constant that is not expanded (below). The four
+position of the fourth, a key the POSITIVE ALLOWLIST does not prove by its
+binding. The allowlist accepts only a constant string spelling no listed name; a
+parameter; a call's return whose callee reaches neither text nor the str, bytes
+or bytearray type nor a method of one; a name that is a loop or comprehension
+target inside a function over a literal of constants, a once-bound module tuple
+constant no code can mutate or an attribute whose base reaches no text and whose
+name the file never writes (it binds and declares no such name, uses an
+attribute so named only as such a source or an item read, never storing,
+deleting, augmenting or calling a method on one, spells the name in no string
+constant or keyword and in no setattr, delattr, `__setattr__` or `__delattr__`
+name folded from string constants, and names no globals, vars, locals or
+`__dict__` and holds no star import; such a setter whose name is not so folded
+is not read for it); a name that is such a target, or an unpacking target, over
+a parameter or such a call's
+return, directly or through names an assignment, such a target or an unpacking
+binds to one; a boolean operation or an if-expression each of whose values the
+allowlist accepts where it stands; and a name an assignment binds to any of
+these but a constant string. Every other key refuses by name, the reason naming
+what the walk
+met: a join, format, format_map or replace call, a `%`, a `+` or an f-string a
+string constant does not fold; a method of the name str, bytes or bytearray,
+however reached; any method
+called on, or attribute read on, constant text or anything not proven to reach no
+text; a direct attribute key or a name bound to one, an attribute proven only as
+a loop or comprehension source; such a source whose name the file may write, as
+above; a name bound to a constant string; a with
+target, or a name bound to one; a walrus, or a name a walrus binds anywhere, a
+comprehension's included; a subscript; an augmented assignment; a loop target
+bound at module level; a name a function or a class body
+declares global or a scope declares nonlocal; a name a class body binds; a name
+bound only in another form or by no statement; a list, set or dict module
+constant; and any other node kind. A name read at module level or as a builtin
+refuses where the file may rewrite its namespace.
+The
+four
 ways, the whole of the reach the census reads for each of these names
 (`__dict__` in the fourth alone, beside the attribute the computed-name forms
 above name): by its own name, in any context; by a name
@@ -473,28 +561,77 @@ its `X.append(...)`, does not rebind it. It follows a call whose callee
 is a module function (a top-level def statement that is its name's one
 module-level binding, not rebound, in a module with no star import, and bound by
 no function scope of the page), a function defined in the page function or a
-method of the route's class (to what it returns, any decorator on it not
-applied), a text method or a file read, or any other method (through its
-receiver, as above, so `_K.__call__(t)` on a module constant `_K` that holds a
-lambda reads `_K` and the lambda's body, whose parameters are value slots), and
-it reads every call's arguments; a call to any other callee passes when the
+method called on the calling method's own first parameter (self by binding,
+however it is spelled, the first parameter of a method whose def carries no
+decorator, never rebound in the method, and read so in a closure, a lambda or a
+comprehension of the method that does not bind the name; the first parameter of
+a route handler that carries a decorator, whatever it is bound to, or that
+stands in a file binding staticmethod or classmethod in any scope and by any
+form, a star import among them, is not classified, and a method called on it, or
+it called, is refused by name), resolved through the route class's
+method resolution order to the first class that binds the name, where that is a
+class of the file whose body itself binds it by one def statement and nothing
+else, carrying no decorator at all (staticmethod and classmethod among them),
+since Python calls a decorator's return in the def's place,
+and that no file
+class deriving from the route class, directly or through file classes, overrides
+in its own body, a text method or a
+file read, or any other method (through its receiver, as above, so
+`_K.__call__(t)` on a module constant `_K` that holds a lambda reads `_K` and
+the lambda's body, whose parameters are value slots), and it reads every call's
+arguments. A method called on self that no def statement of a class of the file
+defines first in that order (the order reaching a base whose names the census
+does not read, an imported one, before any class of the file that binds the
+name; the first class that binds it binding it any other way; or no class
+binding it) is refused by name, and so is a method the follow arm would take
+that a file class deriving from the route class, directly or through file
+classes, defines in its own body: the server may instantiate that subclass,
+whose override Python runs in place of the def the order resolves the name to.
+So too is a call of a route class's method (a
+name a def statement binds in the body of a route class or of a class of the
+file it derives from, the names read once per file) on self through anything
+else (a local, a loop, comprehension or with target, a container, an
+if-expression, a BoolOp or a walrus bound to it), on any other parameter, or on
+a name spelled self that is not the calling method's own first parameter, and a
+call of any other name on self through anything else, and a method the census
+would follow whose def carries any decorator (staticmethod and classmethod among
+them), whose return Python calls in its place, and a method the
+census would follow that the file may replace at run time (below), each before the
+file-read and text-call arms and wherever such a call stands on the path of a
+receiver or
+a container; a call to any other callee passes when the
 callee is such an import, one of the seven builtins a page may name or a
-parameter other than a classmethod's first parameter, and is refused by name for
-any other builtin, for str handed more than one positional argument, a starred
-argument or a keyword other than `object`, and, as a call, for a classmethod's
-first parameter, its class. It reads both operands
+parameter other than such an unclassified first parameter, and is refused by
+name for any other builtin, for str handed more than one positional argument, a
+starred argument or a keyword other than `object`, and for such a first
+parameter. For that refusal the file may replace a method at
+run time where it stores or deletes an attribute of the method's name on any
+object (the target of an assignment of any kind, a for, with or comprehension
+target, or a del), names the method by a string constant, or a join of them,
+as the second argument of setattr or delattr (by that name or as an attribute
+so named) or of `__setattr__` or `__delattr__` called unbound (by that name,
+or as an attribute of `object`, of `type`, of a class a top-level class statement
+of the file binds or of a call of type()), or as the first argument of `__setattr__`
+or `__delattr__` called bound on any other receiver (`self.__setattr__("name",
+f)`, `super().__setattr__(...)`), or holds a class in the route class's method
+resolution order that binds `__getattribute__`. It reads both operands
 of a `/`, a path join. `__file__`, wherever a page reads it (as a bare name, the
-base of a receiver, a container or an attribute, or a callee), is refused by
-name in a file where a statement binds it, in any scope and by any form, before
+base of a receiver, a container or an attribute, or a callee, but never inside
+the index of a subscript over a container whose text the pass does not read:
+below), is refused by name in a file where a statement binds it, in any
+scope and by any form, before
 any scope's or module-level binding of it is read, and there a file read whose
 path the census builds from `Path(__file__)` or `open(__file__)` is refused as a
-file the walk does not scan; where no statement binds it, it is a value slot as
-a bare name (the argument of `Path(__file__)` among them) when the file neither
+file the walk does not scan; where no statement binds it, the file neither
 writes a name of its module namespace through a computed name nor may rewrite it
-at run time and the module holds no star import, and is refused by name in every
-other case, with that file's reason in a file that writes its namespace through
-a computed name or may rewrite it at run time and with no reason in a module
-that holds a star import. It reads a
+at run time, no module-level statement writes it and the module holds no star
+import, it is the file's own path: a value slot as a bare name (the argument of
+`Path(__file__)` among them) and the path of a file read the census builds from
+`Path(__file__)` or `open(__file__)`; in every other case it is refused by name
+as a bare name, with that file's reason in a file that writes its namespace
+through a computed name or may rewrite it at run time and with no reason
+otherwise, and such a file read is refused as a file the walk does not scan, as
+in a file where a statement binds it. It reads a
 lambda's body, its
 parameters value slots, and its defaults where the lambda stands. It reads a
 subscript's container only under a constant index: a slice of any shape, or an
@@ -507,10 +644,16 @@ since it reads the container whole and does not compute what the index selects;
 honest forms fail closed with it (`_PAGE[1:]`, a template's leading newline cut;
 `PAGES[key]` over a dict constant, the key no constant; `_P[-1]`), and a
 container that is a base whose own text it does not read, or a call of one or of
-a method on one, passes whatever its index. A None, bool or int constant, the empty bytes constant and a `*` or `<<` over int constants are value
-slots the pass reads as no text; one that stands directly as a `%` operand
-(bare, a tuple element or a dict literal's value, an int modulo such as `n % 60`
-among them), as a `.format` argument (an element of a starred list or tuple
+a method on one, passes whatever its index. The index of such a subscript, over
+a container whose text the pass does not read, is not read at all, whatever it
+holds (a name the import system binds, `__file__`, an attribute read on self, on
+a parameter or on a class, a call): the item it selects is text such a base
+holds (above). A None, bool or int constant, the empty bytes constant and a `*`
+or `<<` over int constants are value
+slots the pass reads as no text; one that stands directly as the right operand
+of a `%` (bare, a tuple element or a dict literal's value, an int modulo such as
+`n % 60` among them), as a `.format` argument (an element of a starred list or
+tuple
 literal and a value of a `**` dict literal among them) or as a value of the dict
 literal a `.format_map` is handed is refused by name, whether or not a
 conversion takes it, since a conversion can turn it into characters (a `%c`, a
@@ -523,23 +666,39 @@ store or delete of an attribute so named, or a string equal to `_send`), a
 content type the pass cannot read, a script-running
 type written outside `_send`, a function that answers outside `_send` more often
 than it writes a Content-Type header, a container the module writes at run time,
-an attribute read on self, a class attribute (an attribute read on a class
-through the class's own name, a name the census resolves to it or a method call
-on a name whose value holds it), a replacement field reaching an attribute or an
-index of its argument in a `.format` or `.format_map`, a name the
+an attribute read on self, on any other parameter or on an except name, each
+judged by the root its base reaches by binding (so one read on a local bound to
+self, or on a method's first parameter however spelled under the conditions
+above, is one read on self), a
+class attribute (an attribute read on a class, a method called on one among
+them, through the class's own name, a name the census resolves to it, a method
+call on or a subscript of a name whose value holds it or of such a value itself,
+or any other base whose root by binding is a class), a method called on self
+that no def statement of a class of
+the file defines first in the route class's method resolution order, a method
+called on self that a file class deriving from the route class overrides, a route
+class's method called other than on the calling method's own first parameter, a
+method called on self that the file may replace at run time, a call of, or a
+method called on, a route handler's first parameter the census does not
+classify, a replacement field
+reaching an attribute or an index of its argument in a `.format` or
+`.format_map`, a `.format` or `.format_map` whose format string the receiver
+reaches other than as a string constant, a join of them or a name bound to one,
+a name the
 import system binds in every module
 that the file does not bind, a subscript by a slice or an index other than a
 constant over a container whose text the pass reads, a subscript by a constant
 index over such a container that stands as an operand of a `+`, a `%`, an
 f-string, a `.join`, a `.format`, a `.format_map` or a `.replace`, a value slot
-that stands directly as a `%` operand, a `.format` argument or a `.format_map`
-value, a builtin other than the seven a page may name, a call of str with more
+that stands directly as the right operand of a `%`, a `.format` argument or a
+`.format_map` value, a builtin other than the seven a page may name, a call of
+str with more
 than one positional argument, a starred argument or a keyword other than
 `object`, a join, format, format_map or replace called on the name
 str, bytes or bytearray, a `%`, `.format` or `.format_map` on a string constant
 that is not expanded, `__file__` in a file where a statement binds it, any other
 receiver or container, any other callee (a module constant, a local, a class, a
-classmethod's first parameter, a subscript, a call and a lambda among them), any
+subscript, a call and a lambda among them), any
 other bare module name
 (one bound other than by one assignment, one bound by an annotated, unpacking or
 chained assignment, one annotated at module level beside its assignment, one no
@@ -555,7 +714,10 @@ file that may rewrite the builtins, and a rebound import, builtin,
 function or class among them), any other kind of
 expression in a page (a non-empty bytes, float, complex or Ellipsis constant, an
 f-string's format spec, any other operator, a comparison and a unary expression
-among them), and a route whose body yields no piece and no file slot, unless the served allowlist, SERVED_ALLOW, names the place
+among them), and a route whose body yields no piece and no file slot (each
+refusal of page text applies where the pass reads that text, never inside the
+index of a subscript over a container whose text the pass does not read: above),
+unless the served allowlist, SERVED_ALLOW, names the place
 by its function and expression, with the number of places the entry covers and
 the reason (the two answers with no body, the CORS preflight's 204 and the
 websocket upgrade's 101, are named there); an entry that names nothing in the
@@ -586,9 +748,17 @@ index of its argument (`{0.CSS}`, `{h.CSS}`, `{self.body}`, `{0[k]}`) refuses by
 name, since the text such a field reads is the argument's attribute or item,
 which the pass does not read: the census looks for such a field where the format
 string is the receiver's text, a string constant or one of these joins, or the
-value of a module constant or a local bound to one, and a format string the pass
-reaches any other way (a function's return among them) is text a call computes
-from its arguments, the call limit. Text a page joins through anything but a
+value of a module constant or a local bound to one, and a `.format` or
+`.format_map` whose format string the receiver reaches any other way (a
+function's or a method's return, a
+parameter, an attribute, an if-expression, a `+` over a name among them) is
+refused by name too, since the pass does not read that format string's fields,
+unless the receiver is a class (above), refused as a class attribute, a
+subscript whose join the pass does not compute, refused as that, or one the pass
+refuses by name, in whole or in part, as it reads it (`self.X.format(...)`,
+`Handler.X.format(...)`), that line standing for the text the receiver holds.
+Text a page joins through
+anything but a
 string constant (a
 name, a call, an attribute, a subscript of a container whose text the pass does
 not read, or a field or a `%` slot holding one) is read piece by piece: a tool's name, a tag or an attribute split there is not seen, and a

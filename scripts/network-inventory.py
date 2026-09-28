@@ -223,8 +223,9 @@ such a method on a type _CONTAINER_TYPES lists with the name as its first argume
 function that declares the name `global` (as the target of an assignment, an augmented assignment, a loop, a comprehension, a
 with or a walrus, or by an import, a def or class statement or an except clause) or a module-level augmented assignment),
 through a local whose every binding is read (a walrus in a nested def's, class's or lambda's header is a binding it does not
-read) and through a dict literal's values (a call or a Content-Type write inside a lambda's body is refused before its type is
-read, below); the part before any `;`, stripped and lower-cased, is compared with the types a
+read) and through a dict literal's values (refused before its type is read, below: a call inside a lambda's body, a Content-Type
+write inside one that is no `_send` definition's own write, and a call whose definition binds the parameter one of its own writes
+names other than as that parameter); the part before any `;`, stripped and lower-cased, is compared with the types a
 browser runs script from (SCRIPT_TYPES: text/html; the XML types text/xml, application/xml, text/xsl and any type with a `+xml`
 suffix, image/svg+xml and application/xhtml+xml among them; and text/javascript under each name a browser takes for JavaScript,
 application/javascript among them). A script-running route's page body is the call's second positional argument, read only when
@@ -263,9 +264,16 @@ or a name the list does not hold (through `__self__` of a builtin, a container o
 built at run time, gc or ctypes among them, and through a module reached by a tuple or list unpacking, an inline walrus,
 `sys.modules.__getitem__`, a for-loop target, a parameter default or a starred argument)
 is outside the list and not seen, and a module name or a builtin so rewritten is read as the file's text binds it. A `_send`
-definition in a class that a function defines, a page function that a function encloses, and a `_send` call or a Content-Type
-write inside a lambda's body fail the run by name: the census does not read the enclosing function's or lambda's scope, so it
-would take a name that scope binds (a builtin or a module name it shadows) for the module's.
+definition in a class that a function defines, a page function that a function encloses, a `_send` call inside a lambda's body, and
+a Content-Type write inside one that is no `_send` definition's own write fail the run by name: the census does not read the
+enclosing function's or lambda's scope, so it would take a name that scope binds (a builtin or a module name it shadows) for the
+module's. A `_send` definition's own Content-Type writes (each write whose innermost def is the definition, or a def in it itself
+named `_send`) are typed at each call. A call fails the run by name where one of them names a parameter whose argument the census
+reads as the type and the definition binds that name other than as that parameter anywhere in its body (in its own scope or in a
+lambda, a comprehension, a nested def or a class body in it) and in any form (an assignment, augmented or annotated, or an
+annotation; a loop, with, walrus or match target; an except name; a del; an import; a def or class statement; a global or nonlocal
+declaration; a parameter, a comprehension's target, a type statement or a type parameter): the census reads that write's type from
+the call's argument, which such a binding may replace.
 The page function of each script-running route
 is followed to the text it returns or inlines, and a
 parameter a followed call omits is read from its default value as that argument would be, in the scope the def statement runs in
@@ -297,32 +305,60 @@ chr give text their arguments do not hold, and max over one iterable returns an 
 text beside the call the census does not compute, so each falls under the call limit below, getattr and chr as its witnesses) that
 no module-level binding shadows and
 that is not rebound, any other builtin refused by name, and a call of super() refused by name as well, its methods being a base
-class's (the names the import system binds in every module, `__doc__`, `__name__`, `__package__`, `__spec__` and `__loader__`, are no
-builtins here: a page that reads one the file does not bind is refused by name); a parameter, an except name, or a name the
-function binds from one of those), reading as text the arguments a call of such a base or of a method on one is handed, never the
+class's (the names the import system binds in every module, `__doc__`, `__name__`, `__package__`, `__spec__` and `__loader__`, are
+no builtins here: a page that reads one the file does not bind is refused by name wherever the pass reads it, as a bare name, the
+base of a receiver, a container or an attribute, a callee or a call's argument, but never inside the index of a subscript over a
+container whose text the pass does not read: below); a parameter, an except name, or a name the function
+binds from one of those, where no attribute is read on the path to it: `q.get(k)` passes, and `q.X` is refused, below), reading as
+text the arguments a call of such a base or of a method on one is handed, never the
 text it computes from them: text a call computes from its arguments is not read, a stated limit (`dict(X).get(k)` and
 `json.loads(json.dumps(X))[0]` read X; the limit's witnesses are `chr(n)`, whose character is not n's text, `getattr(o, name)`,
 whose attribute is not its arguments' text, and a decoder, `base64.b64decode(X).decode()` or zlib or gzip over an embedded bundle
 (`zlib.decompress(base64.b64decode(X)).decode()`), each read only as its arguments' own text; an encoded asset kept ASCII and
-decoded where the page is built is such a shape, and can be honest; max handed one iterable, which returns an element of it, is
-such a call too: `max("af")` gives the character f), and over a bare module name that is such an import or one of the seven builtins a page may name, or, in such a
-module, a top-level def or class statement that is its name's one module-level binding and is not rebound. Text such a base holds
-is not read, as with code behind a name on self (a method called on self): a constant that a sibling module defines and the page
-imports, an attribute set before the call on a parameter other than self and other than a classmethod's first parameter, and an
-attribute of a class the pass reaches as a value without resolving it as the class (among them a class passed to a parameter or
-given as its default, a loop, comprehension or unpacking target bound to one, an if-expression over classes standing as the
-attribute's base, and a subscript of a container of classes); an attribute read on self (`self.X` as a value, a receiver or a
-container,
-`self.X.get(k)`, `self.X[0]` and `self.__doc__` among them) is refused by name, whatever sets it, and so is an attribute read on a
-class, as a value, a receiver or a container, through the class's own name (a name a class statement binds, in the innermost
+decoded where the page is built is such a shape, and can be honest; max handed one iterable, which returns an element of it, is such
+a call too: `max("af")` gives the character f; and so is a method called on a parameter whose name is no route class's method
+(below), a method of a class that holds no route among them), and over a bare module name that is such an import or one of the seven
+builtins a page may name, or, in such a
+module, a top-level def or class statement that is its name's one module-level binding and is not rebound. Text such a base holds is
+not read, as with code behind a name on self (a method called on self is read through the def statement the census follows, below,
+unless the file may replace it at run time in a way the census reads, below; code that replaces that method in any other way, a
+setattr or delattr whose name argument is no string constant, a write to an instance's `__dict__`, a reassigned `__class__`, a class
+decorator or a metaclass among them, is not read; its witness: a method the route class defines that a module function replaces
+through setattr, the method's name handed to it as an argument): a constant that
+a sibling module defines and the page
+imports, and a class reached through an import's attribute (its witness: a class that a sibling module defines, read as an attribute
+of that module, which the page imports by name) or through a call's return, under the call limit. An attribute read in a page
+position, as a value or anywhere on the path of a receiver or a container (but never inside the index of a subscript over a
+container whose text the pass does not read: below), is refused by name unless the root its base reaches by
+binding is a module constant, an import, one of the seven builtins a page may name, a value slot or a literal the pass reads (the
+census follows the base down that path, through a call's callee, a BoolOp's operands, an if-expression's branches and a walrus's
+value as well, and through a local's values, a loop, comprehension or with target's source, a list, tuple, set or dict literal's
+elements, keys and values, and a module constant's value, but never through a call's argument or a parameter's default): an
+attribute read on self
+(`self.X` as a value, a receiver or a container, `self.X.get(k)`, `self.X[0]` and `self.__doc__` among them), on a local bound to
+it or on a method's first parameter however spelled, where the method's def carries no decorator and, for a route handler, the
+file binds neither staticmethod nor classmethod, is refused by name, whatever sets it; one read on any other parameter (a module
+helper's parameter, any other method's first parameter, and a parameter that a class is passed to or has as its default among
+them) or on an except name is refused by name with a reason of its own; a base whose root is
+one the pass refuses (a
+function's or a method's return, a call it does not follow, a builtin other than the seven, `__file__` in a file that binds it, a
+run-time memo) is refused with the reason the pass gives that root; and an attribute read on a class, a method called on one among
+them, is refused by name too, as a value, a receiver or a container, through the class's own name (a name a class statement binds,
+in the innermost
 function scope around the read that binds the name or, where none does, at the top level of the file, whatever else binds it at
-module level) or through a name the census resolves to such a class (a classmethod's first parameter in that method, `cls.X`, or a
-local or a module constant bound to one, `h = Handler` and then `h.X`), or through a method call on a name whose value holds such
-a class (a local or a module constant bound to a list, tuple, set or dict literal with one among its elements, keys or values,
-`_REG.get(k).X`, or a local or a module constant bound to such a call), and so is a text method called on such a name
-(`Handler.format(...)`) and a replacement field in a `.format` or `.format_map` that reaches an attribute of its argument (below):
+module level) or through a name the census resolves to such a class (a local or a module constant bound to one, `h = Handler` and
+then `h.X`), or through a method call on, or a subscript of, a name whose
+value holds such a class (a local or a module constant bound to a list, tuple, set or dict literal with one among its elements, keys
+or values, `_REG.get(k).X`, or to a call of the builtin dict with one among its arguments, a keyword's value among them, `_REG =
+dict(a=Handler)` and then `_REG["a"].X`, or a local or a module constant bound to such a method call or subscript), or of such a
+literal or call itself (`dict(a=Handler).get(k).X`), or through any other base whose root by binding is such a class (a loop,
+comprehension or with target over classes, an if-expression or a walrus over classes, and a literal container holding one,
+`_REG["a"].X` and `_REG["a"].render()` among them), and so is a text method called on such a class through any of those roads
+(`Handler.format(...)`, `_REG.get(k).format(...)`, `(A or B).replace(...)`, `t.strip()` in a loop over classes), save one on a
+subscript refused as a join's operand (below), and a replacement field in a `.format` or `.format_map`
+that reaches an attribute of its argument (below):
 no class attribute is read as page text. A call of a name the census resolves to such a class, the class's own name among them, is
-refused by name (a classmethod's first parameter, `cls()`, as a call), so no attribute of the instance it makes is read either. A
+refused by name as a call, so no attribute of the instance it makes is read either. A
 name
 is rebound when a function binds it under `global` or a statement at
 module level writes it, in one of the forms listed above for a route's type; every name is rebound, as under a star import, in a
@@ -341,9 +377,28 @@ script, or `__main__`), which closes every write through the name by one arm; an
 f_globals,
 f_builtins or f_locals, on any receiver; a listed callable (locals, exec, eval, compile, `__import__`, import_module or _getframe)
 reached in the first three ways; or one of those callables or attributes, globals, vars, setattr, delattr or `__dict__` reached in
-the fourth; or, in a position of the fourth, a key that is a join the census does not fold, whatever it spells: a `.join`,
-`.format`, `.format_map` or `.replace` called on the name str, bytes or bytearray (`str.join("", [...])`), or a `%`, `.format` or
-`.format_map` on a string constant that is not expanded (below). The four ways, the whole of the reach the census reads for each of these names (`__dict__` in the fourth alone, beside
+the fourth; or, in a position of the fourth, a key the POSITIVE ALLOWLIST does not prove by its
+binding. The allowlist accepts only a constant string spelling no listed name; a parameter; a call's return whose callee reaches
+neither text nor the str, bytes or bytearray type nor a method of one; a name that is a loop or comprehension target inside a
+function over a literal of constants, a once-bound module tuple constant no code can mutate or an attribute whose base reaches no
+text and whose name the file never writes (it binds and declares no such name, uses an attribute so named only as such a source or
+an item read, never storing, deleting, augmenting or calling a method on one, spells the name in no string constant or keyword and
+in no setattr, delattr, `__setattr__` or `__delattr__` name folded from string constants, and names no globals, vars, locals or
+`__dict__` and holds no star import; such a setter whose name is not so folded is not read for it); a name that is such a target,
+or an unpacking target, over a parameter or such a call's return, directly or through names an
+assignment, such a target or an unpacking binds to one; a boolean operation or an if-expression each of whose values the allowlist
+accepts where it stands; and a name an assignment binds to any of these but a constant string. Every other key refuses by name,
+the reason naming what the
+walk met: a join, format, format_map or replace call, a `%`, a `+` or an f-string a string constant does not fold; a method of the
+name str, bytes or bytearray, however reached; any method called on, or attribute read on, constant text or anything not proven to
+reach no text; a direct attribute key or a name bound to one, an attribute proven only as a loop or comprehension source; such a
+source whose name the file may write, as above; a name bound to a constant string; a with target, or a name bound to one; a
+walrus, or a name a walrus binds anywhere, a comprehension's
+included; a subscript; an augmented assignment; a loop target bound at module level; a name a function or a class body declares
+global or a scope declares nonlocal;
+a name a class body binds; a name bound only in another form or by no statement; a list, set or dict module constant; and any other
+node kind. A name read at module level or as a builtin refuses where the file may rewrite its namespace. The four ways, the whole of the
+reach the census reads for each of these names (`__dict__` in the fourth alone, beside
 the attribute the computed-name forms above name): by its own name, in any context; by a name an import anywhere in
 the file binds to it from its module (locals, exec, eval, compile, `__import__`, globals, vars, setattr and delattr from builtins,
 import_module and
@@ -369,21 +424,51 @@ annotated assignment or a walrus binds to one of these; or an if-expression or a
 operands. A function's `X = []` of a local of the same name, or its `X.append(...)`, does not
 rebind it. It follows a call whose callee is a
 module function (a top-level def statement that is its name's one module-level binding, not rebound, in a module with no star
-import, and bound by no function scope of the page), a function defined in the page function or a method of the route's class
-(to what it returns, any decorator on it not applied), a text method or a file read, or any other method (through its receiver,
-as above, so `_K.__call__(t)` on a module constant `_K` that holds a lambda reads `_K` and the lambda's body, whose parameters are
-value slots), and it reads every call's arguments; a call to any other callee passes when the callee is such an import, one of the
-seven builtins a page may name or a parameter other than a classmethod's first parameter, and is refused by name for any other
-builtin, for str handed more than one positional argument, a starred argument or a keyword other than `object`, and, as a call,
-for a classmethod's first parameter, its class. It reads both operands of a `/`, a path join. `__file__`, wherever a page reads it
-(as a
-bare name, the base of a receiver, a container or an attribute, or a callee), is refused by name in a file where a statement binds
+import, and bound by no function scope of the page), a function defined in the page function or a method called on the calling
+method's own first parameter (self by binding, however it is spelled, the first parameter of a method whose def carries no
+decorator, never rebound in the method, and read so in a closure, a lambda or a comprehension of the method that does not bind the
+name; the first parameter of a route handler that carries a decorator, whatever it is bound to, or that stands in a file binding
+staticmethod or classmethod in any scope and by any form, a star import among them, is not classified, and a method called on it,
+or it called, is refused by name), resolved through
+the route class's method resolution order to the first class that binds the name, where that is a class of the file whose body
+itself binds it by one def statement and nothing else, carrying no decorator at all (staticmethod and classmethod among them),
+since Python calls a decorator's return in the def's place, and that no file class
+deriving from the route class, directly or through file classes, overrides in its own body, a text method or a file
+read, or any other method (through its receiver, as above, so `_K.__call__(t)` on a module constant `_K` that holds a lambda reads
+`_K` and the lambda's body, whose parameters are value slots), and it reads every call's arguments. A method called on self that no
+def statement of a class of the file defines first in that order (the order reaching a base whose names the census does not read, an
+imported one, before any class of the file that binds the name; the first class that binds it binding it any other way; or no class
+binding it) is refused by name, and so is a method the follow arm would take that a file class deriving from the route class, directly
+or through file classes, defines in its own body: the server may instantiate that subclass, whose override Python runs in place of
+the def the order resolves the name to. So too is a call of a route class's method (a name a def statement binds in the body of a route
+class or of a class of the file it derives from, the names read once per file) on self through anything else (a local, a loop,
+comprehension or with target, a container, an if-expression, a BoolOp or a walrus bound to it), on any other parameter, or on a name
+spelled self that is not the calling method's own first parameter, and a call of any other name on self through anything else, and a
+method the census would follow whose def carries any decorator (staticmethod and classmethod among them),
+whose return Python calls in its place, and a method the census would follow that the file may replace at run time (below), each
+before the file-read and text-call arms and
+wherever such a call stands on the path of a receiver or a container; a call to any
+other callee passes when the callee is such an import, one of the
+seven builtins a page may name or a parameter other than such an unclassified first parameter, and is refused by name for any
+other builtin, for str handed more than one positional argument, a starred argument or a keyword other than `object`, and for such
+a first parameter. For that refusal the file may replace a method at run time where it stores or deletes an
+attribute of the method's name on any object (the target of an assignment of any kind, a for, with or comprehension target, or a
+del), names the method by a string constant, or a join of them, as the second argument of setattr or delattr (by that name or as an
+attribute so named) or of `__setattr__` or `__delattr__` called unbound (by that name, or as an attribute of `object`, of `type`, of a class a
+top-level class statement of the file binds or of a call of type()), or as the first argument of `__setattr__` or `__delattr__`
+called bound on any other receiver (`self.__setattr__("name", f)`, `super().__setattr__(...)`), or holds a class in the route
+class's method resolution order that binds `__getattribute__`. It reads both operands
+of a `/`, a path join. `__file__`, wherever a page reads it
+(as a bare name, the base of a receiver, a container or an attribute, or a callee, but never inside the index of a subscript over a
+container whose text the pass does not read: below), is refused by name in a file where a statement binds
 it, in any scope and by any form, before any scope's or module-level binding of it is read, and there a file read whose path the
 census builds from `Path(__file__)` or `open(__file__)` is refused as a file the walk does not scan; where no statement binds it,
-it is a value slot as a bare name (the argument of `Path(__file__)` among them) when the file neither writes a name of its module
-namespace through a computed name nor may rewrite it at run time and the module holds no star import, and is refused by name in
-every other case, with that file's reason in a file that writes its namespace through a computed name or may rewrite it at run
-time and with no reason in a module that holds a star import. It reads a lambda's body, its
+the file neither writes a name of its module namespace through a computed name nor may rewrite it at run time, no module-level
+statement writes it and the module holds no star import, it is the file's own path: a value slot as a bare name (the argument of
+`Path(__file__)` among them) and the path of a file read the census builds from `Path(__file__)` or `open(__file__)`; in every other
+case it is refused by name as a bare name, with that file's reason in a file that writes its namespace through a computed name or
+may rewrite it at run time and with no reason otherwise, and such a file read is refused as a file the walk does not scan, as in a
+file where a statement binds it. It reads a lambda's body, its
 parameters value slots, and its
 defaults where
 the lambda stands. It reads a subscript's container only under a constant index: a slice of any shape, or an index that is no
@@ -392,9 +477,13 @@ text it reads (a literal, an f-string, an operator or an if-expression, a module
 or a method call on one of those, or a boolean operation with one of those among its operands) is refused by name, since it reads
 the container whole and does not compute what the index selects; honest forms fail closed with it (`_PAGE[1:]`, a template's
 leading newline cut; `PAGES[key]` over a dict constant, the key no constant; `_P[-1]`), and a container that is a base whose own
-text it does not read, or a call of one or of a method on one, passes whatever its index. A None, bool or int constant, the empty bytes constant and a `*` or `<<` over int constants are value
-slots the pass reads as no text; one that stands directly as a `%` operand (bare, a tuple element or a dict literal's value, an
-int modulo such as `n % 60` among them), as a `.format` argument (an element of a starred list or tuple literal and a value of a
+text it does not read, or a call of one or of a method on one, passes whatever its index. The index of such a subscript, over a
+container whose text the pass does not read, is not read at all, whatever it holds (a name the import system binds, `__file__`, an
+attribute read on self, on a parameter or on a class, a call): the item it selects is text such a base holds (above). A None, bool
+or int constant, the empty bytes constant and a `*` or `<<` over int constants are value
+slots the pass reads as no text; one that stands directly as the right operand of a `%` (bare, a tuple element or a dict literal's
+value, an int modulo such as `n % 60` among them), as a `.format` argument (an element of a starred list or tuple literal and a
+value of a
 `**` dict literal among them) or as a value of the dict literal a `.format_map` is handed is refused by name, whether or not a
 conversion takes it, since a conversion can turn it into characters (a `%c`, a `%x`, a `{:c}`, a `%.1s` over the empty bytes), and
 one held deeper there (a name or a local bound to one, an if-expression's branch, a list's element, or a call's argument, one of
@@ -402,18 +491,28 @@ the seven builtins' among them) is read as a value slot and not refused. The run
 store or delete of an attribute so named, or a string equal to `_send`), a content type the pass cannot read, a script-running
 type written outside `_send`, a function that
 answers outside `_send` more often than it writes a Content-Type header, a container the module writes at run time, an attribute
-read on self, a class attribute (an attribute read on a class through the class's own name, a name the census resolves to it or a
-method call on a name whose value holds it), a replacement field reaching an attribute or an index of its argument in a `.format`
-or `.format_map`, a
+read on self, on any other parameter or on an except name, each judged by the root its base reaches by binding (so one read on a
+local bound to self, or on a method's first parameter however spelled under the conditions above, is one read on self), a class
+attribute (an attribute read on
+a class, a method called on one among them, through the class's own name, a name the census resolves to it, a method call on or a
+subscript of a name whose value holds it or of such a value itself, or any other base whose root by binding is a class), a method
+called on self that no def statement of a class of the file defines first in the route class's method resolution
+order, a method called on self that a file class deriving from the route class overrides, a route class's method called other than
+on the calling method's own first parameter, a method called on self that the file may replace at run time, a call of, or a method
+called on, a route handler's first parameter the census does not classify, a replacement field reaching an attribute or an index
+of its argument in a `.format` or `.format_map`, a
+`.format` or `.format_map` whose format string the receiver reaches other than as a string constant, a join of them or a name bound
+to one, a
 name the import system binds in every module that the file does not bind, a subscript by a
 slice or an index other than a constant over a container whose text the pass reads, a subscript by a constant index over such a
 container that stands as an operand of a `+`, a `%`, an f-string, a `.join`, a `.format`, a `.format_map` or a `.replace`, a value
-slot that stands directly as a `%` operand, a `.format` argument or a `.format_map` value, a builtin other than the seven a page
+slot that stands directly as the right operand of a `%`, a `.format` argument or a `.format_map` value, a builtin other than the
+seven a page
 may name, a call of str with more than one positional argument, a starred argument or a keyword other than `object`, a join,
 format, format_map or replace called on
 the name str, bytes or bytearray, a `%`, `.format` or `.format_map` on a string constant that is not expanded, `__file__` in a
 file where a statement binds it, any other receiver or container, any other callee (a module constant, a local, a class, a
-classmethod's first parameter, a subscript, a call and a lambda among them), any
+subscript, a call and a lambda among them), any
 other bare module name (one bound other than by one assignment, one bound by an annotated, unpacking or chained assignment, one
 annotated at module level beside its assignment, one no module-level statement binds that a function or a class body binds under a
 `global` declaration, an
@@ -424,7 +523,10 @@ namespace through a computed name or may rewrite it at run time (the reason nami
 that may rewrite the builtins, and a rebound import, builtin, function or
 class among them), any other kind of expression in a page (a non-empty bytes, float, complex or Ellipsis constant, an f-string's
 format spec,
-any other operator, a comparison and a unary expression among them), and a route whose body yields no piece and no file slot, unless the served allowlist, SERVED_ALLOW, names the place by its function and expression, with the number of places the entry
+any other operator, a comparison and a unary expression among them), and a route whose body yields no piece and no file slot (each
+refusal of page text applies where the pass reads that text, never inside the index of a subscript over a container whose text the
+pass does not read: above), unless the served allowlist, SERVED_ALLOW, names the place by its function and expression, with the
+number of places the entry
 covers and the reason (the two answers with no body, the CORS preflight's 204 and the websocket upgrade's 101, are named there);
 an entry that names nothing in the run, or covers a different number of places, fails the run too. In served text every `fetch(`
 and `import(` on a line is read by its own argument, and no comment skip applies, since a joined constant is one line whatever
@@ -444,8 +546,13 @@ the joined text reads it, whole. A `.format` or `.format_map` whose format strin
 attribute or an index of its argument (`{0.CSS}`, `{h.CSS}`, `{self.body}`, `{0[k]}`) refuses by name, since the text such a field
 reads is the argument's attribute or item, which the pass does not read: the census looks for such a field where the format string
 is the receiver's text, a string constant or one of these joins, or the value of a module constant or a local bound to one, and a
-format string the pass reaches any other way (a function's return among them) is text a call computes from its arguments, the call
-limit. Text a page joins through anything but a string constant (a name, a call, an attribute, a
+`.format` or `.format_map` whose format string the receiver reaches any other way (a function's or a method's return, a parameter,
+an attribute, an if-expression, a `+` over a name among them) is refused by
+name too, since the pass does not read that format string's fields, unless the receiver is a class (above), refused as a class
+attribute, a subscript whose join the pass does not compute, refused as that, or one the pass refuses by name, in whole or in part,
+as it reads it (`self.X.format(...)`, `Handler.X.format(...)`), that line standing for the text the receiver holds. Text a page
+joins through anything but a string constant (a name,
+a call, an attribute, a
 subscript of a container whose text the pass does not read, or a field or a `%` slot holding one) is read piece by piece: a tool's name, a tag or an attribute split there is not seen, and a fetch URL cut there is
 classed by the part before the cut. A subscript by a constant index over a container whose text the pass reads (the containers
 named above for a slice) that stands as an operand of one of these joins, a `+`, a `%` or an f-string, or the receiver or an
@@ -997,12 +1104,14 @@ class Scan(ast.NodeVisitor):
         # whether the file names `__builtins__` as a name or imports the builtins module (`import builtins[.x]`, `from builtins[.x]
         # import ...` at any level, or `from X import builtins` or `from X import __builtins__`, any X at any level: visit_Import,
         # visit_ImportFrom),
-        # whether a statement binds `__file__`, each run-time form (runtime, each (line, column, the form): an import from the
+        # whether a statement binds `__file__`, whether one binds staticmethod or classmethod (deco: in any scope and by any form, a star
+        # import among them, which _Served._ctx reads for a route handler), each run-time form (runtime, each (line, column, the form): an import from the
         # file's own package (ns_own), a listed callable or attribute ns_listed reads or a call of one (arm ii), and a listed name
         # spelled as a string where a run-time lookup by name takes it (ns_string, arm iii)), the calls ns_listed reads as
-        # __import__ or import_module (importers, which _namespace_flags's module() reads) and every call's callee node (callees)
+        # __import__ or import_module (importers, which _namespace_flags's module() reads) and every call's callee node (callees),
+        # and beside each run-time form the listed name behind it, None for any other form (rkinds, which _key_settle reads)
         self.ns_facts = {"ns_calls": [], "maps": [], "gets": set(), "stores": [], "setattrs": [], "assigns": [], "builtins": False, "file": False,
-                         "runtime": [], "importers": set(), "callees": set()}
+                         "deco": False, "runtime": [], "rkinds": [], "importers": set(), "callees": set()}
         parts = rel.split("/")   # the file's top package directory (none for a file at the root) and its own module name
         self.ns_top, self.ns_stem = parts[0] if len(parts) > 1 else None, os.path.basename(rel).rsplit(".", 1)[0]
         # the names an import anywhere in the file binds: to a listed name from its module (ns_from, name -> the listed name), to the
@@ -1010,7 +1119,15 @@ class Scan(ast.NodeVisitor):
         # setattr, delattr or hasattr (ns_getattrs), to operator's attrgetter or methodcaller (ns_ops: `from operator import
         # attrgetter [as Y]`) and to the operator module (ns_opmods: `import operator [as X]`, `from X import operator [as Y]`)
         self.ns_from, self.ns_bmods, self.ns_getattrs, self.ns_ops, self.ns_opmods = {}, set(), set(), {}, set()
+        # arm iii's keys read by the allowlist (_key_form): the scopes around the walk's position, innermost last (a def's or a
+        # class's whole statement, a lambda's body, a comprehension), the module's tree, each scope's bindings as _Served._locals and
+        # _key_binds read them, computed once per scope a key's walk reads (id -> (the scope, its forms, its values), the node held
+        # so its id is not reused), the keys held for the allowlist until the walk is done, each with its scopes (kdefer: _unfolded,
+        # _key_settle), the names a key's acceptance read at module level or as a builtin (kheld), and the file's facts _key_const
+        # and _key_attr read, gathered once (kindex: _key_index)
+        self.kscopes, self.ktree, self.klocals, self.kdefer, self.kheld, self.kindex = [], None, {}, [], [], None
     def visit_Module(self, n):   # the walk, then the routes read from its candidates
+        self.ktree = n
         for x in _statements(n.body):   # the imports ns_listed and ns_string read, in every scope, gathered before the walk reads any use of their names
             if isinstance(x, ast.ImportFrom):   # `from X import builtins [as Y]` or `from X import operator [as Y]`, any X at any level,
                 # binds that module, as visit_ImportFrom counts the first as importing the builtins module
@@ -1024,12 +1141,15 @@ class Scan(ast.NodeVisitor):
                 self.ns_bmods.update(a.asname or a.name for a in x.names if a.name == "builtins")
                 self.ns_opmods.update(a.asname or a.name for a in x.names if a.name == "operator")
         self.generic_visit(n)
+        self._key_settle()   # arm iii's held keys, read by the allowlist once every binding, declaration and write of the file is seen
         self.res.ns[self.rel] = _namespace_flags(self.ns_facts, self.ns_stem)
         self.routes = routes_of(self.rel, n, self, self.res)
-    def ns_bind(self, name):   # a binding of `__file__`, in any scope and by any form (_namespace_flags)
+    def ns_bind(self, name):   # a binding of `__file__`, or of staticmethod or classmethod, in any scope and by any form (_namespace_flags)
         if name == "__file__": self.ns_facts["file"] = True
-    def ns_runtime(self, n, form):   # a run-time form of _namespace_flags, with its line
+        elif name in ("staticmethod", "classmethod", "*"): self.ns_facts["deco"] = True   # a star import may bind either
+    def ns_runtime(self, n, form, listed=None):   # a run-time form of _namespace_flags, with its line, and the listed name behind it
         self.ns_facts["runtime"].append((n.lineno, n.col_offset, "%s at line %d" % (form, n.lineno)))
+        self.ns_facts["rkinds"].append(listed)
     def ns_own(self, node, module):   # arm i: an import from the file's own package: a relative import, an absolute one under its top
         # package directory (the file itself by that name among them), the file's own bare stem (its working absolute name when its
         # directory runs as a script, as kernel/ does), or __main__ (the file itself when it runs as a script). The import itself
@@ -1061,31 +1181,424 @@ class Scan(ast.NodeVisitor):
     def _const_str(self, e):   # the string a str constant or a constant join _Served._const_text folds to, else None (arm iii)
         c = _Served._const_text(e)
         return c[0] if c is not None and type(c[0]) is str else None
-    @staticmethod
-    def _unfolded(e):   # arm iii: a key spelled by a join _Served._const_text does not fold, whatever it spells: the run-time form, else None.
-        # A join, format, format_map or replace called on the name str, bytes or bytearray (_unbound_text_call), and a `%`, `.format`
-        # or `.format_map` of string constants that _const_text does not expand (a field wider than a million characters, _wide, or
-        # a format spec holding a replacement field, _nested), the one predicate each that the served pass refuses in a page
+    def _unfolded(self, e):   # arm iii: why a lookup key is refused at once, else None. A join, format, format_map or replace called
+        # on the name str, bytes or bytearray (_unbound_text_call), and a `%`, `.format` or `.format_map` of string constants
+        # _const_text does not expand (a field wider than a million characters, _wide, or a format spec holding a replacement field,
+        # _nested), each the direct key with its own form; a string constant key is left to ns_string's own listed-name test; any
+        # other key is held for the allowlist (_key_form), which reads it once the file's walk is done (_key_settle), so a binding,
+        # a declaration or a write later in the file counts as one earlier does
         if _unbound_text_call(e): return "spells a name by an unbound %s.%s" % (e.func.value.id, e.func.attr)
         if _Served._wide(e) or _Served._nested(e): return "spells a name by a format the census does not expand"
+        if not isinstance(e, ast.Constant): self.kdefer.append((e, tuple(self.kscopes)))
         return None
+    @staticmethod
+    def _key_kind(x):   # the form a key may be that _const_text may not fold, named as a reason names it, else None (_key_form)
+        if isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and x.func.attr in ("join", "format", "format_map", "replace"): return "a " + x.func.attr
+        if isinstance(x, ast.BinOp) and isinstance(x.op, (ast.Mod, ast.Add)): return "a %" if isinstance(x.op, ast.Mod) else "a +"
+        return "an f-string" if isinstance(x, ast.JoinedStr) else None
+    @staticmethod
+    def _key_words(x):   # a node kind the allowlist does not accept where it stands, in words for its reason, never the syntax tree's name for it
+        ops = {ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.FloorDiv: "//", ast.Pow: "**", ast.LShift: "<<", ast.RShift: ">>",
+               ast.BitOr: "|", ast.BitXor: "^", ast.BitAnd: "&", ast.MatMult: "@"}
+        if isinstance(x, ast.BinOp): return "a " + ops.get(type(x.op), "binary operation")
+        if isinstance(x, ast.UnaryOp): return {ast.Not: "a not", ast.USub: "a unary -", ast.UAdd: "a unary +", ast.Invert: "a ~"}.get(type(x.op), "a unary operation")
+        kinds = ((ast.Lambda, "a lambda"), (ast.ListComp, "a list comprehension"), (ast.SetComp, "a set comprehension"),
+                 (ast.DictComp, "a dict comprehension"), (ast.GeneratorExp, "a generator expression"), (ast.Await, "an await"),
+                 (ast.Yield, "a yield"), (ast.YieldFrom, "a yield from"), (ast.Compare, "a comparison"), (ast.Slice, "a slice"),
+                 (ast.FormattedValue, "an f-string's field"), (ast.Starred, "a starred value"), (ast.Tuple, "a tuple"),
+                 (ast.List, "a list"), (ast.Set, "a set"), (ast.Dict, "a dict"), (ast.Call, "a call"), (ast.Name, "a name"),
+                 (ast.NamedExpr, "a walrus"),
+                 (ast.Attribute, "an attribute"), (ast.Subscript, "a subscript"), (getattr(ast, "TemplateStr", ()), "a template string"),
+                 (getattr(ast, "Interpolation", ()), "a template string's field"))
+        return next((w for k, w in kinds if k and isinstance(x, k)), "an expression")
+    def _key_form(self, key, chain):
+        """Why a lookup key is refused, or None where it is accepted: a POSITIVE ALLOWLIST. A key is accepted only in a shape
+        proven by construction, and every other shape refuses, the reason naming in words what the walk met. Accepted:
+        (1) constant text (a string constant, or constants _const_text folds to one) that spells no listed name (_STRING_NAMES),
+        as the key itself or as a leaf of a loop's literal source (3); a direct key that spells one is left to ns_string's own
+        test ("spells <name> as a string"), and constant text reached any other way refuses;
+        (2) the stated remainders, each keyed by binding: a parameter; a call's return whose callee reaches by binding neither text
+        nor the str, bytes or bytearray type nor any of their methods (the callee a name bound by a def statement, an import, a
+        parameter or no statement at all as a builtin other than those three, or an attribute, other than one so named, of a value
+        that reaches no text; a name bound to one of those by an assignment is read through); and a name bound to a parameter or
+        such a call's return by an assignment or an annotated assignment, or as an unpacking target over one;
+        (3) a name that is a loop or comprehension target, inside a function, over a literal (a tuple, list or set literal, nested
+        tuple and list literals among its elements, or a dict literal's keys) whose every leaf is constant text as in (1) or another
+        constant, over a module constant bound once to a tuple literal of such constants, nested tuple literals among them, which no
+        code can mutate (_key_const decides it: the file never binds, declares, names or writes that constant any other way), over an
+        attribute whose base reaches no text and whose name the file never writes (the live key at kernel/host_transport.py:1116,
+        sh.SPEC_FIELDS; _key_attr decides it by the facts _key_const reads, keyed on the attribute's name on any receiver: the file
+        binds and declares no such name, uses an attribute so named only as such a source or an item read, spells the name in no
+        string constant or keyword and in no setter's name folded from string constants, and names no globals, vars, locals or
+        `__dict__` and holds no star import; a setter whose name is not so folded is not read for it), or over a parameter or such a
+        call's return, directly or through a name an assignment, such a target or an unpacking binds to one; a module-level loop
+        target refuses;
+        a boolean operation or an if-expression is accepted where each of its values is, and a name an assignment binds to any
+        accepted shape but constant text is read through. A name read at module level
+        or as a builtin assumes the file may not rewrite its module namespace (_key_settle checks it). Refused, each by name: a
+        join, format, format_map or replace call, a `%`, a `+` or an f-string _const_text does not fold ("... the census does
+        not fold", _key_kind); a method of the name str, bytes or bytearray, however reached; any method called on, or attribute
+        read on, constant text, a literal container or anything else that is not proven to reach no text; a direct attribute key or a
+        name bound to one, an attribute accepted only as a loop or comprehension source; such a source whose name the file may write
+        (_key_attr); a name bound to a constant string; a with
+        target, or a name bound to one (its `__enter__` call's return is no shape the allowlist proves); a walrus, and a name a
+        walrus binds, in any scope, a comprehension's included (a walrus in a comprehension binds the enclosing scope's name to a
+        value the comprehension's own scope computes, so no binding of a walrus target is read in an enclosing scope); a loop
+        target bound at module level; a subscript; a call of a
+        class the file defines, a lambda, a call's return or anything but a name or an attribute; an augmented assignment; a
+        name any function or class body declares global, or a scope of the file declares nonlocal; a name a class body binds; a
+        name bound by a del, a match pattern or any other store; a list, set or dict module constant; and any other node kind,
+        named in words ("a lambda the census does not evaluate"). From the key, read in the scopes `chain` (Scan.kscopes where
+        the key stands). Walked iteratively: an explicit worklist and one visited set per query, keyed on the binding's scope, the
+        name and the context (the key itself, a loop's source, an opaque value's items, a literal source's leaf, a receiver or a
+        callee), so each name expands once per context, in _key_step; there is no depth bound."""
+        if self._const_str(key) is not None: return None   # a direct key that is constant text: ns_string's own test reads its listed name
+
+        def why(node, tail):   # the reason for a form the walk refuses, the entry key named where the form is not the key itself
+            if node is key: return "spells a name by %s" % tail
+            return "spells a name by %s, %s %s" % (ast.unparse(key)[:40], "bound to" if isinstance(key, ast.Name) else "which holds", tail)
+        seen, todo = set(), [(key, tuple(chain), "key")]
+        while todo:   # the context: "key" the key itself, "src" a loop's source, "rem" a value whose items are opaque, "lit" and
+            # "tlit" a literal source's leaves (tlit a module constant's, tuples alone nested), "callee", ("nt", the tail for constant
+            # text there, the attribute read on it) a receiver
+            x, chain, ctx = todo.pop()
+            nt = type(ctx) is tuple
+            text = self._const_str(x)
+            if ctx in ("lit", "tlit"):   # a literal source's leaves: constants, and tuple (and for lit list) literals of them
+                if text is not None or isinstance(x, ast.Constant):
+                    if text in _STRING_NAMES: return "spells %s as a string" % text
+                    continue
+                if isinstance(x, ast.Tuple) or ctx == "lit" and isinstance(x, ast.List):
+                    for v in reversed(x.elts):
+                        if isinstance(v, ast.Starred): return why(v, "a starred element in a loop's literal source the census does not evaluate")
+                        todo.append((v, chain, ctx))
+                    continue
+                kind = self._key_kind(x)
+                if kind is not None: return why(x, "%s the census does not fold" % kind)
+                return why(x, "%s in a loop's literal source the census does not evaluate" % self._key_words(x))
+            if text is not None or isinstance(x, ast.Constant):
+                if nt: return why(x, ctx[1])
+                if text in _STRING_NAMES: return "spells %s as a string" % text
+                return why(x, "constant text outside a loop's literal source")
+            if _unbound_text_call(x): return why(x, "an unbound %s.%s the census does not fold" % (x.func.value.id, x.func.attr))
+            if _Served._wide(x) or _Served._nested(x): return why(x, "a format the census does not expand")
+            kind = self._key_kind(x)
+            if kind is not None: return why(x, "%s the census does not fold" % kind)
+            if isinstance(x, ast.IfExp): todo += [(x.orelse, chain, ctx), (x.body, chain, ctx)]; continue
+            if isinstance(x, ast.BoolOp): todo += [(v, chain, ctx) for v in reversed(x.values)]; continue
+            if isinstance(x, ast.Subscript): return why(x, "a subscript the census does not evaluate")
+            if isinstance(x, ast.Call):   # a call's return: the stated remainder where its callee is proven
+                if ctx == "callee": return why(x, "a call of a call's return the census does not evaluate")
+                f = x.func
+                if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in _TEXT_TYPES:   # `str.lower(v)`, by its spelling
+                    return why(x, "an unbound %s.%s the census does not fold" % (f.value.id, f.attr))
+                todo.append((f, chain, "callee")); continue
+            if isinstance(x, ast.Attribute):
+                if ctx == "callee" or nt:
+                    if x.attr in _TEXT_TYPES: return why(x, "the %s type reached as an attribute, which the census does not fold" % x.attr)
+                    tail = "a .%s() call on constant text the census does not fold" % x.attr if ctx == "callee" else ctx[1]
+                    todo.append((x.value, chain, ("nt", tail, x.attr) if not nt else ctx)); continue
+                if ctx == "src":   # an attribute as a loop or comprehension source (the live key at kernel/host_transport.py:1116, sh.SPEC_FIELDS): accepted where its base reaches no text by binding
+                    shut = self._key_attr(x.attr)   # and the file writes no attribute so named (the facts _key_const reads for a module constant)
+                    if shut: return why(x, _KEY_ATTR % (x.attr, shut))
+                    todo.append((x.value, chain, ("nt", "an attribute .%s of constant text the census does not evaluate" % x.attr, x.attr))); continue
+                return why(x, "an attribute .%s the census does not evaluate, accepted only as a loop or comprehension source" % x.attr)
+            if isinstance(x, (ast.Tuple, ast.List, ast.Set, ast.Dict)) and ctx == "src":   # a loop's literal source
+                if isinstance(x, ast.Dict):
+                    if any(k is None for k in x.keys): return why(x, "a ** mapping in a loop's literal source the census does not evaluate")
+                    todo += [(k, chain, "lit") for k in reversed(x.keys)]; continue
+                for v in reversed(x.elts):
+                    if isinstance(v, ast.Starred): return why(v, "a starred element in a loop's literal source the census does not evaluate")
+                    todo.append((v, chain, "lit"))
+                continue
+            if isinstance(x, ast.Name):
+                got = self._key_binding(x, chain, ctx)
+                if got[0] == "refuse": return "spells a name by %s, %s" % (x.id, got[1])
+                if (got[0], x.id, ctx) in seen: continue
+                seen.add((got[0], x.id, ctx))
+                for item in self._key_step(got[1]):
+                    how = item[0]
+                    if how == "param": continue   # a parameter: the stated remainder, in every context
+                    if how in ("import", "def", "builtin"):
+                        if item[1] in _TEXT_TYPES and (nt or ctx == "callee"):   # the str, bytes or bytearray type itself, by binding
+                            return why(x, "an unbound %s.%s the census does not fold" % (item[1], ctx[2]) if nt else "a call of %s the census does not fold" % item[1])
+                        if not (ctx == "callee" or nt and how == "import"): return "spells a name by %s, %s" % (x.id, _KEY_BOUND[how])
+                        if got[2]: self.kheld.append((x.id, how))
+                        continue
+                    if how in ("class", "except", "with", "walrus"): return "spells a name by %s, %s" % (x.id, _KEY_BOUND[how])
+                    if how == "const":   # a module constant bound once to a tuple literal, read as a loop's source
+                        shut = self._key_const(x.id)
+                        if shut: return "spells a name by %s, %s" % (x.id, shut)
+                        self.kheld.append((x.id, "module"))
+                        todo.append((item[1], (), "tlit")); continue
+                    if how == "mutable": return "spells a name by %s, %s" % (x.id, _KEY_BOUND[how])
+                    v, vch, d = item[1], item[2], item[3]
+                    if got[2]: self.kheld.append((x.id, "module"))
+                    if how in ("for", "comp"):
+                        if got[2]: return "spells a name by %s, %s" % (x.id, "a loop target bound at module level, which the census does not evaluate")
+                        todo.append((v, vch, "src" if ctx == "key" else "rem"))
+                    elif d: todo.append((v, vch, "rem"))   # an unpacking target: an element of an opaque value
+                    else: todo.append((v, vch, "rem" if ctx == "src" else ctx))
+                continue
+            return why(x, "%s the census does not evaluate" % self._key_words(x))   # any other node kind, or a literal where the allowlist takes none
+        return None
+    def _key_step(self, vals):   # _key_form's expansion of one name, which it calls once for each name it expands in a context,
+        # given the items of the name's binding (_key_binding): the items to read, in their order
+        return list(vals)
+    @staticmethod
+    def _key_targets(t):   # (name, the subscripts that take a target's source to it) for each name a target binds: one for each
+        # tuple or list level it stands in, a starred name the level of the tuple or list that holds it (_key_binds, _key_binding)
+        out, todo = [], [(t, 0)]
+        while todo:
+            n, k = todo.pop()
+            if isinstance(n, ast.Name): out.append((n.id, k))
+            elif isinstance(n, (ast.Tuple, ast.List)): todo += [(e.value, k) if isinstance(e, ast.Starred) else (e, k + 1) for e in n.elts]
+            elif isinstance(n, ast.Starred): todo.append((n.value, k))
+        return out
+    @staticmethod
+    def _key_binds(fn):
+        """name -> [(the form, the value, the unpacking level)] for the values the scope fn's own body binds to each name, by form:
+        "assign" for a single-name, chained or annotated assignment's value, and for an element an assignment's tuple or list
+        literal of the target's own length (no starred element on either side) binds element by element; "unpack" for any other
+        unpacking target's value (its level one or more); "for" for a loop target's source (its level one, and one more for each
+        unpacking level); "with" for a with target's context expression; "walrus" for a walrus's value, a walrus inside a
+        comprehension among them, which binds this scope's name (the allowlist refuses both of the last two forms: _key_form).
+        Traversed as _Served._locals traverses: nested defs, classes and lambdas are not entered, their headers read as this
+        body's statements (_header)."""
+        out, stack = {}, list(fn.body) if isinstance(fn.body, list) else [fn.body]
+
+        def bind(t, v, form, base, pair):
+            todo = [(t, v)]
+            while todo:
+                t, v = todo.pop()
+                if (pair and isinstance(t, (ast.Tuple, ast.List)) and isinstance(v, (ast.Tuple, ast.List)) and len(t.elts) == len(v.elts)
+                        and not any(isinstance(e, ast.Starred) for e in t.elts + v.elts)):
+                    todo += zip(t.elts, v.elts); continue
+                for name, k in Scan._key_targets(t):
+                    out.setdefault(name, []).append(("unpack" if form == "assign" and k else form, v, base + k))
+        while stack:
+            n = stack.pop()
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)): stack.extend(_header(n)); continue
+            if isinstance(n, ast.Assign):
+                for tg in n.targets: bind(tg, n.value, "assign", 0, True)
+            elif isinstance(n, ast.AnnAssign) and n.value is not None: bind(n.target, n.value, "assign", 0, False)
+            elif isinstance(n, (ast.For, ast.AsyncFor)): bind(n.target, n.iter, "for", 1, False)
+            elif isinstance(n, (ast.With, ast.AsyncWith)):
+                for it in n.items:
+                    if it.optional_vars is not None: bind(it.optional_vars, it.context_expr, "with", 0, False)
+            elif isinstance(n, ast.NamedExpr): bind(n.target, n.value, "walrus", 0, False)
+            stack.extend(ast.iter_child_nodes(n))
+        return out
+    def _key_scope(self, s):   # (_Served._locals, _key_binds) over the scope s (a def, a class body or the module), computed once per scope
+        got = self.klocals.get(id(s))
+        if got is None: got = self.klocals[id(s)] = (s, _Served._locals(s), self._key_binds(s))
+        return got[1][3], got[2]
+    def _key_binding(self, x, chain, ctx):
+        """How the allowlist reads the name `x` in the scopes `chain` (innermost last), in the context ctx: ("refuse", the tail of a
+        reason); or (the binding's scope, its items, whether the scope is the module) where each item is ("param",), ("import",
+        the type it binds from builtins or None), ("def", None), ("class",), ("except",), ("builtin", its name) for a builtin no
+        statement binds, ("const", the tuple literal) for a module constant bound once to a tuple literal read as a loop's source
+        (ctx "src"), ("mutable",) for one bound once to a list, set or dict literal so read, or (a form of _key_binds or "comp", the
+        value, the scopes it is read in, its unpacking level). From the innermost scope out, as Python resolves the name: a
+        comprehension whose target binds it (read anywhere in it but its first source, which runs in the enclosing scope) gives
+        the sources of the generators whose targets bind it; a lambda's body gives ("param",) for its parameter and refuses a
+        walrus's name; a class body refuses a name it binds (the class body is not a scope of the scopes nested in it); a def's
+        body (the key in it, not in its header, which runs in the enclosing scope) refuses an augmented assignment, a nonlocal
+        declaration of the name in the def or in a def or class nested in it and a del, match or other store, breaks to the module
+        on the def's own `global` declaration, and gives its parameter and its other bindings; and past every scope, the module:
+        a name any function or class body of the file declares global refuses, wherever the declaration stands; else the
+        module's bindings, or, where no statement binds it, a builtin (not a name the import system binds in every module)."""
+        at, name, passed, i = (x.lineno, x.col_offset), x.id, False, len(chain) - 1
+
+        def items(f, binds, sch):
+            out = [("param",)] if "param" in f else []
+            for how in ("import", "def", "class", "except"):
+                if how in f: out.append((how, self.alias.get(name, "").partition("builtins.")[2] or None) if how == "import" else (how, None) if how == "def" else (how,))
+            return out + [(fm, v, sch, d) for fm, v, d in binds.get(name, ())]
+        while i >= 0:
+            s = chain[i]
+            if isinstance(s, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+                first = s.generators[0].iter
+                if not (first.lineno, first.col_offset) <= at < (first.end_lineno, first.end_col_offset):
+                    srcs = [("comp", g.iter, chain[:i] if g is s.generators[0] else chain[:i + 1], 1 + k) for g in s.generators
+                            for t, k in self._key_targets(g.target) if t == name]
+                    if srcs: return id(s), srcs, False
+                    passed = True
+            elif isinstance(s, ast.Lambda):
+                a = s.args
+                if any(isinstance(n, ast.NamedExpr) and n.target.id == name for n in ast.walk(s.body)):
+                    return "refuse", _KEY_BOUND["lambda"]
+                if name in {p.arg for p in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if p is not None}: return id(s), [("param",)], False
+                passed = True
+            elif isinstance(s, ast.ClassDef) and passed: pass
+            elif at >= (s.body[0].lineno, s.body[0].col_offset):   # in the body of a def or a class, not in its header
+                if isinstance(s, ast.ClassDef):
+                    if name in self._key_scope(s)[0]: return "refuse", _KEY_BOUND["classbody"]
+                else:
+                    a = s.args
+                    f = set(self._key_scope(s)[0].get(name, ())) - {"comp"}
+                    if name in {p.arg for p in a.posonlyargs + a.args + a.kwonlyargs + [a.vararg, a.kwarg] if p is not None}: f.add("param")
+                    if f:
+                        if "global" in f: break
+                        if "nonlocal" in f: return "refuse", _KEY_BOUND["nonlocal"]
+                        if "aug" in f: return "refuse", _KEY_BOUND["aug"]
+                        if f & {"del", "match", "store"}: return "refuse", _KEY_BOUND["store"]
+                        return id(s), items(f, self._key_scope(s)[1], chain[:i + 1]), False
+                passed = True
+            i -= 1
+        if any(name in names for _, names in self.global_decls): return "refuse", _KEY_BOUND["global"]
+        f, binds = self._key_scope(self.ktree)
+        f = set(f.get(name, ())) - {"comp"}
+        if "aug" in f: return "refuse", _KEY_BOUND["aug"]
+        if f & {"del", "match", "store", "nonlocal", "global"}: return "refuse", _KEY_BOUND["store"]
+        if f:
+            got = items(f, binds, ())
+            if ctx == "src" and len(got) == 1 and got[0][0] == "assign" and not got[0][3] and any(
+                    isinstance(st, ast.Assign) and st.value is got[0][1] and len(st.targets) == 1 for st in self.ktree.body):
+                v = got[0][1]
+                if isinstance(v, ast.Tuple): return id(self.ktree), [("const", v)], True
+                if isinstance(v, (ast.List, ast.Set, ast.Dict)): return id(self.ktree), [("mutable",)], True
+            return id(self.ktree), got, True
+        if name not in _IMPORT_NAMES and hasattr(builtins, name): return id(self.ktree), [("builtin", name)], True
+        return "refuse", _KEY_BOUND["none"]
+    def _key_index(self):
+        """The file's facts _key_const and _key_attr read, gathered once per file by one walk of its whole tree: how many times each
+        name is bound, in any scope and by any form (a store or delete, a parameter, a def or class statement, an import, an except
+        name, a match capture, a type parameter), the names any function or class body declares global or nonlocal, each name's
+        loads with the node holding them, every attribute name, and each attribute node, in any context, with the node holding it,
+        every string constant, every keyword argument's name, whether a call of setattr, delattr, `__setattr__` or `__delattr__` (by
+        that name or as an attribute so named) names its attribute other than by a string constant, the names such a call's first
+        or second argument folds to (_const_text: a string constant, or constants it folds to one), whether the file names globals,
+        vars or locals (as a name or an attribute) or an attribute `__dict__`, and whether it holds a star import."""
+        if self.kindex is None:
+            binds, decl, loads, attrs, strs, kws, auses, snames = {}, set(), {}, set(), set(), set(), {}, set()
+
+            def bound(name): binds[name] = binds.get(name, 0) + 1
+            setter = ns = star = False
+            for n in ast.walk(self.ktree):
+                for c in ast.iter_child_nodes(n):
+                    if isinstance(c, ast.Name) and isinstance(c.ctx, ast.Load): loads.setdefault(c.id, []).append((c, n))
+                    elif isinstance(c, ast.Attribute): auses.setdefault(c.attr, []).append((c, n))
+                if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load): bound(n.id)
+                elif isinstance(n, ast.arg): bound(n.arg)
+                elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): bound(n.name)
+                elif isinstance(n, ast.alias):
+                    bound((n.asname or n.name).split(".")[0])
+                    star = star or n.name == "*"
+                elif isinstance(n, ast.ExceptHandler) and n.name: bound(n.name)
+                elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name: bound(n.name)
+                elif isinstance(n, ast.MatchMapping) and n.rest: bound(n.rest)
+                elif isinstance(n, (ast.Global, ast.Nonlocal)): decl.update(n.names)
+                elif type(n).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple", "TypeAlias"):
+                    nm = getattr(n, "name", None)
+                    if isinstance(nm, str): bound(nm)
+                if isinstance(n, ast.Attribute):
+                    attrs.add(n.attr)
+                    ns = ns or n.attr in ("globals", "vars", "locals", "__dict__")
+                elif isinstance(n, ast.Name): ns = ns or n.id in ("globals", "vars", "locals")
+                elif isinstance(n, ast.Constant) and type(n.value) is str: strs.add(n.value)
+                elif isinstance(n, ast.keyword) and n.arg: kws.add(n.arg)
+                elif isinstance(n, ast.Call) and (getattr(n.func, "id", None) or getattr(n.func, "attr", None)) in _SETTERS:
+                    setter = setter or not any(isinstance(a, ast.Constant) and type(a.value) is str for a in n.args[:2])
+                    for a in n.args[:2]:   # the bound `x.__setattr__(name, v)` names it first, every other setter second: both read
+                        c = _Served._const_text(a)
+                        if c is not None and type(c[0]) is str: snames.add(c[0])
+            self.kindex = {"binds": binds, "decl": decl, "loads": loads, "attrs": attrs, "strs": strs, "kws": kws, "setter": setter, "ns": ns,
+                           "star": star, "auses": auses, "snames": snames}
+        return self.kindex
+    def _key_const(self, name):
+        """Why the allowlist may not read the module constant `name` (bound once, at the module's top level, to a tuple literal)
+        as a loop's literal source, else None: the file binds it more than once in any scope or by any form, declares it global or
+        nonlocal anywhere, uses it other than as a loop or comprehension source or an item read's container, names it as an
+        attribute on any receiver (a write through the module object), spells it as a string constant (through globals(), vars(),
+        setattr or a namespace mapping) or as a keyword argument, calls setattr, delattr, `__setattr__` or `__delattr__` with an
+        attribute name that is no string constant, names globals, vars, locals or `__dict__`, or holds a star import
+        (_key_index). A tuple no code can mutate, so these are every way the file may change what the name holds; _key_settle
+        then refuses it in a file that may rewrite its module namespace."""
+        ix = self._key_index()
+        if ix["binds"].get(name, 0) != 1: return _KEY_CONST % "the file binds more than once"
+        if name in ix["decl"]: return _KEY_CONST % "a scope of the file declares global or nonlocal"
+        for c, p in ix["loads"].get(name, ()):
+            if not ((isinstance(p, (ast.For, ast.AsyncFor, ast.comprehension)) and p.iter is c) or (isinstance(p, ast.Subscript) and p.value is c)):
+                return _KEY_CONST % "the file uses other than as a loop's source or an item read"
+        if name in ix["attrs"]: return _KEY_CONST % "the file names as an attribute, which may write it through the module object"
+        if name in ix["strs"] or name in ix["kws"]: return _KEY_CONST % "the file spells as a string or a keyword, which may write it through a namespace"
+        if ix["setter"]: return _KEY_CONST % "in a file that calls setattr, delattr, __setattr__ or __delattr__ with a name no string constant spells"
+        if ix["ns"]: return _KEY_CONST % "in a file that names globals, vars, locals or __dict__"
+        if ix["star"]: return _KEY_CONST % "in a file that holds a star import"
+        return None
+    def _key_attr(self, name):
+        """Why the allowlist may not read an attribute named `name` as a loop's or a comprehension's source, else None: the file
+        facts _key_const reads for a module constant (_key_index), keyed on the attribute's name on any receiver, since the base may
+        be reached through any binding. The file binds the name in any scope or by any form (a class body's or the module's binding
+        sets it on a class or a module a base may reach), declares it global or nonlocal anywhere, uses an attribute so named other
+        than as a loop or comprehension source or an item read's container (an attribute store or delete, an augmented assignment,
+        a method called on it, an item or slice store, an alias and a callee handed it among them), spells the name as a string
+        constant or a keyword argument or hands it as a setattr's, delattr's, `__setattr__`'s or `__delattr__`'s name in constants
+        _const_text folds to it, names globals, vars, locals or `__dict__`, or holds a star import. Not read for it: such a setter
+        call whose name is not folded from string constants (the fact _key_const reads as "setter", which kernel/host_transport.py,
+        the file of the live attribute source, holds: `setattr(self, name, None)` over a loop target), and a write in another file."""
+        ix = self._key_index()
+        if ix["binds"].get(name, 0): return "whose name the file binds, which may set it on a class or a module a base reaches"
+        if name in ix["decl"]: return "whose name a scope of the file declares global or nonlocal"
+        for c, p in ix["auses"].get(name, ()):
+            if not (isinstance(c.ctx, ast.Load) and ((isinstance(p, (ast.For, ast.AsyncFor, ast.comprehension)) and p.iter is c)
+                                                     or (isinstance(p, ast.Subscript) and p.value is c and isinstance(p.ctx, ast.Load)))):
+                return "that the file writes or uses other than as a loop's source or an item read"
+        if name in ix["strs"] or name in ix["kws"] or name in ix["snames"]:
+            return "whose name the file spells as a string or a keyword, which may write it through setattr or a namespace"
+        if ix["ns"]: return "in a file that names globals, vars, locals or __dict__"
+        if ix["star"]: return "in a file that holds a star import"
+        return None
+    def _key_settle(self):
+        """The allowlist over every key _unfolded held (Scan.kdefer), once the file's walk is done, each refusal a run-time form;
+        then a key accepted by reading a name at module level, a builtin or a module constant (Scan.kheld) is refused where the
+        file may rewrite its module namespace: it writes a name of it through a computed name or holds a star import
+        (_namespace_flags's "computed", Scan's star imports), holds any run-time form but a call or an attribute read of
+        import_module or __import__ (whose module the computed test reads), or, for a builtin, may write the builtins."""
+        held = []
+        for e, chain in self.kdefer:
+            self.kheld = []
+            got = self._key_form(e, chain)
+            if got: self.ns_runtime(e, got)
+            elif self.kheld: held.append((e, self.kheld))
+        if not held: return
+        flags = _namespace_flags(self.ns_facts, self.ns_stem)
+        shut = (flags["computed"] or any(isinstance(x, ast.ImportFrom) and any(a.name == "*" for a in x.names) for x in _statements(self.ktree.body))
+                or any(k not in ("import_module", "__import__") for k in self.ns_facts["rkinds"]))
+        for e, names in held:
+            hit = next(((nm, "its module namespace") for nm, how in names if shut), None) or next(
+                ((nm, "the builtins") for nm, how in names if how == "builtin" and flags["builtins"]), None)
+            if hit is not None: self.ns_runtime(e, _KEY_SHUT % (ast.unparse(e)[:40], hit[0], hit[1]))
     def _nskey(self, e):   # a namespace expression a run-time lookup by name reaches: `__dict__`, `__builtins__`, or a call ns_listed reads as vars, globals or locals (arm iii)
         return ((isinstance(e, ast.Attribute) and e.attr == "__dict__") or (isinstance(e, ast.Name) and e.id == "__builtins__")
                 or (isinstance(e, ast.Call) and self.ns_listed(e.func) in ("vars", "globals", "locals")))
     def ns_string(self, node):   # arm iii: a listed name (_STRING_NAMES) spelled as a string, read only where a run-time lookup by name
         # takes it: the second argument of getattr/setattr/delattr/hasattr on any receiver; any argument of operator.attrgetter or
         # methodcaller (for attrgetter any dotted part); or a key on a namespace expression (a subscript's slice, or the first argument
-        # of .get/.pop/.setdefault/.__getitem__/.__setitem__/.__delitem__); and in each of those positions a key that is a join the
-        # census does not fold, whatever it spells (_unfolded), a run-time form of its own
+        # of .get/.pop/.setdefault/.__getitem__/.__setitem__/.__delitem__); and in each of those positions a key the positive
+        # allowlist (_unfolded, _key_form) does not PROVE by its binding, a run-time form of its own. The allowlist accepts only a
+        # constant string spelling no listed name; a parameter; a call's return whose callee reaches neither text nor the str, bytes
+        # or bytearray type nor a method of one; a name that is a loop or comprehension target inside a function over a literal of
+        # constants, a once-bound module tuple constant no code can mutate or an attribute whose base reaches no text and whose name
+        # the file never writes (_key_attr); a name that is such a target, or an unpacking target, over a parameter or such a call's
+        # return, directly or through names an assignment, such a target or an unpacking binds to one; a boolean operation or an
+        # if-expression each of whose values the allowlist accepts where it stands; and a name an assignment binds to any of these
+        # but a constant string. Every other shape refuses by name (a direct attribute key or a name bound to one, accepted only as a
+        # loop or comprehension source; such a source whose name the file may write; a name bound to a constant string; a with
+        # target, or a name bound to one; a walrus, or a name a walrus binds anywhere, a comprehension's included; a loop target
+        # bound at module level, among them), the reason naming what the walk met
         if isinstance(node, ast.Subscript):
-            if self._nskey(node.value) and self._unfolded(node.slice): self.ns_runtime(node.slice, self._unfolded(node.slice))
+            why = self._unfolded(node.slice) if self._nskey(node.value) else None
+            if why: self.ns_runtime(node.slice, why)
             if self._nskey(node.value) and self._const_str(node.slice) in _STRING_NAMES: self.ns_runtime(node.slice, "spells %s as a string" % self._const_str(node.slice))
             return
         f = node.func   # the callee by its name, a name an import binds to it (in any scope), or as an attribute of a builtins (getattr) or operator (ns_opmods) receiver
         af = self.alias.get(f.id, f.id).split(".")[-1] if isinstance(f, ast.Name) else ""
         if (isinstance(f, ast.Name) and (af in _GETATTRS or f.id in self.ns_getattrs)) or (isinstance(f, ast.Attribute)
                 and f.attr in _GETATTRS and self._builtins_recv(f.value)):
-            if len(node.args) > 1 and self._unfolded(node.args[1]): self.ns_runtime(node.args[1], self._unfolded(node.args[1]))
+            why = self._unfolded(node.args[1]) if len(node.args) > 1 else None
+            if why: self.ns_runtime(node.args[1], why)
             if len(node.args) > 1 and self._const_str(node.args[1]) in _STRING_NAMES: self.ns_runtime(node.args[1], "spells %s as a string" % self._const_str(node.args[1]))
         d = self.dotted(f)
         op = d if d in ("operator.attrgetter", "operator.methodcaller") else ("operator." + self.ns_ops[f.id]) if (
@@ -1093,12 +1606,14 @@ class Scan(ast.NodeVisitor):
                                                                                               and isinstance(f.value, ast.Name) and f.value.id in self.ns_opmods) else None
         if op is not None:
             for a in list(node.args) + [k.value for k in node.keywords]:
-                if self._unfolded(a): self.ns_runtime(a, self._unfolded(a))
+                why = self._unfolded(a)
+                if why: self.ns_runtime(a, why)
                 s = self._const_str(a)
                 if s is not None and (s in _STRING_NAMES or (op == "operator.attrgetter" and any(p in _STRING_NAMES for p in s.split(".")))):
                     self.ns_runtime(a, "spells %s as a string" % s)
         if isinstance(f, ast.Attribute) and f.attr in ("get", "pop", "setdefault", "__getitem__", "__setitem__", "__delitem__") and self._nskey(f.value):
-            if node.args and self._unfolded(node.args[0]): self.ns_runtime(node.args[0], self._unfolded(node.args[0]))
+            why = self._unfolded(node.args[0]) if node.args else None
+            if why: self.ns_runtime(node.args[0], why)
             if node.args and self._const_str(node.args[0]) in _STRING_NAMES: self.ns_runtime(node.args[0], "spells %s as a string" % self._const_str(node.args[0]))
     def visit_Global(self, n):
         self.globals[-1].update(n.names)
@@ -1116,9 +1631,10 @@ class Scan(ast.NodeVisitor):
         listed = self.ns_listed(n)   # arm ii: the listed callable, computed-name writer or setter the name reaches, by its own name or an import's name for it
         if n.id == "__builtins__": self.ns_facts["builtins"] = True
         elif n.id == "__file__" and not isinstance(n.ctx, ast.Load): self.ns_facts["file"] = True
+        elif n.id in ("staticmethod", "classmethod") and not isinstance(n.ctx, ast.Load): self.ns_facts["deco"] = True
         elif listed in _NS_READS and isinstance(n.ctx, ast.Load) and id(n) not in self.ns_facts["callees"]:
             self.ns_facts["ns_calls"].append(n)   # globals, vars, setattr or delattr itself read (`_g = globals`, `_s = setattr`), a use no `.get` read limits
-        if listed in _RUNTIME_NAMES: self.ns_runtime(n, "names %s" % listed)   # a listed callable, in any context
+        if listed in _RUNTIME_NAMES: self.ns_runtime(n, "names %s" % listed, listed)   # a listed callable, in any context
     def visit_ExceptHandler(self, n):   # `except E as X` under `global X`
         if n.name: self.global_bind(n.name, n.lineno); self.ns_bind(n.name)
         self.generic_visit(n)
@@ -1143,9 +1659,9 @@ class Scan(ast.NodeVisitor):
         if n.attr == "_send" and id(n) not in self.send_funcs: self.send_ref(n)
         if n.attr == "__dict__": self.ns_facts["maps"].append(n)   # a namespace mapping, a module's among them (_namespace_flags)
         if not isinstance(n.ctx, ast.Load): self.ns_facts["stores"].append(n)
-        if n.attr in _RUNTIME_ATTRS: self.ns_runtime(n, "names the attribute %s" % n.attr)   # arm ii: a function's or a frame's namespace, on any receiver
+        if n.attr in _RUNTIME_ATTRS: self.ns_runtime(n, "names the attribute %s" % n.attr, n.attr)   # arm ii: a function's or a frame's namespace, on any receiver
         listed = self.ns_listed(n)   # arm ii: a listed name as an attribute: compile, globals, vars, setattr and delattr on a builtins receiver, the rest on any receiver
-        if listed in _RUNTIME_NAMES: self.ns_runtime(n, "names the attribute %s" % listed)
+        if listed in _RUNTIME_NAMES: self.ns_runtime(n, "names the attribute %s" % listed, listed)
         elif listed in _NS_READS and isinstance(n.ctx, ast.Load) and id(n) not in self.ns_facts["callees"]: self.ns_facts["ns_calls"].append(n)   # `builtins.globals` or `builtins.setattr` read
         self.visit(n.value)   # the one child that holds nodes (attr is a string; the ctx marker holds none and no visitor reads it)
     def send_ref(self, n):
@@ -1197,9 +1713,12 @@ class Scan(ast.NodeVisitor):
     def visit_comprehension(self, n):
         self.bind_loop(n.target, n.iter); self.generic_visit(n)
     def comp(self, n):   # the generators bind before the element that reads them is visited
-        for g in n.generators: self.visit(g)
-        for f in ("key", "value", "elt"):
-            if hasattr(n, f): self.visit(getattr(n, f))
+        self.kscopes.append(n)
+        try:
+            for g in n.generators: self.visit(g)
+            for f in ("key", "value", "elt"):
+                if hasattr(n, f): self.visit(getattr(n, f))
+        finally: self.kscopes.pop()
     visit_ListComp = visit_SetComp = visit_GeneratorExp = visit_DictComp = comp
     def modules_of(self, a):
         """The modules an import_module or __import__ argument names: a string literal, a module constant holding one, or a
@@ -1243,13 +1762,13 @@ class Scan(ast.NodeVisitor):
                 if d is not None and self.prim(d): b[x.arg] = self.prim(d)
         self.global_bind(n.name, n.lineno); self.ns_bind(n.name)   # a def or class statement under `global`, bound in the enclosing scope
         if isinstance(n, ast.ClassDef) and self.defs and not isinstance(self.defs[-1], ast.ClassDef): self.inner_classes.append(n)
-        self.stack.append(n.name); self.binds.append(b); self.defs.append(n); self.globals.append(set()); self.generic_visit(n)
-        self.globals.pop(); self.defs.pop(); self.binds.pop(); self.stack.pop()
+        self.stack.append(n.name); self.binds.append(b); self.defs.append(n); self.globals.append(set()); self.kscopes.append(n); self.generic_visit(n)
+        self.kscopes.pop(); self.globals.pop(); self.defs.pop(); self.binds.pop(); self.stack.pop()
     visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = enter
     def visit_Lambda(self, n):   # its parameters and defaults run where it stands; a candidate in its body is in_lambda's
-        self.visit(n.args); self.lambdas += 1
+        self.visit(n.args); self.lambdas += 1; self.kscopes.append(n)
         try: self.visit(n.body)
-        finally: self.lambdas -= 1
+        finally: self.kscopes.pop(); self.lambdas -= 1
     def argv(self, c):
         """(argv[0] as text, git subcommand or '', the literal after argv[0] or '') for a command call: a literal, a module constant
         (a string, or a list whose first element is read), sys.executable, or RUNTIME-SUPPLIED(expr) when the code does not spell it out."""
@@ -1279,9 +1798,9 @@ class Scan(ast.NodeVisitor):
         if listed in ("__import__", "import_module"): self.ns_facts["importers"].add(id(n))   # module()'s calls of either
         # a call of a listed callable, a run-time form whose reason names the call where the callee is a name, an attribute of a name
         # bound to builtins, or import_module or _getframe on any receiver (the callee's own node, visited next, is the form too)
-        if listed == "_getframe": self.ns_runtime(n, "calls sys._getframe")
+        if listed == "_getframe": self.ns_runtime(n, "calls sys._getframe", listed)
         elif listed in _RUNTIME_NAMES and (isinstance(f, ast.Name) or listed == "import_module" or self.dotted(f.value) in ("builtins", "__builtins__")):
-            self.ns_runtime(n, "calls %s" % listed)
+            self.ns_runtime(n, "calls %s" % listed, listed)
         self.ns_string(n)   # arm iii: a listed name as a string in a getattr-family second argument, an attrgetter/methodcaller argument, or a namespace-mapping key
         where = ".".join(self.stack) or "<module>"
         if attr == "_send" or (isinstance(n.func, ast.Name) and n.func.id == "_send"):   # route candidates, typed by routes_of
@@ -1985,10 +2504,10 @@ def _int_arith(e):
 
 def _value_slot(e):
     """Whether e is a kind resolve reads as a value slot of its own: a None, bool or int constant, the empty bytes constant, or a
-    Mult or LShift over int constants (_int_arith). Read as no text; one that stands directly as a `%` operand (bare, a tuple
-    element or a dict literal's value), a `.format` argument or a value of the dict literal a `.format_map` is handed is refused by
-    name whether or not a conversion takes it (_Served._format_slots), since a conversion can turn it into characters (`%c`, `%x`,
-    `{:c}`, `%.1s` over the empty bytes), and one held deeper there is read as a value slot."""
+    Mult or LShift over int constants (_int_arith). Read as no text; one that stands directly as the right operand of a `%` (bare,
+    a tuple element or a dict literal's value), a `.format` argument or a value of the dict literal a `.format_map` is handed is
+    refused by name whether or not a conversion takes it (_Served._format_slots), since a conversion can turn it into characters
+    (`%c`, `%x`, `{:c}`, `%.1s` over the empty bytes), and one held deeper there is read as a value slot."""
     if isinstance(e, ast.Constant): return e.value is None or type(e.value) in (bool, int) or type(e.value) is bytes and e.value == b""
     return isinstance(e, ast.BinOp) and _int_arith(e)
 
@@ -2124,11 +2643,30 @@ _COMPUTED = "a module name in a file that writes its module namespace through a 
 _FILE_BOUND = "__file__, which a statement of the file binds"
 _SHADOWED = "a builtin in a file that may rewrite the builtins"
 _ENCLOSED = "a definition inside a function, whose scope the census does not read"
-_LAMBDA = "a lambda around the call, whose scope the census does not read"   # routes_of: a `_send` call or a Content-Type write inside a lambda
+_LAMBDA = "a lambda around the call, whose scope the census does not read"   # routes_of: a `_send` call, or a Content-Type write outside `_send`, inside a lambda
+_TYPE_REBOUND = ("a definition that binds %s, the parameter its own Content-Type write names, other than as that parameter (%s), so the "
+                 "type it writes need not be the call's")   # routes_of: a `_send` call refused before any typing (_type_rebinding)
 _IMPORT_NAMES = frozenset(("__doc__", "__name__", "__package__", "__spec__", "__loader__"))   # the names the import system binds in every module: no builtins to the served pass
 _IMPORT_WHY = "a name the import system binds in every module"
 _SELF_ATTR = "an attribute read on self, which any code may set before the call"   # an attribute of self as a value, a receiver or a container
 _CLASS_ATTR = "a class attribute, which the census does not read as page text"   # _Served._class_root's refusal
+_PARAM_ATTR = "an attribute read on a parameter, which any code may set before the call"   # _Served._attr_root's, on any other parameter
+_EXCEPT_ATTR = "an attribute read on an except name, which the code that raised it sets"   # _Served._attr_root's, on an except name
+_METHOD_CALL = ("a route class's method called other than on the calling method's own first parameter, which the census does not "
+                "follow")   # _Served._method_call's, on self through anything else, on any other parameter or on a name spelled self
+_SELF_METHOD = ("a method called on self that no def statement of a class of the file defines first in the route class's method "
+                "resolution order, which the census does not follow")   # _Served._method_call's, where _definer finds no def to follow
+_DECORATED = ("a method called on self whose def statement carries a decorator, staticmethod and classmethod among them, whose return "
+              "Python calls in its place, which the census does not follow")   # _Served._method_call's, where a decorator sits on the def _definer finds
+_UNCLASSIFIED = ("a call of, or a method called on, the first parameter of a route handler that carries a decorator or stands in a file "
+                 "that binds staticmethod or classmethod, which the census does not take for self, the class or any other "
+                 "parameter")   # _Served._method_call's and _scoped's, on the mark _ctx sets (_Unclassified)
+_METHOD_OVERRIDE = ("a method called on self that a file class deriving from the route class overrides, whose override the server would "
+                    "run, which the census does not follow")   # _Served._method_call's, where a file subclass defines the name
+_REPLACED = ("a method called on self whose name the file stores or deletes as an attribute or names as a string to setattr, delattr, "
+             "__setattr__ or __delattr__, or whose route class's method resolution order binds __getattribute__, so code may replace it "
+             "at run time")   # _method_call's
+_SETTERS = ("setattr", "delattr", "__setattr__", "__delattr__")   # the calls _Served._replaced reads a method's name from as a string
 _SLICED = "a subscript by a slice or an index other than a constant, whose result the census does not compute"   # _Served._carries_text's refusal
 _SLOT_FORMAT = "a value slot a % or a format call takes, which a conversion can turn into characters"   # _Served._format_slots's refusal
 _SUB_OPERAND = ("a subscript as an operand of +, %, an f-string, .join, .format, .format_map or .replace, whose joined text the census does "
@@ -2141,6 +2679,8 @@ _WIDE = "a format field wider than a million characters, which the census does n
 _NESTED = "a format spec holding a replacement field, which the census does not expand"   # _Served._nested's refusal
 _FIELD_REACH = ("a replacement field reaching an attribute or an index of its argument, which the census does not "
                 "read")   # _Served._field_reach's refusal
+_TEMPLATE = ("a format string reached other than as a string constant, a join of them or a name bound to one, whose fields the "
+             "census does not read")   # _Served._field_reach's refusal where no field it reads reaches
 # The seven builtins a page may name (_Served._base, as a callee, a receiver's base or a bare name), each for what its result is;
 # any other builtin in a page is refused by name (_BUILTIN_OTHER). int, float and dict give their arguments' digits, or keys and
 # values; str gives its argument's text or a value's printed form (handed more than one positional argument, a starred argument or
@@ -2171,10 +2711,31 @@ _LISTED_FROM = {"builtins": ("locals", "exec", "eval", "compile", "__import__") 
                 "sys": ("_getframe",)}   # the module an import binds each listed name from (ns_listed's second way)
 _STRING_NAMES = _RUNTIME_NAMES + _NS_READS + _RUNTIME_ATTRS + ("__dict__",)   # a listed name spelled as a string, read only in a run-time lookup (arm iii)
 _GETATTRS = ("getattr", "setattr", "delattr", "hasattr")   # arm iii's first position: the second argument of one of these
-_NS_NONE = {"computed": False, "builtins": False, "file": False, "runtime": None}   # _namespace_flags's answer for a file the walk did not read
+_TEXT_TYPES = ("str", "bytes", "bytearray")   # the text types, whose methods the lookup-key allowlist refuses however reached (Scan._key_form)
+# The lookup-key allowlist's reasons for a name it refuses by its binding (Scan._key_binding, _key_form), each after the name
+_KEY_BOUND = {"global": "which a function or a class body declares global, so the census does not evaluate it",
+              "nonlocal": "which a scope of the file declares nonlocal, so the census does not evaluate it",
+              "aug": "bound by an augmented assignment the census does not evaluate",
+              "store": "which the file binds in a form the census reads no value through (a del, a match pattern or another store)",
+              "classbody": "which a class body binds, so the census does not evaluate it",
+              "lambda": "bound by a walrus in a lambda, which the census does not evaluate",
+              "walrus": "bound by a walrus, which the census does not evaluate",
+              "with": "bound as a with target, which the census does not evaluate",
+              "none": "which no statement of the file binds, so the census does not evaluate it",
+              "import": "bound by an import, which the census reads in a lookup key only as a receiver or a callee",
+              "def": "bound by a def statement, which the census reads in a lookup key only as a callee",
+              "builtin": "a builtin, which the census reads in a lookup key only as a callee",
+              "class": "bound by a class statement, which the census does not read in a lookup key",
+              "except": "bound by an except clause, which the census does not read in a lookup key",
+              "mutable": "a list, set or dict module constant, which code may mutate, so the census does not evaluate it"}
+_KEY_CONST = "a module constant %s, so the census does not evaluate it"   # Scan._key_const's reasons
+_KEY_ATTR = "an attribute .%s as a loop's source %s, so the census does not evaluate it"   # Scan._key_attr's, in _key_form
+_KEY_SHUT = "spells a name by %s, which reads %s in a file that may rewrite %s, so the census does not evaluate it"   # _key_settle
+_NS_NONE = {"computed": False, "builtins": False, "file": False, "deco": False, "runtime": None}   # _namespace_flags's answer for a file the walk did not read
 def _namespace_flags(facts, stem):
     """{"computed": whether the file may write its own module namespace through a computed name, "builtins": whether it may write
-    the builtins, "file": whether a statement of the file binds `__file__`, in any scope and by any form, "runtime": the first form,
+    the builtins, "file": whether a statement of the file binds `__file__`, in any scope and by any form, "deco": whether one binds
+    staticmethod or classmethod so, a star import among them (_Served._ctx), "runtime": the first form,
     with its line, by which the file may rewrite its module namespace or the builtins at run time, or None}, from what Scan's walk
     collected (Scan.ns_facts; Result.ns holds the answer per file). The file's namespace is written through globals() or vars()
     with no argument used any way but as the receiver of a `.get(...)` read (a subscript store, a mutating call, or an alias that
@@ -2224,18 +2785,40 @@ def _namespace_flags(facts, stem):
     (Scan.ns_opmods), or by a name that `from operator import attrgetter [as Y]` or `from operator import methodcaller [as Y]`
     binds (Scan.ns_ops)), or a key on a namespace expression (a subscript's slice, or the first argument of `.get`, `.pop`,
     `.setdefault`, `.__getitem__`, `.__setitem__` or `.__delitem__`, whose receiver is an attribute named `__dict__`, the name
-    `__builtins__`, or a call of vars, globals or locals as ns_listed reaches it). In each of those positions a key that is a join
-    _Served._const_text does not fold is a run-time form too, whatever it spells (Scan._unfolded): a join, format, format_map or
-    replace called on the name str, bytes or bytearray (_unbound_text_call: `getattr(builtins, str.join("", ["ex", "ec"]))`), and
-    a `%`, `.format` or `.format_map` on a string constant with a field wider than a million characters or a replacement field in
-    a format spec (_Served._wide, _Served._nested).
+    `__builtins__`, or a call of vars, globals or locals as ns_listed reaches it). In each of those positions the key is a
+    run-time form unless the POSITIVE ALLOWLIST (Scan._unfolded, _key_form, _key_binding) PROVES its shape by the binding: the
+    allowlist accepts only a constant string that spells no listed name; a parameter; a call's return whose callee reaches neither
+    text nor the str, bytes or bytearray type nor a method of one; a name that is a loop or comprehension target inside a function
+    over a literal of constants, a once-bound module tuple constant the file never writes, rebinds, aliases, names as a string or a
+    keyword, or mutates, or an attribute whose base reaches no text and whose name the file never writes (it binds and declares no
+    such name, uses an attribute so named only as such a source or an item read, spells the name in no string constant or keyword
+    and in no setattr, delattr, `__setattr__` or `__delattr__` name folded from string constants, and names no globals, vars,
+    locals or `__dict__` and holds no star import; such a setter whose name is not so folded is not read for it); a name that is
+    such a target, or an unpacking target, over a parameter or such a call's return, directly or through names an assignment,
+    such a target or an unpacking binds to one; a
+    boolean operation or an if-expression each of whose values the allowlist accepts where it stands; and a name an assignment
+    binds to any of these but a constant string. Every other shape refuses by name, the reason
+    naming what the walk met: a join, format, format_map or replace call, a `%`, a `+` or an f-string a string constant does not fold
+    (_key_kind); a method of the name str, bytes or bytearray, however reached (`str.lower(v)`, a name bound to str, `builtins.str`);
+    any method called on, or attribute read on, constant text or anything the allowlist does not prove reaches no text; a direct
+    attribute key or a name bound to one, an attribute proven only as a loop or comprehension source; such a source whose name the
+    file may write, as above; a name bound to a constant string;
+    a with target, or a name bound to one; a walrus, or a name a walrus binds anywhere, a comprehension's included (no binding of a
+    walrus target is read in an enclosing scope); a subscript; a loop target bound at module level;
+    an augmented assignment; a name a function or a class body declares global, wherever the declaration stands, or a scope declares
+    nonlocal; a name a class body binds; a name the file binds only in another form (a del, a match pattern, an import, a def, a class
+    or another store) or by no statement; a list, set or dict module constant, which code may mutate; and any other node kind, named
+    in words. A name read at module level or as a builtin assumes the file may not rewrite its module namespace, and refuses where it
+    may (it writes its namespace through a computed name, holds a star import, or holds a run-time form other than a call of
+    import_module or __import__; and, for a builtin, where it may write its builtins), so the acceptance is closed at the file's own
+    level.
     A listed name reached any other way or a name the list does not hold (through `__self__` of a builtin, a container or a copy
     of a namespace mapping, a module's own `__setattr__` or `__delattr__` method, a listed name, attrgetter or methodcaller
     imported from a module other than its own, a name built at run time, gc or ctypes among them, and through a module reached by
     a tuple or list unpacking, an inline walrus, `sys.modules.__getitem__`, a for-loop target, a parameter default or a starred
     argument) is outside the list and not seen: a module namespace rewritten at run time by code
     outside that list is not seen."""
-    aliases, out = {}, {"computed": False, "builtins": facts["builtins"], "file": facts["file"], "runtime": None}
+    aliases, out = {}, {"computed": False, "builtins": facts["builtins"], "file": facts["file"], "deco": facts["deco"], "runtime": None}
 
     def named(f, *names):
         return isinstance(f, ast.Name) and f.id in names or isinstance(f, ast.Attribute) and f.attr in names
@@ -2867,6 +3450,43 @@ def _forms_said(forms):
     return kinds[0] if len(kinds) == 1 else ", ".join(kinds[:-1]) + " and " + kinds[-1]
 
 
+_NESTED_SCOPES = ((ast.Lambda, "a lambda"), (ast.ClassDef, "a nested class body"), (_COMPS, "a comprehension"),
+                  ((ast.FunctionDef, ast.AsyncFunctionDef), "a nested def"))   # _type_rebinding's scopes inside a definition, as it names them
+
+
+def _type_rebinding(d, writes, params):
+    """(the name, its forms said) where one of a `_send` definition's own Content-Type writes (`writes`, every write under it) has
+    as its value a name the typing reads from the call (`params`, routes_of's: the positional parameters after a method's first
+    and the keyword-only ones) and the definition binds that name other than as that parameter anywhere in its body, in its own
+    scope or a nested one; None otherwise. Its own writes are the ones routes_of's Content-Type loop skips: those whose innermost
+    def or async def (a def's header counted as that def's, as Scan's walk counts it; a lambda, a comprehension and a class body
+    are no def) is named `_send`, the definition itself or a def in it so named; a write in any other def inside it is that loop's.
+    The bindings: every form _binding_forms names in the definition's body, the parameter itself dropped (an assignment,
+    augmented or annotated, or an annotation alone; a loop, with, walrus or match target; an except name; a del; an import; a def
+    or class statement; any other store, a type statement's name among them), the same forms and the parameters of every def,
+    lambda, class body and comprehension in its body (_NESTED_SCOPES), a comprehension's target among them, a global or nonlocal
+    declaration of the name in one, and a type parameter so named (3.12). The census types such a write from the call's argument,
+    so a binding the write may read in its place is refused, never read past."""
+    own, names, stack = {id(w) for w in writes}, set(), [(c, d.name) for c in ast.iter_child_nodes(d)]
+    while stack:
+        n, inner = stack.pop()
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)): inner = n.name
+        if id(n) in own and inner == "_send" and isinstance(n.args[1], ast.Name) and n.args[1].id in params: names.add(n.args[1].id)
+        stack.extend((c, inner) for c in ast.iter_child_nodes(n))
+    for name in sorted(names):
+        forms = list(_binding_forms(d, name)[0]); forms.remove("a parameter")
+        for s in (n for top in d.body for n in ast.walk(top)):
+            if type(s).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple") and s.name == name: forms.append("a type parameter")
+            what = next((w for kinds, w in _NESTED_SCOPES if isinstance(s, kinds)), None)
+            if what is None: continue
+            got, declared = _binding_forms(s, name)
+            forms.extend(("%s's parameter" % what if f == "a parameter" else f if f == "a comprehension's target" else "%s in %s" % (f, what))
+                         for f in got)
+            if declared: forms.append("a %s declaration in %s" % (declared, what))
+        if forms: return name, _forms_said(forms)
+    return None
+
+
 def _global_binder(decls, name):
     """The first function or class body, in source order, that declares `name` global and binds it there in any form
     (_binding_forms), so rebinding the module's name at run time: (its enclosing defs, innermost last; the forms), from one file's
@@ -2920,7 +3540,11 @@ def routes_of(rel, tree, sc, res):
     function defines, and a `_send` call in a lambda's body (the call in the body of a lambda among _call_scopes, which the walk
     records in Scan.in_lambda), each a SERVED line by name (_ENCLOSED, _LAMBDA: after the bare call's own binding reason and
     before any typing), since the enclosing function's or lambda's names (a builtin or a module name it shadows, the page's text
-    or its type among them) are no scope the census reads;
+    or its type among them) are no scope the census reads; a call where one of the definition's own Content-Type writes (each write
+    whose innermost def is the definition or a def in it itself named `_send`, the writes the Content-Type loop below skips) names a
+    parameter the type is read from and the definition binds that name other than as that parameter anywhere in its body, in any
+    form _type_rebinding names, a SERVED line by name before any typing (_TYPE_REBOUND), since the census reads that write's type
+    from the call's argument;
     any other script-running call (a keyword body, a starred or `**` call, a definition with any other output, whose written body is
     another parameter, a local or an expression, or that writes nothing, and a definition holding any other statement or
     expression, among them a call, a store or a nested def the table does not list) is a SERVED line by name, its reason naming the
@@ -2940,8 +3564,9 @@ def routes_of(rel, tree, sc, res):
     and not seen. Any other reference to `_send` (a read of it that is not a call's
     function, a store or delete of an attribute so named, or a string equal to `_send`) is a SERVED line; a call through a name
     computed at
-    run time is not read. Every Content-Type header written outside a `_send` definition is typed the same way (one in a lambda's
-    body refused by name first, _LAMBDA, since a parameter of the lambda may shadow the type's name), and a script-running
+    run time is not read. Every Content-Type header written outside a `_send` definition (each write whose innermost def is not
+    named `_send`, one in a def nested in a `_send` under another name among them) is typed the same way (one in a lambda's body
+    refused by name first, _LAMBDA, since a parameter of the lambda may shadow the type's name), and a script-running
     one is a SERVED line (the served pass follows a page's text through `_send` alone); a function outside `_send` that answers
     (send_response) more often than it writes a Content-Type header is a SERVED line, the browser typing that body by sniffing
     it. SERVED_ALLOW excuses a place by its function and expression (a `_send` call's place by the call's function, `self._send` or
@@ -3046,6 +3671,16 @@ def routes_of(rel, tree, sc, res):
         a = d.args; pos = [x.arg for x in a.posonlyargs + a.args]; defaults = dict(zip(pos[len(pos) - len(a.defaults):], a.defaults))
         me = pos[0] if method and pos else None
         if method: pos = pos[1:]
+        # a write of the definition's own (its innermost def the definition, or a def in it named `_send`: the writes the loop below
+        # skips) that names a parameter the typing reads from the call, where the definition binds that name other than as that
+        # parameter anywhere in its body (a lambda's parameter, a comprehension's or loop target, an assignment, in any form): the
+        # write may carry that binding, not the call's argument, so the call is refused by name before any typing (_type_rebinding)
+        if ("rebound", id(d)) not in typed: typed[("rebound", id(d))] = _type_rebinding(d, writes, pos + [x.arg for x in a.kwonlyargs])
+        if typed[("rebound", id(d))]:
+            if not allowed(where, f, call):
+                res.problems.append("SERVED %s:%d calls _send on %s, %s: the census cannot read the response's content type"
+                                    % (rel, call.lineno, ast.unparse(f)[:40], _TYPE_REBOUND % typed[("rebound", id(d))]))
+            continue
         if ("body", id(d)) not in typed: typed[("body", id(d))] = _body_param(d, pos, me, tree, res.rebinds.get(rel, {}), ns["computed"] or ns["builtins"] or ns["runtime"])
         # the page function, or for a call through self the class whose body holds `_send`, inside a function: that function's names
         # (a builtin or a module name it shadows among them) are no scope the census reads, so neither the definition nor the page is read
@@ -3099,10 +3734,37 @@ def routes_of(rel, tree, sc, res):
     return sorted(routes, key=lambda r: r[0].lineno)
 
 
-class _ClassParam(list):
-    """The binding forms of a classmethod's first parameter in its method's scope (_Served._ctx): a list like any other, so
-    _Served._scoped reads the name as the parameter it is, and a mark for _Served._class_ref, which takes the name for the class.
-    A scope inside the method that binds the name again gives it a plain list, and the mark ends there."""
+class _Unclassified(list):
+    """The binding forms of a route handler's first parameter that the census does not classify (_Served._ctx): the handler
+    carries a decorator, whatever it is bound to, or a statement of the file binds the name staticmethod or classmethod, in any
+    scope and by any form, a star import among them, so the parameter may be self, the class or any other value. A list like any
+    other, so _Served._scoped reads the name as the parameter it is, and a mark for _Served._recv_roots, whose method call on it
+    _method_call refuses as _UNCLASSIFIED, and for _scoped, which refuses it as a callee so; an attribute read on it is one on a
+    parameter (_attr_root, _PARAM_ATTR). A nested function or a lambda that binds no name so spelled reads the same list, so the
+    mark holds in a closure; a scope inside the handler that binds the name again gives it a plain list, and the mark ends there."""
+
+
+class _SelfParam(list):
+    """The binding forms of self by binding in its method's scope (_Served._ctx): the first parameter of a method defined in a class
+    body (a def whose innermost enclosing scope is the class body: _method_defs) whose def carries no decorator, however it is
+    spelled, other than a route handler's in a file that binds staticmethod or classmethod (_Unclassified). A list like any other,
+    so _Served._scoped reads the name as the parameter it is, and a mark for _Served._attr_root, which takes an attribute read on
+    the name for one read on self (_SELF_ATTR). A nested function or a lambda
+    that binds no name so spelled reads the same list, so the mark holds in a closure; a scope inside the method that binds the
+    name again gives it a plain list, and the mark ends there. The parameter never rebound in the method is the mark with forms
+    ["param"] exactly."""
+
+
+def _method_defs(tree):
+    """The ids of the def and async def statements the module defines directly in a class body, a statement of the body itself
+    (not one inside a block of it), in any class, one nested in a class, a function or a block among them: its methods. Statements
+    only, never an expression, as _statements walks them (_BODY_FIELDS); a lambda holds no def statement."""
+    out, stack = set(), list(tree.body)
+    while stack:
+        s = stack.pop()
+        if isinstance(s, ast.ClassDef): out.update(id(n) for n in s.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)))
+        for field in _BODY_FIELDS.get(type(s), ()): stack.extend(getattr(s, field))
+    return out
 
 
 class _Served(object):
@@ -3117,12 +3779,15 @@ class _Served(object):
     the function, a `.format`, `.join` (but one over a set), `.replace` or `.strip` receiver and its arguments (but a `.format`,
     `.join` or `.replace` called on the name str, bytes or bytearray; each refused below), and
     every `return` of a module function,
-    a function defined in the page function or a `self.` method the page calls), each a piece (label, its own line, text, the
+    a function defined in the page function or a method called on the calling method's own first parameter that the route class's
+    method resolution order resolves to a def statement of a class of the file: _method_call), each a piece (label, its own line, text, the
     part it came from) for line_scan, with each join of string constants _const_text reads recorded in `joins` (_note,
     _const_text), whose text served_texts scans beside each literal's own read; a local bound to a `.read_text()` or `.read()`
     is a file slot the walk covers or names. A route whose page function a function encloses, whose `_send` stands in a class a
     function defines, or whose `_send` call stands in a lambda's body, is refused before this pass (routes_of), since the enclosing
-    function's or lambda's names are no scope it reads.
+    function's or lambda's names are no scope it reads; and so is a call whose `_send` definition binds the parameter one of its own
+    Content-Type writes names other than as that parameter, anywhere in its body (_type_rebinding), since that write's type is read
+    from the call's argument.
 
     A name the page function's scope binds, or for a nested context an enclosing function's scope, is decided by that scope and
     never by the module's binding (_scoped over the binding forms _locals records, row (d) of the seventh round): a local (a
@@ -3144,21 +3809,41 @@ class _Served(object):
     constant or a local, an attribute, a subscript or a method call on one of those, or a BoolOp with such an operand) is refused
     by name (_SLICED), since the pass reads the container whole and does not compute what the index selects, and honest forms fail
     closed with it (`_PAGE[1:]`, a template's leading newline cut; `PAGES[key]` over a dict constant, the key no constant;
-    `_P[-1]`), while a container that is a base whose own text the pass does not read (below), or a call of one or of a method
-    on one, passes whatever its index; an attribute read on a class, as a value, a receiver or a container, through the class's
+    `_P[-1]`), while a container that is a base whose own text the pass does not read (below), or a call of one or of a method on
+    one, passes whatever its index, and the index of such a subscript is not read at all, whatever it holds (a name the import
+    system binds, `__file__`, an attribute read on self, on a parameter or on a class, a call: the Subscript arm hands receiver the
+    container alone), the item it selects being text such a base holds; an attribute read on a class, a method called on one among
+    them, as a value, a receiver or a container, through the class's
     own name (a class statement binds it, in the innermost function scope around the read that binds the name or, where none
-    does, at the top level: _class_name) or through a name the census resolves to a class (a classmethod's first parameter in
-    that method, a local or a module constant bound to one or to a method call on a name whose value holds one: _class_ref), or
-    through a method call on a name whose value holds one (a list, tuple, set or dict literal a local or a module constant is
-    bound to, with a class among its elements, keys or values: _class_value, _holds_class, `_REG.get(k).X`), is refused by name
-    (_class_root, _CLASS_ATTR), as is a text method called on such a name (`Cls.format(...)`) and a format field that reaches an
-    attribute of its argument (_FIELD_REACH, below), since no class attribute is read as page text, while a class reached through
-    a base the pass does not resolve to one is text such a base holds (below); a call of a name the census resolves to a class is
-    refused by name (a classmethod's first parameter, `cls()`, as "a call": _scoped), so no attribute of the instance it makes is
-    read; an attribute read on self, `self.X` as a
-    value, a
-    receiver or a container (`self.X.get(k)`, `self.X[0]`: _self_root), is refused by name (_SELF_ATTR), whatever sets it, while
-    a method called on self is code behind a name on self; a name the function binds as a loop, unpacking or with
+    does, at the top level: _class_name) or through a name the census resolves to a class (a local or a module constant bound to
+    one or to a method call on, or a subscript of, a name whose value holds one: _class_value), or through a method call on, or a
+    subscript of, a name whose value holds one (a list, tuple, set or dict literal a local or a module constant is bound to, with
+    a class among its elements, keys or values, or a call of the builtin dict with one
+    among its arguments: _class_value, _class_step, _held, `_REG.get(k).X`, `_REG["a"].X`) or of such a literal or call itself
+    (`dict(a=Cls).get(k).X`), is refused by name (_class_root, _CLASS_ATTR), and so is one read, or a method called, on any other
+    base whose root by binding is a class (_attr_root: a loop, comprehension or with target over classes, an if-expression or a
+    walrus over classes, a literal container holding one, `_REG["a"].X`; a method called with no attribute read on the way,
+    `_REG["a"].render()`, at the call: _value_class), as is a text method called on such a class through any of those roads
+    (_class_value, _value_class: `Cls.format(...)`, `_REG.get(k).format(...)`, `t.strip()` in a loop over classes), save one on a
+    subscript refused as a join's operand (_SUB_OPERAND, below), and a format field that reaches an attribute of
+    its argument (_FIELD_REACH, below), since no class attribute is read as page text; a call of a name the census resolves to a
+    class is refused by name ("a call": _scoped, _base), so no attribute of the instance it makes is read; an attribute read in a
+    page position, as a value or anywhere on the path of a receiver or a container (receiver, _path_attrs; never inside the index
+    of a subscript over a container whose text the pass does not read, above), is refused by
+    name unless the root its base reaches by binding is a module constant, an import, one of the seven
+    builtins a page may name, a value slot or a literal the pass reads (_attr_root, which reads the base down that path, a call's
+    callee, a BoolOp's operands, an if-expression's branches and a walrus's value among it, and through a local's values, a loop,
+    comprehension or with target's source, a list, tuple, set or dict literal's elements, keys and values, and a module constant's
+    value, never a call's argument or a parameter's default): one read on self (`self.X` as a value, a receiver or a container,
+    `self.X.get(k)`, `self.X[0]`), on a local bound to it or on a method's first parameter however spelled where the method's def
+    carries no decorator and, for a route handler, the file binds neither staticmethod nor classmethod (_SelfParam), as _SELF_ATTR,
+    whatever sets it, one read on any other parameter, a route handler's first parameter the census does not classify
+    (_Unclassified) among them, as _PARAM_ATTR
+    and one read on an except name as _EXCEPT_ATTR, and a base whose root is one the pass refuses (a function's or a method's
+    return, a call it does not follow, a builtin other than the seven, `__file__` in a file that binds it, a run-time memo) with the
+    reason the pass gives that root, while a method called on self is no attribute read, followed or refused by name below
+    (_method_call); a name the function binds as a
+    loop, unpacking or with
     target, or by a walrus, is read from that source, and a local container's appended or stored values are its values too; a
     module container some code writes after binding it (a write Result.writes records, as the served sentence lists them) is a
     run-time memo, and it and any other receiver or container are refused by name
@@ -3170,28 +3855,66 @@ class _Served(object):
     object, any of which may be an encoding or an errors argument that decodes its first, is refused by name, _STR_DECODE) that
     no module-level binding shadows, any other builtin refused by name (_BUILTIN_OTHER), and a call of
     super() refused by name as well (_SUPER), its methods being a base class's, and the
-    names the import system binds in every module excepted (_IMPORT_NAMES, refused by name: _IMPORT_WHY), each in a module with no
-    star import; a parameter or a name bound from one, a BoolOp over those; a call of one of those or of a method
-    on one, whose arguments are read as text: `dict(X).get(k)` reads X, _chain_args) or SERVED_ALLOW names the place, and a call
-    base the reader does not resolve is refused by name; text such a base holds (a constant a sibling module defines and the page
-    imports, an attribute set before the call on a parameter other than self and other than a classmethod's first parameter, and
-    an attribute of a class the pass reaches as a value without resolving it as the class, among them a class passed to a
-    parameter or given as its default, a loop, comprehension or unpacking target bound to one, an if-expression over classes
-    standing as the attribute's base and a subscript of a container of classes) is not read as the base's, and text a call
+    names the import system binds in every module excepted (_IMPORT_NAMES, refused by name as a bare name, the base of a receiver, a
+    container or an attribute, a callee or a call's argument, and not read inside the index of a subscript over a container whose
+    text the pass does not read, above: _IMPORT_WHY), each in a module with no
+    star import; a parameter or a name bound from one, a BoolOp over those, where no attribute is read on the path to it (`q.get(k)`
+    passes, `q.X` is refused, above); a call of one of those or of a method on one, whose arguments are read as text:
+    `dict(X).get(k)` reads X, _chain_args) or SERVED_ALLOW names the place, and a call base the reader does not resolve is refused
+    by name; text such a base holds (a constant a sibling module defines and the page imports, and a class reached through an
+    import's attribute, its witness a class a sibling module defines read as an attribute of that module, which the page imports by
+    its name, or through a call's return, under the call limit) is not read as the base's, and text a call
     computes from its arguments is not read, the stated limit (its witnesses chr, getattr and a decoder, `base64.b64decode(X).decode()` or zlib or
     gzip over an embedded bundle, each read only as its arguments' own text; an encoded asset kept ASCII and decoded where the page
-    is built is such a shape, and can be honest; max handed one iterable, which returns an element of it, is such a call too), as
-    with code behind a name on self. A
+    is built is such a shape, and can be honest; max handed one iterable, which returns an element of it, is such a call too, and so
+    is a method called on a parameter whose name is no route class's method, self.route_methods, a method of a class that holds no
+    route among them), as with code behind a name on self (a method called on self is read through the def statement the follow arm
+    takes, unless the file may replace it at run time in a way _replaced reads, refused below; code that replaces that method in any
+    other way, a setattr or delattr whose name argument is no string constant, a write to an instance's `__dict__`, a reassigned
+    `__class__`, a class decorator or a metaclass among them, is not read; its witness a method the route class defines that a
+    module function replaces through setattr, the method's name handed to it as an argument). A
     call is followed only as listed here (a file read, a text method's receiver, a module function that is a top-level def
     statement and its name's one module-level binding, bound by no function scope of the context, a function defined in the page
-    function, a method of the route's class, and any other method call through its receiver as above, so `_K.__call__(t)` on a
-    constant holding a lambda reads `_K` and the lambda's body, whose parameters are value slots), each followed function read to
+    function, a method called on the calling method's own first parameter (_own_self: self by binding, however it is spelled, the
+    first parameter of a method whose def carries no decorator, never rebound in its scope, a closure, a lambda or a comprehension
+    of the method that binds no name so spelled reading it too; the first parameter of a route handler that carries a decorator,
+    whatever it is bound to, or that stands in a file where a statement binds staticmethod or classmethod, a star import among
+    them, is not classified, _Unclassified, and a method called on it, or it called, is refused by name, _UNCLASSIFIED), resolved
+    through the route class's method resolution order (_mro, C3 over the classes of the file, any other base a class whose names
+    the census does not read) to the first class whose body binds the name,
+    where that is a class of the file whose body itself binds it by one def statement and nothing else (_definer) that no file class
+    deriving from the route class, directly or through file classes, overrides (_file_override), and any other
+    method call through its receiver as above, so `_K.__call__(t)` on a constant holding a lambda reads `_K` and the lambda's body,
+    whose parameters are value slots; the follow arm and the refusals below run before the file-read and text-call arms, and on
+    every method call on the path of a receiver or a container, where a call the follow arm takes is refused as a method's return:
+    receiver, _path_calls), each followed function read to
     its own returns with any decorator on it not applied, and the default of each of its parameters the call omits read as that
     argument would be, in the scope its def statement runs in (_defaults), and every call's arguments are read as text; any other
-    callee passes when _base finds it such an import, one of the seven builtins a page may name or a parameter other than a
-    classmethod's first parameter, and is refused by name for any other builtin and otherwise (a module constant, a local, a
-    class, a classmethod's first parameter, a subscript, a call and a lambda literal among them) unless SERVED_ALLOW names the
-    place. A bare
+    callee passes when _base finds it such an import, one of the seven builtins a page may name or a parameter other than a route
+    handler's first parameter the census does not classify, and is refused by name for any other builtin and otherwise (a module
+    constant, a local, a class, such an unclassified first parameter, a subscript, a call and a lambda literal among them) unless
+    SERVED_ALLOW names the place. A method called on the calling method's own first parameter that no def statement of a class of
+    the file defines
+    first in that order (the order reaching a base whose names the census does not read before any class of the file that binds
+    the name; the first class
+    that binds it binding it any other way, an assignment, a lambda, a def inside a block of the body, a second binding or a def
+    under a global declaration among them; no class binding it; or an order the census cannot compute) is refused by name
+    (_SELF_METHOD); a method the follow arm would take that a file class deriving from the route class, directly or through file
+    classes, defines in its own body is refused by name (_METHOD_OVERRIDE), the server's instance of that subclass running the
+    override; and so is a call of a route class's method (self.route_methods: the names def statements bind in the bodies of
+    the route classes and of the classes of the file they derive from, read once per file in run, so a module helper's context has
+    them) whose receiver resolves by binding (_recv_roots: through a local's values, a loop, comprehension or with target's source,
+    a list, tuple, set or dict literal's elements, keys and values, a subscript's container, an if-expression's branches, a BoolOp's
+    operands and a walrus's or a starred value) to self through anything else or to any other parameter, or that is a name spelled
+    self other than that first parameter (_METHOD_CALL), and a call of any other name whose receiver resolves by binding to self
+    through anything else (_SELF_METHOD); and a method the follow arm would take is refused by name instead where the file may
+    replace it at run time (_replaced: the file stores or deletes an attribute of its name on any object, as the target of an
+    assignment of any kind, a for, with or comprehension target or a del, names it by a string constant, or a join of them, as the
+    second argument of setattr or delattr, or of __setattr__ or __delattr__ called unbound (by that name, or on object, type, a
+    class a top-level class statement binds or a call of type(): _class_recv), or as the first argument of __setattr__ or __delattr__
+    called bound on any other receiver (self.__setattr__("name", f), super().__setattr__(...)), or holds a class in the route
+    class's order that binds __getattribute__: _REPLACED). A receiver that is a class, or whose root by binding is one, is decided by receiver (_class_root,
+    _value_class, _CLASS_ATTR), and one that is an except name passes as above. A bare
     module name that is no constant passes when it is such an import or one of the seven builtins a page may name, or a top-level def or class statement that
     is its name's one module-level binding, and any other (one bound other than by one assignment, one bound by an annotated,
     unpacking or chained assignment, one annotated at module level beside its assignment, an import, a function or a class beside
@@ -3230,16 +3953,20 @@ class _Served(object):
     a value slot whose text is its argument's, read at the call, or, where a followed call omits it, its default's (_defaults).
     The other value slots the pass reads as no text are the kinds and roles a full served pass over the kernel hands resolve: a
     None, bool or int constant, the empty bytes constant, a Mult or LShift whose operands are int constants or such BinOps
-    (`2 * 1024`, `1 << 20`), each refused by name where it stands directly as a `%` operand, a `.format` argument or a value of
-    a `.format_map` dict literal, whether or not a conversion takes it (_SLOT_FORMAT, _format_slots: a conversion can turn a value
-    slot into characters; one held deeper there is read as a value slot), and `__file__` as a bare name where no statement of the
-    file binds it, in any scope and by any form, the file writes no name of its module namespace through a computed name and may
-    not rewrite it at run time, and the module holds no star import (the module's own path, which the import system binds). In a
-    file where a statement binds it, `__file__` is refused by name wherever a page reads it (_FILE_BOUND: a bare name, the base of
-    a receiver, a container or an attribute, and a callee), before any scope's or module-level binding of it is read, and a file
-    read whose path _path would build from `Path(__file__)` or `open(__file__)` has no path, a file the walk does not scan; in
-    the other cases it is refused as another module name is. Anything else is text the census did not read, a SERVED
-    problem naming its kind (_unread): a non-empty bytes, float, complex or Ellipsis constant, a format spec (refused, not read:
+    (`2 * 1024`, `1 << 20`), each refused by name where it stands directly as the right operand of a `%` (bare, a tuple element or a
+    dict literal's value), a `.format` argument or a value of a `.format_map` dict literal, whether or not a conversion takes it
+    (_SLOT_FORMAT, _format_slots: a conversion can turn a value
+    slot into characters; one held deeper there is read as a value slot), and `__file__` as a bare name where it is the file's own
+    path, which the import system binds (_file_slot: no statement of the file binds it, in any scope and by any form, the file
+    writes no name of its module namespace through a computed name and may not rewrite it at run time, no module-level statement
+    writes it, and the module holds no star import). In a file where a statement binds it, `__file__` is refused by name wherever a
+    page reads it (_FILE_BOUND: a bare name, the base of a receiver, a container or an attribute, and a callee, never inside the
+    index of a subscript over a container whose text the pass does not read, which is not read at all), before any
+    scope's or module-level binding of it is read; in the other cases where it is not the file's own path it is refused as another
+    module name is; and wherever it is not, a file read whose path _path would build from `Path(__file__)` or `open(__file__)` has
+    no path, a file the walk does not scan. Anything else resolve reaches (and it reaches no index of a subscript over a container
+    whose text the pass does not read) is text the census did not read, a SERVED problem naming its kind (_unread): a non-empty
+    bytes, float, complex or Ellipsis constant, a format spec (refused, not read:
     before 3.12 its parts carry the f-string's own position, which served_texts's read-once key would take for a part already
     read), a Mult or LShift over anything else, every other operator, a comparison, a unary expression, a subscript by a slice or
     an index other than a constant over a container whose text the pass reads (_SLICED: a slice never reaches resolve, the
@@ -3247,7 +3974,8 @@ class _Served(object):
     an f-string or a `.join`, `.format`, `.format_map` or `.replace` (_SUB_OPERAND, _sub_operand, _join_operands: the pass reads
     its container whole and not the text the join makes of the pieces the indexes select; read no further, a subscript of any
     other container read piece by piece and a subscript read through a function under the call limit), a value slot that stands
-    directly as a `%` operand, a `.format` argument or a `.format_map` value (_SLOT_FORMAT), a builtin other than the seven a page
+    directly as the right operand of a `%`, a `.format` argument or a `.format_map` value (_SLOT_FORMAT), a builtin other than the
+    seven a page
     may name (_BUILTIN_OTHER), a call of str with more than one positional argument, a starred argument or a keyword other than
     object (_STR_DECODE), a name the import system binds
     in every module other than `__file__` (`__doc__`, `__name__`,
@@ -3256,9 +3984,17 @@ class _Served(object):
     _unbound_text_call: _const_text folds none, so its pieces are not read apart), a `%`, `.format` or `.format_map` on a string
     constant with a field or precision wider than a million characters (_WIDE, _wide) or a replacement field in a format spec
     (_NESTED, _nested), which _const_text does not expand, a replacement field reaching an attribute or an index of its argument
-    in a `.format` or `.format_map` whose format string the pass reads (_FIELD_REACH, _field_reach), an attribute read on self
-    (_SELF_ATTR), a class attribute, read through the class's own name, a name the census resolves to it or a method call on a
-    name whose value holds it (_CLASS_ATTR), a
+    in a `.format` or `.format_map` whose format string the pass reads (_FIELD_REACH, _field_reach), a
+    `.format` or `.format_map` whose format string the receiver reaches other than as a string constant, a join of them or a name
+    bound to one (_TEMPLATE, taken only where the receiver is no class, stands as no subscript operand and is read with no refusal
+    by name in whole or in part, a refusal of the receiver standing for the text it holds), an attribute read on self (_SELF_ATTR),
+    on any other parameter (_PARAM_ATTR) or on an except name (_EXCEPT_ATTR), each by the root its base reaches by binding
+    (_attr_root), a class attribute, read, or a method called, through the class's own name, a name the census resolves to it, a
+    method call on or a subscript of a name whose value holds it or of such a value itself, or any other base whose root by binding
+    is a class (_CLASS_ATTR), a method called on self that no def statement of a class of the file defines first in the route
+    class's method resolution order (_SELF_METHOD), a method called on self that a file class deriving from the route class overrides
+    (_METHOD_OVERRIDE), a route class's method called other than on the calling method's own first
+    parameter (_METHOD_CALL), a method called on self that the file may replace at run time (_REPLACED), a
     `.join` over a set literal or a set comprehension (its one argument or, unbound as in
     `str.join("", {...})`, its second: a set's iteration order is not fixed, so its join is no one text) and a kind with no
     arm among them, as is a route whose body yields no piece and no file slot."""
@@ -3298,6 +4034,12 @@ class _Served(object):
         self.held = []   # every locals map a context built, held for the pass: a local read is keyed on its map's id, never reused
         self.scopes = {}   # id(function) -> (the function, its _locals): each function's body walked once per pass, each context given copies
         self.def_ctx = {}   # id(nested function) -> (the function, the context of the function its def statement stands in): its defaults' scope
+        self.tree, self.method_ids = tree, None   # the ids of the file's methods (_method_defs), read once, on the first context that asks
+        self.deco_bound = ns["deco"]   # whether a statement of the file binds staticmethod or classmethod, in any scope and by any form (Scan's walk)
+        # decision 2's reads, once per file: the route classes' method names (run: _route_methods), each class's method resolution
+        # order (_mro) and the def statement a method called on self resolves to (_definer)
+        self.route_methods, self.mros, self.definers = set(), {}, {}
+        self.stores = None   # the attribute names the file stores, deletes or names to a setter, read once, at the first follow (_replaced)
 
     @staticmethod
     def _locals(fn):
@@ -3309,7 +4051,7 @@ class _Served(object):
         "nonlocal" too for a name a function or class nested in this one declares nonlocal). Nested defs, classes and lambdas are
         not entered, but a def's or a class's header and a lambda's defaults are read as this function's statements (_header), so a
         walrus there is a local with its value."""
-        out, bound, nested, stack, src, mut, forms, stores, comp = {}, set(), {}, list(fn.body), {}, {}, {}, set(), set()
+        out, bound, nested, stack, src, mut, forms, stores, comp, augs = {}, set(), {}, list(fn.body), {}, {}, {}, set(), set(), set()
 
         def form(name, how): forms.setdefault(name, []).append(how)
         while stack:
@@ -3332,7 +4074,7 @@ class _Served(object):
             elif isinstance(n, ast.MatchMapping) and n.rest: form(n.rest, "match")
             elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Del): form(n.id, "del")
             if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name): out.setdefault(n.targets[0].id, []).append(n.value)
-            elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name): out.setdefault(n.target.id, []).append(n.value)
+            elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name): out.setdefault(n.target.id, []).append(n.value); augs.add(n.target.id)
             elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None: out.setdefault(n.target.id, []).append(n.value)
             elif isinstance(n, (ast.For, ast.AsyncFor)):
                 for t in ast.walk(n.target):
@@ -3361,6 +4103,7 @@ class _Served(object):
         for k in out: form(k, "value")
         for k in comp: form(k, "comp")
         for k in stores - set(out) - comp: form(k, "store")
+        for k in augs: form(k, "aug")   # a name bound by an augmented assignment (the key walk cannot evaluate it: Scan._key_binding)
         return out, bound, nested, forms
 
     @staticmethod
@@ -3373,12 +4116,15 @@ class _Served(object):
             stack.extend(ast.iter_child_nodes(n))
         return out
 
-    def _ctx(self, fn, cls, outer=None, where=None):
+    def _ctx(self, fn, cls, outer=None, where=None, route=False):
         """(the value-slot names: parameters and the other names the body binds, the locals, the class, the nested functions, the
         place's name for SERVED_ALLOW, name -> the forms that bind it in the innermost function scope that binds it: _locals's and
         "param"); a nested function's context (outer given) sees the enclosing function's names and locals under its own, and its
         own binding of a name decides over the enclosing one's. A name the function declares `global` names the module's binding:
-        it is no local here, and the module's binding is read."""
+        it is no local here, and the module's binding is read. The first parameter of a route handler (route, from run) that carries
+        a decorator, whatever it is bound to, or that stands in a file where a statement binds the name staticmethod or classmethod
+        (self.deco_bound, from Scan's walk: _namespace_flags's "deco") is not classified (_Unclassified); that of any other method (_method_defs) whose def carries no decorator is
+        self by binding (_SelfParam)."""
         a = fn.args
         params = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs} | ({a.vararg.arg} if a.vararg else set()) | ({a.kwarg.arg} if a.kwarg else set())
         got = self.scopes.get(id(fn))
@@ -3387,9 +4133,17 @@ class _Served(object):
         local, bound, nested, forms = dict(local), set(bound), dict(nested), {k: list(v) for k, v in forms.items()}
         for p in params: forms.setdefault(p, []).append("param")
         first = (a.posonlyargs + a.args)[:1]
-        if outer is None and cls is not None and first and any(d.id == "classmethod" if isinstance(d, ast.Name) else isinstance(d, ast.Attribute)
-                                                              and d.attr == "classmethod" for d in fn.decorator_list):
-            forms[first[0].arg] = _ClassParam(forms[first[0].arg])   # a classmethod's first parameter is its class (_class_ref)
+        if outer is None and first:
+            if self.method_ids is None: self.method_ids = _method_defs(self.tree)
+            if route and (fn.decorator_list or self.deco_bound):
+                # a route handler's decorator, whatever it is bound to, may make the first parameter self, the class or anything else,
+                # and a file that binds staticmethod or classmethod may rebind the decorator a def carries: not classified, so a method
+                # called on it and it called are refused by name (_UNCLASSIFIED)
+                forms[first[0].arg] = _Unclassified(forms[first[0].arg])
+            elif id(fn) in self.method_ids and not fn.decorator_list:   # a method's first parameter, however spelled, with no
+                # decorator on its def: self by binding (_attr_root); a decorated method's is a parameter like any other, and the
+                # follow arm refuses a decorated def before it reads the body (_DECORATED)
+                forms[first[0].arg] = _SelfParam(forms[first[0].arg])
         gl = {k for k, v in forms.items() if "global" in v}
         if outer is not None:
             params, local, nested, forms = params | outer[0], dict(outer[1], **local), dict(outer[3], **nested), dict(outer[5], **forms)
@@ -3426,11 +4180,23 @@ class _Served(object):
                 continue
             self.resolve(v, dctx, label, done)
 
+    def _file_slot(self):
+        """Whether `__file__` is this file's own path, which the import system binds: no statement of the file binds it, in any
+        scope and by any form (_FILE_BOUND), the file writes no name of its module namespace through a computed name and may not
+        rewrite it at run time, no function binds it under a `global` declaration and no module-level statement writes it
+        (Result.rebinds), and the module holds no star import. The one predicate for both of its reads: _path's `Path(__file__)`
+        and `open(__file__)`, a file read that is this file only here, and the bare name as a value slot (resolve's Name arm, and
+        _root_name's root for an attribute's base); in any other file each is refused."""
+        return not (self.file_bound or self.computed or self.star or "__file__" in self.rebound)
+
     def _path(self, e, local=None, depth=0):
         """The repository-relative path a pathlib expression spells: `ROOT / "ui" / "x.css"` through the module's constants (and a
         local's one binding, given the function's locals), with Path(__file__) (or open(__file__)) as this file and .parent as its
-        directory; None when the census cannot read it, and for Path(__file__) or open(__file__) in a file where a statement binds
-        `__file__`, in any scope and by any form (_FILE_BOUND), so a file read through it is a file the walk does not scan."""
+        directory; None when the census cannot read it, and for Path(__file__) or open(__file__) wherever `__file__` may not be
+        this file's own path (_file_slot: in a file where a statement binds it, in any scope and by any form, _FILE_BOUND, one that
+        writes a name of its module namespace through a computed name or may rewrite it at run time, one where a function binds it
+        under a `global` declaration or a module-level statement writes it, and a module that holds a star import), so a file read
+        through it is a file the walk does not scan."""
         if depth > 32: return None   # a constant bound through itself (`X = X.parent`) is not a path the census reads
         if isinstance(e, ast.Name) and local and e.id in local and len(local[e.id]) == 1: return self._path(local[e.id][0], None, depth + 1)
         if isinstance(e, ast.BinOp) and isinstance(e.op, ast.Div) and isinstance(e.right, ast.Constant) and isinstance(e.right.value, str):
@@ -3445,7 +4211,7 @@ class _Served(object):
         if isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr == "resolve": return self._path(e.func.value, None, depth + 1)
         if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id in ("Path", "open") and e.args:
             a = e.args[0]
-            if isinstance(a, ast.Name) and a.id == "__file__": return None if self.file_bound else self.rel   # bound by a statement: no path
+            if isinstance(a, ast.Name) and a.id == "__file__": return self.rel if self._file_slot() else None   # not this file's own path: no path
             if isinstance(a, ast.Constant) and isinstance(a.value, str): return a.value
             return self._path(a, None, depth + 1)
         return None
@@ -3533,8 +4299,8 @@ class _Served(object):
         the seventh round): None when no function scope of the context binds it, or declares it `global` (the module's binding
         decides); otherwise ('local', None) for a local with values (a parameter the body also assigns among them), read from
         those values as a bare name or a receiver and refused as "a call" as a callee; ('exempt', why) for a parameter or an except
-        name, a value slot, but refused as a callee when it shares a module function's name, and a classmethod's first parameter,
-        its class (_ClassParam), refused as "a call" as a callee; ('follow', None) for a callee that is a
+        name, a value slot, but refused as a callee when it shares a module function's name, and a route handler's first parameter
+        the census does not classify (_Unclassified), refused as a callee as _UNCLASSIFIED; ('follow', None) for a callee that is a
         nested def, the name's one binding in the scope, and ('unread', "a function or class object") for that def as a bare name or
         a receiver; and ('unread', why) for everything else: a comprehension's target, a function-level import, a nested class, a
         del, a match capture, a name a nonlocal declaration rebinds, any other store, and a name bound two ways (two different
@@ -3543,7 +4309,7 @@ class _Served(object):
         by one is one local)."""
         forms = ctx[5].get(name)
         if not forms or "global" in forms: return None
-        if callee and isinstance(forms, _ClassParam): return "unread", "a call"   # a classmethod's first parameter: its class (_class_ref)
+        if callee and isinstance(forms, _Unclassified): return "unread", _UNCLASSIFIED   # a route handler's first parameter the census does not classify (_ctx)
         kinds = set(forms)
         if "nonlocal" in kinds: return "unread", "a name a nonlocal declaration rebinds"
         if "value" in kinds and kinds <= {"value", "param"}: return ("unread", "a call") if callee else ("local", None)
@@ -3606,13 +4372,217 @@ class _Served(object):
                         or f.id in self.bound and f.id in self.block and self.bound[f.id] == 1): return "unread", self._module_why(f.id)
                 return "unread", "a call"
             if isinstance(f, ast.Attribute):
-                if isinstance(f.value, ast.Name) and f.value.id == "self" and cls and f.attr in self.methods.get(cls, {}): return "unread", "a method's return"
+                if self._self_method(f, ctx): return "unread", "a method's return"
                 return self._base(f.value, ctx)
             return "unread", "a call"
         if isinstance(e, ast.BoolOp):
             kinds = [self._base(v, ctx)[0] for v in e.values]
             return ("exempt", "a BoolOp looked through") if all(k == "exempt" for k in kinds) else ("unread", "a BoolOp")
         return "unread", type(e).__name__
+
+    def _self_method(self, f, ctx):
+        """Whether the callee `f`, an attribute, is the call the follow arm takes (_method_call): a method called on the calling
+        method's own first parameter (_own_self) that the route class's method resolution order resolves to a def statement of a class
+        of the file (_definer). resolve follows it, and _base and _attr_root take its return for "a method's return"; where the file may
+        replace it at run time (_replaced), _method_call refuses it first, on resolve's Call arm and on every receiver's path."""
+        return self._own_self(f.value, ctx) and self._definer(ctx[2], f.attr) is not None
+
+    @staticmethod
+    def _own_self(r, ctx):
+        """Whether the receiver `r`, read in ctx, is the calling method's own first parameter: a name whose binding is the first
+        parameter of a method defined directly in a class body whose def carries no decorator, however it is spelled (_SelfParam; a
+        route handler's in a file that binds staticmethod or classmethod is not classified, _Unclassified), never rebound in that
+        scope (its forms exactly ["param"]); a closure or a lambda inside the method that binds no name so spelled reads the same
+        binding."""
+        forms = ctx[5].get(r.id) if isinstance(r, ast.Name) else None
+        return isinstance(forms, _SelfParam) and list(forms) == ["param"]
+
+    def _method_call(self, f, ctx):
+        """Decision 2 at a method call in a page position whose callee is the attribute `f`, read in ctx (resolve's Call arm, before
+        the file-read and text-call arms, and each method call on a receiver's or a container's path: receiver, _path_calls).
+        ("follow", the class whose def statement resolve follows) for a method called on the calling method's own first parameter
+        (_own_self) that the route class's method resolution order resolves to a def statement of a class of the file (_definer)
+        carrying no decorator (("refuse", _DECORATED) where it carries one), that no file subclass overrides (_file_override;
+        _METHOD_OVERRIDE) and that the file may not replace at run time (_replaced; ("refuse", _REPLACED) where it may);
+        ("refuse", why) for such a call it resolves otherwise, to an imported base, to a binding other than one def statement or to
+        no class (_SELF_METHOD); for a call of any name on a receiver whose root by binding is a route handler's first parameter the
+        census does not classify (_Unclassified: _UNCLASSIFIED); for a call of a route class's method (self.route_methods) on self
+        through anything else (an alias, a loop, comprehension or with target, a container, an if-expression, a BoolOp, a walrus),
+        on any other parameter, or on a name
+        spelled self that is not the calling method's own first parameter (_METHOD_CALL); and for a call of any other name on self
+        through anything else (_SELF_METHOD); None for any other call, a method called on a parameter whose name no route class
+        defines among them (the call limit: its arguments read as text, not the text it computes)."""
+        r = f.value
+        if self._own_self(r, ctx):
+            d = self._definer(ctx[2], f.attr)
+            if d is None: return "refuse", _SELF_METHOD
+            if self.methods[d][f.attr].decorator_list: return "refuse", _DECORATED
+            if self._file_override(ctx[2], f.attr): return "refuse", _METHOD_OVERRIDE
+            if self._replaced(ctx[2], f.attr): return "refuse", _REPLACED
+            return "follow", d
+        roots = self._recv_roots(r, ctx)
+        if "unclassified" in roots: return "refuse", _UNCLASSIFIED
+        if f.attr in self.route_methods and ("self" in roots or "param" in roots or isinstance(r, ast.Name) and r.id == "self"):
+            return "refuse", _METHOD_CALL
+        return ("refuse", _SELF_METHOD) if "self" in roots else None
+
+    def _recv_roots(self, e, ctx):
+        """The roots the receiver `e` of a method call, read in ctx, reaches by binding (decision 2's walk): "self" for self by binding
+        (a method's first parameter however spelled, _SelfParam), "unclassified" for a route handler's first parameter the census
+        does not classify (_Unclassified), "param" for any other parameter and "except" for an except name (_root_slot). The walk
+        goes through a local's values (a loop, comprehension or with target's source, an unpacking's value and a walrus's among
+        them: _binding), a list, tuple, set or dict literal's elements, keys and values, a subscript's container, an
+        if-expression's branches, a BoolOp's operands and a walrus's or a starred value; never through an attribute or a call, whose
+        value is no binding of a name, a module constant, whose value reads no function scope, or a class (receiver decides a
+        receiver on one). Iterative: an explicit worklist and one visited set per query, keyed on the binding's scope and the name,
+        so each name expands once, in _recv_step, and the walk is linear in the page's size; there is no depth bound."""
+        roots, seen, todo = set(), set(), [(e, ctx)]
+        while todo:
+            x, c = todo.pop()
+            if isinstance(x, (ast.Subscript, ast.NamedExpr, ast.Starred)): todo.append((x.value, c)); continue
+            if isinstance(x, ast.IfExp): todo += [(x.orelse, c), (x.body, c)]; continue
+            if isinstance(x, ast.BoolOp): todo.extend((v, c) for v in reversed(x.values)); continue
+            if isinstance(x, (ast.List, ast.Tuple, ast.Set)): todo.extend((y, c) for y in reversed(x.elts)); continue
+            if isinstance(x, ast.Dict): todo.extend((y, c) for y in reversed(x.keys + x.values) if y is not None); continue
+            if not isinstance(x, ast.Name): continue
+            forms = c[5].get(x.id)
+            if self._class_name(x, c): continue
+            v = self._scoped(x.id, c)
+            if v is not None and v[0] == "exempt": roots.add(self._root_slot(x.id, c)); continue
+            if v is None or v[0] != "local": continue
+            if "param" in forms: roots.add(self._root_slot(x.id, c))
+            got = self._binding(x, c)
+            if got is not None and (got[0], x.id) not in seen:
+                seen.add((got[0], x.id)); todo += self._recv_step(got[1], got[2])
+        return roots
+
+    @staticmethod
+    def _recv_step(vals, ctx):
+        """_recv_roots's expansion of one name, which it calls once for each name it expands, given the values of the name's binding
+        and the ctx they are read in (_binding): the values to read next."""
+        return [(y, ctx) for y in reversed(vals)]
+
+    def _definer(self, cls, attr):
+        """The class whose def statement a method `attr` called on self resolves to, where the route class is `cls`: the first class
+        in cls's method resolution order (_mro) whose body binds the name, when that is a class of the file binding it by one def
+        statement of its own body (self.methods) and by nothing else there; None when that class binds it any other way (an
+        assignment, a lambda, a def inside a block, a second def, a global declaration among them), when the first class that may
+        bind it is not a class of the file (an imported base, whose names the census does not read), when no class binds it, and
+        when the order cannot be read (_mro). Read once per file for each class and name (self.definers)."""
+        key = (cls, attr)
+        if key not in self.definers:
+            got = None
+            for kind, name in self._mro(cls) or [("base", None)]:
+                if kind != "file": break
+                forms, declared = _binding_forms(self.classes[name], attr)
+                if not forms: continue   # the class binds no such name (a global declaration alone binds none there)
+                if forms == ["a def statement"] and declared is None and attr in self.methods.get(name, {}): got = name
+                break
+            self.definers[key] = got
+        return self.definers[key]
+
+    def _file_override(self, cls, attr):
+        """Whether a file class derives from the route class `cls`, directly or through file classes, and defines the method `attr`
+        in its own body: the server may instantiate that subclass, whose override Python runs in place of the def the route class's
+        method resolution order resolves the name to, so the follow arm must not take the base's def (_method_call, _METHOD_OVERRIDE).
+        The derivation is read from the classes' bases (_class_bases), not the linearization, so it does not enter _mro."""
+        for name, node in self.classes.items():
+            if name == cls or not _binding_forms(node, attr)[0]: continue
+            seen, stack = set(), [name]
+            while stack:
+                c = stack.pop()
+                for kind, b in self._class_bases(c):
+                    if kind != "file" or b in seen: continue
+                    if b == cls: return True
+                    seen.add(b); stack.append(b)
+        return False
+
+    def _class_recv(self, e):
+        """Whether the receiver of a `__setattr__` or `__delattr__` call is a class: `object`, `type`, a class a top-level class statement
+        of the file binds, or a call of type(); so the call is the unbound three-argument form whose attribute name is its second
+        argument, where the bound form on any other receiver (self, super()) names it in its first (_replaced)."""
+        if isinstance(e, ast.Name): return e.id in ("object", "type") or e.id in self.classes
+        return isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id == "type"
+
+    def _replaced(self, cls, attr):
+        """Whether code of the file may replace at run time the method `attr` the follow arm would follow for the route class `cls`,
+        as far as one syntactic check reads it: the file stores or deletes an attribute of that name on any object (the target of an
+        assignment, an augmented or annotated assignment, a for, with or comprehension target, or a del), or names it by a string
+        constant, or a join _const_text folds to one, as the second argument of a call of setattr or delattr (by that name or as an
+        attribute so named) or of __setattr__ or __delattr__ called unbound (by that name, or as an attribute of a receiver
+        _class_recv reads as a class), or as the first argument of __setattr__ or __delattr__ called as an attribute of any other
+        receiver (the bound form, `self.__setattr__("name", f)`, `super().__setattr__(...)`), or a class of the file in cls's method
+        resolution order binds __getattribute__, which runs on every lookup on self. The names are read once per file
+        (self.stores)."""
+        if self.stores is None:
+            self.stores = set()
+            for n in ast.walk(self.tree):
+                if isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del)): self.stores.add(n.attr)
+                elif isinstance(n, ast.Call) and (getattr(n.func, "id", None) or getattr(n.func, "attr", None)) in _SETTERS:
+                    # a bound `x.__setattr__("name", f)` or `x.__delattr__("name")` on a receiver that is not a class names the
+                    # attribute in its first argument; every other setter (setattr, delattr, or the unbound `C.__setattr__(obj,
+                    # "name", f)` on a class receiver) names it in its second
+                    idx = 0 if (isinstance(n.func, ast.Attribute) and n.func.attr in ("__setattr__", "__delattr__")
+                                and not self._class_recv(n.func.value)) else 1
+                    if len(n.args) > idx:
+                        c = self._const_text(n.args[idx])
+                        if c is not None and type(c[0]) is str: self.stores.add(c[0])
+        order = self.mros[cls] if cls in self.mros else self._mro(cls)   # the order _definer read, once per file
+        return attr in self.stores or any(k == "file" and _binding_forms(self.classes[c], "__getattribute__")[0] for k, c in order or ())
+
+    def _class_bases(self, name):
+        """The bases of the class a top-level class statement of the file binds under `name`, in order: ("file", its name) for a bare
+        name a top-level class statement binds as the name's one module-level binding (_sole), a class of the file, and ("base", its
+        text) for any other base (an import, an attribute, a call, a starred base), a class whose own bases the census does not read."""
+        return [("file", b.id) if isinstance(b, ast.Name) and b.id in self.classes and self._sole(b.id) else ("base", ast.unparse(b))
+                for b in self.classes[name].bases]
+
+    def _mro(self, name):
+        """The method resolution order of the class a top-level class statement of the file binds under `name`, as Python computes it
+        (the C3 linearization) over its bases as _class_bases reads them, each other base a class of its own with no bases read; None
+        when the name is no such class or the order cannot be computed (a base cycle, or bases C3 cannot order, which Python refuses
+        at class creation). Iterative: an explicit worklist, each class's order computed once per file (self.mros), in _mro_step,
+        which it calls once for each class it expands."""
+        if name not in self.classes: return None
+        todo, opened = [name], set()
+        while todo:
+            n = todo[-1]
+            if n in self.mros: todo.pop(); continue
+            need = [b for k, b in self._class_bases(n) if k == "file" and b not in self.mros]
+            if need and n not in opened: opened.add(n); todo.extend(need); continue
+            todo.pop(); opened.discard(n)
+            self.mros[n] = None if need else self._mro_step(n)   # bases still unread on its second visit: a cycle
+        return self.mros[name]
+
+    def _mro_step(self, name):
+        """_mro's expansion of one class, given its bases' orders (self.mros): its own order by C3's merge of those orders and the
+        list of its bases, or None where a base's order is None or the merge finds no class to take next."""
+        bases = self._class_bases(name)
+        seqs = [(self.mros.get(b) if k == "file" else [(k, b)]) for k, b in bases] + [list(bases)]
+        if any(s is None for s in seqs): return None
+        out, at, tail = [("file", name)], [0] * len(seqs), {}   # tail: each class -> the lists that hold it past their head
+        for s in seqs:
+            for x in s[1:]: tail[x] = tail.get(x, 0) + 1
+        while True:
+            live = [i for i in range(len(seqs)) if at[i] < len(seqs[i])]
+            if not live: return out
+            head = next((seqs[i][at[i]] for i in live if not tail.get(seqs[i][at[i]])), None)
+            if head is None: return None
+            out.append(head)
+            for i in live:
+                if seqs[i][at[i]] == head:
+                    at[i] += 1
+                    if at[i] < len(seqs[i]): tail[seqs[i][at[i]]] -= 1
+
+    def _route_methods(self, classes):
+        """The method names decision 2's refuse arm keys on (the 21:39Z item 1): those the def statements of the route classes'
+        bodies bind and of the classes of the file each derives from (the file classes in its order, _mro), read once per file, so a
+        module helper's context has them too."""
+        out = set()
+        for c in classes:
+            for kind, name in self._mro(c) or ([("file", c)] if c in self.classes else []):
+                if kind == "file": out.update(self.methods.get(name, {}))
+        return out
 
     def _carries_text(self, e, ctx):
         """Whether a subscript's container carries text the pass reads, so that a slice of it, or an index that is no constant,
@@ -3622,36 +4592,50 @@ class _Served(object):
         a name bound from one, an import, one of the seven builtins a page may call, or a call of one of those or of a method on
         one, its arguments read as text: _chain_args), and receiver refuses the rest whatever its index (a function's or a method's
         return, a class object, an attribute read on a class through its own name, refused as a class attribute, and an attribute
-        read on self)."""
+        read on self, on any other parameter or on an except name: _attr_root)."""
         if isinstance(e, ast.BoolOp): return any(self._carries_text(v, ctx) for v in e.values)
         return self._base(e, ctx)[0] == "readable"
 
-    def receiver(self, r, whole, ctx, label, done):
+    def receiver(self, r, whole, ctx, label, done, read=False):
         """The receiver of a method call, or the container of a subscript or an attribute, `r` in the page expression `whole`: a
-        name bound as a module constant or a local is read (a run-time memo is named in SERVED_ALLOW or refused); a BoolOp is
-        looked through to each operand; one that stands on a class, through the class's own name or a name the census resolves to
-        one or through a method call on a name whose value holds one (_class_root: `Handler.X`, `cls.X` in a classmethod, `h.X` after
-        `h = Handler`, `_REG.get(k).X`), is refused by name (_CLASS_ATTR), since
-        no class attribute is read as page text, and one that reads an attribute of self on its path (_self_root: `self.X.get(k)`,
-        `self.X[0]`) is refused by name (_SELF_ATTR); a base whose own text the pass does not read passes, and the arguments of
-        every call it
-        derives through are read as text (_chain_args: `dict(X).get(k)` reads X); anything else is a SERVED line by name unless
-        SERVED_ALLOW names the place, a call the reader does not resolve among them. A name the page function's scope binds is
-        decided by that scope (_scoped) before the module's binding. A subscript is read only through resolve's Subscript arm,
-        which refuses a slice or an index that is no constant over a container whose text the pass reads (_SLICED) before it
-        hands the container here; a subscript `r` whose base is a value slot passes here whatever its index."""
+        name bound as a module constant or a local is read (a run-time memo is named in SERVED_ALLOW or refused); a BoolOp is looked
+        through to each operand; one that stands on a class, through the class's own name or a name the census resolves to one or
+        through a method call on, or a subscript of, a name whose value holds one (_class_root: `Handler.X`, `h.X` after
+        `h = Handler`, `_REG.get(k).X`), is refused by name (_CLASS_ATTR), since no class attribute is read
+        as page text; then an attribute read is refused by the root its base reaches by binding (_attr_root: self, however it is
+        spelled or aliased, as _SELF_ATTR, any other parameter as _PARAM_ATTR, an except name as _EXCEPT_ATTR, a class as
+        _CLASS_ATTR, or a root the pass would read as a name's value with the reason the pass gives it), the attribute being
+        `whole`'s own, on `r` itself, where `read` says `r` is the base of the attribute `whole` reads (resolve's Attribute arm,
+        each operand of a BoolOp so), and otherwise each attribute read on `r`'s path (_path_attrs: `h.X.get(k)`, `h.X[0]` after
+        `h = self`), so `q.get(k)` on a parameter passes and `q.X.get(k)` is refused, and where no attribute is read on the path, `r`
+        whose root by binding is a class is refused as a class attribute (_value_class: a method called on a class reached as a
+        value, `t.render()` in a loop over classes, `_REG["a"].render()`, or such a container); a base whose own text the pass does
+        not read passes, and the arguments of every call it derives through are read as text (_chain_args: `dict(X).get(k)` reads
+        X); anything else is a SERVED line by name unless SERVED_ALLOW names the place, a call the reader does not resolve among
+        them. A name the page function's scope binds is decided by that scope (_scoped) before the module's binding. A subscript is
+        read only through resolve's Subscript arm, which refuses a slice or an index that is no constant over a container whose text
+        the pass reads (_SLICED) before it hands the container here; a subscript `r` whose base is a value slot passes here whatever
+        its index. A method call on `r`'s path, `r` itself among them (_path_calls: `h.m().get(k)` after `h = self`, `q.m()[0]` on a
+        parameter), is read by decision 2 (_method_call) before the base: one it refuses is refused by name, and one the follow arm
+        takes is a method's return (_base)."""
         params, local, cls, nested, where, scope = ctx
         if isinstance(r, ast.BoolOp):
-            for v in r.values: self.receiver(v, whole, ctx, label, done)
+            for v in r.values: self.receiver(v, whole, ctx, label, done, read)
             return
         if self._class_root(r, ctx): return self._unread(whole, _CLASS_ATTR, where)   # on a class: never read as page text
+        if read and self._attr_base(r, whole, ctx, where): return   # an operand of the attribute's base: refused by its root's binding
+        if not read and self._value_class(r, ctx): return self._unread(whole, _CLASS_ATTR, where)   # a class reached as a value
         if isinstance(r, ast.Name):
             v = self._scoped(r.id, ctx)
             if v is not None and v[0] == "local": self.resolve(r, ctx, label, done); return
             if v is None and r.id in self.consts and r.id not in params:
                 if r.id in self.memos: self._memo(r.id, whole, where); return
                 self.resolve(r, ctx, label, done); return
-        if self._self_root(r): return self._unread(whole, _SELF_ATTR, where)   # rooted at an attribute of self: refused, never passed over self
+        for a in () if read else self._path_attrs(r):   # an attribute read on the path: refused by its base's root (_attr_root)
+            if self._attr_base(a.value, whole, ctx, where): return
+        for c in self._path_calls(r):   # a method call on the path that decision 2 refuses (_method_call); one it follows is "a
+            how = self._method_call(c.func, ctx)   # method's return" (_base)
+            if how is not None and how[0] == "refuse": return self._unread(whole, how[1], where)
         kind, why = self._base(r, ctx)
         if kind == "exempt":   # its own text not read, but a call it derives through carries its arguments' (`dict(X).get(k)` reads X)
             for a in self._chain_args(r): self.resolve(a, ctx, label, done)
@@ -3662,36 +4646,150 @@ class _Served(object):
                                  % (self.rel, whole.lineno, ast.unparse(whole)[:60], why))
 
     @staticmethod
-    def _self_root(e):
-        """Whether a receiver or a container reads an attribute of self (`self.X`) on the path _base walks (an attribute's or a
-        subscript's value, a method call's receiver, a BoolOp's operands): `self.X.get(k)`, `self.X[0]`, `(self.X or p).copy()`;
-        a method called on self (`self.m()`) is code behind a name on self and not such a read."""
-        while True:
-            if isinstance(e, ast.Attribute):
-                if isinstance(e.value, ast.Name) and e.value.id == "self": return True
-                e = e.value
-            elif isinstance(e, ast.Subscript): e = e.value
-            elif isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute): e = e.func.value
-            elif isinstance(e, ast.BoolOp): return any(_Served._self_root(v) for v in e.values)
-            else: return False
+    def _path_attrs(e):
+        """The attribute reads on the path of a receiver or a container `e` (an attribute's or a subscript's value, a method call's
+        receiver, a BoolOp's operands), the outermost of each branch: the walk from its base (_attr_root) reads the rest of the path,
+        so a read further down is one it reaches. A method called on a name is code behind that name, not a read of it."""
+        out, todo = [], [e]
+        while todo:
+            x = todo.pop()
+            if isinstance(x, ast.Attribute): out.append(x)
+            elif isinstance(x, ast.Subscript): todo.append(x.value)
+            elif isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute): todo.append(x.func.value)
+            elif isinstance(x, ast.BoolOp): todo.extend(reversed(x.values))
+        return out
+
+    @staticmethod
+    def _path_calls(e):
+        """The method calls on the path of a receiver or a container `e` (an attribute's or a subscript's value, a method call's
+        receiver, a BoolOp's operands), `e` itself among them when it is one, outermost first: each a call in a page position, which
+        decision 2 reads (_method_call)."""
+        out, todo = [], [e]
+        while todo:
+            x = todo.pop()
+            if isinstance(x, (ast.Attribute, ast.Subscript)): todo.append(x.value)
+            elif isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute): out.append(x); todo.append(x.func.value)
+            elif isinstance(x, ast.BoolOp): todo.extend(reversed(x.values))
+        return out
+
+    def _attr_base(self, b, whole, ctx, where):
+        """Refuse by name the page expression `whole`, which reads an attribute of the base `b`, when b's root by binding refuses
+        (_attr_root); whether it did."""
+        why = self._attr_root(b, ctx)
+        if why is None: return False
+        self._unread(whole, why, where); return True
+
+    def _value_class(self, r, ctx):
+        """Whether the receiver or container `r`, read in ctx, on whose path no attribute is read (_path_attrs), has a class as its
+        root by binding: R1.1's walk (_attr_root) from r answers a class attribute (_CLASS_ATTR), so r is a class reached as a
+        value (`_REG["a"]`, a loop, comprehension or with target over classes, an if-expression or a walrus over them). An attribute
+        read on the path is decided by its own base's root."""
+        return not self._path_attrs(r) and self._attr_root(r, ctx) == _CLASS_ATTR
+
+    def _attr_root(self, e, ctx):
+        """Why an attribute read on the base `e`, read in ctx, is refused by name, or None: the base's root by binding. The walk goes
+        down the path _base walks (an attribute's value, a subscript's container, a method call's receiver, a call's callee, a
+        BoolOp's operands, an if-expression's branches, a walrus's or a starred value) and through a name's binding (_binding: a
+        local through each of its values, a loop, comprehension or with target through its source among them, and a module constant
+        through its value) and a list, tuple, set or dict literal's elements, keys and values; never a call's argument or a
+        parameter's default. At the root it ends at: self by binding (a method's first parameter however spelled, _SelfParam)
+        refuses as _SELF_ATTR; a class (its own name, _class_name) as _CLASS_ATTR, wherever the walk meets it, a module constant's
+        value among them; any other parameter, a route handler's first parameter the census does not classify (_Unclassified) among
+        them, as _PARAM_ATTR; an except name as _EXCEPT_ATTR; in that order. An import, one of the seven builtins a page may name, a value
+        slot (`__file__` where it is one among them), a module constant (walked through for a class alone) and a literal the pass
+        reads accept. Any other root is one _base refuses, and the walk stops there (a method's return on self, the call the follow arm
+        takes: _self_method; `__file__` in a file that binds it and a run-time memo among them, never walked past; a method called on
+        self that the follow arm does not take is walked through to self): reached down the path, where _base refuses it as the base
+        it is, that refusal stands and receiver makes it (None here); reached as a name's value (through a local, a literal
+        container or an if-expression), the attribute read refuses with the reason _base names for it (`x = _make()` then `x.X`, "a
+        function's return"; `x = cls()` then `x.X`, "a call"), save inside a module constant's value, the constant being read; a
+        memo is refused as that container wherever the pass reads it (None here). Iterative: an explicit worklist and one visited
+        set per query, keyed on the binding's scope and the name, so each name expands once, in _base_step, and the walk is linear
+        in the page's size; there is no depth bound."""
+        roots, seen, todo = [], set(), [(e, ctx, False, False)]   # (node, ctx, under a module constant, read as a name's value)
+        while todo:
+            x, c, const, value = todo.pop()
+            if isinstance(x, (ast.Attribute, ast.Subscript)): todo.append((x.value, c, const, False)); continue
+            if isinstance(x, (ast.BoolOp)): todo.extend((v, c, const, value) for v in reversed(x.values)); continue
+            if isinstance(x, (ast.NamedExpr, ast.Starred)): todo.append((x.value, c, const, value)); continue
+            if isinstance(x, ast.IfExp): todo += [(x.orelse, c, const, True), (x.body, c, const, True)]; continue
+            if isinstance(x, (ast.List, ast.Tuple, ast.Set)): todo.extend((y, c, const, True) for y in reversed(x.elts)); continue
+            if isinstance(x, ast.Dict): todo.extend((y, c, const, True) for y in reversed(x.keys + x.values) if y is not None); continue
+            if isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and not _unbound_text_call(x):
+                if not self._self_method(x.func, c): todo.append((x.func.value, c, const, False)); continue
+                kind, why = "head", "a method's return"
+            elif isinstance(x, ast.Name): kind, why, got = self._root_name(x, c)
+            else: kind, why = self._root_kind(x, c)
+            if isinstance(x, ast.Name) and got is not None:
+                if (got[0], x.id) not in seen:
+                    seen.add((got[0], x.id)); todo += self._base_step(got[1], got[2], const or got[0] is None)
+                if kind is None: continue
+            roots.append((kind, why, const, value))
+        for k, why in (("self", _SELF_ATTR), ("class", _CLASS_ATTR), ("param", _PARAM_ATTR), ("unclassified", _PARAM_ATTR), ("except", _EXCEPT_ATTR)):
+            if any(r[0] == k and (k == "class" or not r[2]) for r in roots): return why
+        # any other root reached as a name's value, outside a module constant's: the reason _base names for it
+        return next((why for kind, why, const, value in roots if kind == "head" and value and not const), None)
+
+    def _base_step(self, vals, ctx, const):
+        """_attr_root's expansion of one name, which it calls once for each name it expands, given the values of the name's binding
+        and the ctx they are read in (_binding): the values to read next, each read as a name's value, under a module constant where
+        the name is one or stands in one's value."""
+        return [(y, ctx, const, True) for y in reversed(vals)]
+
+    def _root_slot(self, name, ctx):
+        """What a name the scope binds as a parameter or an except name is, as _attr_root's and _recv_roots's root: an except name,
+        self by binding (_SelfParam), a route handler's first parameter the census does not classify (_Unclassified: "unclassified",
+        refused as a parameter's where an attribute is read on it) or any other parameter."""
+        forms = ctx[5].get(name) or ()
+        return "except" if "except" in forms else "self" if isinstance(forms, _SelfParam) else "unclassified" if isinstance(forms, _Unclassified) else "param"
+
+    def _root_name(self, x, ctx):
+        """The name `x`, read in ctx, as _attr_root's root: (its kind, the reason _base names for it, the binding to walk through,
+        _binding's, or None). A class, through its own name; a local, walked through its values,
+        and a root itself where a parameter also binds it; a parameter or an except name; a module constant, accepted and walked
+        through its value for a class; a run-time memo; `__file__` where it is a value slot; and any other as _base reads it."""
+        forms = ctx[5].get(x.id)
+        if x.id == "__file__" and self.file_bound: return "head", _FILE_BOUND, None
+        if self._class_name(x, ctx): return "class", None, None
+        v = self._scoped(x.id, ctx)
+        if v is not None and v[0] == "local": return (self._root_slot(x.id, ctx) if "param" in forms else None), None, self._binding(x, ctx)
+        if v is not None: return (self._root_slot(x.id, ctx), None, None) if v[0] == "exempt" else ("head", v[1], None)
+        if x.id in self.consts and x.id not in ctx[0]:
+            return ("memo", None, None) if x.id in self.memos else ("accept", None, self._binding(x, ctx))
+        if x.id == "__file__" and self._file_slot(): return "accept", None, None
+        return self._root_kind(x, ctx) + (None,)
+
+    def _root_kind(self, x, ctx):
+        """Any other node as _attr_root's root, as _base reads it: (the kind, the reason). A parameter or a name the body binds
+        (a callee among them) is that slot; any other base _base exempts (an import, one of the seven builtins) and a literal it
+        reads accept; any other is the reason _base names."""
+        kind, why = self._base(x, ctx)
+        if kind == "exempt" and why == "a parameter or a name the body binds": return self._root_slot((x.func if isinstance(x, ast.Call) else x).id, ctx), None
+        return ("head", why) if kind == "unread" else ("accept", None)
 
     def _class_root(self, e, ctx):
         """Whether a receiver or a container stands on a class a class statement of the file binds, through the class's own name,
-        a name the census resolves to one or a method call on a name whose value holds one (_class_value, _holds_class), on the
-        path _base walks (an attribute's or a subscript's value, a method call's receiver, a BoolOp's operands): `Handler.PAGE`,
-        `Handler.PAGE.get(k)`, `cls.PAGE` in a classmethod, `h.PAGE` after `h = Handler`, `_H.PAGE` after a module-level
-        `_H = Handler`, `_REG.get(k).PAGE` after `_REG = {"a": Handler}`. No class attribute is read as page text, so each is
-        refused by name (_CLASS_ATTR), as an attribute read on self is, rather than read from a class body, passed over its base as
-        a parameter or read as a name's value. A class the pass reaches through a base it does not resolve to one (among them a
-        parameter the class is passed to or given as its default, a loop, comprehension or unpacking target, an if-expression
-        standing as the base and a subscript of a container of classes) is text such a base holds, the stated limit."""
+        a name the census resolves to one or a method call on, or a subscript of, a name whose value holds one or such a value itself
+        (_class_value), on the path _base walks (an attribute's or a subscript's value, a method call's receiver, a BoolOp's
+        operands): `Handler.PAGE`, `Handler.PAGE.get(k)`, `h.PAGE` after `h = Handler`, `_H.PAGE` after
+        a module-level `_H = Handler`, `_REG.get(k).PAGE` after `_REG = {"a": Handler}`, `_REGD["a"].PAGE` after `_REGD =
+        dict(a=Handler)`. No class attribute is read as page text, so each is refused by name (_CLASS_ATTR), as an attribute read on
+        self is, rather than read from a class body, passed over its base as a parameter or read as a name's value. A class the
+        census reaches through any other base (a loop, comprehension or with target over classes, an if-expression or a walrus over
+        classes, a literal container holding one) is refused by the root its base reaches by binding (_attr_root, _CLASS_ATTR; a
+        class passed to a parameter or given as its default takes the parameter's reason, _PARAM_ATTR): for an attribute read by
+        the attribute's base walk, and for a method called, or a container read, with no attribute read on the way by receiver's
+        _value_class. A class reached through an import's attribute or a call's return the census does not resolve (a call of an
+        import or of one of the seven builtins) is text such a base holds, the stated limit (its witness rsw: a class a sibling
+        module defines, read as an attribute of that module, which the page imports by name)."""
         while True:
+            if isinstance(e, ast.Subscript) and self._class_value(e, ctx): return True   # `_REGD["a"]`: an item of a value that holds classes
             if isinstance(e, (ast.Attribute, ast.Subscript)): e = e.value
             elif isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute):
-                if self._class_value(e, ctx, 0): return True   # `_REG.get(k)`: a method call on a name whose value holds classes
+                if self._class_value(e, ctx): return True   # `_REG.get(k)`: a method call on a name whose value holds classes
                 e = e.func.value
             elif isinstance(e, ast.BoolOp): return any(self._class_root(v, ctx) for v in e.values)
-            else: return isinstance(e, ast.Name) and self._class_value(e, ctx, 0)
+            else: return isinstance(e, ast.Name) and self._class_value(e, ctx)
 
     def _class_name(self, x, ctx):
         """Whether the name `x`, read in ctx, is a class's own name: a class statement binds it in the innermost function scope
@@ -3702,48 +4800,85 @@ class _Served(object):
         if forms and "global" not in forms: return "class" in forms
         return x.id in self.classes and x.id not in ctx[0]
 
-    def _class_ref(self, e, ctx, depth=0):
-        """Whether the name `e`, read in ctx, stands for a class a class statement of the file binds, other than as the class's
-        own name (_class_name): the first parameter of a method the class body decorates with classmethod, read in that method (its
-        binding forms a _ClassParam, set by _ctx; a scope inside it that binds the name again ends it), a local of the page's
-        scope any of whose values names such a class, and a module constant whose value does (`h = Handler`, `_H = Handler`, an
-        if-expression's branch, a boolean operation's operand, a walrus's value or a method call on a name whose value holds such a
-        class among them, and a name bound so in turn)."""
-        if depth > 32 or not isinstance(e, ast.Name): return False
-        if isinstance(ctx[5].get(e.id), _ClassParam): return True
-        v = self._scoped(e.id, ctx)
-        if v is not None: return v[0] == "local" and any(self._class_value(x, ctx, depth + 1) for x in ctx[1].get(e.id, ()))
-        if e.id in ctx[0] or e.id not in self.consts: return False
-        return self._class_value(self.consts[e.id], (set(), {}, None, {}, e.id, {}), depth + 1)
-
-    def _class_value(self, x, ctx, depth):
-        """Whether the value `x`, read in ctx, names a class a class statement of the file binds: the class's own name
-        (_class_name) or a name _class_ref takes for one, through an if-expression's branches, a boolean operation's operands and a
-        walrus's value, and a method call on a name whose value holds one (_holds_class: `_REG.get(k)`, `_REGL.copy()`)."""
-        if isinstance(x, ast.IfExp): return self._class_value(x.body, ctx, depth) or self._class_value(x.orelse, ctx, depth)
-        if isinstance(x, ast.BoolOp): return any(self._class_value(v, ctx, depth) for v in x.values)
-        if isinstance(x, ast.NamedExpr): return self._class_value(x.value, ctx, depth)
-        if isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and isinstance(x.func.value, ast.Name):
-            return self._holds_class(x.func.value, ctx, depth + 1)   # `_REG.get(k)`, `_REGL.copy()`
-        if not isinstance(x, ast.Name): return False
-        return self._class_name(x, ctx) or self._class_ref(x, ctx, depth)
-
-    def _holds_class(self, x, ctx, depth):
-        """Whether the name `x`, read in ctx, is bound to a container literal holding a class _class_value takes, as an element
-        of a list, tuple or set, a key or a value of a dict, or so inside a container it holds: a local of the page's scope any of
-        whose values does, or a module constant whose value does."""
-        if depth > 32: return False
+    def _binding(self, x, ctx):
+        """The binding the class walk (_class_value) and _format_texts read the name `x` through, read in ctx: (its scope, its
+        values, the ctx the values are read in) for a local of the page's scope (the scope the locals map, the values every value
+        _locals holds for the name) and for a module constant (the scope the module, None, the value the constant's one value, read
+        in the module's context); None for any other name, through which neither walk reads a value (a parameter, an except name,
+        any other name the scope binds, a name no module constant binds). Each walk keys its visited set on the scope and the
+        name."""
         v = self._scoped(x.id, ctx)
-        if v is not None: vals = ctx[1].get(x.id, ()) if v[0] == "local" else ()
-        elif x.id in ctx[0] or x.id not in self.consts: return False
-        else: vals, ctx = [self.consts[x.id]], (set(), {}, None, {}, x.id, {})
-        todo = list(vals)
+        if v is not None: return (id(ctx[1]), ctx[1].get(x.id, ()), ctx) if v[0] == "local" else None
+        if x.id in ctx[0] or x.id not in self.consts: return None
+        return None, [self.consts[x.id]], (set(), {}, None, {}, x.id, {})
+
+    def _class_value(self, x, ctx):
+        """Whether the value `x`, read in ctx, names a class a class statement of the file binds: the class's own name
+        (_class_name), or a name that stands for such a class other than as its own name: a local of the page's scope any of whose
+        values names such a class, and a module constant
+        whose value does (`h = Handler`, `_H = Handler`, and a name bound so in turn); through an if-expression's branches, a
+        boolean operation's operands and a walrus's value; and a method call on, or a subscript of, a name bound to a container literal
+        that holds such a class, as an element of a list, tuple or set, a key or a value of a dict, or so inside a container it holds,
+        or bound to a call of the builtin dict with one among its arguments (a local any of whose values does, or a module constant
+        whose value does: `_REG.get(k)`, `_REGL.copy()`, `_REGD.get(k)` and `_REGD["a"]` after `_REGD = dict(a=Handler)`:
+        _class_step), or on or of such a literal or call itself (`dict(a=Handler).get(k)`, `dict(a=Handler)["a"]`: _held, no name
+        expanded).
+        One query of the class walk, walked iteratively: an explicit worklist and one visited set per query, keyed on what the
+        name is read as (a class reference, or a name whose value may hold a class), on the binding's scope (the locals map for a
+        local, the module for a constant: _binding) and on the name, so each name expands once per query, in _class_step, and the
+        walk is linear in the page's size. There is no depth bound: the visited set ends the walk. The answer is a disjunction, so
+        a name met again drops nothing: its first expansion already carries whatever it reaches."""
+        seen, todo = set(), [("value", x, ctx)]
+        while todo:
+            query, x, ctx = todo.pop()
+            if query == "value":   # an expression: its branches, its operands, a walrus's value, or the name it reads
+                if isinstance(x, ast.IfExp): todo += [("value", x.orelse, ctx), ("value", x.body, ctx)]
+                elif isinstance(x, ast.BoolOp): todo += [("value", v, ctx) for v in reversed(x.values)]
+                elif isinstance(x, ast.NamedExpr): todo.append(("value", x.value, ctx))
+                elif isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and isinstance(x.func.value, ast.Name):
+                    todo.append(("holds", x.func.value, ctx))   # `_REG.get(k)`, `_REGL.copy()`: a name whose value may hold classes
+                elif (isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute)
+                      and isinstance(x.func.value, (ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Call))):
+                    todo += self._held([x.func.value], ctx)   # `dict(a=Handler).get(k)`: such a value itself, no name expanded
+                elif isinstance(x, ast.Subscript) and isinstance(x.value, ast.Name):
+                    todo.append(("holds", x.value, ctx))   # `_REGD["a"]` after `_REGD = dict(a=Handler)`: an item of a name's value
+                elif isinstance(x, ast.Subscript) and isinstance(x.value, (ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Call)):
+                    todo += self._held([x.value], ctx)   # `dict(a=Handler)["a"]`: an item of such a value itself
+                elif isinstance(x, ast.Name):
+                    if self._class_name(x, ctx): return True
+                    todo.append(("ref", x, ctx))   # a name that may stand for a class: its binding's values
+                continue
+            got = self._binding(x, ctx)
+            if got is None or (query, got[0], x.id) in seen: continue
+            seen.add((query, got[0], x.id))
+            todo += self._class_step(query, got[1], got[2])
+        return False
+
+    def _class_step(self, query, vals, ctx):
+        """The class walk's expansion of one name, which _class_value calls once for each name it expands, given the values of the
+        name's binding and the ctx they are read in (_binding): the values to read next, each one that may name a class. For a
+        class reference they are the values themselves; for a name whose value may hold a class they are the names standing in a
+        list, tuple or set literal among the values, as a key or a value of a dict literal, or as an argument, positional or a
+        keyword's value, of a call of the builtin dict, one of the seven a page may name (`dict(a=Handler)`: _base reads the
+        callee as that builtin), or so inside a container literal or such a call it holds."""
+        if query == "ref": return [("value", y, ctx) for y in reversed(vals)]
+        return self._held(vals, ctx)
+
+    def _held(self, vals, ctx):
+        """The names the values `vals`, read in ctx, hold as the class walk reads a container: each standing in a list, tuple or set
+        literal, as a key or a value of a dict literal, or as an argument, positional or a keyword's value, of a call of the builtin
+        dict (_base reads the callee as that builtin), or so inside a container literal or such a call it holds; each a value item of
+        the class walk (_class_value)."""
+        out, todo = [], list(vals)
         while todo:
             y = todo.pop()
             if isinstance(y, (ast.List, ast.Tuple, ast.Set)): todo.extend(y.elts)
             elif isinstance(y, ast.Dict): todo.extend(k for k in y.keys + y.values if k is not None)
-            elif isinstance(y, ast.Name) and self._class_value(y, ctx, depth + 1): return True
-        return False
+            elif (isinstance(y, ast.Call) and isinstance(y.func, ast.Name) and y.func.id == "dict"
+                  and self._base(y, ctx) == ("exempt", "a builtin")):   # `dict(a=Cls)`, `dict({"a": Cls})`: a registry the builtin builds
+                todo.extend(list(y.args) + [k.value for k in y.keywords])
+            elif isinstance(y, ast.Name): out.append(("value", y, ctx))
+        return out
 
     @staticmethod
     def _chain_args(e):
@@ -3753,10 +4888,12 @@ class _Served(object):
         are page text (`dict(X)` and `json.loads(json.dumps(X))` carry X's values; `list(X)` and `sorted(X)` are refused by name
         before this, list and sorted being no builtin a page may call: _BUILTIN_OTHER). The reader reads these arguments' own
         text, never the text the call computes from them: text a call computes from its arguments is not read (the stated limit,
-        its witnesses chr, getattr and a decoder, `base64.b64decode(X).decode()` or zlib or gzip over an embedded bundle; max
-        handed one iterable is such a call too, returning an element its argument holds, whose join with the text beside the call
+        its witnesses chr, getattr and a decoder, `base64.b64decode(X).decode()` or zlib or gzip over an embedded bundle; an
+        encoded asset kept ASCII and decoded where the page is built is such a shape, and can be honest; max handed one iterable
+        is such a call too, returning an element its argument holds, whose join with the text beside the call
         is not computed, while str handed more than one positional argument, a starred argument or a keyword other than object is
-        refused before this: _STR_DECODE)."""
+        refused before this: _STR_DECODE; and a method called on a parameter whose name is no route class's method, a method of a
+        class that holds no route among them, stays under this call limit too, its arguments read and the text it computes not)."""
         if isinstance(e, (ast.Attribute, ast.Subscript)): return _Served._chain_args(e.value)
         if isinstance(e, ast.Call): return _Served._chain_args(e.func) + list(e.args) + [k.value for k in e.keywords]
         if isinstance(e, ast.BoolOp): return [a for v in e.values for a in _Served._chain_args(v)]
@@ -3836,7 +4973,7 @@ class _Served(object):
         more than a million characters: one with more than seven digits after its leading zeros is, without converting it (int()
         refuses a digit string past 4300 digits on 3.11 and later, and on the 3.10 releases that carry that limit), and a
         zero-padded small value is not (`0000000000005` is 5)."""
-        return any(w and (len(w.lstrip("0")) > 7 or int(w) > 10 ** 6) for w in ws)
+        return any(w and (len(s := w.lstrip("0")) > 7 or int(s or "0") > 10 ** 6) for w in ws)
 
     @staticmethod
     def _wide(e):
@@ -3868,35 +5005,71 @@ class _Served(object):
         except ValueError: return False
 
     def _field_reach(self, e, ctx):
-        """Whether the `.format` or `.format_map` call `e` has, in a format string its receiver holds (_format_texts), a
-        replacement field whose name reaches an attribute or an index of its argument (`{0.CSS}`, `{h.CSS}`, `{self.body}`,
-        `{0[k]}`), which resolve refuses by name (_FIELD_REACH): the text such a field reads is the argument's attribute or item,
-        which the pass does not read, the argument being read as its own text, a class or self among them."""
-        if not (isinstance(e.func, ast.Attribute) and e.func.attr in ("format", "format_map")): return False
-        for text in self._format_texts(e.func.value, ctx, 0):
+        """The refusal the `.format` or `.format_map` call `e` takes for its format string, read through its receiver
+        (_format_texts), or None: _FIELD_REACH where a format string the receiver holds has a replacement field whose name reaches
+        an attribute or an index of its argument (`{0.CSS}`, `{h.CSS}`, `{self.body}`, `{0[k]}`), at its top level or nested in a
+        field's format spec at any depth (`{0:{1.W}}`, `{a:{b[0]}}`: _reaches), since the text such a field reads is the
+        argument's attribute or item, which the pass does not read, the argument being read as its own text, a class or self among
+        them; else _TEMPLATE where the receiver reaches anything but a string constant, a join _const_text folds to one or a name
+        bound to one (a function's or a method's return, a parameter, an attribute, an if-expression, a `+` over a name, a method
+        called on a name among them), since the pass does not read that format string's fields; else None. resolve asks it only of
+        a call _join did not refuse (_WIDE, _NESTED), so a node takes one of those reasons, never two, and takes _TEMPLATE only where
+        the receiver is no class, stands as no subscript operand and is read with no refusal by name."""
+        if not (isinstance(e.func, ast.Attribute) and e.func.attr in ("format", "format_map")): return None
+        texts, other = self._format_texts(e.func.value, ctx)
+        if any(self._reaches(text) for text in texts): return _FIELD_REACH
+        return _TEMPLATE if other else None
+
+    @staticmethod
+    def _reaches(text):
+        """Whether the format string `text` holds a replacement field whose name reaches an attribute or an index (a `.` or a `[`
+        in the name), at its top level or nested in a field's format spec, at any depth, each spec parsed in turn with
+        string.Formatter().parse from an explicit worklist. A format string Python refuses is read up to the fault: the call
+        raises there, and no page is served."""
+        todo = [text]
+        while todo:
             try:
-                if any(name and ("." in name or "[" in name) for _, name, _, _ in string.Formatter().parse(text)): return True
-            except ValueError: pass   # a format string Python refuses: the call raises, and no page is served
+                for _, name, spec, _ in string.Formatter().parse(todo.pop()):
+                    if name and ("." in name or "[" in name): return True
+                    if spec: todo.append(spec)
+            except ValueError: pass
         return False
 
-    def _format_texts(self, x, ctx, depth):
-        """The format strings the receiver `x` of a `.format` or `.format_map` holds, as the pass reads them: its text where it is
-        a string constant or a join of them (_const_text), and, where it is a name, the texts of the values a local of the page's
-        scope or a module constant so named is bound to, a name bound to such a name in turn."""
-        c = self._const_text(x)
-        if c is not None: return [c[0]] if type(c[0]) is str else []
-        if depth > 32 or not isinstance(x, ast.Name): return []
-        v = self._scoped(x.id, ctx)
-        if v is not None: return [t for y in ctx[1].get(x.id, ()) for t in self._format_texts(y, ctx, depth + 1)] if v[0] == "local" else []
-        if x.id in ctx[0] or x.id not in self.consts: return []
-        return self._format_texts(self.consts[x.id], (set(), {}, None, {}, x.id, {}), depth + 1)
+    def _format_texts(self, x, ctx):
+        """(the format strings the receiver `x` of a `.format` or `.format_map` holds, as the pass reads them; whether it reaches
+        anything else): its text where it is a string constant or a join of them that _const_text folds to a str, and, where it is
+        a name, the texts of the values a local of the page's scope or a module constant so named is bound to (_binding), a name
+        bound to such a name in turn; any other value it reaches (a call, an attribute, a subscript, an if-expression, a boolean
+        operation, a `+` or a `%` over a name, a parameter, an except name, a name no local or module constant binds, a join that
+        folds to no str) is anything else, and gives no text. Walked iteratively, as the class walk is: an explicit worklist and
+        one visited set per query, keyed on the binding's scope and the name, so each name expands once, in _format_step, and the
+        walk is linear in the page's size. There is no depth bound: the visited set ends the walk. The texts are a union and the
+        other answer a disjunction, so a name met again drops nothing: its first expansion already carries whatever it reaches."""
+        texts, other, seen, todo = [], False, set(), [(x, ctx)]
+        while todo:
+            x, ctx = todo.pop()
+            c = self._const_text(x)
+            if c is not None and type(c[0]) is str:
+                texts.append(c[0]); continue
+            got = self._binding(x, ctx) if isinstance(x, ast.Name) else None
+            if got is None: other = True; continue
+            if (got[0], x.id) in seen: continue
+            seen.add((got[0], x.id))
+            todo += self._format_step(got[1], got[2])
+        return texts, other
+
+    def _format_step(self, vals, ctx):
+        """_format_texts's expansion of one name, which it calls once for each name it expands, given the values of the name's
+        binding and the ctx they are read in (_binding): the values to read next, in their order."""
+        return [(y, ctx) for y in reversed(vals)]
 
     def _join(self, e, where):
         """A `%`, `.join`, `.format`, `.format_map` or `.replace` of string constants recorded as a join (_note), or, too wide to
-        expand (_wide) or holding a replacement field in a format spec (_nested), refused by name."""
+        expand (_wide) or holding a replacement field in a format spec (_nested), refused by name; whether it refused."""
         if self._wide(e): self._unread(e, _WIDE, where)
         elif self._nested(e): self._unread(e, _NESTED, where)
-        else: self._note([self._const_text(e)])
+        else: self._note([self._const_text(e)]); return False
+        return True
 
     @staticmethod
     def _format_slots(e):
@@ -3961,8 +5134,8 @@ class _Served(object):
 
     def _refuse_operands(self, e, ctx, where):
         """The refusals by name on the operands of a `+`, a `%`, an f-string or a `.join`, `.format`, `.format_map` or `.replace`
-        call `e`, before resolve reads them: each value slot that stands directly as a `%` operand, a `.format` argument or a
-        `.format_map` value (_format_slots, _SLOT_FORMAT) and each subscript whose join the pass does not compute (_sub_operand,
+        call `e`, before resolve reads them: each value slot that stands directly as the right operand of a `%`, a `.format`
+        argument or a `.format_map` value (_format_slots, _SLOT_FORMAT) and each subscript whose join the pass does not compute (_sub_operand,
         _SUB_OPERAND, over every operand _join_operands gives), each a SERVED line at its own line unless SERVED_ALLOW names the place. A
         refused subscript's id joins self.op_refused, so resolve's Subscript arm does not read its container: the pass names the gap
         and reads nothing the join selects, as a slice refused by name reads nothing (_SLICED)."""
@@ -4014,8 +5187,8 @@ class _Served(object):
             if isinstance(e.value, str): self.pieces.append((label, e.lineno, e.value, (e.lineno, e.col_offset, -1)))
             elif e.value is None or type(e.value) in (bool, int) or e.value == b"" and isinstance(e.value, bytes):
                 # a value slot read as no text: None, a bool, an int or the empty bytes, refused by name where it stands
-                # directly as a `%` operand, a `.format` argument or a `.format_map` dict literal's value, whether or not a
-                # conversion takes it (_format_slots)
+                # directly as the right operand of a `%`, a `.format` argument or a `.format_map` dict literal's value, whether
+                # or not a conversion takes it (_format_slots)
                 pass
             else: self._unread(e, _CONSTANT_KINDS.get(type(e.value), "a %s Constant" % type(e.value).__name__), where)
         elif isinstance(e, ast.JoinedStr):   # each part keyed at its own line: the part's on 3.12 and later, else where the expression before it ends
@@ -4033,7 +5206,8 @@ class _Served(object):
         elif isinstance(e, ast.BinOp) and isinstance(e.op, (ast.Add, ast.Mod, ast.Div)):   # a Div's operands too: a path join
             if isinstance(e.op, ast.Add) and id(e) not in self.noted: self._note(self._chain(e))   # its runs of string constants, joins
             elif isinstance(e.op, ast.Mod): self._join(e, where)   # a `%` of string constants, a join (served_texts)
-            # a value slot standing directly as an operand, whether or not a conversion takes it, and a subscript as an operand
+            # a value slot standing directly as a `%`'s right operand, whether or not a conversion takes it, and a subscript as an
+            # operand
             if not isinstance(e.op, ast.Div): self._refuse_operands(e, ctx, where)
             self.resolve(e.left, ctx, label, done); self.resolve(e.right, ctx, label, done)
         elif isinstance(e, ast.BinOp) and _int_arith(e): pass   # a value slot: a Mult or LShift over int constants (2 * 1024, 1 << 20)
@@ -4091,9 +5265,10 @@ class _Served(object):
                     self.problems.append("SERVED %s:%d builds a served page from %s (%s), text the census did not read"
                                          % (self.rel, e.lineno, ast.unparse(e)[:60], why))
             elif e.id == "__file__" and not self.star and e.id not in self.rebound:   # the module's own path, which the import system binds
-                # (no statement of the file binds it: the arm above): a value slot where the file writes no name of its module namespace
-                # through a computed name and may not rewrite it at run time, and refused there with that file's reason
-                if self.computed: self._unread(e, self.computed_why, where)
+                # (no statement of the file binds it: the arm above): a value slot where it is this file's own path (_file_slot, the
+                # predicate _path's `Path(__file__)` and `open(__file__)` read too), so here where the file writes no name of its module
+                # namespace through a computed name and may not rewrite it at run time, and refused otherwise with that file's reason
+                if not self._file_slot(): self._unread(e, self.computed_why, where)
             elif e.id in _IMPORT_NAMES:   # the module's own docstring, name, package, spec or loader, which the import system binds: no builtin
                 self._unread(e, _IMPORT_WHY, where)
             else:   # a name bound nowhere the census reads
@@ -4106,13 +5281,42 @@ class _Served(object):
                 return self._unread(e, "a join over a set, whose order is not fixed", where)   # a set's iteration order is not fixed, so its join is no one text
             if _unbound_text_call(e): return self._unread(e, _UNBOUND, where)   # `str.join("", [...])`: not folded, so refused, not read apart
             if isinstance(f, ast.Name) and f.id == "__file__" and self.file_bound: return self._unread(e, _FILE_BOUND, where)   # a callee so bound
-            if isinstance(f, ast.Attribute) and f.attr in _READ_CALLS: self.files.append((label, e.lineno, ast.unparse(f.value)[:40], self._path(f.value), where, e))
+            # decision 2, before the file-read and text-call arms: a method called on the calling method's own first parameter is
+            # followed to the def statement the route class's method resolution order resolves it to, and the calls _method_call
+            # refuses are refused by name (a route class's method on self through anything else or on a parameter, and a method
+            # called on self that no def statement of a class of the file defines first)
+            how = self._method_call(f, ctx) if isinstance(f, ast.Attribute) else None
+            if how is not None and how[0] == "follow":
+                key, fn = how[1] + "." + f.attr, self.methods[how[1]][f.attr]
+                if key not in done:
+                    done.add(key)
+                    for r in self._returns(fn): self.resolve(r, self._ctx(fn, cls, None, key), key, done)
+                self._defaults(e, fn, 1, (set(), {}, None, {}, key, {}), key, done, self.classes[how[1]])
+            elif how is not None: self._unread(e, how[1], where)
+            elif isinstance(f, ast.Attribute) and f.attr in _READ_CALLS: self.files.append((label, e.lineno, ast.unparse(f.value)[:40], self._path(f.value), where, e))
             elif isinstance(f, ast.Attribute) and f.attr in _TEXT_CALLS + _FOLLOW_ANY:
-                self._join(e, where); self._refuse_operands(e, ctx, where)   # a join of string constants among them; the operands' refusals
-                if self._field_reach(e, ctx): self._unread(e, _FIELD_REACH, where)   # `"{0.CSS}".format(Handler)`: its argument's attribute
-                if isinstance(f.value, ast.Name) and self._class_value(f.value, ctx, 0):   # `Cls.format(...)`: the method a class
-                    self._unread(e, _CLASS_ATTR, where)   # attribute, not a text receiver
-                else: self.resolve(f.value, ctx, label, done)
+                refused = self._join(e, where); self._refuse_operands(e, ctx, where)   # a join of string constants among them; the operands' refusals
+                # the format string's fields, read through the receiver, asked only of a call _join did not refuse as _WIDE or _NESTED
+                # (one reason a node): `"{0.CSS}".format(Handler)` and `_T.format(d, Other)` with `_T = "{0:{1.W}}"` reach the
+                # argument's attribute (_FIELD_REACH); `_T.strip().format(Handler)` is a format string reached other than as a
+                # string constant, a join of them or a name bound to one (_TEMPLATE, below)
+                why = None if refused else self._field_reach(e, ctx)
+                if why == _FIELD_REACH: self._unread(e, _FIELD_REACH, where)
+                # `Cls.format(...)`, `_REG.get(k).format(...)`, `(A or B).replace(...)`, `t.strip()` in a loop over classes: a class
+                # the class walk resolves the receiver to (_class_value: through its own name, a name the census resolves to it, a
+                # method call on or a subscript of a name whose value holds one or of such a value itself, or an if-expression, a
+                # boolean operation or a walrus over those), or a receiver on whose path no attribute is read whose root by binding is
+                # a class (_value_class), whose method is a class attribute, not a text receiver, save a receiver refused already as a
+                # subscript operand (op_refused); a receiver standing on such a class further down (an attribute of it, a method called
+                # on that: `Handler.X.format(...)`) is refused where resolve reads that part (receiver, _class_root, _attr_root)
+                if id(f.value) not in self.op_refused and (self._class_value(f.value, ctx) or self._value_class(f.value, ctx)):
+                    self._unread(e, _CLASS_ATTR, where)
+                else:   # _TEMPLATE, save where the receiver stands refused already: as a subscript operand (_SUB_OPERAND, op_refused),
+                    # or by any refusal the pass makes as it reads the receiver (`self.X.format(...)`, `Handler.X.format(...)`), whose
+                    # line stands for the text it holds: one gap, one line
+                    n = len(self.problems)
+                    self.resolve(f.value, ctx, label, done)
+                    if why == _TEMPLATE and id(f.value) not in self.op_refused and len(self.problems) == n: self._unread(e, _TEMPLATE, where)
             elif isinstance(f, ast.Name) and self._scoped(f.id, ctx, callee=True) is not None:   # a callee the scope binds: never the module's
                 kind, why = self._scoped(f.id, ctx, callee=True)
                 if kind == "follow":   # a function defined inside the page function, the name's one binding there, over its names
@@ -4130,12 +5334,6 @@ class _Served(object):
                     done.add(f.id)
                     for r in self._returns(fn): self.resolve(r, self._ctx(fn, None, None, f.id), f.id, done)
                 self._defaults(e, fn, 0, (set(), {}, None, {}, f.id, {}), f.id, done)
-            elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self" and cls and f.attr in self.methods.get(cls, {}):
-                key, fn = cls + "." + f.attr, self.methods[cls][f.attr]
-                if key not in done:
-                    done.add(key)
-                    for r in self._returns(fn): self.resolve(r, self._ctx(fn, cls, None, key), key, done)
-                self._defaults(e, fn, 1, (set(), {}, None, {}, key, {}), key, done, self.classes[cls])
             elif isinstance(f, ast.Attribute): self.receiver(f.value, e, ctx, label, done)   # any other method call: its receiver
             else:   # any other callee: an import, one of the seven builtins a page may call or a parameter passes (_base), anything
                 # else, any other builtin among them, is refused by name
@@ -4155,13 +5353,13 @@ class _Served(object):
             self.receiver(e.value, e, ctx, label, done)
         elif isinstance(e, ast.Attribute):
             base = e.value
-            if isinstance(base, ast.Name) and base.id == "self":   # an attribute read on self: any code may set it before the call
-                self._unread(e, _SELF_ATTR, where); return
             if isinstance(base, ast.Name) and base.id == "__file__" and self.file_bound:   # a statement binds it: refused before
                 self._unread(e, _FILE_BOUND, where); return   # receiver takes a class so named (_FILE_BOUND)
-            # any other base goes to receiver, which refuses an attribute read on a class, through the class's own name or a name
-            # the census resolves to one (_class_root, _CLASS_ATTR): no class attribute is read as page text
-            self.receiver(base, e, ctx, label, done)
+            # any other base goes to receiver as the attribute's base (each operand of a BoolOp so), which refuses an attribute read
+            # on a class, through the class's own name or a name the census resolves to one (_class_root, _CLASS_ATTR), and then by
+            # the base's root, read by binding (_attr_root): self, a class, a parameter, an except name, or a root reached as a name's
+            # value that _base refuses
+            self.receiver(base, e, ctx, label, done, True)
         elif isinstance(e, ast.Lambda):   # read: its body is page text (a replacement function's return), its parameters value slots
             a = e.args
             for d in a.defaults + [d for d in a.kw_defaults if d is not None]: self.resolve(d, ctx, label, done)   # run where it stands
@@ -4182,10 +5380,11 @@ class _Served(object):
                                  % (self.rel, e.lineno if line is None else line, (ast.unparse(e) if shown is None else shown)[:60], why))
 
     def run(self, routes):
+        self.route_methods = self._route_methods(sorted({r[2] for r in routes if r[2] is not None}))   # once per file (_method_call)
         for call, fn, cls, ctype, body in routes:   # the body routes_of read: the call's second positional argument
             before = len(self.pieces), len(self.files)
             where = ((cls + ".") if cls is not None else "") + fn.name if fn is not None else "<module>"
-            ctx = self._ctx(fn, cls, None, where) if fn is not None else (set(), {}, cls, {}, "<module>", {})
+            ctx = self._ctx(fn, cls, None, where, True) if fn is not None else (set(), {}, cls, {}, "<module>", {})
             self.resolve(body, ctx, fn.name if fn is not None else "<module>", set())
             if (len(self.pieces), len(self.files)) == before:
                 self.problems.append("SERVED %s:%d serves %s from %s, text the census did not read"
