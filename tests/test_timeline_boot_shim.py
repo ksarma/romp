@@ -95,7 +95,7 @@ const SANDBOXED_POPUP = opened('a sandboxed page that /timeline opened');
 // the frames in this tab besides this one and the shell: each shares this window's top, the shell's own parent
 const SIBLING_SAME_TOP = { name: 'a sandboxed frame beside this one', parent: SHELL, top: GRAND };
 const CHILD_SAME_TOP = { name: 'a sandboxed frame inside this one', parent: window, top: GRAND };
-const OWN_ORIGIN_CHILD = { name: 'a frame inside this one on its origin', parent: window, top: GRAND };
+const OWN_ORIGIN_CHILD = { name: 'a frame inside this one on its location.origin', parent: window, top: GRAND };
 // the frames inside this one, as a browser lists them: window.frames is the window itself, with a length and an index each
 global.frames = global;
 global.length = 2;
@@ -114,8 +114,8 @@ const SENDERS = {
   fedDirect: [undefined, undefined],   // federation.js's direct call with a bare event
   self: [window, ORIGIN],
   embedder: [SHELL, ORIGIN],      // the shell, this frame's parent
-  peer: [{}, ORIGIN],             // another window on this origin
-  ownOriginChild: [OWN_ORIGIN_CHILD, ORIGIN],      // a frame inside this one on this origin, in its frames: a peer
+  peer: [{}, ORIGIN],             // another window on this page's location.origin
+  ownOriginChild: [OWN_ORIGIN_CHILD, ORIGIN],      // a frame inside this one on its location.origin, in its frames: a peer
   opener: [OPENER, OTHER],        // the page on another origin that opened /timeline: this window's opener
   openerOpaque: [OPENER, 'null'], // the page that opened /timeline, posting the opaque origin (a sandboxed page)
   popup: [POPUP, OTHER],          // a page on another origin that /timeline opened: its opener is this window
@@ -128,9 +128,9 @@ const SENDERS = {
   sandboxedChild: [{ parent: window }, 'null'],    // a sandboxed frame inside this one
   sandboxedSiblingSameTop: [SIBLING_SAME_TOP, 'null'],   // a sandboxed frame beside this one, sharing its top
   sandboxedChildInFrames: [CHILD_SAME_TOP, 'null'],      // a sandboxed frame inside this one, sharing its top, in its frames
-  overlappingOrigin: [{}, ORIGIN + '0'],           // another port whose text begins with this origin
-  noPort: [{}, 'http://127.0.0.1'],                // this origin's scheme and host on another port (the default)
-  otherPort: [{}, 'http://127.0.0.1:7778'],        // this origin's scheme and host on another port
+  overlappingOrigin: [{}, ORIGIN + '0'],           // another port whose text begins with this page's location.origin
+  noPort: [{}, 'http://127.0.0.1'],                // the scheme and host of this page's location.origin on the default port
+  otherPort: [{}, 'http://127.0.0.1:7778'],        // the scheme and host of this page's location.origin on another port
   sourcelessElsewhere: [null, OTHER],
   sourcelessOpaque: [null, 'null'],                // a sandboxed frame gone after it posted
 };
@@ -183,7 +183,7 @@ class TimelineBootSenders(unittest.TestCase):
         got = _run_boot(_OWN_ORIGIN, perf=False)
         self.assertEqual(got["listeners"], 1, "the boot registers one window message listener")
         self.assertEqual(got["updates"], _HEARD,
-                         "drawn once from each heard sender (a frame inside this one on its origin included), never "
+                         "drawn once from each heard sender (a frame inside this one on its location.origin included), never "
                          "from a page on another origin (the one that opened this page, or one this page opened, "
                          "included), a sandboxed page this page opened, the top window above the shell, the top window "
                          "or the page that opened this one posting the opaque origin, a sandboxed "

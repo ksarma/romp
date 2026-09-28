@@ -17,22 +17,23 @@ them reds; recompute the recorded digest from that commit, never from the fork's
 
 NoOtherWriter holds that nothing else names the check: no file in the tree but the kernel, and in the kernel's code
 nothing but the adopted lines and the gates. The rest runs the served landing: the census of every window message
-listener in its inline scripts (addEventListener for a message or a messageerror, and every onmessage or onmessageerror
-assignment, whatever its receiver, which must be one of the sockets and the channel ONMESSAGE_RECEIVERS lists), the same
-census over all of kernel.py and every page it serves (KernelListenerCensus), and node executing the scripts in a
-stand-in browser. The run goes through every callback they leave for later (timers, animation frames, idle callbacks, microtasks, load
-listeners) and an exercise: every other listener and handler they register (on the window, the document, a frame or an
-element), handed a stand-in event; every callback they hand to a stand-in (an observer's, a fetch's then); and every word
-a message listener's arms compare against, from each pane. Then it forges a message from each sender the shell must
-refuse (a page that opened it, on another origin or on its own, a sandboxed frame, a window it does not hold, a frame
-nested in a pane, sandboxed or on its origin, a same-origin window that replaced its window.parent with the shell, a
-window it opened, on another origin or on its own, itself, its own dispatch, a sourceless post with the opaque origin)
-and from a pane, over windows that carry the edges a browser gives them (parent, top, opener, and the shell's frames),
-and reads which function the check is when each message is delivered. The other pages' scripts run through the same
-exercise for their census (ServedPagesExecuted). ServedScriptPopulation derives the pages every census here reads
-(SERVED_BUILDERS) from kernel.py's syntax tree, and ui/webview/served-script-scopes.test.ts parses every script on them
-(_served_scripts) and refuses a direct eval or a with statement, the two ways code can add a binding at run time to a
-scope between a listener and the global scope. Synthetic only: no session data, a loopback origin.
+listener in its inline scripts (addEventListener for a message or a messageerror; every onmessage assignment, whatever
+its receiver, which must be one of the sockets and the channel ONMESSAGE_RECEIVERS lists; and no onmessageerror handler
+on any receiver), the same census over all of kernel.py and every page it serves (KernelListenerCensus), and node
+executing the scripts in a stand-in browser. The run goes through every callback they leave for later (timers, animation
+frames, idle callbacks, microtasks, load listeners) and an exercise: every other listener and handler they register (on
+the window, the document, a frame or an element), handed a stand-in event; every callback they hand to a stand-in (an
+observer's, a fetch's then); and every word a message listener's arms compare against, from each pane. Then it forges a
+message from each sender the shell must refuse (a page that opened it, on another origin or on its location.origin, a
+sandboxed frame, a window it does not hold, a frame nested in a pane, sandboxed or on its location.origin, a window on
+its location.origin nested in a pane that replaced its window.parent with the shell, a window it opened, on another
+origin or on its location.origin, itself, its own dispatch, a sourceless post with the opaque origin) and from a pane,
+over windows that carry the edges a browser gives them (parent, top, opener, and the shell's frames), and reads which
+function the check is when each message is delivered. The other pages' scripts run through the same exercise for their
+census (ServedPagesExecuted). ServedScriptPopulation derives the pages every census here reads (SERVED_BUILDERS) from
+kernel.py's syntax tree, and ui/webview/served-script-scopes.test.ts parses every script on them (_served_scripts) and
+refuses a direct eval or a with statement, the two ways code can add a binding at run time to a scope between a listener
+and the global scope. Synthetic only: no session data, a loopback origin.
 
 The line after the adopted three is the fork's LOCK (2026-09-26): it makes the check's property read-only and
 non-configurable once defined, so a later write of it, under any name and on any road (a road the stand-in does not
@@ -121,11 +122,11 @@ _CHAIN_BEFORE = re.compile(r"(?<![\w$.)\]])((?:[\w$]+\s*\.\s*)*[\w$]+)\s*$")
 # and abandon, `var d=ws;`, and the shell's shAbandon, `var d=shWs;`, each d.onopen=d.onmessage=...=null), the shim's and
 # the shell's sockets (ws.onmessage=function(ev){), and the shim's dispatch channel, a MessageChannel
 # (ch.port1.onmessage=flush). None is a window, and no other page can post on a socket or on the channel. Any other
-# receiver (the window by any name, a frame, a document's window, the body element, whose handler is its window's), a bare
-# onmessage, a chain the census cannot read, or any onmessageerror handler fails until it is listed here, which is where
-# its senders get decided. The table counts receivers by name, not by binding: a listed name rebound to a window keeps
-# its count and passes here, and only the executed stand-in catches it (ShellListenersExecuted, ServedPagesExecuted), on
-# the roads it drives.
+# receiver (the window by any name, a frame, a document's window, the body element, whose handler is its window's), a
+# bare onmessage, or a chain the census cannot read fails until it is listed here, which is where its senders get
+# decided. An onmessageerror handler fails on every receiver, a listed one included: no entry here admits one. The table
+# counts receivers by name, not by binding: a listed name rebound to a window keeps its count and passes here, and only
+# the executed stand-in catches it (ShellListenersExecuted, ServedPagesExecuted), on the roads it drives.
 ONMESSAGE_RECEIVERS = {"d": 3, "ws": 2, "ch.port1": 1}
 
 
@@ -712,13 +713,15 @@ class ServedScriptPopulation(unittest.TestCase):
 # it does not hold with an inert stub (callable, constructible, every property another stub, 0 as a number), so the
 # scripts boot far enough to register their listeners without a DOM. What the checks read is real: location (the
 # shell's origin), document.querySelectorAll('iframe') and window.frames (the shell's frames), window.parent/top (the
-# shell is the top window), and each sending window's parent, top and opener. So is every object a script reaches a
-# window's onmessage handler through: the shell's window by any name, document.defaultView (the shell's window),
-# document.body (whose handler is its window's), window.frames and each frame's window; an onmessage or onmessageerror
-# handler written on any of them, by a set or a define, is heard. Before any message is tested it runs what the scripts
-# left for later and the exercise (ShellListenersExecuted names the roads). The harness then hands each registered window
-# message listener a message from each sender and counts how often the listener reads the message's data: a listener
-# that returns before reading it acts on nothing.
+# shell is the top window), and each sending window's parent, top and opener. So are the objects through which the
+# stand-in hears a window's onmessage handler: the shell's window by any name, document.defaultView (the shell's
+# window), document.body itself (whose handler is its window's), window.frames and each frame's window; an onmessage or
+# onmessageerror handler written on any of them, by a set or a define, is heard. A body reached any other way (a query
+# for it, a frame's document, a contentDocument, document.documentElement.lastElementChild) is an inert stub, so a
+# handler written on it is not heard here, and under a computed name no census here reads it. Before any message is
+# tested it runs what the scripts left for later and the exercise (ShellListenersExecuted names the roads). The harness
+# then hands each registered window message listener a message from each sender and counts how often the listener reads
+# the message's data: a listener that returns before reading it acts on nothing.
 _HARNESS = r"""
 'use strict';
 const vm = require('vm');
@@ -761,13 +764,14 @@ function stubbed(o) {
                         set(t, k, v) { onWrite(k, v); t[k] = v; return true; } });
 }
 // windows: a pane of the shell (the chat), the Files pane, a sandboxed frame of the shell, a frame of the shell on
-// another origin, a same-origin window the shell does not hold and that has no edge to it, the page that opened the
-// shell, which posts from another origin and from the shell's own (the shell's Cross-Origin-Opener-Policy, same-origin,
-// keeps an opener on its own origin, and on a plain-http address a browser applies none, Handler._send); and, for the
-// frames in the shell's tab and the windows it opened (their edges are set once the shell's window exists, below): a
-// frame nested in the chat pane, sandboxed and on the shell's origin; a same-origin window nested in a pane that
-// replaced its own window.parent with the shell (no iframe of the shell holds it); a window the shell opened, on
-// another origin and on the shell's
+// another origin, a window on the shell's location.origin the shell does not hold and that has no edge to it, the page
+// that opened the shell, which posts from another origin and from the shell's location.origin (the shell's
+// Cross-Origin-Opener-Policy, same-origin, keeps an opener on its own origin, and on a plain-http address a browser
+// applies none, Handler._send); and, for the frames in the shell's tab and the windows it opened (their edges are set
+// once the shell's window exists, below): a frame nested in the chat pane, sandboxed and on the shell's
+// location.origin; a window on the shell's location.origin nested in a pane that replaced its own window.parent with
+// the shell (no iframe of the shell holds it); a window the shell opened, on another origin and on the shell's
+// location.origin
 const POSTED = [];
 function win(name) { return heardHandlers(stubbed({ name, postMessage(m) { POSTED.push([name, m]); }, focus() {} })); }
 const CHAT = win('chat'), FILES = win('files'), SANDBOXED = win('sandboxed'), XFRAME = win('xframe'),
@@ -929,15 +933,17 @@ await drain();
 // the senders: [name, source, origin]
 const SENDERS = {
   opener: [OPENER, ELSEWHERE],             // a page on another origin that opened the dashboard
-  openerSameOrigin: [OPENER, ORIGIN],     // a page on the shell's origin that opened the dashboard
+  openerSameOrigin: [OPENER, ORIGIN],     // a page on the shell's location.origin that opened the dashboard
   sandboxedFrame: [SANDBOXED, 'null'],    // a sandboxed iframe of the shell (opaque origin)
   otherOriginFrame: [XFRAME, ELSEWHERE],  // an iframe of the shell showing another origin
-  strayWindow: [STRAY, ORIGIN],           // same origin, but not a frame of this document, with no edge to it
+  strayWindow: [STRAY, ORIGIN],           // on the shell's location.origin, not a frame of this document, no edge to it
   nestedSandboxed: [NESTED_SBX, 'null'],  // a sandboxed frame nested in a pane: its top is the shell, no iframe of it
-  nestedSameOrigin: [NESTED, ORIGIN],     // a frame on the shell's origin nested in a pane: the same top, no iframe of it
-  nestedParentReplaced: [FORGED, ORIGIN], // a same-origin window nested in a pane that set its window.parent to the shell
+  // a frame on the shell's location.origin nested in a pane: the same top, no iframe of it
+  nestedSameOrigin: [NESTED, ORIGIN],
+  // a window on the shell's location.origin nested in a pane that set its window.parent to the shell
+  nestedParentReplaced: [FORGED, ORIGIN],
   popup: [POPUP, ELSEWHERE],               // a page on another origin the shell opened: its opener is the shell
-  popupSameOrigin: [POPUP_SO, ORIGIN],    // a window on the shell's origin the shell opened
+  popupSameOrigin: [POPUP_SO, ORIGIN],    // a window on the shell's location.origin the shell opened
   shellItself: [SHELL_WIN, ORIGIN],       // the shell's own window, as its scripts see it
   dispatch: [null, ''],                    // no source, no origin: an event this document dispatched
   sourcelessElsewhere: [null, ELSEWHERE], // no source, another origin
@@ -1274,9 +1280,12 @@ class ShellListenersExecuted(unittest.TestCase):
     # window by other names (frames, window.frames, self.frames, top, parent, a local holding it), a document's window
     # (document.defaultView, and one held in a local), the body element, whose handler is its window's, and a frame's
     # window (frames[0], window[0], a pane iframe's contentWindow), by a plain write, under a computed name, by a define
-    # or by Object.assign; and an onmessageerror handler. Not heard here: a body the page reaches by a query
-    # (document.querySelector answers a stub; KernelListenerCensus's text census reads that spelling). A write on the
-    # html element, which reflects no window handler, is heard nowhere (the control).
+    # or by Object.assign; and an onmessageerror handler. The stand-in hears the body only as document.body itself: a
+    # body reached any other way (a query for it, a frame's document, a contentDocument,
+    # document.documentElement.lastElementChild) is a stub, so a write on it is not heard here. KernelListenerCensus's
+    # text census reads such a write when it spells onmessage (document.querySelector('body').onmessage=), and under a
+    # computed name no census here reads it. A write on the html element, which reflects no window handler, is heard
+    # nowhere (the control).
     HANDLER_ROADS = {
         "frames": "frames.onmessage=function(e){go(e.data)};",
         "window.frames": "window.frames.onmessage=function(e){go(e.data)};",
@@ -1525,8 +1534,9 @@ class CheckLocked(unittest.TestCase):
 # browser gives them: the shell's page is the top of its tab (its own parent and top); its iframes (a pane, a pane marked
 # data-protocol=none, a sandboxed frame) have it as parent and top and are listed in window.frames, which is the window
 # itself with a length and an index per frame; a frame nested in the pane has the pane as parent and the shell as top; a
-# same-origin window nested in the pane can replace its own window.parent with the shell; a window the shell opened has
-# it as opener, and the page that opened the shell is its opener; the stray window has no edge to the shell.
+# window on the shell's location.origin nested in the pane can replace its own window.parent with the shell; a window
+# the shell opened has it as opener, and the page that opened the shell is its opener; the stray window has no edge to
+# the shell.
 _CHECK_HARNESS = r"""
 'use strict';
 const ORIGIN = 'http://127.0.0.1:7777', ELSEWHERE = 'https://elsewhere.example';

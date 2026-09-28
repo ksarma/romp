@@ -124,8 +124,8 @@ test("another window on this document's origin is a peer; any other origin is fo
 test("an origin whose text overlaps this page's location.origin is still another origin", () => {
   for (const src of [other, null]) {
     const who = src === null ? "no source, " : "another window, ";
-    assert.equal(windowSender({ source: src, origin: ORIGIN + "0" }, framed), "foreign", who + "another port whose text begins with this origin");
-    assert.equal(windowSender({ source: src, origin: "http://127.0.0.1" }, framed), "foreign", who + "this origin's text without its port");
+    assert.equal(windowSender({ source: src, origin: ORIGIN + "0" }, framed), "foreign", who + "another port whose text begins with this page's location.origin");
+    assert.equal(windowSender({ source: src, origin: "http://127.0.0.1" }, framed), "foreign", who + "this page's location.origin without its port");
     assert.equal(windowSender({ source: src, origin: "https://127.0.0.1:1" }, framed), "foreign", who + "the same host and port on another scheme");
   }
 });
@@ -196,7 +196,7 @@ test("a window related to this one other than as its parent is judged by its ori
   for (const [who, src] of RELATED) {
     assert.equal(windowSender({ source: src, origin: "null" }, w), "foreign", who + ", opaque origin");
     assert.equal(windowSender({ source: src, origin: "https://example.invalid" }, w), "foreign", who + ", another origin");
-    assert.equal(windowSender({ source: src, origin: ORIGIN }, w), "peer", who + ", this origin");
+    assert.equal(windowSender({ source: src, origin: ORIGIN }, w), "peer", who + ", on this page's location.origin");
   }
 });
 
@@ -217,7 +217,7 @@ test("a frame beside this one or inside it, sharing its top and listed in its fr
   const pane: Win = { name: "a pane framed in the shell", parent: shell, top: shell, location: { origin: ORIGIN } };
   const sibling: Win = { name: "a frame beside the pane", parent: shell, top: shell };
   const child: Win = { name: "a sandboxed frame inside the pane", parent: pane, top: shell };
-  const ownChild: Win = { name: "a frame inside the pane on its origin", parent: pane, top: shell };
+  const ownChild: Win = { name: "a frame inside the pane on its location.origin", parent: pane, top: shell };
   holdFrames(pane, [child, ownChild]);
   holdFrames(shell, [pane, sibling]);
   assert.ok(pane.frames === pane && pane.length === 2 && pane[0] === child && pane[1] === ownChild, "the pane's frames list the two frames inside it");
@@ -227,10 +227,10 @@ test("a frame beside this one or inside it, sharing its top and listed in its fr
     // the receiving window, the sender, the origin the sender's post names, the class
     ["the pane", pane, sibling, "null", "foreign"],             // a sandboxed frame beside it: the same top
     ["the pane", pane, child, "null", "foreign"],               // a sandboxed frame inside it: the same top, in its frames
-    ["the pane", pane, ownChild, ORIGIN, "peer"],               // a frame inside it on its origin: the same top, in its frames
-    ["the pane", pane, sibling, ORIGIN, "peer"],                // a frame beside it on its origin, such as a second chat column
+    ["the pane", pane, ownChild, ORIGIN, "peer"],               // a frame inside it on its location.origin: the same top, in its frames
+    ["the pane", pane, sibling, ORIGIN, "peer"],                // a frame beside it on its location.origin, such as a second chat column
     ["the pane", pane, shell, ORIGIN, "embedder"],              // its parent, which is also its top
-    ["the pane", pane, pane, ORIGIN, "self"],                   // its own post, which names its own origin
+    ["the pane", pane, pane, ORIGIN, "self"],                   // its own post, which names its own location.origin
     ["the pane", pane, pane, "null", "self"],                   // "null" on purpose: self is decided before the origin is read
     ["the shell's page", shell, sibling, "null", "foreign"],    // a sandboxed frame inside it: in its frames, its top the shell
     ["the shell's page", shell, child, "null", "foreign"],      // a sandboxed frame inside one of its panes: the same top

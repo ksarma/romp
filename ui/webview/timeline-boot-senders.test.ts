@@ -277,10 +277,10 @@ test("a frame beside the page or inside it, sharing its top and listed in its fr
     // the receiving window, the sender, its source, the origin its post names, the class
     [pane, "a sandboxed frame beside it, sharing its top", sibling, "null", "foreign"],
     [pane, "a sandboxed frame inside it, sharing its top and listed in its frames", frameIn(pane), "null", "foreign"],
-    [pane, "a frame beside it on its origin, sharing its top", sibling, ORIGIN, "peer"],
-    [pane, "a frame inside it on its origin, sharing its top and listed in its frames", frameIn(pane), ORIGIN, "peer"],
+    [pane, "a frame beside it on its location.origin, sharing its top", sibling, ORIGIN, "peer"],
+    [pane, "a frame inside it on its location.origin, sharing its top and listed in its frames", frameIn(pane), ORIGIN, "peer"],
     [topLevel, "a sandboxed frame inside it, sharing its top and listed in its frames", frameIn(topLevel), "null", "foreign"],
-    [topLevel, "a frame inside it on its origin, sharing its top and listed in its frames", frameIn(topLevel), ORIGIN, "peer"],
+    [topLevel, "a frame inside it on its location.origin, sharing its top and listed in its frames", frameIn(topLevel), ORIGIN, "peer"],
   ];
   const wrong: string[] = [];
   for (const w of [pane, topLevel]) {

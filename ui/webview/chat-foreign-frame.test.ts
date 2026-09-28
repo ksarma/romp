@@ -61,7 +61,7 @@ const W: Win = standIn({ parent: SHELL, top: SHELL, location: standIn({ origin: 
 // in the romp shell beside the chat, and inside the chat: each shares the chat's top, the shell's page
 const SANDBOXED_SIBLING = { name: "a sandboxed frame beside the chat", parent: SHELL, top: SHELL };
 const SANDBOXED_CHILD = { name: "a sandboxed frame inside the chat", parent: W, top: SHELL };
-const OWN_ORIGIN_CHILD = { name: "a frame inside the chat on its origin", parent: W, top: SHELL };
+const OWN_ORIGIN_CHILD = { name: "a frame inside the chat on its location.origin", parent: W, top: SHELL };
 // the frames inside the chat, as a browser lists them: window.frames is the window itself, with a length and an index each
 W.frames = W;
 W.length = 2;
@@ -85,7 +85,7 @@ const HEARD: Record<string, Sent> = {
   "a peer (the VS Code webview host, the frame's window.parent replaced)": { source: VSCODE_HOST, origin: VSCODE_ORIGIN, to: W_VSCODE },
   "a peer (the VS Code webview host, the frame's window.parent deleted)": { source: VSCODE_HOST, origin: VSCODE_ORIGIN, to: W_VSCODE_OLDER },
   "a peer (a sourceless post on this page's location.origin)": { source: null, origin: ORIGIN },
-  "a peer (a frame inside the chat on its origin, sharing its top and listed in its frames)": { source: OWN_ORIGIN_CHILD, origin: ORIGIN },
+  "a peer (a frame inside the chat on its location.origin, sharing its top and listed in its frames)": { source: OWN_ORIGIN_CHILD, origin: ORIGIN },
   dispatch: { source: null, origin: "" },
 };
 const FOREIGN: Record<string, Sent> = {
