@@ -675,7 +675,7 @@ def restore_env(name, prior):
 # the incident above names); measured 2026-09-19 over the three files in one run, on the missing road (none of
 # the three is tests/test_host_transport.py), 90 of 108 teardowns end with that one object over a removed root
 # (33, 5 and 52 by file) and the catalog file reads it zero times;
-# eight private names are shared by two or three files each. The blocker, and the order: the same rule
+# nine private names are shared by two or three files each. The blocker, and the order: the same rule
 # looped over every sys.modules name starting with romp_kernel (round 1's proposed fix) is the arm that would
 # cover it, and the loop cannot land here because the private-kernel harnesses carry 90 or more pre-existing
 # teardown leaks (the 90 above are one name's, on the missing road; the round-1 refuters counted 574 would-fail
