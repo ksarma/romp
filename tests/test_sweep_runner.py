@@ -1679,6 +1679,25 @@ class CiParity(unittest.TestCase):
         self.jobs = {j: ci_steps(j) for j in ("python", "shell", "secrets", "vscode-extension")}
         self.legs = sweep.plan_legs(str(ROOT), "python", 2)
 
+    def test_the_tree_holds_nothing_the_pytest_legs_two_differences_would_hide(self):
+        """Two of the pytest leg's named differences hold only while the tree keeps two properties, read here from the
+        tree the leg itself runs in (so a change that breaks one turns the leg red): CI's Run pytest collects from the
+        root and the leg from tests/, which differ only if a test module lives outside tests/; and the leg's `-c
+        /dev/null` drops any pytest configuration in the checkout's root, which CI honours, so the root holds none."""
+        listing = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], stdout=subprocess.PIPE, check=True).stdout
+        tracked = [os.fsdecode(n) for n in listing.split(b"\0") if n]
+        self.assertIn("tests/test_sweep_runner.py", tracked, "git ls-files read this tree")
+        outside = [n for n in tracked if not n.startswith("tests/") and re.fullmatch(r"test_[^/]*\.py|[^/]*_test\.py",
+                                                                                      os.path.basename(n))]
+        self.assertEqual(outside, [], "a test module outside tests/ runs in CI's Run pytest (which collects from the root) and "
+                                      "not in the sweep's pytest leg (which collects tests/)")
+        sections = {"pytest.ini": None, "tox.ini": "[pytest]", "setup.cfg": "[tool:pytest]", "pyproject.toml": "[tool.pytest"}
+        for name, marker in sections.items():
+            path = ROOT / name
+            if name in tracked and (marker is None or marker in path.read_text(encoding="utf-8")):
+                self.fail("%s configures pytest at the root: CI's Run pytest honours it and the sweep's `-c /dev/null` drops "
+                          "it; name the difference in PYTEST_ISOLATION's comment or pass it to the leg" % name)
+
     def test_every_named_step_is_compared_or_named_as_ci_only(self):
         compared = {("python", "Run pytest"), ("shell", "Run bats"), ("shell", "Manager handshake tests (node --test)"),
                     ("shell", "Vendored tooling and host-script tests (node --test)"), ("vscode-extension", "Install deps"),
