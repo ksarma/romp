@@ -251,44 +251,50 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `sys.orig_argv` and the invocation params, xdist's copy of the command line
   on a worker, `-p`'s list, the ini settings, the plugins loaded,
   `PYTEST_ADDOPTS`, an argument parser's parse of `sys.argv`) other than by a
-  key it proves names something else. Under the reviewer's stopping rule, it
-  counts none of the fixtures of a conftest with a hook or fixture keyed on
-  `-p no:anyio`, given or not given, by an honest road: a read an author
-  writes to key on the option (`config.getoption`, `config.option`,
-  `config.pluginmanager`, `sys.argv` and xdist's copy of it,
-  `config.workerinput["mainargv"]`, the invocation params,
-  `PYTEST_ADDOPTS`), followed through the aliases and helpers of the
-  conftest's text (the key `mainargv` is refused wherever the text holds
-  it, so a helper handed it is refused too), and through a module of the
-  repository it imports directly in the two shapes the reviewer's ruling
-  names: the conftest's read of a function there that returns a value, or
-  of a name there, whose code reads what the rule refuses, directly or
-  through another such function or name of the module (for a name, the
-  statement that binds it or the module-level statement it stands under,
-  such as an `if` over `sys.argv`). A function that returns nothing, such as
-  `write_owner_marker` in `tests/__init__.py`, is not refused. The rule also
-  refuses an import of a module it finds neither among the directories it
-  reads nor, through the import system, outside the repository (a module on
-  a directory put on the import path, say), and the conftest's read of
-  `sys.path`. It refuses the conftest's use of a module of the repository
-  it imports directly as a whole value, other than through an attribute of
-  the module (the module bound by a loop, held in a container or handed to
-  `getattr`), since the check cannot follow the module there.
-  A road no honest author writes, whose only effect is to escape the check, is
-  refused where one syntactic check does it; otherwise it passes and is
-  listed. The listed roads include a carrier reached through a name the rule
-  cannot fold (a `getattr` whose name is built by a call, say) or through a
-  function that reads by name and that the rule does not list, and the
-  command line read from outside the interpreter's objects
-  (`/proc/self/cmdline`, say). It stops at
-  the modules the conftest imports directly: a read reached only through an
-  import of an import passes, and so does a road through such a module in
-  neither shape (what a function that returns nothing leaves behind, or an
-  object the module fills at its import). The rule claims no more than this.
-  Its docstring, `_anyio_option_reads` in
-  `tests/test_hermetic_kernel_postal.py`, lists in WHAT IT DOES NOT READ the
-  kinds of road no honest author writes that it leaves unrefused, the read
-  through an import of an import, and the roads in neither shape. A name
+  key it proves names something else. Under the reviewer's fail-closed ruling
+  the rule is an allowlist: a read that can reach the option is admitted only
+  where the rule proves it, and everything else is refused, naming its site
+  and why. A keyed read (`config.getoption` and its siblings, `getini`, the
+  plugin manager's lookups by name, `config.option` read through `getattr`,
+  `getattr` and its kin, an item of a namespace such as `vars(sys)`, and
+  `config.workerinput`) is admitted only when its key is proved to be one
+  fixed string other than the option's: a literal, or a name bound once to a
+  literal with nothing in the conftest's text that can rebind it, in the
+  conftest or in a module of the repository it imports directly. A key taken
+  from a list, a loop, a parameter, a default, a class attribute or a fold is
+  refused, so a helper that passes keys is refused visibly rather than
+  admitted. The rule states the trade this makes:
+  `getattr(config, "workerinput", {})` is refused, and
+  `hasattr(config, "workerinput")` is admitted. Through a module of the
+  repository the conftest imports directly, the rule refuses the conftest's
+  read of a function there that returns a value, or of a name there, whose
+  code reads what the rule refuses (for a name, the statement that binds it
+  or the module-level statement it stands under, such as an `if` over
+  `sys.argv`), and of any decorated function or class there. A function that
+  returns nothing, such as `write_owner_marker` in `tests/__init__.py`, is not
+  refused. The rule also refuses an import of a module it finds neither among
+  the directories it reads nor, through the import system, outside the
+  repository (a module on a directory put on the import path, say), and the
+  conftest's read of `sys.path`. It refuses the conftest's use of a module of
+  the repository it imports directly as a whole value, other than through an
+  attribute of the module (the module bound by a loop, held in a container or
+  handed to `getattr`), and a double-underscore attribute read on an object
+  of such a module (a function's `__globals__`, say), since the check cannot
+  follow the module there. It refuses a write to the module's namespace
+  through `globals()`. Other roads that no honest author writes, and that no
+  one check refuses without refusing the live conftest, pass and are listed:
+  among them a carrier reached through a function that reads by name and
+  that the rule does not list, the command line read from outside the
+  interpreter's objects (`/proc/self/cmdline`, say), and an environment
+  lookup by a key the rule does not prove, or the environment read whole,
+  which `tests/conftest.py` does 12 times for its state isolation (a lookup
+  that names `PYTEST_ADDOPTS` is refused). It stops at the modules the
+  conftest imports directly: a read reached only through an import of an
+  import passes, and so does a road through such a module in neither shape
+  (what a function that returns nothing leaves behind, or an object the
+  module fills at its import). The rule claims no more than this. Its
+  docstring, `_anyio_option_reads` in `tests/test_hermetic_kernel_postal.py`,
+  lists in WHAT IT DOES NOT READ what it leaves unrefused. A name
   is licensed only when a child pytest over a copy of the conftest writes the
   name at each probe module's import and, in each probe
   test, reads it and sets it again, and sees the counted fixture's own code set or
@@ -381,11 +387,11 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   plugin blocked with no `-k` are granted (planted; no committed test makes a
   real run under either). A road on `-p no:anyio` not given, which no child
   is, is granted by the run, and the reader counts no fixture of a conftest
-  keyed on the flag by an honest road (above), so a licence rests on such a
-  road only where the reader leaves it unrefused: a road no honest author
-  writes, one reached only through an import of an import, or one through a
-  module the conftest imports directly in neither shape the reviewer's ruling
-  names. Third,
+  whose code reads what can reach the flag other than where it proves the
+  read (above), so a licence rests on such a road only where the reader
+  leaves it unrefused: one of the listed roads, one reached only through an
+  import of an import, or one through a module the conftest imports directly
+  in neither shape. Third,
   unmatchable at any
   cost: a hook condition
   keyed on an open-valued signal (a mark, an environment variable, a host name,

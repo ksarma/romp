@@ -1125,20 +1125,21 @@ def _stub_place_llm(monkeypatch):
 # STATE that is not a directory after a reload is the test's own doing and is still named, and the
 # environment names are still checked. Values of the environment names are never printed (one of
 # them is a credential), only the kind of change.
-_SHARED_JUDGE_PATHS = ("STATE", "PROJECTS")
 _SEAM_ENV_NAMES = ("ROMP_SESSIONS_FILE", "ROMP_SERVE_TOKEN", "ROMP_POSTAL_HOST")
 
 
 def _shared_judge_paths():
     """({name: (path text or None, is a directory)}, marker) for the shared judge's watched globals,
-    the marker being a function object judge.py defines (a re-execution replaces it); ({}, None) when
-    no module has loaded the judge under its shared name yet."""
+    STATE and PROJECTS, each read by getattr with its own literal name (the conftest reader of
+    tests/test_hermetic_kernel_postal.py admits getattr only with a name it proves to be one fixed
+    string, and a name taken from a loop over a tuple is not one); the marker being a function object
+    judge.py defines (a re-execution replaces it); ({}, None) when no module has loaded the judge
+    under its shared name yet."""
     jd = sys.modules.get("romp_judge")
     if jd is None:
         return {}, None
     out = {}
-    for name in _SHARED_JUDGE_PATHS:
-        p = getattr(jd, name, None)
+    for name, p in (("STATE", getattr(jd, "STATE", None)), ("PROJECTS", getattr(jd, "PROJECTS", None))):
         text = None if p is None else str(p)
         out[name] = (text, text is not None and os.path.isdir(text))
     return out, vars(jd).get("_rebind_state")
