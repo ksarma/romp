@@ -818,6 +818,27 @@ class Runner(_Base):
             self.assertEqual(json.load(f), old)
         self.assertEqual((w.data()["schema"], len(w.data()["runs"])), (2, 1))
 
+    def test_a_result_whose_runs_record_no_private_checkout_is_moved_aside_and_a_leg_rerun_over_one_refused(self):
+        """A schema-2 result written by a runner that swept the batcher's own tree (no runner.checkout) is treated as a
+        schema-1 one: a full run moves it aside, named, and writes a new history; a --leg re-run over it is refused."""
+        w = self.w
+        path = w.result_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        run = {"kind": "full", "sha": w.head(), "branch": "main", "started": "s", "finished": "f", "flakes": {}, "legs": {},
+               "verdict": "red", "red": [PYTEST_LEG], "invalid": None,
+               "runner": {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}}}
+        old = {"schema": 2, "sha": w.head(), "branch": "main", "runs": [run]}
+        sweep.write_result(path, old)
+        p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
+        self.assertIn("run 1 records no private checkout, recorded by a runner that swept the batcher's own tree); run the "
+                      "full sweep", p.stderr)
+        p = w.run(check=0)
+        aside = path[:-len(".json")] + ".no-checkout.json"
+        self.assertIn("moved the result aside to %s" % aside, p.stdout)
+        with open(aside) as f:
+            self.assertEqual(json.load(f), old)
+        self.assertEqual((w.data()["schema"], len(w.data()["runs"])), (2, 1))
+
     def test_an_empty_glob_is_a_red_leg_not_a_bare_run(self):
         seed = dict(SEED)
         del seed["tests/a.bats"]
@@ -1717,6 +1738,11 @@ class CiParity(unittest.TestCase):
             self.assertEqual(self.legs[leg]["cwd"], "vscode-extension")
 
 
+# The private-checkout record every run of the runner carries (runner.checkout); a reader refuses a run without one.
+CHECKOUT_REC = {"form": "clone", "path": "/nonexistent/trees/1234567890ab-test", "create_s": 0.1, "verify_s": 0.1, "files": 1,
+                "setup": None}
+
+
 class Reader(unittest.TestCase):
     """assess, the reader scripts/batch.py verify calls: each case by name, over files written the way the runner
     writes them. The batch side of the same cases is tests/test_batch_tool.py, VerifyReadsTheSweep."""
@@ -1750,7 +1776,7 @@ class Reader(unittest.TestCase):
                "finished": "2026-01-01T00:01:00Z", "flakes": {}, "legs": self.legs(), "red": [], "invalid": None}
         run.update(over)
         if "runner" not in over:
-            run["runner"] = {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}}
+            run["runner"] = {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}, "checkout": CHECKOUT_REC}
         if "verdict" not in over:
             run["verdict"] = sweep.run_verdict(run)
         return run
@@ -2025,6 +2051,25 @@ class Reader(unittest.TestCase):
         case, line = self.case()
         self.assertEqual(case, "unreadable", line)
         self.assertIn("schema 1, recorded by a runner that swept the batcher's own tree; sweep again", line)
+
+    def test_a_run_that_records_no_private_checkout_is_unreadable(self):
+        """Round 1, A6's aim: no result of a runner that swept the batcher's own tree passes. This branch's intermediate
+        runners wrote schema 2, with the allowlist's hash, before the private checkout existed, so the schema alone does
+        not tell them apart: a run with no runner.checkout of form clone reads unreadable, whichever run it is."""
+        ok = self.run_rec()
+        bare = self.run_rec(runner={"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}})
+        worktree = self.run_rec(runner={"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()},
+                                        "checkout": dict(CHECKOUT_REC, form="worktree")})
+        for label, runs, named in (("the only run", [bare], "run 1"), ("an earlier run", [bare, ok], "run 1"),
+                                   ("a later full run", [ok, bare], "run 2"), ("another form", [worktree], "run 1")):
+            with self.subTest(runs=label):
+                self.write(self.result(runs=runs))
+                case, line = self.case()
+                self.assertEqual(case, "unreadable", line)
+                self.assertIn("%s records no private checkout, so it was recorded by a runner that swept the batcher's own "
+                              "tree; sweep again" % named, line)
+        self.write(self.result(runs=[ok]))
+        self.assertEqual(self.case()[0], "pass")
 
     def test_a_result_recorded_under_another_leg_environment_is_refused(self):
         """Round 1, decision 10: a result made under another environment policy is not the same gate."""

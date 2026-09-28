@@ -201,7 +201,7 @@ subject; `verify` refuses the branch otherwise.
    fails by name when it is missing, stale (recorded at another commit), unfinished, red (a red run
    no later run excused counts too), invalid (a result recorded under another sweep.py's leg
    environment is), incomplete or unreadable (a schema-1 result, from the runner that swept the
-   batcher's own tree, is). A missing result names the directory verify read and the variable it
+   batcher's own tree, is, and so is a result with a run that records no private checkout). A missing result names the directory verify read and the variable it
    came from (`ROMP_STATE_DIR`, `XDG_STATE_HOME` or `HOME`): a sweep run with another environment
    wrote its result somewhere else. It also fails as "behind" when the batch head does not contain
    main as origin has it now: CI does not run on the merge to main, so a batch should land only when

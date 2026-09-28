@@ -72,7 +72,9 @@ The pane bench (tests/ui-bench.test.mjs), the Python versions other than --pytho
 the batch's CI.
 
 The result is append-only (schema 2): `runs` keeps every run at the sha, oldest first, and a run is never
-rewritten once it has finished. The verdict is read from the newest full run with any later --leg re-run's legs
+rewritten once it has finished. Every run records the private checkout it ran in (runner.checkout); a reader
+reads a result holding a run without one as unreadable, and the runner moves such a file aside, as it moves a
+schema-1 file: both came from a runner that swept the batcher's own tree. The verdict is read from the newest full run with any later --leg re-run's legs
 laid over it, and the whole history is read too: a run that failed a leg counts as excused only when the next
 run of that leg carries --flake naming it and its known-flake entry, once per leg, whether that run is a --leg
 re-run or a full run (`--flake LEG=TEXT`). A leg that failed twice, or that a later run passed without --flake
@@ -449,6 +451,20 @@ def _rc_text(name, leg):
 SCHEMA_1_TEXT = "recorded by a runner that swept the batcher's own tree"
 
 
+def checkout_recorded(run):
+    """Whether a run records the private clone its legs ran in (runner.checkout, form "clone"), as every run of this
+    runner does before its first write. A schema-2 run without one came from a runner that swept the batcher's own tree
+    (this branch's intermediate runners wrote schema 2 before the private checkout existed), so no reader counts it."""
+    runner = run.get("runner") if isinstance(run, dict) else None
+    co = runner.get("checkout") if isinstance(runner, dict) else None
+    return isinstance(co, dict) and co.get("form") == "clone"
+
+
+def no_checkout_runs(runs):
+    """The numbers of the runs that record no private checkout (checkout_recorded)."""
+    return [i + 1 for i, r in enumerate(runs) if not checkout_recorded(r)]
+
+
 def _load(path):
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
@@ -587,6 +603,11 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
                                "another scripts/sweep.py's allowlist or set values), so it is not this gate; sweep again with "
                                "this checkout's scripts/sweep.py" % (short(sha), str(recorded)[:12] if recorded else "none",
                                                                      policy_hash()[:12]), rec)
+    blind = no_checkout_runs(runs)
+    if blind:
+        return done("unreadable", "sweep unreadable: %s: run %s records no private checkout, so it was %s; sweep again with "
+                                  "this checkout's scripts/sweep.py, which moves the file aside"
+                    % (path, ", ".join(str(n) for n in blind), SCHEMA_1_TEXT), rec)
     recomputed = verdict_of(rec)
     if recomputed == "running":
         ran = [name for name in LEGS if (runs[-1].get("legs") or {}).get(name, {}).get("finished")]
@@ -1551,7 +1572,7 @@ def load_history(path, sha, for_leg):
     """The result file at `path` to append a run to, or None when there is none. Results are append-only: a file
     this runner cannot read is kept and refused, never overwritten; a schema-1 file (the runner before round 1)
     is moved aside to <sha>.schema-1.json, named, since its runs swept the batcher's own tree and no reader counts
-    them."""
+    them, and so is a schema-2 file holding a run that records no private checkout (to <sha>.no-checkout.json)."""
     try:
         data = _load(path)
     except FileNotFoundError:
@@ -1572,6 +1593,17 @@ def load_history(path, sha, for_leg):
         raise Refused("the result at %s is not a record of %s this runner writes (schema %r, sha %s)%s"
                       % (path, short(sha), data.get("schema"), short(str(data.get("sha"))), "; run the full sweep" if for_leg else
                          "; it is kept, since results are append-only: move it aside to sweep this sha again"))
+    blind = no_checkout_runs(data["runs"])
+    if blind:
+        # A schema-2 file whose runs swept the batcher's own tree (no private checkout recorded) is treated as a
+        # schema-1 file is: no reader counts it, so it is moved aside, named.
+        what = "run %s records no private checkout, %s" % (", ".join(str(n) for n in blind), SCHEMA_1_TEXT)
+        if for_leg:
+            raise Refused("the result at %s is unreadable (%s); run the full sweep" % (short(sha), what))
+        aside = path[:-len(".json")] + ".no-checkout.json"
+        os.replace(path, aside)
+        print("sweep %s: moved the result aside to %s (%s)" % (short(sha), aside, what), flush=True)
+        return None
     return data
 
 

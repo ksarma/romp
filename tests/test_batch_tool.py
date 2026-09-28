@@ -339,9 +339,12 @@ class Fixture:
 
     @staticmethod
     def run_record(**run):
-        """A run as the runner writes it: the leg environment's hash the reader compares (round 1, decision 10) unless
-        `runner` is given, and the run's own verdict unless `verdict` is."""
-        run.setdefault("runner", {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}})
+        """A run as the runner writes it: the leg environment's hash the reader compares (round 1, decision 10) and the
+        private checkout it ran in (a reader refuses a run without one) unless `runner` is given, and the run's own
+        verdict unless `verdict` is."""
+        run.setdefault("runner", {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()},
+                                  "checkout": {"form": "clone", "path": "/nonexistent/trees/test", "create_s": 0.1,
+                                               "verify_s": 0.1, "files": 1, "setup": None}})
         run.setdefault("verdict", sweep.run_verdict(run))
         return run
 
@@ -1854,6 +1857,18 @@ class VerifyReadsTheSweep(_Base):
                      % (head[:10], sweep.policy_hash()[:12]))
         fx.sweep("b1", runner={})
         self.refused("FAIL sweep invalid at %s: recorded under another leg environment (hash none;" % head[:10])
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
+
+    def test_a_result_whose_run_records_no_private_checkout_fails(self):
+        """A run that records no private checkout was swept in the batcher's own tree (this branch's intermediate
+        runners wrote schema 2, with the allowlist's hash, before the checkout existed), so verify fails it as it fails a
+        schema-1 result."""
+        fx = self.fx
+        head = self.assembled()
+        fx.sweep("b1", runner={"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}})
+        self.refused("FAIL sweep unreadable: %s: run 1 records no private checkout, so it was recorded by a runner that swept "
+                     "the batcher's own tree" % sweep.result_path(head, env=fx.env))
         fx.sweep("b1")
         fx.ok("verify", "b1")
 
