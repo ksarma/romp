@@ -2174,7 +2174,14 @@ def _spread(path):
         # status and headers do not. A returned Name the follow cannot place, bound only to no expression of its own (an unpack of
         # a call's answer, _opaque), makes the call a fetch that binds every name, as a helper the module does not define does, so
         # the read behind it stays in both censuses. A parameter returned is no read of the helper's (_echo), and its call stays no
-        # fetch. The rows of both derivations are named, never inferred.
+        # fetch. test_b holds the other forms the follow claims (the rulings on the census bounds, 2026-09-28: each was unpinned):
+        # a for target, a with target and an except name returned are unknown (_forv, _withv, _exc); an augmented assignment, a
+        # walrus and an annotated assignment bind their Name to the read (_aug, _walrus, _ann); a tuple or list target over a tuple
+        # or list of the same length pairs by position, so the read binds and the status does not (_tuplepair, _listpair: d9 and
+        # d11 are no rows); a Name bound to an unknown Name is unknown (_opaque2); a nested def's bindings are its own, so a
+        # helper whose inner def binds `body = r.read()` while its own `body` is not a read is no fetch (_outer2: d13 is no row);
+        # and two definitions of one name, a helper per class, give the union of their positions (_two: both names bind). The rows
+        # of both derivations are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import re, unittest
 def _named(path):
@@ -2204,6 +2211,76 @@ class T(unittest.TestCase):
         self.assertIn("n5", o3)
         e = _echo("/", "x")
         self.assertIn("n6", e)
+    def test_b(self):
+        f1, f2 = _forv("/")
+        self.assertIn("d1", f2)
+        w1, w2 = _withv("/")
+        self.assertIn("d2", w2)
+        x1, x2 = _exc("/")
+        self.assertIn("d3", x2)
+        g1, g2 = _aug("/")
+        self.assertIn("d4", g2)
+        self.assertIn("d5", g1)
+        k1, k2 = _walrus("/")
+        self.assertIn("d6", k2)
+        h1, h2 = _ann("/")
+        self.assertIn("d7", h2)
+        t1, t2 = _tuplepair("/")
+        self.assertIn("d8", t2)
+        self.assertIn("d9", t1)
+        l1, l2 = _listpair("/")
+        self.assertIn("d10", l2)
+        self.assertIn("d11", l1)
+        u1, u2 = _opaque2("/")
+        self.assertIn("d12", u2)
+        v1, v2 = _outer2("/")
+        self.assertIn("d13", v2)
+        s1, s2 = self._two("/")
+        self.assertIn("d14", s1)
+        self.assertIn("d15", s2)
+    def _two(self, path):
+        return r.status, r.read()
+class U(unittest.TestCase):
+    def _two(self, path):
+        return r.read(), r.status
+def _forv(path):
+    for body in fetch_all(path):
+        pass
+    return 200, body
+def _withv(path):
+    with fetch(path) as body:
+        return 200, body
+def _exc(path):
+    try:
+        raise Failed(path)
+    except Failed as body:
+        return 200, body
+def _aug(path):
+    body = ""
+    body += urlopen(path).read().decode()
+    return 200, body
+def _walrus(path):
+    if (body := urlopen(path).read()):
+        return 200, body
+def _ann(path):
+    body: bytes = urlopen(path).read()
+    return 200, body
+def _tuplepair(path):
+    status, body = 200, urlopen(path).read()
+    return status, body
+def _listpair(path):
+    [status, body] = [200, urlopen(path).read()]
+    return status, body
+def _opaque2(path):
+    status, body = _raw(path)
+    text = body
+    return 200, text
+def _outer2(path):
+    def inner(r):
+        body = r.read()
+        return body
+    body = fetch_meta(path)
+    return 200, body
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -2212,13 +2289,16 @@ class T(unittest.TestCase):
             readers = readers_of(f.name, getters, constants, routes)
         finally:
             os.unlink(f.name)
+        pinned = [(31, "d1"), (33, "d2"), (35, "d3"), (37, "d4"), (40, "d6"), (42, "d7"), (44, "d8"), (47, "d10"), (50, "d12"), (54, "d14"), (55, "d15")]
         self.assertEqual([r[:4] for r in rows], [(18, "n1", "_landing", "in"), (23, "n3", "_chat_page", "in"), (25, "n4", "_landing", "in"),
-                                                 (26, "n5", "_landing", "in")])
+                                                 (26, "n5", "_landing", "in")] + [(line, lit, "_landing", "in") for line, lit in pinned])
         self.assertEqual([r[:3] for r in readers], [(18, "assert", "_landing"), (19, "regex", "_landing"), (23, "assert", "_chat_page"),
-                                                    (25, "assert", "_landing"), (26, "assert", "_landing")],
+                                                    (25, "assert", "_landing"), (26, "assert", "_landing")] + [(line, "assert", "_landing") for line, _ in pinned],
                          "the body a helper returns by name is read in both censuses, and no status or headers read is a read of the page")
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
-                         {"_named": [-2, 1], "_aliased": [-1, 1], "_opaque": ["unknown"], "_echo": [], "test_a": []})
+                         {"_named": [-2, 1], "_aliased": [-1, 1], "_opaque": ["unknown"], "_echo": [], "test_a": [], "test_b": [], "_two": [-1, -2, 0, 1],
+                          "_forv": ["unknown"], "_withv": ["unknown"], "_exc": ["unknown"], "_aug": [-1, 1], "_walrus": [-1, 1], "_ann": [-1, 1],
+                          "_tuplepair": [-1, 1], "_listpair": [-1, 1], "_opaque2": ["unknown"], "_outer2": [], "inner": ["whole"]})
 
     def test_a_call_is_a_fetch_only_where_its_callee_reads_a_response(self):
         # the rulings at the merge of main's login cookie split (2026-09-28), P2: a call to a Name or a self.<method> whose first
@@ -2228,8 +2308,8 @@ class T(unittest.TestCase):
         # (os.pathconf's answer) is no fetch, in an assignment of its own or inside a tuple assignment; one whose return reads a
         # response (`urlopen(path).read().decode()`) is; and a callee the module does not define keeps the reading before the
         # ruling, a fetch. A Return is credited to the innermost function holding it (_response_reads), so a helper whose nested
-        # def reads a response while its own returns read none (`_outer`) is no fetch either (the rulings at the merge, 2026-09-28:
-        # a walk that credits the nested def's returns to the helper binds `st` here). The rows of both derivations are named,
+        # def reads a response while its own returns read none (`_outer`) is no fetch either (the rulings on the census pass,
+        # 2026-09-28: a walk that credits the nested def's returns to the helper binds `st` here). The rows of both derivations are named,
         # never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest
