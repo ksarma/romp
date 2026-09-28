@@ -249,6 +249,31 @@ for (const [name, src] of BUILDERS) {
     assert.ok(log.every((l) => /^(set --ut-rest-h \d+px|remove --ut-rest-h)$/.test(l)), "restCap writes one property and nothing else: " + JSON.stringify(log));
   });
 }
+// A STATED RESIDUAL of the keyboard-up ruling (the maintainer's ruling on the cap pass), pinned as it is so a change to it
+// is seen: Android Chrome honours the shell's interactive-widget=resizes-content (kernel.py's viewport meta; iOS ignores
+// it), so the keyboard shrinks the shell's LAYOUT viewport with its visual one, the two agree, and restCap, reading the
+// shell as kbOpen does, sees no keyboard: the pane's height stays published and the at-rest term applies under the
+// keyboard. The browser half is waiting-reply-sheet-browser.test.ts (the pane in a frame inside a shell page whose layout
+// viewport shrinks with the keyboard: at 508 the cap is 188px and the room sets the detail)
+for (const [name, src] of BUILDERS) {
+  test(`${name}: under Android Chrome's resizes-content the keyboard shrinks the shell's layout viewport too, so restCap sees no keyboard and keeps the pane's height published (a stated residual)`, () => {
+    const props = new Map<string, string>();
+    const overlay = { style: {
+      setProperty: (k: string, v: string) => { props.set(k, v); },
+      removeProperty: (k: string) => { props.delete(k); return ""; },
+    } };
+    const shell = { innerHeight: 844, visualViewport: { height: 844, scale: 1 } };
+    const win: any = { innerHeight: 844, visualViewport: { height: 844, scale: 1 }, parent: shell };
+    const restCap = restCapper(name, src, overlay, win);
+    restCap();
+    assert.equal(props.get("--ut-rest-h"), "844px", "at rest, the keyboard down: the pane's height is published");
+    // the keyboard opens under resizes-content: the shell's layout and visual viewports shrink together, and the shell sizes
+    // the pane to what is left
+    shell.innerHeight = 508; shell.visualViewport.height = 508; win.innerHeight = 508; win.visualViewport.height = 508;
+    restCap();
+    assert.equal(props.get("--ut-rest-h"), "508px", "under resizes-content the shell's two heights agree, so restCap sees no keyboard and the term stays: the cap is 37% of 508 (188px), not 12em. Today's behaviour, disclosed at restCap and in the ledger entry; a keyboard signal that survives resizes-content turns this red, and is a design of its own (the shell's kbOpen has the same blind spot)");
+  });
+}
 
 // ── the grow handler, executed out of each builder ───────────────────────────────────────────────
 // the textarea as the handler reads it: a shim node whose geometry is the test's input (offsetHeight is the border-box

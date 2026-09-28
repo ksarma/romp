@@ -41,7 +41,9 @@
 // rendered height there), 12em under the keyboard at 508 with the sheet opened at rest and the keyboard then raised and
 // lowered under it, the recorded 8-line detail on both sides of the stated boundary (in full at 680, 740, 844 and 900;
 // at 600 and 664 it shows the cap and scrolls the rest), the tightest sheet (both chip rows) fitting in Safari's range
-// with its detail under the cap, and at its cap under its room at 844 and 900.
+// with its detail under the cap, and at its cap under its room at 844 and 900. And a stated residual, pinned as it is:
+// under Android Chrome's resizes-content the keyboard shrinks the shell page's layout viewport, restCap sees no keyboard,
+// and at 508 the cap is the at-rest term (188px) with the room setting the detail's height.
 //
 // The browser legs (Chromium, Firefox, and WebKit when the box has them) load the kernel's /waiting page as it is
 // served (styles.css, then the pane's sheet) with the worktree's waiting.ts bundle in a 390px-wide frame, the
@@ -200,6 +202,18 @@ async function boot(browser: any) {
     await page.waitForFunction((hh: number) => (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!.innerHeight === hh, h, { timeout: 10000 });
     await settle();
   };
+  // the keyboard as Android Chrome shows it in the app (the stated residual at restCap): the shell's meta asks for
+  // interactive-widget=resizes-content, which Chrome 108+ honours and iOS ignores, so the keyboard shrinks the shell's
+  // LAYOUT viewport: the shell page itself is resized to h, its visual viewport is not stubbed (the two agree), and the
+  // frame follows the shell's height as --app-h sizes it. restoreShell puts the shell page back at its own height
+  const setResizesContent = async (h: number) => {
+    await keyboard(null);
+    await page.setViewportSize({ width: PHONE_W + 30, height: h });
+    await page.evaluate((hh: number) => { (document.getElementById("f-waiting") as HTMLIFrameElement).style.height = hh + "px"; }, h);
+    await page.waitForFunction((hh: number) => window.innerHeight === hh && (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!.innerHeight === hh, h, { timeout: 10000 });
+    await settle();
+  };
+  const restoreShell = async () => { await page.setViewportSize({ width: PHONE_W + 30, height: REST_TALL + 40 }); await settle(); };
   await keyboard(KEYBOARD_UP);   // the frame opens at 508, the keyboard up
   const measure = (): Promise<Sheet | null> => page.evaluate(() => {
     const win = (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!;
@@ -404,7 +418,7 @@ async function boot(browser: any) {
     const overlayUp: boolean = await page.evaluate(() => !!(document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!.document.getElementById("ut-reply-prompt"));
     return { at, overlayUp };
   };
-  return { page, W, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, errors };
+  return { page, W, setHeight, setResizesContent, restoreShell, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, errors };
 }
 // a short window with the chip todo open: the box scrolls; the detail keeps its floor and scrolls within itself; its
 // first line's address and Send are each under a finger once the box is scrolled to them
@@ -647,7 +661,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
     try { browser = await pw[name].launch(); }
     catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's Browser-backed served-page tests (pytest) step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
-      const { setHeight, measure, openReply, cancelReply, waitTight, errors } = await boot(browser);
+      const { setHeight, setResizesContent, restoreShell, measure, openReply, cancelReply, waitTight, errors } = await boot(browser);
       const em12 = (m: Sheet) => 12 * m.detailFontPx;
       const term = (m: Sheet) => REST_SHARE * m.frameH;
       // at rest, the viewport term the larger: the resolved cap and the forty-line detail's height are 37% of the window
@@ -757,6 +771,27 @@ for (const name of ["chromium", "firefox", "webkit"]) {
           finally { await cancelReply(); }
         });
       }
+      // A STATED RESIDUAL of the keyboard-up ruling (the maintainer's ruling on the cap pass), pinned as it is so a change to
+      // it is seen: under Android Chrome's resizes-content the keyboard shrinks the shell's layout viewport, so restCap, which
+      // reads the keyboard on the shell as kbOpen does, sees none, and the at-rest term applies under the keyboard. The sheet
+      // is opened at rest at 900 and the keyboard then raised under it to 508: the cap is 37% of 508 (187.96px) and not 12em
+      // (134.16px), and the room (174px for the forty-line detail) sets the detail's height; the answer box keeps its three
+      // rows and Send stays in the box. Under the iOS model above the same 508 is 12em
+      await t.test("the keyboard up at 508 under Android Chrome's resizes-content: restCap sees no keyboard and the at-rest term applies, a stated residual", async () => {
+        await setHeight(TALL, false);
+        await openReply("t1");
+        try {
+          await setResizesContent(KEYBOARD_UP);
+          const m = (await measure())!;
+          const what = "the keyboard up at 508 under resizes-content";
+          assert.equal(m.frameH, KEYBOARD_UP, `${what}: the pane is the shell's shrunk height`);
+          assert.equal(m.tight, false, `${what}: no fold`);
+          assert.ok(Math.abs(m.detailMaxH - term(m)) <= 0.5, `${what}: the cap is the at-rest term, 37% of the pane (${m.detailMaxH}px against ${term(m).toFixed(1)}px), not 12em (${em12(m).toFixed(1)}px): the residual restCap and the ledger entry state; a keyboard signal that survives resizes-content changes this, and what they say`);
+          assert.ok(m.detailClientH > em12(m) + 20 && m.detailClientH <= m.detailMaxH + 0.5, `${what}: the forty-line detail shows more than 12em, up to the room (${m.detailClientH}px under a ${m.detailMaxH}px cap)`);
+          assert.ok(m.inputH >= m.floorH - 1, `${what}: three rows (${m.inputH} against ${m.floorH}px)`);
+          assertFits(m, what);
+        } finally { await restoreShell(); await cancelReply(); }
+      });
       assert.deepEqual(errors, [], "no script error in the frame");
     } finally { await browser.close(); }
   });

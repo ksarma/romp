@@ -2977,8 +2977,9 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    to 177.8px against 12em's 134px at the default font; the maintainer's round 1 ruling). At rest, the keyboard down, it
    is the larger of 12em and 37% of the pane's height (its innerHeight, which is the visual viewport's height except
    under a pinch zoom), which both builders publish as --ut-rest-h only while the keyboard is down (restCap; with the
-   property absent the term is 0px and the cap is 12em), so a taller pane shows more of a long detail; the term is the
-   larger above about 363px. The share is derived at the pane heights a phone gives (the maintainer's ruling on the cap
+   property absent the term is 0px and the cap is 12em; inside the app on Android Chrome that read sees no keyboard, so
+   the term applies under it too, a stated residual described at restCap), so a taller pane shows more of a long
+   detail; the term is the larger above about 363px. The share is derived at the pane heights a phone gives (the maintainer's ruling on the cap
    pass), measured with the cap lifted in Chromium, WebKit and Firefox and in both panes: mobile Safari at 390px wide,
    about 600 to 740px (664 with both toolbars shown: a 390x844 iPhone 12, 13 or 14 in Playwright's device registry; the
    phone shell's tab bar takes its own height off that before the pane gets it), and the installed app at 844. The

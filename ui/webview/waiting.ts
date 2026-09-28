@@ -306,13 +306,21 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   // with the keyboard down the detail's cap is the larger of 12em and 37% of this window's height, so a tall window shows
   // more of a long detail; with the keyboard up it is 12em and the flex shrink governs, as before (styles.css
   // #ut-reply-prompt .ut-detail.open, where the share is derived). This publishes the window's height for that term at
-  // rest (--ut-rest-h on the overlay) and withdraws it with the keyboard up. The height is innerHeight, this window's visual
-  // viewport height but under a pinch zoom, which shrinks only the visual viewport and so leaves the cap alone (inside the
-  // shell the pane's iframe is sized to the visible height and never zoomed on its own). The keyboard is read as the shell
-  // reads it (kernel.py kbOpen): the visual viewport of the window that owns the screen more than 120px shorter than its
-  // layout viewport. That window is the parent: this window's own two heights agree whatever the keyboard does, and its
-  // height alone cannot tell the keyboard from a short window; standalone the parent is this window, and a cross-origin
-  // host (VS Code) throws, read as no keyboard. kbFit runs it at open and on every resize, before grow reads the room.
+  // rest (--ut-rest-h on the overlay) and withdraws it with the keyboard up. The height is innerHeight, which is this
+  // window's visual viewport height except under a pinch zoom: a pinch shrinks only the visual viewport, so it leaves the
+  // cap alone (inside the shell the pane's iframe is sized to the visible height and never zoomed on its own). The
+  // keyboard is read as the shell reads it (kernel.py kbOpen): the visual viewport of the window that owns the screen more
+  // than 120px shorter than its layout viewport. That window is the parent: this window's own two heights agree whatever
+  // the keyboard does, and its height alone cannot tell the keyboard from a short window; standalone the parent is this
+  // window, and a cross-origin host (VS Code) throws, read as no keyboard. kbFit runs it at open and on every resize,
+  // before grow reads the room. A STATED RESIDUAL (the maintainer's ruling on the cap pass): Android Chrome honours the
+  // shell's interactive-widget=resizes-content (kernel.py's viewport meta; iOS ignores the token), so there the keyboard
+  // shrinks the shell's LAYOUT viewport, the shell's two heights agree, and this read, like kbOpen itself, sees no
+  // keyboard: the at-rest term applies under the keyboard (at 508, 37% is 188px against 12em's 134, and the room, 174px
+  // for a long detail under a short ask, sets the detail's height; the answer box keeps its three rows and Send stays in
+  // the box). No other keyboard signal is read here (a guess from a height or from focus is the time-free heuristic the
+  // design rule avoids); the shell's blind spot is a follow-up of its own. waiting-reply-sheet-browser.test.ts and
+  // reply-sheet-keyboard.test.ts pin today's behaviour under that model.
   const restCap = () => { let up = false; try { const p = window.parent, pv = p.visualViewport; up = !!pv && p.innerHeight - pv.height * (pv.scale || 1) > 120; } catch { up = false; } if (up) overlay.style.removeProperty("--ut-rest-h"); else overlay.style.setProperty("--ut-rest-h", window.innerHeight + "px"); };
   // THE KEYBOARD (the user 2026-09-19, a phone screenshot: the detail filled the sheet and the answer box was one squeezed
   // line). The shell sizes this iframe to the VISIBLE height, so the on-screen keyboard opening or closing lands here as
