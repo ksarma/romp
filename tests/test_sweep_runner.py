@@ -15,6 +15,7 @@ variable names and every file they can see in their checkout, and exit with the 
 carries its world's control and log paths in its own text, since no variable a test sets is sure to reach a
 leg. The real suite never runs. Synthetic data only.
 """
+import ast
 import fcntl
 import importlib.util
 import json
@@ -294,6 +295,30 @@ elif act == "venv-write":                        # a test that leaves a file in 
     os.makedirs(site, exist_ok=True)
     with open(os.path.join(site, "zz-left-by-a-test.pth"), "w") as f:
         f.write("import os\n")
+elif act in ("venv-forge", "venv-forge-gate"):   # as venv-write, then the build's marker rewritten to record the file;
+    # venv-forge-gate then waits as gate does, for a test that stops the runner there
+    import hashlib, stat
+    site = os.path.join(venv_root, "lib", "python3.99", "site-packages")
+    os.makedirs(site, exist_ok=True)
+    with open(os.path.join(site, "zz-left-by-a-test.pth"), "w") as f:
+        f.write("import os\n")
+    for m in ("sweep-sdk.json", "sweep-served.json"):
+        mp = os.path.join(venv_root, m)
+        if not os.path.exists(mp):
+            continue
+        doc = json.load(open(mp))
+        for rel in ("lib", os.path.join("lib", "python3.99"), os.path.join("lib", "python3.99", "site-packages")):
+            doc["tree"].setdefault(rel, ["dir", stat.S_IMODE(os.lstat(os.path.join(venv_root, rel)).st_mode)])
+        rel = os.path.join("lib", "python3.99", "site-packages", "zz-left-by-a-test.pth")
+        data = open(os.path.join(venv_root, rel), "rb").read()
+        doc["tree"][rel] = ["file", stat.S_IMODE(os.lstat(os.path.join(venv_root, rel)).st_mode), len(data),
+                            hashlib.sha256(data).hexdigest()]
+        json.dump(doc, open(mp, "w"))
+    if act == "venv-forge-gate":
+        open(os.path.join(ctl["marks"], "ready"), "w").write(str(os.getpid()))
+        end = time.monotonic() + 60
+        while not os.path.exists(os.path.join(ctl["marks"], "go")) and time.monotonic() < end:
+            time.sleep(0.02)
 elif act == "gate":                              # the leg waits, up to a minute, until the test lets it go
     open(os.path.join(ctl["marks"], "ready"), "w").write(str(os.getpid()))
     end = time.monotonic() + 60
@@ -2449,8 +2474,65 @@ class PytestEnvironment(_Base):
         w.ctl({})
         w.change({"README.md": "# notes-api, again\n"})
         p = w.run(check=0)
-        self.assertIn("rebuilding the pytest leg's environment %s (it is not the tree its build wrote" % key, p.stdout)
+        self.assertIn("rebuilding the pytest leg's environment %s (no finished build)" % key, p.stdout,
+                      "the runner removed the marker when it saw the change")
         self.assertEqual((self.sdk()["key"], self.sdk()["built"]), (key, True))
+
+    def test_a_leg_that_changes_the_venv_and_its_marker_to_match_still_makes_the_next_run_build_it_again(self):
+        """The build's marker is inside the venv, where a leg can write: a leg that adds a file and rewrites the tree the
+        marker records to match makes its own run invalid (the run compares with the tree it read at its check), and the
+        runner removes the marker then, so the next run finds no finished build and builds the venv again rather than
+        reusing it with the file in it."""
+        w = self.w
+        w.ctl({"action": {"pytest": "venv-forge"}})
+        w.run(check=3)
+        first = self.sdk()
+        self.assertIn("after the pytest leg its environment %s is not the tree its build wrote (1 path: "
+                      "lib/python3.99/site-packages/zz-left-by-a-test.pth (added)); the next run that uses it builds it "
+                      "again" % first["path"], w.result()["invalid"])
+        self.assertFalse(os.path.exists(os.path.join(first["path"], sweep.SDK_MARKER)), "the runner removed the marker")
+        w.ctl({})
+        w.change({"README.md": "# notes-api, again\n"})
+        p = w.run(check=0)
+        self.assertIn("rebuilding the pytest leg's environment %s (no finished build)" % first["key"], p.stdout)
+        self.assertEqual((self.sdk()["key"], self.sdk()["built"]), (first["key"], True))
+        self.assertFalse(os.path.exists(os.path.join(first["path"], "lib", "python3.99", "site-packages",
+                                                     "zz-left-by-a-test.pth")), "the file the leg left is gone")
+
+    def test_a_venv_changed_by_a_leg_the_runner_was_stopped_in_is_retired_on_the_way_out(self):
+        """A run stopped during a leg never reaches that leg's check, so the runner reads the venv again after the reap
+        on its way out: a leg that added a file and rewrote the marker to match before SIGTERM reached the runner leaves
+        the venv retired, and the next run builds it again."""
+        if not sys.platform.startswith("linux"):
+            self.skipTest("the subreaper and /proc are Linux's")
+        w = self.w
+        marks = os.path.join(w.tmp, "marks")
+        os.makedirs(marks)
+        w.ctl({"action": {"pytest": "venv-forge-gate"}, "marks": marks})
+        proc = subprocess.Popen([sys.executable, str(SWEEP), "run", "--tree", w.tree, "--python", w.python, "--workers", "2"],
+                                env=w.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        ready = os.path.join(marks, "ready")
+        deadline = time.monotonic() + 60
+        while not (os.path.exists(ready) and open(ready).read()):
+            if proc.poll() is not None:
+                self.fail("the runner ended before the leg was ready: %s" % (proc.communicate(),))
+            if time.monotonic() > deadline:
+                self.fail("the leg never became ready")
+            time.sleep(0.05)
+        self.addCleanup(_kill_quietly, int(open(ready).read()))
+        proc.send_signal(15)
+        out, err = proc.communicate(timeout=90)
+        self.assertEqual(proc.returncode, 128 + 15, out + err)
+        first = self.sdk()
+        self.assertIn("%s is not the tree its build wrote (1 path: lib/python3.99/site-packages/zz-left-by-a-test.pth "
+                      "(added)); the next run that uses it builds it again" % first["path"], out)
+        self.assertFalse(os.path.exists(os.path.join(first["path"], sweep.SDK_MARKER)), "the runner removed the marker")
+        w.ctl({})
+        w.change({"README.md": "# notes-api, again\n"})
+        p = w.run(check=0)
+        self.assertIn("rebuilding the pytest leg's environment %s (no finished build)" % first["key"], p.stdout)
+        self.assertEqual((self.sdk()["key"], self.sdk()["built"]), (first["key"], True))
 
     def test_a_run_holds_the_venv_shared_to_its_end_and_a_rebuild_waits_for_it(self):
         """Runs at other shas share a finished venv: each holds a shared lock on its key until it ends, and a run that
@@ -2767,7 +2849,20 @@ class ServedLeg(_Base):
         w.ctl({})
         w.change({"README.md": "# notes-api, a fourth time\n"})
         p = w.run(check=0)
-        self.assertIn("rebuilding the served leg's environment %s (it is not the tree its build wrote" % first["key"], p.stdout)
+        self.assertIn("rebuilding the served leg's environment %s (no finished build)" % first["key"], p.stdout)
+        # a served leg that also rewrites the marker to record what it left: the next run still builds the venv again
+        w.ctl({"action": {"served": "venv-forge"}})
+        w.change({"README.md": "# notes-api, a fifth time\n"})
+        w.run(check=3)
+        self.assertIn("after the served leg its environment %s is not the tree its build wrote (1 path: "
+                      "lib/python3.99/site-packages/zz-left-by-a-test.pth (added)); the next run that uses it builds it again"
+                      % first["path"], w.result()["invalid"])
+        self.assertFalse(os.path.exists(os.path.join(first["path"], sweep.SERVED_MARKER)), "the runner removed the marker")
+        w.ctl({})
+        w.change({"README.md": "# notes-api, a sixth time\n"})
+        p = w.run(check=0)
+        self.assertIn("rebuilding the served leg's environment %s (no finished build)" % first["key"], p.stdout)
+        self.assertIs(w.result()["runner"]["served"]["built"], True)
 
     def test_a_served_python_of_another_version_is_refused_naming_what_to_pass(self):
         """The served venv is built from the Python version the served step's job sets up (read from ci.yml): a
@@ -2833,6 +2928,9 @@ class ServedLeg(_Base):
                          "the served files, then the tests the pytest leg skipped for want of the deps")
         r = w.result()
         self.assertEqual(r["legs"][PYTEST_LEG]["deps_skipped"]["tests"], also)
+        self.assertEqual(r["legs"][PYTEST_LEG]["deps_skipped"]["unselected"], [["tests/test_d_mac.py::test_mac", "macOS only"]],
+                         "every other skip outside the served globs is recorded with its reason, so a deps reason the rule "
+                         "misses can be seen")
         self.assertEqual(r["legs"]["served"]["also"], {"tests": also, "count": 3, "why": sweep.DEPS_SKIP_WHY})
         self.assertEqual(r["legs"]["served"]["cmd"][3:3 + len(SEED_SERVED_FILES) + len(also)], SEED_SERVED_FILES + also)
         # a --leg re-run of served runs the recorded set again
@@ -3138,8 +3236,11 @@ class ServedPartition(unittest.TestCase):
         self.assertEqual(p.returncode, 1, p.stdout[-3000:])
         self.assertEqual(sweep.count_tests(PYTEST_LEG, log), (1, 1), p.stdout[-3000:])
         self.assertRegex(p.stdout, r"(?m)^FAILED tests/test_fail[.]py::test_it", "the summary still lists the failure")
-        ids, why = sweep.deps_skipped(log, ["tests/test_x_served.py"])
+        others = []
+        ids, why = sweep.deps_skipped(log, ["tests/test_x_served.py"], others)
         self.assertIsNone(why)
+        self.assertEqual([o[0] for o in others], ["tests/test_other.py::test_it"], "the other skip outside the served file")
+        self.assertIn("macOS only", others[0][1])
         self.assertEqual(sorted(ids), ["tests/test_deps.py::Build::test_build", "tests/test_deps.py::test_engine[a b]",
                                        "tests/test_lab.py", "tests/test_multi.py::test_it"], p.stdout[-3000:])
         # the served leg's command takes them: each id is one pytest collects, and each skips again here
@@ -3225,6 +3326,48 @@ class DepsSkipRule(unittest.TestCase):
                 text = (ROOT / f).read_text(encoding="utf-8")
                 self.assertTrue(any(sweep.DEPS_SKIP.search(r) for r in re.findall(r"SkipTest\(\s*\"([^\"]*)\"", text)),
                                 "the file still skips for want of the deps, in words the rule reads")
+
+    SKIP_CALLS = ("SkipTest", "skipTest", "skip", "skipIf", "skipUnless", "importorskip")
+
+    def test_the_measured_files_are_the_trees_census_of_deps_skips_outside_the_served_globs(self):
+        """MEASURED_DEPS_SKIPS names its files by hand; this derives them. The census: every tests/test_*.py outside the
+        served globs with a skip call (SKIP_CALLS, by name or attribute) one of whose arguments holds a string DEPS_SKIP
+        matches, a literal (an f-string's literal parts among them) or a module-level name bound to one. A new test that
+        skips for want of the deps in words the rule reads changes the census, so this reds until the measurement is
+        taken again and every text names the new count (test_every_text_names_the_measured_count). A skip whose reason
+        is built any other way is outside the census, as it is outside the rule's reach until its log is read."""
+        served = set(expand_globs(str(ROOT), ("tests/test_*_browser.py", "tests/test_*_served.py")))
+        self.assertTrue(served, "the served globs select files here")
+        census = []
+        for path in sorted((ROOT / "tests").glob("test_*.py")):
+            rel = path.relative_to(ROOT).as_posix()
+            if rel in served:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
+            bound = {t.id: n.value.value for n in tree.body if isinstance(n, ast.Assign)
+                     and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)
+                     for t in n.targets if isinstance(t, ast.Name)}
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                name = fn.attr if isinstance(fn, ast.Attribute) else fn.id if isinstance(fn, ast.Name) else None
+                if name not in self.SKIP_CALLS:
+                    continue
+                texts = []
+                for arg in list(node.args) + [k.value for k in node.keywords]:
+                    for sub in ast.walk(arg):
+                        if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                            texts.append(sub.value)
+                        elif isinstance(sub, ast.Name) and sub.id in bound:
+                            texts.append(bound[sub.id])
+                if any(sweep.DEPS_SKIP.search(t) for t in texts):
+                    census.append(rel)
+                    break
+        self.assertTrue(census, "the census found no deps skip at all: it cannot be reading the tree")
+        self.assertEqual(tuple(census), tuple(sweep.MEASURED_DEPS_SKIPS["files"]),
+                         "the files outside the served globs that skip for want of the deps are not the measured ones: "
+                         "measure again and update MEASURED_DEPS_SKIPS and every text that names the count")
 
     def test_every_text_names_the_measured_count(self):
         """The runner's docstring, its run help and docs/batching.md say the served leg also runs these tests and

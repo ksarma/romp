@@ -115,13 +115,22 @@ pytest plugins they declare, which pytest loads on its own (runner.served).
 The served leg also runs, with the deps present, the tests outside the served globs that the pytest leg skipped for
 want of the extension's node_modules or a browser (DEPS_SKIP). Neither of CI's jobs runs them (the Python cells have
 neither; the served step runs only the globs), and the sweep before the served rulings ran them in its pytest leg,
-after npm ci, so the runner never runs less than it did. They are derived at run time, not listed: the pytest leg
-prints every skip with its node id and reason (-rfEs --no-fold-skipped), and deps_skipped reads, from its log's short
-summary, each skip outside the served globs whose reason DEPS_SKIP matches; the node ids join the served leg's command
-after the globs' files, and both legs' records name them. A pytest leg whose log has no closing summary line leaves
-the set unknown, and the served leg is then red naming why, never run without it. The count when the served rulings'
-condition was measured: 1 test in 1 file when measured on 2026-09-28 (tests/test_landing_bundles_built.py, whose
-build guard needs the extension's deps).
+after npm ci, so every test the rule selects still runs with the deps. They are derived at run time, not listed: the
+pytest leg prints every skip with its node id and reason (-rfEs --no-fold-skipped), and deps_skipped reads, from its
+log's short summary, each skip outside the served globs whose reason DEPS_SKIP matches; the node ids join the served
+leg's command after the globs' files, and both legs' records name them. A pytest leg whose log has no closing summary
+line leaves the set unknown, and the served leg is then red naming why, never run without it. The count when the
+served rulings' condition was measured: 1 test in 1 file when measured on 2026-09-28
+(tests/test_landing_bundles_built.py, whose build guard needs the extension's deps). The claim covers what the rule
+selects, and three cases fall outside it. A skip for want of the deps whose reason DEPS_SKIP does not match runs in
+no leg; the pytest leg's record lists every other skip outside the served globs with its reason
+(deps_skipped.unselected), so such a miss can be seen. A test that does not skip without node_modules but takes
+another road runs there on that road only: two real-tree pins, in tests/test_lab_dist.py and
+tests/test_kernel_bundle_staleness.py, read esbuild.js under tests/lab_dist_stub.py's stand-in for a missing package,
+where the sweep before ran them after npm ci with the real one (the build leg still loads the real one). And the
+tests the served leg adds run in the served venv, with no SDK, where before they ran in the pytest leg's venv, so a
+test outside the globs that needs both the deps and the SDK would skip there, and no switch makes that skip a
+failure.
 
 The leg environment is an allowlist (LEG_ALLOW, leg_sets): USER and LOGNAME pass when set, and the runner
 sets everything else. PATH is the directory of --python (for the pytest and served legs, of its venv's python) and
@@ -307,21 +316,25 @@ PYTEST_VALUE_OPTIONS = ("-p", "-n", "-c", "-k", "-m", "-o", "-r", "-W", "--rootd
 _SERVED_GLOB = re.compile(r"tests/[A-Za-z0-9_.*?\[\]-]+\.py")
 # The tests outside the served globs that skip without the extension's node_modules or a browser run in neither of CI's
 # jobs: CI's Python cells have neither, and CI's served step runs only the globs. The sweep before the served ruling ran
-# them, in its pytest leg after npm ci, so the served leg runs them now, with the deps present, and the runner never runs
-# less than it did (the served ruling's condition, 2026-09-28). They are derived at run time from the pytest leg's own
-# log: every skip its short summary prints (`SKIPPED <node id> - <reason>`, PYTEST_FLAGS' -rfEs --no-fold-skipped) whose
-# node id is outside the served globs and whose reason matches DEPS_SKIP (deps_skipped). DEPS_SKIP is read off the
-# reasons the tree's tests give when they skip without the deps: every one of the 578 skips in the served globs' files
-# and the one outside them, measured on 2026-09-28, names one of these words, and none of the other 20 skips outside them
-# does (tests/test_sweep_runner.py, DepsSkipRule, holds it to those reasons). A reason it matches that is not about the
-# deps costs one more test the served leg runs, which skips there again; a deps reason it misses is a test no leg runs.
+# them, in its pytest leg after npm ci, so the served leg runs them now, with the deps present (the served ruling's
+# condition, 2026-09-28; the module docstring names what falls outside it). They are derived at run time from the
+# pytest leg's own log: every skip its short summary prints (`SKIPPED <node id> - <reason>`, PYTEST_FLAGS' -rfEs
+# --no-fold-skipped) whose node id is outside the served globs and whose reason matches DEPS_SKIP (deps_skipped).
+# DEPS_SKIP is read off the reasons the tree's tests give when they skip without the deps: every one of the 578 skips in
+# the served globs' files and the one outside them, measured on 2026-09-28, names one of these words, and none of the
+# other 20 skips outside them does (tests/test_sweep_runner.py, DepsSkipRule, holds it to those reasons). A reason it
+# matches that is not about the deps costs one more test the served leg runs, which skips there again; a deps reason it
+# misses is a test no leg runs,
+# which the pytest leg's record shows among the skips the rule did not select (deps_skipped.unselected).
 DEPS_SKIP = re.compile(r"node_modules|npm ci|extension deps|playwright|chromium|esbuild|\bbrowser", re.I)
 DEPS_SKIP_WHY = ("the tests outside the served globs that the pytest leg skipped for want of the extension's node_modules "
                  "or a browser: they run in neither of CI's jobs, so the served leg runs them with the deps present")
 # What the served ruling's condition measured on 2026-09-28 (all of tests/ run as the pytest leg runs them, in the SDK
 # venv, with no node_modules and no browser: 18428 passed, 599 skipped, 21 of the skips outside the served globs): the
 # tests outside the served globs that skip for want of the deps or a browser, and the files they are in. The run itself
-# derives the set (deps_skipped); this is the count the docstring, the help and docs/batching.md name.
+# derives the set (deps_skipped); this is the count the docstring, the help and docs/batching.md name. The files are
+# held to a census of the tree's skip calls (tests/test_sweep_runner.py, DepsSkipRule), so a new file that skips for
+# want of the deps in words DEPS_SKIP reads reds there until this is measured again.
 MEASURED_DEPS_SKIPS = {"date": "2026-09-28", "tests": 1, "files": ("tests/test_landing_bundles_built.py",)}
 MEASURED_TEXT = "%d test%s in %d file%s when measured on %s" % (
     MEASURED_DEPS_SKIPS["tests"], "" if MEASURED_DEPS_SKIPS["tests"] == 1 else "s", len(MEASURED_DEPS_SKIPS["files"]),
@@ -2321,16 +2334,35 @@ def venv_changes(built, now):
 class VenvHold:
     """A venv the runner built (the pytest leg's, the served leg's) as one run holds it from its check to the end of the
     run: a shared lock on the key's lock file, so no other run rebuilds (which removes the venv) while this run's leg may
-    be running in it, and the tree its build left, which changes() compares with the venv's tree now."""
+    be running in it, and the tree its build left, which changes() compares with the venv's tree now. retire() removes
+    the build's marker, so the next run that reads the venv finds no finished build and builds it again: the marker is
+    inside the venv, where a leg can write, so a leg that changed the venv can also have rewritten the tree the marker
+    records to match, and the next run's check (_venv_check) would then pass it. The runner retires a venv whose tree
+    changed as soon as it sees the change and again after the reap, while it still holds the shared lock: every other
+    run holding it checked the venv before, and a rebuild waits for them all."""
 
-    def __init__(self, lock, venv, built):
-        self.lock, self.venv, self.built = lock, venv, built
+    def __init__(self, lock, venv, built, marker):
+        self.lock, self.venv, self.built, self.marker = lock, venv, built, marker
 
     def changes(self):
         try:
             return venv_changes(self.built, venv_tree(self.venv))
         except OSError as e:
             return ["%s cannot be read (%s)" % (self.venv, e)]
+
+    def retire(self):
+        """Remove the build's marker (a directory in its place too); None when it is gone, else why it could not be."""
+        path = os.path.join(self.venv, self.marker)
+        try:
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            return "its marker %s could not be removed (%s)" % (path, e)
+        return None
 
     def release(self):
         if self.lock is not None:
@@ -2562,7 +2594,7 @@ def _venv_environment(spec, sha, python, tmpdir):
                 rec.update(python_version=got.get("full"), tree=_tree_digest(tree), files=len(tree))
                 print("sweep %s: %s, %s" % (short(sha), spec["ready"](rec), "built in %.0f s" % rec["build_s"] if rec["built"]
                                              else "built earlier"), flush=True)
-                return rec, VenvHold(lock, venv, tree)
+                return rec, VenvHold(lock, venv, tree, spec["marker"])
             fcntl.flock(lock, fcntl.LOCK_UN)
             _flock(lock, fcntl.LOCK_EX, sha, "waiting for the other runs using %s %s to finish, to rebuild it (%s)"
                    % (spec["what"], key, stale))
@@ -2641,10 +2673,12 @@ _SKIPPED_LINE = re.compile(r"SKIPPED (tests/\S(?:.*?\S)?)(?: - (.*))?")
 _SUMMARY_WORD = re.compile(r"(?:PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS|DESELECTED) ")
 
 
-def deps_skipped(path, served_files):
+def deps_skipped(path, served_files, others=None):
     """([node id, ...], None) of the tests outside `served_files` (the served globs' expansion) that the pytest leg's log
     at `path` shows skipped for want of the extension's node_modules or a browser: each skip its short summary prints
-    whose reason DEPS_SKIP matches, in the log's order, each once. (None, why) when the log cannot be read or holds no
+    whose reason DEPS_SKIP matches, in the log's order, each once. `others`, a list when given, gets [node id, reason] of
+    every other skip outside `served_files`, the ones DEPS_SKIP did not select, so a deps reason it misses can be seen in
+    the record rather than run in no leg unnoticed. (None, why) when the log cannot be read or holds no
     closing summary line (pytest did not finish, so its summary of skips is not whole): the set is then not known, and
     the served leg, which would run it, is red naming why rather than run without it."""
     data = _read_log(path) if path else None
@@ -2667,6 +2701,9 @@ def deps_skipped(path, served_files):
             cur[1] += "\n" + line
     served = set(served_files)
     out = [nodeid for nodeid, reason in skips if nodeid.split("::")[0] not in served and DEPS_SKIP.search(reason)]
+    if others is not None:
+        others.extend([nodeid, reason] for nodeid, reason in skips
+                      if nodeid.split("::")[0] not in served and not DEPS_SKIP.search(reason))
     return list(dict.fromkeys(out)), None
 
 
@@ -3141,16 +3178,20 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             print("sweep %s: %s ..." % (short(sha), name), flush=True)
             run_leg(checkout, name, rec, wraps, ctx, logdir)
             if name == "pytest":
-                ids, why = deps_skipped(rec.get("log"), served_files)
-                rec["deps_skipped"] = {"tests": ids, "count": len(ids), "rule": DEPS_SKIP.pattern} if why is None else {"error": why}
+                unselected = []
+                ids, why = deps_skipped(rec.get("log"), served_files, unselected)
+                rec["deps_skipped"] = ({"tests": ids, "count": len(ids), "rule": DEPS_SKIP.pattern, "unselected": unselected}
+                                       if why is None else {"error": why})
             print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
             changed = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS if name == "deps" else None,
                                        known=known)
             # A4 reads the pytest and served legs' environments too: a leg that changed its venv changed what it, or
             # another run's leg using the same venv, ran in, as a leg that changed the checkout changed the tree later
-            # legs run on. The next run that uses the venv finds it changed and builds it again (_venv_environment).
+            # legs run on. The runner removes the venv's marker then (VenvHold.retire), so the next run that uses it builds
+            # it again whatever the leg wrote into the marker.
             own = {"pytest": hold, SERVED_LEG: served_hold}.get(name)
             moved = own.changes() if own is not None else []
+            unretired = own.retire() if moved else None
             if changed or moved:
                 # A4, the runner's one producer of invalid: a leg changed the checkout, so later legs would not run on
                 # the sha's tree, or its own environment, so it may not have run in what its build installed.
@@ -3158,10 +3199,10 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                 if changed:
                     parts.append("after the %s leg the checkout is not the sha's tree: %s" % (name, describe_faults(changed)))
                 if moved:
-                    parts.append("after the %s leg its environment %s is not the tree its build wrote (%d path%s: %s%s); "
-                                 "the next run that uses it builds it again" % (name, own.venv, len(moved), "" if len(moved) == 1
-                                                                                 else "s", ", ".join(moved[:3]),
-                                                                                 ", ..." if len(moved) > 3 else ""))
+                    parts.append("after the %s leg its environment %s is not the tree its build wrote (%d path%s: %s%s); %s"
+                                 % (name, own.venv, len(moved), "" if len(moved) == 1 else "s", ", ".join(moved[:3]),
+                                    ", ..." if len(moved) > 3 else "", "the next run that uses it builds it again"
+                                    if unretired is None else "%s, so remove the venv by hand" % unretired))
                 run["invalid"] = "; ".join(parts) + "; the legs after it did not run"
                 write_result(path, data)
                 break
@@ -3171,9 +3212,21 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
     finally:
         reap_descendants()
         # The shared locks on the legs' environments are held to here, after the reap, so no rebuild removes a venv while
-        # anything this run started may still be running from it.
+        # anything this run started may still be running from it. A venv whose tree changed, seen after a leg or only now
+        # (something the run started wrote to it after its leg's check), is retired first, under the lock, so the next run
+        # that uses it builds it again.
         for h in (hold, served_hold):
-            if h is not None:
+            if h is None:
+                continue
+            try:
+                late = h.changes()
+                if late:
+                    why = h.retire()
+                    print("sweep %s: %s is not the tree its build wrote (%d path%s: %s%s); %s" % (
+                        short(sha), h.venv, len(late), "" if len(late) == 1 else "s", ", ".join(late[:3]),
+                        ", ..." if len(late) > 3 else "", "the next run that uses it builds it again" if why is None
+                        else "%s, so remove the venv by hand" % why), flush=True)
+            finally:
                 h.release()
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
