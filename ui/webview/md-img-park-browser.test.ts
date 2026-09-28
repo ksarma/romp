@@ -4,7 +4,8 @@
 // data mark on it (VIEWER_PICTURE_MARK, set by file-view.ts imgBlock; PREVIEW_BOX_MARK, set by preview.ts previewFull), never
 // by the box's class, which an author can type. Two surfaces render an author's markdown under
 // the heal: a chat message (marked with the one grammar, then sanitizeMd and the chat's post-pass, as render.ts md() composes
-// them, less the PR-reference walk) and a markdown file the viewer renders in the chat modal (real-viewer-leg.ts, with the
+// them, less the PR-reference walk and the cap pass, capAuthoredFileUrls, which changes nothing here because this leg's page
+// holds no page key) and a markdown file the viewer renders in the chat modal (real-viewer-leg.ts, with the
 // heal and render.ts's romp:wsup line installed before the open). Each carries seven figures whose addresses answer 404 at
 // first: for each box, one inside a wrapper wearing its class (fileview-imgbox, path-full), one wearing that class itself and
 // one inside a wrapper carrying its data mark as an author wrote it, and a plain markdown figure. The sanitizer keeps the
@@ -14,7 +15,9 @@
 // preview box (previewFull) in a message, a picture whose bytes do not decode: its swirl, whose address fails here, and the
 // picture it shows from the fetched bytes listen to nothing, and the heal parks neither. That the viewer's own picture stays
 // the viewer's is file-view-svg-reask-browser.test.ts's claim (the chat modal's probes per kernel message) and
-// md-img-park.test.ts's. Waits are for the figures' own error and load events, never a timer. Skips LOUDLY without a
+// md-img-park.test.ts's. With no page key the addresses this leg parks and heals carry no cap, so it does not exercise the heal
+// under the page key and the caps: tests/test_svg_picture_caps_served.py does (its roads C and H, on a signed-in page). Waits
+// are for the figures' own error and load events, never a timer. Skips LOUDLY without a
 // playwright browser (CI's Test step runs before its Chromium install, so it skips there). Synthetic values only: /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -45,8 +48,9 @@ const figures = (src: (leaf: string) => string): string => [
 const LEAVES = ["wrapped.svg", "classed.svg", "marked.svg", "pf-wrapped.svg", "pf-classed.svg", "pf-marked.svg", "plain.svg"];
 const ALTS = ["wrapped", "classed", "marked", "pf-wrapped", "pf-classed", "pf-marked", "plain"];
 
-/** The chat's renderer, minus the PR-reference walk: the singleton under md-config.ts, then sanitizeMd and the post-pass that
- *  parks a known-failed figure; with the heal and its two drivers, as the chat page has them. */
+/** The chat's renderer, minus the PR-reference walk and the cap pass (capAuthoredFileUrls, which changes nothing with no page
+ *  key): the singleton under md-config.ts, then sanitizeMd and the post-pass that parks a known-failed figure; with the heal and
+ *  its two drivers, as the chat page has them. */
 function chatBundle(): string {
   const contents = [
     'import { marked } from "marked";',

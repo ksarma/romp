@@ -44,7 +44,12 @@ const RELAY_502 = "tunnel to TESTHOST is not answering; re-dialing";
 const SVG_PICTURE_FAILED = "this image failed to load or decode: the connection may have dropped, or the file may be mid-write or truncated";
 const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";
 const REMOTE = "TESTHOST:" + SID;
-/** The picture's /file address for a session: the local route, or the relay's with the bare sid; the key follows. */
+/** The picture's /file address for a session as a page with no page key builds it, with no cap (this leg's page holds no key):
+ *  the local route, or the relay's with the bare sid; the version key follows the sid. The relay route and the version key's
+ *  place in the address are pinned by this leg's no-key address check, not by tests/test_svg_picture_caps_served.py, which is
+ *  the witness only for what it checks: the capped /file address and the load, on the viewer's and the preview's local roads.
+ *  Its cap and version key checks do not depend on order, and this leg's page makes no cap, so neither checks that a signed-in
+ *  page puts the cap before the version key. */
 const address = (sid: string): string => (sid === REMOTE ? "/remote/TESTHOST/file" : "/file") + "?path=" + encodeURIComponent(FIG) + "&sid=" + encodeURIComponent(SID) + "&v=";
 
 type PicMode = "ok" | "bad" | "502" | "refuse" | "hold" | "hold502" | "holdRefuse" | "once502";
@@ -175,9 +180,13 @@ const settled = (page: any): Promise<unknown> => page.waitForFunction(() => {
   const img = body.querySelector("img.fileview-img") as HTMLImageElement | null;
   return !!img && img.complete && img.naturalWidth > 0;
 }, null, { timeout: 10000 });
-/** The property after a road: the picture's src is its /file address, and no object URL was made for the svg. */
+/** The property after a road: the picture's src is its /file address, as a page with no page key builds it (address), and no
+ *  object URL was made for the svg. The relay route and the absence of an object URL are pinned here, by this leg's no-key
+ *  checks, and not by tests/test_svg_picture_caps_served.py: it makes no relay request and does not watch for an object URL
+ *  being made, and it is the witness only for the capped /file address and the load, on the viewer's and the preview's local
+ *  roads under the page key. */
 function onAddress(s: State, sid: string, road: string): void {
-  assert.ok(s.src !== null && s.src.startsWith(address(sid)), road + ": the svg's picture is its /file address, not an object URL; got " + s.src);
+  assert.ok(s.src !== null && s.src.startsWith(address(sid)), road + ": the svg's picture is its /file address as a page with no page key builds it, not an object URL (this leg's no-key check; tests/test_svg_picture_caps_served.py checks only the capped /file address and the load, on the local roads); got " + s.src);
   assert.ok(!s.objectUrls.includes("image/svg+xml"), road + ": no object URL made for the svg: " + JSON.stringify(s.objectUrls));
 }
 /** A kernel message of no kind the way back reads, as the kernel pushes many. */
