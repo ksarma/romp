@@ -1612,13 +1612,14 @@ const RULE_CALLERS = ["onRendered's callback paint", "constructor paint", "onSav
  *  that refile (repaintPreselPass holds the composer's repaint's refile). */
 const CARD_CALLEES = ["settingsFlipped", "toggleInline", "setFilter", "showAbout", "goToArrival", "paintAll", "repaintPresel", "repaintPreselPass"];
 
-test("the card-state rule's writer: the one assignment to the private #cardState is #latchCardState's, #latchCardState's calls are the callers #cardState's doc names with their events, #replaced, the count of what the viewer put up other than a content paint, is written by the seam's onReplaced and a pane's onRendered alone, the callers of the five gestures and of paintAll, repaintPresel and repaintPreselPass, whose refile writes a card's filing, are the ones named here, and file-comments.ts, read by the compiler's own parser, holds no other mention of any of those eight names and none of the doors to code in a string the census lists (eval and Function by name; the identifier constructor; a string literal spelled eval, Function, constructor, setTimeout or setInterval; a timer given anything but a function written in place)", () => {
+test("the card-state rule's writer: the one assignment to the private #cardState is #latchCardState's, #latchCardState's calls are the callers #cardState's doc names with their events, #replaced, the count of what the viewer put up other than a content paint, is written by the seam's onReplaced and a pane's onRendered alone, the callers of the five gestures and of paintAll, repaintPresel and repaintPreselPass, whose refile writes a card's filing, are the ones named here, and file-comments.ts, read by the compiler's own parser, holds no other mention of any of those eight names, no decorator on the declaration of #cardState, #latchCardState or #replaced or on its parameters, and none of the doors to code in a string the census lists (eval and Function by name; the identifier constructor; a string literal spelled eval, Function, constructor, setTimeout or setInterval; a timer given anything but a function written in place)", () => {
   const c = cardStateCensus(PANEL_SRC, CARD_CALLEES);
   assert.equal(c.decls, 1, "one #cardState, the Panel's private field whose doc states the rule");
   assert.deepEqual(c.writes.map((x) => x.fn + ": " + x.text), ["#latchCardState: this.#cardState = Object.freeze({ ...next, painted: Object.freeze(Array.from(this.paintedChanges)) })"],
     "the writer's one assignment is the only assignment to #cardState in the file (#cardState's doc)");
   assert.deepEqual(c.refs, [], "the writer is only ever called, never handed on");
   assert.deepEqual(c.evals, [], "none of the doors to code in a string the census lists is in the file (eval and Function by name; the identifier constructor; a string literal spelled eval, Function, constructor, setTimeout or setInterval; a timer given anything but a function written in place): a direct eval inside the class could write #cardState where no syntax shows it, and any of them can run code that calls a pass on a panel handed to it, so the census refuses them all; it reads none of the other ways a page runs code from a string (writer-census.ts, cardStateCensus's doc)");
+  assert.deepEqual(c.decorators, [], "no decorator on the declaration of #cardState, #latchCardState or #replaced or on its parameters: one on a field is handed access that writes it and one on the writer is handed the writer, so its body, which may sit outside the class, could write the field or call the writer where no syntax in this file shows it (writer-census.ts, cardStateCensus's doc: decorators)");
   assert.deepEqual(c.calls.map((x) => x.fn + " " + x.at).sort(), [...RULE_CALLERS].sort(),
     "the writer's callers, each with its event (#cardState's doc): " + JSON.stringify(c.calls.map((x) => x.fn + " " + x.at + " at " + x.line)));
   assert.deepEqual(c.counts.map((x) => x.fn + ": " + x.text), ["onRendered's callback: this.#replaced++", "onReplaced's callback: this.#replaced++"],
@@ -1635,9 +1636,10 @@ test("the card-state rule's writer: the one assignment to the private #cardState
   // parentheses or .call, a string literal spelled as the name, a decorator on its declaration or its parameters), the name's own
   // declarations aside, is listed apart and held empty below for all eight names, and the doors to code in a string the census
   // lists (eval and Function by name; the identifier constructor; a string literal spelled eval, Function, constructor, setTimeout
-  // or setInterval; a timer given anything but a function written in place) are held empty above. No name computed at run time
-  // (this[k]), no code in another module and none of the other ways a page runs code from a string (a module imported from a data
-  // address, handler attributes or markup, an element whose text runs as code) is read.
+  // or setInterval; a timer given anything but a function written in place) and every decorator on the declaration of #cardState,
+  // #latchCardState or #replaced or on its parameters are held empty above. No name computed at run time (this[k]), no code in
+  // another module and none of the other ways a page runs code from a string, such as a module imported from a data address,
+  // handler attributes or markup, and an element whose text runs as code, is read.
   assert.deepEqual([...c.callers.paintAll].sort(), ["#latchCardState", "applyStatus", "loadColors", "onRendered's callback"],
     "paintAll's four callers: a pane's onRendered, applyStatus's status that does not differ, the colour fetch's repaint (loadColors) and a gesture over anything else (#latchCardState)");
   assert.deepEqual([...c.callers.repaintPresel].sort(), ["closeComposer", "onRegionDrawn", "onRegionDrawn", "restoreRefused", "settleAway", "startChangeComment", "startComment", "startFileComment", "startImageComment", "startReplace", "startReply", "switchToRaw", "switchToRaw"],
@@ -1735,6 +1737,24 @@ test("the card-state census lists these doors to code in a string, whose code no
   assert.throws(() => assert.deepEqual(viaFunction.evals, []), assert.AssertionError, "so the rule's census, which holds the doors empty, reds on the Function constructor");
   assert.throws(() => assert.deepEqual(viaTimer.evals, []), assert.AssertionError, "and on the timer");
   assert.throws(() => assert.deepEqual(decorated.calleeRefs, none), assert.AssertionError, "and the hold on the eight names' other mentions reds on the decorator");
+});
+
+test("the card-state census lists every decorator on the declaration of #cardState, #latchCardState or #replaced or on one of its parameters, each named by the declaration it decorates, and none on another member; so a decorator added to any of the three declarations in file-comments.ts, which the census's other lists do not see, reds the writer case's hold on that list", () => {
+  const src = "class P {\n  @a #cardState: S = x;\n  @b #replaced = 0;\n  @c #latchCardState(@d at: string): void { this.#cardState = y; }\n"
+    + "  @e #other = 1;\n  @f render(@g n = 0): void { this.#latchCardState(\"paint\"); }\n}\n";
+  const c = cardStateCensus(src);
+  assert.deepEqual(c.decorators.map((x) => x.fn + ": " + x.text), ["#cardState: @a", "#replaced: @b", "#latchCardState: @c", "#latchCardState: @d"],
+    "the decorators on the three declarations and on the writer's parameter, each by the declaration it decorates; those on #other, on render and on render's parameter are not listed");
+  // the real file with a decorator added to each of the three declarations in turn
+  const real = cardStateCensus(PANEL_SRC, CARD_CALLEES);
+  assert.deepEqual(real.decorators, [], "the file as it is: nothing listed");
+  for (const [name, at] of [["#cardState", "  #cardState: CardState = "], ["#latchCardState", "  #latchCardState(at: "], ["#replaced", "  #replaced = 0;"]] as const) {
+    assert.equal(PANEL_SRC.split(at).length, 2, "one declaration of " + name + " to decorate");
+    const x = cardStateCensus(PANEL_SRC.replace(at, "  @wrap " + at.slice(2)), CARD_CALLEES);
+    assert.deepEqual({ ...x, decorators: [] }, { ...real, decorators: [] }, "the census's other lists do not see a decorator on " + name + "'s declaration");
+    assert.deepEqual(x.decorators.map((d) => d.fn + ": " + d.text), [name + ": @wrap"], "the decorator on " + name + "'s declaration is listed");
+    assert.throws(() => assert.deepEqual(x.decorators, []), assert.AssertionError, "so the writer case's hold, which keeps that list empty, reds on the decorator on " + name + "'s declaration");
+  }
 });
 
 test("the card-state census lists a door's string literal written as a template with no substitution as it lists a quoted one, a timer's instantiation expression (setTimeout<[string]>, handed on under another name), which is a value and not a type, and a string literal spelled setTimeout, setInterval or constructor; a timer given a function written in place inside parentheses is not listed, as one given it bare is not", () => {

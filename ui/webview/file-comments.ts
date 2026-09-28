@@ -1795,8 +1795,10 @@ class Panel {
    *  callers of those three are named as well. The census (writer-census.ts, cardStateCensus's doc) counts every call whose
    *  callee is the name or a property access ending in it, and lists, to be held empty, every other mention of the name in this
    *  file's code (a bound reference or one handed on, an alias, a destructured name, a call through parentheses or .call, a
-   *  string literal spelled as the name, a decorator on its declaration or its parameters), the name's own declarations aside,
-   *  and these doors to code in a string: eval and Function by name; the identifier constructor; a string literal spelled eval,
+   *  string literal spelled as the name, a decorator on its declaration or its parameters), the name's own declarations aside;
+   *  every decorator on the declaration of #cardState, #latchCardState or #replaced or on its parameters, since one on a field is
+   *  handed access that writes it and one on the writer is handed the writer, from code that may sit outside this class; and
+   *  these doors to code in a string: eval and Function by name; the identifier constructor; a string literal spelled eval,
    *  Function, constructor, setTimeout or setInterval; and a timer given anything but a function written in place. It reads no
    *  name computed at run time (this[k]), no code in another module, and none of the other ways a page runs code from a string,
    *  such as a module imported from a data address, handler attributes or markup, and an element whose text runs as code.
@@ -2121,7 +2123,7 @@ class Panel {
   // (render), never rebuilt.
   live = liveRegion();
   liveFrame: number | null = null;          // the frame that writes the words (speak), until it runs or hush drops it
-  liveSlot: string | null = null;           // the "view:" slot of the row the region's words are for (speak sets it, hush clears it): only that row's retire or ✕ empties the region (notInView)
+  liveSlot: string | null = null;           // the "view:" slot of the row the region's words are for (speak sets it, hush clears it): of the rows' exits, only that row's retire or ✕ empties the region (notInView); the content paint, the next click (speak) and the close (dispose) empty it too
   // persistent composer parts, for the same reason
   composerBox = el("div", "fc-composer");   // in the panel's slot, or inside the card a reply answers (placeComposer)
   composerRef = el("div", "fc-composer-ref");
