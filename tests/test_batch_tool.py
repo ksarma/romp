@@ -312,6 +312,9 @@ class Fixture:
         data = {"schema": sweep.SCHEMA, "sha": sha, "branch": branch, "tree": tree, "started": stamp,
                 "finished": stamp, "legs": legs, "history": [], "red": [], "invalid": None}
         data.update(over)
+        if "runner" not in over:
+            # the leg environment's hash the reader compares (round 1, decision 10)
+            data["runner"] = {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}}
         data.setdefault("verdict", sweep.verdict_of(data))
         path = sweep.result_path(sha, env=self.env)
         sweep.write_result(path, data)
@@ -1728,6 +1731,19 @@ class VerifyReadsTheSweep(_Base):
         with open(sweep.result_path(head, env=fx.env), "w") as f:
             f.write("{")
         self.refused("FAIL sweep unreadable: %s: " % sweep.result_path(head, env=fx.env))
+
+    def test_a_result_recorded_under_another_leg_environment_fails(self):
+        """The allowlist hash is verified (round 1, decision 10): a result recorded under another leg environment policy
+        is not the same gate, so verify fails it by name, as it fails one with no hash at all."""
+        fx = self.fx
+        head = self.assembled()
+        fx.sweep("b1", runner={"leg_env": {"allow": ["USER"], "hash": "0" * 64}})
+        self.refused("FAIL sweep invalid at %s: recorded under another leg environment (hash 000000000000; this reader's is %s"
+                     % (head[:10], sweep.policy_hash()[:12]))
+        fx.sweep("b1", runner={})
+        self.refused("FAIL sweep invalid at %s: recorded under another leg environment (hash none;" % head[:10])
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
 
     def test_without_sweep_py_beside_it_verify_refuses_by_name(self):
         fx = self.fx

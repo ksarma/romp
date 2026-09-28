@@ -11,7 +11,8 @@ sweep of its exact head (docs/batching.md).
 The result is `<state dir>/sweeps/<full sha>.json`, the state dir resolved as bin/romp resolves it
 (ROMP_STATE_DIR, else XDG_STATE_HOME/romp, else ~/.local/state/romp); leg logs go under
 `<state dir>/sweeps/logs/<full sha>/`. Nothing is written in the working tree, and a result names no
-secret: the environment it records is variable NAMES only.
+secret: of the leg environment it records the names it dropped and the values it set itself, never an
+inherited value, and a leg log's header shows each variable by its name only.
 
 The legs, in order (LEGS): deps (`npm ci` when vscode-extension/node_modules is absent), pytest, bats,
 manager and tools (node --test), ledger (scripts/upstream-ledger.py check), and the three webview legs
@@ -19,9 +20,29 @@ manager and tools (node --test), ledger (scripts/upstream-ledger.py check), and 
 merge base with origin/main (CLAUDE.md's webview rule; with no origin/main they are owed). Every leg runs
 even after an earlier one is red, so the result carries every leg's status. A result claims a sha only
 when the tree was clean at the start and HEAD and the tree were unchanged at the end; otherwise the run
-is refused (dirty at the start) or recorded invalid. The leg environment drops every ROMP_*, CLAUDE* and
-GIT_* variable (a session's or a hook's, which CI does not have) and, for the test legs, every
-credential-shaped name; TMPDIR is a fresh short directory under /tmp, removed at the end.
+is refused (dirty at the start) or recorded invalid.
+
+The leg environment is an allowlist (LEG_ALLOW, leg_sets): USER and LOGNAME pass when set, and the runner
+sets everything else. PATH is the pytest interpreter's directory and those of node, npm, bats, git and
+gitleaks, then /usr/bin and /bin; HOME is a private empty directory and XDG_STATE_HOME a private state root
+(session hosts off) under TMPDIR, a fresh short directory under /tmp removed at the end; npm_config_cache and
+PLAYWRIGHT_BROWSERS_PATH point at the shared caches the batcher's environment names; SHELL=/bin/bash,
+LANG=C.UTF-8 and CI=true, as CI's runner has them; every ROMP_*_PORT the tree reads is a dead port (a box
+floor CI does not need); and each leg gets the switches CI sets on the matching step (LEG_ENV), plus the box
+rule's 8 GB heap cap for npm test (NODE_OPTIONS), which CI does not set. So no credential, session identity or
+test-narrowing variable (PYTEST_ADDOPTS, PYTHONPATH, NODE_OPTIONS) of the batcher's shell reaches a leg, and
+no dotfile of the batcher's HOME does (an .npmrc, a git config and its hooks, a shell rc, the live
+deployment's SDK). pytest also runs with `-c /dev/null --rootdir=. --confcutdir=.`, so no pytest.ini or
+conftest.py above the tree configures it. --wrap prefixes run with the runner's environment, and the
+allowlist applies after them (`env -i`), so nothing a wrap sets reaches the leg. What the allowlist does not
+govern: files stay readable at their absolute paths (a credential file, an agent's socket), and every leg can
+read /proc/<pid>/environ of the runner and of every other process of the batcher's user, since the legs run
+as that user. The result records the allowlist's hash (runner.leg_env), and a reader refuses a result
+recorded under another; it also records the versions of node, npm, bats, git and gitleaks the legs found,
+and whether the private HOME was empty at the end.
+
+The pane bench (tests/ui-bench.test.mjs), the Python versions other than --python's, and macOS run only in
+the batch's CI.
 
 A --leg re-run counts only over a known flake: it needs --flake naming it, refuses unless that leg's first run
 at the same sha finished and failed, and runs once per leg. The leg's record keeps both attempts (the re-run's,
@@ -34,6 +55,7 @@ under such wrappers passes them with --wrap. It imports nothing beyond the stand
 import argparse
 import datetime as _dt
 import fcntl
+import hashlib
 import json
 import os
 import random
@@ -60,26 +82,65 @@ EXIT_PASS, EXIT_RED, EXIT_REFUSED, EXIT_INVALID = 0, 1, 2, 3
 WEBVIEW_FILES = ("kernel/kernel.py",)
 WEBVIEW_DIRS = ("ui/", "vscode-extension/")
 
-# CI's pytest flags (.github/workflows/ci.yml, the Run pytest step), plus -p no:anyio (PR 872 puts it on CI).
+# The pytest command the runner builds (pytest_cmd): `<python> -m pytest tests -n <workers>`, then these flags, then
+# PYTEST_ISOLATION and one --ignore per PYTEST_IGNORED entry. Against CI's Run pytest step (.github/workflows/ci.yml,
+# `python -m pytest -q -n <2 or 0> --durations=10 --timeout=600 --timeout-method=thread`, collecting from the root,
+# where test modules live only under tests/) the differences are: -n at this machine's idle cores; -p no:cacheprovider,
+# so nothing is written to a .pytest_cache in the checkout; -p no:anyio (PR 872 puts it on CI); PYTEST_ISOLATION;
+# and the --ignore list. tests/test_sweep_runner.py (CiParity) holds the two sides to exactly these differences.
 PYTEST_FLAGS = ("-q", "-p", "no:cacheprovider", "-p", "no:anyio", "--durations=10", "--timeout=600", "--timeout-method=thread")
+# No pytest.ini or conftest.py above the checkout configures the leg: an empty inifile, the rootdir pinned to the
+# checkout (a bare `-c /dev/null` would move it to /dev), and conftest.py files read from the checkout down only.
+PYTEST_ISOLATION = ("-c", os.devnull, "--rootdir=.", "--confcutdir=.")
 PYTEST_MODULES = ("pytest", "xdist", "pytest_timeout")
 # Test modules the pytest leg never collects, each with its reason (recorded in the result).
 PYTEST_IGNORED = {
     "tests/test_cut_turn_tree_kill.py": ("it runs the real cut-turn reaper on a child of pytest, which inside a romp "
                                          "session can stop the session's own process tree; CI covers it once per batch"),
 }
+# The commands of the deps leg and the three webview legs, all run in vscode-extension/ (CI's extension job runs
+# the same commands there; deps adds --no-audit --no-fund, which change what npm prints, not what it installs).
+DEPS_CMD = ("npm", "ci", "--no-audit", "--no-fund")
+NPM_CMDS = {"typecheck": ("npm", "run", "typecheck"), "npm-test": ("npm", "test"), "build": ("npm", "run", "build")}
 GLOBS = {
     "bats": ("tests/*.bats",),
     "manager": ("tests/manager-*.test.js",),
     "tools": ("tools/*.test.mjs", "vendor/track-changents/hooks/*.test.mjs"),
 }
-# The switches CI sets on the matching steps, so a skip that CI would count as a failure counts here too.
+# The leg environment is an allowlist (leg_env). A leg inherits these names from the runner's environment when they
+# are set, and nothing else: every other variable it sees is one the runner sets (leg_sets), so no credential, session
+# identity, hook variable or test-narrowing name (PYTEST_ADDOPTS, PYTEST_PLUGINS, PYTHONPATH, NODE_OPTIONS) the
+# batcher's shell holds reaches a leg.
+LEG_ALLOW = ("USER", "LOGNAME")
+# The leg's PATH: the directory of the pytest leg's interpreter, then the directory of each of these tools as the
+# runner's PATH finds it, then PATH_FLOOR. The batcher's PATH is not passed on (on a self-hosting box it leads with the
+# live deployment's bin directory and holds a vault tool, neither of which a leg needs).
+PATH_TOOLS = ("node", "npm", "bats", "git", "gitleaks")
+PATH_FLOOR = ("/usr/bin", "/bin")
+# Fixed values, as GitHub's ubuntu runner has them, whatever the batcher's are. CI=true because that runner sets it
+# and pytest reads it (with CI set, its short summary prints each error's message whole).
+LEG_FIXED = {"SHELL": "/bin/bash", "LANG": "C.UTF-8", "CI": "true"}
+# The box floor, which CI does not need: every port variable the tree reads is set to a dead port, so leg code its own
+# suite does not floor cannot reach a live manager, kernel, dashboard or postal bus on this machine (each falls back to
+# the live deployment's port when unset). XDG_STATE_HOME, the state root, is private per run (leg_sets).
+# tests/test_sweep_runner.py's census derives the port names from the tree: each is here or in PORT_DEFAULTS.
+PORT_FLOOR = {"ROMP_MANAGER_PORT": "1", "ROMP_KERNEL_PORT": "1", "ROMP_SERVE_PORT": "1", "ROMP_POSTAL_PORT": "1"}
+# Port variables the floor need not set, each with the floored variable it defaults to.
+PORT_DEFAULTS = {"ROMP_REMOTE_KERNEL_PORT": "ROMP_KERNEL_PORT"}
+# Per leg: the switches CI sets on the matching steps (the served-page step's two for pytest, the Run bats step's two
+# for bats), so a skip that CI would count as a failure counts here too; and the box rule's heap cap for npm test, a
+# difference from CI, which sets none.
 LEG_ENV = {
-    "pytest": {"ROMP_SERVED_TESTS_REQUIRE": "1"},
+    "pytest": {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"},
     "bats": {"BATS_TEST_TIMEOUT": "180", "ROMP_GITLEAKS_REQUIRE": "1"},
+    "npm-test": {"NODE_OPTIONS": "--max-old-space-size=8192"},
 }
-DROP_ALWAYS = re.compile(r"^(ROMP_|CLAUDE|GIT_)")
-DROP_CREDENTIAL = re.compile(r"key|token|secret", re.IGNORECASE)
+# The allowlist applies after --wrap: argv is the wrap, then `env -i NAME=VALUE ...`, then the leg's command, so the
+# wrap runs with the runner's environment and nothing it sets reaches the leg.
+ENV_BIN = "/usr/bin/env"
+# The tools whose versions a result records (found on the leg's PATH), with the argument that prints the version.
+TOOL_VERSION_ARGS = (("node", "--version"), ("npm", "--version"), ("bats", "--version"), ("git", "--version"),
+                     ("gitleaks", "version"))
 # git's repository-location variables: the runner's own git calls act on --tree, never on an inherited
 # GIT_DIR (a hook's environment carries one).
 GIT_LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -343,6 +404,12 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
     if reruns:
         return done("invalid", "sweep invalid at %s: %s; a --leg re-run counts only over a recorded first failure named as a "
                                "known flake, at the same full sha; sweep again" % (short(sha), "; ".join(reruns)), data)
+    recorded = recorded_hash(data)
+    if recorded != policy_hash():
+        return done("invalid", "sweep invalid at %s: recorded under another leg environment (hash %s; this reader's is %s: "
+                               "another scripts/sweep.py's allowlist or set values), so it is not this gate; sweep again with "
+                               "this checkout's scripts/sweep.py" % (short(sha), str(recorded)[:12] if recorded else "none",
+                                                                     policy_hash()[:12]), data)
     recomputed = verdict_of(data)
     if recomputed == "running":
         ran = [name for name in LEGS if legs[name].get("finished")]
@@ -387,15 +454,141 @@ def dirty_paths(tree):
     return [line[3:] for line in out.stdout.splitlines() if line.strip()]
 
 
-def leg_env(leg, tmpdir, base=None):
-    """(the environment for `leg`, the names dropped, the values set). Names only are recorded, never values."""
+def npm_cache(env):
+    """The npm cache as the batcher's environment resolves it: npm_config_cache (either case), else ~/.npm."""
+    for k in ("npm_config_cache", "NPM_CONFIG_CACHE"):
+        if env.get(k):
+            return env[k]
+    return os.path.join(env.get("HOME") or os.path.expanduser("~"), ".npm")
+
+
+def browsers_path(env):
+    """Playwright's browser cache as the batcher's environment resolves it: PLAYWRIGHT_BROWSERS_PATH, else the
+    platform's default (~/Library/Caches on macOS, XDG_CACHE_HOME or ~/.cache elsewhere) plus ms-playwright."""
+    if env.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return env["PLAYWRIGHT_BROWSERS_PATH"]
+    home = env.get("HOME") or os.path.expanduser("~")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Caches", "ms-playwright")
+    return os.path.join(env.get("XDG_CACHE_HOME") or os.path.join(home, ".cache"), "ms-playwright")
+
+
+def build_path(python, env):
+    """The leg's PATH: the pytest interpreter's directory, each PATH_TOOLS tool's directory as the runner's PATH finds
+    it (a tool not found adds nothing), then PATH_FLOOR, each directory once."""
+    search = env.get("PATH", "")
+    exe = python if os.sep in python else (shutil.which(python, path=search) or "")
+    dirs = [os.path.dirname(os.path.abspath(exe))] if exe else []
+    for tool in PATH_TOOLS:
+        hit = shutil.which(tool, path=search)
+        if hit:
+            dirs.append(os.path.dirname(hit))
+    return os.pathsep.join(dict.fromkeys(dirs + list(PATH_FLOOR)))
+
+
+def leg_context(tmpdir, python, env=None):
+    """The per-run values the leg environment is built from: TMPDIR, the private HOME and state root under it (both
+    removed with it), the shared npm and Playwright caches as the batcher's environment resolves them, and PATH."""
+    env = os.environ if env is None else env
+    return {"tmpdir": tmpdir, "home": os.path.join(tmpdir, "home"), "xdg": os.path.join(tmpdir, "xdg-state"),
+            "npm_cache": npm_cache(env), "browsers": browsers_path(env), "path": build_path(python, env)}
+
+
+def leg_sets(leg, ctx):
+    """{name: value} the runner sets for `leg`: PATH, the private HOME and XDG_STATE_HOME, TMPDIR, the two shared caches
+    (a private HOME has none), LEG_FIXED, PORT_FLOOR and the leg's LEG_ENV."""
+    sets = {"PATH": ctx["path"], "HOME": ctx["home"], "TMPDIR": ctx["tmpdir"], "XDG_STATE_HOME": ctx["xdg"],
+            "npm_config_cache": ctx["npm_cache"], "PLAYWRIGHT_BROWSERS_PATH": ctx["browsers"]}
+    sets.update(LEG_FIXED)
+    sets.update(PORT_FLOOR)
+    sets.update(LEG_ENV.get(leg, {}))
+    return sets
+
+
+def leg_env(leg, ctx, base=None):
+    """(the environment for `leg`, the names dropped, the values set): LEG_ALLOW's names from `base` (the runner's
+    environment) when set, then leg_sets. The result records the dropped names and the set values, never an
+    inherited value."""
     base = dict(os.environ if base is None else base)
-    dropped = sorted(k for k in base if DROP_ALWAYS.match(k) or (leg in TEST_LEGS and DROP_CREDENTIAL.search(k)))
-    env = {k: v for k, v in base.items() if k not in dropped}
-    extra = dict(LEG_ENV.get(leg, {}))
-    extra["TMPDIR"] = tmpdir
-    env.update(extra)
-    return env, dropped, extra
+    env = {k: base[k] for k in LEG_ALLOW if base.get(k)}
+    sets = leg_sets(leg, ctx)
+    dropped = sorted(k for k in base if k not in env and k not in sets)
+    env.update(sets)
+    return env, dropped, sets
+
+
+def _tokenized(value, ctx):
+    """A set value with its per-run and per-machine parts named instead: PATH and the two caches whole, and every
+    value under TMPDIR (TMPDIR, HOME, XDG_STATE_HOME) by its path below it."""
+    for key, token in (("path", "<PATH>"), ("npm_cache", "<NPM_CACHE>"), ("browsers", "<BROWSERS>")):
+        if value == ctx[key]:
+            return token
+    t = ctx["tmpdir"]
+    if value == t or value.startswith(t + os.sep):
+        return "<TMPDIR>" + value[len(t):]
+    return value
+
+
+def leg_env_hash(ctx):
+    """sha256 over the allowed names and, per leg, the sorted NAME=VALUE pairs the runner sets, each value
+    tokenized (_tokenized): it identifies the runner's allowlist and set values, which depend only on its code, and
+    not on the machine, the batcher's environment or the run."""
+    doc = {"allow": sorted(LEG_ALLOW),
+           "set": {leg: sorted("%s=%s" % (k, _tokenized(v, ctx)) for k, v in leg_sets(leg, ctx).items()) for leg in LEGS}}
+    return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def policy_hash():
+    """The leg environment hash this runner records, computed over placeholder values: what a reader compares a
+    result's recorded hash with (a result made under another allowlist or other set values is not the same gate)."""
+    t = os.path.join(os.sep + "nonexistent", TMPDIR_PREFIX + "0" * TMPDIR_TAIL)
+    return leg_env_hash({"tmpdir": t, "home": os.path.join(t, "home"), "xdg": os.path.join(t, "xdg-state"),
+                         "npm_cache": os.sep + "nonexistent-npm-cache", "browsers": os.sep + "nonexistent-browsers",
+                         "path": os.sep + "nonexistent-path"})
+
+
+def recorded_hash(result):
+    """The leg environment hash a result records (runner.leg_env.hash), or None when it records none."""
+    runner = result.get("runner")
+    leg_env_rec = runner.get("leg_env") if isinstance(runner, dict) else None
+    h = leg_env_rec.get("hash") if isinstance(leg_env_rec, dict) else None
+    return h if isinstance(h, str) else None
+
+
+def prepare_home(ctx):
+    """The private HOME (empty) and the private state root, with session hosts off in its romp directory (the
+    runner's own floor for leg code that starts a backend over the default state dir)."""
+    os.mkdir(ctx["home"], 0o700)
+    os.makedirs(os.path.join(ctx["xdg"], "romp"), mode=0o700)
+    with open(os.path.join(ctx["xdg"], "romp", "session-hosts"), "w") as f:
+        f.write("off\n")
+
+
+def home_left(ctx):
+    """The names a run left in the private HOME, sorted (empty: the HOME was empty at the end)."""
+    try:
+        return sorted(os.listdir(ctx["home"]))
+    except OSError:
+        return []
+
+
+def tool_versions(ctx):
+    """{tool: {"path", "version"}} for TOOL_VERSION_ARGS, each found on the leg's PATH and run in a leg's environment;
+    a tool not found records path None. Recorded only: versions differ by machine legitimately."""
+    env, _dropped, _sets = leg_env("tools", ctx)
+    out = {}
+    for tool, arg in TOOL_VERSION_ARGS:
+        path = shutil.which(tool, path=ctx["path"])
+        rec = {"path": path, "version": None}
+        if path:
+            try:
+                p = subprocess.run([path, arg], env=env, cwd=ctx["tmpdir"], text=True, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+                rec["version"] = (p.stdout.strip().splitlines() or [""])[0][:200]
+            except (OSError, subprocess.SubprocessError) as e:
+                rec["error"] = str(e)[:200]
+        out[tool] = rec
+    return out
 
 
 def expand(tree, patterns):
@@ -466,7 +659,8 @@ def parse_wraps(values):
 
 
 def pytest_cmd(python, workers):
-    return [python, "-m", "pytest", "tests", "-n", str(workers), *PYTEST_FLAGS, *("--ignore=%s" % p for p in sorted(PYTEST_IGNORED))]
+    return [python, "-m", "pytest", "tests", "-n", str(workers), *PYTEST_FLAGS, *PYTEST_ISOLATION,
+            *("--ignore=%s" % p for p in sorted(PYTEST_IGNORED))]
 
 
 def plan_legs(tree, python, workers, webview):
@@ -482,7 +676,7 @@ def plan_legs(tree, python, workers, webview):
             elif os.path.lexists(node_modules):
                 rec.update(owed=False, why="vscode-extension/node_modules present%s" % (" (a symlink)" if os.path.islink(node_modules) else ""))
             else:
-                rec.update(cmd=["npm", "ci", "--no-audit", "--no-fund"], cwd="vscode-extension",
+                rec.update(cmd=list(DEPS_CMD), cwd="vscode-extension",
                            why="vscode-extension/node_modules absent")
         elif name == "pytest":
             rec.update(cmd=pytest_cmd(python, workers), cwd=".", ignored=dict(PYTEST_IGNORED))
@@ -498,7 +692,7 @@ def plan_legs(tree, python, workers, webview):
             else:
                 rec.update(owed=False, why="no scripts/upstream-ledger.py in the tree")
         else:
-            npm = {"typecheck": ["npm", "run", "typecheck"], "npm-test": ["npm", "test"], "build": ["npm", "run", "build"]}[name]
+            npm = list(NPM_CMDS[name])
             if webview["owed"]:
                 rec.update(cmd=npm, cwd="vscode-extension", why=webview["why"])
             else:
@@ -566,10 +760,17 @@ def summarize_log(name, path):
     return None
 
 
-def run_leg(tree, name, rec, wraps, tmpdir, logdir):
+def leg_argv(wrap, env, cmd, shown=False):
+    """The leg's argv: the wrap, then `env -i` with every pair of `env`, then the command. `shown` writes each pair as
+    NAME=... for the log's header, which records no value of the leg's environment."""
+    pairs = ["%s=..." % k if shown else "%s=%s" % (k, env[k]) for k in sorted(env)]
+    return list(wrap or []) + [ENV_BIN, "-i"] + pairs + list(cmd)
+
+
+def run_leg(tree, name, rec, wraps, ctx, logdir):
     """Run one owed leg and fill in its record. A glob that matched nothing, a cwd that does not exist or a
     command that cannot start leaves rc empty with the reason in `error`: the leg is red, never run bare."""
-    env, dropped, extra = leg_env(name, tmpdir)
+    env, dropped, extra = leg_env(name, ctx)
     wrap = wraps.get(name, wraps.get("*"))
     stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log = os.path.join(logdir, "%s.%s.log" % (name, stamp))
@@ -584,12 +785,14 @@ def run_leg(tree, name, rec, wraps, tmpdir, logdir):
     elif not os.path.isdir(cwd):
         rec["error"] = "no directory %s in the tree" % rec.get("cwd")
     else:
-        argv = (wrap or []) + rec["cmd"]
+        argv = leg_argv(wrap, env, rec["cmd"])
         try:
             with open(log, "w") as out:
-                out.write("# leg: %s\n# cwd: %s\n# argv: %s\n" % (name, cwd, " ".join(shlex.quote(a) for a in argv)))
+                out.write("# leg: %s\n# cwd: %s\n# argv: %s\n" % (
+                    name, rec.get("cwd") or ".", " ".join(shlex.quote(a) for a in leg_argv(wrap, env, rec["cmd"], shown=True))))
                 out.flush()
-                p = subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
+                # The wrap (or env itself) runs with the runner's environment; the leg gets exactly `env`.
+                p = subprocess.run(argv, cwd=cwd, env=dict(os.environ), stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
             rec["rc"] = p.returncode
         except OSError as e:
             rec["error"] = "could not start: %s" % e
@@ -680,6 +883,10 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
             raise Refused("the result at %s is not a complete record of %s; run the full sweep" % (path, short(sha)))
         if result.get("invalid"):
             raise Refused("the result at %s is invalid (%s); run the full sweep" % (short(sha), result["invalid"]))
+        recorded = recorded_hash(result)
+        if recorded != policy_hash():
+            raise Refused("the result at %s was recorded under another leg environment (hash %s, this runner's %s), so a "
+                          "re-run here would mix two; run the full sweep" % (short(sha), str(recorded)[:12], policy_hash()[:12]))
         if not result.get("finished"):
             raise Refused("the sweep at %s has not finished, so its first run's failures are not all recorded; wait for it or "
                           "run the full sweep" % short(sha))
@@ -724,6 +931,10 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
     tmpdir = make_tmpdir()
     result["runner"]["tmpdir"] = tmpdir
     try:
+        ctx = leg_context(tmpdir, python)
+        prepare_home(ctx)
+        result["runner"]["leg_env"] = {"allow": list(LEG_ALLOW), "hash": leg_env_hash(ctx)}
+        result["runner"]["tools"] = tool_versions(ctx)
         write_result(path, result)
         for name in LEGS:
             if only and name not in only:
@@ -732,9 +943,11 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
             if not is_owed(name, rec):
                 continue
             print("sweep %s: %s ..." % (short(sha), name), flush=True)
-            run_leg(tree, name, rec, wraps, tmpdir, logdir)
+            run_leg(tree, name, rec, wraps, ctx, logdir)
             print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
             write_result(path, result)
+        left = home_left(ctx)
+        result["runner"].update(home_empty=not left, home_left=left[:20])
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
     head = git(tree, "rev-parse", "HEAD")
@@ -776,7 +989,9 @@ def main(argv=None):
                                                             % (WORKERS_MIN, WORKERS_MAX))
     p.add_argument("--wrap", action="append", metavar="LEG=PREFIX",
                    help="a command prefix for that leg's argv (shlex-split); * means every leg, and a leg's own prefix "
-                        "replaces * for it; the recorded rc is the wrapper's")
+                        "replaces * for it; the recorded rc is the wrapper's. The prefix runs with this runner's "
+                        "environment and the leg's allowlisted environment applies after it, so nothing it sets reaches "
+                        "the leg")
     p.add_argument("--leg", action="append", metavar="NAME",
                    help="re-run only this leg over the existing result at the same sha, after its first run failed on a known "
                         "flake (needs --flake; once per leg; the first failure is kept in the leg's record and the history); "

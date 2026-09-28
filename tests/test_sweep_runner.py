@@ -17,6 +17,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -51,7 +52,7 @@ PYTEST_LEG = sweep.LEGS[1]
 assert PYTEST_LEG == "pytest", sweep.LEGS
 
 FAKE = r'''#!%(python)s
-import json, os, shutil, subprocess, sys
+import glob, json, os, shutil, subprocess, sys
 name = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 # The control and log paths are written into this file when the World makes it, never read from the environment:
@@ -61,6 +62,9 @@ ctl = json.load(open(CTL)) if os.path.exists(CTL) else {}
 if name == "python" and args[:1] == ["-c"]:
     print(ctl.get("probe_version", "3.99.0"))
     print(" ".join(ctl.get("missing", [])))
+    sys.exit(0)
+if args in (["--version"], ["version"]):     # the runner's tool version record; not a leg
+    print(name + " 0.0.0-fake")
     sys.exit(0)
 if name == "python":
     leg = "pytest"
@@ -72,10 +76,21 @@ elif name == "upstream-ledger.py":
     leg = "ledger"
 else:
     leg = name
-keep = ("TMPDIR", "SWEEP_WRAPPED", "ROMP_SERVED_TESTS_REQUIRE", "ROMP_GITLEAKS_REQUIRE", "BATS_TEST_TIMEOUT")
+keep = ("TMPDIR", "HOME", "PATH", "SHELL", "LANG", "CI", "USER", "LOGNAME", "XDG_STATE_HOME", "npm_config_cache",
+        "PLAYWRIGHT_BROWSERS_PATH", "NODE_OPTIONS", "SWEEP_WRAPPED", "ROMP_SERVED_TESTS_REQUIRE", "ROMP_SERVED_TESTS_ENGINES",
+        "ROMP_GITLEAKS_REQUIRE", "BATS_TEST_TIMEOUT", "ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT",
+        "ROMP_POSTAL_PORT")
+marker = ctl.get("marker")
+home = os.path.expanduser("~")
+hosts = os.path.join(os.environ.get("XDG_STATE_HOME", "/nonexistent"), "romp", "session-hosts")
 with open(LOG, "a") as f:
     f.write(json.dumps({"leg": leg, "argv": args, "cwd": os.getcwd(), "names": sorted(os.environ),
-                        "values": {k: os.environ[k] for k in keep if k in os.environ}}) + "\n")
+                        "values": {k: os.environ[k] for k in keep if k in os.environ},
+                        # the names whose value carries the test's marker, and what the batcher's HOME would hand a leg
+                        "marked": sorted(k for k, v in os.environ.items() if marker and marker in v),
+                        "home_files": sorted(n for n in (".npmrc", ".gitconfig", ".zshenv") if os.path.exists(os.path.join(home, n))),
+                        "sdk": glob.glob(os.path.join(home, ".local", "state", "romp", "sdkvenv", "lib", "*", "site-packages")),
+                        "hosts": open(hosts).read() if os.path.exists(hosts) else None}) + "\n")
 act = ctl.get("action", {}).get(leg)
 if act == "commit":
     subprocess.run(["git", "-C", ctl["tree"], "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null",
@@ -86,12 +101,43 @@ elif act == "copy-result":
 elif act == "leak":
     with open(os.path.join(ctl["tree"], "leaked.txt"), "w") as f:
         f.write("a test that wrote into the tree\n")
+elif act == "home":
+    with open(os.path.join(home, ".leftover"), "w") as f:
+        f.write("a test that wrote into HOME\n")
 # What each test leg's real tool prints at the end of a run (pytest -q's summary, bats' TAP, node's TAP summary):
 # the runner counts the tests a leg ran from its log, and a test leg with rc 0 and no test counted is red.
 out = {"pytest": "3 passed in 0.01s\n", "bats": "1..1\nok 1 a\n", "manager": "# pass 1\n# fail 0\n",
        "tools": "# pass 2\n# fail 0\n", "npm-test": "# pass 4\n# fail 0\n"}
 sys.stdout.write(ctl.get("out", {}).get(leg, out.get(leg, "")))
 sys.exit(ctl.get("rc", {}).get(leg, 0))
+'''
+
+# A --wrap prefix for the tests: records its tag, the leg it wraps (told apart as FAKE tells its legs apart) and its own
+# environment's names, then runs the rest of its argv (`env -i ...` and the leg's command).
+WRAPPER = r'''#!%(python)s
+import json, os, re, sys
+LOG = %(log)r
+tag, rest = sys.argv[1], sys.argv[2:]
+cmd = list(rest)
+if cmd[:2] == ["/usr/bin/env", "-i"]:
+    cmd = cmd[2:]
+    while cmd and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", cmd[0]):
+        cmd = cmd[1:]
+name, args = (os.path.basename(cmd[0]), cmd[1:]) if cmd else ("", [])
+if "scripts/upstream-ledger.py" in args:
+    leg = "ledger"
+elif name.startswith("python"):
+    leg = "pytest"
+elif name == "npm":
+    leg = {"ci": "deps", "test": "npm-test", "run": {"typecheck": "typecheck", "build": "build"}.get(args[1] if len(args) > 1 else "")}.get(args[0] if args else "")
+elif name == "node":
+    leg = "manager" if any(a.startswith("tests/manager-") for a in args) else "tools"
+else:
+    leg = name
+with open(LOG, "a") as f:
+    f.write(json.dumps({"tag": tag, "leg": leg, "names": sorted(os.environ),
+                        "values": {k: os.environ[k] for k in ("XDG_RUNTIME_DIR", "HOME") if k in os.environ}}) + "\n")
+os.execvp(rest[0], rest)
 '''
 
 SEED = {
@@ -118,12 +164,17 @@ class World:
         self.xdg = os.path.join(self.tmp, "xdg")
         self.ctl_path = os.path.join(self.tmp, "ctl.json")
         self.log_path = os.path.join(self.tmp, "fake.log")
+        self.wrap_log = os.path.join(self.tmp, "wrap.log")
         os.makedirs(self.bin)
         fake = FAKE % {"python": sys.executable, "ctl": self.ctl_path, "log": self.log_path}
         for name in ("python", "npm", "node", "bats"):
             with open(os.path.join(self.bin, name), "w") as f:
                 f.write(fake)
             os.chmod(os.path.join(self.bin, name), 0o755)
+        self.wrapper = os.path.join(self.bin, "wrapper")
+        with open(self.wrapper, "w") as f:
+            f.write(WRAPPER % {"python": sys.executable, "log": self.wrap_log})
+        os.chmod(self.wrapper, 0o755)
         self.python = os.path.join(self.bin, "python")
         self.env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ.get("PATH", ""), XDG_STATE_HOME=self.xdg,
                         GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0",
@@ -188,6 +239,12 @@ class World:
 
     def legs_called(self):
         return [c["leg"] for c in self.calls()]
+
+    def wraps(self):
+        if not os.path.exists(self.wrap_log):
+            return []
+        with open(self.wrap_log) as f:
+            return [json.loads(line) for line in f]
 
     def run(self, *extra, env=None, check=None):
         p = subprocess.run([sys.executable, str(SWEEP), "run", "--tree", self.tree, "--python", self.python, "--workers", "2", *extra],
@@ -344,53 +401,44 @@ class Runner(_Base):
         self.assertEqual(w.calls(), [])
         w.run(check=0)
 
-    def test_the_pytest_leg_drops_session_git_and_credential_variables(self):
+    def test_the_pytest_leg_gets_the_short_tmpdir_and_its_command(self):
+        """The pytest leg's TMPDIR is the box rule's short shape and is gone after the run; its command is CI's with the
+        runner's named differences (CiParity holds the two to them); an inherited GIT_DIR does not move the runner's own
+        git calls."""
         w = self.w
-        env = dict(w.env, ROMP_SID=SID, CLAUDE_CODE_SESSION_ID=SID, GIT_DIR=os.path.join(w.tmp, "no-such-git-dir"),
-                   SWEEP_PROBE_TOKEN="plain")
+        env = dict(w.env, GIT_DIR=os.path.join(w.tmp, "no-such-git-dir"))
         w.run(env=env, check=0)
         call = [c for c in w.calls() if c["leg"] == "pytest"][0]
-        for name in ("ROMP_SID", "CLAUDE_CODE_SESSION_ID", "GIT_DIR", "SWEEP_PROBE_TOKEN", "GIT_CONFIG_GLOBAL"):
-            self.assertNotIn(name, call["names"], "the pytest leg inherits %s" % name)
-        self.assertFalse([n for n in call["names"] if sweep.DROP_CREDENTIAL.search(n)], "a credential-shaped name reaches pytest")
-        ledger = [c for c in w.calls() if c["leg"] == "ledger"][0]
-        self.assertIn("SWEEP_PROBE_TOKEN", ledger["names"], "only the test legs drop credential-shaped names")
-        self.assertNotIn("ROMP_SID", ledger["names"])
         tmpdir = call["values"]["TMPDIR"]
         self.assertLessEqual(len(os.fsencode(tmpdir)), len(BOX_TMPDIR_TEMPLATE), tmpdir)
         self.assertNotRegex(tmpdir, r"-[A-Za-z]", "a letter after the dash spells a short option")
         self.assertFalse(os.path.exists(tmpdir), "the runner removes its TMPDIR")
-        self.assertEqual(call["values"]["ROMP_SERVED_TESTS_REQUIRE"], "1")
         argv = call["argv"]
         self.assertEqual(" ".join(argv[:4]), "-m pytest tests -n")
         self.assertIn("no:anyio", argv)
         self.assertIn("--ignore=tests/test_cut_turn_tree_kill.py", argv)
-        r = w.result()
-        rec = r["legs"]["pytest"]
-        self.assertIn("ROMP_SID", rec["env_dropped"])
-        self.assertIn("SWEEP_PROBE_TOKEN", rec["env_dropped"])
-        self.assertNotIn(SID, json.dumps(r), "the result records variable names, never values")
-        self.assertNotIn("plain", json.dumps(rec["env_dropped"]))
-        self.assertEqual(r["sha"], w.head(), "an inherited GIT_DIR does not move the runner's own git calls")
+        self.assertEqual(w.result()["sha"], w.head(), "an inherited GIT_DIR does not move the runner's own git calls")
 
     def test_a_wrap_prefixes_one_leg_and_its_rc_is_the_legs(self):
+        """A leg's own --wrap prefix replaces * for it, and the recorded rc is the wrapper's. The wrap runs with the
+        runner's environment and the allowlist applies after it, so a variable the wrap sets does not reach the leg."""
         w = self.w
-        w.run("--wrap", "pytest=env SWEEP_WRAPPED=1", check=0)
+        w.run("--wrap", "pytest=%s pytest-only" % w.wrapper, "--wrap", "bats=env SWEEP_WRAPPED=1", check=0)
+        self.assertEqual([c["tag"] for c in w.wraps()], ["pytest-only"], "the pytest prefix wrapped the pytest leg alone")
         by_leg = {c["leg"]: c for c in w.calls()}
-        self.assertEqual(by_leg["pytest"]["values"].get("SWEEP_WRAPPED"), "1")
-        self.assertNotIn("SWEEP_WRAPPED", by_leg["bats"]["values"])
+        self.assertNotIn("SWEEP_WRAPPED", by_leg["bats"]["names"], "a variable the wrap sets does not reach the leg")
         r = w.result()
-        self.assertEqual(r["legs"]["pytest"]["wrap"], ["env", "SWEEP_WRAPPED=1"])
-        self.assertIsNone(r["legs"]["bats"]["wrap"])
+        self.assertEqual(r["legs"]["pytest"]["wrap"], [w.wrapper, "pytest-only"])
+        self.assertIsNone(r["legs"]["manager"]["wrap"])
         w2 = World()
         self.addCleanup(w2.close)
-        w2.run("--wrap", "*=env SWEEP_WRAPPED=star", "--wrap", 'bats=sh -c "exit 7" --', check=1)
+        w2.run("--wrap", "*=%s star" % w2.wrapper, "--wrap", 'bats=sh -c "exit 7" --', check=1)
         r2 = w2.result()
         self.assertEqual(r2["legs"]["bats"]["rc"], 7, "the recorded rc is the wrapper's")
         self.assertEqual(r2["red"], ["bats"])
-        self.assertEqual({c["leg"]: c["values"].get("SWEEP_WRAPPED") for c in w2.calls()}.get("pytest"), "star",
-                         "* applies to a leg with no prefix of its own")
+        self.assertIn("pytest", [c["leg"] for c in w2.calls()], "* applies to a leg with no prefix of its own")
         self.assertNotIn("bats", w2.legs_called(), "the leg's own prefix replaced *")
+        self.assertNotIn("bats", [c["leg"] for c in w2.wraps()])
 
     def test_a_wrap_that_runs_nothing_is_red_not_a_pass(self):
         """A wrapper that exits 0 without running its command (`true`; `systemd-run --user` without --wait, which
@@ -504,6 +552,21 @@ class Runner(_Base):
         p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
         self.assertIn("pytest has no finished first run at %s to re-run" % w.head()[:10], p.stderr)
 
+    def test_a_leg_rerun_over_a_result_recorded_under_another_leg_environment_is_refused(self):
+        """A re-run would mix two leg environments in one result (decision 10: a result made under another environment
+        policy is not the same gate), so it is refused and the full sweep named."""
+        w = self.w
+        w.ctl({"rc": {"pytest": 1}})
+        w.run(check=1)
+        data = w.result()
+        data["runner"]["leg_env"] = {"allow": ["USER"], "hash": "0" * 64}
+        sweep.write_result(w.result_path(), data)
+        before = len(w.calls())
+        p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
+        self.assertIn("was recorded under another leg environment (hash 000000000000, this runner's %s)" % sweep.policy_hash()[:12],
+                      p.stderr)
+        self.assertEqual(len(w.calls()), before, "nothing ran")
+
     def test_an_empty_glob_is_a_red_leg_not_a_bare_run(self):
         seed = dict(SEED)
         del seed["tests/a.bats"]
@@ -546,6 +609,401 @@ class Runner(_Base):
         self.assertIn("ok   sweep at %s: pass" % w.head()[:10], p.stdout)
 
 
+# The keys of leg_context, with placeholder values: leg_sets' NAMES do not depend on them.
+CTX_SHAPE = {k: "/nonexistent/" + k for k in ("tmpdir", "home", "xdg", "npm_cache", "browsers", "path")}
+
+
+class LegEnvironment(_Base):
+    """Round 1, Class B: the leg environment is an allowlist. A leg inherits LEG_ALLOW's names and nothing else; the
+    runner sets the rest (a built PATH, a private HOME and state root, the shared caches, CI's fixed values, the box
+    floor's dead ports, the leg's CI switches). The wrap runs with the runner's environment and the allowlist applies
+    after it; a log header names each variable without its value; the result records the allowlist's hash, which a
+    reader compares with its own."""
+
+    def all_legs_world(self):
+        """The world's head changes kernel/kernel.py, so the webview legs are owed and all nine legs run."""
+        self.w.change({"kernel/kernel.py": "VERSION = 2\n"})
+        return self.w
+
+    def batcher_home(self):
+        home = os.path.join(self.w.tmp, "batcher-home")
+        os.makedirs(home)
+        return home
+
+    def test_no_credential_session_or_narrowing_name_reaches_any_leg(self):
+        w = self.all_legs_world()
+        marker = "-".join(("sweep", "mark"))
+        names = ("OPENAI_API_KEY", "HF_TOKEN", "RCLONE_CONFIG_R2_SECRET_ACCESS_KEY", "SWEEP_DB_PASSWORD", "PGPASSWORD",
+                 "GITHUB_PAT", "NPM_CONFIG__AUTH", "OP_SESSION_sweep", "SSH_AUTH_SOCK", "AWS_SESSION_TOKEN", "ROMP_SID",
+                 "CLAUDE_CODE_SESSION_ID", "GIT_SWEEP_MARK")
+        planted = {n: "%s-%d" % (marker, i) for i, n in enumerate(names)}
+        narrowing = {"PYTEST_ADDOPTS": "-k nothing_at_all", "PYTEST_PLUGINS": "no_such_plugin", "PYTEST_CURRENT_TEST": "t",
+                     "PYTHONPATH": os.path.join(w.tmp, "shadow"), "NODE_OPTIONS": "--no-such-flag"}
+        w.ctl({"marker": marker})
+        w.run(env=dict(w.env, **planted, **narrowing), check=0)
+        calls = w.calls()
+        self.assertEqual(sorted(c["leg"] for c in calls), sorted(sweep.LEGS), "all nine legs ran")
+        for c in calls:
+            with self.subTest(leg=c["leg"]):
+                self.assertEqual(c["marked"], [], "a planted value reached the leg")
+                allowed = set(sweep.LEG_ALLOW) | set(sweep.leg_sets(c["leg"], CTX_SHAPE))
+                self.assertEqual(sorted(set(c["names"]) - allowed), [], "only allowlisted and runner-set names reach a leg")
+                for n in sorted(set(narrowing) - {"NODE_OPTIONS"}):
+                    self.assertNotIn(n, c["names"])
+                self.assertNotEqual(c["values"].get("NODE_OPTIONS"), narrowing["NODE_OPTIONS"])
+                self.assertEqual("NODE_OPTIONS" in c["names"], c["leg"] == "npm-test", "only npm test gets the heap cap")
+        r = w.result()
+        self.assertIn("OPENAI_API_KEY", r["legs"]["deps"]["env_dropped"])
+        self.assertIn("PYTEST_ADDOPTS", r["legs"]["pytest"]["env_dropped"])
+        self.assertNotIn(marker, json.dumps(r), "the result records names, never an inherited value")
+
+    def test_every_leg_carries_the_floor_and_the_fixed_values_whatever_the_runners(self):
+        w = self.all_legs_world()
+        # a directory ahead of the tools on the batcher's PATH, holding what a leg never needs (a live deployment's bin)
+        decoy = os.path.join(w.tmp, "live-bin")
+        os.makedirs(decoy)
+        for name in ("romp", "vault-secret"):
+            with open(os.path.join(decoy, name), "w") as f:
+                f.write("#!/bin/sh\nexit 0\n")
+            os.chmod(os.path.join(decoy, name), 0o755)
+        env = dict(w.env, PATH=decoy + os.pathsep + w.env["PATH"])
+        env.update(HOME=self.batcher_home(), SHELL="/usr/bin/zsh", LANG="fr_FR.UTF-8", LC_ALL="fr_FR.UTF-8", CI="",
+                   ROMP_MANAGER_PORT="29801", ROMP_KERNEL_PORT="29855", ROMP_SERVE_PORT="29855", ROMP_POSTAL_PORT="25302",
+                   BATS_TEST_TIMEOUT="5", ROMP_GITLEAKS_REQUIRE="0", ROMP_SERVED_TESTS_ENGINES="chromium,firefox")
+        w.run(env=env, check=0)
+        calls = w.calls()
+        self.assertEqual(len(calls), len(sweep.LEGS))
+        for c in calls:
+            with self.subTest(leg=c["leg"]):
+                v = c["values"]
+                tmp = v["TMPDIR"]
+                self.assertEqual(v["XDG_STATE_HOME"], os.path.join(tmp, "xdg-state"), "the state root is private")
+                self.assertEqual(c["hosts"], "off\n", "session hosts are off in the private state root")
+                self.assertEqual(v["HOME"], os.path.join(tmp, "home"), "HOME is private")
+                self.assertEqual({p: v.get(p) for p in sweep.PORT_FLOOR}, dict.fromkeys(sweep.PORT_FLOOR, "1"))
+                self.assertIn("ROMP_POSTAL_PORT", sweep.PORT_FLOOR, "the postal bus falls back to the live bus's port")
+                self.assertEqual((v["CI"], v["SHELL"], v["LANG"]), ("true", "/bin/bash", "C.UTF-8"))
+                self.assertNotIn("LC_ALL", c["names"])
+                path = v["PATH"].split(os.pathsep)
+                self.assertEqual(path[0], w.bin, "the pytest interpreter's directory leads PATH")
+                tool_dirs = {os.path.dirname(shutil.which(t, path=env["PATH"]) or "") for t in sweep.PATH_TOOLS} - {""}
+                self.assertEqual(sorted(set(path) - {w.bin} - tool_dirs - set(sweep.PATH_FLOOR)), [])
+                self.assertTrue(set(sweep.PATH_FLOOR) <= set(path), path)
+                self.assertNotIn(decoy, path, "the batcher's PATH is not passed on")
+                self.assertEqual(len(path), len(set(path)), "each directory once")
+        by_leg = {c["leg"]: c["values"] for c in calls}
+        self.assertEqual({k: by_leg["bats"].get(k) for k in ("BATS_TEST_TIMEOUT", "ROMP_GITLEAKS_REQUIRE")},
+                         {"BATS_TEST_TIMEOUT": "180", "ROMP_GITLEAKS_REQUIRE": "1"})
+        self.assertEqual({k: by_leg[PYTEST_LEG].get(k) for k in ("ROMP_SERVED_TESTS_REQUIRE", "ROMP_SERVED_TESTS_ENGINES")},
+                         {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"})
+        self.assertEqual(by_leg["npm-test"]["NODE_OPTIONS"], "--max-old-space-size=8192")
+        rec = w.result()["legs"]["bats"]
+        self.assertEqual({k: rec["env_set"][k] for k in ("BATS_TEST_TIMEOUT", "ROMP_GITLEAKS_REQUIRE")},
+                         {"BATS_TEST_TIMEOUT": "180", "ROMP_GITLEAKS_REQUIRE": "1"}, "the set values are recorded")
+
+    def test_the_batchers_home_reaches_no_leg(self):
+        """An .npmrc (its node-options reach every npm-run leg as NODE_OPTIONS), a git config (its hooksPath runs in bats
+        fixture repos), a .zshenv, and the live deployment's SDK venv (tests/test_host_transport.py puts it on sys.path)
+        in the batcher's HOME: no leg sees any of them. The shared caches still resolve from the batcher's HOME."""
+        w = self.all_legs_world()
+        home = self.batcher_home()
+        files = {".npmrc": "node-options=--require /nonexistent/hook.js\n", ".gitconfig": "[core]\n\thooksPath = /nonexistent\n",
+                 ".zshenv": "export SWEEP_FROM_ZSHENV=1\n",
+                 ".local/state/romp/sdkvenv/lib/python3.99/site-packages/claude_agent_sdk/__init__.py": "FAKE = 1\n"}
+        for rel, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(home, rel)), exist_ok=True)
+            with open(os.path.join(home, rel), "w") as f:
+                f.write(text)
+        env = dict(w.env, HOME=home)
+        for k in ("npm_config_cache", "NPM_CONFIG_CACHE", "PLAYWRIGHT_BROWSERS_PATH", "XDG_CACHE_HOME"):
+            env.pop(k, None)
+        w.run(env=env, check=0)
+        for c in w.calls():
+            with self.subTest(leg=c["leg"]):
+                self.assertEqual(c["home_files"], [])
+                self.assertEqual(c["sdk"], [], "the live deployment's SDK venv is not in the leg's HOME")
+                self.assertNotEqual(c["values"]["HOME"], home)
+                self.assertEqual(c["values"]["npm_config_cache"], os.path.join(home, ".npm"))
+                if sys.platform != "darwin":
+                    self.assertEqual(c["values"]["PLAYWRIGHT_BROWSERS_PATH"], os.path.join(home, ".cache", "ms-playwright"))
+        runner = w.result()["runner"]
+        self.assertIs(runner.get("home_empty"), True, "the result records whether the private HOME was empty at the end")
+        self.assertEqual(runner["home_left"], [])
+
+    def test_a_file_a_leg_leaves_in_home_is_recorded(self):
+        w = self.w
+        w.ctl({"action": {"manager": "home"}})
+        w.run(check=0)
+        runner = w.result()["runner"]
+        self.assertIs(runner.get("home_empty"), False, "the result records whether the private HOME was empty at the end")
+        self.assertEqual(runner["home_left"], [".leftover"])
+
+    def test_no_leg_log_header_holds_a_value_of_the_leg_environment(self):
+        w = self.all_legs_world()
+        user = "-".join(("sweep", "user", "mark"))
+        home = self.batcher_home()
+        w.run(env=dict(w.env, USER=user, LOGNAME=user, HOME=home), check=0)
+        r = w.result()
+        for c in w.calls():
+            with self.subTest(leg=c["leg"]):
+                self.assertEqual(c["values"]["USER"], user, "USER passes to the leg")
+                with open(r["legs"][c["leg"]]["log"]) as f:
+                    header = "".join(f.readline() for _ in range(3))
+                self.assertTrue(header.startswith("# leg: %s\n# cwd: " % c["leg"]), header)
+                self.assertIn("PATH=... ", header)
+                for value in (c["values"]["PATH"], c["values"]["HOME"], c["values"]["TMPDIR"], user, home):
+                    self.assertNotIn(value, header)
+
+    def test_the_recorded_hash_is_the_readers_constant_across_runs(self):
+        w = self.w
+        w.run(check=0)
+        first = w.result()
+        w.change({"README.md": "# notes-api, again\n"})
+        w.run(check=0)
+        second = w.result()
+        self.assertNotEqual(first["runner"]["tmpdir"], second["runner"]["tmpdir"], "two runs, two TMPDIR tails")
+        for r in (first, second):
+            got = r["runner"].get("leg_env")
+            self.assertIsNotNone(got, "the result records the leg environment's allowlist and hash")
+            self.assertEqual(got, {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()})
+
+    def test_the_tool_versions_are_recorded_and_run_no_leg(self):
+        w = self.w
+        w.run(check=0)
+        tools = w.result()["runner"].get("tools")
+        self.assertIsNotNone(tools, "the result records the tool versions the legs found")
+        self.assertEqual(sorted(tools), sorted(t for t, _arg in sweep.TOOL_VERSION_ARGS))
+        for name in ("node", "npm", "bats"):
+            self.assertEqual(tools[name], {"path": os.path.join(w.bin, name), "version": name + " 0.0.0-fake"})
+        self.assertTrue(tools["git"]["version"].startswith("git version"), tools["git"])
+        self.assertEqual(w.legs_called(), ["deps", PYTEST_LEG, "bats", "manager", "tools", "ledger"])
+
+    def test_a_wrap_sees_the_runners_environment_and_its_leg_does_not(self):
+        w = self.w
+        env = dict(w.env, XDG_RUNTIME_DIR=os.path.join(w.tmp, "runtime"))
+        w.run("--wrap", "*=%s all" % w.wrapper, env=env, check=0)
+        wraps = w.wraps()
+        self.assertEqual([c["leg"] for c in wraps], w.legs_called())
+        for c in wraps:
+            self.assertEqual(c["values"].get("XDG_RUNTIME_DIR"), env["XDG_RUNTIME_DIR"], "the wrap reaches the user bus")
+        for c in w.calls():
+            self.assertNotIn("XDG_RUNTIME_DIR", c["names"])
+
+
+class LegEnvironmentReader(unittest.TestCase):
+    def test_the_floor_names_every_port_variable_the_tree_reads(self):
+        """A census over the tree: every ROMP_*_PORT name it reads is in PORT_FLOOR, or in PORT_DEFAULTS with a default
+        that is. A new port variable reds this until the floor names it. It reads the tree with git grep and fails when
+        it cannot, rather than passing over an empty population."""
+        p = subprocess.run(["git", "-C", str(ROOT), "grep", "-ohE", r"ROMP_[A-Z_]*PORT\b"], text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(p.returncode, 0, "the census could not read the tree: %s" % p.stderr)
+        names = sorted(set(p.stdout.split()))
+        self.assertIn("ROMP_KERNEL_PORT", names, "the census found no port variable at all")
+        for n in names:
+            self.assertTrue(n in sweep.PORT_FLOOR or sweep.PORT_DEFAULTS.get(n) in sweep.PORT_FLOOR,
+                            "%s is read in the tree and the sweep's box floor neither sets it nor defaults it to a floored port" % n)
+        # The default the floor relies on is the tree's: the remote kernel port falls back to the kernel's own.
+        src = (ROOT / "kernel" / "kernel.py").read_text(encoding="utf-8")
+        self.assertRegex(src, r'(?m)^PORT = int\(os\.environ\.get\("ROMP_KERNEL_PORT", ')
+        self.assertRegex(src, r'os\.environ\.get\("ROMP_REMOTE_KERNEL_PORT", str\(PORT\)\)')
+
+    def test_a_result_recorded_under_another_leg_environment_is_refused(self):
+        """Round 1, decision 10: a result made under another environment policy is not the same gate."""
+        tmp = tempfile.mkdtemp(prefix="sweepread-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        env = {"XDG_STATE_HOME": tmp, "HOME": tmp}
+        data = Reader.result(Reader, runner={"leg_env": {"allow": ["USER"], "hash": "0" * 64}})
+        sweep.write_result(sweep.result_path(data["sha"], env), data)
+        a = sweep.assess(data["sha"], env=env)
+        self.assertEqual(a["case"], "invalid", a["line"])
+        self.assertIn("recorded under another leg environment (hash 000000000000; this reader's is %s" % sweep.policy_hash()[:12],
+                      a["line"])
+        del data["runner"]
+        sweep.write_result(sweep.result_path(data["sha"], env), data)
+        a = sweep.assess(data["sha"], env=env)
+        self.assertEqual(a["case"], "invalid", a["line"])
+        self.assertIn("(hash none;", a["line"])
+
+
+def _pytest_counts(test, ini=None, conftest=None):
+    """(rc, failed) of the runner's real pytest command over a checkout holding one passing and one failing test,
+    with `ini` and `conftest` (texts) written in the checkout's PARENT directory."""
+    tmp = tempfile.mkdtemp(prefix="sweepb4-")
+    test.addCleanup(shutil.rmtree, tmp, True)
+    checkout = os.path.join(tmp, "checkout")
+    os.makedirs(os.path.join(checkout, "tests"))
+    with open(os.path.join(checkout, "tests", "test_b4.py"), "w") as f:
+        f.write("def test_pass():\n    pass\n\n\ndef test_fail():\n    assert False\n")
+    if ini is not None:
+        with open(os.path.join(tmp, "pytest.ini"), "w") as f:
+            f.write(ini)
+    if conftest is not None:
+        with open(os.path.join(tmp, "conftest.py"), "w") as f:
+            f.write(conftest)
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": tmp, "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8"}
+    p = subprocess.run(sweep.pytest_cmd(sys.executable, 0), cwd=checkout, env=env, text=True, stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=300)
+    log = os.path.join(tmp, "pytest.log")
+    with open(log, "w") as f:
+        f.write(p.stdout)
+    return p.returncode, sweep.count_tests(PYTEST_LEG, log)[1], p.stdout
+
+
+class PytestIsolation(unittest.TestCase):
+    """B4: the pytest leg's `-c /dev/null --rootdir=. --confcutdir=.`: no pytest.ini or conftest.py above the checkout
+    narrows the leg. Real pytest over a two-test checkout; each case asserts the failing test RAN (failed >= 1), since
+    a nonzero rc alone is also what collecting nothing gives."""
+
+    DESELECT = "def pytest_collection_modifyitems(config, items):\n    items[:] = [i for i in items if i.name != 'test_fail']\n"
+
+    def check(self, **kw):
+        rc, failed, out = _pytest_counts(self, **kw)
+        self.assertEqual((rc, failed), (1, 1), "the failing test must run and fail:\n" + out[-2000:])
+
+    def test_a_narrowing_parent_ini(self):
+        self.check(ini='[pytest]\naddopts = -k "not test_fail"\n')
+
+    def test_a_deselecting_parent_conftest_alone(self):
+        self.check(conftest=self.DESELECT)
+
+    def test_an_empty_parent_ini_and_a_deselecting_conftest(self):
+        self.check(ini="[pytest]\n", conftest=self.DESELECT)
+
+
+CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
+
+
+def ci_steps(job):
+    """{name: (env, run)} of one ci.yml job's named steps, read by line shape (no YAML library in the test deps, as
+    tests/test_ci_bats_bound.py): a step is a `      - name:` line and the lines under it; its env is the `env:`
+    block's KEY: value lines, its run the `run:` value or `run: |` block. Raises LookupError when the job is gone."""
+    src = CI_YML.read_text(encoding="utf-8")
+    m = re.search(r"^  %s:\n((?:    .*\n|\n)+)" % re.escape(job), src, re.M)
+    if not m:
+        raise LookupError("ci.yml has no %s job: re-anchor CiParity" % job)
+    steps = {}
+    for s in re.finditer(r"^      - name: (.*)\n((?:        .*\n|\n)*)", m.group(1), re.M):
+        env, run, cur = {}, None, None
+        lines = s.group(2).split("\n")
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            k = re.match(r"^        ([a-z-]+):(.*)$", line)
+            if k:
+                cur, val = k.group(1), k.group(2).strip()
+                if cur == "run" and val == "|":
+                    block = []
+                    i += 1
+                    while i < len(lines) and (lines[i].startswith(" " * 10) or not lines[i].strip()):
+                        block.append(lines[i][10:])
+                        i += 1
+                    run = "\n".join(block).strip()
+                    continue
+                if cur == "run":
+                    run = val
+            elif cur == "env":
+                e = re.match(r"^          ([A-Za-z_][A-Za-z0-9_]*): (.*)$", line)
+                if e:
+                    env[e.group(1)] = e.group(2).strip().strip("\"'")
+            i += 1
+        steps[s.group(1).strip()] = (env, run)
+    return steps
+
+
+def _expr(text):
+    """A GitHub expression as one token."""
+    return re.sub(r"\$\{\{.*?\}\}", "<expr>", text)
+
+
+def _units(tokens):
+    """pytest options as units: a flag that takes the next token (-n, -p, -c) paired with it, every other token alone."""
+    out, it = [], iter(tokens)
+    for t in it:
+        out.append((t, next(it, None)) if t in ("-n", "-p", "-c") else (t,))
+    return out
+
+
+class CiParity(unittest.TestCase):
+    """B6 (fresh-1): the legs' commands are hand copies of ci.yml's, so this reads ci.yml's steps by name and compares
+    them with what the runner builds (pytest_cmd, plan_legs' commands, LEG_ENV). Every difference is named here with
+    its reason; a change to either side that adds one reds. Every named step of the four jobs is either compared with a
+    leg or named as CI-only, so a new step reds until it is placed."""
+
+    CI_ONLY = {
+        # setup that installs the tools the runner finds on the batcher's machine instead
+        ("python", "Install pytest"), ("python", "Install cryptography"), ("shell", "Install bats (Linux)"),
+        ("shell", "Install bats (macOS)"), ("shell", "Install gitleaks (Linux)"), ("secrets", "Install gitleaks"),
+        ("vscode-extension", "Cache Playwright's browsers"), ("vscode-extension", "Install the pinned Playwright Chromium"),
+        # the history and tree scans: the pre-push hook scans what a push publishes; CI scans all of history
+        ("secrets", "Scan every commit"), ("secrets", "Scan the tree as it stands"),
+        # the pane bench runs only in CI (the runner's docstring and docs/batching.md say so)
+        ("vscode-extension", "Dashboard pane bench (node --test)"),
+    }
+
+    def setUp(self):
+        self.jobs = {j: ci_steps(j) for j in ("python", "shell", "secrets", "vscode-extension")}
+        self.legs = sweep.plan_legs(str(ROOT), "python", 2, {"owed": True, "why": "compared with ci.yml"})
+
+    def test_every_named_step_is_compared_or_named_as_ci_only(self):
+        compared = {("python", "Run pytest"), ("shell", "Run bats"), ("shell", "Manager handshake tests (node --test)"),
+                    ("shell", "Vendored tooling and host-script tests (node --test)"), ("vscode-extension", "Install deps"),
+                    ("vscode-extension", "Typecheck"), ("vscode-extension", "Test"), ("vscode-extension", "Build"),
+                    ("vscode-extension", "PDF renderer dependency smoke test (node --test)"),
+                    ("vscode-extension", "Browser-backed served-page tests (pytest)")}
+        seen = {(j, n) for j, steps in self.jobs.items() for n in steps}
+        self.assertEqual(sorted(seen - compared - self.CI_ONLY), [], "a ci.yml step neither compared with a leg nor named CI-only")
+        self.assertEqual(sorted((compared | self.CI_ONLY) - seen), [], "a step this pin names is gone from ci.yml")
+
+    def test_the_pytest_command_differs_from_run_pytest_only_as_named(self):
+        env, run = self.jobs["python"]["Run pytest"]
+        ci = shlex.split(_expr(run))
+        ours = sweep.pytest_cmd("python", "<expr>")
+        self.assertEqual(ci[:3], ours[:3], "python -m pytest")
+        ci_units, our_units = _units(ci[3:]), _units(ours[3:])
+        named = [("tests",),                              # CI collects from the root; test modules live only under tests/
+                 ("-p", "no:cacheprovider"),              # nothing written to a .pytest_cache in the checkout
+                 ("-p", "no:anyio")]                      # PR 872
+        named += _units(sweep.PYTEST_ISOLATION)           # B4: no ini or conftest above the checkout
+        named += [("--ignore=%s" % p,) for p in sorted(sweep.PYTEST_IGNORED)]   # Q6
+        for u in named:
+            self.assertIn(u, our_units, "a named difference the runner no longer has: %r" % (u,))
+        # the -n count: CI's expression (2 or 0 by runner) against the runner's idle cores
+        self.assertIn(("-n", "<expr>"), ci_units)
+        self.assertEqual(sorted(u for u in our_units if u not in named), sorted(ci_units))
+
+    def test_the_served_steps_switches_are_the_pytest_legs(self):
+        env, _run = self.jobs["vscode-extension"]["Browser-backed served-page tests (pytest)"]
+        served = {k: v for k, v in env.items() if k.startswith("ROMP_SERVED_TESTS_")}
+        self.assertEqual(served, {k: v for k, v in sweep.LEG_ENV[PYTEST_LEG].items() if k.startswith("ROMP_SERVED_TESTS_")})
+        self.assertEqual(sorted(sweep.LEG_ENV[PYTEST_LEG]), sorted(served), "the pytest leg's switches are the served step's")
+
+    def test_bats_and_the_node_legs_run_ci_s_commands(self):
+        env, run = self.jobs["shell"]["Run bats"]
+        self.assertEqual(shlex.split(run), self.legs["bats"]["cmd"][:2] + list(sweep.GLOBS["bats"]),
+                         "the runner passes the glob's expansion, CI the glob")
+        # ROMP_GITLEAKS_REQUIRE is CI's Linux value: the Linux cell installs the pinned gitleaks
+        self.assertEqual(env.get("ROMP_GITLEAKS_REQUIRE"), "${{ runner.os == 'Linux' && '1' || '' }}")
+        self.assertEqual({"BATS_TEST_TIMEOUT": env["BATS_TEST_TIMEOUT"], "ROMP_GITLEAKS_REQUIRE": "1"}, sweep.LEG_ENV["bats"])
+        for step, leg in (("Manager handshake tests (node --test)", "manager"),
+                          ("Vendored tooling and host-script tests (node --test)", "tools")):
+            _env, run = self.jobs["shell"][step]
+            self.assertEqual(shlex.split(run), self.legs[leg]["cmd"][:2] + list(sweep.GLOBS[leg]))
+        # tools/pdf-smoke.test.mjs, its own step in the extension job, is in the tools leg's glob
+        _env, run = self.jobs["vscode-extension"]["PDF renderer dependency smoke test (node --test)"]
+        self.assertEqual(shlex.split(run), ["node", "--test", "tools/pdf-smoke.test.mjs"])
+        self.assertIn("tools/pdf-smoke.test.mjs", self.legs["tools"]["cmd"])
+
+    def test_the_webview_legs_run_the_extension_jobs_commands(self):
+        steps = self.jobs["vscode-extension"]
+        self.assertEqual(shlex.split(steps["Install deps"][1]), list(sweep.DEPS_CMD[:2]),
+                         "npm ci; the runner adds --no-audit --no-fund, which change what npm prints, not what it installs")
+        self.assertEqual(list(sweep.DEPS_CMD[2:]), ["--no-audit", "--no-fund"])
+        for step, leg in (("Typecheck", "typecheck"), ("Test", "npm-test"), ("Build", "build")):
+            self.assertEqual(shlex.split(steps[step][1]), self.legs[leg]["cmd"], step)
+            self.assertEqual(self.legs[leg]["cwd"], "vscode-extension")
+
+
 class Reader(unittest.TestCase):
     """assess, the reader scripts/batch.py verify calls: each case by name, over files written the way the runner
     writes them. The batch side of the same cases is tests/test_batch_tool.py, VerifyReadsTheSweep."""
@@ -568,6 +1026,8 @@ class Reader(unittest.TestCase):
         data = {"schema": sweep.SCHEMA, "sha": sha, "branch": "batch/b1", "started": "2026-01-01T00:00:00Z",
                 "finished": "2026-01-01T00:01:00Z", "legs": legs, "verdict": "pass", "red": [], "invalid": None}
         data.update(over)
+        if "runner" not in over:
+            data["runner"] = {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}}
         return data
 
     def write(self, data, sha=None):
