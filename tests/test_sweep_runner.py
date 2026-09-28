@@ -502,6 +502,10 @@ class World:
             with open(os.path.join(self.bin, name), "w") as f:
                 f.write(fake)
             os.chmod(os.path.join(self.bin, name), 0o755)
+        # a python3 beside --python that is the same file, as in a venv's bin: the served tests' kernels run the first
+        # python3 on the served leg's PATH (bin/romp-kernel's #!/usr/bin/env python3), and the runner refuses a --python
+        # whose directory holds none, or another file
+        os.symlink("python", os.path.join(self.bin, "python3"))
         self.wrapper = os.path.join(self.bin, "wrapper")
         with open(self.wrapper, "w") as f:
             f.write(WRAPPER % {"python": sys.executable, "log": self.wrap_log})
@@ -2456,6 +2460,7 @@ class PytestEnvironment(_Base):
         os.makedirs(other)
         shutil.copy(w.python, os.path.join(other, "python"))
         os.chmod(os.path.join(other, "python"), 0o755)
+        os.symlink("python", os.path.join(other, "python3"))        # the served leg's kernels run it (World's comment)
         w.change({"README.md": "# notes-api, again\n"})
         w.run("--python", os.path.join(other, "python"), check=0)
         second = self.sdk()
@@ -2627,9 +2632,43 @@ class ServedLeg(_Base):
                 p = w.run(check=2)
                 self.assertIn("the served leg's interpreter %s (--python) " % w.python, p.stderr)
                 self.assertIn(text, p.stderr)
+                if " lacks " in text:
+                    self.assertIn("; pass --python an interpreter that has pytest, pytest-xdist, pytest-timeout and what the "
+                                  "served step installs, and not the SDK", p.stderr, "the refusal names what to pass")
                 self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
                 self.assertEqual(w.legs_called()[before:], [], "no leg ran")
         w.ctl({})
+        w.run(check=0)
+
+    def test_a_python_whose_directory_holds_no_python3_of_its_own_is_refused(self):
+        """The served tests' kernels start as bin/romp-kernel (#!/usr/bin/env python3), so they run the first python3 on
+        the served leg's PATH, not --python: a --python whose directory holds another python3 file, or none (the next
+        one on the PATH then answers), is refused before anything is recorded, since the SDK check read an interpreter
+        the kernels do not run."""
+        w = self.w
+        p3 = os.path.join(w.bin, "python3")
+        other = os.path.join(w.tmp, "other-python3")
+        shutil.copy(w.python, other)
+        os.chmod(other, 0o755)
+
+        for label, target, shown in (("another file", other, "there that is %s, not this interpreter" % p3),
+                                     ("none", None, ", not this interpreter")):
+            with self.subTest(case=label):
+                if os.path.lexists(p3):
+                    os.remove(p3)
+                if target:
+                    os.symlink(target, p3)
+                before = len(w.calls())
+                p = w.run(check=2)
+                self.assertIn("the served leg's interpreter %s (--python): the served tests' kernels run python3 from the "
+                              "leg's PATH" % w.python, p.stderr)
+                self.assertIn(shown, p.stderr)
+                self.assertIn("pass --python an interpreter whose directory holds python3 as the same file", p.stderr)
+                self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
+                self.assertEqual(w.legs_called()[before:], [], "no leg ran")
+        if os.path.lexists(p3):
+            os.remove(p3)
+        os.symlink("python", p3)
         w.run(check=0)
 
     def test_the_served_leg_carries_the_served_steps_env_as_ci_yml_writes_it(self):
@@ -2686,7 +2725,9 @@ class ServedLeg(_Base):
         step, env_line = SEED_SERVED_STEP, '          ROMP_SERVED_TESTS_REQUIRE: "1"\n'
         wd = "        working-directory: ${{ github.workspace }}\n"
         pytest_line = "          python -m pytest tests/test_*_browser.py"
-        for anchor in (step, env_line, wd, pytest_line, "jobs:\n", "    runs-on: ubuntu-24.04\n"):
+        defaults = "    defaults:\n      run:\n        working-directory: vscode-extension\n"
+        env_block = '        env:\n          ROMP_SERVED_TESTS_REQUIRE: "1"\n          ROMP_SERVED_TESTS_ENGINES: chromium\n'
+        for anchor in (step, env_line, wd, pytest_line, defaults, env_block, "jobs:\n", "    runs-on: ubuntu-24.04\n"):
             self.assertEqual(SEED_CI.count(anchor), 1, anchor)
         name = "step 'Browser-backed served-page tests (pytest)' of the vscode-extension job"
         cases = (
@@ -2700,7 +2741,22 @@ class ServedLeg(_Base):
              "%s sets HOME, which the runner sets itself" % name),
             ("an env: on its job", SEED_CI.replace("    runs-on: ubuntu-24.04\n", "    runs-on: ubuntu-24.04\n    env:\n      ROMP_X: \"1\"\n"),
              "the vscode-extension job has env:, which reaches the step"),
-            ("a workflow-level env:", SEED_CI.replace("jobs:\n", "env:\n  ROMP_X: \"1\"\njobs:\n"), "has a workflow-level env:, which reaches"),
+            # the python job's install steps refuse a workflow-level env: or defaults: too, later: the text names the step
+            ("a workflow-level env:", SEED_CI.replace("jobs:\n", "env:\n  ROMP_X: \"1\"\njobs:\n"),
+             "has a workflow-level env:, which reaches its step 'Browser-backed served-page tests (pytest)'"),
+            ("a workflow-level defaults:", SEED_CI.replace("jobs:\n", "defaults:\n  run:\n    shell: bash\njobs:\n"),
+             "has a workflow-level defaults:, which reaches its step 'Browser-backed served-page tests (pytest)'"),
+            ("a container: on its job", SEED_CI.replace("    runs-on: ubuntu-24.04\n", "    runs-on: ubuntu-24.04\n    container: node:20\n"),
+             "the vscode-extension job has container:, which reaches the step"),
+            ("a shell: in its job's defaults", SEED_CI.replace(defaults, defaults.replace("      run:\n", "      run:\n        shell: sh\n")),
+             "the vscode-extension job has a defaults: other than one run: working-directory: line"),
+            ("a shell other than bash", SEED_CI.replace(wd, wd + "        shell: sh\n"), "%s runs under shell: sh" % name),
+            # an env: block the runner does not read is refused, never read as empty: that would drop the step's
+            # ROMP_SERVED_TESTS_REQUIRE from the leg without a word
+            ("an env: block in flow form", SEED_CI.replace(env_block, '        env: {ROMP_SERVED_TESTS_REQUIRE: "1"}\n'),
+             "%s has an env: block in a shape the runner does not read" % name),
+            ("a key given twice", SEED_CI.replace(wd, wd + "        timeout-minutes: 5\n        timeout-minutes: 6\n"),
+             "%s gives timeout-minutes: twice" % name),
             ("another working directory", SEED_CI.replace(wd, "        working-directory: kernel\n"), "%s runs in kernel" % name),
             ("no working directory under the job's defaults", SEED_CI.replace(wd, ""),
              "%s names no working-directory: and its job has a defaults:" % name),
@@ -2712,6 +2768,17 @@ class ServedLeg(_Base):
             ("a pytest line naming a file outside tests/", SEED_CI.replace(pytest_line, "          python -m pytest kernel/x.py"),
              "its pytest line names 'kernel/x.py', which the runner does not read as a glob"),
             ("a substitution", SEED_CI.replace(pytest_line, pytest_line + " $EXTRA"), "holds an expansion, a substitution"),
+            # bash passes a quoted glob to pytest as it stands (CI's pytest then exits 4 on a file not found), so the
+            # runner reads no quoted word as a glob
+            ("a quoted glob", SEED_CI.replace(pytest_line, '          python -m pytest "tests/test_*_browser.py"'),
+             '%s: its pytest line names "tests/test_*_browser.py", a quoted word' % name),
+            ("a single-quoted glob", SEED_CI.replace(pytest_line, "          python -m pytest 'tests/test_*_browser.py'"),
+             "%s: its pytest line names 'tests/test_*_browser.py', a quoted word" % name),
+            # a job's defaults: written on its own line moves the step as the block form does, and the step names no
+            # working-directory: here, so CI would run it in vscode-extension/, where the globs match nothing
+            ("a job defaults: in flow form", SEED_CI.replace(defaults, "    defaults: {run: {working-directory: vscode-extension}}\n")
+             .replace(wd, ""),
+             "the vscode-extension job has a defaults: other than one run: working-directory: line"),
         )
         for label, ci, text in cases:
             with self.subTest(case=label):
@@ -2735,6 +2802,21 @@ class ServedLeg(_Base):
                 p = w.run(check=1)
                 self.assertEqual(w.result()["red"], ["served"])
                 self.assertIn(named, p.stdout)
+
+    def test_an_empty_served_glob_is_a_red_served_leg_and_the_pytest_leg_still_leaves_out_the_other_globs_files(self):
+        """CI's served step passes a glob that matches nothing to pytest as it stands, and pytest exits 4 on the file not
+        found, so the served leg is red naming the glob and never runs the other glob's files as a pass. The pytest leg
+        still leaves out every file the other glob selects, as CI's Python cells skip them."""
+        w = self.w
+        w.change({"tests/test_b_browser.py": None}, msg="the one browser test removed")
+        w.run(check=1)
+        r = w.result()
+        self.assertEqual(r["red"], ["served"])
+        self.assertEqual(r["legs"]["served"]["error"], "no files matched tests/test_*_browser.py")
+        self.assertEqual([c for c in w.calls() if c["leg"] == "served"], [], "the served leg does not run the other glob's files")
+        pytest_argv = [c for c in w.calls() if c["leg"] == PYTEST_LEG][-1]["argv"]
+        self.assertIn("--ignore=tests/test_a_served.py", pytest_argv, "the second glob's files are left out of the pytest leg")
+        self.assertEqual(r["legs"][PYTEST_LEG]["left_out"]["files"], 1)
 
     def test_a_leg_rerun_of_served_installs_the_deps_and_reads_the_step_again(self):
         w = self.w
@@ -2779,6 +2861,17 @@ class ServedPartition(unittest.TestCase):
     two legs split tests/ where the served step's globs do."""
 
     SERVED = ["tests/test_y_browser.py", "tests/test_x_served.py"]
+
+    def test_expand_expands_every_pattern_after_an_empty_one(self):
+        """expand names the first pattern that matched nothing and still expands the ones after it, so the pytest leg
+        leaves out every served file even where one of the served globs is empty."""
+        tmp = tempfile.mkdtemp(prefix="sweepsv-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        os.makedirs(os.path.join(tmp, "tests"))
+        for name in ("test_x_served.py", "test_w_served.py"):
+            open(os.path.join(tmp, "tests", name), "w").close()
+        self.assertEqual(sweep.expand(tmp, ["tests/test_*_browser.py", "tests/test_*_served.py", "tests/test_*_none.py"]),
+                         (["tests/test_w_served.py", "tests/test_x_served.py"], "tests/test_*_browser.py"))
 
     def test_the_pytest_leg_collects_no_served_file_and_the_served_leg_runs_only_those(self):
         rc, ran, out = _partition_run(self, sweep.pytest_cmd(sys.executable, 0, self.SERVED))

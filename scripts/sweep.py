@@ -1908,15 +1908,20 @@ def _env_value(raw, name, where):
 
 
 def _job_defaults(text, job):
-    """The lines of `job`'s defaults: block (comment and blank lines dropped), or None when the job has no defaults:."""
+    """The lines of `job`'s defaults: block (comment and blank lines dropped), or None when the job has no defaults:. A
+    defaults: line with a value after its colon (a flow mapping such as `defaults: {run: {working-directory: x}}`) is
+    returned as that one line, which no reader accepts, so a job whose defaults: the runner cannot read in block form
+    is never read as a job without one."""
     lines = text.split("\n")
     out = None
     for line in lines[lines.index("  %s:" % job) + 1:]:
         if line.strip() and not line.startswith("    "):
             break
         if out is None:
-            if line == "    defaults:":
+            if re.fullmatch(r"    defaults:\s*(?:#.*)?", line):
                 out = []
+            elif re.match(r"    defaults\s*:", line):
+                return [line]
             continue
         if line.strip() and not line.startswith("      "):
             break
@@ -1932,12 +1937,15 @@ def read_served_step(checkout, sha):
     the distributions its pip install lines name. Refused, naming the file and the step, when ci.yml cannot be read; has
     a workflow-level env: or defaults: (either reaches the step); holds no step of that name, or two; the step's job has
     an env: (it reaches the step, and the runner reads the step's own env: alone) or a container:, a defaults: other
-    than one run: working-directory: line, or a defaults: while the step names no working-directory:; the step has a
+    than one run: working-directory: line in block form (_job_defaults), or a defaults: while the step names no
+    working-directory:; the step has a
     key outside SERVED_STEP_KEYS or one given twice, a working-directory: other than the repository root, a shell: other
     than bash, an env: block in another shape, a value _env_value does not read, or a name the runner sets itself
     (runner_set_names: its value would replace the runner's floor); or its run text holds a line other than blank and
     comment lines, `set -euo pipefail`, `python -m pip install` of plain requirements, and exactly one `python -m
-    pytest` line whose words are pytest options and globs of .py files directly under tests/."""
+    pytest` line whose words are pytest options and globs of .py files directly under tests/, each glob written without
+    quotes (bash passes a quoted one to pytest unexpanded) and the line splitting into the same words quoted and
+    unquoted."""
     where = "%s at %s" % (CI_WORKFLOW, short(sha))
     try:
         with open(os.path.join(checkout, CI_WORKFLOW), encoding="utf-8") as f:
@@ -2011,6 +2019,7 @@ def read_served_step(checkout, sha):
                           "runner does not read" % (step_where, line))
         try:
             words = shlex.split(line)
+            written = shlex.split(line, posix=False)
         except ValueError as e:
             raise Refused("%s: the line %r does not parse (%s)" % (step_where, line, e))
         if words[:4] == ["python", "-m", "pip", "install"] and len(words) > 4 and all(_PIP_WORD.fullmatch(w) for w in words[4:]):
@@ -2020,12 +2029,20 @@ def read_served_step(checkout, sha):
             raise Refused("%s: the line %r is not one the runner reads (python -m pip install of plain requirements, and one "
                           "python -m pytest line)" % (step_where, line))
         pytest_lines += 1
-        rest = iter(words[3:])
-        for w in rest:
+        # each word beside the text ci.yml writes for it: bash expands a glob written bare and passes a quoted one to
+        # pytest as it stands, so a glob is read only where it is written without quotes
+        if len(written) != len(words):
+            raise Refused("%s: the line %r does not split into the same words quoted and unquoted, which the runner does not "
+                          "read" % (step_where, line))
+        rest = iter(zip(words[3:], written[3:]))
+        for w, as_written in rest:
             if w.startswith("-"):
                 if w in PYTEST_VALUE_OPTIONS:
                     next(rest, None)
                 continue
+            if as_written != w:
+                raise Refused("%s: its pytest line names %s, a quoted word; bash passes it to pytest unexpanded, so the "
+                              "runner does not read it as a glob" % (step_where, as_written))
             if not _SERVED_GLOB.fullmatch(w):
                 raise Refused("%s: its pytest line names %r, which the runner does not read as a glob of .py files directly "
                               "under tests/" % (step_where, w))
@@ -2047,8 +2064,9 @@ def served_environment(checkout, sha, python, tmpdir, served):
     itself: CI's served step runs its tests in an interpreter without the SDK, so the runner refuses a --python that has
     the SDK the python job's SDK step installs (read_install_plan: its distribution installed, or its module
     importable), one missing a module the leg needs (PYTEST_MODULES: pytest, xdist for -n, pytest-timeout), and one
-    missing a distribution the served step's pip lines install (pip aside, the installer itself). The probe runs under
-    build_env, as the SDK build's probes do. The record: job, step, env and globs as read_served_step read them, python
+    missing a distribution the served step's pip lines install (pip aside, the installer itself), and one whose
+    directory does not hold python3 as the same file: the served tests' kernels run the first python3 on the leg's
+    PATH, which leads with that directory. The probe runs under build_env, as the SDK build's probes do. The record: job, step, env and globs as read_served_step read them, python
     (its absolute path), python_version (its whole sys.version) and packages ({distribution: version} of the ones the
     served step installs)."""
     python = os.path.abspath(python) if os.sep in python else (shutil.which(python) or python)
@@ -2070,13 +2088,27 @@ def served_environment(checkout, sha, python, tmpdir, served):
                       "combination CI never runs; pass --python an interpreter without it"
                       % (where, "; ".join((["%s %s installed" % (plan["dist"], has)] if has is not None else []) +
                                           ["module %s importable" % m for m in found])))
+    remedy = ("; pass --python an interpreter that has pytest, pytest-xdist, pytest-timeout and what the served step "
+              "installs, and not the SDK (a venv made for the sweep holds exactly that)")
     if got["missing"]:
-        raise Refused("%s lacks %s, which the served leg needs (it runs pytest -n with pytest-timeout)"
-                      % (where, ", ".join(got["missing"])))
+        raise Refused("%s lacks %s, which the served leg needs (it runs pytest -n with pytest-timeout)%s"
+                      % (where, ", ".join(got["missing"]), remedy))
     lacks = [d for d in wanted if got["dists"].get(d) is None]
     if lacks:
-        raise Refused("%s lacks %s, which %s's step %r installs (the %s job)"
-                      % (where, ", ".join(lacks), CI_WORKFLOW, served["step"], served["job"]))
+        raise Refused("%s lacks %s, which %s's step %r installs (the %s job)%s"
+                      % (where, ", ".join(lacks), CI_WORKFLOW, served["step"], served["job"], remedy))
+    # The served tests' kernels are started as bin/romp-kernel, whose first line is `#!/usr/bin/env python3`, so they run
+    # the first python3 on the leg's PATH (build_path: --python's directory first). The checks above hold for them only
+    # when that python3 is --python: in its directory (so it reads the same pyvenv.cfg) and the same file.
+    path = build_path(python, os.environ)
+    python3 = shutil.which("python3", path=path)
+    same = (python3 is not None and os.path.dirname(os.path.abspath(python3)) == os.path.dirname(python)
+            and os.path.samefile(python3, python))
+    if not same:
+        raise Refused("%s: the served tests' kernels run python3 from the leg's PATH (bin/romp-kernel starts with "
+                      "#!/usr/bin/env python3), and there that is %s, not this interpreter, so the SDK check above does "
+                      "not hold for them; pass --python an interpreter whose directory holds python3 as the same file "
+                      "(a venv's bin/python)" % (where, python3 or "not found"))
     return {"job": served["job"], "step": served["step"], "env": dict(served["env"]), "globs": list(served["globs"]),
             "python": python, "python_version": got.get("full"), "packages": {d: got["dists"].get(d) for d in wanted}}
 
@@ -2904,7 +2936,9 @@ def main(argv=None):
                                                     "at its pin); a build that fails refuses the run. The served leg runs in "
                                                     "this interpreter itself, as CI's served step runs without the SDK: one "
                                                     "that has the SDK, or lacks pytest, xdist, pytest-timeout or a package the "
-                                                    "served step installs, refuses the run")
+                                                    "served step installs, or whose directory's python3 (what the served "
+                                                    "tests' kernels run) is another file, refuses the run; the "
+                                                    "system python usually lacks pytest, so pass a venv's bin/python")
     p.add_argument("--workers", type=int, metavar="N", help="pytest -n for the pytest and served legs (default: the idle cores at "
                                                             "launch, clamped to %d..%d)" % (WORKERS_MIN, WORKERS_MAX))
     p.add_argument("--wrap", action="append", metavar="LEG=PREFIX",
