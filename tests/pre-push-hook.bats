@@ -5520,7 +5520,7 @@ census_unread_shapes() {   # <bash file>: prints "<line>:<text>" once for each l
 census_memo() {   # <census helper> <bash file> [<arguments>...]: prints what the helper prints over the file, its stdout on stdout and its stderr on stderr, and returns its status
     local key dir entry tmp rc
     if [ -z "${BATS_FILE_TMPDIR:-}" ]; then "$@"; return; fi   # no per-file directory (a bats before 1.4): the helper itself
-    key=$({ declare -f "$1" masked_text census_records census_rec census_unquote census_functions census_definition_shapes census_command census_is census_word_kind census_statements undeclared_reads census_block_above_has_marker census_unread_shapes stdin_loops_running_tools loop_kinds r11c_git_calls r11c_pins_check; declare -p CENSUS_PREFIX CENSUS_BUILTIN CENSUS_LOOKUP CENSUS_TOOLS CENSUS_LOOKUP_KEPT; printf '%s\n' "$@"; cat -- "$2"; } 2>&1 | sha256sum)
+    key=$({ declare -f "$1" masked_text census_records census_rec census_unquote census_functions census_definition_shapes census_command census_is census_word_kind census_statements undeclared_reads census_block_above_has_marker census_unread_shapes stdin_loops_running_tools loop_kinds r11c_git_calls r12t_submodule_reads r11c_pins_check; declare -p CENSUS_PREFIX CENSUS_BUILTIN CENSUS_LOOKUP CENSUS_TOOLS CENSUS_LOOKUP_KEPT; printf '%s\n' "$@"; cat -- "$2"; } 2>&1 | sha256sum)
     key=${key%% *}
     dir="$BATS_FILE_TMPDIR/census-memo"; entry="$dir/$key"
     mkdir -p "$dir"
@@ -9965,7 +9965,7 @@ r10a_octopus_scans() {   # <parents>: r10a_octopus, pushed twice for real, once 
     at_base
 }
 
-@test "round 10a (A.1): a synthesized foreign line inside a section is refused naming the read and the commit: a feed git that rewrites the credential's added line with a tilde in place of its plus, a line of none of the shapes the awk reads or recognizes, through a real push, is refused as a read the feed could not make, and the remote stays at its base (at eee3938a8 the awk skipped the line silently, nothing was fed, and the credential published)" {
+@test "round 10a (A.1): a synthesized foreign line inside a section is refused naming the read and the commit: a feed git that rewrites the credential's added line with a tilde in place of its plus, a line of none of the shapes the awk reads or recognizes, through a real push, is refused as a read the feed could not make, its refusal line naming the feed's read and the commit and its closing advice naming neither the scanner nor a single read, and the remote stays at its base (at eee3938a8 the awk skipped the line silently, nothing was fed, and the credential published; re-aimed in round 12t, romp-manager's ruling CC3 on the closing check: until then the advice asserted here was the scanner's, gitleaks could not scan, which had not failed)" {
     r9d_base
     commit_file k.py "k = \"$(probe_token)\"" "a credential"
     sha="$(git -C "$REPO" rev-parse HEAD)"
@@ -9974,7 +9974,8 @@ r10a_octopus_scans() {   # <parents>: r10a_octopus, pushed twice for real, once 
     [ -s "$TEST_DIR/calls.rewrite" ]
     [ "$status" -ne 0 ]
     [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read whole (git diff-tree exited 0 and printed a line inside commit 1 of the 1 it was given, ${sha:0:10}, that is none of the shapes the feed reads or recognizes, so what that line stands for went unread); the scan is incomplete, so the push is refused"* ]]
-    [[ "$output" == *"gitleaks could not scan"* ]]
+    [[ "$output" == *"romp pre-push: BLOCKED. A git read of the credential scan (git diff-tree) printed a line the hook cannot read; the read and its commit are named above."* ]]
+    [[ "$output" != *"gitleaks could not scan"* ]]
     at_base
 }
 
@@ -12055,8 +12056,74 @@ r11c_git_calls() {   # <bash file> [<census_records' calls records of that file,
     done < "$rf"
     rm -f "$mf" "$rf"
 }
-r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin and returns 1, 0 when every pin is carried: no git read the census finds unsets GIT_DIFF_OPTS or runs under an environment that lacks it (an env -u or --unset of it, an assignment of it ahead of git, env -i or a lone -), and no statement of the text names GIT_DIFF_OPTS, so none unsets, sets or exports it for the reads after it (round 12n, romp-manager's ruling P on round 12l's audit A1: the feed reads the variable as main's git log does); the feed's diff-tree reads (the git reads given diff-tree, --stdin and --text: the feed and, since round 12e, the merges' first-parent read) carry -c diff.suppressBlankEmpty=false among git's own options; every git log or rev-list given --format or --pretty carries --encoding=UTF-8, or -c i18n.logOutputEncoding=UTF-8 among git's own options; any other git read given a format is a for-each-ref whose format is %(refname) alone, the stated exemption (ref names are not re-encoded); and the reads given a format number as many as the lines of the text that run git log or git rev-list with one, a second derivation
-    local ln pre args sub g n i x fmt enc feed=0 formats=0 lines calls named recs
+r12t_submodule_reads() {   # <bash file>: the line of each git read the census finds that passes --submodule, one per line (round 12t, the closing check's CC1, romp-manager 2026-09-28 11:57Z: every such read pins its output encoding, r11c_pins_check below). A read passes it when its words from git on hold a word with --submodule in it, an expansion of a variable that carries one, or, inside a function a call hands such a word or expansion, an expansion of the whole positional list ($@, $*, ${@...}, ${*...}); a variable carries one when an assignment or an array literal gives it such a word or such an expansion; the rules are applied to the census's records until nothing more joins. Not followed (a bound, stated): eval, an indirect expansion (${!x}), a single positional parameter ($7), a word built at run time from pieces, and a value read from a file
+    local -a orig masked rec
+    local -A fstart fend vars=() funs=()
+    local mf rf n0 re w u f nm carries hold st pre k line
+    mapfile -t orig < "$1"
+    mf=$(mktemp "$TEST_DIR/census.XXXXXX"); rf=$(mktemp "$TEST_DIR/census.XXXXXX")   # files, not pipes (round 12q)
+    masked_text "$1" > "$mf" || :
+    mapfile -t masked < "$mf"
+    census_functions
+    census_records "$1" calls '--submodule|[$]' "$mf" > "$rf"     # every record with a reading tool's word (every git read) or a $ or the option's name
+    n0=-1
+    while [ "$n0" -ne $((${#vars[@]} + ${#funs[@]})) ]; do
+        n0=$((${#vars[@]} + ${#funs[@]}))
+        re='--submodule'
+        [ "${#vars[@]}" -eq 0 ] || re="$re|[\$][{]?($(printf '%s\n' "${!vars[@]}" | paste -sd '|'))([^A-Za-z0-9_]|\$)"
+        [ "${#funs[@]}" -eq 0 ] || re="$re|[\$][{]?[@*]"
+        while IFS= read -r line; do
+            IFS=$'\x1f' read -r -a rec <<< "$line"
+            census_rec "${rec[@]}"; st=${rec[1]}
+            hold=""
+            for f in "${!funs[@]}"; do if [ "$((ln - 1))" -ge "${fstart[$f]}" ] && [ "$((ln - 1))" -le "${fend[$f]}" ]; then hold=$f; break; fi; done
+            carries=0
+            for w in "${rw[@]}"; do
+                census_unquote "$w"
+                if [[ "$u" == *--submodule* ]]; then carries=1; break; fi
+                if [ -n "$hold" ] && [[ "$u" =~ [\$][{]?[@*] ]]; then carries=1; break; fi
+                for nm in "${!vars[@]}"; do if [[ "$u" =~ [\$][{]?${nm}([^A-Za-z0-9_]|$) ]]; then carries=1; break 2; fi; done
+            done
+            [ "$carries" -eq 1 ] || continue
+            case "$fl" in
+                *R*)                                            # an array literal's elements: the name ahead of the ( that opens them
+                    pre=${orig[ln - 1]:0:st - 2}
+                    if [[ "$pre" =~ ([A-Za-z_][A-Za-z0-9_]*)\+?=$ ]]; then vars[${BASH_REMATCH[1]}]=1; fi
+                    continue ;;
+            esac
+            for w in "${rw[@]}"; do                             # an assignment word whose value carries the option
+                [[ "$w" =~ ^([A-Za-z_][A-Za-z0-9_]*)(\[[^]]*\])?\+?=(.*)$ ]] || continue
+                nm=${BASH_REMATCH[1]}; census_unquote "${BASH_REMATCH[3]}"
+                if [[ "$u" == *--submodule* ]] || { [ -n "$hold" ] && [[ "$u" =~ [\$][{]?[@*] ]]; }; then vars[$nm]=1; continue; fi
+                for f in "${!vars[@]}"; do if [[ "$u" =~ [\$][{]?${f}([^A-Za-z0-9_]|$) ]]; then vars[$nm]=1; break; fi; done
+            done
+            census_command
+            if [ "$wkind" = function ]; then funs[$word]=1; fi   # a function handed the option: its positional list carries it
+        done < <(grep -a -E -- "$re" "$rf")
+    done
+    # the reads: each git command whose words from git on carry the option, under the sets above
+    while IFS= read -r line; do
+        IFS=$'\x1f' read -r -a rec <<< "$line"
+        census_rec "${rec[@]}"
+        census_command
+        [ "$cmd" = git ] || continue
+        hold=""
+        for f in "${!funs[@]}"; do if [ "$((ln - 1))" -ge "${fstart[$f]}" ] && [ "$((ln - 1))" -le "${fend[$f]}" ]; then hold=$f; break; fi; done
+        k=0
+        while [ "$k" -lt "${#rw[@]}" ]; do census_unquote "${rw[k]}"; [ "${u##*/}" = git ] && break; k=$((k + 1)); done
+        carries=0
+        for w in "${rw[@]:k}"; do
+            census_unquote "$w"
+            if [[ "$u" == *--submodule* ]]; then carries=1; break; fi
+            if [ -n "$hold" ] && [[ "$u" =~ [\$][{]?[@*] ]]; then carries=1; break; fi
+            for nm in "${!vars[@]}"; do if [[ "$u" =~ [\$][{]?${nm}([^A-Za-z0-9_]|$) ]]; then carries=1; break 2; fi; done
+        done
+        [ "$carries" -eq 0 ] || echo "$ln"
+    done < <(grep -a -E -- "$re" "$rf")
+    rm -f "$mf" "$rf"
+}
+r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin and returns 1, 0 when every pin is carried: no git read the census finds unsets GIT_DIFF_OPTS or runs under an environment that lacks it (an env -u or --unset of it, an assignment of it ahead of git, env -i or a lone -), and no statement of the text names GIT_DIFF_OPTS, so none unsets, sets or exports it for the reads after it (round 12n, romp-manager's ruling P on round 12l's audit A1: the feed reads the variable as main's git log does); the feed's diff-tree reads (the git reads given diff-tree, --stdin and --text: the feed and, since round 12e, the merges' first-parent read) carry -c diff.suppressBlankEmpty=false among git's own options; every git log or rev-list given --format or --pretty carries --encoding=UTF-8, or -c i18n.logOutputEncoding=UTF-8 among git's own options; any other git read given a format is a for-each-ref whose format is %(refname) alone, the stated exemption (ref names are not re-encoded); the reads given a format number as many as the lines of the text that run git log or git rev-list with one, a second derivation; and every git read that passes --submodule (r12t_submodule_reads, above: one or more, each met among the census's git reads) carries --encoding=UTF-8, or -c i18n.logOutputEncoding=UTF-8 among git's own options, since under diff.submodule=log git re-encodes each summary line into the log output encoding (round 12t, the closing check's CC1)
+    local ln pre args sub g n i x fmt enc feed=0 formats=0 lines calls named recs sublines subn=0
     local -a a p
     # The list is read whole before the loop, never through a pipe the loop reads: the loop returns at the first read
     # lacking its pin, and a pipe closed while r11c_git_calls still writes gives its printf EPIPE, which, with SIGPIPE
@@ -12066,6 +12133,7 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
     # (the names regex keeps them too), read for the statement check after the loop.
     recs=$(census_records "$1" calls 'GIT_DIFF_OPTS')
     calls=$(r11c_git_calls "$1" "$recs")
+    sublines=$(r12t_submodule_reads "$1")
     while IFS=$'\037' read -r ln pre args; do
         read -r -a a <<< "$args"
         g=" "; n=1
@@ -12099,6 +12167,10 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
             feed=$((feed + 1))
             [[ "$g" == *" -c diff.suppressBlankEmpty=false "* ]] || { echo "the feed's git at line $ln carries no -c diff.suppressBlankEmpty=false"; return 1; }
         fi
+        if [[ $'\n'"$sublines"$'\n' == *$'\n'"$ln"$'\n'* ]]; then
+            subn=$((subn + 1))
+            [ "$enc" -eq 1 ] || { echo "the git $sub at line $ln passes --submodule and pins no output encoding"; return 1; }
+        fi
         [ -n "$fmt" ] || continue
         case "$sub" in
             log|rev-list)
@@ -12110,6 +12182,8 @@ r11c_pins_check() {   # <bash file>: prints the first git read lacking its pin a
         esac
     done <<< "$calls"
     [ "$feed" -eq 2 ] || { echo "the hook holds $feed feed reads (git diff-tree given --stdin and --text), where it holds two: the feed and, since round 12e, the merges' first-parent read"; return 1; }
+    [ "$subn" -ge 1 ] || { echo "no git read that passes --submodule was found, where the feed's reads take the clone's diff.submodule (round 12l)"; return 1; }
+    [ "$subn" -eq "$(grep -c . <<< "$sublines")" ] || { echo "the census met $subn git reads that pass --submodule among its git reads, where r12t_submodule_reads found $(grep -c . <<< "$sublines")"; return 1; }
     # a statement anywhere in the text that names GIT_DIFF_OPTS (an unset, an export, an assignment, a read of it): the
     # census's own records, each word read raw, so a quoted or escaped spelling is found too
     named=$(awk -F $'\037' '{ for (i = 7; i <= NF; i += 2) { w = $i; gsub(/["\047\\]/, "", w); if (w ~ /GIT_DIFF_OPTS/) { print $1; exit } } }' <<< "$recs")
@@ -16438,4 +16512,193 @@ WANT
         ( if [ -n "$d" ]; then PATH="$d:$PATH"; fi; echo "census awk: $a is $(readlink -f "$(command -v awk)")" >&2; census_records "$probe" calls '.'; echo "--"; census_records "$probe" vars ) | tr '\037' '|' > "$TEST_DIR/awk-got-$a"
         diff -u "$want" "$TEST_DIR/awk-got-$a"
     done
+}
+
+r12t_log_history() {   # r12l_super, then: a side branch moving the gitlink to a submodule commit (s.txt), pushed to the remote's side branch without the hook; main's own file and a plain merge of the side, so the merge's first-parent diff moves the gitlink; then a commit moving it again (b.txt), which the feed reads; BASE is the remote's main before the three; merge is the merge
+    r12l_super
+    git -C "$REPO" checkout -q -b side
+    r12l_bump s.txt 'side\n'
+    git -C "$REPO" push -q origin side
+    git -C "$REPO" checkout -q main
+    git -C "$REPO" -c protocol.file.allow=always submodule --quiet update sub
+    printf 'main\n' > "$REPO/mainf.txt"; git -C "$REPO" add mainf.txt; git -C "$REPO" commit -qm "main: another file"
+    git -C "$REPO" merge -q --no-ff -m "merge side" side > /dev/null
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    git -C "$REPO" -c protocol.file.allow=always submodule --quiet update sub
+    r12l_bump b.txt 'x\n'
+}
+r12t_summary_lines() {   # <commit> [<log option>...]: the summary lines git log -p prints for the commit under the clone's keys that read as ASCII "  > the submodule's"
+    local c=$1
+    shift
+    git -C "$REPO" log -1 -p --format= "$@" "$c" | LC_ALL=C grep -c "^  > the submodule's" || true
+}
+
+@test "round 12t (CC1, the witness: the log output encoding under diff.submodule=log): a clean push whose commit moves a populated submodule's gitlink, after a plain merge of a side branch the remote already holds that moves it too (so the merges' first-parent read, not the feed, reads that change), under diff.submodule=log with i18n.logOutputEncoding UTF-16, UTF-32 or IBM037, or i18n.commitEncoding=UTF-16 with the output key unset, each of which has git re-encode the summary lines diff.submodule=log prints, passes, the feed and the first-parent read pinning their output (--encoding=UTF-8), as main's hook passes it; so does a submodule commit recording an IBM037 encoding of its own under the UTF-16 key; and a credential in a submodule commit's added lines under diff.submodule=diff with the UTF-16 key is still refused naming github-pat (each clean push REFUSED at 1e827e62d, the round 12l head, to 363fa75dc as a foreign line, and passed at main, both scanners; red under the mutant dropping --encoding=UTF-8 from the feed's line, and under the one dropping it from the first-parent read's line, each alone; the closing check's CC1, romp-manager 2026-09-28 11:57Z)" {
+    local key
+    r12t_log_history
+    git -C "$REPO" config diff.submodule log
+    [ "$(r12t_summary_lines HEAD)" -eq 1 ]                                              # the premise's control: with no key, each summary line reads as ASCII
+    [ "$(r12t_summary_lines "$merge" --diff-merges=first-parent)" -eq 1 ]
+    for key in i18n.logOutputEncoding=UTF-16 i18n.logOutputEncoding=UTF-32 i18n.logOutputEncoding=IBM037 i18n.commitEncoding=UTF-16; do
+        git -C "$REPO" config "${key%%=*}" "${key#*=}"
+        [ "$(r12t_summary_lines HEAD)" -eq 0 ]                                          # the premise: git log re-encodes both summaries under the key
+        [ "$(r12t_summary_lines "$merge" --diff-merges=first-parent)" -eq 0 ]
+        push_main_through_hook_with_shim
+        r10a_passes
+        r12l_again
+        git -C "$REPO" config --unset "${key%%=*}"
+    done
+    # a submodule commit that records an encoding of its own (IBM037, under which ASCII bytes do not read as themselves),
+    # under the clone's UTF-16 output key: the pinned output is UTF-8, and the line keeps its shape
+    git -C "$REPO/sub" config i18n.commitEncoding IBM037
+    r12l_bump e.txt 'e\n'
+    git -C "$REPO/sub" config --unset i18n.commitEncoding
+    [ "$(git -C "$REPO/sub" cat-file commit HEAD | grep -c '^encoding IBM037$')" -eq 1 ]
+    git -C "$REPO" config i18n.logOutputEncoding UTF-16
+    push_main_through_hook_with_shim
+    r10a_passes
+    r12l_again
+    # the credential road under diff, the key still set: refused naming it
+    git -C "$REPO" config diff.submodule diff
+    r12l_bump deploy.env 'DEPLOY_TOKEN=%s\n' "$(probe_token)"
+    push_main_through_hook_with_shim
+    r12l_cred_refused github-pat sub/deploy.env
+}
+
+@test "round 12t (CC1, the census of the pins widened): every git read that passes --submodule pins its output encoding; r12t_submodule_reads finds over the hook's census records exactly the three reads handed the clone's diff.submodule through feed_opts (the name listing, the feed and the merges' first-parent read, each a function a judged_read call hands \"\${feed_opts[@]}\", whose git passes its positional list), and r11c_pins_check passes the hook; a copy dropping --encoding=UTF-8 from any one of the three reds the check naming that read's line (all three unpinned at 363fa75dc); a copy whose feed_opts holds no --submodule reds it as finding no such read; and on texts of a few lines the derivation's other roads red it (a git read given the option itself, a scalar variable holding it, an array copied from another and handed through two functions), while a git read given --encoding=UTF-8 or -c i18n.logOutputEncoding=UTF-8 passes, and a function whose git passes its positional list, handed no such word, is not required to pin (round 12t, the closing check's CC1)" {
+    local k ln
+    local -a want=() pat=('^    git -c core.quotePath=true diff-tree --stdin -r --name-status ' '^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p .* -c --root ' '^    git -c core.quotePath=true -c diff.suppressBlankEmpty=false diff-tree --stdin -p .* --diff-merges=first-parent ')
+    run census_memo r11c_pins_check "$HOOK"
+    [ "$output" = "" ]
+    [ "$status" -eq 0 ]
+    for k in 0 1 2; do
+        [ "$(grep -c -- "${pat[k]}" "$HOOK")" -eq 1 ]
+        want+=("$(grep -n -- "${pat[k]}" "$HOOK" | cut -d: -f1)")
+    done
+    run census_memo r12t_submodule_reads "$HOOK"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf '%s\n' "${want[@]}")" ]
+    for k in 0 1 2; do
+        ln=${want[k]}
+        sed "${ln}s/ --encoding=UTF-8 < / < /" "$HOOK" > "$TEST_DIR/sub-$k.sh"
+        [ "$(diff "$HOOK" "$TEST_DIR/sub-$k.sh" | grep -c '^>')" -eq 1 ]               # the change landed, on one line
+        run r11c_pins_check "$TEST_DIR/sub-$k.sh"
+        [ "$status" -ne 0 ]
+        [ "$output" = "the git diff-tree at line $ln passes --submodule and pins no output encoding" ]
+    done
+    [ "$(grep -c -- ' "--submodule=$sm")$' "$HOOK")" -eq 1 ]
+    sed 's/ "--submodule=$sm")$/)/' "$HOOK" > "$TEST_DIR/sub-none.sh"
+    [ "$(diff "$HOOK" "$TEST_DIR/sub-none.sh" | grep -c '^>')" -eq 1 ]
+    run r11c_pins_check "$TEST_DIR/sub-none.sh"
+    [ "$status" -ne 0 ]
+    [ "$output" = "no git read that passes --submodule was found, where the feed's reads take the clone's diff.submodule (round 12l)" ]
+    # the derivation's other roads, each on a text of a few lines (the check refuses at the first read it refuses, ahead
+    # of the counts it makes over a whole hook; a text that passes every read ends at the feed count, the first of them)
+    local nofeed="the hook holds 0 feed reads (git diff-tree given --stdin and --text), where it holds two: the feed and, since round 12e, the merges' first-parent read"
+    printf '#!/usr/bin/env bash\ngit diff-tree -p --submodule=log HEAD\n' > "$TEST_DIR/sub-lit.sh"
+    run r11c_pins_check "$TEST_DIR/sub-lit.sh"
+    [ "$status" -ne 0 ]
+    [ "$output" = "the git diff-tree at line 2 passes --submodule and pins no output encoding" ]
+    printf '#!/usr/bin/env bash\ngit diff-tree -p --submodule=log --encoding=UTF-8 HEAD\ngit -c i18n.logOutputEncoding=UTF-8 diff-tree -p --submodule=log HEAD\n' > "$TEST_DIR/sub-pinned.sh"
+    run r11c_pins_check "$TEST_DIR/sub-pinned.sh"
+    [ "$status" -ne 0 ]
+    [ "$output" = "$nofeed" ]
+    printf '#!/usr/bin/env bash\nsm_opt="--submodule=$1"\ngit diff-tree -p $sm_opt HEAD\n' > "$TEST_DIR/sub-scalar.sh"
+    run r11c_pins_check "$TEST_DIR/sub-scalar.sh"
+    [ "$status" -ne 0 ]
+    [ "$output" = "the git diff-tree at line 3 passes --submodule and pins no output encoding" ]
+    printf '%s\n' '#!/usr/bin/env bash' 'opts=("--submodule=$1")' 'more=("${opts[@]}")' 'inner() {' '    git diff-tree -p "$@" HEAD' '}' 'outer() {' '    inner "$@"' '}' 'outer "${more[@]}"' > "$TEST_DIR/sub-chain.sh"
+    run r11c_pins_check "$TEST_DIR/sub-chain.sh"
+    [ "$status" -ne 0 ]
+    [ "$output" = "the git diff-tree at line 5 passes --submodule and pins no output encoding" ]
+    printf '%s\n' '#!/usr/bin/env bash' 'lone() {' '    git diff-tree -p "$@" HEAD' '}' 'lone -r' > "$TEST_DIR/sub-lone.sh"
+    run r11c_pins_check "$TEST_DIR/sub-lone.sh"
+    [ "$status" -ne 0 ]
+    [ "$output" = "$nofeed" ]
+}
+
+r12t_deinit_bump() {   # r12l_super, then a gitlink moved to a submodule commit (b.txt), the submodule then deinitialized with its repository kept under .git/modules, and diff.submodule=diff: git log prints (diff failed) for the change, its error line on stderr; sets sha
+    r12l_super
+    r12l_bump b.txt 'x\n'
+    git -C "$REPO" submodule --quiet deinit -f sub
+    [ -d "$REPO/.git/modules/sub" ]
+    git -C "$REPO" config diff.submodule diff
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= 2> /dev/null | grep -c '^(diff failed)$')" -eq 1 ]   # the premise
+}
+r12t_feed_advice() {   # the push just made was refused as unscanned with failed_feed's advice, which names no single read (the refusal line above it names the read; round 12u, on round 12t's audit, F1), never the scanner's advice, the remote at its base
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"; the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"romp pre-push: BLOCKED. A git read of the credential scan (git diff-tree) printed a line the hook cannot read; the read and its commit are named above."* ]]
+    [[ "$output" == *"  The push is refused rather than published unscanned. Git prints (diff failed) or (revision walker failed) for a submodule it cannot read: check the submodule out (git submodule update --init). An external diff that runs in a submodule's diff prints lines of its own: unset it for this push. Or set ROMP_NO_GITLEAKS=1 for one push."* ]]
+    [[ "$output" != *"gitleaks could not scan"* ]]
+    [[ "$output" != *"Fix the scanner"* ]]
+    at_base
+}
+
+@test "round 12t (CC3, git's error line for a submodule it cannot read): under diff.submodule=diff, a gitlink moved in a submodule deinitialized with its repository kept, where git prints (diff failed) after the change's header line and its error line on stderr: the clean push is refused as a foreign line of the feed, its refusal line naming the feed's read and the commit, its closing advice naming git's two submodule error lines and neither the scanner nor a single read (main's hook publishes it unscanned, its gitleaks stopping on git's error line, both scanners, the closing check's L3: a fail-closed refusal); and it passes once git submodule update --init checks the submodule out, as at main (the advice named the scanner at 363fa75dc; red under the mutant setting failed_creds in place of failed_feed on the feed's foreign line; round 12t, the closing check's CC3)" {
+    r12t_deinit_bump
+    push_main_through_hook_with_shim
+    [[ "$output" == *"error: Could not access '"* ]]
+    [[ "$output" == *"romp pre-push: the CREDENTIAL FEED of the push could not be read whole (git diff-tree exited 0 and printed a line inside commit 1 of the 1 it was given, ${sha:0:10}, that is none of the shapes the feed reads or recognizes"* ]]
+    r12t_feed_advice
+    git -C "$REPO" -c protocol.file.allow=always submodule --quiet update --init sub
+    push_main_through_hook_with_shim
+    r10a_passes
+}
+
+@test "round 12t (CC3, the fail-closed shape and the other roads to the read-neutral advice): the deinitialized bump pushed with a github-pat credential in an earlier commit is refused with that advice, the value in no line (main's hook publishes it unscanned, both scanners, the closing check's L3); a plain merge of a side branch the remote holds, moving the gitlink, the submodule then deinitialized, is refused by the merges' first-parent read, its refusal line naming that read and the merge, with the same advice, which names no single read (round 12u, on round 12t's audit, F1); and GIT_EXTERNAL_DIFF reaching a populated submodule's own diff under diff.submodule=diff, where main's hook reads nothing of the change and passes a clean push (the closing check's L2), is refused with it (red under the mutant setting failed_creds in place of failed_feed on the first-parent read's foreign line, in its merge push; round 12t, the closing check's CC3)" {
+    r12l_super
+    commit_file aa.env "T=$(probe_token)" "an env file"
+    r12l_bump b.txt 'x\n'
+    git -C "$REPO" submodule --quiet deinit -f sub
+    git -C "$REPO" config diff.submodule diff
+    push_main_through_hook_with_shim
+    r12t_feed_advice
+    [[ "$output" != *"$(probe_token)"* ]]
+    # the merge, read by the first-parent read alone: the side commit is on the remote, and the combined diff prints the
+    # gitlink as its Subproject lines under any value
+    git -C "$REPO" -c protocol.file.allow=always submodule --quiet update --init sub
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b side
+    r12l_bump s.txt 'side\n'
+    git -C "$REPO" push -q origin side
+    git -C "$REPO" checkout -q main
+    git -C "$REPO" -c protocol.file.allow=always submodule --quiet update sub
+    printf 'main\n' > "$REPO/mainf.txt"; git -C "$REPO" add mainf.txt; git -C "$REPO" commit -qm "main: another file"
+    git -C "$REPO" merge -q --no-ff -m "merge side" side > /dev/null
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    git -C "$REPO" submodule --quiet deinit -f sub
+    [ "$(git -C "$REPO" log -1 -p -U0 --diff-merges=first-parent --format= "$merge" 2> /dev/null | grep -c '^(diff failed)$')" -eq 1 ]
+    push_main_through_hook_with_shim
+    [[ "$output" == *"romp pre-push: the FIRST-PARENT DIFF of the pushed merges could not be read whole for the credential scan (git diff-tree exited 0 and printed a line inside merge 1 of those it was given, ${merge:0:10},"* ]]
+    [[ "$output" != *"the CREDENTIAL FEED of the push could not be read whole"* ]]
+    r12t_feed_advice
+    # GIT_EXTERNAL_DIFF, which git runs in a submodule's own diff (git diff), where main's hook reads nothing of the change
+    git -C "$REPO" -c protocol.file.allow=always submodule --quiet update --init sub
+    printf '#!/usr/bin/env bash\necho "EXT $1"\n' > "$TEST_DIR/ext-diff"
+    chmod 755 "$TEST_DIR/ext-diff"
+    r12l_bump c.txt 'c\n'
+    [ "$(GIT_EXTERNAL_DIFF="$TEST_DIR/ext-diff" git -C "$REPO" log -1 -p -U0 --format= | grep -c '^EXT ')" -eq 1 ]   # the premise
+    export GIT_EXTERNAL_DIFF="$TEST_DIR/ext-diff"
+    push_main_through_hook_with_shim
+    unset GIT_EXTERNAL_DIFF
+    r12t_feed_advice
+}
+
+@test "round 12t (CC4, the stated limit's witness): a text cert.p12 at its base on the remote, then a commit that only removes one of its lines, so its one hunk adds no line and the feed writes no piece for it: the push passes at the fix, where main's hook refuses it naming pkcs12-file, whose git mode reports that path-only rule for the file's section; a stated limit that publishes no new bytes, present since the additive run (both scanners; the closing check's adversary, L4; romp-manager's ruling CC4, stated in the header's additive-run paragraph)" {
+    r11a_base
+    printf 'l1\nl2\n' > "$REPO/cert.p12"
+    git -C "$REPO" add cert.p12
+    git -C "$REPO" commit -qm "a text p12"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    printf 'l1\n' > "$REPO/cert.p12"
+    git -C "$REPO" commit -qam "a line removed"
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c '^+[^+]')" -eq 0 ]            # the premise: the hunk adds no line
+    [ "$(git -C "$REPO" log -1 -p -U0 --format= | grep -c '^-l2$')" -eq 1 ]
+    push_main_through_hook_with_shim
+    r10a_passes
 }
