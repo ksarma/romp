@@ -325,7 +325,7 @@ test("listenForFrames registers the handler in the registry and installs on wind
     assert.equal(listenForFrames(h), h);
     assert.deepEqual(subs, [h], "the SAME function is registered — the perf wrapper included, so the brackets nest on both paths");
     win.dispatchEvent(new MessageEvent("message", { data: { romp: "paneFocus" } }));
-    assert.deepEqual(seen, [{ romp: "paneFocus" }], "…and it is on window for the shell's posts");
+    assert.deepEqual(seen, [{ romp: "paneFocus" }], "…and the window holds a wrapper that calls it after the foreign-sender check, which hears this dispatch (no source, no origin: the page's own)");
     // no federation.js on the page (a VS Code webview)
     const bare: any = new EventTarget();
     g.window = bare;

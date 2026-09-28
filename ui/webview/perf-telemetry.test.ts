@@ -981,9 +981,10 @@ const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const readUi = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
 
 test("each pane bundle's one frame listener is installed through listenForFrames, wrapped by perfFrameHandler under its own app name", () => {
-  // the pane hands ONE handler to frame-listener.ts, which puts it on window and in federation's registry; a bare
-  // window listener beside that call would be a second delivery path, and an unwrapped one a frame the collector
-  // never sees (the import line has no paren, so the call is the only match for the count)
+  // the pane hands ONE handler to frame-listener.ts, which puts it in federation's registry and, on window, a wrapper
+  // that calls it after the foreign-sender check; a bare window listener beside that call would be a second delivery
+  // path, and an unwrapped one a frame the collector never sees (the import line has no paren, so the call is the only
+  // match for the count)
   const panes: Array<[string, string]> = [["render.ts", "chat"], ["feed.ts", "feed"], ["fleet.ts", "fleet"], ["timeline-main.ts", "timeline"]];
   for (const [file, app] of panes) {
     const src = readUi(file);

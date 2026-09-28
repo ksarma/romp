@@ -16,10 +16,11 @@
 //
 // What the census does not read, and why none of it can shadow the shim's check:
 //   - eval reached other than by its name as the callee ((0, eval)(s), window.eval(s), an alias, a computed name), the
-//     Function constructor, and a string handed to a timer: each runs its string in the global scope or in a function
-//     of its own. The witness below runs the indirect evals and the Function constructor in node and shows a function
-//     scope's binding left alone; a string timer is compiled as a script of its own in the global scope (the HTML
-//     standard's timer steps).
+//     Function constructor, a string handed to a timer, and an import() of a URL built at run time (a data: or blob: URL
+//     holding code): each runs its string in the global scope, in a function of its own or as a module of its own. The
+//     witness below runs the indirect evals and the Function constructor in node and shows a function scope's binding
+//     left alone; a string timer is compiled as a script of its own in the global scope (the HTML standard's timer
+//     steps); an imported module's code runs in a module scope of its own.
 //   - markup a page builds at run time (a handler attribute, a script element): its code is a string until then, and
 //     runs as a handler function or a script of its own.
 //   - the /dist bundles a page loads by src: tests/test_shell_source_check.py's population leaves them out, the ui/
@@ -86,7 +87,8 @@ const REFUSED: Array<[string, string]> = [
   ["function g() { with (o) go(); }", "inside a function, with no block"],
 ];
 // Survivors: eval or code from a string reached other than as a call of the name. Each runs its string in the global
-// scope or in a function of its own (the witness below), so none can put a binding in a scope around a listener.
+// scope, in a function of its own (the witness below) or as a module of its own, so none can put a binding in a scope
+// around a listener.
 const SURVIVORS: Array<[string, string]> = [
   ["(0, eval)(s);", "a comma expression as the callee: an indirect eval"],
   ["window.eval(s);", "eval as a member: indirect"],
@@ -95,6 +97,7 @@ const SURVIVORS: Array<[string, string]> = [
   ["Function(s)();", "the Function constructor: a function of its own in the global scope"],
   ["new Function(s)();", "the same, with new"],
   ["setTimeout(s, 0);", "a string timer: a script of its own in the global scope"],
+  ["import(\"data:text/javascript,\" + encodeURIComponent(s));", "an import() of a URL built at run time: a module of its own"],
   ["document.body.insertAdjacentHTML(\"beforeend\", \"<b onclick=\\\"with (o) go()\\\">x</b>\");", "markup made at run time"],
   ["eval`s`;", "a tagged template: eval is handed the strings array and returns it"],
 ];

@@ -1546,21 +1546,20 @@ class ShellWordsFromTheShellOnly(unittest.TestCase):
     location.origin) and the windows it opened, over the edges a browser gives them (top, frames, parent, opener)."""
 
     # [source, origin] of every sender that is not the shell: a page on another origin that opened this pane page, a
-    # sandboxed frame (origin "null"), a window on this page's location.origin that is not the parent (a popup, a sibling
-    # pane), this page
-    # itself, this page's own dispatch (no source, no origin), the parent speaking from another origin; a sourceless post
-    # that names an origin (a frame removed right after it posted can leave its message with no source): another origin,
-    # the opaque origin, and this page's location.origin, none of them the shell's window; the parent with the opaque origin;
-    # and the pane's own window.opener as the source, which in a frame is null (the harness's window has opener null, as a
-    # browser's frame does), on this origin and on the opaque one: a check that admitted e.source===window.opener would
-    # admit a sourceless post there. Then the windows in the pane's tab and the ones it opened, over the edges a browser
-    # gives them (the prelude's first two lines): the pane's top is the shell, its parent, and the shell is its own
-    # parent and top; window.frames is the window itself, whose length and indexes list the frames inside it. A frame
-    # inside the pane, sandboxed and on its location.origin (its parent the pane, its top the shell, listed in its
-    # frames); a frame beside it in the shell, sandboxed and on its location.origin (its parent and its top the shell); a
-    # window this page
-    # opened (window.open), on another origin and on this one (its opener is this window). A check that took any of
-    # those edges for the shell's would hear one of them
+    # sandboxed frame (origin "null"), a window on this page's location.origin that is not the parent (a popup, a
+    # sibling pane), this page itself, this page's own dispatch (no source, no origin), the parent speaking from another
+    # origin; a sourceless post that names an origin (a frame removed right after it posted can leave its message with
+    # no source): another origin, the opaque origin, and this page's location.origin, none of them the shell's window;
+    # the parent with the opaque origin; and the pane's own window.opener as the source, which in a frame is null (the
+    # harness's window has opener null, as a browser's frame does), on this page's location.origin and on the opaque
+    # one: a check that admitted e.source===window.opener would admit a sourceless post there. Then the windows in the
+    # pane's tab and the ones it opened, over the edges a browser gives them (the prelude's first two lines): the pane's
+    # top is the shell, its parent, and the shell is its own parent and top; window.frames is the window itself, whose
+    # length and indexes list the frames inside it. A frame inside the pane, sandboxed and on its location.origin (its
+    # parent the pane, its top the shell, listed in its frames); a frame beside it in the shell, sandboxed and on its
+    # location.origin (its parent and its top the shell); a window this page opened (window.open), on another origin and
+    # on this page's location.origin (its opener is this window). A check that took any of those edges for the shell's
+    # would hear one of them
     FOREIGN = r"""
 window.top=window.parent;window.parent.top=window.parent;window.parent.parent=window.parent;window.frames=window;
 var KID={parent:window,top:window.parent},OWN_KID={parent:window,top:window.parent};window.length=2;window[0]=KID;window[1]=OWN_KID;
@@ -1637,10 +1636,10 @@ out({onScreen:onScreen===undefined?"unset":onScreen});""")
         # window.opener is the page that opened it, the top of its own tab. On a plain-http address a browser applies no
         # Cross-Origin-Opener-Policy (Handler._send says so), so a page on another origin keeps that handle, and a page
         # on this origin keeps it under the policy as well. That window is not the shell whatever origin its post names
-        # (another origin, this page's own, the opaque "null"), so neither word is heard from it: the on-screen flag
-        # stays unset, the next return's row carries no parked field (a standalone row's shape) and nothing dials. The
-        # flag and the row are what a check that heard the opener would change: in a standalone page no shell publishes
-        # a link, so a return never awaits one and the link word dials nothing either way
+        # (another origin, this page's location.origin, the opaque "null"), so neither word is heard from it: the
+        # on-screen flag stays unset, the next return's row carries no parked field (a standalone row's shape) and
+        # nothing dials. The flag and the row are what a check that heard the opener would change: in a standalone page
+        # no shell publishes a link, so a return never awaits one and the link word dials nothing either way
         for origin in ('"https://elsewhere.example"', "location.origin", '"null"'):
             with self.subTest(origin=origin):
                 r = _run(r"""
