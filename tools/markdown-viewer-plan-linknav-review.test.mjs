@@ -141,6 +141,12 @@ test('L3 puts the web test first in figureTarget, as the source does, and names 
   const target = between(viewer, 'function figureTarget(img: Element, filePath: string): FigureTarget | null {', '\n}\n');
   inOrder(target, ['if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest), src: dest };', 'const p = figurePath(filePath, dest);'], 'figureTarget');
   assert.ok(L3.includes('What it opens (`figureTarget`): a remote picture (an http or https source, a protocol-relative one) in a tab, never the viewer, the web test run FIRST, before the model\'s join'));
+  // a source of that kind at this origin's /file route is a file of a session, read before the web test (the coordinator's ruling on
+  // the same-origin figure after the file review's round 19), in the source and in L3 (a sentence pin; file-figure-open.test.ts runs
+  // the classifier and file-figure-open-engines-browser.test.ts opens its forms in the three engines)
+  inOrder(target, ['const own = ownFileRoute(dest, document.baseURI, location.origin);', 'if (/^https?:/i.test(dest) || dest.startsWith("//")) return { kind: "web", href: absUrl(dest), src: dest };'], 'figureTarget: this origin\'s /file route before the web test');
+  assert.ok(L3.includes('but for a source of that kind that names THIS origin\'s /file route (`ownFileRoute`, read before the web test:'), 'L3 names the same-origin file route as a file of a session, read before the web test');
+  assert.ok(L3.includes('and never as a web tab at the address'), 'L3 says it never opens as a web tab');
   const clicks = viewer.split('body.addEventListener("click", (ev) => {');
   assert.equal(clicks.length, 3, 'two click listeners on the body: the links\' and the figures\'');
   inOrder(clicks[2].split('\n  });\n')[0], ['if (ev.defaultPrevented) return;', 'if (!img || figureLinkOf(img)) return;', 'openFigure(img, ev);'], 'the figure listener: the one predicate (a sentence pin)');

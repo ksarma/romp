@@ -8478,7 +8478,16 @@ the control when both stand (`figureLabelAfter`). What it opens (`figureTarget`)
 source, a protocol-relative one) in a tab, never the viewer, the web test run FIRST, before the model's join, since
 `figurePath` reads a protocol-relative source as an absolute path of the disk (read after the join, a `//host/pic.svg`
 source opened the viewer on the kernel's /file route at that path, a 404 and a bogus entry on the trail; the review's
-round 1); else the file named by the candidate the browser chose for the figure, as the author wrote it (`chosenSource`,
+round 1), but for a source of that kind that names THIS origin's /file route (`ownFileRoute`, read before the web test:
+the address parsed against the page, its origin the page's own, its path /file once its escapes are decoded and its dot
+segments resolved, so `/%66ile`, `/x/../file` and `/./file` count), which is a file of a session and opens as a local
+picture does, the file its query names in the session it names, in the viewer or, on a Cmd/Ctrl-click, in its own tab off
+the /file route, and never as a web tab at the address, since the cap pass caps such a figure's src so the picture loads
+under a page key while a tab at the address as written carries no cap and the kernel refused it (the coordinator's ruling
+on the same-origin figure after the file review's round 19; a /file address on another origin, or on this host at another
+port, stays a web target; the kernel routes the path as the browser sends it, escapes left as written, so an escaped
+spelling's picture does not load there, and it counts here all the same, on the side that opens no tab); else the file
+named by the candidate the browser chose for the figure, as the author wrote it (`chosenSource`,
 the review's round 2: `currentSrc`, when it is set and is not the img's own src, matched against the srcset carriers, a
 `<picture>`'s sources then the img, and named by the authored spelling rewriteFigureSrcs kept beside the rewritten
 candidates; else the src by pictureDest's rule, the browser having chosen the src itself or the figure carrying no other
@@ -9087,7 +9096,9 @@ listener already answered (`ev.defaultPrevented`, its first line): the gate list
 default as it restores a placeholder's img, and a click dispatched on that img (a display:none element no pointer
 reaches; a synthetic case from a read-only pre-drive, not a measured one) arrived at this listener with the img
 restored, was read as a bare figure, and opened its target. Held by file-figure-open.test.ts (the source pins:
-the one decision, the target, the two insertion points, the click routing, the walks, the sheets) and
+the one decision, the target, the two insertion points, the click routing, the walks, the sheets, and, since the
+coordinator's ruling on the same-origin figure after the file review's round 19, `ownFileRoute` run over the forms of a
+figure at this origin's /file route, whose open file-figure-open-engines-browser.test.ts drives in the three engines) and
 file-figure-open-browser.test.ts (Chromium: the controls on a synthetic report, the hover reveal and the corner in
 both float cases, Tab and Enter, the place kept across the open and Back, the plain click with the panel closed, the
 modified click's tab, the linked figure, the gated remote figure, the inline data picture, print media, no hover, and
@@ -9291,7 +9302,11 @@ each engine launched through real-viewer-leg.ts's inBrowser with the engine name
 a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and two cases of WebKit's alone that read window errors, the Files
 pane's as its Comments aside opens beside a document of top-level tables, and the chat modal's, the Files pane's and the feed
 modal's as remote pictures in top-level tables load, one of them under the floor, 24 opens a surface, the file review's round
-18, extra6-3) and, since the fixes
+18, extra6-3; and, since the coordinator's ruling on the same-origin figure after the file review's round 19, the cells of a
+figure written with this origin's /file address, in Chromium, Firefox and WebKit under a page key: the plain spelling, an
+escaped route, a .. segment and a . segment open in the viewer, in the session the address names, and open no tab, red at
+dcaa80ec4, and a /file address on another origin or on this host at another port still opens a web tab, while
+ui/webview/file-figure-open.test.ts runs the classifier over those forms and more in CI) and, since the fixes
 for that round's extra9-1 (with the coordinator's decision 4), ui/webview/file-figure-open-stacking.ts (the one gate's stacking
 cells, a module of the cells alone that the same two legs run in the three engines, on the chat modal and the Files pane: a remote
 picture in a top-level table, inside author elements of page classes that would make a stacking context around it and inside an
