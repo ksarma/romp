@@ -88,12 +88,15 @@ the seven pane pages, the service worker). The walk is shape-sensitive: it reads
 (a `match`, a comparison through a helper, a table whose value is a lambda or a getter called with arguments) is outside it
 until a branch is added and pinned in the form-space tests below (a naive equality walk misses the landing). A fetch is a call to a Name or a
 self.<method> (a test helper over the handler or an HTTP client) whose first argument is a string literal beginning with `/`
-that, without its ?query, is such a route, or a call to an attribute named `urlopen` whose first argument is a string literal,
+that, without its ?query, is such a route (or a concatenation led by such a literal that holds the whole path, its `?` inside
+the literal: `self._req("/?token=" + tok)`, the form main's login cookie split added to the suite, merged 2026-09-28), or a
+call to an attribute named `urlopen` whose first argument is a string literal,
 bare or `%`-formatted, of the form `http://127.0.0.1:%d/<route>?...token=...` (the `with ... as r` target is what it binds;
 the fixer pass of the author's pass 8: the tokened fetches in tests/test_kernel.py carried 39 pins over five pages outside the population, one
 of them satisfiable by three comments of the timeline page); a method call on another object (`path.split("/")`) is not one.
 
-Bound: a url built otherwise than as a bare or `%`-formatted literal (a `Request` object, an f-string, `.format`), a formatted
+Bound: a url built otherwise than as a bare or `%`-formatted literal or a concatenation led by the whole path (a `Request`
+object, an f-string, `.format`, `"/chat" + rest`), a formatted
 url whose query carries no `token=` (tests/test_kernel.py's token-less fetch of `/`, answered with the paste-the-token page), a
 membership asserted through a helper (`_has(self, lit, body)` in tests/test_files_pane.py and tests/test_settings_page.py, whose
 formatted fetches bind a name no form here reads), a fetch of a path the dispatch does not map to a getter
@@ -388,7 +391,7 @@ def _text(node, getters, constants):
 def _fetched(node, names, routes):
     """The served text a fetched value stands for (the author's pass 8, 2026-09-20): a call to a Name or a self.<method> whose first argument
     is a string literal beginning with `/` that, without its ?query, is a route in `routes` (`_serve_get("/sw.js", ...)`,
-    `self._get_text("/")`); a call to an attribute named `urlopen` whose first argument is a string literal, bare or `%`-formatted,
+    `self._get_text("/")`), or a concatenation led by such a literal holding the whole path (_fetch_path); a call to an attribute named `urlopen` whose first argument is a string literal, bare or `%`-formatted,
     naming such a route with the token in its query (_url_route; the fixer pass of the author's pass 8); or the `.read(...)` or `.decode(...)`
     of such a value or of a Name bound to one, through any chain of the two (`body.decode()`, `fetch("/chat").read().decode()`);
     else None. A bare Name is not followed (as _text does not)."""
@@ -403,10 +406,23 @@ def _fetched(node, names, routes):
         fmt = a.left if isinstance(a, ast.BinOp) and isinstance(a.op, ast.Mod) else a
         route = _url_route(fmt.value) if isinstance(fmt, ast.Constant) and isinstance(fmt.value, str) else None
         return routes.get(route) if route else None
-    if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str) and node.args[0].value.startswith("/") \
-            and (isinstance(f, ast.Name) or (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self")):
-        return routes.get(node.args[0].value.split("?")[0])
+    path = _fetch_path(node.args[0]) if node.args else None
+    if path and (isinstance(f, ast.Name) or (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self")):
+        return routes.get(path.split("?")[0])
     return None
+
+
+def _fetch_path(node):
+    """The literal url a fetch helper is handed: a string literal beginning with `/`, or a concatenation whose leftmost operand is
+    such a literal holding the whole path, its `?` inside the literal (`"/?token=" + quote(tok)`; the merge of main's login cookie
+    split, 2026-09-28, whose tests fetch the signed-in landing so, three sites the textual census read and the derivation did not);
+    None otherwise. A concatenation whose literal ends before its `?` (`"/chat" + rest`) names no path whole and is no fetch here."""
+    left = node
+    while isinstance(left, ast.BinOp) and isinstance(left.op, ast.Add):
+        left = left.left
+    if not (isinstance(left, ast.Constant) and isinstance(left.value, str) and left.value.startswith("/")):
+        return None
+    return left.value if left is node or "?" in left.value else None
 
 
 def _resolve(node, names, attrs, getters, constants):
@@ -1203,7 +1219,8 @@ class ServedPinsReadElements(unittest.TestCase):
         # constant outside the author's pass 6 roster), each name derived here, not written. The author's pass 8: a body fetched by a literal path,
         # and (the fixer pass) by a formatted url with the token in its query, bound by the with-item's `as` target; a token-less
         # url and an unmapped path bind nothing. The fixer pass of the author's pass 9: a binding at module level (MOD) and an alias of a bound Name
-        # or self.<attr> (alias, al2), each a row and a site. The module is built over EVERY derived
+        # or self.<attr> (alias, al2), each a row and a site. The merge of main's login cookie split (2026-09-28): a fetch by a
+        # concatenation led by the whole path (f10) is a row and a site, and one led by a name (f12) binds nothing. The module is built over EVERY derived
         # getter, so a new getter is pinned by construction, and every expectation fails on an empty derivation
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         css = sorted(c for c in constants if c.endswith("_CSS"))[0]   # one constant of each kind, derived
@@ -1273,6 +1290,10 @@ class T(unittest.TestCase):
         self.assertIn("m2", alias)
         al2 = self.html
         self.assertIn("m3", al2)
+        st, fb, _ = self._get("/?token=" + tok, {})
+        self.assertIn("f10", fb)
+        pb = self._get(prefix + "/chat?token=x")
+        self.assertIn("f12", pb)
 '''
         loop = "        for pg in (%s):\n" % ", ".join("km.%s()" % g for g in getters)
         tail = '''            self.assertIn("a1", pg, "one row per text")
@@ -1313,7 +1334,8 @@ def test_module_level():
                     (34, "y\tz", "_feed_page", "in"), (35, "tq", "_feed_page", "in"),
                     (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in"),   # the fetched forms (the author's pass 8)
                     (51, "f7", "_chat_page", "in"),   # a formatted url with the token, bound by the with-item's `as` (the fixer pass of the author's pass 8)
-                    (58, "m1", "_feed_page", "in"), (60, "m2", "_feed_page", "in"), (62, "m3", "_landing", "in")]   # a module-level binding and two aliases (the fixer pass of the author's pass 9)
+                    (58, "m1", "_feed_page", "in"), (60, "m2", "_feed_page", "in"), (62, "m3", "_landing", "in"),   # a module-level binding and two aliases (the fixer pass of the author's pass 9)
+                    (64, "f10", "_landing", "in")]   # a fetch by a concatenation led by the whole path (the merge of main's login cookie split)
         expected += [(L + 1, "a1", g, "in") for g in getters] + [(L + 2, "a2", g, "index") for g in getters]
         expected += [(L + 5, "a4", "_feed_page", "index"), (L + 5, "a5", "_feed_page", "index"), (L + 6, "a6", "_feed_page", "index"), (L + 6, "a7", "_feed_page", "index"),
                      (L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
@@ -1324,7 +1346,13 @@ def test_module_level():
         # the author's pass 8 (2026-09-20): a fetch of an unmapped path, a body passed through served_css.js_code, and a method call on another
         # object with a route-shaped literal (path.split("/")) bind nothing; the fixer pass: nor a formatted url of a page route with
         # no token in its query (the gate's paste-the-token page, f8), nor one of a path the dispatch does not map (f9)
-        self.assertEqual({lit for _, lit, _, _, _ in rows} & {"f4", "f5", "f6", "f8", "f9"}, set())
+        self.assertEqual({lit for _, lit, _, _, _ in rows} & {"f4", "f5", "f6", "f8", "f9", "f12"}, set())
+        # the merge of main's login cookie split (2026-09-28): a concatenation is a fetch of its path only where its leading literal
+        # holds the whole path, its `?` inside the literal; a literal that ends before its `?` names no path whole, and a
+        # concatenation led by a name (f12 above) is no fetch
+        url = lambda text: _fetch_path(ast.parse(text, mode="eval").body)
+        self.assertEqual((url('"/?token=" + tok'), url('"/chat?token=" + tok + "&x=1"'), url('"/sw.js"')), ("/?token=", "/chat?token=", "/sw.js"))
+        self.assertEqual((url('"/chat" + rest'), url('prefix + "/chat?token=x"'), url('"chat?token=" + tok'), url('"/?token=%s" % tok')), (None, None, None, None))
         # the author's pass 8 (2026-09-20): the rows the textual census declines, by form: a loop or comprehension literal (p, q, r, a4 to a7),
         # a name bound to a slice (h), a literal with a backslash and a triple-quoted one; every other row is readable
         declined = {(15, "p"), (15, "q"), (17, "r"), (28, "h"), (L + 5, "a4"), (L + 5, "a5"), (L + 6, "a6"), (L + 6, "a7"), (34, "y\tz"), (35, "tq")}
@@ -1339,7 +1367,7 @@ def test_module_level():
                           (26, "k", "_feed_page", "in"), (26, "j", "_LANDING_MOBILE_JS", "in"), (29, "g", "_feed_page", "index"), (29, "f", "_feed_page", "index"),
                           (30, "e", "_LANDING_MOBILE_JS", "count"), (31, "d", "_feed_page", "find"), (31, "c", "_feed_page", "rindex"), (31, "b", "_feed_page", "rfind"),
                           (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in"), (51, "f7", "_chat_page", "in"),
-                          (58, "m1", "_feed_page", "in"), (60, "m2", "_feed_page", "in"), (62, "m3", "_landing", "in")]
+                          (58, "m1", "_feed_page", "in"), (60, "m2", "_feed_page", "in"), (62, "m3", "_landing", "in"), (64, "f10", "_landing", "in")]
         expected_sites += [(L + 1, "a1", g, "in") for g in getters] + [(L + 2, "a2", g, "index") for g in getters]
         expected_sites += [(L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
                            (L + 19, "x1", "_landing", "in"), (L + 19, "x2", "_landing", "in"), (L + 20, "x3", "_landing", "in")]
