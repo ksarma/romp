@@ -1573,15 +1573,20 @@ def wait_for_census(before, timeout=5.0):
 # whose target's module, or a Timer's function's module, starts with pytest_timeout. That exclusion exists for
 # pytest-timeout's timer for the running test, a non-daemon threading.Timer that the plugin cancels and joins only after
 # the test's protocol returns, so under CI's --timeout-method=thread it is always alive here.
-# HOW THE REPORT REACHES THE CONTROLLER. The failure is the teardown phase's test report. A worker sends every test report
-# to the controller over xdist's channel, this one included; the controller prints it as `ERROR at teardown of <that
-# test>` and counts it in the run's exit status. Nothing else a worker does after its session would be seen: its stdout
-# goes to /dev/null and its exit status is not read, which is why this is a test report and not a print or an exit code.
-# Run serially, the same error prints first, so a serial cell that then hangs at exit on a thread still running (until
-# the thread ends or the cap cancels the cell) names the thread in its log; an idle concurrent.futures worker or a thread
-# stopped only after the check lets the process exit after the error. The test the error names is the process's last,
-# where the check runs, not necessarily the one that started the thread; the thread's target and stack say where it came
-# from.
+# HOW THE REPORT REACHES THE CONTROLLER: by two channels. The first is the teardown phase's test report. A worker sends
+# every test report to the controller over xdist's channel, this one included; the controller prints it as `ERROR at
+# teardown of <that test>` and counts it in the run's exit status. It is the channel that fails the run, since a
+# worker's exit status is not read, and a print to a worker's stdout would not be seen: that stdout goes to /dev/null.
+# The second is stderr: the guard writes the same text there (_guard_failure_to_stderr), because pytest's unittest
+# plugin puts a TestCase's second stored error (a body and a cleanup that both fail) into the teardown report in place
+# of the guard's, and that report then names no thread. A worker's stderr is the controller's, so the text reaches the
+# log serially and under xdist; a line from the terminal reporter at session finish would not, since in a worker the
+# reporter writes to that /dev/null stdout. Run serially, both print before the interpreter exits (stderr at the check,
+# the error in the run's summary), so a serial cell that then hangs at exit on a thread still running (until the thread
+# ends or the cap cancels the cell) names the thread in its log, through stderr when the error was replaced; an idle
+# concurrent.futures worker or a thread stopped only after the check lets the process exit after the error. The test
+# the error names is the process's last, where the check runs, not necessarily the one that started the thread; the
+# thread's target and stack say where it came from.
 # THE CAP, 10 s, from the census of 2026-09-26 on the fork's main (the full suite on 3.12 at -n 2, twice, and at -n 4;
 # every third test module, 314 of 940, serially, twice each on 3.12 and on 3.14t with the GIL off). No non-daemon thread
 # but pytest-timeout's timer was alive at any session end, so no exit latency could be measured there (that census read
@@ -1734,12 +1739,46 @@ def _thread_report(t, frames):
     return "thread %r (ident %s) runs %s\n%s" % (t.name, t.ident, runs, stack)
 
 
+def _guard_failure_to_stderr(item, failure):
+    """The guard's second channel: its failure's text, written to stderr. pytest's unittest plugin puts a TestCase's
+    second stored error (a body and a cleanup that both fail) into the teardown report in place of the guard's, and that
+    report then names no thread; stderr is out of the plugin's reach. The capture plugin captures stderr during a
+    teardown, so it is suspended for the write, which then reaches this process's own stderr. Under pytest-xdist that is
+    the controller's stderr: execnet, xdist's transport, points a worker's stdout at /dev/null but, outside Windows,
+    does not redirect its stderr (on Windows it moves sys.stderr to a copy of the controller's)."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
+    text = ("\n[tests/conftest.py, the session-end thread guard] the teardown of %s, this process's last test%s, fails "
+            "with the error below. It is written to stderr as well as to that teardown's report, because pytest's "
+            "unittest plugin can put a TestCase's own second error in that report in its place.\n%s\n"
+            % (item.nodeid, " (pytest-xdist worker %s)" % worker if worker else "", failure))
+    capman = item.config.pluginmanager.getplugin("capturemanager")
+    if capman is None:                          # -p no:capture: nothing captures stderr
+        sys.stderr.write(text)
+        sys.stderr.flush()
+        return
+    with capman.global_and_fixture_disabled():
+        sys.stderr.write(text)
+        sys.stderr.flush()
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_runtest_teardown(item, nextitem):
     """The session-end thread guard (above): at the process's last test only, after the runner has torn down every
-    fixture, the guarded threads still alive at THREAD_GUARD_CAP_S fail this teardown, each named with its stack."""
+    fixture, the guarded threads still alive at THREAD_GUARD_CAP_S fail this teardown, each named with its stack. Every
+    failure of the guard takes two channels: this teardown's error, and the same text on stderr
+    (_guard_failure_to_stderr), which pytest's unittest plugin cannot replace with a TestCase's own error."""
     if nextitem is not None:
         return
+    try:
+        _session_end_thread_guard(item)
+    except pytest.fail.Exception as failure:
+        _guard_failure_to_stderr(item, failure)
+        raise
+
+
+def _session_end_thread_guard(item):
+    """The check itself, for pytest_runtest_teardown: fails, through pytest.fail, naming each guarded thread still
+    alive at THREAD_GUARD_CAP_S with its stack; a table it cannot read fails it too (_exit_joined_threads)."""
     left = threads_left_at_session_end(THREAD_GUARD_CAP_S)
     if not left:
         return

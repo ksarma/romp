@@ -12,9 +12,11 @@ CI's job cap cancels the cell, which is a red cell. Under pytest-xdist the contr
 the run ends and the run passes, so the fork's Linux cells lost that signal when they moved to two workers (2026-09-25).
 Two kinds of thread the guard names do not keep the process from exiting, and the guard fails on them too: an idle
 concurrent.futures worker and a thread stopped only after the check (tests/conftest.py's comment on the guard says why).
-A worker's stdout goes to /dev/null and its exit status is not read, so the guard reports through the one thing a worker
-sends the controller, a test report: the teardown phase's, printed by the controller as `ERROR at teardown of <the
-worker's last test>` and counted in the run's exit status.
+A worker's stdout goes to /dev/null and its exit status is not read, so the guard fails the run through a test report,
+the teardown phase's, which a worker sends the controller and the controller prints as `ERROR at teardown of <the
+worker's last test>` and counts in the run's exit status. The guard writes the same text to stderr too, a second
+channel: pytest's unittest plugin puts a TestCase's second stored error into that teardown report in place of the
+guard's, and a worker's stderr is the controller's.
 
 Pinned by running pytest in a child over synthetic files in a scratch directory outside tests/, with tests/conftest.py
 loaded as a plugin (`-p tests.conftest`), serially and under -n 2 (the shape tests/test_served_tests_require.py and
@@ -29,17 +31,22 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
 - A LEAKED non-daemon thread (it waits on an event the scratch conftest sets only at pytest_unconfigure, after the guard
   has run) fails the run, serially and under -n 2, with exactly one error, whose text names the thread, its target and a
   frame of its stack; under -n 2 that text is in the controller's output under a worker's `[gwN]` line, which is how the
-  report is shown to have reached the controller. Plain daemon threads (no concurrent.futures thread among them) alive
-  at the same moment are not named. The leaked thread is stopped only after the check, so these pins also witness that
-  such a thread fails the guard although the process exits: it is still alive at pytest_sessionfinish, the scratch
-  conftest's stop writes a release marker, and every process that ran tests then writes its atexit marker, which the
-  interpreter runs only after joining its non-daemon threads and the threads concurrent.futures' exit hooks join (a
-  worker killed by xdist's controller writes none). Serially the plant also leaves four ThreadPoolExecutor workers: an
+  report is shown to have reached the controller. Stderr, the second channel, names the thread once too, with the same
+  frame. Plain daemon threads (no concurrent.futures thread among them) alive at the same moment are not named. The
+  leaked thread is stopped only after the check, so these pins also witness that such a thread fails the guard
+  although the process exits: it is still alive at pytest_sessionfinish, the scratch conftest's stop writes a release
+  marker, and every process that ran tests then writes its atexit marker, which the interpreter runs only after joining
+  its non-daemon threads and the threads concurrent.futures' exit hooks join (a worker killed by xdist's controller
+  writes none). Serially the plant also leaves four ThreadPoolExecutor workers: an
   IDLE one in each of a pool left open and an event loop's default executor, the loop never closed, and a BUSY one,
   running a task, in each of a pool shut down with wait=False and a closed loop's default executor. All four are named
   with the label naming both causes, and each busy worker's report block, the one carrying its task's frame, carries the
   running-task cause. These runs shorten the guard's cap to LEAK_CAP_S through the scratch conftest, so a leak costs the
   pins seconds and not the full cap.
+- A TESTCASE'S SECOND ERROR IN THE TEARDOWN REPORT. The process's last test is a unittest TestCase whose body fails and
+  whose cleanup fails, with a leaked non-daemon thread. pytest's unittest plugin reports the cleanup's error at teardown
+  in place of the guard's, so the report names no thread (the premise, checked), and stderr names the thread with its
+  target and stack, serially and under -n 2, where the worker's text reaches the controller's stderr naming the worker.
 - IDLE EXECUTOR WORKERS ALONE (the pool left open and the loop never closed, no other guarded thread) fail the run,
   serially and under -n 2, and the process exits: every process that ran tests writes its atexit marker. The message's
   wording, that such a worker lets the process exit, is pinned by its text; the markers are the executed evidence.
@@ -55,7 +62,7 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   marker).
 - A MISSING EXIT-JOIN TABLE fails the run loudly: with the scratch conftest deleting concurrent.futures.thread's
   _threads_queues for the session (put back at pytest_sessionfinish, after the guard), a serial run of one plain test
-  fails with exactly one error naming concurrent.futures.thread._threads_queues; the same with
+  fails with exactly one error naming concurrent.futures.thread._threads_queues, and stderr names it too; the same with
   concurrent.futures.process's _threads_wakeups (the module loaded by the scratch conftest). In this process
   (ExitJoinTables): each EXIT_JOIN_TABLES attribute exists on this Python and is a global its module's exit hook reads;
   the two hooks are the only ones the standard library registers with threading._register_atexit, derived from its
@@ -101,11 +108,12 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   pytest-worker, Timers whose functions are in pytest_asyncio and pytest_testmon).
 
 Each child-run pin was run with the guard removed from tests/conftest.py and fails there: the leak, idle-worker,
-daemon-started-pool and missing-table runs pass (exit 0, no error) and the green runs' witness finds the within-cap
-threads alive at sessionfinish. The pins for the exit-join tables were also run with the guard as it was before it read
-them, when it waited for non-daemon threads only, and fail there: the daemon-started-pool and missing-table runs pass,
-and in this process the guard returns neither daemon thread and has no EXIT_JOIN_TABLES. Synthetic fixtures only; no
-kernel, no network.
+daemon-started-pool and missing-table runs pass (exit 0, no error), the green runs' witness finds the within-cap
+threads alive at sessionfinish, and the two-error runs, red on the TestCase's own errors, find no thread named on
+stderr. The two-error runs also fail with the guard as it was before it wrote to stderr, on the same missing name.
+The pins for the exit-join tables were also run with the guard as it was before it read them, when it waited for
+non-daemon threads only, and fail there: the daemon-started-pool and missing-table runs pass, and in this process the
+guard returns neither daemon thread and has no EXIT_JOIN_TABLES. Synthetic fixtures only; no kernel, no network.
 """
 import importlib.util
 import itertools
@@ -141,6 +149,8 @@ EXIT_CLAUSES = ("A named thread still running when the interpreter exits keeps t
                 "at exit, and a thread stopped only after this check (a config cleanup, pytest_sessionfinish or "
                 "pytest_unconfigure).")
 LEAK_CAP_S = 2.0      # the guard's cap in the leak runs: long enough to be a real wait, short enough to cost little
+# _run joins the child's stdout, where the test reports print, and its stderr, the guard's second channel, at this line
+STDERR_LINE = "\n---- the child's stderr ----\n"
 EXIT_HOLD_S = 1.0     # how long the busy worker of a daemon-started pool runs on after the stop, before its end record
 WITHIN_S = 1.0        # a within-cap thread's life after its test: a tenth of the guard's own cap
 TESTS = 4             # tests in the plant, each starting its threads: every worker's last test starts some
@@ -346,11 +356,28 @@ def test_busy_worker_of_a_closed_event_loop():
     loop.close()                            # shuts its default executor down with wait=False: the worker runs on
 '''
 
+# a unittest TestCase whose body fails and whose cleanup fails: pytest's unittest plugin reports the body's failure at
+# the call and puts the cleanup's error into the teardown report, in place of the guard's
+TWO_ERRORS_TEST = '''
+import unittest
+
+
+class TwoErrors(unittest.TestCase):
+    def test_body_and_cleanup_fail(self):
+        _start("two-errors", [threading.Thread(target=_leaked, name="plant-leaked")])
+        self.addCleanup(self._cleanup_fails)
+        raise AssertionError("plant: the body failed")
+
+    def _cleanup_fails(self):
+        raise RuntimeError("plant: the cleanup failed")
+'''
+
 
 class SessionEndThreadGuard(unittest.TestCase):
     def _run(self, plant, *, cap=None, workers=None, drop=None):
         """pytest in a child over the plant `plant` (PLANT's helpers plus test functions), tests/conftest.py loaded as a
-        plugin. Returns (exit status, the child's output, {pid: [[name, daemon]] started}, {pid: {within-cap thread name:
+        plugin. Returns (exit status, the child's output (its stdout, STDERR_LINE, then its stderr; _channels splits
+        them), {pid: [[name, daemon]] started}, {pid: {within-cap thread name:
         its end time}}, {pid: {"alive": plant threads alive at pytest_sessionfinish, "t": that time, "cap": the guard's
         cap}}, {"release": {pid: time of the scratch conftest's stop at pytest_unconfigure}, "atexit": {pid: time of the
         process's atexit handler}}), the times from each process's monotonic clock. `drop`, a (module, attribute) pair,
@@ -389,21 +416,33 @@ class SessionEndThreadGuard(unittest.TestCase):
                 marks[kind][int(pid)] = data
             else:
                 raise AssertionError("a record of no known kind in the plant's output: " + name)
-        return r.returncode, r.stdout + r.stderr, started, ended, finish, marks
+        return r.returncode, r.stdout + STDERR_LINE + r.stderr, started, ended, finish, marks
+
+    @staticmethod
+    def _channels(out):
+        """The child's output (_run) split into its stdout, where the test reports print, and its stderr, where the
+        guard writes its failure a second time."""
+        report, sep, err = out.partition(STDERR_LINE)
+        assert sep, "the output carries _run's stderr line"
+        return report, err
 
     # -- a leaked non-daemon thread fails the run ---------------------------------------------------------------------
 
     def _assert_leak_reported(self, rc, out, started, finish, marks):
+        report, err = self._channels(out)
         self.assertIn("plant-leaked", {n for names in started.values() for n, _daemon in names}, "the plant ran:\n" + out)
         self.assertEqual(rc, 1, "a leaked non-daemon thread fails the run:\n" + out)
         self.assertEqual(len(re.findall(r"ERROR at teardown of test_", out)), 1, "one error, at a teardown:\n" + out)
         self.assertRegex(out, r"\n1 error\b|, 1 error\b", out)
-        self.assertEqual(out.count("thread 'plant-leaked'"), 1, "the report names the leaked thread once:\n" + out)
-        self.assertIn("thread 'plant-leaked' (ident ", out)
-        self.assertIn("runs test_plant._leaked\n", out, "the report names the thread's target")
-        self.assertIn("in _leaked\n    plant_shared.RELEASE.wait(120)", out,
+        self.assertEqual(report.count("thread 'plant-leaked'"), 1, "the report names the leaked thread once:\n" + out)
+        self.assertIn("thread 'plant-leaked' (ident ", report)
+        self.assertIn("runs test_plant._leaked\n", report, "the report names the thread's target")
+        self.assertIn("in _leaked\n    plant_shared.RELEASE.wait(120)", report,
                       "the report carries the thread's stack, down to the plant's frame")
-        self.assertIn("session-end thread guard", out, "the report says what made it")
+        self.assertIn("session-end thread guard", report, "the report says what made it")
+        # the second channel: the same text on stderr, which reaches the output serially and from a worker
+        self.assertEqual(err.count("thread 'plant-leaked'"), 1, "stderr names the leaked thread once too:\n" + out)
+        self.assertIn("in _leaked\n    plant_shared.RELEASE.wait(120)", err, "stderr carries the thread's stack too")
         self.assertNotIn("plant-daemon", out, "plain daemon threads alive at the same moment are not named")
         self.assertNotIn("plant-fx-", out, "threads the fixtures stop at teardown are not named")
         # the leaked thread is stopped only after the check, so the run also witnesses that such a thread fails the guard
@@ -432,14 +471,17 @@ class SessionEndThreadGuard(unittest.TestCase):
         plant = "".join(DAEMON_TEST.format(i=i) for i in range(TESTS)) + LEAK_TEST + POOL_TEST + BUSY_TEST
         rc, out, started, _ended, finish, marks = self._run(plant, cap=LEAK_CAP_S)
         self._assert_leak_reported(rc, out, started, finish, marks)
-        self.assertIn("thread 'plant-pool_0'", out, "an idle executor worker left open is named too:\n" + out)
-        self.assertIn("thread 'plant-busy-pool_0'", out, "so is a busy worker of a pool shut down with wait=False:\n" + out)
-        self.assertEqual(out.count("thread 'asyncio_0'"), 2, "so are an event loop's default-executor workers, idle in a "
-                         "loop never closed and busy in a closed one (each executor numbers its workers from 0):\n" + out)
+        report, _err = self._channels(out)
+        self.assertIn("thread 'plant-pool_0'", report, "an idle executor worker left open is named too:\n" + out)
+        self.assertIn("thread 'plant-busy-pool_0'", report, "so is a busy worker of a pool shut down with wait=False:\n"
+                      + out)
+        self.assertEqual(report.count("thread 'asyncio_0'"), 2, "so are an event loop's default-executor workers, idle "
+                         "in a loop never closed and busy in a closed one (each executor numbers its workers from 0):\n"
+                         + out)
         # a busy worker's block is keyed on its task's frame: its name alone cannot tell the closed loop's worker from
         # the open loop's. Each in its own subTest, and both before any other label check, so each one's outcome is
         # reported whatever the other's.
-        blocks = self._report_blocks(out)
+        blocks = self._report_blocks(report)
         for task, which in (("_busy_pool_task", "a pool shut down with wait=False"),
                             ("_busy_loop_task", "a closed event loop's default executor")):
             with self.subTest(task=task):
@@ -447,7 +489,7 @@ class SessionEndThreadGuard(unittest.TestCase):
                 self.assertEqual(len(mine), 1, "one report block carries the %s frame:\n%s" % (task, out))
                 self.assertIn(RUNNING_TASK_CAUSE, mine[0].split("\n", 1)[0], "the label of the busy worker of %s names "
                               "the running-task cause:\n%s" % (which, mine[0]))
-        self.assertEqual(out.count(EXECUTOR_LABEL), 4, "the four executor workers carry the label that names both "
+        self.assertEqual(report.count(EXECUTOR_LABEL), 4, "the four executor workers carry the label that names both "
                          "causes:\n" + out)
         self.assertIn(EXIT_CLAUSES, out, "the message states the exit clauses with the idle-worker and stopped-later "
                       "exceptions (a wording check):\n" + out)
@@ -459,9 +501,54 @@ class SessionEndThreadGuard(unittest.TestCase):
         rc, out, started, _ended, finish, marks = self._run(plant, cap=LEAK_CAP_S, workers=2)
         self._assert_leak_reported(rc, out, started, finish, marks)
         self.assertEqual(len(finish), 3, "a controller and two workers each reached pytest_sessionfinish:\n" + out)
-        # the error came from a worker (its [gwN] line under the section header) and is printed by the controller, the only
-        # process whose output this captures: a worker's own stdout goes to /dev/null
+        # the error came from a worker (its [gwN] line under the section header) and is printed by the controller: a
+        # worker's own stdout goes to /dev/null (its stderr is the controller's, the second channel checked above)
         self.assertRegex(out, r"ERROR at teardown of test_\w+ _+\n\[gw\d+\] ", "the report came from a worker:\n" + out)
+
+    # -- a TestCase's own second error takes the teardown report: stderr still names the thread ------------------------
+
+    def _assert_two_errors_named_on_stderr(self, rc, out, started, marks):
+        """The process's last test is a unittest TestCase whose body fails and whose cleanup fails, with a thread left
+        running. pytest's unittest plugin puts the cleanup's error into the teardown report in place of the guard's (the
+        premise, checked first: the report names no thread), and the guard's second channel, stderr, names the thread
+        with its target and stack. Returns stderr."""
+        report, err = self._channels(out)
+        self.assertIn("plant-leaked", {n for names in started.values() for n, _daemon in names},
+                      "the plant ran:\n" + out)
+        self.assertEqual(rc, 1, "the run fails:\n" + out)
+        self.assertIn("AssertionError: plant: the body failed", report, "the body's failure is reported:\n" + out)
+        self.assertEqual(len(re.findall(r"ERROR at teardown of TwoErrors\.test_body_and_cleanup_fail", report)), 1,
+                         "one error, at the TestCase's teardown:\n" + out)
+        self.assertIn("RuntimeError: plant: the cleanup failed", report, "the premise: the teardown report carries the "
+                      "cleanup's error:\n" + out)
+        self.assertNotIn("thread 'plant-leaked'", report, "the premise: pytest's unittest plugin put the cleanup's "
+                         "error into the teardown report in place of the guard's, so the report names no thread:\n"
+                         + out)
+        self.assertNotIn("session-end thread guard", report, "and carries none of the guard's text:\n" + out)
+        self.assertEqual(err.count("thread 'plant-leaked' (ident "), 1, "stderr, the guard's second channel, names the "
+                         "thread the replaced report does not:\n" + out)
+        self.assertIn("runs test_plant._leaked\n", err, "stderr names the thread's target:\n" + out)
+        self.assertIn("in _leaked\n    plant_shared.RELEASE.wait(120)", err, "stderr carries the thread's stack, down "
+                      "to the plant's frame:\n" + out)
+        self.assertIn("the session-end thread guard] the teardown of "
+                      "test_plant.py::TwoErrors::test_body_and_cleanup_fail", err,
+                      "stderr says what wrote it and which teardown it failed:\n" + out)
+        self.assertEqual(sorted(pid for pid in started if pid not in marks["atexit"]), [],
+                         "every process that ran tests exited once the scratch conftest's stop released the thread:\n"
+                         + out)
+        return err
+
+    def test_a_testcases_second_error_in_the_teardown_report_leaves_the_thread_named_on_stderr_in_a_serial_run(self):
+        rc, out, started, _ended, _finish, marks = self._run(TWO_ERRORS_TEST, cap=LEAK_CAP_S)
+        err = self._assert_two_errors_named_on_stderr(rc, out, started, marks)
+        self.assertNotIn("pytest-xdist worker", err, "a serial run names no worker")
+
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
+    def test_under_two_workers_a_testcases_second_error_leaves_the_thread_named_on_the_controllers_stderr(self):
+        rc, out, started, _ended, _finish, marks = self._run(TWO_ERRORS_TEST, cap=LEAK_CAP_S, workers=2)
+        err = self._assert_two_errors_named_on_stderr(rc, out, started, marks)
+        self.assertRegex(err, r"this process's last test \(pytest-xdist worker gw\d+\)", "the worker's text reached "
+                         "the controller's stderr, naming the worker:\n" + out)
 
     # -- idle executor workers alone fail the run, and the process exits ----------------------------------------------
 
@@ -503,8 +590,9 @@ class SessionEndThreadGuard(unittest.TestCase):
         self.assertEqual(rc, 1, "the %s worker of a pool a daemon thread started fails the run:\n%s" % (kind, out))
         self.assertEqual(len(re.findall(r"ERROR at teardown of test_", out)), 1, "one error, at a teardown:\n" + out)
         self.assertRegex(out, r"\n1 error\b|, 1 error\b", out)
-        self.assertEqual(out.count("thread '%s'" % worker), 1, "the report names the worker once:\n" + out)
-        mine = [b for b in self._report_blocks(out) if b.startswith("thread '%s' " % worker)]
+        report, _err = self._channels(out)
+        self.assertEqual(report.count("thread '%s'" % worker), 1, "the report names the worker once:\n" + out)
+        mine = [b for b in self._report_blocks(report) if b.startswith("thread '%s' " % worker)]
         self.assertEqual(len(mine), 1, "one report block is the worker's:\n" + out)
         self.assertIn(EXECUTOR_LABEL, mine[0].split("\n", 1)[0], "the worker carries the executor label:\n" + mine[0])
         self.assertNotIn(spawner, out, "the daemon thread that started the pool, still running, is not named")
@@ -567,8 +655,10 @@ class SessionEndThreadGuard(unittest.TestCase):
                 self.assertEqual(rc, 1, "a missing %s.%s fails the run:\n%s" % (module, attr, out))
                 self.assertEqual(len(re.findall(r"ERROR at teardown of test_plain", out)), 1, "one error, at the "
                                  "teardown of the process's last test:\n" + out)
-                self.assertIn("session-end thread guard cannot read %s.%s on this Python" % (module, attr), out,
-                              "the error names the missing attribute:\n" + out)
+                report, err = self._channels(out)
+                for channel, text in (("the report", report), ("stderr", err)):
+                    self.assertIn("session-end thread guard cannot read %s.%s on this Python" % (module, attr), text,
+                                  "%s names the missing attribute:\n%s" % (channel, out))
                 self.assertEqual(sorted(pid for pid in started if pid not in marks["atexit"]), [],
                                  "the process exited once the scratch conftest put the table back:\n" + out)
 

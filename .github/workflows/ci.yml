@@ -163,11 +163,13 @@ jobs:
         # target's module or Timer function's module starts with pytest_timeout, which covers the
         # plugin's timer), then fails that test's teardown naming each thread still running, with
         # its stack, and the controller prints that error like any test report
-        # (tests/test_session_end_thread_guard.py). A serial cell prints the same error, so one that
-        # then hangs at exit names the thread in its log. Two kinds of named thread let the process
-        # exit and fail the guard all the same: an idle concurrent.futures worker, which the
-        # interpreter wakes at exit, and a thread stopped only after the check (a config cleanup,
-        # pytest_sessionfinish or pytest_unconfigure).
+        # (tests/test_session_end_thread_guard.py). The guard writes the same text to stderr, which
+        # a worker shares with the controller, because pytest's unittest plugin can put a
+        # TestCase's own second error in that report in its place. A serial cell prints both, so
+        # one that then hangs at exit names the thread in its log. Two kinds of named thread let
+        # the process exit and fail the guard all the same: an idle concurrent.futures worker,
+        # which the interpreter wakes at exit, and a thread stopped only after the check (a config
+        # cleanup, pytest_sessionfinish or pytest_unconfigure).
         run: python -m pytest -q -n ${{ matrix.os == 'ubuntu-latest' && '2' || '0' }} --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
