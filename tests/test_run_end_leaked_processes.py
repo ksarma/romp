@@ -1312,8 +1312,9 @@ def _tracker_gone(pid):
     return False
 
 
-_KEPT = []    # what a Leaker test keeps referenced until its run's process exits: on 3.12.10 and later 3.12 releases and
-#               on 3.13.3 and later a collected ResourceTracker stops its tracker (ResourceTracker.__del__)
+_KEPT = []    # what a Leaker test keeps referenced until its run's process exits: on 3.12.10 and later 3.12 releases, on
+#               3.13.3 and later 3.13 releases and on 3.14.0 and later a collected ResourceTracker stops its tracker
+#               (ResourceTracker.__del__)
 
 
 def _record(label, pid):
