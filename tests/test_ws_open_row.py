@@ -166,10 +166,10 @@ class WsOpenRow(unittest.TestCase):
             st, s4 = _upgrade(port, "/ws?app=timeline&wid=%s&token=%s" % (w_bare, km.TOKEN), extensions=True)
             socks.append(s4)
             self.assertEqual(st, 101, "a bare token dial upgrades")
-            # a splice the remote REFUSES (the hub holds a wrong token for it): the hub forwards the refusal and files no row
+            # a splice the remote REFUSES (the hub holds a wrong token for it): the hub answers its own 502 and files no row
             st, s5 = _upgrade(port, "/remote/BADHOST/ws?app=chat&wid=%s&iid=i-%s&token=%s" % (w_refused, w_refused, km.TOKEN), origin="http://127.0.0.1:%d" % port)
             socks.append(s5)
-            self.assertNotEqual(st, 101, "the remote's refusal is what the browser gets back: %r" % st)
+            self.assertEqual(st, 502, "the remote's refusal reaches the browser as this kernel's 502: %r" % st)
             # a browser's pane relayed through the hub to the remote: the hub files hub, the remote files relay on the splice's term
             st, s3 = _upgrade(port, "/remote/TESTHOST/ws?app=chat&wid=%s&iid=i-%s&reconnect=1&proto=2&token=%s" % (w_spliced, w_spliced, km.TOKEN),
                               origin="http://127.0.0.1:%d" % port)
