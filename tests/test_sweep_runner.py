@@ -256,9 +256,15 @@ class World:
     def result_path(self, sha=None):
         return os.path.join(self.xdg, "romp", "sweeps", (sha or self.head()) + ".json")
 
-    def result(self, sha=None):
+    def data(self, sha=None):
+        """The result file as written: {"schema", "sha", "branch", "tree", "runs"}."""
         with open(self.result_path(sha)) as f:
             return json.load(f)
+
+    def result(self, sha=None):
+        """The newest run's record (legs, verdict, red, invalid, runner, flakes...), with the file's sha, schema and runs."""
+        data = self.data(sha)
+        return dict(data["runs"][-1], schema=data["schema"], runs=data["runs"])
 
 
 class _Base(unittest.TestCase):
@@ -382,7 +388,7 @@ class Runner(_Base):
         w.ctl({"action": {"bats": "copy-result"}, "result": w.result_path(), "copy_to": copy})
         w.run(check=0)
         with open(copy) as f:
-            mid = json.load(f)
+            mid = json.load(f)["runs"][-1]
         self.assertEqual(mid["verdict"], "running")
         self.assertIsNone(mid["finished"])
         self.assertEqual(mid["legs"]["pytest"]["rc"], 0, "written after every leg")
@@ -486,40 +492,35 @@ class Runner(_Base):
 
     FLAKE = "tests/test_notes.py::test_order (a known flake, recorded in the flake census)"
 
-    def test_a_leg_rerun_after_a_named_flake_keeps_both_runs(self):
-        """A --leg re-run counts only over the first run's recorded failure, named as a known flake, at the same full
-        sha (pre-round ruling Q11): the leg's record holds the re-run's attempt and, under `rerun`, the first failure,
-        the flake and the sha each ran at; the history keeps the first attempt too, and the pass line names both."""
+    def test_a_leg_rerun_after_a_named_flake_appends_a_run_and_keeps_the_failed_one(self):
+        """A --leg re-run counts only over the newest run's recorded failure, named as a known flake, at the same full
+        sha (pre-round ruling Q11). Results are append-only (frozen-head item 1): the re-run is a new run in the file
+        (kind leg, the re-run legs, the flake), the failed run stays as it was, and the pass line names both."""
         w = self.w
         w.ctl({"rc": {"pytest": 1}})
         w.run(check=1)
-        first = w.result()
-        self.assertEqual(first["red"], [PYTEST_LEG])
+        first = w.data()
+        self.assertEqual(first["runs"][0]["red"], [PYTEST_LEG])
         w.ctl({})
         before = len(w.calls())
         p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=0)
-        r = w.result()
-        self.assertEqual(r["verdict"], "pass", p.stdout + p.stderr)
+        data = w.data()
+        self.assertEqual(data["runs"][0], first["runs"][0], "the failed run is kept as it was")
+        rerun = data["runs"][1]
+        self.assertEqual((rerun["kind"], sorted(rerun["legs"]), rerun["flakes"], rerun["sha"], rerun["verdict"]),
+                         ("leg", [PYTEST_LEG], {PYTEST_LEG: self.FLAKE}, w.head(), "pass"))
+        self.assertEqual(rerun["legs"]["pytest"]["rc"], 0)
         self.assertEqual([c["leg"] for c in w.calls()[before:]], [PYTEST_LEG], "only the named leg ran again")
-        self.assertEqual([(h["leg"], h["rc"]) for h in r["history"]], [(PYTEST_LEG, 1)], "the red attempt is kept")
-        leg = r["legs"]["pytest"]
-        self.assertEqual(leg["rc"], 0)
-        self.assertEqual(leg["rerun"]["flake"], self.FLAKE)
-        self.assertEqual(leg["rerun"]["sha"], w.head())
-        self.assertEqual(leg["rerun"]["first"]["sha"], w.head())
-        self.assertEqual((leg["rerun"]["first"]["rc"], leg["rerun"]["first"]["started"]),
-                         (1, first["legs"]["pytest"]["started"]), "the first failure is the first run's own attempt")
-        for name in ("bats", "manager", "tools", "ledger"):
-            self.assertEqual(r["legs"][name]["started"], first["legs"][name]["started"], "%s was not touched" % name)
         a = sweep.assess(w.head(), env=w.env)
         self.assertEqual(a["case"], "pass", a["line"])
         self.assertIn("pytest re-run after a known flake (first run rc 1; flake: %s)" % self.FLAKE, a["line"])
         self.assertIn("pytest re-run after a known flake", p.stdout)
+        self.assertEqual(a["result"]["legs"]["bats"], first["runs"][0]["legs"]["bats"], "the other legs are the full run's")
         w.change({"README.md": "moved on\n"})
         p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
         self.assertIn("no result at %s to re-run a leg in; run the full sweep" % w.head()[:10], p.stderr)
 
-    def test_a_leg_rerun_is_refused_without_a_flake_over_a_pass_twice_or_before_the_sweep_finished(self):
+    def test_a_leg_rerun_is_refused_without_a_flake_over_a_pass_or_before_the_sweep_finished(self):
         w = self.w
         w.ctl({"rc": {"pytest": 1}})
         w.run(check=1)
@@ -530,7 +531,7 @@ class Runner(_Base):
         before = len(w.calls())
         for extra, named in ((("--leg", "pytest"), "--leg re-runs a leg only after a known flake: name it with --flake"),
                              (("--leg", "pytest", "--flake", "  "), "--leg re-runs a leg only after a known flake"),
-                             (("--flake", self.FLAKE), "--flake names the flake a --leg re-run is for; it takes --leg"),
+                             (("--flake", self.FLAKE), "--flake on a full run names the leg it is for: --flake LEG=TEXT"),
                              (("--leg", "bats", "--flake", self.FLAKE), "bats passed at %s; there is no failure to re-run" % w.head()[:10])):
             with self.subTest(extra=extra):
                 p = w.run(*extra, check=2)
@@ -540,14 +541,14 @@ class Runner(_Base):
         self.assertEqual(len(w.calls()), before, "nothing ran")
         w.run("--leg", "pytest", "--flake", self.FLAKE, check=0)
         p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
-        self.assertIn("pytest was already re-run at %s, and a re-run counts once; run the full sweep" % w.head()[:10], p.stderr)
+        self.assertIn("pytest passed at %s; there is no failure to re-run" % w.head()[:10], p.stderr)
         data = json.loads(red)
-        data.update(finished=None, verdict="running")
+        data["runs"][-1].update(finished=None, verdict="running")
         sweep.write_result(path, data)
         p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
         self.assertIn("the sweep at %s has not finished" % w.head()[:10], p.stderr)
         data = json.loads(red)
-        data["legs"]["pytest"]["finished"] = None
+        data["runs"][-1]["legs"]["pytest"]["finished"] = None
         sweep.write_result(path, data)
         p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
         self.assertIn("pytest has no finished first run at %s to re-run" % w.head()[:10], p.stderr)
@@ -558,14 +559,101 @@ class Runner(_Base):
         w = self.w
         w.ctl({"rc": {"pytest": 1}})
         w.run(check=1)
-        data = w.result()
-        data["runner"]["leg_env"] = {"allow": ["USER"], "hash": "0" * 64}
+        data = w.data()
+        (data["runs"][-1] if "runs" in data else data)["runner"]["leg_env"] = {"allow": ["USER"], "hash": "0" * 64}
         sweep.write_result(w.result_path(), data)
         before = len(w.calls())
         p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
         self.assertIn("was recorded under another leg environment (hash 000000000000, this runner's %s)" % sweep.policy_hash()[:12],
                       p.stderr)
         self.assertEqual(len(w.calls()), before, "nothing ran")
+
+    def test_a_full_run_after_a_red_one_counts_only_with_a_flake_naming_each_failed_leg(self):
+        """Frozen-head item 1: a finished red result is never overwritten. A full run at a sha whose newest run failed
+        legs is refused up front, the file untouched, unless --flake LEG=TEXT names each failed leg (and no other);
+        with them the run is appended, the red run kept, and the pass line names each failure and its flake."""
+        w = self.w
+        w.ctl({"rc": {"pytest": 1, "bats": 1}})
+        w.run(check=1)
+        path = w.result_path()
+        with open(path) as f:
+            red = f.read()
+        w.ctl({})
+        before = len(w.calls())
+        flake = self.FLAKE
+        for extra, named in (((), "the run at %s failed pytest in run 1 (rc 1), bats in run 1 (rc 1); a later run counts over a "
+                                  "failed leg only with --flake LEG=TEXT naming each" % w.head()[:10]),
+                             (("--flake", "pytest=" + flake), "failed bats in run 1 (rc 1)"),
+                             (("--flake", "pytest=" + flake, "--flake", "bats=" + flake, "--flake", "tools=" + flake),
+                              "--flake names tools, which has no failed run at %s to excuse" % w.head()[:10])):
+            with self.subTest(extra=extra):
+                p = w.run(*extra, check=2)
+                self.assertIn(named, p.stderr)
+                with open(path) as f:
+                    self.assertEqual(f.read(), red, "a refused run leaves the result as it was")
+        self.assertEqual(len(w.calls()), before, "nothing ran")
+        w.run("--flake", "pytest=" + flake, "--flake", "bats=" + flake, check=0)
+        data = w.data()
+        self.assertEqual(data["runs"][0], json.loads(red)["runs"][0], "the red run is kept")
+        self.assertEqual((len(data["runs"]), data["runs"][1]["kind"], data["runs"][1]["flakes"]),
+                         (2, "full", {PYTEST_LEG: flake, "bats": flake}))
+        a = sweep.assess(w.head(), env=w.env)
+        self.assertEqual(a["case"], "pass", a["line"])
+        for n in (PYTEST_LEG, "bats"):
+            self.assertIn("%s re-run after a known flake (first run rc 1; flake: %s)" % (n, flake), a["line"])
+
+    def test_a_leg_that_fails_again_after_its_flake_leaves_the_sha_unable_to_pass(self):
+        """A known flake is excused once: a leg that fails its re-run leaves no run at that sha able to pass. The result
+        reads red naming both runs, and the runner refuses a further run of either kind up front."""
+        w = self.w
+        w.ctl({"rc": {"pytest": 1}})
+        w.run(check=1)
+        w.run("--leg", "pytest", "--flake", self.FLAKE, check=1)
+        a = sweep.assess(w.head(), env=w.env)
+        self.assertEqual(a["case"], "red", a["line"])
+        self.assertIn("pytest failed in runs 1 and 2; a known flake is excused once (--flake), so no run at this sha can pass", a["line"])
+        self.assertIn("fix it and sweep the new head", a["line"])
+        w.ctl({})
+        for extra in (("--flake", "pytest=" + self.FLAKE), ("--leg", "pytest", "--flake", self.FLAKE)):
+            with self.subTest(extra=extra):
+                p = w.run(*extra, check=2)
+                self.assertIn("no run at %s can pass: pytest failed in runs 1 and 2" % w.head()[:10], p.stderr)
+        self.assertEqual(len(w.data()["runs"]), 2)
+
+    def test_an_invalid_run_needs_no_flake_before_a_green_and_the_line_names_it(self):
+        """Round 1, decision 18: an invalid run is not a test failure, so the next full run needs no --flake, even for a
+        leg the invalid run failed, but the pass line names the invalid run."""
+        w = self.w
+        w.ctl({"action": {"manager": "leak"}, "rc": {"pytest": 1}})
+        p = w.run(check=3)
+        m = re.search(r"sweep invalid at %s: (.*)$" % w.head()[:10], p.stdout, re.M)
+        self.assertTrue(m, p.stdout)
+        reason = m.group(1)
+        self.assertIn("leaked.txt", reason)
+        os.remove(os.path.join(w.tree, "leaked.txt"))
+        w.ctl({})
+        p = w.run(check=0)
+        self.assertIn("an earlier run 1 (started ", p.stdout)
+        self.assertIn(") was invalid: %s" % reason, p.stdout)
+        self.assertEqual([r["verdict"] for r in w.data()["runs"]], ["invalid", "pass"])
+
+    def test_a_schema_1_result_is_moved_aside_and_a_leg_rerun_over_one_refused(self):
+        """A result of the runner before round 1 (schema 1) swept the batcher's own tree; no reader counts it. A full run
+        moves it aside, named, and writes a new history; a --leg re-run over it is refused."""
+        w = self.w
+        path = w.result_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        old = {"schema": 1, "sha": w.head(), "branch": "main", "started": "s", "finished": "f", "legs": {}, "history": [],
+               "verdict": "red", "red": [PYTEST_LEG], "invalid": None}
+        sweep.write_result(path, old)
+        p = w.run("--leg", "pytest", "--flake", self.FLAKE, check=2)
+        self.assertIn("schema 1, recorded by a runner that swept the batcher's own tree); run the full sweep", p.stderr)
+        p = w.run(check=0)
+        aside = path[:-len(".json")] + ".schema-1.json"
+        self.assertIn("moved the schema-1 result aside to %s" % aside, p.stdout)
+        with open(aside) as f:
+            self.assertEqual(json.load(f), old)
+        self.assertEqual((w.data()["schema"], len(w.data()["runs"])), (2, 1))
 
     def test_an_empty_glob_is_a_red_leg_not_a_bare_run(self):
         seed = dict(SEED)
@@ -808,23 +896,6 @@ class LegEnvironmentReader(unittest.TestCase):
         self.assertRegex(src, r'(?m)^PORT = int\(os\.environ\.get\("ROMP_KERNEL_PORT", ')
         self.assertRegex(src, r'os\.environ\.get\("ROMP_REMOTE_KERNEL_PORT", str\(PORT\)\)')
 
-    def test_a_result_recorded_under_another_leg_environment_is_refused(self):
-        """Round 1, decision 10: a result made under another environment policy is not the same gate."""
-        tmp = tempfile.mkdtemp(prefix="sweepread-")
-        self.addCleanup(shutil.rmtree, tmp, True)
-        env = {"XDG_STATE_HOME": tmp, "HOME": tmp}
-        data = Reader.result(Reader, runner={"leg_env": {"allow": ["USER"], "hash": "0" * 64}})
-        sweep.write_result(sweep.result_path(data["sha"], env), data)
-        a = sweep.assess(data["sha"], env=env)
-        self.assertEqual(a["case"], "invalid", a["line"])
-        self.assertIn("recorded under another leg environment (hash 000000000000; this reader's is %s" % sweep.policy_hash()[:12],
-                      a["line"])
-        del data["runner"]
-        sweep.write_result(sweep.result_path(data["sha"], env), data)
-        a = sweep.assess(data["sha"], env=env)
-        self.assertEqual(a["case"], "invalid", a["line"])
-        self.assertIn("(hash none;", a["line"])
-
 
 def _pytest_counts(test, ini=None, conftest=None):
     """(rc, failed) of the runner's real pytest command over a checkout holding one passing and one failing test,
@@ -1016,18 +1087,40 @@ class Reader(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.env = {"XDG_STATE_HOME": self.tmp, "HOME": self.tmp}
 
-    def result(self, sha=None, **over):
-        sha = sha or self.SHA
-        legs = {n: {"owed": True, "rc": 0, "started": "2026-01-01T00:00:01Z", "finished": "2026-01-01T00:00:02Z"} for n in sweep.LEGS}
+    TOP = ("schema", "sha", "branch", "tree")
+
+    def legs(self, **rcs):
+        """A full run's legs as the runner writes them: every leg that is always owed run with rc 0 (or `rcs`), and
+        deps and the webview legs not owed with a reason."""
+        legs = {n: {"owed": True, "rc": rcs.get(n, 0), "started": "2026-01-01T00:00:01Z", "finished": "2026-01-01T00:00:02Z",
+                    "log": "logs/%s.log" % n} for n in sweep.LEGS}
         for n in sweep.TEST_LEGS:
-            legs[n].update(tests=1, failed=0)
+            legs[n].update(tests=1, failed=1 if rcs.get(n) else 0)
         for n in sweep.WEBVIEW_LEGS + ("deps",):
             legs[n] = {"owed": False, "rc": None, "why": "not owed here"}
-        data = {"schema": sweep.SCHEMA, "sha": sha, "branch": "batch/b1", "started": "2026-01-01T00:00:00Z",
-                "finished": "2026-01-01T00:01:00Z", "legs": legs, "verdict": "pass", "red": [], "invalid": None}
-        data.update(over)
+        return legs
+
+    def run(self, kind="full", **over):
+        """One run record as the runner writes it; `over` replaces its keys. Its recorded verdict is its own legs'
+        unless given."""
+        run = {"kind": kind, "sha": self.SHA, "branch": "batch/b1", "started": "2026-01-01T00:00:00Z",
+               "finished": "2026-01-01T00:01:00Z", "flakes": {}, "legs": self.legs(), "red": [], "invalid": None}
+        run.update(over)
         if "runner" not in over:
-            data["runner"] = {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}}
+            run["runner"] = {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}}
+        if "verdict" not in over:
+            run["verdict"] = sweep.run_verdict(run)
+        return run
+
+    def result(self, sha=None, runs=None, **over):
+        """A result file: {"schema", "sha", "branch", "runs"}, by default one full run. Keys of TOP in `over` go to the
+        file, the rest to its one run."""
+        sha = sha or self.SHA
+        top = {k: over.pop(k) for k in self.TOP if k in over}
+        if runs is None:
+            runs = [self.run(**dict({"sha": sha}, **over))]
+        data = {"schema": sweep.SCHEMA, "sha": sha, "branch": "batch/b1", "runs": runs}
+        data.update(top)
         return data
 
     def write(self, data, sha=None):
@@ -1079,7 +1172,7 @@ class Reader(unittest.TestCase):
         cases = []
         self.write(self.result(finished=None, verdict="running"))
         cases.append(("unfinished", self.case()))
-        legs = self.result()["legs"]
+        legs = self.legs()
         legs["bats"]["rc"] = 1
         self.write(self.result(legs=legs, verdict="red", red=["bats"]))
         cases.append(("red", self.case()))
@@ -1087,7 +1180,7 @@ class Reader(unittest.TestCase):
         cases.append(("invalid", self.case()))
         self.write(self.result(invalid="HEAD moved to 0000000000 during the run", verdict="invalid"))
         cases.append(("invalid", self.case()))
-        legs = self.result()["legs"]
+        legs = self.legs()
         del legs["bats"]
         self.write(self.result(legs=legs))
         cases.append(("incomplete", self.case()))
@@ -1113,17 +1206,17 @@ class Reader(unittest.TestCase):
         owed only with a reason. A record that says otherwise did not come from the runner (or came from a runner
         with another roster), and a leg it marks not owed ran nothing, so the reader refuses it by name."""
         cases = []
-        legs = self.result()["legs"]
+        legs = self.legs()
         for n in sweep.LEGS:
             legs[n] = {"owed": False}
         cases.append(("every leg not owed", legs, "pytest, bats, manager, tools marked not owed"))
-        legs = self.result()["legs"]
+        legs = self.legs()
         legs["pytest"] = {"owed": False, "rc": None, "why": "skipped by hand"}
         cases.append(("pytest alone", legs, "pytest marked not owed"))
-        legs = self.result()["legs"]
+        legs = self.legs()
         legs["deps"] = {"owed": False, "rc": None}
         cases.append(("deps with no reason", legs, "deps marked not owed with no reason"))
-        legs = self.result()["legs"]
+        legs = self.legs()
         legs["build"] = {"owed": False, "rc": None, "why": "  "}
         cases.append(("a blank reason", legs, "build marked not owed with no reason"))
         for label, legs, named in cases:
@@ -1132,52 +1225,100 @@ class Reader(unittest.TestCase):
                 case, line = self.case()
                 self.assertEqual(case, "invalid", line)
                 self.assertIn(named, line)
-                self.assertEqual(sweep.verdict_of(self.result(legs=legs)), "red", "the verdict rule owes such a leg too")
+                self.assertEqual(sweep.verdict_of(self.run(legs=legs)), "red", "the verdict rule owes such a leg too")
 
-    def rerun(self, **mark):
-        """A result whose pytest leg the runner re-ran after a known flake: the re-run passed, the first run failed with
-        rc 1, both at SHA; `mark` replaces keys of the rerun record (None deletes one)."""
-        data = self.result()
-        first = {"rc": 1, "started": "2026-01-01T00:00:01Z", "finished": "2026-01-01T00:00:02Z", "tests": 3, "failed": 1}
-        data["history"] = [dict(first, leg="pytest")]
-        rec = {"flake": "tests/test_notes.py::test_order (known)", "sha": self.SHA, "first": dict(first, sha=self.SHA)}
-        for k, v in mark.items():
-            if v is None:
-                rec.pop(k, None)
-            else:
-                rec[k] = v
-        data["legs"]["pytest"]["rerun"] = rec
-        return data
+    FLAKE = "tests/test_notes.py::test_order (known)"
+
+    def red_then(self, *later):
+        """A history: a full run that failed pytest (rc 1), then the runs in `later`."""
+        return self.result(runs=[self.run(legs=self.legs(pytest=1), started="2026-01-01T00:00:00Z")] + list(later))
+
+    def rerun(self, rc=0, flake=FLAKE, **over):
+        """A --leg re-run of pytest, as the runner appends it after a failed run."""
+        legs = {PYTEST_LEG: dict(self.legs(pytest=rc)[PYTEST_LEG], log="logs/pytest.rerun.log")}
+        kw = dict(legs=legs, flakes={PYTEST_LEG: flake} if flake is not None else {}, started="2026-01-01T00:02:00Z",
+                  finished="2026-01-01T00:03:00Z")
+        kw.update(over)
+        return self.run(kind="leg", **kw)
 
     def test_a_counted_rerun_passes_and_the_line_names_both_runs(self):
-        self.write(self.rerun())
+        """Pre-round Q11 and frozen-head item 1: a failed run is excused when the next run of that leg carries --flake
+        naming it, whether that run is a --leg re-run or a full run; the pass line names the failure and the flake."""
+        note = "pytest re-run after a known flake (first run rc 1; flake: %s)" % self.FLAKE
+        for label, later in (("a --leg re-run", self.rerun()),
+                             ("a full run", self.run(flakes={PYTEST_LEG: self.FLAKE}, started="2026-01-01T00:02:00Z"))):
+            with self.subTest(label):
+                self.write(self.red_then(later))
+                case, line = self.case()
+                self.assertEqual(case, "pass", line)
+                self.assertIn(note, line)
+                self.assertIn("finished 2026-01-01T0", line)
+
+    def test_a_later_green_without_a_flake_or_a_second_failure_leaves_the_sha_red(self):
+        """Frozen-head item 1: a red run is not erased by a later run. A later run that passes the failed leg without
+        --flake naming it, or a second failure of the leg (a flake is excused once), reads red naming the runs and
+        their logs, and says a fix and a new head is the way on."""
+        cases = (
+            ("a full run passes it with no flake", [self.run(started="2026-01-01T00:02:00Z")],
+             "run 1 failed pytest (rc 1; log logs/pytest.log), and run 2 passed it with no --flake naming it"),
+            ("a --leg re-run passes it with no flake", [self.rerun(flake=None, verdict="pass")], None),
+            ("the flake fails again", [self.rerun(rc=1)], "pytest failed in runs 1 and 2; a known flake is excused once"),
+            ("a full run with the flake fails again", [self.run(legs=self.legs(pytest=1), flakes={PYTEST_LEG: self.FLAKE})],
+             "pytest failed in runs 1 and 2"),
+            ("excused, then failed again", [self.rerun(), self.run(legs=self.legs(pytest=1), started="2026-01-01T00:04:00Z")],
+             "pytest failed in runs 1 and 3"),
+        )
+        for label, later, named in cases:
+            with self.subTest(label):
+                self.write(self.red_then(*later))
+                case, line = self.case()
+                if named is None:       # the runner never writes a --leg re-run with no flake: invalid, not red
+                    self.assertEqual(case, "invalid", line)
+                    self.assertIn("run 2 re-ran pytest with no known flake named", line)
+                    continue
+                self.assertEqual(case, "red", line)
+                self.assertIn(named, line)
+                self.assertIn("fix it and sweep the new head; logs under %s" % os.path.join(sweep.sweeps_dir(self.env), "logs", self.SHA),
+                              line)
+
+    def test_a_failed_leg_no_later_run_ran_stays_red(self):
+        """A leg that failed and that a later full run marks not owed (the webview decision moved) is not excused by
+        not running: the result reads red naming the failed run."""
+        failed = self.legs()
+        failed["npm-test"] = {"owed": True, "rc": 1, "tests": 3, "failed": 1, "started": "s", "finished": "f", "log": "logs/n.log"}
+        self.write(self.result(runs=[self.run(legs=failed), self.run(started="2026-01-01T00:02:00Z")]))
+        case, line = self.case()
+        self.assertEqual(case, "red", line)
+        self.assertIn("npm-test failed in run 1 (rc 1) and no later run ran it", line)
+
+    def test_an_invalid_run_needs_no_flake_and_the_line_names_it(self):
+        """Round 1, decision 18: an invalid run is not a test failure, so a later green counts over it with no flake,
+        but the pass line names it. A red before an invalid run still needs the flake."""
+        reason = "after the pytest leg the checkout is not the sha's tree: changed kernel/kernel.py"
+        # the invalid run failed pytest too: a failure in an invalid run needs no flake either
+        self.write(self.result(runs=[self.run(invalid=reason, legs=self.legs(pytest=1)), self.run(started="2026-01-01T00:02:00Z")]))
         case, line = self.case()
         self.assertEqual(case, "pass", line)
-        self.assertIn("pytest re-run after a known flake (first run rc 1; flake: tests/test_notes.py::test_order (known))", line)
+        self.assertIn("an earlier run 1 (started 2026-01-01T00:00:00Z) was invalid: %s" % reason, line)
+        self.write(self.red_then(self.run(invalid=reason), self.run(started="2026-01-01T00:04:00Z")))
+        case, line = self.case()
+        self.assertEqual(case, "red", line)
+        self.assertIn("run 1 failed pytest (rc 1; log logs/pytest.log), and run 3 passed it with no --flake naming it", line)
 
-    def test_a_rerun_the_runner_never_writes_is_invalid(self):
-        """The reader refuses a re-run that lacks the recorded first failure, names no flake, or ran at another sha
-        (pre-round ruling Q11), each by name; a leg counts as re-run when its record carries `rerun` or the history
-        holds an earlier attempt of it."""
-        passing_first = {"rc": 0, "started": "s", "finished": "f", "tests": 3, "failed": 0, "sha": self.SHA}
-        unfinished_first = {"rc": 1, "started": "s", "finished": None, "tests": 3, "failed": 1, "sha": self.SHA}
-        no_mark = self.rerun()
-        del no_mark["legs"]["pytest"]["rerun"]
-        twice = self.rerun()
-        twice["history"].append(dict(twice["history"][0]))
+    def test_a_history_the_runner_never_writes_is_invalid(self):
+        """The records no runner writes, each refused by name: a --leg re-run that names no flake (or a blank one), a
+        flake for a leg with no failed run before it, a flake for a leg the run did not run, a run recorded at another
+        sha, and a --leg re-run with no full run before it."""
+        leg_only = self.rerun()
         cases = (
-            ("history with no mark", no_mark, "pytest was re-run with no first failure recorded and no flake named"),
-            ("an empty mark", self.rerun(first=None, flake=None, sha=None), "pytest's re-run records no first failure"),
-            ("no first failure", self.rerun(first=None), "pytest's re-run records no first failure"),
-            ("a first run that passed", self.rerun(first=passing_first), "pytest's re-run records no first failure"),
-            ("a first run that never finished", self.rerun(first=unfinished_first), "pytest's re-run records no first failure"),
-            ("no flake", self.rerun(flake=None), "pytest's re-run names no known flake"),
-            ("a blank flake", self.rerun(flake="  "), "pytest's re-run names no known flake"),
-            ("the re-run at another sha", self.rerun(sha=self.OTHER), "pytest: the re-run ran at %s, not at %s" % (self.OTHER, self.SHA)),
-            ("the first run at another sha", self.rerun(first=dict(self.rerun()["legs"]["pytest"]["rerun"]["first"], sha=self.OTHER)),
-             "pytest: the first run ran at %s, not at %s" % (self.OTHER, self.SHA)),
-            ("the re-run at no sha", self.rerun(sha=None), "pytest: the re-run ran at None, not at %s" % self.SHA),
-            ("re-run twice", twice, "pytest was re-run 2 times, and a re-run counts once"),
+            ("a re-run with no flake", self.red_then(self.rerun(flake=None)), "run 2 re-ran pytest with no known flake named"),
+            ("a blank flake", self.red_then(self.rerun(flake="  ")), "run 2 re-ran pytest with no known flake named"),
+            ("a flake with no failure before it", self.result(runs=[self.run(), self.run(flakes={PYTEST_LEG: self.FLAKE})]),
+             "run 2 names a known flake for pytest, but pytest has no failed run before it at this sha"),
+            ("a flake for a leg the run did not run", self.red_then(self.rerun(flakes={PYTEST_LEG: self.FLAKE, "bats": self.FLAKE})),
+             "run 2 names a known flake for bats, which it did not run"),
+            ("a run at another sha", self.red_then(self.rerun(sha=self.OTHER)), "run 2 was recorded at %s" % self.OTHER),
+            ("a re-run with no full run", self.result(runs=[leg_only]), "it records no full run"),
         )
         for label, data, named in cases:
             with self.subTest(label):
@@ -1185,12 +1326,28 @@ class Reader(unittest.TestCase):
                 case, line = self.case()
                 self.assertEqual(case, "invalid", line)
                 self.assertIn(named, line)
-                self.assertIn("a --leg re-run counts only over a recorded first failure named as a known flake, at the same "
-                              "full sha", line)
-        bare = self.rerun()
-        bare["legs"]["pytest"]["rerun"] = "yes"
-        self.write(bare)
-        self.assertEqual(self.case()[0], "invalid", "a rerun key whose value is not a record is refused too")
+
+    def test_the_runs_are_the_history_and_a_schema_1_result_is_refused(self):
+        """Round 1, A6: SCHEMA is 2, and a schema-1 result (the runner that swept the batcher's own tree) reads
+        unreadable, so no result of the old runner passes verify, plan or --repin."""
+        self.assertEqual(sweep.SCHEMA, 2)
+        old = {"schema": 1, "sha": self.SHA, "branch": "batch/b1", "started": "s", "finished": "f", "legs": self.legs(),
+               "history": [], "verdict": "pass", "red": [], "invalid": None}
+        self.write(old)
+        case, line = self.case()
+        self.assertEqual(case, "unreadable", line)
+        self.assertIn("schema 1, recorded by a runner that swept the batcher's own tree; sweep again", line)
+
+    def test_a_result_recorded_under_another_leg_environment_is_refused(self):
+        """Round 1, decision 10: a result made under another environment policy is not the same gate."""
+        self.write(self.result(runner={"leg_env": {"allow": ["USER"], "hash": "0" * 64}}))
+        case, line = self.case()
+        self.assertEqual(case, "invalid", line)
+        self.assertIn("recorded under another leg environment (hash 000000000000; this reader's is %s" % sweep.policy_hash()[:12], line)
+        self.write(self.result(runner={}))
+        case, line = self.case()
+        self.assertEqual(case, "invalid", line)
+        self.assertIn("(hash none;", line)
 
     def test_the_schema_must_be_the_integer(self):
         self.write(self.result(schema=True))

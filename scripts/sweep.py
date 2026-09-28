@@ -44,10 +44,14 @@ and whether the private HOME was empty at the end.
 The pane bench (tests/ui-bench.test.mjs), the Python versions other than --python's, and macOS run only in
 the batch's CI.
 
-A --leg re-run counts only over a known flake: it needs --flake naming it, refuses unless that leg's first run
-at the same sha finished and failed, and runs once per leg. The leg's record keeps both attempts (the re-run's,
-and the first failure under `rerun`, with the flake and the sha each ran at), and the reader refuses a re-run
-that lacks the recorded first failure, names no flake, or ran at another sha.
+The result is append-only (schema 2): `runs` keeps every run at the sha, oldest first, and a run is never
+rewritten once it has finished. The verdict is read from the newest full run with any later --leg re-run's legs
+laid over it, and the whole history is read too: a run that failed a leg counts as excused only when the next
+run of that leg carries --flake naming it and its known-flake entry, once per leg, whether that run is a --leg
+re-run or a full run (`--flake LEG=TEXT`). A leg that failed twice, or that a later run passed without --flake
+naming it, leaves no run at that sha able to pass; the runner refuses such a run up front, and the reader reads
+the result red, naming the failed run and its logs. An invalid run needs no flake, but the pass line names it.
+A --leg re-run refuses unless the newest run finished, is valid, and failed that leg.
 
 The runner calls no nice, ionice, systemd-run, flock or slot script itself: a machine that runs legs
 under such wrappers passes them with --wrap. It imports nothing beyond the standard library.
@@ -67,7 +71,7 @@ import subprocess
 import sys
 import tempfile
 
-SCHEMA = 1
+SCHEMA = 2
 LEGS = ("deps", "pytest", "bats", "manager", "tools", "ledger", "typecheck", "npm-test", "build")
 WEBVIEW_LEGS = ("typecheck", "npm-test", "build")
 TEST_LEGS = ("pytest", "bats", "manager", "tools", "npm-test")
@@ -267,36 +271,108 @@ def verdict_of(result):
     return "pass"
 
 
-def rerun_fault(name, leg, result):
-    """Why a leg's --leg re-run does not count, or None: the leg was not re-run, or its re-run is one the runner
-    writes. A leg counts as re-run when its record carries a `rerun` key or the history holds an earlier attempt
-    of it; then `rerun` must record the first run's failure (a finished attempt that did not pass), name the known
-    flake it was, and place both attempts at the result's full sha, and the leg must have been re-run once."""
-    earlier = [h for h in (result.get("history") or []) if isinstance(h, dict) and h.get("leg") == name]
-    if not earlier and not (isinstance(leg, dict) and "rerun" in leg):
-        return None
-    mark = leg.get("rerun") if isinstance(leg, dict) else None
-    if len(earlier) > 1:
-        return "%s was re-run %d times, and a re-run counts once" % (name, len(earlier))
-    if not isinstance(mark, dict):
-        return "%s was re-run with no first failure recorded and no flake named" % name
-    first = mark.get("first")
-    if not isinstance(first, dict) or not first.get("finished") or passed(name, first):
-        return "%s's re-run records no first failure" % name
-    flake = mark.get("flake")
-    if not (isinstance(flake, str) and flake.strip()):
-        return "%s's re-run names no known flake" % name
-    sha = result.get("sha")
-    for what, at in (("the re-run", mark.get("sha")), ("the first run", first.get("sha"))):
-        if at != sha:
-            return "%s: %s ran at %s, not at %s" % (name, what, at if isinstance(at, str) else repr(at), sha)
-    return None
+def run_verdict(run):
+    """One run's own verdict over its own legs: running until finished, invalid when the run says so, else red when
+    an owed leg of it did not pass (a full run's roster is LEGS, so a leg it lacks is owed; a --leg re-run's is the
+    legs it ran), else pass."""
+    if not run.get("finished"):
+        return "running"
+    if run.get("invalid"):
+        return "invalid"
+    legs = run.get("legs") or {}
+    names = LEGS if run.get("kind") == "full" else [n for n in LEGS if n in legs]
+    return "red" if any(is_owed(n, legs.get(n)) and not passed(n, legs.get(n)) for n in names) else "pass"
 
 
-def rerun_note(name, leg):
-    """The words for a counted re-run: the first failure and the flake named, for the pass line."""
-    mark = leg["rerun"]
-    return "%s re-run after a known flake (first run %s; flake: %s)" % (name, _rc_text(name, mark["first"]), mark["flake"].strip())
+def effective(data):
+    """(the record the verdict is read from, or None, and the reason when it is None). The file keeps every run at the
+    sha, oldest first (`runs`, append-only); the record is the newest full run with every later --leg re-run's legs
+    laid over it. It carries the result's sha, branch and tree, the full run's start, the newest run's finish (None
+    while that run is still going), the first invalid reason among those runs, and the newest run's runner."""
+    runs = data.get("runs") or []
+    fulls = [i for i, r in enumerate(runs) if r.get("kind") == "full"]
+    if not fulls:
+        return None, "it records no full run"
+    for i, r in enumerate(runs):
+        if r.get("kind") not in ("full", "leg"):
+            return None, "run %d is of no kind the runner writes (%r)" % (i + 1, r.get("kind"))
+    f = fulls[-1]
+    legs = {n: dict(rec) for n, rec in (runs[f].get("legs") or {}).items()}
+    for r in runs[f + 1:]:
+        for n, rec in (r.get("legs") or {}).items():
+            legs[n] = dict(rec)
+    invalid = next((r.get("invalid") for r in runs[f:] if r.get("invalid")), None)
+    return {"sha": data.get("sha"), "branch": data.get("branch"), "tree": data.get("tree"), "started": runs[f].get("started"),
+            "finished": runs[-1].get("finished"), "legs": legs, "invalid": invalid, "runner": runs[-1].get("runner"),
+            "runs": runs, "full_run": f + 1}, None
+
+
+def read_history(runs):
+    """What the whole history at one sha says, read over every finished leg attempt of every run that is not invalid
+    (an invalid run is not a test failure and needs no flake, round 1 decision 18; it is only named):
+      never    the records no runner writes: a --leg re-run with no known flake named for a leg it ran, a flake
+               named for a leg the run did not run or that had no failed run before it at this sha;
+      dead     why no run at this sha can pass any more: a leg that failed in two runs (a known flake is excused once),
+               or a failed run whose leg a later run passed without --flake naming it;
+      need     {leg: (run number, record)} for each leg whose newest attempt failed: the next run that runs it counts
+               only with --flake naming it and its known-flake entry;
+      flaked   [(leg, failed run number, failed record, flake)] for each failure a later run's flake excused;
+      invalid  [(run number, started, reason)] for each invalid run."""
+    out = {"never": [], "dead": None, "need": {}, "flaked": [], "invalid": []}
+    attempts = {n: [] for n in LEGS}
+    for i, run in enumerate(runs):
+        num = i + 1
+        if run.get("invalid"):
+            out["invalid"].append((num, run.get("started"), run.get("invalid")))
+            continue
+        legs = run.get("legs") or {}
+        flakes = run.get("flakes") or {}
+        if not isinstance(flakes, dict):
+            out["never"].append("run %d's flakes are not a mapping of leg to known flake" % num)
+            flakes = {}
+        ran = [n for n in LEGS if n in legs and is_owed(n, legs[n]) and legs[n].get("finished")]
+        for n in flakes if run.get("finished") else ():
+            if n not in ran:
+                out["never"].append("run %d names a known flake for %s, which it did not run" % (num, n))
+        if run.get("kind") == "leg":
+            for n in [n for n in LEGS if n in legs]:
+                if not (isinstance(flakes.get(n), str) and flakes[n].strip()):
+                    out["never"].append("run %d re-ran %s with no known flake named" % (num, n))
+        for n in ran:
+            flake = flakes.get(n)
+            attempts[n].append((num, passed(n, legs[n]), flake if isinstance(flake, str) and flake.strip() else None, legs[n]))
+    for n in LEGS:
+        seq = attempts[n]
+        fails = [a for a in seq if not a[1]]
+        if len(fails) >= 2 and not out["dead"]:
+            out["dead"] = ("%s failed in runs %s; a known flake is excused once (--flake), so no run at this sha can pass "
+                           "(logs: %s)" % (n, " and ".join(str(a[0]) for a in fails), ", ".join(str(a[3].get("log")) for a in fails)))
+        for k, (num, ok, flake, rec) in enumerate(seq):
+            if flake is not None and (k == 0 or seq[k - 1][1]):
+                out["never"].append("run %d names a known flake for %s, but %s has no failed run before it at this sha"
+                                    % (num, n, n))
+            if not ok and k + 1 < len(seq):
+                nnum, nok, nflake, _nrec = seq[k + 1]
+                if nok and nflake is None and not out["dead"]:
+                    out["dead"] = ("run %d failed %s (%s; log %s), and run %d passed it with no --flake naming it; a later run "
+                                   "turns a failed leg green only with --flake naming the leg and its known-flake entry"
+                                   % (num, n, _rc_text(n, rec), rec.get("log"), nnum))
+                elif nok:
+                    out["flaked"].append((n, num, rec, nflake))
+        if seq and not seq[-1][1]:
+            out["need"][n] = (seq[-1][0], seq[-1][3])
+    return out
+
+
+def flake_notes(history):
+    """The pass line's words for each failure a later run's flake excused: the failed run and the flake."""
+    return ["%s re-run after a known flake (first run %s; flake: %s)" % (n, _rc_text(n, rec), flake.strip())
+            for n, _num, rec, flake in history["flaked"]]
+
+
+def invalid_notes(history):
+    """The pass line's words for each invalid run in the history (it needs no flake, but it is named)."""
+    return ["run %d (started %s) was invalid: %s" % (num, started, reason) for num, started, reason in history["invalid"]]
 
 
 def red_legs(result):
@@ -319,6 +395,9 @@ def _rc_text(name, leg):
 
 # ── the reader (scripts/batch.py calls assess) ───────────────────────────────
 
+SCHEMA_1_TEXT = "recorded by a runner that swept the batcher's own tree"
+
+
 def _load(path):
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
@@ -326,11 +405,28 @@ def _load(path):
         raise ValueError("not a JSON object")
     if not isinstance(data.get("legs", {}), dict) or not all(isinstance(v, dict) for v in data.get("legs", {}).values()):
         raise ValueError("its legs are not a mapping of leg records")
+    if "runs" in data or data.get("schema") == SCHEMA:
+        runs = data.get("runs")
+        if not isinstance(runs, list) or not runs or not all(isinstance(r, dict) for r in runs):
+            raise ValueError("its runs are not a list of run records")
+        for i, r in enumerate(runs):
+            legs = r.get("legs", {})
+            if not isinstance(legs, dict) or not all(isinstance(v, dict) for v in legs.values()):
+                raise ValueError("run %d's legs are not a mapping of leg records" % (i + 1))
     return data
 
 
+def _started_finished(data):
+    """(started, finished) of a result's newest run (schema 2), or of the result itself (an older schema)."""
+    runs = data.get("runs")
+    if isinstance(runs, list) and runs and isinstance(runs[-1], dict):
+        return runs[-1].get("started"), runs[-1].get("finished")
+    return data.get("started"), data.get("finished")
+
+
 def newest_for_branch(branch, env=None):
-    """(path, result) of the newest readable result recorded for `branch`, by its start stamp; (None, None)."""
+    """(path, result) of the newest readable result recorded for `branch`, by its newest run's start stamp;
+    (None, None)."""
     d = sweeps_dir(env)
     best = (None, None)
     try:
@@ -344,7 +440,7 @@ def newest_for_branch(branch, env=None):
             data = _load(os.path.join(d, name))
         except (OSError, ValueError):
             continue
-        if data.get("branch") == branch and (best[1] is None or str(data.get("started")) > str(best[1].get("started"))):
+        if data.get("branch") == branch and (best[1] is None or str(_started_finished(data)[0]) > str(_started_finished(best[1])[0])):
             best = (os.path.join(d, name), data)
     return best
 
@@ -353,7 +449,9 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
     """Read the result for `sha` and name its case: {"case", "line", "path", "result"}. The case is pass, or one of
     missing, stale, unfinished, red, invalid, incomplete, unreadable; `line` is the text a caller prints after
     "ok   " or "FAIL ". Stale is decided on the full sha only; `branch` lets a missing result for sha be told apart
-    from a stale one recorded for the same branch at another sha."""
+    from a stale one recorded for the same branch at another sha. `result` is the record the verdict was read from
+    (effective(): the newest full run with its later --leg re-runs laid over it), with `flake_notes` and
+    `invalid_notes` naming what the whole history excused and what it held invalid."""
     path = result_path(sha, env)
     out = {"case": None, "line": None, "path": path, "result": None}
 
@@ -366,7 +464,7 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
             opath, other = newest_for_branch(branch, env)
             if other is not None and other.get("sha") != sha:
                 return done("stale", "sweep stale: the newest result for %s is at %s (finished %s), %s is at %s; sweep again "
-                                     "at %s" % (branch, short(other.get("sha")), other.get("finished") or "never", subject,
+                                     "at %s" % (branch, short(other.get("sha")), _started_finished(other)[1] or "never", subject,
                                                 short(sha), subject))
         # The directory read is named with where it came from: the runner writes under the state dir ITS environment
         # names, so a result written with another ROMP_STATE_DIR or XDG_STATE_HOME is missing here.
@@ -380,17 +478,29 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
         data = _load(path)
     except (OSError, ValueError) as e:
         return done("unreadable", "sweep unreadable: %s: %s; sweep again" % (path, e))
+    if type(data.get("schema")) is int and data.get("schema") == 1:
+        return done("unreadable", "sweep unreadable: %s: schema 1, %s; sweep again with this checkout's scripts/sweep.py"
+                    % (path, SCHEMA_1_TEXT), data)
     if type(data.get("schema")) is not int or data.get("schema") != SCHEMA:
         return done("unreadable", "sweep unreadable: %s: schema %r, and this reader reads schema %d; sweep again with this "
                                   "checkout's scripts/sweep.py" % (path, data.get("schema"), SCHEMA), data)
     if data.get("sha") != sha:
         return done("stale", "sweep stale: %s records sha %s, not %s %s; sweep again at %s"
                     % (path, short(str(data.get("sha"))), subject, short(sha), subject), data)
-    legs = data.get("legs") or {}
-    absent = [name for name in LEGS if name not in legs]
+    rec, why = effective(data)
+    never = "sweep invalid at %s: %s, which the runner never records; sweep again with this checkout's scripts/sweep.py"
+    if rec is None:
+        return done("invalid", never % (short(sha), why), data)
+    runs = data["runs"]
+    at = [(i + 1, r.get("sha")) for i, r in enumerate(runs) if r.get("sha") != sha]
+    if at:
+        return done("invalid", never % (short(sha), "; ".join("run %d was recorded at %s" % (n, s if isinstance(s, str) else repr(s))
+                                                              for n, s in at)), rec)
+    legs = rec["legs"]
+    absent = [name for name in LEGS if name not in (runs[rec["full_run"] - 1].get("legs") or {})]
     if absent:
         return done("incomplete", "sweep incomplete at %s: no %s leg in %s; sweep again with this checkout's scripts/sweep.py"
-                    % (short(sha), ", ".join(absent), path), data)
+                    % (short(sha), ", ".join(absent), path), rec)
     faults = [f for f in (excuse_fault(name, legs[name]) for name in LEGS) if f]
     always = [name for name in ALWAYS_OWED if legs[name].get("owed") is False]
     if faults:
@@ -399,37 +509,48 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
             text.insert(0, "%s marked not owed" % ", ".join(always))
         return done("invalid", "sweep invalid at %s: %s, which the runner never records (%s always run; the other legs are "
                                "marked not owed only with a reason); sweep again with this checkout's scripts/sweep.py"
-                    % (short(sha), "; ".join(text), ", ".join(ALWAYS_OWED)), data)
-    reruns = [f for f in (rerun_fault(name, legs[name], data) for name in LEGS) if f]
-    if reruns:
-        return done("invalid", "sweep invalid at %s: %s; a --leg re-run counts only over a recorded first failure named as a "
-                               "known flake, at the same full sha; sweep again" % (short(sha), "; ".join(reruns)), data)
-    recorded = recorded_hash(data)
-    if recorded != policy_hash():
+                    % (short(sha), "; ".join(text), ", ".join(ALWAYS_OWED)), rec)
+    history = read_history(runs)
+    rec.update(flake_notes=flake_notes(history), invalid_notes=invalid_notes(history))
+    if history["never"]:
+        return done("invalid", "sweep invalid at %s: %s; a later run counts over a failed one only with --flake naming the "
+                               "leg and its known-flake entry, once per leg; sweep again" % (short(sha), "; ".join(history["never"])), rec)
+    stray = sorted(set(recorded_hash(r) for r in runs[rec["full_run"] - 1:]) - {policy_hash()}, key=str)
+    if stray:
+        recorded = stray[0]
         return done("invalid", "sweep invalid at %s: recorded under another leg environment (hash %s; this reader's is %s: "
                                "another scripts/sweep.py's allowlist or set values), so it is not this gate; sweep again with "
                                "this checkout's scripts/sweep.py" % (short(sha), str(recorded)[:12] if recorded else "none",
-                                                                     policy_hash()[:12]), data)
-    recomputed = verdict_of(data)
+                                                                     policy_hash()[:12]), rec)
+    recomputed = verdict_of(rec)
     if recomputed == "running":
-        ran = [name for name in LEGS if legs[name].get("finished")]
+        ran = [name for name in LEGS if (runs[-1].get("legs") or {}).get(name, {}).get("finished")]
         return done("unfinished", "sweep unfinished: the sweep at %s started %s and has not finished (running, or its runner "
-                                  "died; done: %s); wait for it or sweep again" % (short(sha), data.get("started"), ", ".join(ran) or "none"), data)
+                                  "died; done: %s); wait for it or sweep again" % (short(sha), runs[-1].get("started"),
+                                                                                    ", ".join(ran) or "none"), rec)
     if recomputed == "invalid":
-        return done("invalid", "sweep invalid at %s: %s" % (short(sha), data.get("invalid")), data)
-    if data.get("verdict") != recomputed:
-        return done("invalid", "sweep invalid at %s: the recorded verdict %s disagrees with its legs (%s)"
-                    % (short(sha), data.get("verdict"), recomputed), data)
+        return done("invalid", "sweep invalid at %s: %s" % (short(sha), rec.get("invalid")), rec)
+    for i, r in enumerate(runs):
+        if r.get("finished") and r.get("verdict") != run_verdict(r):
+            return done("invalid", "sweep invalid at %s: the recorded verdict %s disagrees with its legs (%s) in run %d"
+                        % (short(sha), r.get("verdict"), run_verdict(r), i + 1), rec)
+    logs = os.path.join(sweeps_dir(env), "logs", sha)
+    if history["dead"]:
+        return done("red", "sweep red at %s: %s; fix it and sweep the new head; logs under %s" % (short(sha), history["dead"], logs), rec)
     if recomputed == "red":
         return done("red", "sweep red at %s: %s; logs under %s" % (
-            short(sha), ", ".join("%s (%s)" % (n, _rc_text(n, legs[n])) for n in red_legs(data)),
-            os.path.join(sweeps_dir(env), "logs", sha)), data)
+            short(sha), ", ".join("%s (%s)" % (n, _rc_text(n, legs[n])) for n in red_legs(rec)), logs), rec)
+    unrun = sorted(n for n in history["need"] if not is_owed(n, legs[n]))
+    if unrun:
+        return done("red", "sweep red at %s: %s; logs under %s" % (short(sha), "; ".join(
+            "%s failed in run %d (%s) and no later run ran it" % (n, history["need"][n][0], _rc_text(n, history["need"][n][1]))
+            for n in unrun), logs), rec)
     ran = ["%s %s" % (n, legs[n]["rc"]) for n in LEGS if is_owed(n, legs[n])]
     skipped = [n for n in LEGS if not is_owed(n, legs[n])]
-    rerun = [rerun_note(n, legs[n]) for n in LEGS if "rerun" in legs[n]]
+    notes = rec["flake_notes"] + (["an earlier " + t for t in rec["invalid_notes"]])
     return done("pass", "sweep at %s: pass, finished %s (%s%s%s); %s" % (
-        short(sha), data.get("finished"), ", ".join(ran), ("; not owed: " + ", ".join(skipped)) if skipped else "",
-        ("; " + "; ".join(rerun)) if rerun else "", path), data)
+        short(sha), rec.get("finished"), ", ".join(ran), ("; not owed: " + ", ".join(skipped)) if skipped else "",
+        ("; " + "; ".join(notes)) if notes else "", path), rec)
 
 
 # ── the runner ────────────────────────────────────────────────────────────────
@@ -825,6 +946,31 @@ def script_blob():
     return p.stdout.strip() if p.returncode == 0 else None
 
 
+def parse_flakes(values, only):
+    """{leg: known-flake entry} from the --flake values. `LEG=TEXT` names its leg; a bare TEXT names every --leg leg
+    that has no named one, and is refused on a full run, which must say which leg each flake is for."""
+    named, bare = {}, []
+    for v in values or []:
+        leg, sep, text = v.partition("=")
+        if sep and leg in LEGS:
+            if not text.strip():
+                raise Refused("--flake %s= names no known flake: give the test and where it is recorded as a known flake" % leg)
+            if leg in named:
+                raise Refused("--flake names %s twice" % leg)
+            named[leg] = text.strip()
+        elif v.strip():
+            bare.append(v.strip())
+    if len(bare) > 1:
+        raise Refused("--flake: give one known flake per leg, as LEG=TEXT")
+    if bare and not only:
+        raise Refused("--flake on a full run names the leg it is for: --flake LEG=TEXT (the leg that failed, the test, and "
+                      "where it is recorded as a known flake)")
+    for leg in only:
+        if leg not in named and bare:
+            named[leg] = bare[0]
+    return named
+
+
 def cmd_run(args):
     tree = os.path.realpath(args.tree or git(os.getcwd(), "rev-parse", "--show-toplevel"))
     if git(tree, "rev-parse", "--is-inside-work-tree", check=False).stdout.strip() != "true":
@@ -837,12 +983,12 @@ def cmd_run(args):
     for name in only:
         if name not in LEGS:
             raise Refused("--leg %s: not a leg (%s)" % (name, ", ".join(LEGS)))
-    flake = (args.flake or "").strip()
-    if only and not flake:
+    flakes = parse_flakes(args.flake, only)
+    if only and any(name not in flakes for name in only):
         raise Refused("--leg re-runs a leg only after a known flake: name it with --flake (the test and where it is recorded "
                       "as a known flake); anything else is a failure, and the full sweep runs again")
-    if flake and not only:
-        raise Refused("--flake names the flake a --leg re-run is for; it takes --leg")
+    if only and set(flakes) - set(only):
+        raise Refused("--flake names %s, which this --leg re-run does not run" % ", ".join(sorted(set(flakes) - set(only))))
     dirty = dirty_paths(tree)
     if dirty:
         raise Refused("the tree %s is not clean, so a run would not be a run of %s: %s%s"
@@ -864,105 +1010,143 @@ def cmd_run(args):
         lock.close()
         raise Refused("a sweep of %s is already running (%s)" % (short(sha), lock_path))
     try:
-        return _run_locked(args, tree, sha, branch, python, version, wraps, only, path, flake)
+        return _run_locked(args, tree, sha, branch, python, version, wraps, only, path, flakes)
     finally:
         fcntl.flock(lock, fcntl.LOCK_UN)
         lock.close()
 
 
-def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, flake=""):
-    logdir = os.path.join(sweeps_dir(), "logs", sha)
-    if only:
-        try:
-            result = _load(path)
-        except FileNotFoundError:
+def load_history(path, sha, for_leg):
+    """The result file at `path` to append a run to, or None when there is none. Results are append-only: a file
+    this runner cannot read is kept and refused, never overwritten; a schema-1 file (the runner before round 1)
+    is moved aside to <sha>.schema-1.json, named, since its runs swept the batcher's own tree and no reader counts
+    them."""
+    try:
+        data = _load(path)
+    except FileNotFoundError:
+        if for_leg:
             raise Refused("no result at %s to re-run a leg in; run the full sweep" % short(sha))
-        except (OSError, ValueError) as e:
-            raise Refused("the result at %s is unreadable (%s); run the full sweep" % (short(sha), e))
-        if result.get("sha") != sha or any(name not in (result.get("legs") or {}) for name in LEGS):
+        return None
+    except (OSError, ValueError) as e:
+        raise Refused("the result at %s is unreadable (%s)%s" % (short(sha), e, "; run the full sweep" if for_leg else
+                      "; it is kept, since results are append-only: move it aside to sweep this sha again"))
+    if data.get("schema") == 1 and type(data.get("schema")) is int:
+        if for_leg:
+            raise Refused("the result at %s is unreadable (schema 1, %s); run the full sweep" % (short(sha), SCHEMA_1_TEXT))
+        aside = path[:-len(".json")] + ".schema-1.json"
+        os.replace(path, aside)
+        print("sweep %s: moved the schema-1 result aside to %s (%s)" % (short(sha), aside, SCHEMA_1_TEXT), flush=True)
+        return None
+    if data.get("schema") != SCHEMA or type(data.get("schema")) is not int or data.get("sha") != sha:
+        raise Refused("the result at %s is not a record of %s this runner writes (schema %r, sha %s)%s"
+                      % (path, short(sha), data.get("schema"), short(str(data.get("sha"))), "; run the full sweep" if for_leg else
+                         "; it is kept, since results are append-only: move it aside to sweep this sha again"))
+    return data
+
+
+def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, flakes=None):
+    flakes = dict(flakes or {})
+    logdir = os.path.join(sweeps_dir(), "logs", sha)
+    data = load_history(path, sha, bool(only))
+    history = read_history(data["runs"]) if data else None
+    if history and history["never"]:
+        raise Refused("the result at %s holds records no runner writes (%s)%s" % (short(sha), "; ".join(history["never"]),
+                      "; run the full sweep" if only else
+                      "; it is kept, since results are append-only: move it aside to sweep this sha again"))
+    if history and history["dead"]:
+        raise Refused("no run at %s can pass: %s; fix it and sweep the new head" % (short(sha), history["dead"]))
+    run = {"kind": "leg" if only else "full", "sha": sha, "branch": branch, "tree": tree, "started": now(), "finished": None,
+           "flakes": flakes, "runner": {"script_blob": script_blob(), "python": python, "python_version": version},
+           "legs": {}, "verdict": "running", "red": [], "invalid": None}
+    if only:
+        rec, why = effective(data)
+        if rec is None or any(name not in (data["runs"][rec["full_run"] - 1].get("legs") or {}) for name in LEGS):
             raise Refused("the result at %s is not a complete record of %s; run the full sweep" % (path, short(sha)))
-        if result.get("invalid"):
-            raise Refused("the result at %s is invalid (%s); run the full sweep" % (short(sha), result["invalid"]))
-        recorded = recorded_hash(result)
+        if rec.get("invalid"):
+            raise Refused("the result at %s is invalid (%s); run the full sweep" % (short(sha), rec["invalid"]))
+        recorded = recorded_hash(data["runs"][-1])
         if recorded != policy_hash():
             raise Refused("the result at %s was recorded under another leg environment (hash %s, this runner's %s), so a "
                           "re-run here would mix two; run the full sweep" % (short(sha), str(recorded)[:12], policy_hash()[:12]))
-        if not result.get("finished"):
+        if not rec.get("finished"):
             raise Refused("the sweep at %s has not finished, so its first run's failures are not all recorded; wait for it or "
                           "run the full sweep" % short(sha))
         for name in only:
-            old = result["legs"][name]
+            old = rec["legs"][name]
             if not is_owed(name, old):
                 raise Refused("%s is not owed at %s (%s); nothing to re-run" % (name, short(sha), old.get("why")))
-            # A re-run counts once, over the first run's recorded failure (rerun_fault is the reader's side of this).
-            if "rerun" in old or any(isinstance(h, dict) and h.get("leg") == name for h in result.get("history") or []):
-                raise Refused("%s was already re-run at %s, and a re-run counts once; run the full sweep" % (name, short(sha)))
             if not old.get("finished"):
                 raise Refused("%s has no finished first run at %s to re-run; run the full sweep" % (name, short(sha)))
             if passed(name, old):
                 raise Refused("%s passed at %s; there is no failure to re-run" % (name, short(sha)))
-        workers = args.workers or (result.get("runner") or {}).get("workers") or default_workers()
+        workers = args.workers or (rec.get("runner") or {}).get("workers") or default_workers()
         for name in only:
-            old = result["legs"][name]
-            first = {k: old.get(k) for k in ATTEMPT_KEYS if k in old}
-            result.setdefault("history", []).append(dict(first, leg=name))
-            new = {k: old[k] for k in PLAN_KEYS if k in old}
+            new = {k: rec["legs"][name][k] for k in PLAN_KEYS if k in rec["legs"][name]}
             if name == "pytest":
                 new["cmd"] = pytest_cmd(python, workers)
             new["rc"] = None
-            # The verdict records both runs: this re-run's attempt fills the record, and the first failure stays in it
-            # with the flake it was named as and the sha each ran at.
-            new["rerun"] = {"flake": flake, "sha": sha, "first": dict(first, sha=sha)}
-            result["legs"][name] = new
-        runner = result.setdefault("runner", {})
-        runner.update(python=python, python_version=version or runner.get("python_version"), workers=workers)
-        result.update(finished=None, verdict="running", red=[], invalid=None)
+            run["legs"][name] = new
     else:
         workers = args.workers or default_workers()
         webview = webview_state(tree)
-        result = {
-            "schema": SCHEMA, "sha": sha, "branch": branch, "tree": tree, "started": now(), "finished": None,
-            "runner": {"script_blob": script_blob(), "python": python, "python_version": version, "workers": workers},
-            "base": webview["base"], "owed": {"webview": webview}, "order": list(LEGS),
-            "legs": plan_legs(tree, python, workers, webview), "history": [],
-            "verdict": "running", "red": [], "invalid": None,
-        }
+        run["legs"] = plan_legs(tree, python, workers, webview)
+        run.update(base=webview["base"], owed={"webview": webview}, order=list(LEGS))
+        need = (history or {}).get("need") or {}
+        owed = [n for n in LEGS if is_owed(n, run["legs"][n])]
+        unrun = sorted(set(need) - set(owed))
+        if unrun:
+            raise Refused("%s failed at %s and this run would not run %s (%s); fix it and sweep the new head"
+                          % (", ".join(unrun), short(sha), "it" if len(unrun) == 1 else "them",
+                             "; ".join("%s: %s" % (n, run["legs"][n].get("why")) for n in unrun)))
+        stray = sorted(set(flakes) - set(need))
+        if stray:
+            raise Refused("--flake names %s, which %s no failed run at %s to excuse" % (", ".join(stray),
+                          "has" if len(stray) == 1 else "have", short(sha)))
+        unnamed = [n for n in LEGS if n in need and n not in flakes]
+        if unnamed:
+            raise Refused("the run at %s failed %s; a later run counts over a failed leg only with --flake LEG=TEXT naming each "
+                          "(the test, and where it is recorded as a known flake); for anything else, fix it and sweep the new "
+                          "head (logs: %s)" % (short(sha), ", ".join("%s in run %d (%s)" % (n, need[n][0], _rc_text(n, need[n][1]))
+                                                                     for n in unnamed),
+                                               ", ".join(str(need[n][1].get("log")) for n in unnamed)))
+    run["runner"]["workers"] = workers
+    data = data or {"schema": SCHEMA, "sha": sha, "runs": []}
+    data.update(branch=branch, tree=tree)
+    data["runs"].append(run)
     os.makedirs(logdir, mode=0o700, exist_ok=True)
     tmpdir = make_tmpdir()
-    result["runner"]["tmpdir"] = tmpdir
+    run["runner"]["tmpdir"] = tmpdir
     try:
         ctx = leg_context(tmpdir, python)
         prepare_home(ctx)
-        result["runner"]["leg_env"] = {"allow": list(LEG_ALLOW), "hash": leg_env_hash(ctx)}
-        result["runner"]["tools"] = tool_versions(ctx)
-        write_result(path, result)
+        run["runner"]["leg_env"] = {"allow": list(LEG_ALLOW), "hash": leg_env_hash(ctx)}
+        run["runner"]["tools"] = tool_versions(ctx)
+        write_result(path, data)
         for name in LEGS:
-            if only and name not in only:
-                continue
-            rec = result["legs"][name]
-            if not is_owed(name, rec):
+            rec = run["legs"].get(name)
+            if rec is None or not is_owed(name, rec):
                 continue
             print("sweep %s: %s ..." % (short(sha), name), flush=True)
             run_leg(tree, name, rec, wraps, ctx, logdir)
             print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
-            write_result(path, result)
+            write_result(path, data)
         left = home_left(ctx)
-        result["runner"].update(home_empty=not left, home_left=left[:20])
+        run["runner"].update(home_empty=not left, home_left=left[:20])
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
     head = git(tree, "rev-parse", "HEAD")
     dirty = dirty_paths(tree)
     if head != sha:
-        result["invalid"] = "HEAD moved to %s during the run (it started at %s)" % (short(head), short(sha))
+        run["invalid"] = "HEAD moved to %s during the run (it started at %s)" % (short(head), short(sha))
     elif dirty:
-        result["invalid"] = "the tree changed during the run: %s" % ", ".join(dirty[:10])
-    result["finished"] = now()
-    result["verdict"] = verdict_of(result)
-    result["red"] = red_legs(result) if result["verdict"] == "red" else []
-    write_result(path, result)
+        run["invalid"] = "the tree changed during the run: %s" % ", ".join(dirty[:10])
+    run["finished"] = now()
+    run["verdict"] = run_verdict(run)
+    run["red"] = [n for n in red_legs(run) if run["kind"] == "full" or n in run["legs"]] if run["verdict"] == "red" else []
+    write_result(path, data)
     a = assess(sha, subject="HEAD")
     print(("ok   " if a["case"] == "pass" else "FAIL ") + a["line"])
-    return {"pass": EXIT_PASS, "red": EXIT_RED, "invalid": EXIT_INVALID}.get(result["verdict"], EXIT_RED)
+    return {"pass": EXIT_PASS, "red": EXIT_RED, "invalid": EXIT_INVALID}.get(a["case"], EXIT_RED)
 
 
 def cmd_check(args):
@@ -993,12 +1177,14 @@ def main(argv=None):
                         "environment and the leg's allowlisted environment applies after it, so nothing it sets reaches "
                         "the leg")
     p.add_argument("--leg", action="append", metavar="NAME",
-                   help="re-run only this leg over the existing result at the same sha, after its first run failed on a known "
-                        "flake (needs --flake; once per leg; the first failure is kept in the leg's record and the history); "
-                        "repeatable")
-    p.add_argument("--flake", metavar="TEXT",
-                   help="with --leg: the known flake the first run's failure was (the test, and where it is recorded as a "
-                        "known flake), written into the result with both runs")
+                   help="re-run only this leg at the same sha, after the result's newest run failed it on a known flake "
+                        "(needs --flake; once per leg; the re-run is appended to the result's runs, which keep the failed "
+                        "one); repeatable")
+    p.add_argument("--flake", action="append", metavar="[LEG=]TEXT",
+                   help="the known flake a failed leg's run was (the test, and where it is recorded as a known flake), "
+                        "written into the new run: after a run at the same sha failed a leg, the next run that runs it "
+                        "counts only with --flake LEG=TEXT naming it (once per leg); with --leg a bare TEXT names every "
+                        "--leg leg; repeatable")
     p.set_defaults(func=cmd_run)
     p = sub.add_parser("check", help="read the result for a commit, as scripts/batch.py verify does",
                        description="Read the result recorded for a commit and name its case: pass, or missing, stale, "

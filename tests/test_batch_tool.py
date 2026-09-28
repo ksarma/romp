@@ -300,25 +300,34 @@ class Fixture:
             webview = bool(sweep.webview_owed(self.dev_git("diff", "--no-renames", "--name-only", base, sha).splitlines()))
         return self.result(sha, "batch/" + name, webview=webview, tree=self.wt(name), **over)
 
-    def result(self, sha, branch, webview, tree, **over):
-        """The result the runner would write for `sha`, recorded for `branch`: every leg rc 0 but deps, not owed, and
-        the webview legs owed and rc 0 when `webview`, else not owed; `over` replaces top-level keys."""
-        stamp = sweep.now()
-        legs = {n: {"owed": True, "rc": 0, "cmd": ["true"], "started": stamp, "finished": stamp} for n in sweep.LEGS}
-        for n in sweep.TEST_LEGS:
-            legs[n].update(tests=1, failed=0)
-        for n in ("deps",) + (() if webview else sweep.WEBVIEW_LEGS):
-            legs[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
-        data = {"schema": sweep.SCHEMA, "sha": sha, "branch": branch, "tree": tree, "started": stamp,
-                "finished": stamp, "legs": legs, "history": [], "red": [], "invalid": None}
-        data.update(over)
-        if "runner" not in over:
-            # the leg environment's hash the reader compares (round 1, decision 10)
-            data["runner"] = {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}}
-        data.setdefault("verdict", sweep.verdict_of(data))
+    def result(self, sha, branch, webview, tree, runs=None, **over):
+        """The result the runner would write for `sha`, recorded for `branch`: one full run (schema 2 keeps every run
+        at the sha in `runs`), every leg rc 0 but deps, not owed, and the webview legs owed and rc 0 when `webview`,
+        else not owed. `over` replaces keys of that run, `runs` the whole history; a run's verdict is its own legs'
+        unless given."""
+        if runs is None:
+            stamp = sweep.now()
+            legs = {n: {"owed": True, "rc": 0, "cmd": ["true"], "started": stamp, "finished": stamp} for n in sweep.LEGS}
+            for n in sweep.TEST_LEGS:
+                legs[n].update(tests=1, failed=0)
+            for n in ("deps",) + (() if webview else sweep.WEBVIEW_LEGS):
+                legs[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
+            run = {"kind": "full", "sha": sha, "branch": branch, "tree": tree, "started": stamp, "finished": stamp,
+                   "flakes": {}, "legs": legs, "red": [], "invalid": None}
+            run.update(over)
+            runs = [self.run_record(**run)]
+        data = {"schema": sweep.SCHEMA, "sha": sha, "branch": branch, "tree": tree, "runs": runs}
         path = sweep.result_path(sha, env=self.env)
         sweep.write_result(path, data)
         return path
+
+    @staticmethod
+    def run_record(**run):
+        """A run as the runner writes it: the leg environment's hash the reader compares (round 1, decision 10) unless
+        `runner` is given, and the run's own verdict unless `verdict` is."""
+        run.setdefault("runner", {"leg_env": {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()}})
+        run.setdefault("verdict", sweep.run_verdict(run))
+        return run
 
 
 class _Base(unittest.TestCase):
@@ -581,7 +590,7 @@ class PlanReadsTheMemberSweep(_Base):
         fx = self.fx
         red_head = fx.branch("e", {"e.txt": "e\n"}, swept=False)
         with open(fx.swept("e")) as f:
-            legs = json.load(f)["legs"]
+            legs = json.load(f)["runs"][-1]["legs"]
         legs["bats"]["rc"] = 1
         fx.result(red_head, "e", webview=True, tree=fx.author, legs=legs)
         old = fx.branch("f", {"f.txt": "f\n"})
@@ -1777,26 +1786,68 @@ class VerifyReadsTheSweep(_Base):
         self.assertIn("ok   sweep at %s: pass" % head[:10], p.stdout)
         self.assertNotIn("sweep webview", p.stdout)
 
+    FLAKE = "tests/test_notes.py::test_order (known)"
+
+    def history(self, head, *later):
+        """A history at `head`: a full run that failed pytest (rc 1, log logs/pytest.log), then the runs `later` gives
+        as (kind, legs, flakes) or a run record."""
+        stamp = sweep.now()
+        failed = self.legs()
+        failed[sweep.LEGS[1]].update(rc=1, failed=1, log="logs/pytest.log")
+        runs = [self.fx.run_record(kind="full", sha=head, started=stamp, finished=stamp, flakes={}, legs=failed, invalid=None)]
+        for item in later:
+            if isinstance(item, dict):
+                runs.append(self.fx.run_record(**dict({"sha": head, "started": stamp, "finished": stamp, "flakes": {}, "invalid": None}, **item)))
+                continue
+            kind, legs, flakes = item
+            runs.append(self.fx.run_record(kind=kind, sha=head, started=stamp, finished=stamp, flakes=flakes, legs=legs, invalid=None))
+        return runs
+
     def test_a_leg_rerun_counts_only_with_its_first_failure_and_flake_and_the_body_names_both(self):
-        """A leg the runner re-ran after a known flake (pre-round ruling Q11): verify accepts it through the reader,
-        records both runs, and the body's first block names the first failure and the flake; a re-run that names no
-        flake is refused as invalid."""
+        """A leg the runner re-ran after a known flake (pre-round ruling Q11, frozen-head item 1): the result keeps both
+        runs, verify accepts the pair through the reader and records it, and the body's first block names the first
+        failure and the flake; a re-run that names no flake is refused as invalid."""
         fx = self.fx
         head = self.assembled()
-        legs = self.legs()
-        first = {"rc": 1, "started": sweep.now(), "finished": sweep.now(), "tests": 3, "failed": 1}
-        legs["pytest"]["rerun"] = {"flake": "tests/test_notes.py::test_order (known)", "sha": head, "first": dict(first, sha=head)}
-        fx.sweep("b1", legs=legs, history=[dict(first, leg="pytest")])
+        pytest_leg = sweep.LEGS[1]
+        rerun = {pytest_leg: self.legs()[pytest_leg]}
+        fx.sweep("b1", runs=self.history(head, ("leg", rerun, {pytest_leg: self.FLAKE})))
         p = fx.ok("verify", "b1")
-        note = "pytest re-run after a known flake (first run rc 1; flake: tests/test_notes.py::test_order (known))"
+        note = "pytest re-run after a known flake (first run rc 1; flake: %s)" % self.FLAKE
         self.assertIn(note, p.stdout)
         self.assertEqual(fx.state("b1")["sweep"]["reruns"], [note])
         body = fx.ok("summarize", "b1", "--print-only").stdout
         first_block = next(b for b in body.split("\n\n") if "Verified at %s" % head[:10] in b)
         self.assertIn(note, first_block, "the first block names both runs")
-        legs["pytest"]["rerun"]["flake"] = ""
-        fx.sweep("b1", legs=legs, history=[dict(first, leg="pytest")])
-        self.refused("FAIL sweep invalid at %s: pytest's re-run names no known flake" % head[:10])
+        fx.sweep("b1", runs=self.history(head, ("leg", rerun, {})))
+        self.refused("FAIL sweep invalid at %s: run 2 re-ran pytest with no known flake named" % head[:10])
+
+    def test_a_red_run_a_later_green_did_not_excuse_is_refused_by_name(self):
+        """Frozen-head item 1: a later green counts over a red run only with --flake naming the failed leg, so verify
+        refuses a history whose second full run passed pytest with no flake, naming the red run and its log."""
+        fx = self.fx
+        head = self.assembled()
+        fx.sweep("b1", runs=self.history(head, ("full", self.legs(), {})))
+        self.refused("FAIL sweep red at %s: run 1 failed pytest (rc 1; log logs/pytest.log), and run 2 passed it with no "
+                     "--flake naming it" % head[:10])
+
+    def test_an_invalid_run_in_the_history_is_named_by_verify_and_the_body(self):
+        """Round 1, decision 18: an invalid run needs no flake before a later green counts, but verify and the body
+        name it."""
+        fx = self.fx
+        head = self.assembled()
+        stamp = sweep.now()
+        reason = "after the manager leg the checkout is not the sha's tree: untracked leaked.txt"
+        runs = [fx.run_record(kind="full", sha=head, started=stamp, finished=stamp, flakes={}, legs=self.legs(), invalid=reason),
+                fx.run_record(kind="full", sha=head, started=stamp, finished=stamp, flakes={}, legs=self.legs(), invalid=None)]
+        fx.sweep("b1", runs=runs)
+        p = fx.ok("verify", "b1")
+        note = "run 1 (started %s) was invalid: %s" % (stamp, reason)
+        self.assertIn("an earlier " + note, p.stdout)
+        self.assertEqual(fx.state("b1")["sweep"]["invalid_runs"], [note])
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        first_block = next(b for b in body.split("\n\n") if "Verified at %s" % head[:10] in b)
+        self.assertIn("an earlier " + note, first_block)
 
     def test_the_free_text_flag_is_gone(self):
         fx = self.fx

@@ -53,7 +53,10 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     for the batch head's full sha, and a batch head that does not contain main as origin has it now
     (CI does not run on the merge to main, so the tree that lands must be the tree the sweep and the
     batch branch's CI ran on), and a result that marks a webview leg not owed while the diff from main
-    to the head owes it; land re-runs verify and refuses the same;
+    to the head owes it; land re-runs verify and refuses the same. The reader reads the result's whole
+    history (append-only runs): a failed run that no later run excused with --flake naming the leg reads
+    red, naming the run and its logs, and a result recorded under another leg environment (the allowlist
+    hash) reads invalid; verify and the body name each invalid run the history holds;
   - land reads main on origin once more right before the merge call and refuses if it moved since verify;
     the residual is stated, not closed: a move between that read and GitHub's merge (the merge pins the
     head, not the base), and a move before an --auto merge fires later (--auto is refused until the
@@ -1644,8 +1647,10 @@ def cmd_verify(args, quiet=False):
         state["sweep"] = {"head": head, "path": a["path"], "verdict": "pass", "finished": a["result"].get("finished"),
                           "legs": [[n, legs[n].get("rc") if sweep.is_owed(n, legs[n]) else "not owed"] for n in sweep.LEGS],
                           "summary": {n: legs[n]["summary"] for n in sweep.LEGS if sweep.is_owed(n, legs[n]) and legs[n].get("summary")},
-                          # a leg re-run after a known flake: both runs, as the reader counted them (sweep.rerun_note)
-                          "reruns": [sweep.rerun_note(n, legs[n]) for n in sweep.LEGS if "rerun" in legs[n]]}
+                          # the result's whole history as the reader read it: each failed run a later run's known
+                          # flake excused, and each invalid run (it needs no flake, but it is named)
+                          "reruns": list(a["result"].get("flake_notes") or []),
+                          "invalid_runs": list(a["result"].get("invalid_notes") or [])}
         lines.append("ok   " + a["line"])
     else:
         ok = False
@@ -1726,17 +1731,17 @@ def read_first_reasons(m, resolved, contained_by=None):
 def sweep_phrase(sw):
     """The first block's words for the sweep verify read: every owed leg with its rc (and the runner's
     display summary), then the legs not owed, then any leg re-run after a known flake, with its first
-    failure and the flake. A record from before the result file (free text passed to verify) is shown as
-    it was written."""
+    failure and the flake, then any invalid run in the result's history. A record from before the result
+    file (free text passed to verify) is shown as it was written."""
     if not sw:
         return "sweep not recorded"
     if sw.get("verdict") == "pass" and isinstance(sw.get("legs"), list):
         summary = sw.get("summary") or {}
         ran = ["%s rc %s%s" % (n, rc, (" (%s)" % summary[n]) if summary.get(n) else "") for n, rc in sw["legs"] if rc != "not owed"]
         skipped = [n for n, rc in sw["legs"] if rc == "not owed"]
-        reruns = sw.get("reruns") or []
+        notes = list(sw.get("reruns") or []) + ["an earlier " + t for t in sw.get("invalid_runs") or []]
         return "sweep pass: %s%s%s" % (", ".join(ran), ("; not owed: " + ", ".join(skipped)) if skipped else "",
-                                       ("; " + "; ".join(reruns)) if reruns else "")
+                                       ("; " + "; ".join(notes)) if notes else "")
     return sw.get("text") or "sweep not recorded"
 
 
