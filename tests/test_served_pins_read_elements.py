@@ -2013,12 +2013,16 @@ def do_GET(self):
         # routes when a function looks the table up and returns a call carrying the looked-up name called bare. A lambda value, a
         # value that is no derived getter, a table nothing looks up, a lookup whose result is never called in a return, and a
         # lookup in one function with the call in another bind nothing. A walk without the table branch reds here (the synthetic
-        # table's three routes missing) and on the kernel (no landing, no pane page).
+        # table's three routes missing) and on the kernel (no landing, no pane page). The rulings at the merge (2026-09-28) add the
+        # no-argument condition's case: a lookup whose result a return calls WITH an argument, positional or by keyword, renders
+        # another text and binds nothing (a walk that drops either half of the condition reds here on /settings or /waiting).
         handler = '''
 PAGES = {"": _landing, "/": _landing, "/chat": _chat_page, "/shim": lambda: _shim_core_js("chat"), "/nope": _not_a_getter}
 UNREAD = {"/feed": _feed_page}
 UNCALLED = {"/timeline": _timeline_page}
 APART = {"/files": _files_page}
+POSITIONAL = {"/settings": _settings_page}
+KEYWORD = {"/waiting": _waiting_page}
 def do_GET(self):
     p = "/x"
     page = PAGES.get(p)
@@ -2027,6 +2031,12 @@ def do_GET(self):
     other = UNCALLED.get(p)
     if other is not None:
         return self._send(200, json.dumps(str(other)), "application/json")
+    argued = POSITIONAL.get(p)
+    if argued is not None:
+        return self._send(200, argued(p), "text/html")
+    named = KEYWORD.get(p)
+    if named is not None:
+        return self._send(200, named(path=p), "text/html")
     if p == "/sw.js":
         return self._send(200, _sw_js(), "text/javascript")
 def lookup_only(self, p):
