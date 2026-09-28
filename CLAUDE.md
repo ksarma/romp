@@ -143,7 +143,8 @@ so there is no list to write. **gitleaks** covers them, in two places:
   the hook handed it or no figure at all, or a count of files read that is
   not the count of files the hook handed it. The
   hook's read carries `--text`, so a diff attribute cannot hide a credential
-  in a commit that is not a merge: a path git would otherwise call binary (a
+  in a commit that is not a merge (except in a submodule's own diff, below):
+  a path git would otherwise call binary (a
   `-diff` line or the `binary` macro in an attributes file, or a blob over
   `core.bigFileThreshold`) is diffed as text and scanned like any other, while
   a plain patch stream prints no hunk for it. A merge's combined diff applies
@@ -162,11 +163,26 @@ so there is no list to write. **gitleaks** covers them, in two places:
   a `diff.<driver>.textconv` is refused, naming the path and the driver, even
   for a pure rename or a mode change: a credential could show only in the
   driver's rendering, which the hook does not read. Review the path by hand,
-  then set `ROMP_NO_GITLEAKS=1` for that push. The hook refuses a push under
-  any `diff.<driver>.algorithm` in the clone's config, whether or not a
-  file's attribute names that driver, and under a value of `diff.algorithm`,
-  `diff.interHunkContext` or `diff.renames` that it does not read; each
-  refusal names the key and its remedy.
+  then set `ROMP_NO_GITLEAKS=1` for that push. The hook cuts the pushed
+  lines into hunks as gitleaks' own git mode (`git log -p -U0`) would in
+  this clone: it reads the clone's `diff.algorithm`, `diff.interHunkContext`,
+  `diff.renames` and `diff.submodule`, and the environment's
+  `GIT_DIFF_OPTS`, as git log does. It refuses a push under a value of any
+  of those four `diff.` keys that it does not read, and under any
+  `diff.<driver>.algorithm` in the clone's config, whether or not a file's
+  attribute names that driver; each refusal names the key and its remedy.
+  For `diff.submodule`, a value it does not read is anything but `short`,
+  `log` or `diff`, spelled so: a spelling git warns about and ignores
+  (`Diff`, say) is refused too, since the hook fails closed. Under
+  `diff.submodule=diff` the hook also scans a submodule change's own diff,
+  as git log shows it. Git produces that diff without `--text`, so a file
+  git calls binary there is skipped, as it is in git log. An external diff
+  that reaches the submodule's diff (`diff.external`, a driver's `command`,
+  or `GIT_EXTERNAL_DIFF`) makes the hook refuse even a clean push, on lines
+  it cannot read, until the external diff is unset. And the hook still
+  reads a submodule change that `diff.ignoreSubmodules=all` or
+  `submodule.<name>.ignore=all` has git log skip, so a credential there is
+  refused.
   The hook refuses a push with something to scan when the gitleaks config gives
   any rule a path condition, naming the rule and the config file, since the
   scan cannot apply the condition; support for such rules is a held follow-up.
@@ -186,12 +202,23 @@ so there is no list to write. **gitleaks** covers them, in two places:
   config, so the hook's check and the scan read the same bytes.
   A path allowlist on a rule (the rule's own, or a targeted one) is matched
   against the names the scan gives the pushed lines, not against the files'
-  paths. One that matches none of those names changes nothing, and the rule
-  fires. One that matches them makes gitleaks skip the rule, and the push is
-  refused, even when the file is clean, naming the rule and the file: an
-  allowlist for extensionless names does this, and so does `paths = ['.*']`
-  written to switch a rule off. Excuse a false alarm by its value, with a
-  regex or stopword allowlist, and switch a rule off with `disabledRules`.
+  paths. Those names are numbers, and, for the five default rules scoped to
+  a path, the names of two copies the hook makes of a file those rules
+  could match. One that matches none of those names changes nothing, and
+  the rule fires. One that matches them makes gitleaks skip the rule when
+  its paths decide alone, as in an OR allowlist (the default condition) or
+  an AND one that gives only paths: the push is then refused, even when the
+  file is clean, naming the rule and the file. An allowlist for
+  extensionless names does this, and so does `paths = ['.*']` written to
+  switch a rule off. An AND allowlist that also gives a regex or stopwords
+  drops only the values they match. Where its paths match the numbers, the
+  push is still refused when it drops a value, and a clean file passes.
+  Where they match both copies' names but not the file's path, a credential
+  its regex or stopwords match is published. This is the residual stated in
+  the hook's header: such an allowlist keys on names the hook makes up, and
+  has no honest use.
+  Excuse a false alarm by its value, with a regex or stopword allowlist
+  that gives no paths, and switch a rule off with `disabledRules`.
   Under a config that carries such an allowlist, the hook first runs
   gitleaks once more, over text of its own, to check that the running
   release reports the skip in words the hook reads (every release from

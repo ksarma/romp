@@ -22,6 +22,8 @@ setup() {
     # Redirect the git pre-push hook symlink into a temp dir so install.sh never
     # writes into the REAL repo's .git/hooks while these tests run.
     export ROMP_GITHOOK_DIR="$TEST_DIR/githooks"
+    # The hook's credential feed reads GIT_DIFF_OPTS as main's git log does (round 12n): a runner's value would move its hunks.
+    unset GIT_DIFF_OPTS
 }
 
 teardown() { rm -rf "$TEST_DIR"; }

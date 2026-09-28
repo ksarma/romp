@@ -22,6 +22,8 @@ load git-hermetic
 
 setup() {
     git_hermetic
+    # The hook's credential feed reads GIT_DIFF_OPTS as main's git log does (round 12n): a runner's value would move its hunks.
+    unset GIT_DIFF_OPTS
     GL="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"
     if [ -z "$GL" ] || [ ! -x "$GL" ]; then
         # ROMP_GITLEAKS_REQUIRE=1 makes the absence a failure naming the reason, not a skip:

@@ -69,6 +69,8 @@ setup() {
 
     export ROMP_PRIVATE_STRINGS="$STRINGS"
     export ROMP_NO_GITLEAKS=1          # the credential half has its own test file
+    # GIT_DIFF_OPTS moves the hunks of the hook's diff reads, the credential feed's since round 12n: a runner's value stays out.
+    unset GIT_DIFF_OPTS
 }
 
 teardown() { rm -rf "${TEST_DIR:-}"; }

@@ -16177,3 +16177,44 @@ r12l_cred_refused() {   # <rule> <path>: r12d_refused_as, and the probe token in
         at_base
     done
 }
+
+# ── round 12o: the merges' first-parent read frames hunks under GIT_DIFF_OPTS (round 12n's audit N1, the fold owner's call) ──
+# Round 12n's audit found no pushing case red under the mutant putting env -u GIT_DIFF_OPTS back on the merges'
+# first-parent read alone: case 694 pins the feed's framing by a push, and cases 521, 522 and 650 pin the first-parent
+# read's text. The audit's witness fp-side pins its behaviour by a real push: a key block that a side branch splits
+# across one unchanged line reaches the push only through a merge's first-parent diff, one hunk under
+# GIT_DIFF_OPTS=-u1 and two under git's own -U0. Every credential-shaped string is assembled at run time.
+
+r12o_fp_side() {   # keys/g.txt at its base on the remote (top, u1, end); a side branch writing the key block's first ten lines after top and its END line after u1, pushed to the remote's side branch without the hook (so no scan read it); a main commit adding another file, pushed without the hook (BASE moves); and a plain merge of the side, writing no line of its own; sha and merge are the merge
+    local kb nl=$'\n'
+    kb=$(r12d2_keyblock)
+    r12d_base_file keys/g.txt 'top\nu1\nend\n'
+    git -C "$REPO" checkout -q -b side
+    printf 'top\n%s\nu1\n%s\nend\n' "${kb%"$nl"*}" "${kb##*"$nl"}" > "$REPO/keys/g.txt"
+    git -C "$REPO" commit -qam "side: a key block split across u1"
+    git -C "$REPO" push -q origin side
+    git -C "$REPO" checkout -q main
+    printf 'main\n' > "$REPO/mainf.txt"; git -C "$REPO" add mainf.txt; git -C "$REPO" commit -qm "main: another file"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" merge -q --no-ff -m "merge side" side > /dev/null
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    merge=$sha
+    is_merge "$merge"
+}
+
+@test "round 12o (round 12n's audit N1: the merges' first-parent read frames a merge's hunks under GIT_DIFF_OPTS as main's git log does): a side branch the remote already holds writes a PEM private key block around one unchanged line of keys/g.txt, its END line past that line, and a plain merge of it, writing no line of its own, is the one pushed commit (fp-side); under GIT_DIFF_OPTS=-u1, which has main's git log read the merge's first-parent diff as one hunk, the push is refused naming private-key, the merge and the file, through the first-parent read alone (the combined read holds nothing of the merge), with the figure main's gitleaks logs, as at main; with GIT_DIFF_OPTS unset the same push passes, the block two hunks under git's own -U0, as at main (both scanners; PUBLISHED under -u1 at round 12l, whose first-parent read ran under env -u GIT_DIFF_OPTS; red under the mutant putting env -u GIT_DIFF_OPTS back on the first-parent read's git alone, where case 694, the feed's pin, stays green)" {
+    r11a_base
+    r12o_fp_side
+    [ -z "$(git -C "$REPO" diff-tree -c -p --no-commit-id "$merge")" ]                                                        # the premise: the combined read holds nothing of the merge
+    [ "$(git -C "$REPO" log -1 -p -U0 --diff-merges=first-parent --format= "$merge" | grep -c '^@@ ')" -eq 2 ]                  # two first-parent hunks under -U0
+    [ "$(GIT_DIFF_OPTS=-u1 git -C "$REPO" log -1 -p -U0 --diff-merges=first-parent --format= "$merge" | grep -c '^@@ ')" -eq 1 ]   # and one under the variable, main's framing
+    export GIT_DIFF_OPTS=-u1
+    push_main_through_hook_with_shim
+    unset GIT_DIFF_OPTS
+    r12d_refused_as private-key keys/g.txt
+    [ "$(grep -c 'ADDS a credential' <<< "$output")" -eq 1 ]
+    [[ "$output" == *"scanned ~591 bytes"* ]]
+    push_main_through_hook_with_shim
+    r10a_passes
+}
