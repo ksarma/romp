@@ -181,8 +181,9 @@ subject; `verify` refuses the branch otherwise.
    (`NODE_OPTIONS=--max-old-space-size=8192`), which CI does not set. The allowlist governs
    variables only: the legs run as your user, so a file stays readable at its absolute path (a
    credential file, an agent's socket), and a leg can read `/proc/<pid>/environ` of the runner and
-   of your other processes, your shell and sessions included. A leg that changes the checkout (a tracked file, or an untracked
-   file `.gitignore` does not cover) makes the run invalid. It writes every run to
+   of your other processes, your shell and sessions included. A leg that changes the checkout (a tracked file; a file no rule of a
+   tracked `.gitignore` covers, whatever the clone's own git state says; after `npm ci`, any
+   ignored file outside `vscode-extension/node_modules`) makes the run invalid. It writes every run to
    `<state dir>/sweeps/<full sha>.json`, which keeps every run at that sha. The state dir is
    `$ROMP_STATE_DIR`, else `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and
    `batch.py` with the same environment. When one leg fails on a known flake,

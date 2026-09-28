@@ -1110,6 +1110,93 @@ class Checkout(_Base):
             self.assertTrue(os.path.exists(made["held"][0]), "a checkout whose run holds its lock is kept")
             self.assertEqual(sorted(os.listdir(trees)), sorted([os.path.basename(made["held"][0]), os.path.basename(made["held"][0]) + ".sha"]))
 
+    # What the deps leg (its npm ci, whose dependencies' install scripts run) could leave for the pytest leg, each hidden
+    # from `git status` in the private clone one way, or ignored by the tracked .gitignore (round 1's verify of the
+    # stage 1 to 3 head: every one of these passed, with the pytest leg seeing the planted file). $R is the checkout.
+    HIDDEN_PLANTS = (
+        ("a self-hiding untracked .gitignore", 'mkdir -p "$R/tests/zz"; printf "*\\n" > "$R/tests/zz/.gitignore"; '
+                                               'printf "x = 1\\n" > "$R/tests/zz/conftest.py"',
+         ["untracked 2 (tests/zz/.gitignore, tests/zz/conftest.py)"]),
+        ("the clone's info/exclude", 'printf "conftest.py\\n" >> "$R/.git/info/exclude"; printf "x = 1\\n" > "$R/conftest.py"',
+         ["untracked 1 (conftest.py)", "git 1 (.git/info/exclude)"]),
+        ("a commit in the clone", 'printf "x = 1\\n" > "$R/conftest.py"; G="git -C $R -c user.name=t -c user.email=t@example.invalid '
+                                  '-c core.hooksPath=/dev/null"; $G add conftest.py && $G commit -q -m planted',
+         ["untracked 1 (conftest.py)", "git 1 (.git/HEAD)"]),
+        ("a test module the tracked .gitignore covers", 'printf "def test_x():\\n    pass\\n" > "$R/tests/test_no_personal_identifiers.py"',
+         ["ignored outside vscode-extension/node_modules 1 (tests/test_no_personal_identifiers.py)"]),
+        ("bytecode in a __pycache__", 'mkdir -p "$R/kernel/__pycache__"; printf "planted" > "$R/kernel/__pycache__/other.cpython-399.pyc"',
+         ["ignored outside vscode-extension/node_modules 1 (kernel/__pycache__/other.cpython-399.pyc)"]),
+        ("a file a tracked .gitignore's negation keeps", 'printf "x = 1\\n" > "$R/keep.local"', ["untracked 1 (keep.local)"]),
+        ("the clone's .git replaced by a copy", 'cp -a "$R/.git" "$R/.git-copy" && rm -rf "$R/.git" && mv "$R/.git-copy" "$R/.git"',
+         ["git 1 (.git)"]),
+    )
+    HIDDEN_SEED_IGNORE = "vscode-extension/node_modules\ntests/test_no_personal_identifiers.py\n__pycache__/\n*.local\n!keep.local\n"
+
+    def deps_plants(self, script):
+        """A World whose deps leg (the fake npm ci) runs `script` in the checkout ($R) before the fake records it."""
+        seed = dict(SEED)
+        seed[".gitignore"] = self.HIDDEN_SEED_IGNORE
+        w = World(seed)
+        self.addCleanup(w.close)
+        real = os.path.join(w.tmp, "realbin")
+        os.makedirs(real)
+        os.rename(os.path.join(w.bin, "npm"), os.path.join(real, "npm"))
+        with open(os.path.join(w.bin, "npm"), "w") as f:
+            f.write('#!/bin/sh\nif [ "$1" = ci ]; then R=$(cd .. && pwd); %s; fi\nexec \'%s\' "$@"\n' % (script, os.path.join(real, "npm")))
+        os.chmod(os.path.join(w.bin, "npm"), 0o755)
+        return w
+
+    def test_a_file_the_deps_leg_hides_from_git_status_or_the_tracked_gitignore_covers_makes_the_run_invalid(self):
+        """A4 by the runner's own walk: a file the deps leg leaves counts whatever git status would say of it (a
+        .gitignore the leg wrote, the clone's info/exclude, a commit in the clone excuse nothing, and a replaced .git or a
+        changed HEAD or info/exclude is a change of its own), and after deps an ignored file outside
+        vscode-extension/node_modules counts too (bytecode or a test module the tracked .gitignore covers, which pytest
+        would load). Each run is invalid after the deps leg, and the pytest leg never runs."""
+        for label, script, named in self.HIDDEN_PLANTS:
+            with self.subTest(plant=label):
+                w = self.deps_plants(script)
+                p = w.run(check=3)
+                r = w.result()
+                self.assertEqual(r["verdict"], "invalid", p.stdout + p.stderr)
+                self.assertIn("after the deps leg the checkout is not the sha's tree: ", r["invalid"])
+                for text in named:
+                    self.assertIn(text, r["invalid"])
+                self.assertEqual(w.legs_called(), ["deps"], "the pytest leg did not run")
+
+    def test_ignored_files_are_allowed_where_the_tracked_gitignore_puts_them(self):
+        """The controls: node_modules left by the deps leg, and bytecode left by the pytest leg (ignored by the tracked
+        .gitignore, after deps), pass."""
+        w = self.deps_plants('mkdir -p "$R/vscode-extension/node_modules/pkg"; printf "x" > "$R/vscode-extension/node_modules/pkg/index.js"; '
+                             'printf "x" > "$R/vscode-extension/node_modules/pkg/:colon.js"')
+        real = os.path.join(w.tmp, "realbin")
+        os.rename(os.path.join(w.bin, "python"), os.path.join(real, "python"))
+        with open(os.path.join(w.bin, "python"), "w") as f:
+            f.write('#!/bin/sh\ncase "$1" in -c) ;; *) mkdir -p kernel/__pycache__; printf x > kernel/__pycache__/other.cpython-399.pyc;; esac\n'
+                    'exec \'%s\' "$@"\n' % os.path.join(real, "python"))
+        os.chmod(os.path.join(w.bin, "python"), 0o755)
+        p = w.run(check=0)
+        self.assertEqual(w.result()["invalid"], None, p.stdout + p.stderr)
+
+    def test_a_leg_reruns_setup_that_leaves_bytecode_refuses_the_rerun(self):
+        """The setup of a --leg re-run (npm ci) is read as the deps leg is: an ignored file outside
+        vscode-extension/node_modules refuses the re-run, and nothing is recorded."""
+        flag = "$R/../../plant-now"
+        w = self.deps_plants('[ -e "%s" ] && mkdir -p "$R/kernel/__pycache__" && printf x > "$R/kernel/__pycache__/other.cpython-399.pyc"; true' % flag)
+        w.ctl({"rc": {"tools": 1}})
+        w.run(check=1)
+        with open(w.result_path()) as f:
+            red = f.read()
+        w.ctl({})
+        trees = os.path.join(w.xdg, "romp", "sweeps", "trees")
+        os.makedirs(trees, exist_ok=True)
+        with open(os.path.join(w.xdg, "romp", "sweeps", "plant-now"), "w") as f:
+            f.write("1\n")
+        p = w.run("--leg", "tools", "--flake", Runner.FLAKE, check=2)
+        self.assertIn("(npm ci) changed it: ignored outside vscode-extension/node_modules 1 (kernel/__pycache__/other.cpython-399.pyc)",
+                      p.stderr)
+        with open(w.result_path()) as f:
+            self.assertEqual(f.read(), red, "a refused re-run records nothing")
+
     def test_a_leg_rerun_runs_npm_ci_first_and_records_it_as_setup(self):
         """A fresh checkout has no node_modules, so a --leg re-run installs them from the sha's lockfile before its leg
         and records the install as the checkout's setup; a setup that fails refuses the re-run and records nothing."""

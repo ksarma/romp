@@ -23,10 +23,14 @@ sparse patterns, index flags or replace refs, so the legs see the sha's tree plu
 nothing from the checkout's parents. Before any leg the runner verifies the checkout against `git ls-tree -r
 <sha>` (every path, executable bit, symlink target and blob), and refuses (exit 2, nothing recorded) on a
 difference or on node_modules, package.json, tsconfig.json or jsconfig.json in any ancestor directory, which
-node, tsc and esbuild would read. After every leg it reads the checkout again, and a tracked path changed or
-gone, an untracked path the tracked .gitignore does not ignore, or one of those names now in an ancestor
-directory, records the run invalid naming the paths and the leg (the runner's one producer of invalid; the
-legs after it do not run). The batcher's tree is read for its HEAD sha and branch only, so it need not
+node, tsc and esbuild would read. After every leg it reads the checkout again with its own directory walk,
+and records the run invalid, naming the paths and the leg, when a tracked path changed or is gone; when any
+other file exists that no rule of a tracked .gitignore ignores (a .gitignore a leg wrote, the clone's
+info/exclude or a commit made in the clone excuses nothing); after the deps leg, when an ignored file exists
+outside vscode-extension/node_modules (bytecode, or a test module the tracked .gitignore covers, which pytest
+would load); when the clone's .git was replaced or its HEAD, config or info/exclude changed; or when one of
+those names is now in an ancestor directory. That is the runner's one producer of invalid, and the legs after
+it do not run. The batcher's tree is read for its HEAD sha and branch only, so it need not
 be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
 during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
 untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
@@ -632,7 +636,7 @@ def excuse_contradiction(tree, result, sha, subject="HEAD"):
 # GIT_CONFIG_*, GIT_TEMPLATE_DIR or config file changes what it reads; refs/replace is ignored; and the per-user
 # attributes and excludes files git reads by default (~/.config/git/attributes and ignore) are pointed at an empty
 # file, since a global `* text eol=crlf` there would change what a checkout writes. fsmonitor and the untracked cache
-# are off, so `git status` in the private clone lists what is on disk.
+# are off.
 GIT_NEUTRAL = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_NO_REPLACE_OBJECTS": "1"}
 GIT_NEUTRAL_CONFIG = (("core.attributesFile", os.devnull), ("core.excludesFile", os.devnull), ("core.fsmonitor", "false"),
                       ("core.untrackedCache", "false"))
@@ -885,26 +889,86 @@ def verify_checkout(path, sha, entries):
     return [(k, sorted(faults[k])) for k in ("missing", "extra", "content", "mode", "symlink") if faults[k]]
 
 
-def recheck_checkout(path, sha, entries):
-    """[(class, [paths])] where the checkout differs from the sha's tree after a leg: every tracked entry as
-    _entry_faults reads it, what `git status` in the private clone calls changed, and every untracked path the tracked
-    .gitignore does not ignore (untracked). Ignored build products (node_modules, dist/, out-tests/, bytecode) are
-    allowed; an unignored file one leg leaves could be read by a later one (a root conftest.py, which pytest loads). A
-    name of ANCESTOR_NAMES in an ancestor directory is a change too (ancestor)."""
+# After the deps leg (npm ci, whose dependencies' install scripts run), the one place an ignored file may appear: every
+# other ignored path it could leave (bytecode in a __pycache__, a module the tracked .gitignore covers) would be read
+# by the pytest leg after it.
+DEPS_PRODUCTS = b"vscode-extension/node_modules/"
+# The files in the private clone's .git that decide what the runner's own git reads there (its HEAD, its repository
+# config, its excludes): a leg that changes one, or replaces .git itself, changes the re-read's verdict.
+GIT_STATE_FILES = ("HEAD", "config", os.path.join("info", "exclude"))
+
+
+def git_state(path):
+    """{name: value} for the private clone's .git: its identity (a directory, its device and inode) and the bytes of each
+    GIT_STATE_FILES file (None when absent). The re-read after every leg compares it with the one taken before the
+    first leg."""
+    g = os.path.join(path, ".git")
+    try:
+        st = os.lstat(g)
+    except OSError:
+        return {".git": None}
+    out = {".git": (stat.S_ISDIR(st.st_mode), st.st_dev, st.st_ino)}
+    for name in GIT_STATE_FILES:
+        try:
+            with open(os.path.join(g, name), "rb") as f:
+                out[os.path.join(".git", name)] = f.read()
+        except OSError:
+            out[os.path.join(".git", name)] = None
+    return out
+
+
+def tracked_ignored(path, entries, paths):
+    """(the subset of `paths` a rule of a TRACKED .gitignore ignores, or None when git failed, and git's error). Read with
+    `git check-ignore -v -z --no-index --stdin` in the private clone (the runner's git hygiene, per-user excludes off),
+    and a match counts only when the rule's source file is a .gitignore the sha tracks (its bytes checked by
+    _entry_faults) and the rule is not a negation: a .gitignore a leg wrote, the clone's info/exclude, or a commit made
+    in the clone excuses nothing."""
+    if not paths:
+        return set(), None
+    sources = {n for n, (mode, _oid) in entries.items() if mode in (b"100644", b"100755") and os.path.basename(n) == b".gitignore"}
+    # A path that starts with ":" reads to git as pathspec magic, which check-ignore refuses; "./" in front keeps it a
+    # path, and the name git echoes back is mapped to the path walked.
+    asked = {(b"./" + n if n.startswith(b":") else n): n for n in paths}
+    p = subprocess.run(["git", "-C", path, "check-ignore", "-v", "-z", "--no-index", "--stdin"], env=_git_env(),
+                       input=b"".join(n + b"\0" for n in asked), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if p.returncode not in (0, 1):
+        return None, p.stderr.decode("utf-8", "replace").strip()
+    fields = p.stdout.split(b"\0")
+    out = set()
+    for i in range(0, len(fields) - 3, 4):
+        source, _line, pattern, name = fields[i:i + 4]
+        if source in sources and not pattern.startswith(b"!"):
+            out.add(asked.get(name, name))
+    return out, None
+
+
+def recheck_checkout(path, sha, entries, before, only_under=None):
+    """[(class, [paths])] where the checkout differs from the sha's tree after a leg, read without trusting any state a
+    leg could have written: every tracked entry as _entry_faults reads it; every other file on disk, found by the
+    runner's own walk (_disk_paths), that no rule of a tracked .gitignore ignores (untracked: a root conftest.py, which
+    pytest loads, or a file hidden by a .gitignore a leg wrote, by the clone's info/exclude or by a commit in the
+    clone); with `only_under`, an ignored file outside it too (after deps, bytecode or a module the tracked .gitignore
+    covers, which pytest would still load); the clone's .git replaced or its HEAD, config or info/exclude changed since
+    `before` (git_state); and a name of ANCESTOR_NAMES in an ancestor directory (ancestor). Ignored build products
+    (node_modules, dist/, out-tests/, bytecode) are otherwise allowed."""
     faults = _entry_faults(path, entries)
-    p = subprocess.run(["git", "-C", path, "status", "--porcelain=v1", "-z", "--untracked-files=all"], env=_git_env(),
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if p.returncode != 0:
-        faults["changed"] = [b"(git status failed: %s)" % p.stderr.strip()]
+    tracked = {n for n, (mode, _oid) in entries.items() if mode != b"160000"}
+    extra = sorted(_disk_paths(path) - tracked)
+    ignored, err = tracked_ignored(path, entries, extra)
+    if ignored is None:
+        faults["untracked"] = [b"(git check-ignore failed: %s)" % os.fsencode(err)] + extra
+        ignored = set()
     else:
-        seen = {n for k in faults for n in faults[k]}
-        faults["untracked"] = sorted(n for xy, n in _status_entries(p.stdout) if xy == "??")
-        faults["changed"] = sorted(n for xy, n in _status_entries(p.stdout) if xy != "??" and n not in seen)
+        faults["untracked"] = [n for n in extra if n not in ignored]
+    if only_under is not None:
+        faults["ignored outside " + os.fsdecode(only_under).rstrip("/")] = sorted(n for n in ignored if not n.startswith(only_under))
+    now_state = git_state(path)
+    faults["git"] = sorted(os.fsencode(k) for k in set(before) | set(now_state) if before.get(k) != now_state.get(k))
     # A name of ANCESTOR_NAMES that appeared above the checkout during the leg (the refusal before the first leg saw
     # none) would reach the legs after it.
     faults["ancestor"] = [os.fsencode(a) for a in ancestor_hits(path)]
-    return [(k, sorted(faults[k])) for k in ("missing", "content", "mode", "symlink", "changed", "untracked", "ancestor")
-            if faults.get(k)]
+    order = ["missing", "content", "mode", "symlink", "untracked"] + [k for k in faults if k.startswith("ignored outside ")] + ["git", "ancestor"]
+    return [(k, sorted(faults[k])) for k in order if faults.get(k)]
 
 
 def describe_faults(faults, shown=3):
@@ -1567,6 +1631,7 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
                           "from outside the sha; remove %s and sweep again" % (short(sha), " and ".join(sorted(set(
                               os.path.basename(a) for a in above))), len(above), ", ".join(above[:3]),
                               "it" if len(above) == 1 else "them"))
+        before = git_state(checkout)
         run["runner"]["checkout"] = {"form": "clone", "path": checkout, "create_s": create_s,
                                      "verify_s": round(time.monotonic() - t0, 2), "files": len(entries), "setup": None}
         if not only:
@@ -1606,7 +1671,7 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
             print("sweep %s: setup (npm ci) ..." % short(sha), flush=True)
             run_leg(checkout, "deps", setup, wraps, ctx, logdir)
             run["runner"]["checkout"]["setup"] = setup
-            after = recheck_checkout(checkout, sha, entries)
+            after = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS)
             if not passed("deps", setup) or after:
                 raise Refused("the setup of the checkout of %s (npm ci) %s, so the re-run would not run on the sha's tree with "
                               "its dependencies; nothing was recorded (log %s)" % (short(sha), _rc_text("deps", setup) if not
@@ -1622,7 +1687,7 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
             print("sweep %s: %s ..." % (short(sha), name), flush=True)
             run_leg(checkout, name, rec, wraps, ctx, logdir)
             print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
-            changed = recheck_checkout(checkout, sha, entries)
+            changed = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS if name == "deps" else None)
             if changed:
                 # A4, the runner's one producer of invalid: a leg changed the checkout, so later legs would not run on
                 # the sha's tree.
