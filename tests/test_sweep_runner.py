@@ -1100,9 +1100,9 @@ class Reader(unittest.TestCase):
             legs[n] = {"owed": False, "rc": None, "why": "not owed here"}
         return legs
 
-    def run(self, kind="full", **over):
+    def run_rec(self, kind="full", **over):
         """One run record as the runner writes it; `over` replaces its keys. Its recorded verdict is its own legs'
-        unless given."""
+        unless given. (Not named `run`: that is unittest.TestCase's own method, which runs the test.)"""
         run = {"kind": kind, "sha": self.SHA, "branch": "batch/b1", "started": "2026-01-01T00:00:00Z",
                "finished": "2026-01-01T00:01:00Z", "flakes": {}, "legs": self.legs(), "red": [], "invalid": None}
         run.update(over)
@@ -1118,7 +1118,7 @@ class Reader(unittest.TestCase):
         sha = sha or self.SHA
         top = {k: over.pop(k) for k in self.TOP if k in over}
         if runs is None:
-            runs = [self.run(**dict({"sha": sha}, **over))]
+            runs = [self.run_rec(**dict({"sha": sha}, **over))]
         data = {"schema": sweep.SCHEMA, "sha": sha, "branch": "batch/b1", "runs": runs}
         data.update(top)
         return data
@@ -1225,13 +1225,13 @@ class Reader(unittest.TestCase):
                 case, line = self.case()
                 self.assertEqual(case, "invalid", line)
                 self.assertIn(named, line)
-                self.assertEqual(sweep.verdict_of(self.run(legs=legs)), "red", "the verdict rule owes such a leg too")
+                self.assertEqual(sweep.verdict_of(self.run_rec(legs=legs)), "red", "the verdict rule owes such a leg too")
 
     FLAKE = "tests/test_notes.py::test_order (known)"
 
     def red_then(self, *later):
         """A history: a full run that failed pytest (rc 1), then the runs in `later`."""
-        return self.result(runs=[self.run(legs=self.legs(pytest=1), started="2026-01-01T00:00:00Z")] + list(later))
+        return self.result(runs=[self.run_rec(legs=self.legs(pytest=1), started="2026-01-01T00:00:00Z")] + list(later))
 
     def rerun(self, rc=0, flake=FLAKE, **over):
         """A --leg re-run of pytest, as the runner appends it after a failed run."""
@@ -1239,14 +1239,14 @@ class Reader(unittest.TestCase):
         kw = dict(legs=legs, flakes={PYTEST_LEG: flake} if flake is not None else {}, started="2026-01-01T00:02:00Z",
                   finished="2026-01-01T00:03:00Z")
         kw.update(over)
-        return self.run(kind="leg", **kw)
+        return self.run_rec(kind="leg", **kw)
 
     def test_a_counted_rerun_passes_and_the_line_names_both_runs(self):
         """Pre-round Q11 and frozen-head item 1: a failed run is excused when the next run of that leg carries --flake
         naming it, whether that run is a --leg re-run or a full run; the pass line names the failure and the flake."""
         note = "pytest re-run after a known flake (first run rc 1; flake: %s)" % self.FLAKE
         for label, later in (("a --leg re-run", self.rerun()),
-                             ("a full run", self.run(flakes={PYTEST_LEG: self.FLAKE}, started="2026-01-01T00:02:00Z"))):
+                             ("a full run", self.run_rec(flakes={PYTEST_LEG: self.FLAKE}, started="2026-01-01T00:02:00Z"))):
             with self.subTest(label):
                 self.write(self.red_then(later))
                 case, line = self.case()
@@ -1259,13 +1259,13 @@ class Reader(unittest.TestCase):
         --flake naming it, or a second failure of the leg (a flake is excused once), reads red naming the runs and
         their logs, and says a fix and a new head is the way on."""
         cases = (
-            ("a full run passes it with no flake", [self.run(started="2026-01-01T00:02:00Z")],
+            ("a full run passes it with no flake", [self.run_rec(started="2026-01-01T00:02:00Z")],
              "run 1 failed pytest (rc 1; log logs/pytest.log), and run 2 passed it with no --flake naming it"),
             ("a --leg re-run passes it with no flake", [self.rerun(flake=None, verdict="pass")], None),
             ("the flake fails again", [self.rerun(rc=1)], "pytest failed in runs 1 and 2; a known flake is excused once"),
-            ("a full run with the flake fails again", [self.run(legs=self.legs(pytest=1), flakes={PYTEST_LEG: self.FLAKE})],
+            ("a full run with the flake fails again", [self.run_rec(legs=self.legs(pytest=1), flakes={PYTEST_LEG: self.FLAKE})],
              "pytest failed in runs 1 and 2"),
-            ("excused, then failed again", [self.rerun(), self.run(legs=self.legs(pytest=1), started="2026-01-01T00:04:00Z")],
+            ("excused, then failed again", [self.rerun(), self.run_rec(legs=self.legs(pytest=1), started="2026-01-01T00:04:00Z")],
              "pytest failed in runs 1 and 3"),
         )
         for label, later, named in cases:
@@ -1286,7 +1286,7 @@ class Reader(unittest.TestCase):
         not running: the result reads red naming the failed run."""
         failed = self.legs()
         failed["npm-test"] = {"owed": True, "rc": 1, "tests": 3, "failed": 1, "started": "s", "finished": "f", "log": "logs/n.log"}
-        self.write(self.result(runs=[self.run(legs=failed), self.run(started="2026-01-01T00:02:00Z")]))
+        self.write(self.result(runs=[self.run_rec(legs=failed), self.run_rec(started="2026-01-01T00:02:00Z")]))
         case, line = self.case()
         self.assertEqual(case, "red", line)
         self.assertIn("npm-test failed in run 1 (rc 1) and no later run ran it", line)
@@ -1296,11 +1296,11 @@ class Reader(unittest.TestCase):
         but the pass line names it. A red before an invalid run still needs the flake."""
         reason = "after the pytest leg the checkout is not the sha's tree: changed kernel/kernel.py"
         # the invalid run failed pytest too: a failure in an invalid run needs no flake either
-        self.write(self.result(runs=[self.run(invalid=reason, legs=self.legs(pytest=1)), self.run(started="2026-01-01T00:02:00Z")]))
+        self.write(self.result(runs=[self.run_rec(invalid=reason, legs=self.legs(pytest=1)), self.run_rec(started="2026-01-01T00:02:00Z")]))
         case, line = self.case()
         self.assertEqual(case, "pass", line)
         self.assertIn("an earlier run 1 (started 2026-01-01T00:00:00Z) was invalid: %s" % reason, line)
-        self.write(self.red_then(self.run(invalid=reason), self.run(started="2026-01-01T00:04:00Z")))
+        self.write(self.red_then(self.run_rec(invalid=reason), self.run_rec(started="2026-01-01T00:04:00Z")))
         case, line = self.case()
         self.assertEqual(case, "red", line)
         self.assertIn("run 1 failed pytest (rc 1; log logs/pytest.log), and run 3 passed it with no --flake naming it", line)
@@ -1313,7 +1313,7 @@ class Reader(unittest.TestCase):
         cases = (
             ("a re-run with no flake", self.red_then(self.rerun(flake=None)), "run 2 re-ran pytest with no known flake named"),
             ("a blank flake", self.red_then(self.rerun(flake="  ")), "run 2 re-ran pytest with no known flake named"),
-            ("a flake with no failure before it", self.result(runs=[self.run(), self.run(flakes={PYTEST_LEG: self.FLAKE})]),
+            ("a flake with no failure before it", self.result(runs=[self.run_rec(), self.run_rec(flakes={PYTEST_LEG: self.FLAKE})]),
              "run 2 names a known flake for pytest, but pytest has no failed run before it at this sha"),
             ("a flake for a leg the run did not run", self.red_then(self.rerun(flakes={PYTEST_LEG: self.FLAKE, "bats": self.FLAKE})),
              "run 2 names a known flake for bats, which it did not run"),
