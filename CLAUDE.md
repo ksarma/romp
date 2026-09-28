@@ -318,11 +318,14 @@ its `.test.ts` files read the file and assert on its inline JavaScript AND on it
 switch's 409 literal appears at least twice, once per request route), so a pure-Python
 refactor that touches no `ui/` file and no JavaScript line can still turn it red. Precedent:
 our PR 994 to the project (2026-09-20) lifted the route bodies into functions and turned the
-project's `vscode-extension` CI job red on that one test of 5224. The leg may be skipped only
-when `kernel/kernel.py`, `ui/` and `vscode-extension/` are ALL untouched; `scripts/sweep.py`
-never skips it: it owes the three webview legs (typecheck, `npm test`, build) at every head it
-sweeps, a member PR's included, whatever changed. Corollary for the pins themselves: a pin keyed
-on WHERE code lives says in its message what it guards (the route still reaches the function) and
+project's `vscode-extension` CI job red on that one test of 5224. The leg runs for every change:
+it also reads files outside `kernel/kernel.py`, `ui/` and `vscode-extension/` (other kernel
+modules, tests, docs, the CI workflow), and no derived set of the files it reads is kept, so no
+rule over the changed paths can say it may be skipped (PR 926's review measured the old rule,
+"skip when those three are untouched": of 581 recent PRs it let skip, 191 touched a file the
+leg reads). `scripts/sweep.py` owes the three webview legs (typecheck, `npm test`, build) at
+every head it sweeps, a member PR's included. Corollary for the pins themselves: a pin keyed on
+WHERE code lives says in its message what it guards (the route still reaches the function) and
 points to the executed test that proves the behaviour, so a reader never mistakes the weaker
 guarantee for the stronger one.
 
