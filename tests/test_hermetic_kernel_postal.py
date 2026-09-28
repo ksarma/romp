@@ -1505,8 +1505,9 @@ _TREE_BUILDERS = (("ast", ".", "parse"), ("PyCF_ONLY_AST",), ("from", "ast", "im
                   ("Bindings", ".", "of"), ("Bindings", "("))
 
 _OWN_TREE_ROADS = (
-    "_anyio_option_reads", "_conftest_fixture_env_names", "_conftest_fixture_env_writes", "_conftest_import_pops",
-    "_deepest_call_chain", "_expr", "_fixtures_scoped_above_module", "_fresh", "_own_tree", "_parser_singletons",
+    "_anyio_imported_module", "_anyio_option_reads", "_conftest_fixture_env_names", "_conftest_fixture_env_writes",
+    "_conftest_import_pops", "_deepest_call_chain", "_expr", "_fixtures_scoped_above_module", "_fresh", "_own_tree",
+    "_parser_singletons",
     "_proof_facets", "_proof_option_case", "_reassert_sites", "_teardown_only_restore",
     "HermeticKernelPostal._guard_class_source", "HermeticKernelPostal._guard_shape", "HermeticKernelPostal._guard_test",
     "HermeticKernelPostal._the_drops_count_body",
@@ -6442,6 +6443,7 @@ _ANYIO_CARRIERS = {
     "_name2plugin": "the plugins the run loaded or blocked, by name",
     "_plugin_distinfo": "the plugins the run loaded from an installed distribution",
     "get_hookimpls": "the plugins that implement a hook",
+    "mainargv": "the controller's command line on an xdist worker (config.workerinput['mainargv'], its sys.argv)",
 }
 #   THE ANYIO RULE's carriers, {attribute: what it holds}: what holds the run's -p options or the plugins it loaded as a
 #   whole, read in no way the rule can tell from a read of -p no:anyio, so a read of one is refused wherever the rule
@@ -6473,27 +6475,37 @@ _ANYIO_ATTRIBUTE_READERS = frozenset(("getattr", "hasattr", "getattr_static", "a
 _ANYIO_FOLD_CAP = 64
 #   the most values THE ANYIO RULE folds one expression to: a fold past it is refused, since a value beyond it could
 #   name anyio unread
+_ANYIO_PARSES = frozenset(("parse_args", "parse_known_args", "parse_intermixed_args", "parse_known_intermixed_args"))
+#   the parses of an argument parser that read sys.argv when handed no list of arguments or None (argparse's four, and
+#   optparse's parse_args): THE ANYIO RULE admits one only as a call handed a list it proves (its seventh clause)
 
 
-def _anyio_option_reads(tree):
+def _anyio_option_reads(tree, where=None, follow=True, nodes=None):
     """[(line, what)] for each read of the anyio option THE ANYIO RULE finds in `tree`, a conftest's text, wherever it
     stands (the module's import-time code and the body of every def, lambda and class, their decorators and defaults
-    included), sorted; empty when there is none. THE RULE (the reviewer's ruling at fork PR #894's landing merge with
-    main, on the proof's launcher: every child of the proof passes -p no:anyio (_PROOF_CHILD_FLAG), so the execution
-    proof refuses a hook keyed on the flag given and cannot refuse one keyed on it not given): a module's code may neither
-    name anyio nor read what carries the run's -p options, but by a key the rule proves names something else, and a
-    module whose code it finds doing either has every fixture refused on both roads (_registration_refusals).
-    WHAT IT CLAIMS (the reviewer's stopping rule of 2026-09-28 16:38Z on round 2 of fork PR #894): it refuses every
-    HONEST road, the reads an author writes in a conftest's text to key a hook or fixture on the option, given or not
-    given: config.getoption and its siblings, config.option, config.pluginmanager, sys.argv, the invocation params and
-    PYTEST_ADDOPTS, each through the ordinary aliases and helpers of that text. An honest road it passes is a defect of
-    the rule. A road no honest author writes, whose only effect is to escape the check, is refused where one syntactic
-    check does it and finds no read in tests/conftest.py (the third clause refuses a carrier's bare name wherever a
-    star import, exec or a write to a namespace could bind it, and the fifth refuses getattr and its kin wherever they
-    are read other than as a call's callee, whatever name they are then handed), and otherwise is a line of WHAT IT
-    DOES NOT READ, below. It claims no more than that, and never every read: it reads the conftest's text alone, so
-    what another module the conftest imports holds or does is read by none of it (a helper there returning sys.argv,
-    a name there holding PYTEST_ADDOPTS), and no syntactic check over Python sees every read that text's code can make.
+    included), and through the modules of the repository that text imports directly (THE DIRECT-IMPORT CHECK, the last
+    clause), sorted; empty when there is none. `where` is the directory the text is read as sitting in (tests/, where
+    tests/conftest.py sits, when None), from which the check resolves the text's imports; `follow` false leaves the
+    check out, as the check itself does when it reads an imported module, so a read reached only through an import of
+    an import is not read; `nodes`, a list, is given (node, line, what) for each read. THE RULE (the reviewer's ruling at
+    fork PR #894's landing merge with main, on the proof's launcher: every child of the proof passes -p no:anyio
+    (_PROOF_CHILD_FLAG), so the execution proof refuses a hook keyed on the flag given and cannot refuse one keyed on it
+    not given): a module's code may neither name anyio nor read what carries the run's -p options, but by a key the
+    rule proves names something else, and a module whose code it finds doing either has every fixture refused on both
+    roads (_registration_refusals).
+    WHAT IT CLAIMS (the reviewer's stopping rule of 2026-09-28 16:38Z on round 2 of fork PR #894, and the ruling of
+    18:47Z on a module the conftest imports): it refuses every HONEST road, the reads an author writes to key a hook or
+    fixture of a conftest on the option, given or not given: config.getoption and its siblings, config.option,
+    config.pluginmanager, sys.argv, the invocation params and PYTEST_ADDOPTS, each through the ordinary aliases and
+    helpers of the conftest's text and of the modules of the repository that text imports directly. An honest road it
+    passes is a defect of the rule. A road no honest author writes, whose only effect is to escape the check, is refused
+    where one syntactic check does it and finds no read in tests/conftest.py (the third clause refuses a carrier's bare
+    name wherever a star import, exec or a write to a namespace could bind it, the fifth refuses getattr and its kin
+    wherever they are read other than as a call's callee, whatever name they are then handed, and the sixth a pattern's
+    keyword or key that names a carrier, a keyed read, option or a by-name read), and otherwise is a line of WHAT IT
+    DOES NOT READ, below. It claims no more than that, and never every read: no syntactic check over Python sees every
+    read a module's code can make, and a read reached only through a module the conftest imports transitively (an
+    import of an import) is read by none of it.
     HOW IT FOLLOWS A ROAD: a carrier or a keyed read is read as an attribute of anything, so an alias of the object it
     is read from (sys under another name, the plugin manager bound to a name) changes nothing; a carrier read and
     bound to a name is refused where it is read, and so is a keyed read taken other than as a call (getoption bound to
@@ -6521,8 +6533,9 @@ def _anyio_option_reads(tree):
       from sys import * and then argv, with or without an argv = [] above it, a dead declaration, a def declaring it
       global or a for binding it; the same for the name of a keyed read; a parameter or a local of a def, lambda or
       comprehension named argv passes), or read through a call of _ANYIO_BY_NAME or a subscript whose key folds to its
-      name: sys.argv and sys.orig_argv, the invocation params, the options read before plugins load,
-      config.option.plugins, the ini settings, and the plugin manager's listings. A carrier holds the flag among the
+      name: sys.argv and sys.orig_argv, the invocation params, xdist's copy of the controller's sys.argv on a worker
+      (config.workerinput["mainargv"]), the options read before plugins load, config.option.plugins, the ini
+      settings, and the plugin manager's listings. A carrier holds the flag among the
       run's other options or plugins, so its read is refused whatever the code does with it, which covers a key built
       at run time and a road that names no plugin: len(sys.argv), "-p" not in the invocation params, an empty -p list.
     - A KEYED READ (_ANYIO_KEYED): the config's getoption, getvalue, getvalueorskip and getini and the plugin manager's
@@ -6541,26 +6554,63 @@ def _anyio_option_reads(tree):
       refuses a carrier's name (getattr(builtins, "getattr"), operator.methodcaller("__getattribute__", "argv")). Called
       directly, each is read by its entry in _ANYIO_BY_NAME, so object.__getattribute__(sys, "argv") and
       inspect.getattr_static(sys, "argv") read argv.
+    - A PATTERN THAT READS BY NAME: a class pattern's keyword that names a carrier, a keyed read, option or a by-name
+      read of an attribute (match sys: case object(argv=a), which reads sys.argv and binds it to a; case
+      object(getoption=g) over the config), and a mapping pattern's key that folds to one, as a subscript's key does
+      (case {"argv": a} over vars(sys)).
+    - AN ARGUMENT PARSER'S PARSE (_ANYIO_PARSES: argparse's parse_args, parse_known_args, parse_intermixed_args and
+      parse_known_intermixed_args, and optparse's parse_args), which reads sys.argv when handed no list of arguments or
+      None: admitted only as a call whose first argument, else its args=, is a list or tuple display or a name every
+      declaration of which binds one by an assignment, so a parse handed none, None, a parameter (a helper's
+      argv=None) or any other value is refused, and so is one read other than as a call's callee (bound to a name).
+    - THE DIRECT-IMPORT CHECK (the reviewer's ruling of 18:47Z): each module of the repository the text imports
+      directly, by an import or a from import wherever it stands, a relative one included (resolved to a file in
+      `where` or a parent up to the first with no __init__.py, the directories _import_roots names), is read by the
+      clauses above, and a read in the text of a def, a class or a name that module binds, reached by binding (the
+      name its import binds, an attribute chain on that name through the package's submodules, a name bound to either,
+      or a name a star import of the module binds), is refused where the check matches it there: (i) a def that
+      returns a value (a return with an expression, or a yield) and holds a read of those clauses; (ii) any other
+      binding of the module's scope whose statement holds one (ARGV = sys.argv[1:], a name bound to PYTEST_ADDOPTS
+      or to a value naming anyio, from sys import argv, a name a def binds through global), and a class whose body, or
+      a method of it that returns a value, holds one; each of these also where what it holds is a read of a name of
+      the same module already matched, so a helper that calls a helper of its own module is followed; and the
+      module's __getattr__, when matched, for a name the module does not bind. A def that returns nothing is not
+      matched, whatever it reads: tests/__init__.py's write_owner_marker copies the basenames of sys.argv[:3] into the
+      owner marker and returns nothing. A module of the repository the text imports that the check cannot read (not
+      readable, or not Python it can parse) is refused at the import.
     LIVE: tests/conftest.py has none (its one keyed read, get_plugin("terminalreporter") in _say_at_run_end, folds to a
-    name that is neither anyio nor a key of the -p options; the refusal test pins the count at 0, and the module road
-    proves every fixture of the conftest).
-    WHAT IT DOES NOT READ: the roads no honest author writes that the rule leaves unrefused, by kind. A road found
-    passing that is of none of these kinds is one more line here if no honest author writes it, and a defect of the
-    rule if one does (above). A carrier reached through a name the rule cannot fold (a getattr whose name is a
+    name that is neither anyio nor a key of the -p options; the direct-import check reads tests/__init__.py, which the
+    conftest imports as _tests and, in a def, as `from tests import remove_made_dirs`, and whose one read, sys.argv in
+    write_owner_marker, is in a def that returns nothing, so it matches none of the module's names; the refusal test
+    pins the count at 0, and the module road proves every fixture of the conftest).
+    WHAT IT DOES NOT READ: the roads no honest author writes that the rule leaves unrefused, by kind, and the one line
+    where the direct-import check stops. A road found passing that is of none of these kinds is one more line here if
+    no honest author writes it, and a defect of the rule if one does (above). A read reached only through a module the
+    conftest imports transitively (an import of an import: a name the imported module itself imports from another
+    module, or a def of it whose read is a call of another module's def), where the check stops. A carrier reached
+    through a name the rule cannot fold (a getattr whose name is a
     parameter, is built by a call or a subscript, is read from an attribute, a docstring through __doc__ say, or is
     passed starred); through a function or method that reads an attribute by a name handed it and that _ANYIO_BY_NAME
     does not list (pydoc.locate("sys.argv"), pkgutil.resolve_name("sys:argv"), a field of a format string,
     "{0.argv}".format(sys), and a pickled global each pass); through a namespace held whole (vars() or __dict__ of the
-    config, of sys, of a class or of the module, or globals(), iterated or read through a method of it bound to another
-    name, _get = vars(sys).get say; tests/conftest.py calls vars() on other objects, so the rule does not refuse the
-    call); or by a private attribute of pytest's that _ANYIO_CARRIERS does not name; the command line read from outside
+    config, of sys, of a class or of the module, config.workerinput, or globals(), iterated or read through a method of
+    it bound to another name, _get = vars(sys).get say; tests/conftest.py calls vars() on other objects, so the rule
+    does not refuse the call); or by a private attribute of pytest's that _ANYIO_CARRIERS does not name; the command
+    line read by a function of a library other than the parses of the seventh clause that reads sys.argv itself
+    (fileinput.input, say); the command line read from outside
     the interpreter's objects: from a file (/proc/self/cmdline, say; tests/conftest.py's _proc_argv reads
     /proc/<pid>/cmdline for the processes a test leaves, and the run's own command line read by its pid is spelled the
     same way, so a refusal by spelling would refuse the live conftest), or through another process or a library that
     reads it there (ps run on the process, psutil's Process.cmdline);
     code the module runs from a string (exec, eval), whose reads the rule does not parse as code (a string naming
-    anyio there is still refused as a value); a key naming anyio that the rule cannot fold (built by a call or a
-    subscript, or brought from outside the module's text: another module, the environment, a file), or one that
+    anyio there is still refused as a value); a module loaded other than by an import statement (importlib,
+    __import__, sys.modules; tests/conftest.py loads tests/credential_patterns.py through importlib); a def, a class or
+    a name of an imported module reached other than by binding (getattr on the module, the module handed whole to a
+    helper, vars() of it), and what a def of it that returns nothing leaves where the conftest reads it (an item or an
+    attribute of an object of the module, or a file, as write_owner_marker's marker is); a key naming anyio that the
+    rule cannot fold (built by a call or a subscript, or brought from outside the module's text and the modules of the
+    repository it imports directly: a module outside the repository or imported only transitively, the environment, a
+    file), or one that
     matches anyio or the flag without naming anyio (a prefix, "any" or "no:a", say), handed to a read that is no carrier
     and no keyed read (sys.modules, a fixture's name, the environment's values read whole); PYTEST_ADDOPTS read through
     a name the rule cannot fold (built by a call, say) or among the environment's values read whole; and the plugins
@@ -6704,13 +6754,25 @@ def _anyio_option_reads(tree):
         line = getattr(node, "lineno", None) or getattr(parent.get(node), "lineno", 0)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             text = "%s %s" % ("class" if isinstance(node, ast.ClassDef) else "def", node.name)
-        elif isinstance(node, (ast.expr, ast.stmt)):
+        elif isinstance(node, (ast.expr, ast.stmt, ast.pattern)):
             text = ast.unparse(node).split("\n", 1)[0]
         elif isinstance(node, ast.alias):
             text = node.name + (" as " + node.asname if node.asname else "")
         else:
             text = "%s %s" % ("the parameter" if isinstance(node, ast.arg) else "the keyword", getattr(node, "arg", None))
-        out.append((line, "%s: %s" % (text if len(text) <= 100 else text[:97] + "...", why)))
+        entry = (line, "%s: %s" % (text if len(text) <= 100 else text[:97] + "...", why))
+        out.append(entry)
+        if nodes is not None:
+            nodes.append((node,) + entry)
+
+    def proven_list(call):
+        """Whether an argument parser's parse `call` is handed a list it proves: its first argument, else its args=, a
+        list or tuple display, or a name every declaration of which binds one by an assignment (the seventh clause)."""
+        given = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == "args"), None)
+        if isinstance(given, (ast.List, ast.Tuple)):
+            return True
+        decls = declared(given) if isinstance(given, ast.Name) else None
+        return bool(decls) and all(d.kind == "assign" and isinstance(d.value, (ast.List, ast.Tuple)) for d in decls)
 
     def key_of(call):
         """(values, open) of the key a keyed read's call passes: its first positional argument, else its name=."""
@@ -6807,10 +6869,244 @@ def _anyio_option_reads(tree):
             if isinstance(n, ast.Subscript):
                 for v in sorted(v for v in fold(n.slice)[0] if names_a_carrier(v)):
                     off(n, "a read of %s by its name, through a subscript" % v)
+            if isinstance(n, ast.MatchClass):
+                for k in n.kwd_attrs:
+                    if names_a_carrier(k):
+                        off(n, "a class pattern's keyword naming %s, which reads that attribute and binds it to a name" % k)
+            if isinstance(n, ast.MatchMapping):
+                for key in n.keys:
+                    for v in sorted(v for v in fold(key)[0] if names_a_carrier(v)):
+                        off(n, "a mapping pattern's key naming %s, which reads that item and binds it to a name" % v)
+            if isinstance(n, ast.Attribute) and n.attr in _ANYIO_PARSES:
+                p = parent.get(n)
+                if not (isinstance(p, ast.Call) and p.func is n):
+                    off(n, "an argument parser's %s other than as a call, so what it is handed is not in the text" % n.attr)
+                elif not proven_list(p):
+                    off(n, "an argument parser's %s handed no list of arguments the rule proves (none, None, a parameter "
+                           "or another value), so it may read sys.argv, as it does when handed none" % n.attr)
+        if follow:
+            for node, why in _anyio_import_reads(tree, HERE if where is None else where, bindings, parent):
+                off(node, why)
     finally:
         capped = declared = iterated = through = by_declaration = fold = elements = off = key_of = None   # each holds
+        proven_list = None
         bindings.release()                  # the next, or the tree, through its closure: a cycle only a collection frees
     return sorted(set(out))
+
+
+def _anyio_import_reads(tree, where, bindings, parent):
+    """[(node, why)] for THE DIRECT-IMPORT CHECK of THE ANYIO RULE (the reviewer's ruling of 2026-09-28 18:47Z on round
+    2 of fork PR #894; _anyio_option_reads' docstring states what it reads): each read in `tree`, a conftest's text
+    sitting in the directory `where`, of a def, a class or a name of a module of the repository the text imports
+    directly that the check matches there (_anyio_imported_module), the node being the name or the attribute chain the
+    text reads it by. `bindings` and `parent` are the rule's own over `tree`. A module of the repository the text
+    imports that the check cannot read is refused at the import."""
+    package, dirs = _import_roots(where)
+    known, out = {}, []
+    kinds = {"def": "a def of the module %s, which the text imports directly, that returns a value and reads %s",
+             "class": "a class of the module %s, which the text imports directly, that reads %s",
+             "name": "a name the module %s, which the text imports directly, binds from %s"}
+
+    def located(dotted):
+        """The file of the module `dotted` of the repository (a package's __init__.py, or a module's .py), "" for a
+        directory with no __init__.py (a namespace package, which binds nothing), None where none of `dirs` holds it:
+        the first of them that holds its first part decides, as _shadowed reads them."""
+        parts = dotted.split(".")
+        for d in dirs:
+            if os.path.isdir(os.path.join(d, parts[0])) or os.path.isfile(os.path.join(d, parts[0] + ".py")):
+                base = os.path.join(d, *parts)
+                if os.path.isfile(os.path.join(base, "__init__.py")):
+                    return os.path.join(base, "__init__.py")
+                if os.path.isfile(base + ".py"):
+                    return base + ".py"
+                return "" if os.path.isdir(base) else None
+        return None
+
+    def module(dotted):
+        """(names, matched, fault) of the module `dotted` of the repository (_anyio_imported_module), None where it is
+        none."""
+        if dotted not in known:
+            path = located(dotted)
+            known[dotted] = None if path is None else (frozenset(), {}, None) if path == "" else _anyio_imported_module(path)
+        return known[dotted]
+
+    def absolute(stmt):
+        """The dotted module a from import names, a relative one resolved against the text's package; None past it."""
+        if not stmt.level:
+            return stmt.module
+        parts = package.split(".") if package else []
+        if stmt.level > len(parts):
+            return None
+        return ".".join(parts[:len(parts) - stmt.level + 1] + ([stmt.module] if stmt.module else []))
+
+    def resolved(name_node):
+        """The declarations the name `name_node` resolves to by its scope ([] where none binds it)."""
+        try:
+            return bindings.scope_of(name_node).resolve(name_node.id)[0]
+        except AssertionError:
+            return []
+
+    def split(expr):
+        """(the name an attribute chain `expr` starts from, or None, and the attributes read on it, in order)."""
+        chain = []
+        while isinstance(expr, ast.Attribute):
+            chain.insert(0, expr.attr)
+            expr = expr.value
+        return (expr if isinstance(expr, ast.Name) else None), tuple(chain)
+
+    def targets(expr, seen):
+        """[(dotted module, chain)] for what `expr`, a name or an attribute chain on one, reads by binding: the module
+        an import binds its name to and the chain read on it (a from import's name first), and a name bound to another
+        name or chain by an assignment followed to that one."""
+        name, chain = split(expr)
+        got = []
+        for d in (resolved(name) if name is not None else ()):
+            stmt = parent.get(d.node) if d.kind == "import" else None
+            if isinstance(stmt, ast.Import):
+                got.append((d.node.name if d.node.asname else d.node.name.split(".")[0], chain))
+            elif isinstance(stmt, ast.ImportFrom) and absolute(stmt):
+                got.append((absolute(stmt), (d.node.name,) + chain))
+            elif d.kind == "assign" and isinstance(d.value, (ast.Name, ast.Attribute)) and id(d) not in seen:
+                got += [(m, c + chain) for m, c in targets(d.value, seen | {id(d)})]
+        return got
+
+    def reached(dotted, chain):
+        """(the module, its match) for the first name of `chain` a module binds on the walk from the module `dotted`
+        through its submodules, where the check matches it there (the module's __getattr__'s for a name it does not
+        bind and no submodule has), else None."""
+        for part in chain:
+            got = module(dotted)
+            if got is None:
+                return None
+            names, matched, _fault = got
+            if part in names:
+                return (dotted, matched[part]) if part in matched else None
+            if located(dotted + "." + part) is None:
+                return (dotted, matched["__getattr__"]) if "__getattr__" in matched else None
+            dotted = dotted + "." + part
+        return None
+
+    try:
+        stars = [absolute(n) for n in ast.walk(tree)
+                 if isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names) and absolute(n)]
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.Import, ast.ImportFrom)):
+                base = absolute(n) if isinstance(n, ast.ImportFrom) else None
+                for a in n.names:
+                    parts = a.name.split(".") if isinstance(n, ast.Import) else []
+                    dotteds = ([".".join(parts[:i + 1]) for i in range(len(parts))] if parts
+                               else [base] + ([base + "." + a.name] if a.name != "*" else []) if base else [])
+                    for m in dotteds:
+                        got = module(m)
+                        if got is not None and got[2]:
+                            out.append((n, "a module of the repository the rule cannot read, %s (%s), so THE "
+                                           "DIRECT-IMPORT CHECK reads nothing it binds" % (m, got[2])))
+            if not (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)):
+                continue
+            top = n
+            while isinstance(parent.get(top), ast.Attribute) and parent[top].value is top:
+                top = parent[top]
+            if not isinstance(getattr(top, "ctx", None), ast.Load):
+                continue
+            roads = targets(top, frozenset())
+            if not roads and not resolved(n):
+                roads = [(m, (n.id,) + split(top)[1]) for m in stars]
+            for dotted, chain in roads:
+                hit = reached(dotted, chain)
+                if hit is not None:
+                    out.append((top, kinds[hit[1][0]] % (hit[0], hit[1][1])))
+    finally:
+        located = module = absolute = resolved = split = targets = reached = None   # each holds the next, or the tree,
+    return out                                                  # through its closure: a cycle only a collection frees
+
+
+def _anyio_imported_module(path):
+    """(names, matched, fault) for THE DIRECT-IMPORT CHECK (_anyio_import_reads) over the module of the repository at
+    `path`: NAMES, the names its module scope binds; MATCHED, {name: (kind, why)} for each the check matches, by the
+    clauses of THE ANYIO RULE read over the module's own text (_anyio_option_reads, not following its imports): (i) a
+    def that returns a value (a return with an expression, or a yield) and holds a read, kind "def"; (ii) any other
+    binding of the module's scope whose statement holds one, kind "name", and a class whose body, or a method of it that
+    returns a value, holds one, kind "class"; each also where it holds a read of a name of the module's scope already
+    matched, until no more match; FAULT, why the module could not be read (None when it was). Plain values only: the
+    module's tree and bindings are dropped before it returns."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            mtree = ast.parse(f.read(), filename=os.path.basename(path))
+    except (OSError, SyntaxError, ValueError) as e:
+        return frozenset(), {}, "%s: %s" % (type(e).__name__, e.strerror if isinstance(e, OSError) else e)
+    found = []
+    _anyio_option_reads(mtree, follow=False, nodes=found)
+    reads = {id(node): "line %d: %s" % (line, what) for node, line, what in found}
+    found = None
+    mbindings = ast_bindings.Bindings.of(mtree)
+    upward = {}
+    for x in ast.walk(mtree):
+        for c in ast.iter_child_nodes(x):
+            upward[id(c)] = x
+    functions = (ast.FunctionDef, ast.AsyncFunctionDef)
+    names, matched = frozenset(mbindings.module.names), {}
+
+    def gives(fn):
+        """Whether the def `fn` returns a value: a return with an expression, or a yield, in its own body."""
+        todo = list(fn.body)
+        while todo:             # loop-ok: bounded by the nodes of the def's own body
+            x = todo.pop()
+            if isinstance(x, functions + (ast.ClassDef, ast.Lambda)):
+                continue
+            if isinstance(x, (ast.Return, ast.Yield, ast.YieldFrom)) and x.value is not None:
+                return True
+            todo.extend(ast.iter_child_nodes(x))
+        return False
+
+    def holds(site, methods_apart=False):
+        """Why `site` holds a read of the rule, or a read of a name of the module's scope already matched, else None;
+        with `methods_apart` a def in it is not entered (a class body's own statements)."""
+        todo = collections.deque([site])
+        while todo:             # loop-ok: bounded by the nodes of `site`
+            x = todo.popleft()
+            if methods_apart and x is not site and isinstance(x, functions):
+                continue
+            if id(x) in reads:
+                return "what the rule refuses there (its %s)" % reads[id(x)]
+            if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load) and x.id in matched:
+                try:
+                    scope = mbindings.scope_of(x).resolve(x.id)[1]
+                except AssertionError:
+                    scope = None
+                if scope is mbindings.module:
+                    return "its %s, which the check matches there" % x.id
+            todo.extend(ast.iter_child_nodes(x))
+        return None
+
+    def matches(d):
+        """(kind, why) where the check matches the declaration `d` of the module's scope, else None."""
+        if d.kind == "def":
+            why = holds(d.node) if gives(d.node) else None
+            return ("def", why) if why else None
+        if d.kind == "class":
+            why = holds(d.node, methods_apart=True)
+            for m in d.node.body:
+                if why is None and isinstance(m, functions) and gives(m) and holds(m):
+                    why = "%s, in its method %s" % (holds(m), m.name)
+            return ("class", why) if why else None
+        site = upward.get(id(d.node)) if isinstance(d.node, ast.alias) else d.node
+        why = holds(site) if site is not None and d.kind != "del" else None
+        return ("name", why) if why else None
+
+    try:
+        changed = True
+        while changed:          # loop-ok: each turn matches one more name of the module's scope, or ends
+            changed = False
+            for name, decls in mbindings.module.names.items():
+                got = None if name in matched else next((m for m in map(matches, decls) if m), None)
+                if got:
+                    matched[name] = got
+                    changed = True
+    finally:
+        gives = holds = matches = None      # each holds the module's tree or bindings through its closure
+        mbindings.release()
+        mbindings = upward = reads = mtree = None
+    return names, matched, None
 
 
 def _registration_refusals(tree, candidates, real, where=None):
@@ -6820,12 +7116,13 @@ def _registration_refusals(tree, candidates, real, where=None):
     launcher): a module whose code the rule finds naming anyio or reading what carries the run's -p options, but by a
     key the rule proves names something else, has every fixture refused, naming each read, so no hook or fixture of a
     module whose fixtures the filter counts keys on -p no:anyio, given or not given, by an honest road, the reads an
-    author writes to key on the option, followed through the aliases and helpers of the module's text (the reviewer's
-    stopping rule; the rule's docstring says what it claims, and lists in WHAT IT DOES NOT READ the kinds of road no
-    honest author writes that it leaves unrefused)."""
+    author writes to key on the option, followed through the aliases and helpers of the module's text and of the
+    modules of the repository it imports directly (the reviewer's stopping rule; the rule's docstring says what it
+    claims, and lists in WHAT IT DOES NOT READ the kinds of road no honest author writes that it leaves unrefused, and
+    the read reached only through an import of an import, where it stops)."""
     if not candidates:
         return {}
-    reads = _anyio_option_reads(tree)
+    reads = _anyio_option_reads(tree, where)
     anyio = ("its module's code names anyio or reads what carries the run's -p options, other than by a key the reader "
              "proves names something else, so a hook or fixture of it may key on -p no:anyio, given or not given (THE "
              "ANYIO RULE, _anyio_option_reads): " + "; ".join("line %d: %s" % r for r in reads)) if reads else None
@@ -6898,8 +7195,10 @@ def _conftest_reasserted_names(src=None, where=None):
     fixture of a module whose code it finds naming anyio or reading what carries the run's -p options, but by a key
     the rule proves names something else, so no fixture of a module with a hook or fixture keyed on -p no:anyio, given
     or not given, by an honest road (the reads an author writes to key on the option, followed through the aliases and
-    helpers of the module's text) is counted (the reviewer's stopping rule; the rule's docstring says what it claims,
-    and lists in WHAT IT DOES NOT READ the kinds of road no honest author writes that it leaves unrefused).
+    helpers of the module's text and of the modules of the repository it imports directly) is counted (the reviewer's
+    stopping rule; the rule's docstring says what it claims, and lists in WHAT IT DOES NOT READ the kinds of road no
+    honest author writes that it leaves unrefused, and the read reached only through an import of an import, where it
+    stops).
     WHY TWO ROADS: before this ruling the reader closed the class one case at a time, each found by a child pytest in
     which a counted fixture never ran (a later binding of the fixture's name, the sixteenth commit; another def given its
     name=, the seventeenth; a name= passed through functools.partial or getattr, the eighteenth; a decorator or a name
@@ -6937,8 +7236,10 @@ def _conftest_reasserted_names(src=None, where=None):
     since the reader reads tests/conftest.py alone. On the module road, what tests/conftest.py's own code does beyond
     what pytest registers from it, which the reader takes on trust since it would refuse the conftest if it read that
     code by the proven list (the text road refuses it on the statements the registration test prints), and reads by
-    THE ANYIO RULE alone (_anyio_option_reads, which refuses every honest road keyed on the anyio option and whose
-    docstring lists in WHAT IT DOES NOT READ the roads no honest author writes that it leaves unrefused): its
+    THE ANYIO RULE alone (_anyio_option_reads, which refuses every honest road keyed on the anyio option through the
+    module's text and the modules of the repository it imports directly, and whose docstring lists in WHAT IT DOES NOT
+    READ the roads no honest author writes that it leaves unrefused, and the read reached only through an import of an
+    import, where it stops): its
     import-time
     code, its fixtures' bodies and the bodies of its hooks on _LISTED_HOOKS (not its pytest_make_collect_report, whose
     body and every def it calls the reader reads, THE SHAPE of _collect_report_shape_faults) may register a plugin,
@@ -7044,8 +7345,9 @@ def _conftest_reasserted_names(src=None, where=None):
     the flag, _PROOF_CHILD_FLAG), is granted by the proof (_proof_option_roads' road on it, in the context test), and
     THE ANYIO RULE refuses, on the filter's two roads, every fixture of a conftest with a hook or fixture keyed on the
     flag, given or not given, by an honest road (_anyio_option_reads, whose docstring says what the rule claims under
-    the reviewer's stopping rule), so a licence rests on such a road only where it is one no honest author writes and
-    the rule leaves unrefused (that docstring lists their kinds in WHAT IT DOES NOT READ).
+    the reviewer's stopping rule), so a licence rests on such a road only where the rule leaves it unrefused: a road no
+    honest author writes, or one reached only through an import of an import (that docstring lists their kinds in WHAT
+    IT DOES NOT READ).
     THIRD, UNMATCHABLE at any cost: a conftest hook condition keyed on an open-valued signal, a mark of any name, an
     environment variable, a host name, an option's value (a --durations of 5, where CI's step gives 10: the pair
     matches whether an option is given, not its value; _proof_option_roads' road on it is granted), or another
@@ -7258,10 +7560,11 @@ _PROOF_CHILD_FLAG = ("-p", "no:anyio")
 #   _proof_ci_option_units). Since each child passes it, every run of the proof has the flag and none lacks it, so the
 #   proof grants a road keyed on it not given; THE ANYIO RULE refuses such a road, and a road on the flag given, on the
 #   filter's two roads when it is an honest road, the reads an author writes to key on the option, followed through the
-#   aliases and helpers of the conftest's text (_anyio_option_reads, whose docstring says what the rule claims under the
-#   reviewer's stopping rule, and lists in WHAT IT DOES NOT READ the kinds of road no honest author writes that it
-#   leaves unrefused), so a licence rests on either road only where the road is one no honest author writes and the
-#   rule leaves unrefused
+#   aliases and helpers of the conftest's text and of the modules of the repository it imports directly
+#   (_anyio_option_reads, whose docstring says what the rule claims under the reviewer's stopping rule, and lists in WHAT
+#   IT DOES NOT READ the kinds of road no honest author writes that it leaves unrefused, and the read reached only
+#   through an import of an import, where it stops), so a licence rests on either road only where the rule leaves the
+#   road unrefused: a road no honest author writes, or one reached only through an import of an import
 
 
 def _proof_developer_options():
@@ -11755,13 +12058,15 @@ class HermeticKernelPostal(unittest.TestCase):
         """THE ANYIO RULE (the reviewer's ruling at fork PR #894's landing merge with main, on the proof's launcher: every
         child of the proof passes -p no:anyio (_PROOF_CHILD_FLAG), so the execution proof refuses a hook keyed on the flag
         given and grants one keyed on it not given; one syntactic check of the filter, _anyio_option_reads, now refuses
-        both when keyed by any honest road, the reads an author writes to key on the option, and its docstring says what
-        it claims under the reviewer's stopping rule and lists in WHAT IT DOES NOT READ the kinds of road no honest
-        author writes that it leaves unrefused). LIVE: over tests/conftest.py the rule finds no read, and the module
-        road still proves every function-scoped autouse fixture of it. THE PREMISE, run: ONE child pytest, passing
-        -p no:anyio as every child does, over the proof's own two roads on the flag (_proof_option_roads: CI's option
-        -p no:anyio given, and not given), and over the reads the verifier found the rule passing at the commit that
-        added this test
+        both when keyed by any honest road, the reads an author writes to key on the option through the conftest's text
+        and the modules of the repository it imports directly, and its docstring says what it claims under the
+        reviewer's stopping rule and lists in WHAT IT DOES NOT READ the kinds of road no honest author writes that it
+        leaves unrefused, and the read reached only through an import of an import, where it stops). LIVE: over
+        tests/conftest.py the rule finds no read, its direct-import check's reading of tests/__init__.py included, and
+        the module road still proves every function-scoped autouse fixture of it. THE PREMISE, run: ONE child pytest,
+        passing -p no:anyio as every child does, over the proof's own two roads on the flag (_proof_option_roads: CI's
+        option -p no:anyio given, and not given), and over the reads the verifier found the rule passing at the commit
+        that added this test
         (-p's list read by -p, its option string, which pytest maps to its dest; argv reached through from sys import *)
         and at the eighty-seventh commit (argv after a star import that an argv = [] above it also binds; sys.argv
         through getattr bound to another name, through object.__getattribute__ and through inspect.getattr_static), each
@@ -11800,13 +12105,38 @@ class HermeticKernelPostal(unittest.TestCase):
         cases on a bare name a declaration also binds); no refusal of a by-name read of an attribute read other than as
         a callee or imported under another name (the cases classed so); no value naming one refused (getattr by its
         name, __getattribute__ named to methodcaller); __getattribute__ read at its first argument alone (the cases
-        through object.__getattribute__); and getattr_static left out of _ANYIO_BY_NAME (its case). REFUSED NOTHING:
+        through object.__getattribute__); and getattr_static left out of _ANYIO_BY_NAME (its case). THE NINETIETH
+        COMMIT'S CASES (the re-verify's findings H1 to H3 at the eighty-ninth commit, and the reviewer's ruling of
+        18:47Z on a module the conftest imports): a class pattern's keyword naming each kind the rule's sixth clause
+        names (argv, getoption, option, getattr) and a mapping pattern's key naming argv, and xdist's
+        config.workerinput['mainargv'], each on the flag given and not given; an argument parser's parse handed nothing
+        (argparse's parse_known_args and optparse's parse_args, given and not given; argparse's parse_intermixed_args
+        and parse_known_intermixed_args), handed None and args=None, handed a helper's argv=None parameter, and bound to
+        a name; and, over a module written beside the conftest (_di_helpers.py), a def of it returning sys.argv's words
+        imported in a hook by a from import and at import as a module (given and not given), a def of it reaching
+        sys.argv through a def of its own module, a method of a class of it, the module bound to another name, a star
+        import of it, names it binds from sys.argv, sys.orig_argv and PYTEST_ADDOPTS, a name a def of it binds through
+        global, and the def named by a relative import (an __init__.py written beside the conftest); a name a module's
+        __getattr__ gives from sys.argv (_di_lazy.py); a def of a package's submodule read through the package's name
+        (_di_pkg/argvs.py); and an import of a module beside the conftest that the check cannot parse (_di_broken.py).
+        Each is refused on both roads naming THE ANYIO RULE, and each reds under a rule without the check that refuses it: the class pattern's
+        keyword, the mapping pattern's key, mainargv among the carriers, the parse check (and its cases handed None,
+        args=None or a parameter under one that refuses only a parse handed no argument, its case bound to a name under
+        one that does not refuse a parse read other than as a callee), and THE DIRECT-IMPORT CHECK (and its cases on a
+        def of the module's own, a class, the module bound to a name, a star import, the module's names, a module it
+        cannot parse, a module's __getattr__, a relative import and a package's submodule, each under a check without
+        that part). REFUSED NOTHING:
         the shapes tests/conftest.py uses (get_plugin of another plugin by a literal, a local named argv, the word argv
         in a list, a read of the whole environment), another option read by getoption, by option.<name>, by getattr
         with a literal or through a name that folds to it, a def's parameter named argv, a star import of a module whose
-        names the conftest reads, none a carrier, a local named argv in a def of a module with a star import, and
+        names the conftest reads, none a carrier, a local named argv in a def of a module with a star import,
         another attribute read by inspect.getattr_static, object.__getattribute__ or operator.attrgetter with a
-        literal, each counted on the module road, and on the text road where it makes no call. THE RULE FREES
+        literal, a parse handed a list display or a name bound to one, write_owner_marker's shape (a def of a module the
+        conftest imports that reads sys.argv and returns nothing, called from a hook; red under a check that matches a
+        def whatever it returns), a def of that module that returns a value and reads no carrier, a name of it bound to
+        a literal, and the stated limit where the check stops, a name reached only through an import of an import
+        (_di_helpers2.py's from import of a name of _di_helpers.py), each counted on the module road, and on the text
+        road where it makes no call and imports no module of the repository. THE RULE FREES
         WHAT IT READ: once the test drops the conftest's tree, no def of it is alive (the nested defs hold one another
         through their closures, and are cleared when the rule ends)."""
         from unittest import mock
@@ -12007,6 +12337,95 @@ class HermeticKernelPostal(unittest.TestCase):
                    hook(ng % "object.__getattribute__(config, 'invocation_params').args"), {"byname"}, False),
                   ("sys.argv through inspect.getattr_static",
                    "import inspect\n\n\n" + hook(ng % "inspect.getattr_static(sys, 'argv')"), {"byname"}, False)]
+        argparse_head = ("import argparse\n\n_P = argparse.ArgumentParser(add_help=False)\n"
+                         "_P.add_argument('-p', action='append', default=[])\n\n\n")
+        # the re-verify's findings at the eighty-ninth commit, each keyed on the flag given and on it not given: H1, a
+        # class pattern's keyword naming each kind the sixth clause names (and a mapping pattern's key, the same road by
+        # an item), H2, xdist's copy of the controller's sys.argv, and H3, an argument parser's parse handed nothing
+        for polarity, neg in (("the flag given", ""), ("the flag not given", "not ")):
+            cases += [("a class pattern's keyword naming a carrier, %s" % polarity,
+                       "def pytest_configure(config):\n    match sys:\n        case object(argv=a):\n"
+                       "            if %sany(x.startswith('no:a') for x in a):\n                pass\n" % neg,
+                       {"pattern"}, False),
+                      ("a class pattern's keyword naming a keyed read, %s" % polarity,
+                       "def pytest_configure(config):\n    match config:\n        case object(getoption=g):\n"
+                       "            if %sany(p.startswith('no:a') for p in g('-p')):\n                pass\n" % neg,
+                       {"pattern"}, False),
+                      ("a class pattern's keyword naming option, %s" % polarity,
+                       "def pytest_configure(config):\n    match config:\n        case object(option=o):\n"
+                       "            if %sany('no:a' in str(v) for v in vars(o).values()):\n                pass\n" % neg,
+                       {"pattern"}, False),
+                      ("a class pattern's keyword naming a by-name read of an attribute, %s" % polarity,
+                       "import builtins\n\n\ndef pytest_configure(config):\n    match builtins:\n"
+                       "        case object(getattr=g):\n            if %sany(x.startswith('no:a') for x in g(sys, 'argv')):\n"
+                       "                pass\n" % neg, {"pattern"}, False),
+                      ("a mapping pattern's key naming a carrier, %s" % polarity,
+                       "def pytest_configure(config):\n    match vars(sys):\n        case {'argv': a}:\n"
+                       "            if %sany(x.startswith('no:a') for x in a):\n                pass\n" % neg,
+                       {"pattern"}, False),
+                      ("xdist's workerinput mainargv, the controller's sys.argv, %s" % polarity,
+                       hook("hasattr(config, 'workerinput') and %sany(a.startswith('no:a') for a in "
+                            "config.workerinput['mainargv'])" % neg), {"byname"}, False),
+                      ("argparse's parse_known_args handed nothing, %s" % polarity,
+                       argparse_head + hook("%sany(p.startswith('no:a') for p in _P.parse_known_args()[0].p)" % neg),
+                       {"parser"}, False),
+                      ("optparse's parse_args handed nothing, %s" % polarity,
+                       "import optparse\n\n_O = optparse.OptionParser(add_help_option=False)\n"
+                       "_O.add_option('-p', action='append', default=[])\n\n\n"
+                       + hook("%sany(p.startswith('no:a') for p in _O.parse_args()[0].p)" % neg), {"parser"}, False),
+                      # THE DIRECT-IMPORT CHECK (the reviewer's ruling of 18:47Z), over _di_helpers.py written beside
+                      # the conftest: a def of it that returns sys.argv's words, called from a hook
+                      ("a def of a module the conftest imports in a hook, returning sys.argv's words, %s" % polarity,
+                       "def pytest_configure(config):\n    from _di_helpers import flags\n"
+                       "    if %sany(a.startswith('no:a') for a in flags()):\n        pass\n" % neg, {"direct"}, False),
+                      ("a def of a module the conftest imports at import, returning sys.argv's words, %s" % polarity,
+                       "import _di_helpers as _h\n\n\n" + hook("%sany(a.startswith('no:a') for a in _h.flags())" % neg),
+                       {"direct"}, False)]
+        cases += [("argparse's parse_intermixed_args handed nothing",
+                   argparse_head + hook(ng % "_P.parse_intermixed_args().p"), {"parser"}, False),
+                  ("argparse's parse_known_intermixed_args handed nothing",
+                   argparse_head + hook(ng % "_P.parse_known_intermixed_args()[0].p"), {"parser"}, False),
+                  ("argparse's parse_args handed None", argparse_head + hook(ng % "_P.parse_args(None).p"),
+                   {"parser"}, False),
+                  ("argparse's parse_known_args handed args=None",
+                   argparse_head + hook(ng % "_P.parse_known_args(args=None)[0].p"), {"parser"}, False),
+                  ("a helper handing parse_known_args its argv=None parameter",
+                   argparse_head + "def _ns(argv=None):\n    return _P.parse_known_args(argv)[0]\n\n\n"
+                   + hook(ng % "_ns().p"), {"parser"}, False),
+                  ("parse_known_args bound to a name", argparse_head + "_parse = _P.parse_known_args\n\n\n"
+                   + hook(ng % "_parse()[0].p"), {"parser"}, False),
+                  ("a def of an imported module reaching sys.argv through a def of its own module",
+                   "import _di_helpers as _h\n\n\n" + hook(ng % "_h.blocked()"), {"direct"}, False),
+                  ("a method of a class of an imported module returning sys.argv",
+                   "import _di_helpers as _h\n\n\n" + hook(ng % "_h.Opts.words()"), {"direct"}, False),
+                  ("an imported module bound to another name, a def of it returning sys.argv's words",
+                   "import _di_helpers as _h\n\n_m = _h\n\n\n" + hook(ng % "_m.flags()"), {"direct"}, False),
+                  ("a def of a module the conftest star imports, returning sys.argv's words",
+                   "from _di_helpers import *\n\n\n" + hook(ng % "flags()"), {"direct"}, False),
+                  ("a name an imported module binds from sys.argv",
+                   "def pytest_configure(config):\n    from _di_helpers import ARGV\n    if %s:\n        pass\n"
+                   % (ng % "ARGV"), {"direct"}, True),
+                  ("a name an imported module binds from sys.orig_argv",
+                   "def pytest_configure(config):\n    from _di_helpers import ORIG\n    if %s:\n        pass\n"
+                   % (ng % "ORIG"), {"direct"}, True),
+                  ("a name an imported module binds from PYTEST_ADDOPTS",
+                   "def pytest_configure(config):\n    from _di_helpers import ADDOPTS\n    if 'no:a' not in ADDOPTS:\n"
+                   "        pass\n", {"direct"}, True),
+                  ("a name a def of an imported module binds through global from sys.argv",
+                   "def pytest_configure(config):\n    from _di_helpers import SEEN\n    if %s:\n        pass\n"
+                   % (ng % "SEEN"), {"direct"}, True),
+                  ("a name an imported module's __getattr__ gives from sys.argv",
+                   "def pytest_configure(config):\n    import _di_lazy\n    if %s:\n        pass\n"
+                   % (ng % "_di_lazy.anything"), {"direct"}, True),
+                  ("a def of a module a relative import names, returning sys.argv's words",
+                   "def pytest_configure(config):\n    from ._di_helpers import flags\n    if %s:\n        pass\n"
+                   % (ng % "flags()"), {"direct"}, False),
+                  ("a def of a submodule of a package the conftest imports, read through the package's name",
+                   "def pytest_configure(config):\n    import _di_pkg.argvs\n    if %s:\n        pass\n"
+                   % (ng % "_di_pkg.argvs.flags()"), {"direct"}, False),
+                  ("a module of the repository the conftest imports that the check cannot parse",
+                   "def pytest_configure(config):\n    from _di_broken import broken\n    if broken():\n        pass\n",
+                   {"unread"}, False)]
         controls = [("get_plugin of another plugin by a literal, as tests/conftest.py's _say_at_run_end",
                      hook("config.pluginmanager.get_plugin('terminalreporter') is None"), False),
                     ("a local named argv", "def pytest_configure(config):\n    argv = ['x']\n    if argv:\n"
@@ -12032,45 +12451,102 @@ class HermeticKernelPostal(unittest.TestCase):
                     ("another attribute read by object.__getattribute__ with a literal",
                      hook("object.__getattribute__(config, 'rootpath') is None"), False),
                     ("another attribute read by operator.attrgetter with a literal",
-                     hook("operator.attrgetter('rootpath')(config) is None"), False)]
+                     hook("operator.attrgetter('rootpath')(config) is None"), False),
+                    ("an argument parser's parse handed a list display",
+                     argparse_head + hook("_P.parse_known_args(['-x'])[1] == ['-x']"), False),
+                    ("an argument parser's parse handed a name bound to a list display",
+                     argparse_head + "_ARGS = ['-x']\n\n\n" + hook("_P.parse_known_args(_ARGS)[1] == ['-x']"), False),
+                    ("write_owner_marker's shape: a def of an imported module that reads sys.argv and returns nothing, "
+                     "called from a hook",
+                     "def pytest_configure(config):\n    from _di_helpers import marker\n    marker(str(config.rootpath))\n",
+                     False),
+                    ("a def of an imported module that returns a value and reads no carrier",
+                     "def pytest_configure(config):\n    from _di_helpers import plain\n    if plain():\n        pass\n", False),
+                    ("a name of an imported module bound to a literal",
+                     "def pytest_configure(config):\n    from _di_helpers import WORD\n    if WORD:\n        pass\n", False),
+                    ("the stated limit: a name reached only through an import of an import",
+                     "def pytest_configure(config):\n    from _di_helpers2 import ARGV2\n    if %s:\n        pass\n"
+                     % (ng % "ARGV2"), False)]
+        # the module _di_helpers.py beside a conftest that names it (and _di_helpers2.py, which imports a name of it)
+        di_helpers = ("import os\nimport sys\n\n\n"
+                      "def flags():\n    return [a for a in sys.argv if a.startswith('no:')]\n\n\n"
+                      "def _raw():\n    return list(sys.argv)\n\n\n"
+                      "def blocked():\n    return [a for a in _raw() if a.startswith('no:')]\n\n\n"
+                      "class Opts:\n    @staticmethod\n    def words():\n        return list(sys.argv)\n\n\n"
+                      "def marker(d):\n    with open(os.path.join(d, 'marker.json'), 'w', encoding='utf-8') as fh:\n"
+                      "        fh.write(repr([os.path.basename(a) for a in sys.argv[:3]]))\n\n\n"
+                      "def plain():\n    return ['x']\n\n\n"
+                      "def note():\n    global SEEN\n    SEEN = list(sys.argv)\n\n\n"
+                      "ARGV = sys.argv[1:]\nORIG = list(sys.orig_argv)\nADDOPTS = os.environ.get('PYTEST_ADDOPTS', '')\n"
+                      "WORD = 'x'\n")
+        di_helpers2 = "from _di_helpers import ARGV as ARGV2\n"
+        # each written beside a conftest whose text names it (_di_helpers2's text names _di_helpers too), and an empty
+        # __init__.py beside one with a relative import, which makes the conftest's directory a package
+        di_modules = {"_di_helpers": di_helpers, "_di_helpers2": di_helpers2, "_di_broken": "def broken(:\n",
+                      "_di_lazy": "import sys\n\n\ndef __getattr__(name):\n    return list(sys.argv)\n",
+                      "_di_pkg/__init__": "", "_di_pkg/argvs": "import sys\n\n\ndef flags():\n"
+                                                             "    return [a for a in sys.argv if a.startswith('no:')]\n"}
         clauses = (("value", "a value naming anyio"), ("addopts", "a value naming PYTEST_ADDOPTS"),
                    ("cap", "cannot fold within"), ("identifier", "an identifier naming anyio"),
                    ("carrier", "a read of the carrier"), ("import", "an import of"), ("keyed", "the keyed read"),
                    ("option", "a read of option other than"), ("byname", "by its name, through"),
                    ("bare", "that resolves outside every def, lambda and comprehension"),
-                   ("aliased", "the by-name read"))
+                   ("aliased", "the by-name read"), ("pattern", "pattern's key"), ("parser", "an argument parser's"),
+                   ("direct", "which the text imports directly"),
+                   ("unread", "a module of the repository the rule cannot read"))
         home = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, home, True)
         made = []
 
-        def both_roads(text):
-            """(module road, text road): _conftest_reasserted_names over `text` written to a scratch directory, read once
-            as tests.conftest is (the module imported from the file, HERE the file's directory) and once as a source
-            handed in, sitting there."""
+        def both_roads(text, files=()):
+            """(module road, text road, the directory): _conftest_reasserted_names over `text` written to a scratch
+            directory beside `files` ((name, text) pairs, the modules it imports), read once as tests.conftest is (the
+            module imported from the file, HERE the file's directory, which is on sys.path while it is imported when
+            there are files) and once as a source handed in, sitting there."""
             d = os.path.join(home, "c%02d" % len(made))
             os.mkdir(d)
+            for name, body in files:
+                os.makedirs(os.path.dirname(os.path.join(d, name)), exist_ok=True)
+                with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                    f.write(body)
             path = os.path.join(d, "conftest.py")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
             spec = importlib.util.spec_from_file_location("_flag_plant_%02d" % len(made), path)
             m = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(m)
+            if files:
+                sys.path.insert(0, d)
+            try:
+                spec.loader.exec_module(m)
+            finally:
+                if files:
+                    sys.path.remove(d)
+                for name, _body in files:
+                    sys.modules.pop(name[:-len(".py")].replace("/", ".").replace(".__init__", ""), None)
             made.append(m)
             with mock.patch.dict(globals(), {"HERE": d, "_real_conftest_module": lambda: m}):
                 module = _conftest_reasserted_names()
-            return module, _conftest_reasserted_names(text, where=d)
+            return module, _conftest_reasserted_names(text, where=d), d
 
         def refusal(got):
             mine = [r for r in got.refused if r.startswith("_f (line ")]
             return mine[0] if len(mine) == 1 else None
+
+        def own(what):
+            """The words a read is classed by: for a read through a module the text imports directly, the check's own
+            words up to the phrase that names it, and not the read it quotes from that module."""
+            cut = what.find("which the text imports directly")
+            return what if cut < 0 else what[:cut + len("which the text imports directly")]
         for i, (label, rest, kinds, _free) in enumerate(cases + [(lab, rest, set(), free) for lab, rest, free in controls]):
             probe = "ROMP_PROBE_FLAG_%02d" % i
             text = head % probe + rest
+            files = tuple((stem + ".py", body) for stem, body in di_modules.items() if stem.split("/")[0] in rest)
+            files += (("__init__.py", ""),) if "from ." in rest else ()
             with self.subTest(case=label):
-                reads = _anyio_option_reads(ast.parse(text))
-                self.assertEqual({k for k, phrase in clauses if any(phrase in w for _l, w in reads)}, kinds,
+                module, by_text, where = both_roads(text, files)
+                reads = _anyio_option_reads(ast.parse(text), where)
+                self.assertEqual({k for k, phrase in clauses if any(phrase in own(w) for _l, w in reads)}, kinds,
                                  "%s: the clauses the rule's reads are classed by: %s" % (label, reads))
-                module, by_text = both_roads(text)
                 if kinds:
                     for road, got in (("THE MODULE ROAD", module), ("THE TEXT ROAD", by_text)):
                         why = refusal(got) or ""

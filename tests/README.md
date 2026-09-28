@@ -248,25 +248,32 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `tests/conftest.py`'s fixtures and hooks from the module Python imported). That
   reader only refuses. It also refuses every fixture of a conftest whose code
   it finds naming anyio or reading what carries the run's `-p` options (`sys.argv`,
-  `sys.orig_argv` and the invocation params, `-p`'s list, the ini settings, the
-  plugins loaded, `PYTEST_ADDOPTS`) other than by a key it proves names
-  something else. Under the reviewer's stopping rule, it counts none of the
-  fixtures of a conftest with a hook or fixture keyed on `-p no:anyio`, given
-  or not given, by an honest road: a read an author writes to key on the
-  option (`config.getoption`, `config.option`, `config.pluginmanager`,
-  `sys.argv`, the invocation params, `PYTEST_ADDOPTS`), followed through the
-  aliases and helpers of the conftest's text. A road no
-  honest author writes, whose only effect is to escape the check, is refused
-  where one syntactic check does it, and otherwise passes and is listed. It
-  reads the conftest's text alone, so it passes a carrier reached through a
-  name it cannot fold (a `getattr` whose name is built by a call, say) or
-  through a function that reads by name and that it does not list, the
+  `sys.orig_argv` and the invocation params, xdist's copy of the command line
+  on a worker, `-p`'s list, the ini settings, the plugins loaded,
+  `PYTEST_ADDOPTS`, an argument parser's parse of `sys.argv`) other than by a
+  key it proves names something else. Under the reviewer's stopping rule, it
+  counts none of the fixtures of a conftest with a hook or fixture keyed on
+  `-p no:anyio`, given or not given, by an honest road: a read an author
+  writes to key on the option (`config.getoption`, `config.option`,
+  `config.pluginmanager`, `sys.argv`, the invocation params,
+  `PYTEST_ADDOPTS`), followed through the aliases and helpers of the
+  conftest's text and of the modules of the repository it imports directly.
+  Through such a module it refuses the conftest's read of a function there
+  that returns a value, or of a name there, whose code reads what the rule
+  refuses; a function that returns nothing, such as `write_owner_marker` in
+  `tests/__init__.py`, is not refused.
+  A road no honest author writes, whose only effect is to escape the check, is
+  refused where one syntactic check does it; otherwise it passes and is
+  listed. The listed roads include a carrier reached through a name the rule
+  cannot fold (a `getattr` whose name is built by a call, say) or through a
+  function that reads by name and that the rule does not list, and the
   command line read from outside the interpreter's objects
-  (`/proc/self/cmdline`, say), and what another module the conftest imports
-  does. The rule claims no more than this. Its docstring,
-  `_anyio_option_reads` in `tests/test_hermetic_kernel_postal.py`, lists in
-  WHAT IT DOES NOT READ the kinds of road no honest author writes that it
-  leaves unrefused. A name
+  (`/proc/self/cmdline`, say). It stops at
+  the modules the conftest imports directly: a read reached only through an
+  import of an import passes. The rule claims no more than this. Its
+  docstring, `_anyio_option_reads` in `tests/test_hermetic_kernel_postal.py`,
+  lists in WHAT IT DOES NOT READ the kinds of road no honest author writes
+  that it leaves unrefused, and the read through an import of an import. A name
   is licensed only when a child pytest over a copy of the conftest writes the
   name at each probe module's import and, in each probe
   test, reads it and sets it again, and sees the counted fixture's own code set or
@@ -360,8 +367,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   real run under either). A road on `-p no:anyio` not given, which no child
   is, is granted by the run, and the reader counts no fixture of a conftest
   keyed on the flag by an honest road (above), so a licence rests on such a
-  road only where no honest author writes it and the reader leaves it
-  unrefused. Third, unmatchable at any
+  road only where the reader leaves it unrefused: a road no honest author
+  writes, or one reached only through an import of an import. Third,
+  unmatchable at any
   cost: a hook condition
   keyed on an open-valued signal (a mark, an environment variable, a host name,
   an option's value such as a `--durations` of 5 where CI's step gives 10, or
