@@ -204,8 +204,11 @@ class Plumbing(unittest.TestCase):
         self.assertIn("/dist/waiting.js", page)
         self.assertLess(page.index("/dist/federation.js"), page.index("/dist/waiting.js"), "manager before the bundle")
         self.assertIn('_pane_spin("waiting-list")', SRC)
-        self.assertIn('if p == "/waiting":', SRC)
-        self.assertIn("_waiting_page()", SRC)
+        # the page is dispatched off the shared route table (_PAGE_RENDERERS) do_GET reads, which the
+        # auth classifier reads too, so the route maps to its renderer and do_GET serves it from there
+        self.assertIs(km._PAGE_RENDERERS.get("/waiting"), km._waiting_page,
+                      "the /waiting route maps to _waiting_page in the shared route table")
+        self.assertIn("_PAGE_RENDERERS.get(p)", SRC, "do_GET serves a page off that table")
         # the sheet is read live, like fleet-pane.css; a missing one fails loudly on the page, never blank
         css = (Path(BIN).parent / "ui" / "webview" / "waiting-pane.css").read_text()
         self.assertIn(css.splitlines()[-1], page)

@@ -123,8 +123,11 @@ class Plumbing(unittest.TestCase):
         self.assertLess(page.index("/dist/federation.js"), page.index("/dist/files.js"), "manager before the bundle")
         self.assertNotIn("id=pane-spin", page, "an empty pane is not a loading state")
         self.assertNotIn("rel=manifest", page)
-        self.assertIn('if p == "/files":', SRC)
-        self.assertIn("_files_page()", SRC)
+        # the page is dispatched off the shared route table (_PAGE_RENDERERS) do_GET reads, which the
+        # auth classifier reads too, so the route maps to its renderer and do_GET serves it from there
+        self.assertIs(km._PAGE_RENDERERS.get("/files"), km._files_page,
+                      "the /files route maps to _files_page in the shared route table")
+        self.assertIn("_PAGE_RENDERERS.get(p)", SRC, "do_GET serves a page off that table")
         # the sheet is read live, like fleet-pane.css; a missing one fails loudly on the page, never blank
         css = (UI / "files-pane.css").read_text()
         self.assertIn(css.splitlines()[-1], page)

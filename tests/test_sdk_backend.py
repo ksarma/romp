@@ -3,7 +3,7 @@
 
 Two layers:
   * Pure translation logic (AskUserQuestion <-> the existing askLive picker shape,
-    state/registry files) is tested WITHOUT the SDK, so it runs in CI.
+    state/registry files) is tested WITHOUT the SDK, so it runs wherever pytest does, package or not.
   * The async runner + the can_use_tool round-trip is tested with a FAKE
     ClaudeSDKClient (monkeypatched in), skipped where claude_agent_sdk is absent.
     This exercises the headline path: a user turn -> the model calls
@@ -44,6 +44,7 @@ from pathlib import Path
 from unittest import mock
 from romp_load import load_source
 from unittest import mock
+from tests.thread_ends import join_started
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -2272,9 +2273,10 @@ class AskArmedBeforePresent(unittest.TestCase):
     await must already find the future armed — or it is reported lost and the coroutine waits forever.
     Production dodges the gap by microseconds (only the kernel's click handlers answer, from another
     thread); an answer delivered synchronously INSIDE the presentation callback hits it every time. That
-    is exactly how the SDK-gated round-trip classes below drive their asks, and CI does not install the
-    SDK, so the hang was never seen there. Pinned WITHOUT the SDK: _ask_one needs none, so the standard
-    runner and CI exercise the invariant. The answer rides on_ask -> resolve_ask, the kernel's own path."""
+    is exactly how the SDK-gated round-trip classes below drive their asks; CI ran none of them until every
+    Python matrix cell installed the SDK (#872), so the hang was never seen there, and they run in every cell
+    now. Pinned WITHOUT the SDK: _ask_one needs none, so the standard runner and CI exercise the invariant.
+    The answer rides on_ask -> resolve_ask, the kernel's own path."""
 
     SID = "11111111-2222-3333-4444-555555555555"
 
@@ -3960,6 +3962,15 @@ class FastModeReportedState(unittest.TestCase):
 
     def tearDown(self):
         import asyncio
+        # The refresh the init branch parked on the loop never ran; cancel it and run the loop once so the task
+        # closes its coroutine, instead of leaving it to the collector, which warned "coroutine ... was never
+        # awaited" once per test (seven per run in every CI cell's warnings summary since the cells install the
+        # SDK, 2026-09-20). Cancelling before the first step never runs the coroutine's body.
+        pending = asyncio.all_tasks(self._loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         asyncio.set_event_loop(None)
         self._loop.close()
 
@@ -4187,8 +4198,10 @@ class InterruptSettlesStall(unittest.TestCase):
                 self.interrupted = True
 
             async def receive_messages(self):
+                # the turn's init, streamed once the turn is read, as the CLI does (one init per turn:
+                # _turn_frame in kernel/sdk_backend.py); this fake streamed it at stream open until 2026-09-26
+                await self._turnq.get()              # read the turn romp fed (inflight went to 1 at the feed)...
                 yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
-                await self._turnq.get()              # consume the turn → inflight goes to 1...
                 while True:
                     await _aio.sleep(3600)            # ...then STALL forever (never a ResultMessage)
 
@@ -4404,12 +4417,17 @@ class PendingQueueLoop(unittest.TestCase):
             async def set_permission_mode(self, mode): pass
 
             async def receive_messages(self):
-                yield _sdk.SystemMessage("init", {
-                    "model": "claude-x", "permissionMode": "acceptEdits",
-                    "session_id": (self.options.session_id or "fsid")})
+                # one init per turn, streamed once the turn is read, as the CLI does (_turn_frame in
+                # kernel/sdk_backend.py). A single init at stream open made
+                # test_second_turn_forwarded_immediately_mid_flight a flake (2026-09-25): when that init
+                # reached romp before A was fed, romp counted it as a turn the CLI started on its own, A
+                # went in mid-turn, and nothing released A's hold before A's result, so B stayed queued.
                 while True:
                     turn = await self._turnq.get()
                     GatedClient.received.append(turn["message"]["content"][0]["text"])
+                    yield _sdk.SystemMessage("init", {
+                        "model": "claude-x", "permissionMode": "acceptEdits",
+                        "session_id": (self.options.session_id or "fsid")})
                     while not GatedClient.release.is_set():
                         await _aio.sleep(0.01)            # hold the turn 'in flight' until released
                     GatedClient.release.clear()
@@ -4451,6 +4469,49 @@ class PendingQueueLoop(unittest.TestCase):
         self.assertTrue(self._wait(lambda: self.Gated.received == ["A", "B"]),
                         "B is delivered after A, in order")
 
+    def test_second_turn_forwarded_immediately_when_the_first_is_sent_after_connect(self):
+        # The test above with the order that made it flake forced (2026-09-25). The first send starts the
+        # session, so A's enqueue is what waits: until the receive loop has handled every frame the stream
+        # sends before a turn and waits on the client's turn queue. With the fake's old single init at
+        # stream open, this order failed every time: the init reached romp before A and read as a turn the
+        # CLI started on its own (inflight 0 to 1), so A went in mid-turn, its hold waited for a take,
+        # nothing streamed until A's release, and B stayed queued. The CLI streams an init for each turn it
+        # reads (_turn_frame in kernel/sdk_backend.py), and so does GatedClient now. GatedClient is built
+        # fresh in each setUp, so the __init__ patch ends with the test.
+        waiting = threading.Event()   # set when the receive loop first waits on the client for a turn
+
+        class SignallingQueue(asyncio.Queue):
+            async def get(self):
+                waiting.set()
+                return await super().get()
+
+        orig_init = self.Gated.__init__
+
+        def __init__(gself, *a, **k):
+            orig_init(gself, *a, **k)
+            gself._turnq = SignallingQueue()
+
+        self.Gated.__init__ = __init__
+        orig_enqueue = sb.SdkSession.enqueue
+        waited = []
+
+        def enqueue(s, text, *a, **k):
+            if text == "A" and not waited:
+                waited.append(waiting.wait(6.0))
+            return orig_enqueue(s, text, *a, **k)
+
+        sid = self.backend.spawn("q", self.d)
+        with mock.patch.object(sb.SdkSession, "enqueue", enqueue):
+            self.assertTrue(self.backend.send(sid, "A"))
+        self.assertEqual(waited, [True], "A's enqueue never waited for the receive loop to wait on the client")
+        self.assertTrue(self._wait(lambda: self.Gated.received == ["A"]), "A never reached the SDK")
+        self.assertTrue(self.backend.send(sid, "B"))
+        self.assertTrue(self._wait(lambda: self.backend.pending_queued(sid) == []),
+                        "B should be forwarded to the SDK at once, not held in romp's queue")
+        self.Gated.release.set()
+        self.assertTrue(self._wait(lambda: self.Gated.received == ["A", "B"]),
+                        "B is delivered after A, in order")
+
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
 class InterruptWithQueue(unittest.TestCase):
@@ -4472,6 +4533,7 @@ class InterruptWithQueue(unittest.TestCase):
         class StallClient:
             instances = []
             received = []                  # turn texts actually fed to the SDK, in order
+            fed = []                       # turn texts romp's input stream handed to query(), in order
 
             def __init__(self, options=None, transport=None):
                 self.options = options
@@ -4484,22 +4546,28 @@ class InterruptWithQueue(unittest.TestCase):
 
             async def query(self, prompt, session_id="default"):
                 async for turn in prompt:
+                    StallClient.fed.append(turn["message"]["content"][0]["text"])
                     await self._turnq.put(turn)
 
             async def interrupt(self):
                 self.interrupted = True    # interrupt sent, but the wedged turn never produces a result
 
             async def receive_messages(self):
-                yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
+                # one init per turn, streamed once the turn is read, as the CLI does (_turn_frame in
+                # kernel/sdk_backend.py). A's init releases A's one-fed-text hold, so only the interrupt gate
+                # can hold B; the forced-order test below says what an init at stream open let through
+                # (2026-09-26).
                 while True:
                     turn = await self._turnq.get()
                     StallClient.received.append(turn["message"]["content"][0]["text"])
+                    yield _sdk.SystemMessage("init", {"session_id": self.options.session_id or "fsid"})
                     await _aio.sleep(3600)           # stall this turn forever (never a ResultMessage)
 
         _sdk.ClaudeSDKClient = StallClient
         self.Fake = StallClient
         StallClient.instances = []
         StallClient.received = []
+        StallClient.fed = []
         self.backend = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
 
     def tearDown(self):
@@ -4533,6 +4601,51 @@ class InterruptWithQueue(unittest.TestCase):
         self.assertEqual(self.Fake.received, ["A"], "B was NOT fed to the SDK while interrupted")
         self.assertEqual(self.backend.live_sessions().get(sid, {}).get("state"), "waiting",
                          "still 'waiting' — inflight held, not double-counted")
+
+    def test_interrupt_holds_a_turn_queued_after_it_when_the_first_is_sent_after_connect(self):
+        # The test above with A's enqueue made to wait until the receive loop waits on the client for a turn,
+        # the same forcing as PendingQueueLoop's forced-order test (2026-09-26). While StallClient streamed
+        # one init at stream open, this order passed with the interrupt gate in inputs() removed: the init
+        # reached romp before A and read as a turn the CLI started on its own, A went in mid-turn, nothing
+        # streamed after it, and A's one-fed-text hold kept B queued in the gate's place. StallClient is built
+        # fresh in each setUp, so the __init__ patch ends with the test.
+        waiting = threading.Event()   # set when the receive loop first waits on the client for a turn
+
+        class SignallingQueue(asyncio.Queue):
+            async def get(self):
+                waiting.set()
+                return await super().get()
+
+        orig_init = self.Fake.__init__
+
+        def __init__(fself, *a, **k):
+            orig_init(fself, *a, **k)
+            fself._turnq = SignallingQueue()
+
+        self.Fake.__init__ = __init__
+        orig_enqueue = sb.SdkSession.enqueue
+        waited = []
+
+        def enqueue(s, text, *a, **k):
+            if text == "A" and not waited:
+                waited.append(waiting.wait(6.0))
+            return orig_enqueue(s, text, *a, **k)
+
+        sid = self.backend.spawn("x", self.d)
+        with mock.patch.object(sb.SdkSession, "enqueue", enqueue):
+            self.backend.send(sid, "A")
+        self.assertEqual(waited, [True], "A's enqueue never waited for the receive loop to wait on the client")
+        self.assertTrue(self._wait(lambda: self.Fake.received == ["A"]), "A never reached the SDK")
+        self.assertTrue(self.backend.interrupt(sid))
+        self.assertTrue(self._wait(lambda: self.backend.live_sessions().get(sid, {}).get("state") == "waiting"),
+                        "the interrupted turn reads 'waiting'")
+        self.backend.send(sid, "B")
+        time.sleep(0.3)
+        self.assertEqual(self.backend.pending_queued(sid), ["B"],
+                         "B stays queued behind the interrupted turn")
+        self.assertEqual(self.Fake.fed, ["A"], "B was not fed to the SDK while interrupted")
+        self.assertEqual(self.backend.live_sessions().get(sid, {}).get("state"), "waiting",
+                         "the session still reads 'waiting' after B was sent")
 
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
@@ -5263,10 +5376,12 @@ class UpdateRegDroppingUnreadable(unittest.TestCase):
 def _sdk_module_for_the_road_pins():
     """The module the connect loop imports ClaudeSDKClient from, and whether this call installed it: the installed SDK when
     there is one, else a stand-in with an inert class for any name the backend imports. The road pins stub the transport and
-    fake the client, so they need no package; CI installs none, and a gate on the package would let a re-key on the pre-read
-    go green on every Python (the follow-up's item a). The stand-in lives in sys.modules only for the test that asked (its
-    tearDown removes it): left behind, it made every later import of the SDK succeed with inert classes, and the kernel's own
-    wiring took roads it never takes without the package (two shared-parse tests red under the whole suite)."""
+    fake the client, so they need no package; the stand-in is for an interpreter without one (a box venv without the SDK, the
+    vscode-extension job's served-page pytest step; every Python matrix cell installs it since #872), and a gate on the package
+    would let a re-key on the pre-read go green wherever the package is absent (the follow-up's item a). The stand-in lives in
+    sys.modules only for the test that asked (its tearDown removes it): left behind, it made every later import of the SDK
+    succeed with inert classes, and the kernel's own wiring took roads it never takes without the package (two shared-parse
+    tests red under the whole suite)."""
     if _HAVE_SDK:
         return _sdk, False
     import types
@@ -5956,7 +6071,8 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
             k_done.set()
 
         lt, kt = threading.Thread(target=run_l, name="L"), threading.Thread(target=run_k, name="K")
-        lt.start()
+        self.addCleanup(join_started, resume, (lt, kt), 5)   # on every exit path (T282): resume the parked loop side (an assertion
+        lt.start()                                           # between the two starts fails with L parked on it), join what started
         self.assertTrue(parked.wait(5), "the loop side never reached the parked read")
         kt.start()
         deadline = time.monotonic() + 5
@@ -11317,15 +11433,104 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.be._reg_lock = _Gate()
         self.addCleanup(setattr, self.be, "_reg_lock", real_lock)
         real_lock.acquire()
+        held = [True]                        # the TEST'S hold on real_lock; cleared by the body's release below
         t = threading.Thread(target=s._mirror_auth_pending, daemon=True)
+
+        def end():                           # on every exit path (T282): a failed assertion below would leave the mirror parked
+            if held[0]:                      # on the lock this test holds; release the test's own hold, then a bounded join.
+                held[0] = False              # Only the test's: locked() cannot say whose hold it is, and on the road where the
+                real_lock.release()          # mirror holds the lock at the failure a release here took the MIRROR's hold and
+            t.join(5)                        # made its __exit__ raise in the daemon thread (round 2 of PR 891's review)
+        self.addCleanup(end)
         t.start()
         self.assertTrue(inside.wait(5), "the writer reached the reg lock")
         with s._hold_write():
             s._auth_pending = ""                                     # the landing clears the ask while the mirror waits
         real_lock.release()
+        held[0] = False
         t.join(5)
         self.assertFalse(t.is_alive())
         self.assertFalse(self._reg(s).get("authPending"), "the mirror recorded the pending as it stood at the write")
+
+    def test_a_body_that_fails_while_the_mirror_holds_the_lock_leaves_the_mirrors_hold_to_the_mirror(self):
+        """The cleanup above, run rather than read on its failure road (all-5 of round 2 of PR 891's review, 2026-09-22). It
+        used to release real_lock whenever locked(), but locked() does not say WHOSE hold it is: where the test has released
+        its hold and the mirror holds the lock inside the reg write when the body fails, that released the MIRROR's hold, and
+        the mirror's `with` then raised RuntimeError("release unlocked lock") in the daemon thread, outside the test's result.
+        The cleanup now tracks the test's own hold. A nested case with the same shape (a lock; a gate that signals when the
+        worker is about to take it; a worker holding it through its write; a body that releases its own hold, waits for the
+        worker to hold, and fails) runs both cleanups. The worker's write lasts until the cleanup has decided (`decided`, the
+        plant's stand-in for the write's duration, set after the release decision and before the join), so the road is
+        deterministic. With the fixed cleanup the run records the planted failure, no error, nothing raised in the worker's
+        thread (threading.excepthook swapped for the run: the hook is process-wide, so it records only an exception whose
+        thread is the plant's worker and hands any other thread's to the hook it replaced) and the lock free once the worker
+        is done; with the old shape the same failure and a RuntimeError from the worker's thread."""
+        def case(track_own_hold):
+            raised, state = [], {}
+
+            class _Case(unittest.TestCase):
+                def test_fails(self):
+                    real_lock = threading.Lock()
+                    state["lock"] = real_lock
+                    inside, holding, decided = threading.Event(), threading.Event(), threading.Event()
+
+                    class _Gate:
+                        def __enter__(self):
+                            inside.set()
+                            return real_lock.__enter__()
+
+                        def __exit__(self, *a):
+                            return real_lock.__exit__(*a)
+
+                    def mirror():
+                        with _Gate():
+                            holding.set()
+                            decided.wait(5)                          # the write in flight until the cleanup has decided
+                    real_lock.acquire()
+                    held = [True]
+                    t = threading.Thread(target=mirror, daemon=True)
+                    state["worker"] = t
+
+                    def end():
+                        if track_own_hold:
+                            if held[0]:
+                                held[0] = False
+                                real_lock.release()
+                        elif real_lock.locked():                     # the old shape: whoever holds it
+                            real_lock.release()
+                        decided.set()
+                        t.join(5)
+                    self.addCleanup(end)
+                    t.start()
+                    self.assertTrue(inside.wait(5), "the worker reached the lock")
+                    real_lock.release()
+                    held[0] = False
+                    self.assertTrue(holding.wait(5), "the worker took the lock")
+                    self.fail("planted: the body fails while the mirror holds the lock")
+
+            saved = threading.excepthook
+
+            def hook(args):                                          # process-wide while the case runs: the plant's worker's
+                if args.thread is state.get("worker"):               # exceptions are recorded, any other thread's go to the
+                    raised.append("%s: %s" % (args.exc_type.__name__, args.exc_value))     # hook that was installed
+                else:
+                    saved(args)
+            threading.excepthook = hook
+            try:
+                res = unittest.TestResult()
+                _Case("test_fails").run(res)
+            finally:
+                threading.excepthook = saved
+            return res, raised, state["lock"]
+
+        res, raised, lock = case(track_own_hold=True)
+        self.assertEqual((len(res.failures), res.errors, raised), (1, [], []), "the planted failure and nothing beside it: %r %r %r" % (res.failures, res.errors, raised))
+        self.assertIn("planted", res.failures[0][1])
+        self.assertFalse(lock.locked(), "the mirror released its own hold once its write was done")
+        res, raised, lock = case(track_own_hold=False)
+        self.assertEqual((len(res.failures), res.errors), (1, []), (res.failures, res.errors))
+        self.assertEqual(raised, ["RuntimeError: release unlocked lock"], "the old cleanup released the mirror's hold; the mirror's __exit__ raised in its thread")
+        self.assertFalse(lock.locked())
 
     def test_the_reference_says_a_default_change_reconnects_its_followers(self):
         doc = " ".join(open(os.path.join(os.path.dirname(HERE), "docs", "reference.md"), encoding="utf-8").read().split())

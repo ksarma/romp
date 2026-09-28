@@ -413,6 +413,9 @@ test("in a browser, the real module (review round 3): a heading target on a pict
       page.on("pageerror", (e: Error) => { errors.push(e.message); });
       const html = pageHtml(mode, { [REPORT]: LONG, [FIG]: SVG }, MT);   // the stub serves a .svg path as image/svg+xml, as the kernel does
       await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+      // the picture's own request to its /file address, answered with the svg as image/svg+xml; registered after the page's route,
+      // so it is asked first
+      await page.route((u: URL) => u.pathname === "/file" && u.searchParams.get("path") === FIG, (route: any) => route.fulfill({ status: 200, contentType: "image/svg+xml", body: SVG }));
       await page.goto(ORIGIN + "/");
       await page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, { at: { heading: "layer1" } }); }, [FIG, SID]);
       await page.waitForFunction(() => { const i = document.querySelector("img.fileview-img") as HTMLImageElement | null; return !!i && i.complete; }, null, { timeout: 10000 });

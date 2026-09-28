@@ -454,6 +454,7 @@ class LedgerFaultsNeverEraseSiblings(unittest.TestCase):
         km._retry_suppress_data = stalling
         self._undo.append(lambda: setattr(km, "_retry_suppress_data", real))
         arm = threading.Thread(target=km._suppress_session_retry, args=("s3",))
+        self.addCleanup(lambda: (clear_done.set(), arm.join(5)))   # on every exit path: release the stalled read, wait for the arm
         arm.start()
         self.assertTrue(arm_read.wait(5), "the arm read the ledger")
         cleared = km._clear_session_retry_suppress("s1")      # the sweep's clear, racing the arm's write

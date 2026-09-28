@@ -1,12 +1,12 @@
 ---
 title: User todos slice 3 — memory across context loss: a SessionStart hook (resume + compact sources) hands a resumed/compacted session its open todos as passive additionalContext, rendered kernel-side over a read-only `POST /usertodo/context` so the voice test scans exactly what a session receives
-status: offered
+status: keep-private
 where: fork branch `usertodos` (commit `57b085bc`; `hooks/romp-usertodo-context.sh`)
 added: 2026-08-22
 pr:
 tier: major-feature
 offered: their PR #994
-closed:
+closed: 2026-09-20
 ---
 (the user 2026-09-06: one of two example major features to offer in future) Upstream ships the same SessionStart hook family (`hooks/romp-postal-context.sh`, install.sh registration) and the same SDK/tmux split the hook straddles. Depends on slice 1.
 
@@ -17,3 +17,13 @@ APPROVED 2026-09-07 as an RFC: the fork owner approved offering the user-todos s
 OFFERED 2026-09-07: all three slices ride one RFC, their draft PR #994 (label major-feature, head a408815d; discussion issue #993), with the per-install switch off by default, docs and twelve synthetic captures, and the fork #325 withdraw fix folded; under #991's policy it merges on the other maintainer's approval plus a non-author comment on #993.
 
 2026-09-07: #994 head is now b8a906f3 (38 commits; a review fold added 23 commits; CI scaffold fork PR #356).
+
+**Closed with their PR #994 on 2026-09-20, and kept fork-side (the user 2026-09-21, who decided the
+feature stays with us for now).** The project closed #994 as a DIRECTION call rather than on any defect:
+the maintainer's own design for the same need merged upstream overnight, adopts no store, and widens the
+approval box the project already ships. So this is not declined by us and it is not a defect to fix; the
+road is simply not the project's. The fork already runs the feature. Status is `keep-private` rather than
+`declined` because we hold and maintain it, and the user is taking the direction question to the
+maintainer himself. Standing design note for future work on this surface: encapsulate it as much as
+possible, preferring fork-only modules and single call sites, because the fold runs twice a week and
+every line shared with upstream is a recurring conflict cost.

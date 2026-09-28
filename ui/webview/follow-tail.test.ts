@@ -23,14 +23,14 @@ test("the harness case: 60 px above the bottom, a frame that adds nothing → no
 });
 
 test("render.ts appendActive measures before the rebuild and pins only when followTail says so", () => {
-  assert.match(RENDER, /import \{ followReader, keepPlaceAcrossShow, followTail, atBottomDist, followBoxBelow, followTailShrink, reshowStick \} from "\.\/scroll-keep";/);
+  assert.match(RENDER, /import \{ followReader, keepPlaceAcrossShow, followTail, atBottomDist, followBoxBelow, followTailShrink, followRebuiltTail, reshowStick \} from "\.\/scroll-keep";/);   // + followRebuiltTail (PR E: a re-windowed follow-mode reader follows the rebuilt rows' settling)
   const m = RENDER.match(/^function appendActive\(\) \{([\s\S]*?)\n\}/m);
   assert.ok(m, "appendActive");
   const body = m![1];
   assert.match(body, /const heightBefore = content\.scrollHeight;\n\s*const distBefore = heightBefore - before - content\.clientHeight;/);
-  assert.ok(body.indexOf("const distBefore") < body.indexOf("syncView(activeId, stick);"), "measured BEFORE the rebuild");
+  assert.ok(body.indexOf("const distBefore") < body.indexOf("syncView(activeId, stick, stick || !!anchor);"), "measured BEFORE the rebuild");
   assert.match(body, /if \(stick && followTail\(distBefore, heightBefore, content\.scrollHeight\)\) writeScroll\(content, content\.scrollHeight, "append-stick", true, before\);/);
   assert.match(body, /else if \(stick\) \{ \/\* near the bottom, nothing new: the reader stays where they are \*\/ \}/);
-  // the scrolled-up path is untouched: anchor restore, raw fallback
-  assert.match(body, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) writeScroll\(content, before, "append-raw", false, before\);/);
+  // the scrolled-up path: anchor restore, the raw fallback with the sync's take given back first (the maintainer's round 3 ruling B)
+  assert.match(body, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) \{ if \(v && figures\) untakeMeasure\(v, figures\); writeScroll\(content, before, "append-raw", false, before\); \}/);
 });
