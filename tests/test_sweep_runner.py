@@ -86,7 +86,9 @@ keep = ("TMPDIR", "HOME", "PATH", "SHELL", "LANG", "CI", "USER", "LOGNAME", "XDG
         "ROMP_POSTAL_PORT")
 marker = ctl.get("marker")
 home = os.path.expanduser("~")
-hosts = os.path.join(os.environ.get("XDG_STATE_HOME", "/nonexistent"), "romp", "session-hosts")
+# every file the runner put in the leg's private state root (names and contents), read without naming any
+state_root = os.path.join(os.environ.get("XDG_STATE_HOME", "/nonexistent"), "romp")
+state = {n: open(os.path.join(state_root, n)).read() for n in sorted(os.listdir(state_root))} if os.path.isdir(state_root) else None
 
 
 def checkout_root(d):
@@ -125,7 +127,7 @@ with open(LOG, "a") as f:
                         "marked": sorted(k for k, v in os.environ.items() if marker and marker in v),
                         "home_files": sorted(n for n in (".npmrc", ".gitconfig", ".zshenv") if os.path.exists(os.path.join(home, n))),
                         "sdk": glob.glob(os.path.join(home, ".local", "state", "romp", "sdkvenv", "lib", "*", "site-packages")),
-                        "hosts": open(hosts).read() if os.path.exists(hosts) else None}) + "\n")
+                        "state": state}) + "\n")
 act = ctl.get("action", {}).get(leg)
 if act == "commit":
     subprocess.run(["git", "-C", ctl["tree"], "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null",
@@ -1163,7 +1165,7 @@ class LegEnvironment(_Base):
                 v = c["values"]
                 tmp = v["TMPDIR"]
                 self.assertEqual(v["XDG_STATE_HOME"], os.path.join(tmp, "xdg-state"), "the state root is private")
-                self.assertEqual(c["hosts"], "off\n", "session hosts are off in the private state root")
+                self.assertEqual(c["state"], {"session-hosts": "off\n"}, "session hosts are off in the private state root")
                 self.assertEqual(v["HOME"], os.path.join(tmp, "home"), "HOME is private")
                 self.assertEqual({p: v.get(p) for p in sweep.PORT_FLOOR}, dict.fromkeys(sweep.PORT_FLOOR, "1"))
                 self.assertIn("ROMP_POSTAL_PORT", sweep.PORT_FLOOR, "the postal bus falls back to the live bus's port")
