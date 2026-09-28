@@ -28,10 +28,14 @@
 // one each; each of those legs counts its own arm's effect once and the other arm's twice, so a heard sender that reaches
 // the wrong arm fails as well as a foreign one that reaches either.
 //
-// The census reads the population instead of a list: every addEventListener("message", …) call in a ui/ source file
-// (tests excluded), the method named or a computed member, and every onmessage handler assigned to the window (by window,
-// self, globalThis or the bare global), must take the event as its one parameter, with no default, open with the check,
-// preceded by nothing but reads of the message, and be one of the gated sites below, each with an executed leg here. A
+// The census reads the population instead of a list: every addEventListener("message", …) or
+// addEventListener("messageerror", …) call in a ui/ source file (tests excluded; uiSources lists the files), the method
+// named or a computed member, whatever its receiver, and every onmessage or onmessageerror handler assigned to this page's
+// own window, the receiver resolved by its binding (window, self, globalThis, the bare global, this page's
+// document.defaultView, a local initialised to one of them, the global `this`), must take the event as its one parameter,
+// with no default, open with the check, preceded by nothing but reads of the message, and be one of the gated sites below,
+// each with an executed leg here. A messageerror event carries the sender's origin and source as a message does, and a
+// sender causes one by posting what the page cannot deserialize, so it is counted as a message. A
 // listener handed over by name is read at the function written in place that a const of that name holds, found by the
 // name's binding; any other name fails. A new
 // window listener anywhere in ui/ fails it until it is gated and given a leg. A second census reads what the name
@@ -39,12 +43,15 @@
 // bound once and never written, so a local helper of the same name that lets one more sender through cannot stand in for
 // it. The first census reads the listeners the source spells, so two more hold the source to spellings it can read: a
 // third holds that every addEventListener in ui/ is a call the first can read, and a fourth refuses the roads that spell
-// neither (a method of the window or of a prototype read by a computed name, a function run with the window as its
-// `this`, an onmessage handler set other than by assignment, code run from a string). What those cannot see is listed at
-// the fourth. Synthetic world only: the notes-api demo, placeholder ids.
+// neither (a method of the window, of the body element or of a prototype read by a computed name, a function run with
+// the window as its `this`, an onmessage handler set other than by an assignment the fourth accepts, a handler or a
+// message listener on a window other than this page's own, code run from a string, a `with` statement, and the name
+// WebSocket anywhere but a `new`). What those cannot see is listed at the fourth. Synthetic world only: the notes-api
+// demo, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { hideEdges, staysEnumerable, defineHidden } from "../test-dom-shim";
@@ -231,16 +238,27 @@ for (const leg of INSTALLED) {
 
 // ── the listeners lifted out of their files ──
 
-type Site = { file: string; line: number; receiver: string; fn: any; text: string; kind: "addEventListener" | "onmessage" };
+type Site = { file: string; line: number; receiver: string; fn: any; text: string; kind: "addEventListener" | "onmessage";
+               event?: string };   // the event it hears, "message" or "messageerror" (an onmessage kind: its handler's name less "on")
 const parsed = new Map<string, Site[]>();
-/** The names a script reaches its own window by, for an onmessage assignment: window.onmessage, self.onmessage,
- *  globalThis.onmessage (or any of them by a computed member), or a bare `onmessage =`. Any other receiver (a WebSocket, a
- *  MessagePort, a worker) is not a window, and no other page can post to it. */
+/** The names a script reaches its own window by: window, self and globalThis, unshadowed. With the bare global they are
+ *  where refKind (at the road census below) starts this page's own window; a receiver it resolves to a window other than
+ *  this page's own, or cannot resolve, is no census site, and the road census refuses the handler set on it. */
 const WINDOW_NAMES = new Set(["window", "self", "globalThis"]);
+/** The events a window listener hears a sender's post as: a message, and a messageerror, which carries the sender's origin
+ *  and source too and which a sender causes by posting what the page cannot deserialize. */
+const MESSAGE_EVENTS = new Set(["message", "messageerror"]);
+/** The handler properties of those events. */
+const MESSAGE_HANDLERS = new Set(["onmessage", "onmessageerror"]);
+/** The ScriptKind a ui/ file parses under, by its suffix (spacer-measure.test.ts kindOf's rule): a .tsx or .jsx under its
+ *  own kind, a .js, .mjs or .cjs under JS, the rest under TS. Every parse site and compile()'s loader read it. */
+const kindOfUi = (m: string): any => /\.tsx$/.test(m) ? ts.ScriptKind.TSX : /\.jsx$/.test(m) ? ts.ScriptKind.JSX
+  : /\.[mc]?js$/.test(m) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
 /** Every window message listener in `src`, read by the TypeScript parser (so a spelling in a comment or a string is no
- *  listener): each addEventListener("message", fn) call, whether the method is named (x.addEventListener, a bare
- *  addEventListener) or a computed member (x["addEventListener"]), and each assignment of an onmessage handler to the
- *  window by any of WINDOW_NAMES. Where it is, what it is on, and the listener's node and text. A listener handed to
+ *  listener): each addEventListener("message", fn) or addEventListener("messageerror", fn) call, on any receiver, whether
+ *  the method is named (x.addEventListener, a bare addEventListener) or a computed member (x["addEventListener"]), and
+ *  each assignment of an onmessage or onmessageerror handler whose receiver refKind resolves by binding to this page's own
+ *  window, or with no receiver (the bare global). Where it is, what it is on, and the listener's node and text. A listener handed to
  *  addEventListener by a plain name (the file viewer's onKernelMessage, which its close removes by that name) is read at
  *  the function the name holds, when a const of that name, found by the name's binding (declOf), is initialised to a
  *  function written in place: a const is never rebound, and the binding, not the spelling, picks it, so another
@@ -248,7 +266,7 @@ const WINDOW_NAMES = new Set(["window", "self", "globalThis"]);
  *  rebound; a parameter; a function declaration, which can be assigned to; a const holding a call's result) stays the
  *  name, which the head census refuses. */
 function sitesIn(file: string, src: string): Site[] {
-  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, kindOfUi(file));
   const out: Site[] = [];
   const line = (n: any) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   /** the expression under any parentheses, type assertion or non-null mark: `(window as any)` is window */
@@ -275,17 +293,19 @@ function sitesIn(file: string, src: string): Site[] {
     return init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) ? init : a;
   };
   const visit = (n: any): void => {
-    if (ts.isCallExpression(n) && n.arguments.length >= 2 && ts.isStringLiteralLike(n.arguments[0]) && n.arguments[0].text === "message") {
+    if (ts.isCallExpression(n) && n.arguments.length >= 2 && ts.isStringLiteralLike(n.arguments[0]) && MESSAGE_EVENTS.has(n.arguments[0].text)) {
       const m = member(n.expression);
       if (m && m.name === "addEventListener") {
         const fn = listenerOf(n.arguments[1]);
-        out.push({ file, line: line(n), receiver: m.receiver, fn, text: fn.getText(sf), kind: "addEventListener" });
+        out.push({ file, line: line(n), receiver: m.receiver, fn, text: fn.getText(sf), kind: "addEventListener", event: n.arguments[0].text });
       }
     }
     if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const m = member(n.left);
-      if (m && m.name === "onmessage" && (m.receiver === "" || WINDOW_NAMES.has(m.receiver))) {
-        out.push({ file, line: line(n), receiver: m.receiver, fn: n.right, text: n.right.getText(sf), kind: "onmessage" });
+      const l = bare(n.left);
+      const recv = ts.isPropertyAccessExpression(l) || ts.isElementAccessExpression(l) ? l.expression : null;   // null: the bare global
+      if (m && MESSAGE_HANDLERS.has(m.name) && (recv === null || ownWindowRef(recv))) {
+        out.push({ file, line: line(n), receiver: m.receiver, fn: n.right, text: n.right.getText(sf), kind: "onmessage", event: m.name.slice(2) });
       }
     }
     ts.forEachChild(n, visit);
@@ -385,7 +405,9 @@ function compile(site: Site): (scope: unknown) => Listener {
   const hit = compiled.get(key);
   if (hit) return hit;
   const src = "const __listener = " + site.text + ";\n";
-  const code = site.file.endsWith(".ts") ? requireCjs("esbuild").transformSync(src, { loader: "ts", target: "es2020" }).code : src;
+  const kind = kindOfUi(site.file);   // a .js, .mjs or .cjs listener is used as written; every other kind is transformed by its own loader
+  const code = kind === ts.ScriptKind.JS ? src : requireCjs("esbuild").transformSync(src, {
+    loader: kind === ts.ScriptKind.TSX ? "tsx" : kind === ts.ScriptKind.JSX ? "jsx" : "ts", target: "es2020" }).code;
   const make = new Function("__scope", "with (__scope) {\n" + code + "\nreturn __listener;\n}") as (s: unknown) => Listener;
   compiled.set(key, make);
   return make;
@@ -441,28 +463,63 @@ test("the legs of a listener declared in ARMS tell its arms apart: in each leg's
 
 // ── the census: every window message listener in ui/ ──
 
-/** Every ui/ source file the parser should read: .ts, .js and .mjs under ui/ at any depth, tests (*.test.*) excluded. */
-function uiSources(): string[] {
-  const out: string[] = [];
+/** The classes every file under ui/ falls into, by its path relative to ui/ (forward slashes), tried in this order, the
+ *  first whose test matches taking the file: tests and types (a `.test.` file of any module suffix, a `.d.` file of a
+ *  TypeScript one); modules, every suffix esbuild 0.21.5's default loaders read as code (.ts .tsx .mts .cts .js .jsx .mjs
+ *  .cjs) in any directory, the files every census here reads; and the files no census reads, each class named:
+ *  stylesheets, the anchor map's fixtures (its directory's data: markdown, json, a python file, an html page with no
+ *  script, a csv, an svg, a .gitattributes) and the markdown at ui/'s own top (its README and CLAUDE.md). A file no class
+ *  takes reds uiPartition, named with its suffix, so a file of a kind no class names is loud, never dropped. A directory
+ *  named node_modules or dist is not walked: installed packages and build output, no source. */
+const UI_CLASSES: Array<[string, RegExp]> = [
+  ["tests and types", /\.test\.([mc]?[tj]s|[tj]sx)$|\.d\.([mc]?ts|tsx)$/],
+  ["modules", /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/],
+  ["stylesheets", /\.css$/],
+  ["the anchor map's fixtures", /^webview\/anchor-map-fixtures\/[^/]+$/],
+  ["ui's own markdown", /^[^/]+\.md$/],
+];
+/** The class of the file at `rel` (relative to ui/): the first of UI_CLASSES whose test matches it, or null. */
+const uiClassOf = (rel: string): string | null => { const c = UI_CLASSES.find(([, re]) => re.test(rel)); return c ? c[0] : null; };
+let uiParts: Record<string, string[]> | null = null;
+/** Every file under `root` (ui/ unless a test hands another; a directory named node_modules or dist aside), relative to it,
+ *  partitioned into UI_CLASSES by uiClassOf; a file no class takes is a red naming it. ui/ is walked once per run. */
+function uiPartition(root: string = UI): Record<string, string[]> {
+  if (root === UI && uiParts) return uiParts;
+  const out: Record<string, string[]> = {};
+  for (const [k] of UI_CLASSES) out[k] = [];
+  const rest: string[] = [];
   const walk = (rel: string): void => {
-    for (const d of fs.readdirSync(path.join(UI, rel), { withFileTypes: true })) {
+    for (const d of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
       const r = rel ? rel + "/" + d.name : d.name;
       if (d.isDirectory()) { if (d.name !== "node_modules" && d.name !== "dist") walk(r); continue; }
-      if (/\.(ts|js|mjs)$/.test(d.name) && !/\.test\.(ts|js|mjs)$/.test(d.name) && !d.name.endsWith(".d.ts")) out.push(r);
+      const c = uiClassOf(r);
+      if (c) out[c].push(r); else rest.push(r);
     }
   };
   walk("");
-  return out.sort();
+  assert.deepEqual(rest, [], "every file under ui/ is in one of the named classes (" + UI_CLASSES.map(([k]) => k).join(", ") +
+    "); a file none takes is given a class in UI_CLASSES, never dropped: " + rest.map((f) => f + " (" + (path.extname(f) || "no suffix") + ")").join(", "));
+  for (const k of Object.keys(out)) out[k].sort();
+  if (root === UI) uiParts = out;
+  return out;
+}
+/** Every ui/ source file the parser should read: uiPartition's modules. */
+function uiSources(): string[] {
+  return uiPartition()["modules"];
 }
 /** Where the listener's `if (windowSender(<its event>) === "foreign") return;` is among its body's statements, or why it
  *  does not count: the listener takes one parameter, the event, a plain name with no default (a parameter's default runs
  *  before the body, so a default on it or on a second parameter would run ahead of the check), and every statement before
  *  the check must be a read of the message (a declaration initialised to <event>.data) or an early return whose condition
  *  runs no code (inert): no call, construct, tagged or substituted template, delete, await, yield, ++/--, assignment, or a
- *  binary operator that coerces an operand (==, !=, <, >, <=, >=, in, instanceof — the strict === and !== do not coerce and
- *  stay), and every property or element access reads off the event or a name a message read bound to <event>.data, whose
- *  value is a structured clone with no accessors, so a getter cannot run. A getter read or a coercion off any other object
- *  would run an arm for a foreign sender before the check, so it is not inert. So no arm runs before the check. */
+ *  binary operator that coerces an operand (==, !=, <, >, <=, >=, in, instanceof; the strict === and !== do not coerce and
+ *  stay), and every property or element access reads what no page code produces: off the event, its data at any depth (a
+ *  structured clone, with no accessors) or, one level and no deeper, its own origin, source, ports or lastEventId; off a
+ *  name a message read bound to <event>.data, any depth. A read any further through the event can run a getter the page
+ *  defined: its target, currentTarget and srcElement are the receiving window, its view is a window where the event has
+ *  one, and a member of its source is a member of the sending window, so e.target.x, e.view and e.source.parent are not
+ *  inert, nor is a getter read or a coercion off any other object. Each would run an arm for a foreign sender before the
+ *  check. So no arm runs before the check. */
 function headCheck(site: Site): string | null {
   const fn = site.fn;
   if (ts.isIdentifier(fn)) return "the listener is a name no const holding a function written in place binds (sitesIn): " + fn.text;
@@ -484,10 +541,14 @@ function headCheck(site: Site): string | null {
   const NON_COERCING = new Set<number>([ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken,
     ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
     ts.SyntaxKind.CommaToken]);
+  /** The event's own attributes a pre-check may read one level deep: none runs page code, and a member of any of them could
+   *  (a member of its source is a member of the sending window). */
+  const EVENT_OWN = new Set(["origin", "source", "ports", "lastEventId"]);
   /** The leftmost node of a property or element access chain, casts and parentheses removed. */
   const accessRoot = (n: any): any => { n = unwrap(n); while (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) n = unwrap(n.expression); return n; };
-  /** Whether `n` runs no code. `allowed` is the names a property or element access may read off (a getter cannot run on a
-   *  MessageEvent's structured-clone data): the event and every name a message read has bound to <event>.data so far. */
+  /** Whether `n` runs no code. `allowed` is the names a property or element access may read off: the event (its data at any
+   *  depth, or one of EVENT_OWN one level deep) and every name a message read has bound to <event>.data so far (any depth; a
+   *  getter cannot run on a MessageEvent's structured-clone data). */
   const inert = (n: any, allowed: Set<string>): boolean => {
     if (ts.isCallExpression(n) || ts.isNewExpression(n) || ts.isTaggedTemplateExpression(n) || ts.isTemplateExpression(n)
         || ts.isDeleteExpression(n) || ts.isAwaitExpression(n) || ts.isYieldExpression(n)
@@ -498,7 +559,13 @@ function headCheck(site: Site): string | null {
         if (ts.isElementAccessExpression(c) && c.argumentExpression && !inert(c.argumentExpression, allowed)) return false;
       }
       const root = accessRoot(n);
-      return ts.isIdentifier(root) && allowed.has(root.text);
+      if (!ts.isIdentifier(root) || !allowed.has(root.text)) return false;
+      if (root.text !== ev) return true;   // a name a message read bound to <event>.data: a structured clone, any depth
+      const links: any[] = [];   // the chain's accesses from the event outward: links[0] reads the event's own member
+      for (let c: any = unwrap(n); ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c); c = unwrap(c.expression)) links.unshift(c);
+      const first = memberName(links[0]);
+      if (first === "data") return true;   // under the message's data, any depth
+      return links.length === 1 && first !== null && EVENT_OWN.has(first);
     }
     let ok = true;
     ts.forEachChild(n, (c: any) => { if (ok && !inert(c, allowed)) ok = false; });
@@ -520,14 +587,20 @@ function headCheck(site: Site): string | null {
   }
   return "no `if (windowSender(" + ev + ") === \"foreign\") return;` in the listener's body";
 }
-// The gated sites, by file and count. A listener that is not a window listener (a WebSocket's or a MessagePort's, which
-// no other page can post to) would be listed in EXEMPT with its reason; there is none in ui/ today (federation.ts's
-// sockets use onmessage, and the design leaves WebSocket and MessageChannel handlers out).
+// The gated sites, by file and count. An addEventListener("message", …) on something that is not a window, which no
+// other page can post to, would be listed in EXEMPT with its reason; there is none in ui/ today. An onmessage handler on
+// something other than this page's window is no census site: the road census accepts a WebSocket's own handler
+// (federation.ts's sockets, a binding that only ever holds `new WebSocket(...)`) and refuses every other receiver it
+// cannot resolve, so a MessagePort's, a worker's, a BroadcastChannel's or an EventSource's handler is refused, fail-closed.
 const GATED: Array<[string, number]> = [
   ["webview/file-browse.ts", 1], ["webview/file-comments.ts", 1], ["webview/file-view.ts", 2], ["webview/frame-listener.ts", 1],
   ["webview/gear.js", 6], ["webview/palette-main.ts", 2], ["webview/settings.ts", 1], ["webview/strip.ts", 1], ["webview/waiting.ts", 1],
 ];
 const EXEMPT: Array<[string, number, string]> = [];
+/** Whether a census site is spelled as every gated site is, window.addEventListener("message" or "messageerror", …): the
+ *  census holds every site to it, so an onmessage handler on any receiver, and a listener added to any receiver but the
+ *  text `window`, keeps the census red whatever else it carries. */
+const spelledAsGated = (s: Site): boolean => s.receiver === "window" && s.kind === "addEventListener";
 
 test("census: every window message listener in ui/ opens with the foreign-sender check, before any arm, and is one of the gated sites", () => {
   const sites = uiSources().flatMap(messageSites);
@@ -539,12 +612,12 @@ test("census: every window message listener in ui/ opens with the foreign-sender
   const bad = sites.filter((s) => !exempt.has(s.file + ":" + s.line)).map((s) => [s, headCheck(s)] as const).filter(([, why]) => why !== null)
     .map(([s, why]) => s.file + ":" + s.line + " (" + s.receiver + "): " + why);
   assert.deepEqual(bad, [], "a window message listener acts before it rules out a foreign sender:\n" + bad.join("\n"));
-  assert.ok(sites.every((s) => s.receiver === "window" && s.kind === "addEventListener"),
+  assert.ok(sites.every(spelledAsGated),
     "every census site is window.addEventListener(\"message\", ...), the one spelling the gated sites use");
 });
 
-test("the census reads every spelling of a window message listener: addEventListener named or computed, an onmessage handler on window, self, globalThis or the bare global; a socket's onmessage is none", () => {
-  const found = (src: string) => sitesIn("webview/probe.ts", src).map((s) => s.kind + " on " + (s.receiver || "(bare)"));
+test("the census reads every spelling of a window message listener: addEventListener named or computed on any receiver, for a message or a messageerror, and an onmessage or onmessageerror handler on a receiver resolved by its binding to this page's own window, each failing the gated spelling; a handler on another window, a socket or a receiver the census cannot resolve is no site", () => {
+  const found = (src: string) => sitesIn("webview/probe.ts", src).map((s) => (s.kind === "onmessage" ? "on" + s.event : s.kind) + " on " + (s.receiver || "(bare)"));
   const listener = "function (e) { go(e.data); }";
   assert.deepEqual(found("window.addEventListener(\"message\", " + listener + ");"), ["addEventListener on window"]);
   assert.deepEqual(found("window[\"addEventListener\"](\"message\", " + listener + ");"), ["addEventListener on window"]);
@@ -558,6 +631,38 @@ test("the census reads every spelling of a window message listener: addEventList
   assert.deepEqual(found("onmessage = " + listener + ";"), ["onmessage on (bare)"]);
   assert.deepEqual(found("ws.onmessage = " + listener + "; port.onmessage = " + listener + ";"), [], "a socket's and a port's handler are not window listeners");
   assert.deepEqual(found("window.addEventListener(\"resize\", " + listener + "); const s = \"window.onmessage = f\";"), [], "another event, or a string");
+  // a messageerror is heard as a message (it carries the sender's origin and source): its listener and its handler are sites
+  assert.deepEqual(sitesIn("webview/probe.ts", "window.addEventListener(\"messageerror\", " + listener + ");").map((s) => s.kind + " " + s.event + " on " + s.receiver),
+    ["addEventListener messageerror on window"]);
+  assert.deepEqual(found("window.onmessageerror = " + listener + ";"), ["onmessageerror on window"]);
+  assert.deepEqual(found("parent.addEventListener(\"message\", " + listener + ");"), ["addEventListener on parent"], "a listener on any receiver is a site, held off the gated spelling");
+  // an onmessage or onmessageerror handler on a receiver the census resolves by its binding to this page's own window is
+  // exactly one census site, and the census's spelling predicate (spelledAsGated) fails it, so it keeps the census red
+  const OWN_WINDOW: Array<[string, string?]> = [
+    ["window.window.onmessage = f;"], ["self.self.onmessage = f;"], ["globalThis.window.onmessage = f;"],
+    ["window[\"window\"][\"onmessage\"] = f;"], ["(window as any).self.onmessage = f;"], ["window!.onmessageerror = f;"],
+    ["document.defaultView.onmessage = f;"], ["window.document.defaultView.onmessage = f;"], ["self.document.defaultView.onmessage = f;"],
+    ["const w = window; w.onmessage = f;"], ["const w = window, x = w; x.onmessage = f;"], ["let w = window; w.onmessage = f;"],
+    ["for (var w = window; ;) { w.onmessage = f; break; }"], ["const d = document; d.defaultView.onmessage = f;"],
+    ["const { defaultView } = document; defaultView.onmessage = f;"], ["const { document: { defaultView: dv } } = window; dv.onmessage = f;"],
+    ["const { window: w } = self; w.onmessage = f;"],
+    ["w\\u0069ndow.onmessage = f;"], ["document.def\\u0061ultView.onmessage = f;"],
+    ["this.onmessage = f;", "webview/probe.js"], ["(function () { this.onmessage = f; })();", "webview/probe.js"],
+  ];
+  const notOneSite: string[] = [], spelled: string[] = [];
+  for (const [src, file] of OWN_WINDOW) {
+    const s = sitesIn(file || "webview/probe.ts", src);
+    if (s.filter((x) => x.kind === "onmessage").length !== 1) notOneSite.push(src);
+    if (s.some(spelledAsGated)) spelled.push(src);
+  }
+  assert.deepEqual(notOneSite, [], "not one onmessage site on this page's own window");
+  assert.deepEqual(spelled, [], "the census's spelling predicate (spelledAsGated) passes it");
+  // a handler on a window other than this page's own, on a socket, or on a receiver the census cannot resolve is no site
+  // (the road census refuses all but the socket's)
+  const sited = ["frames.onmessage = f;", "parent.onmessage = f;", "top[\"onmessage\"] = f;", "opener.onmessage = f;", "frames[0].onmessage = f;",
+    "window[0].onmessage = f;", "frame.contentWindow.onmessage = f;", "el.ownerDocument.defaultView.onmessage = f;", "e.target.onmessage = f;",
+    "document.body.onmessage = f;", "getWin().onmessage = f;", "const ws = new WebSocket(u); ws.onmessage = f;"].filter((src) => found(src).length !== 0);
+  assert.deepEqual(sited, [], "a site on a receiver that is not this page's own window");
   // a listener handed over by name is read at the function written in place that a const of that name holds, the const
   // the name's binding picks; any other name stays the name (the head census refuses it)
   const text = (src: string) => sitesIn("webview/probe.ts", src).map((s) => s.text);
@@ -588,8 +693,8 @@ const GEAR_BINDING = "var windowSender = require('./window-sender.ts').windowSen
 /** Why `windowSender` in this source does not certainly name the helper, or null when it does: its declarations, the
  *  writes to it and any `with` statement, read by the TypeScript parser (so a spelling in a comment or a string is none). */
 function senderBinding(file: string, src: string): string | null {
-  const isJs = !file.endsWith(".ts");
-  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, isJs ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+  const kind = kindOfUi(file), isJs = kind === ts.ScriptKind.JS || kind === ts.ScriptKind.JSX;
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, kind);
   const decls: any[] = [], writes: string[] = [], withs: string[] = [];
   const DECL = [ts.SyntaxKind.VariableDeclaration, ts.SyntaxKind.Parameter, ts.SyntaxKind.BindingElement, ts.SyntaxKind.FunctionDeclaration,
     ts.SyntaxKind.FunctionExpression, ts.SyntaxKind.ClassDeclaration, ts.SyntaxKind.ClassExpression, ts.SyntaxKind.ImportSpecifier,
@@ -628,7 +733,7 @@ function senderFiles(): string[] {
   return uiSources().filter((f) => f !== "webview/window-sender.ts").filter((f) => {
     const src = fs.readFileSync(path.join(UI, f), "utf8");
     if (!src.includes("windowSender")) return false;
-    const sf = ts.createSourceFile(f, src, ts.ScriptTarget.Latest, true, f.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+    const sf = ts.createSourceFile(f, src, ts.ScriptTarget.Latest, true, kindOfUi(f));
     let hit = false;
     const visit = (n: any): void => { if (hit) return; if (ts.isIdentifier(n) && n.text === "windowSender") hit = true; else ts.forEachChild(n, visit); };
     visit(sf);
@@ -680,10 +785,12 @@ test("the binding census reads what it claims: a local, a parameter, an aliased 
 // is not a literal (window.addEventListener(type, f)). tests/test_shell_source_check.py refuses those in kernel.py
 // (_loose_add_tokens); this is the same rule for ui/, read by the TypeScript parser, so a spelling in a comment or inside
 // a longer string is none. Every addEventListener in a ui/ source file (tests excluded) must be one of:
-//   - the method called directly with a string literal for its event type (the census above reads the "message" ones);
-//   - the method called directly with an event type the parser resolves to strings, none of them "message": a const
-//     initialised to a string, in the file or exported so by the ui/ module it is imported from (`export const`); the
-//     const variable of a for...of over a list of strings; or the one parameter, never written, of a callback handed
+//   - the method called directly with a string literal for its event type (the census above reads the "message" and
+//     "messageerror" ones);
+//   - the method called directly with an event type the parser resolves to strings, none of them "message" or
+//     "messageerror": a const initialised to a string, in the file or exported so by the ui/ module it is imported from
+//     (`export const`, read from the one file esbuild bundles for the import); the const variable of a for...of over a
+//     list of strings; or the one parameter, never written, of a callback handed
 //     to such a list's forEach that has no way to reach the list (forEach's only argument, one parameter, and neither
 //     `arguments` nor `this` in a function that has its own: sealedForEach). A list is an array literal of strings,
 //     inline or held by a const that is not exported and whose every other mention is a for...of's list or such a
@@ -861,18 +968,21 @@ function listOf(e: any, sf: any): string[] | null {
   visit(sf);
   return onlyAsList ? listOf(d.initializer, sf) : null;
 }
-/** The string a ui/ module exports under `name` as `export const name = "..."`, or null. */
-function exportedString(mod: string, name: string): string[] | null {
-  for (const ext of [".ts", ".js"]) {
-    const p = path.join(UI, mod + ext);
-    if (!fs.existsSync(p)) continue;
-    const sf = ts.createSourceFile(p, fs.readFileSync(p, "utf8"), ts.ScriptTarget.Latest, true, ext === ".ts" ? ts.ScriptKind.TS : ts.ScriptKind.JS);
-    for (const st of sf.statements) {
-      if (!ts.isVariableStatement(st) || !isExported(st) || !(st.declarationList.flags & ts.NodeFlags.Const)) continue;
-      const d = st.declarationList.declarations.find((x: any) => ts.isIdentifier(x.name) && x.name.text === name);
-      if (d && d.initializer && ts.isStringLiteralLike(unwrap(d.initializer))) return [unwrap(d.initializer).text];
-    }
-    return null;
+/** The suffixes esbuild 0.21.5 tries, in its default order, for an import that names none (vscode-extension/esbuild.js sets
+ *  no resolveExtensions), the code ones: a .tsx sibling is picked before a .ts one, a .jsx before a .js. */
+const RESOLVE_ORDER = [".tsx", ".ts", ".jsx", ".js"];
+/** The string the module at base `mod` under `root` (ui/ unless a test hands another) exports under `name` as
+ *  `export const name = "..."`, or null. The module is the one file of RESOLVE_ORDER's suffixes the base has; a base with
+ *  two or more such siblings is refused (null), so no reading of it can differ from the file esbuild bundles. */
+function exportedString(mod: string, name: string, root: string = UI): string[] | null {
+  const siblings = RESOLVE_ORDER.map((ext) => path.join(root, mod + ext)).filter((p) => fs.existsSync(p));
+  if (siblings.length !== 1) return null;
+  const p = siblings[0];
+  const sf = ts.createSourceFile(p, fs.readFileSync(p, "utf8"), ts.ScriptTarget.Latest, true, kindOfUi(p));
+  for (const st of sf.statements) {
+    if (!ts.isVariableStatement(st) || !isExported(st) || !(st.declarationList.flags & ts.NodeFlags.Const)) continue;
+    const d = st.declarationList.declarations.find((x: any) => ts.isIdentifier(x.name) && x.name.text === name);
+    if (d && d.initializer && ts.isStringLiteralLike(unwrap(d.initializer))) return [unwrap(d.initializer).text];
   }
   return null;
 }
@@ -905,7 +1015,7 @@ function eventTypes(e: any, sf: any, file: string, depth = 0): string[] | null {
 type LooseAdd = { file: string; line: number; why: string; text: string };
 /** Every addEventListener in `src` that is none of the shapes the comment above lists, and how many it read. */
 function looseAddTokens(file: string, src: string): { read: number; loose: LooseAdd[] } {
-  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, kindOfUi(file));
   const loose: LooseAdd[] = [];
   let read = 0;
   const refuse = (n: any, why: string): void => {
@@ -927,7 +1037,7 @@ function looseAddTokens(file: string, src: string): { read: number; loose: Loose
       if (arg && ts.isStringLiteralLike(arg)) return;
       const types = arg ? eventTypes(arg, sf, file) : null;
       if (!types) return refuse(acc, "a call whose event type the census cannot read");
-      if (types.includes("message")) return refuse(acc, "a message listener whose event type is not a string literal");
+      if (types.some((t) => MESSAGE_EVENTS.has(t))) return refuse(acc, "a message listener whose event type is not a string literal");
       return;
     }
     if (onlyTested(acc)) return;
@@ -941,7 +1051,7 @@ function looseAddTokens(file: string, src: string): { read: number; loose: Loose
   return { read, loose };
 }
 
-test("census: every addEventListener in ui/ is a direct call the census reads (its event type a literal, or strings that are not \"message\"), a read that is only tested, or a member's name", () => {
+test("census: every addEventListener in ui/ is a direct call the census reads (its event type a literal, or strings that are not \"message\" or \"messageerror\"), a read that is only tested, or a member's name", () => {
   const bad: string[] = [];
   const readIn = new Map<string, number>();
   for (const f of uiSources()) {
@@ -1038,97 +1148,241 @@ test("the addEventListener census reads what it claims: every way around the lit
   for (const src of accepted) assert.deepEqual(loose(src), [], "accepted: " + src);
 });
 
+test("census: every file under ui/ is in a named class, and the censuses read the modules class, every gated site's file among them", () => {
+  const parts = uiPartition();
+  assert.ok(parts["modules"].length > 100, "the censuses read ui/'s modules: " + parts["modules"].length);
+  for (const [f] of GATED) assert.ok(parts["modules"].includes(f), "a gated site's file is a module the censuses read: " + f);
+  assert.deepEqual(uiSources(), parts["modules"], "the censuses walk the modules class");
+});
+
+test("the file classes read what they claim: a module of every suffix esbuild reads as code is read by the censuses in any directory, a test or a types file of each is not, and a file of any other kind outside the named classes has no class", () => {
+  // synthetic names only: uiClassOf reads a name, and no fixture file may sit in ui/
+  const NAMES: Array<[string, string | null]> = [
+    ["webview/probe.ts", "modules"], ["webview/probe.tsx", "modules"], ["webview/probe.mts", "modules"], ["webview/probe.cts", "modules"],
+    ["webview/probe.js", "modules"], ["webview/probe.jsx", "modules"], ["webview/probe.mjs", "modules"], ["webview/probe.cjs", "modules"],
+    ["probe.ts", "modules"], ["webview/deep/er/probe.tsx", "modules"], ["webview/anchor-map-fixtures/probe.js", "modules"],
+    ["webview/probe.test.ts", "tests and types"], ["webview/probe.test.tsx", "tests and types"], ["webview/probe.test.mjs", "tests and types"],
+    ["webview/probe.test.cjs", "tests and types"], ["webview/probe.test.jsx", "tests and types"], ["webview/probe.d.ts", "tests and types"],
+    ["webview/probe.d.mts", "tests and types"], ["webview/probe.d.cts", "tests and types"],
+    ["webview/probe.css", "stylesheets"], ["webview/anchor-map-fixtures/probe.json", "the anchor map's fixtures"],
+    ["webview/anchor-map-fixtures/.gitattributes", "the anchor map's fixtures"], ["README.md", "ui's own markdown"],
+    ["webview/probe.html", null], ["webview/probe.json", null], ["webview/probe.md", null], ["webview/probe.vue", null],
+    ["webview/probe", null], ["webview/anchor-map-fixtures/deeper/probe.md", null],
+  ];
+  const wrong = NAMES.filter(([n, want]) => uiClassOf(n) !== want).map(([n, want]) => n + ": " + uiClassOf(n) + ", not " + want);
+  assert.deepEqual(wrong, [], "each synthetic name's class (UI_CLASSES, tried in order)");
+});
+
+test("the partition fails on a file no class takes, naming it, and walks every directory but node_modules and dist", () => {
+  // a synthetic tree in a temporary root outside ui/ (uiPartition reads the root it is handed)
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsl-partition-"));
+  try {
+    for (const d of ["webview/deep", "node_modules/pkg", "dist"]) fs.mkdirSync(path.join(root, d), { recursive: true });
+    for (const f of ["README.md", "webview/a.ts", "webview/deep/b.tsx", "webview/a.test.ts", "webview/s.css", "node_modules/pkg/x.vue", "dist/y.html"]) {
+      fs.writeFileSync(path.join(root, f), "");
+    }
+    assert.deepEqual(uiPartition(root)["modules"], ["webview/a.ts", "webview/deep/b.tsx"], "the modules, at any depth; node_modules and dist not walked");
+    fs.writeFileSync(path.join(root, "webview", "stray.vue"), "");
+    assert.throws(() => uiPartition(root), /every file under ui\/ is in one of the named classes[^]*webview\/stray\.vue \(\.vue\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("every parse site reads a file under its own suffix's kind: a .tsx or .jsx module's JSX element hides no listener and no road after it", () => {
+  assert.deepEqual([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"].map((x) => ts.ScriptKind[kindOfUi("webview/probe" + x)]),
+    ["TS", "TSX", "TS", "TS", "JS", "JSX", "JS", "JS"]);
+  const jsx = "const v = <div a={1}>{\"x\"}</div>; ";
+  for (const file of ["webview/probe.tsx", "webview/probe.jsx"]) {
+    assert.deepEqual(sitesIn(file, jsx + "window.addEventListener(\"message\", (e) => { go(e.data); });").map((x) => x.receiver), ["window"], file + ": the listener after the element");
+    assert.notDeepEqual(looseRoads(file, jsx + "frames[0][k] = f;").loose, [], file + ": the road after the element");
+  }
+});
+
+test("an imported event name is read from the one file esbuild bundles for its base: a lone .tsx, .ts or .jsx is read, and a base with two code siblings is refused", () => {
+  // a synthetic pair in a temporary root outside ui/ (exportedString reads the root it is handed)
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsl-resolve-"));
+  try {
+    fs.mkdirSync(path.join(root, "webview"));
+    const put = (name: string, v: string) => fs.writeFileSync(path.join(root, "webview", name), "export const EV = \"" + v + "\";\n");
+    put("lone-tsx.tsx", "romp:from-tsx"); put("lone-ts.ts", "romp:from-ts"); put("lone-jsx.jsx", "romp:from-jsx");
+    put("pair.tsx", "message"); put("pair.ts", "click");
+    put("pair2.jsx", "message"); put("pair2.js", "click");
+    assert.deepEqual(exportedString("webview/lone-tsx", "EV", root), ["romp:from-tsx"], "a .tsx is a module esbuild resolves");
+    assert.deepEqual(exportedString("webview/lone-ts", "EV", root), ["romp:from-ts"]);
+    assert.deepEqual(exportedString("webview/lone-jsx", "EV", root), ["romp:from-jsx"]);
+    assert.equal(exportedString("webview/pair", "EV", root), null, "a .tsx and a .ts on one base are refused (esbuild bundles the .tsx)");
+    assert.equal(exportedString("webview/pair2", "EV", root), null, "a .jsx and a .js on one base are refused (esbuild bundles the .jsx)");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // ── the census: no other road to a window listener ──
 //
 // The censuses above read what the source spells: an addEventListener call, an onmessage assignment, the names they
 // reach. More roads reach a window listener without spelling either, and this census refuses each in a ui/ source file
-// (tests excluded), read by the TypeScript parser:
-//   - a method of the window read by a name computed at run time. The window (windowRef) is window, self, globalThis and
-//     the windows a script can name (frames, which is the window itself; top; parent; opener), unshadowed, and any of them
-//     reached through another (window.frames, parent.top); a document's defaultView and a frame's contentWindow, whatever
-//     holds them; a local initialised to any of these, or destructured from one (const { frames: w } = window); and
-//     `this` where it is the global object (a plain function's or the file's own `this`, outside any class or method). A
-//     prototype holds the same methods (protoRef): every DOM interface's chain ends at EventTarget.prototype, which holds
-//     addEventListener, so X.prototype for any X, any __proto__, and what Object.getPrototypeOf or Reflect.getPrototypeOf
-//     returns count with the window. Refused on either: a member read by a computed name (window["add" + "EventListener"],
-//     a template, a variable key), whether called, assigned or read; Reflect.get, Reflect.getOwnPropertyDescriptor or
-//     Object.getOwnPropertyDescriptor with a key that is not a literal, and Object.getOwnPropertyDescriptors, which hands
-//     on every member under its name; a destructuring pattern with a computed key (const { [k]: add } = window); and a
-//     reflective write whose key or keys are computed (Reflect.set, Reflect.defineProperty, Object.defineProperty or
-//     __defineSetter__ with a key that is not a literal; Object.assign or Object.defineProperties from an object literal
-//     with a computed key or a spread; a new prototype for the window);
-//   - a function run with the window as its `this`, however the function was reached: .call, .apply or .bind with the
+// (tests excluded), read by the TypeScript parser. It resolves what a receiver is by its binding (refKind):
+//   - this page's own window: window, self and globalThis, unshadowed; any of them reached through another
+//     (window.self); this page's document's defaultView (document unshadowed, or this window's document, or a local
+//     initialised to one); a local initialised to any of these or destructured from one (const { defaultView } =
+//     document); and `this` where it is the global object (a plain function's or the file's own, outside any class or
+//     method);
+//   - a window other than this page's own: frames (which a browser answers with the window itself; refused with the rest
+//     here, so no reader has to know that), top, parent and opener, unshadowed; any of those reached through a window
+//     (window.parent, parent.top), and anything reached through another window; an indexed window (frames[0], window[0],
+//     a frame's); a frame's contentWindow; the defaultView of any document the census cannot tell is this page's
+//     (el.ownerDocument.defaultView); and an event's view, target, currentTarget or srcElement, each of which can hold a
+//     window; and a local initialised to any of these or destructured from one (const { parent: p } = window);
+//   - the body element, whose onmessage is its window's: the body of any document (this page's, a window's, any
+//     ownerDocument or contentDocument, a local initialised to one) and a local initialised to it or destructured from a
+//     document (const { body } = document).
+// Refused:
+//   - a method of a window (this page's or another), of the body element or of a prototype read by a name computed at
+//     run time. A prototype holds the same methods (protoRef): every DOM interface's chain ends at EventTarget.prototype,
+//     which holds addEventListener, so X.prototype for any X, any __proto__, and what Object.getPrototypeOf or
+//     Reflect.getPrototypeOf returns count with the window. Refused on any of them: a member read by a computed name
+//     (window["add" + "EventListener"], a template, a variable key), whether called, assigned or read; Reflect.get,
+//     Reflect.getOwnPropertyDescriptor or Object.getOwnPropertyDescriptor with a key that is not a literal, and
+//     Object.getOwnPropertyDescriptors, which hands on every member under its name; a destructuring pattern with a
+//     computed key (const { [k]: add } = window); and a reflective write whose key or keys are computed (Reflect.set,
+//     Reflect.defineProperty, Object.defineProperty or __defineSetter__ with a key that is not a literal; Object.assign or
+//     Object.defineProperties from an object literal with a computed key or a spread; a new prototype for the window);
+//   - a function run with a window as its `this`, however the function was reached: .call, .apply or .bind with the
 //     window named as the first argument (or the second, on a .call or .apply of .call or .apply), and Reflect.apply with
 //     the window as its second. A method of any other EventTarget (an element, the document) read by a computed name
 //     registers on the window this way, or with no receiver at all (below). `this` does not count as the window here:
 //     a wrapper passes its own `this` on (md-block-start.ts's, which marked calls with its lexer), and that is disclosed;
-//   - an onmessage handler set any way but a plain assignment the census above reads: the name onmessage may be an
-//     assignment's target (x.onmessage = f; on the window that is a census site), a member of a type, or a read that is
-//     only tested, and nothing else (Object.assign(window, { onmessage: f }), Reflect.set(window, "onmessage", f),
-//     window.onmessage ??= f are refused);
+//   - an onmessage or onmessageerror handler set any way but a plain assignment this census accepts. The name may be an
+//     assignment's target, a member of a type, or a read that is only tested, and nothing else (Object.assign(window,
+//     { onmessage: f }), Reflect.set(window, "onmessage", f), window.onmessage ??= f are refused). The assignment is
+//     accepted in three cases only: on this page's own window or the bare global, where it is a census site above; on
+//     any other receiver but another window, when the value sets no handler (null, or an unshadowed undefined, at the
+//     end of an assignment chain: dead.onopen = dead.onmessage = null); and on a WebSocket, a const, let or var (never a
+//     parameter, a catch clause's name or a for...in or for...of head's) whose initialiser, every plain assignment to it
+//     and every other `var` of its name in its var scope is `new WebSocket(...)`, the constructor unshadowed, with no
+//     other write to it (a compound assignment, ++ or --, destructuring, a for...in or for...of head). A window other than
+//     this page's own is refused whatever the value, and so is every receiver the census resolves to neither this page's
+//     window nor a socket: the body element, a parameter, a call's result, an object's property, a MessagePort, a
+//     worker, a channel;
+//   - a message or messageerror listener added to a window other than this page's own (parent.addEventListener(...)),
+//     where a check at its head could not be about this page's senders;
 //   - code run from a string: eval, the Function constructor (by name, or reached through a function's .constructor),
-//     and setTimeout or setInterval handed a string.
+//     and setTimeout or setInterval handed a string;
+//   - a `with` statement, which answers any name inside it from an object the census cannot read (a write to a socket's
+//     binding, the WebSocket constructor, undefined);
+//   - the name WebSocket, as a name or a string, anywhere but as the constructor a `new` calls (bare or as a member) and
+//     in a type: a replaced global WebSocket (window.WebSocket = f, Object.defineProperty(window, "WebSocket", ...), a
+//     class of that name) would make the socket the census accepts any object.
 // ui/ has none of these today, so the rules cost nothing. What they cannot see, disclosed:
-//   - the window held where no initialiser shows it: in a parameter, in a let or var assigned later, behind a comma,
-//     conditional, || or ?? expression, in a Proxy, in an object or array it was put in, or returned by a function;
+//   - a window held where no initialiser shows it: in a parameter, in a let or var assigned later, behind a comma,
+//     conditional, || or ?? expression, in a Proxy, in an object or array it was put in, or returned by a function
+//     (Object(window) among them), and nested more than four names deep. An onmessage handler set on such a receiver is
+//     refused (the census resolves it to nothing); a method read off it by a computed name is not;
+//   - the body element reached other than as a document's body: a query for it, a frameset,
+//     document.documentElement.lastElementChild. A member written on it under a computed key sets its window's handler;
+//   - an event's source under a computed key (e.source[k] = f): source cannot join the event members above, since two
+//     live reads index an object's `source` string;
 //   - a method of another EventTarget (an element, the document) read by a computed name and called with no receiver:
-//     WebIDL runs an operation called with no `this` on the global object, so `const add = document.body[k];
+//     WebIDL runs an operation called with no `this` on the global object, so `const add = document.documentElement[k];
 //     add("message", f)` registers on the window; and such a method run on `this` where `this` is the window;
 //   - a reflective function under another name (const R = Reflect; R.get(window, k)), and a Function.prototype.call
 //     reached any way but by name;
 //   - an object built elsewhere with a computed key and copied onto the window (Object.assign(window, make()) is read as
 //     its call only), and a key computed in another module and passed to a reflective read or write through a helper;
+//   - a top-level var of a classic script rebound through the global object (this.ws = window, window.ws = window): the
+//     census reads a var's writes by its name. No ui/ source runs as a classic script today: esbuild bundles each, and
+//     the kernel inlines romp-timeline-view.js inside a function;
 //   - code handed to the DOM as markup or a URL (a script element, an inline handler attribute, a javascript: URL),
 //     which is no JavaScript the parser reads.
 
-/** The names a script reaches a window by: its own (window, self, globalThis) and the windows it can name (frames, which
- *  is the window itself; top; parent; opener). */
-const WINDOW_GLOBALS = new Set(["window", "self", "globalThis", "frames", "top", "parent", "opener"]);
-/** The members that are a window whatever holds them: a document's window and a frame's. */
-const WINDOW_MEMBERS = new Set(["defaultView", "contentWindow"]);
+/** The windows a script can name that are not its own (WINDOW_NAMES are its own): frames, top, parent and opener. */
+const OTHER_WINDOW_NAMES = new Set(["frames", "top", "parent", "opener"]);
+/** Every name a script reaches a window by: its own and the others. */
+const WINDOW_GLOBALS = new Set([...WINDOW_NAMES, ...OTHER_WINDOW_NAMES]);
+/** The members that are a window whatever holds them: a document's window, a frame's, and an event's view, target,
+ *  currentTarget and srcElement. A defaultView is this page's own window when its document is this page's (memberKind);
+ *  every other one of these is a window the census cannot tell from another. */
+const WINDOW_MEMBERS = new Set(["defaultView", "contentWindow", "view", "target", "currentTarget", "srcElement"]);
 /** The name of `x.name`, or of `x["name"]` with a literal key; else null. */
 const memberName = (n: any): string | null => ts.isPropertyAccessExpression(n) ? n.name.text
   : ts.isElementAccessExpression(n) && n.argumentExpression && ts.isStringLiteralLike(n.argumentExpression) ? n.argumentExpression.text : null;
-/** Whether `n` is a window: one of WINDOW_GLOBALS unshadowed, one of them reached through another (window.frames,
- *  parent.top), a WINDOW_MEMBERS member of anything (document.defaultView), a local initialised to any of these or
- *  destructured from one (const { frames: w } = window; const { defaultView } = document), or, unless `noThis`, `this`
- *  where it is the global object. */
-function windowRef(n: any, depth = 0, noThis = false): boolean {
-  n = unwrap(n);
-  if (depth > 4) return false;
-  if (n.kind === ts.SyntaxKind.ThisKeyword) {
-    if (noThis) return false;
-    for (let s = n.parent; s; s = s.parent) {
-      if (ts.isArrowFunction(s)) continue;
-      if (ts.isClassLike(s) || ts.isMethodDeclaration(s) || ts.isConstructorDeclaration(s) || ts.isGetAccessor(s) || ts.isSetAccessor(s)
-          || ts.isClassStaticBlockDeclaration(s) || ts.isPropertyDeclaration(s)) return false;
-      if (ts.isFunctionDeclaration(s) || ts.isFunctionExpression(s)) return !(ts.isPropertyAssignment(outer(s).parent) || ts.isObjectLiteralExpression(outer(s).parent));
-      if (ts.isSourceFile(s)) return true;
-    }
-    return false;
+/** What a receiver is, by binding: this page's own window, a window other than this page's own (or one the census cannot
+ *  tell from another), this page's document, a document the census cannot tell is this page's, or a document's body
+ *  element, which reflects its window's event handlers. */
+type RefKind = "window" | "otherWindow" | "document" | "otherDocument" | "body";
+/** The kind of member `key` of something of kind `from` (null: resolved to nothing), or null. */
+function memberKind(from: RefKind | null, key: string): RefKind | null {
+  if (WINDOW_MEMBERS.has(key)) return key === "defaultView" && from === "document" ? "window" : "otherWindow";
+  if (key === "ownerDocument" || key === "contentDocument") return "otherDocument";
+  if (from === "window" || from === "otherWindow") {
+    if (WINDOW_NAMES.has(key)) return from;
+    if (OTHER_WINDOW_NAMES.has(key)) return "otherWindow";
+    if (key === "document") return from === "window" ? "document" : "otherDocument";
   }
-  const name = memberName(n);
-  if (name !== null) return WINDOW_MEMBERS.has(name) || (WINDOW_GLOBALS.has(name) && windowRef(n.expression, depth + 1, noThis));
-  if (!ts.isIdentifier(n)) return false;
-  const d = declOf(n);
-  if (!d) return WINDOW_GLOBALS.has(n.text);
-  if (!ts.isVariableDeclaration(d) || !d.initializer) return false;
-  if (ts.isIdentifier(d.name)) return windowRef(d.initializer, depth + 1, noThis);
-  return windowFromPattern(d.name, n.text, windowRef(d.initializer, depth + 1, noThis));
+  if ((from === "document" || from === "otherDocument") && key === "body") return "body";
+  return null;
 }
-/** Whether destructuring `pattern` (from a window, when `fromWindow`) binds `name` to a window: under a WINDOW_GLOBALS key
- *  of a window, or a WINDOW_MEMBERS key of anything, at any depth. */
-function windowFromPattern(pattern: any, name: string, fromWindow: boolean): boolean {
-  if (!ts.isObjectBindingPattern(pattern)) return false;
-  for (const e of pattern.elements) {
-    const key = e.propertyName ? (ts.isIdentifier(e.propertyName) || ts.isStringLiteralLike(e.propertyName) ? e.propertyName.text : null)
-      : (ts.isIdentifier(e.name) ? e.name.text : null);
-    const isWindow = key !== null && (WINDOW_MEMBERS.has(key) || (fromWindow && WINDOW_GLOBALS.has(key)));
-    if (ts.isIdentifier(e.name)) { if (e.name.text === name) return isWindow; }
-    else if (bindsName(e.name, name)) return windowFromPattern(e.name, name, isWindow);
+/** Whether an element access's key is an index: a numeric literal or an all-digit string (frames[0], window["0"]). */
+const isIndexKey = (k: any): boolean => { const u = k && unwrap(k); return !!u && (ts.isNumericLiteral(u) || (ts.isStringLiteralLike(u) && /^\d+$/.test(u.text))); };
+/** Whether `this` at `n` is the global object: in a plain function (not a method, a class's, or an object literal's
+ *  function) or at the file's top, through any arrow functions. */
+function thisIsGlobal(n: any): boolean {
+  for (let s = n.parent; s; s = s.parent) {
+    if (ts.isArrowFunction(s)) continue;
+    if (ts.isClassLike(s) || ts.isMethodDeclaration(s) || ts.isConstructorDeclaration(s) || ts.isGetAccessor(s) || ts.isSetAccessor(s)
+        || ts.isClassStaticBlockDeclaration(s) || ts.isPropertyDeclaration(s)) return false;
+    if (ts.isFunctionDeclaration(s) || ts.isFunctionExpression(s)) return !(ts.isPropertyAssignment(outer(s).parent) || ts.isObjectLiteralExpression(outer(s).parent));
+    if (ts.isSourceFile(s)) return true;
   }
   return false;
 }
+/** The kind `n` resolves to by its binding, or null: WINDOW_NAMES unshadowed are this page's own window,
+ *  OTHER_WINDOW_NAMES another, `document` unshadowed this page's document; a member by memberKind; an indexed window
+ *  (frames[0], window[0]) is a frame's, another; a local initialised to any of these, or destructured from one, the kind
+ *  its initialiser gives (patternKind); and, unless `noThis`, `this` where it is the global object, this page's window.
+ *  Nested more than four deep, null. */
+function refKind(n: any, depth = 0, noThis = false): RefKind | null {
+  n = unwrap(n);
+  if (depth > 4) return null;
+  if (n.kind === ts.SyntaxKind.ThisKeyword) return !noThis && thisIsGlobal(n) ? "window" : null;
+  if (ts.isElementAccessExpression(n) && isIndexKey(n.argumentExpression)) {   // frames[0]: a frame's window
+    const k = refKind(n.expression, depth + 1, noThis);
+    return k === "window" || k === "otherWindow" ? "otherWindow" : null;
+  }
+  const name = memberName(n);
+  if (name !== null) return memberKind(refKind(n.expression, depth + 1, noThis), name);
+  if (!ts.isIdentifier(n)) return null;
+  const d = declOf(n);
+  if (!d) return WINDOW_NAMES.has(n.text) ? "window" : OTHER_WINDOW_NAMES.has(n.text) ? "otherWindow" : n.text === "document" ? "document" : null;
+  if (!ts.isVariableDeclaration(d) || !d.initializer) return null;
+  const from = refKind(d.initializer, depth + 1, noThis);
+  return ts.isIdentifier(d.name) ? from : patternKind(d.name, n.text, from);
+}
+/** The kind destructuring `pattern` from something of kind `from` binds `name` to: each key by memberKind, at any depth
+ *  (const { parent: p } = window; const { document: { body } } = window). */
+function patternKind(pattern: any, name: string, from: RefKind | null): RefKind | null {
+  if (!ts.isObjectBindingPattern(pattern)) return null;
+  for (const e of pattern.elements) {
+    const key = e.propertyName ? (ts.isIdentifier(e.propertyName) || ts.isStringLiteralLike(e.propertyName) ? e.propertyName.text : null)
+      : (ts.isIdentifier(e.name) ? e.name.text : null);
+    const k = key === null || e.dotDotDotToken ? null : memberKind(from, key);
+    if (ts.isIdentifier(e.name)) { if (e.name.text === name) return k; }
+    else if (bindsName(e.name, name)) return patternKind(e.name, name, k);
+  }
+  return null;
+}
+/** Whether `n` is a window, this page's own or another (refKind). */
+function windowRef(n: any, depth = 0, noThis = false): boolean {
+  const k = refKind(n, depth, noThis);
+  return k === "window" || k === "otherWindow";
+}
+/** Whether `n` is this page's own window (refKind): a handler set on it is a census site. */
+const ownWindowRef = (n: any): boolean => refKind(n) === "window";
+/** Whether `n` is a window other than this page's own, or one the census cannot tell from another (refKind). */
+const otherWindowRef = (n: any): boolean => refKind(n) === "otherWindow";
+/** Whether `n` is a document's body element (refKind), which reflects its window's event handlers. */
+const bodyRef = (n: any): boolean => refKind(n) === "body";
 /** The dotted name of a callee (Reflect.set, setTimeout, window.setTimeout, Reflect["get"]), or "". */
 const calleeName = (c: any): string => {
   c = unwrap(c);
@@ -1149,8 +1403,9 @@ function protoRef(n: any): boolean {
   if (name === "prototype" || name === "__proto__") return true;
   return ts.isCallExpression(n) && PROTO_READS.has(globalName(n.expression));
 }
-/** Whether a member read off `n` can be a window's method: `n` is a window or a prototype. */
-const holdsWindowMethods = (n: any): boolean => windowRef(n) || protoRef(n);
+/** Whether a member read off `n` can be a window's method or its handler: `n` is a window, a prototype, or the body element
+ *  (whose onmessage is its window's). */
+const holdsWindowMethods = (n: any): boolean => windowRef(n) || protoRef(n) || bodyRef(n);
 const isLiteralKey = (k: any): boolean => !!k && (ts.isStringLiteralLike(unwrap(k)) || ts.isNumericLiteral(unwrap(k)));
 /** Whether a destructuring pattern (a binding pattern, or an object literal an assignment destructures into) names a key
  *  computed at run time anywhere inside it. */
@@ -1166,9 +1421,83 @@ const REFLECT_KEYED = new Set(["Reflect.set", "Reflect.defineProperty", "Object.
 const REFLECT_SPREAD = new Set(["Object.assign", "Object.defineProperties"]);
 const REFLECT_PROTO = new Set(["Object.setPrototypeOf", "Reflect.setPrototypeOf"]);
 const RUN_ON = new Set(["call", "apply", "bind"]);
-/** Every road in `src` the comment above lists, with where it is and why, and how many onmessage names it read. */
+const isAssignOp = (k: number): boolean => k >= ts.SyntaxKind.FirstAssignment && k <= ts.SyntaxKind.LastAssignment;
+/** Whether an assignment's value, the last of a chain (a = b = null), sets no handler: null, or an unshadowed undefined. */
+function setsNoHandler(v: any): boolean {
+  v = unwrap(v);
+  while (ts.isBinaryExpression(v) && v.operatorToken.kind === ts.SyntaxKind.EqualsToken) v = unwrap(v.right);
+  return v.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(v) && v.text === "undefined" && !declOf(v));
+}
+/** The constructor whose instance's own onmessage handler the road census accepts: a WebSocket's, on which only its server
+ *  posts. Every other object that carries messages (a MessagePort, a worker, a BroadcastChannel, an EventSource) is refused. */
+const SOCKET_CTORS = new Set(["WebSocket"]);
+/** Whether `v` is `new WebSocket(...)` (or new window.WebSocket(...)), its root name unshadowed. */
+function isSocketNew(v: any): boolean {
+  v = unwrap(v);
+  if (!ts.isNewExpression(v)) return false;
+  let root = unwrap(v.expression);
+  while (ts.isPropertyAccessExpression(root)) root = unwrap(root.expression);
+  return ts.isIdentifier(root) && !declOf(root) && SOCKET_CTORS.has(globalName(v.expression));
+}
+/** The var scope a declaration's name is hoisted to. */
+const hoistedScope = (n: any): any => { let s = n.parent; while (s && !isVarScope(s)) s = s.parent; return s; };
+/** Whether `recv` is a name whose binding only ever holds a WebSocket: a const, let or var (never a parameter, a catch
+ *  clause's name, or a for...in or for...of head's, whose value comes from elsewhere) whose initialiser, every value a
+ *  plain assignment writes to it, and the initialiser of every other `var` of its name in its var scope are
+ *  new WebSocket(...) (isSocketNew). Any other write refuses: a compound assignment, ++ or --, destructuring, a for...in
+ *  or for...of head, a `var` of its name in such a head. */
+function socketBinding(recv: any, sf: any): boolean {
+  recv = unwrap(recv);
+  if (!ts.isIdentifier(recv)) return false;
+  const d = declOf(recv);
+  if (!d || !ts.isVariableDeclaration(d) || !ts.isIdentifier(d.name)) return false;
+  const loop = d.parent && d.parent.parent;
+  if (ts.isCatchClause(d.parent) || (loop && (ts.isForOfStatement(loop) || ts.isForInStatement(loop)))) return false;   // what was thrown, or the loop's value
+  const name = d.name.text;
+  const vals: any[] = d.initializer ? [d.initializer] : [];
+  let other = false;
+  const visit = (n: any): void => {
+    if (other) return;
+    if (ts.isIdentifier(n) && n.text === name && n !== d.name && ts.isVariableDeclaration(n.parent) && n.parent.name === n
+        && (n.parent.parent.flags & ts.NodeFlags.BlockScoped) === 0 && hoistedScope(n) === hoistedScope(d.name)) {
+      // another `var` of the name in the same var scope, matched by name (declOf resolves a for...in or for...of head's
+      // to the loop's own declaration): its initialiser is a write, and a loop head's value is no socket
+      if (n.parent.initializer) vals.push(n.parent.initializer);
+      const h = n.parent.parent.parent;
+      if (h && (ts.isForOfStatement(h) || ts.isForInStatement(h))) other = true;
+    } else if (ts.isIdentifier(n) && n.text === name && n !== d.name && declOf(n) === d) {
+      const m = outer(n), p = m.parent;
+      if (ts.isBinaryExpression(p) && p.left === m && p.operatorToken.kind === ts.SyntaxKind.EqualsToken) vals.push(p.right);
+      else if (ts.isBinaryExpression(p) && p.left === m && isAssignOp(p.operatorToken.kind)) other = true;
+      else if ((ts.isPrefixUnaryExpression(p) || ts.isPostfixUnaryExpression(p))
+               && (p.operator === ts.SyntaxKind.PlusPlusToken || p.operator === ts.SyntaxKind.MinusMinusToken)) other = true;
+      else {
+        for (let c: any = m, q: any = p; q; c = q, q = q.parent) {   // a destructuring target, or a loop head's
+          if (ts.isArrayLiteralExpression(q) || ts.isObjectLiteralExpression(q) || ts.isPropertyAssignment(q) || ts.isShorthandPropertyAssignment(q)
+              || ts.isSpreadElement(q) || ts.isSpreadAssignment(q) || ts.isParenthesizedExpression(q)) continue;
+          if (ts.isBinaryExpression(q) && q.left === c && isAssignOp(q.operatorToken.kind)) other = true;
+          if ((ts.isForOfStatement(q) || ts.isForInStatement(q)) && q.initializer === c) other = true;
+          break;
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return !other && vals.length > 0 && vals.every(isSocketNew);
+}
+/** Whether `n` is the constructor a `new` calls, bare (new WebSocket(u)) or as a member (new window.WebSocket(u)). */
+const isNewCallee = (n: any): boolean => {
+  const o = outer(n);
+  if (ts.isNewExpression(o.parent) && o.parent.expression === o) return true;
+  if (!ts.isPropertyAccessExpression(n.parent) || n.parent.name !== n) return false;
+  const m = outer(n.parent);
+  return ts.isNewExpression(m.parent) && m.parent.expression === m;
+};
+/** Every road in `src` the comment above lists, with where it is and why, and how many onmessage and onmessageerror names
+ *  it read. */
 function looseRoads(file: string, src: string): { onmessage: number; loose: LooseAdd[] } {
-  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, kindOfUi(file));
   const loose: LooseAdd[] = [];
   let onmessage = 0;
   const refuse = (n: any, why: string): void => {
@@ -1176,7 +1505,7 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
                  text: src.slice(Math.max(0, n.getStart(sf) - 30), Math.min(src.length, n.getEnd() + 40)).replace(/\s+/g, " ") });
   };
   const inType = (n: any): boolean => { for (let s = n.parent; s; s = s.parent) { if (ts.isTypeNode(s) || ts.isHeritageClause(s) && ts.isInterfaceDeclaration(s.parent)) return true; if (ts.isStatement(s) || ts.isExpression(s) && !ts.isIdentifier(s)) return false; } return false; };
-  const onmessageToken = (tok: any): void => {
+  const handlerToken = (tok: any): void => {
     const p = tok.parent;
     if ((ts.isPropertySignature(p) || ts.isMethodSignature(p)) && p.name === tok) return;   // a member of a type
     if (ts.isStringLiteralLike(tok) && ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.InKeyword && p.left === tok) return;
@@ -1186,23 +1515,39 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
     else if (ts.isIdentifier(tok) && !ts.isPropertyAccessExpression(p)) acc = tok;   // the bare global
     if (acc) {
       const m = outer(acc), q = m.parent;
-      if (ts.isBinaryExpression(q) && q.operatorToken.kind === ts.SyntaxKind.EqualsToken && q.left === m) return;   // x.onmessage = f
+      if (ts.isBinaryExpression(q) && q.operatorToken.kind === ts.SyntaxKind.EqualsToken && q.left === m) {   // x.onmessage = v
+        if (acc === tok || ownWindowRef(acc.expression)) return;   // the bare global, or this page's own window: a census site
+        if (otherWindowRef(acc.expression)) return refuse(tok, "an " + tok.text + " handler on a window other than this page's own, which no check at its head can be about");
+        if (setsNoHandler(q.right)) return;                         // null or undefined: it sets no handler
+        if (socketBinding(acc.expression, sf)) return;              // a WebSocket's own handler
+        return refuse(tok, "an " + tok.text + " handler on a receiver the census cannot resolve to this page's window or to a socket");
+      }
       if (onlyTested(acc)) return;
     }
-    refuse(tok, "an onmessage handler set some way other than an assignment the census reads");
+    refuse(tok, "an " + tok.text + " handler set some way other than an assignment the census reads");
   };
   const visit = (n: any): void => {
-    if ((ts.isIdentifier(n) || ts.isStringLiteralLike(n)) && n.text === "onmessage") { onmessage++; onmessageToken(n); }
+    if ((ts.isIdentifier(n) || ts.isStringLiteralLike(n)) && MESSAGE_HANDLERS.has(n.text)) { onmessage++; handlerToken(n); }
+    if (ts.isCallExpression(n) && n.arguments.length >= 1 && ts.isStringLiteralLike(n.arguments[0]) && MESSAGE_EVENTS.has(n.arguments[0].text)) {
+      const c = unwrap(n.expression);
+      if (memberName(c) === "addEventListener" && otherWindowRef(c.expression)) {
+        refuse(n, "a " + n.arguments[0].text + " listener added to a window other than this page's own, which no check at its head can be about");
+      }
+    }
+    if (ts.isWithStatement(n)) refuse(n, "a with statement, which answers the names inside it from an object the census cannot read");
+    if ((ts.isIdentifier(n) || ts.isStringLiteralLike(n)) && n.text === "WebSocket" && !inType(n) && !isNewCallee(n)) {
+      refuse(n, "the name WebSocket other than as the constructor a new calls, which could replace the socket the census accepts");
+    }
     if (ts.isElementAccessExpression(n) && !isLiteralKey(n.argumentExpression) && holdsWindowMethods(n.expression)) {
-      refuse(n, "a member of the window or of a prototype reached by a computed name, which the censuses cannot read");
+      refuse(n, "a member of a window, the body element or a prototype reached by a computed name, which the censuses cannot read");
     }
     if ((ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isBindingElement(n)) && n.initializer && ts.isObjectBindingPattern(n.name)
         && holdsWindowMethods(n.initializer) && computedKeyIn(n.name)) {
-      refuse(n, "a member of the window or of a prototype destructured by a computed key, which the censuses cannot read");
+      refuse(n, "a member of a window, the body element or a prototype destructured by a computed key, which the censuses cannot read");
     }
     if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isObjectLiteralExpression(unwrap(n.left))
         && holdsWindowMethods(n.right) && computedKeyIn(unwrap(n.left))) {
-      refuse(n, "a member of the window or of a prototype destructured by a computed key, which the censuses cannot read");
+      refuse(n, "a member of a window, the body element or a prototype destructured by a computed key, which the censuses cannot read");
     }
     if (ts.isIdentifier(n) && n.text === "eval" && !inType(n)) refuse(n, "eval, which runs code from a string");
     if (ts.isStringLiteralLike(n) && (n.text === "eval" || n.text === "Function") && ts.isElementAccessExpression(n.parent) && n.parent.argumentExpression === n) {
@@ -1227,18 +1572,18 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
         if (strings) refuse(n, base + " handed a string, which it runs as code");
       }
       if (args[0] && holdsWindowMethods(args[0])) {
-        if (REFLECT_READ.has(base) && !isLiteralKey(args[1])) refuse(n, base + " of the window or of a prototype with a computed key, which the censuses cannot read");
-        if (REFLECT_READ_ALL.has(base)) refuse(n, base + " of the window or of a prototype, which hands on every member under its name");
-        if (REFLECT_KEYED.has(base) && !isLiteralKey(args[1])) refuse(n, base + " onto the window or a prototype with a computed key, which the censuses cannot read");
+        if (REFLECT_READ.has(base) && !isLiteralKey(args[1])) refuse(n, base + " of a window, the body element or a prototype with a computed key, which the censuses cannot read");
+        if (REFLECT_READ_ALL.has(base)) refuse(n, base + " of a window, the body element or a prototype, which hands on every member under its name");
+        if (REFLECT_KEYED.has(base) && !isLiteralKey(args[1])) refuse(n, base + " onto a window, the body element or a prototype with a computed key, which the censuses cannot read");
         if (REFLECT_SPREAD.has(base)) {
           for (const a of args.slice(1)) {
             const o = unwrap(a);
             if (ts.isObjectLiteralExpression(o) && o.properties.some((pr: any) => ts.isSpreadAssignment(pr) || pr.name && ts.isComputedPropertyName(pr.name) && !isLiteralKey(pr.name.expression))) {
-              refuse(n, base + " onto the window or a prototype from an object with a computed key or a spread, which the censuses cannot read");
+              refuse(n, base + " onto a window, the body element or a prototype from an object with a computed key or a spread, which the censuses cannot read");
             }
           }
         }
-        if (REFLECT_PROTO.has(base)) refuse(n, base + " on the window or a prototype, which replaces what its methods are");
+        if (REFLECT_PROTO.has(base)) refuse(n, base + " on a window, the body element or a prototype, which replaces what its methods are");
       }
       const c = unwrap(n.expression), run = memberName(c);
       if (ts.isCallExpression(n) && run !== null && RUN_ON.has(run)) {
@@ -1250,7 +1595,7 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
       }
       if (base === "Reflect.apply" && args[1] && windowRef(args[1], 0, true)) refuse(n, "Reflect.apply with the window as its this, which the censuses cannot read");
       if ((run === "__defineSetter__" || run === "__defineGetter__") && holdsWindowMethods(c.expression) && !isLiteralKey(args[0])) {
-        refuse(n, run + " on the window or a prototype with a computed key, which the censuses cannot read");
+        refuse(n, run + " on a window, the body element or a prototype with a computed key, which the censuses cannot read");
       }
     }
     if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
@@ -1263,7 +1608,7 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
   return { onmessage, loose };
 }
 
-test("census: no ui/ source reaches a window listener by a computed name, runs a function with the window as its this, sets an onmessage handler other than by an assignment the census reads, or runs code from a string", () => {
+test("census: no ui/ source reaches a window listener by a computed name, runs a function with the window as its this, sets an onmessage handler other than by an assignment the census accepts, adds a message listener to another window, runs code from a string, holds a with statement, or names WebSocket but to construct one", () => {
   const bad: string[] = [];
   const readIn = new Map<string, number>();
   for (const f of uiSources()) {
@@ -1275,7 +1620,7 @@ test("census: no ui/ source reaches a window listener by a computed name, runs a
   assert.deepEqual(bad, [], "a road to a window listener the censuses cannot read: spell the registration so they can\n" + bad.join("\n"));
 });
 
-test("the road census reads what it claims: every road around the spelled registration is refused, and a socket's handler, a literal member and code that is no road are accepted", () => {
+test("the road census reads what it claims: every road around the spelled registration is refused, each for its reason, and a WebSocket's own handler, a handler cleared with null, a handler on this page's own window, a literal member and code that is no road are accepted", () => {
   const roads = (src: string, file = "webview/probe.ts") => looseRoads(file, src).loose.map((l) => l.why);
   const refused: Array<[string, string?]> = [
     ["window[\"add\" + \"EventListener\"](\"message\", f);"],
@@ -1359,7 +1704,7 @@ test("the road census reads what it claims: every road around the spelled regist
   ];
   for (const [src, file] of refused) assert.ok(roads(src, file).length >= 1, "refused: " + src);
   const accepted: Array<[string, string?]> = [
-    ["ws.onmessage = (ev: MessageEvent) => { go(ev.data); }; dead.onopen = dead.onmessage = dead.onclose = null;"],
+    ["const ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); }; const dead = c.ws; dead.onopen = dead.onmessage = dead.onclose = null;"],
     ["window.onmessage = f; self[\"onmessage\"] = g; onmessage = h;"],
     ["if (port.onmessage) go(); const has = \"onmessage\" in window; type T = { onmessage: ((e: unknown) => void) | null };"],
     ["window[\"addEventListener\"](\"resize\", f); const y = list[k]; w[k] = 1;"],
@@ -1380,6 +1725,125 @@ test("the road census reads what it claims: every road around the spelled regist
     ["Object.prototype.hasOwnProperty.call(n, \"_nid\"); Array.prototype.forEach.call(nodes, g); g.bind(obj); frames[0].focus();"],
   ];
   for (const [src, file] of accepted) assert.deepEqual(roads(src, file), [], "accepted: " + src);
+  // an onmessage or onmessageerror handler is accepted on this page's own window (a census site the census above holds),
+  // with a value that sets no handler, or on a binding that only ever holds a WebSocket; a message listener on this page's
+  // own window is a census site, no road
+  const handlerOk: Array<[string, string?]> = [
+    ["const ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };"],
+    ["let ws: WebSocket; ws = new WebSocket(u); ws.onmessage = (ev: MessageEvent) => { go(ev.data); };"],
+    ["let ws = new WebSocket(u); ws = new WebSocket(u2); ws.onmessage = f;"],
+    ["const ws = new window.WebSocket(u); ws.onmessage = f;"],
+    ["const ws = new WebSocket(u); ws.onmessage = f; function g() { var ws = window; return ws; }"],
+    ["var ws = new WebSocket(u); var ws = new WebSocket(u2); ws.onmessage = f;", "webview/probe.js"],
+    ["const dead = c.ws; dead.onopen = dead.onmessage = dead.onclose = dead.onerror = null;"],
+    ["document.body.onmessage = null; x.onmessage = undefined; y.onmessageerror = z.onmessage = null;"],
+    ["window.onmessageerror = f; document.defaultView.onmessage = g; const w = window; w.onmessage = h;"],
+    ["if (port.onmessage) go(); const has = \"onmessage\" in window; type T = { onmessage: ((e: unknown) => void) | null };"],
+    ["let t: WebSocket | null = null; type K = typeof WebSocket; const label = \"WebSocket closed\";"],
+    ["window.addEventListener(\"messageerror\", f); self.addEventListener(\"message\", g);"],
+  ];
+  const missed: string[] = [];
+  for (const [src, file] of handlerOk) { const got = roads(src, file); if (got.length) missed.push("not accepted: " + src + " (refused for: " + JSON.stringify(got) + ")"); }
+  // every other road, each refused for the reason named. A handler on a window other than this page's own, or on a
+  // receiver the census resolves to neither this page's window nor a socket, is refused and is no census site
+  const OTHER_WINDOW = /handler on a window other than this page's own/;
+  const UNRESOLVED = /handler on a receiver the census cannot resolve to this page's window or to a socket/;
+  const COMPUTED = /reached by a computed name|destructured by a computed key|with a computed key|from an object with a computed key|run with the window as its this/;
+  const byReason: Array<[RegExp, boolean, Array<[string, string?]>]> = [
+    // a window other than this page's own, whatever the value
+    [OTHER_WINDOW, true, [
+      ["frames.onmessage = f;"], ["top.onmessage = f;"], ["parent.onmessage = f;"], ["opener.onmessage = f;"], ["self.parent.onmessage = f;"],
+      ["window.frames.onmessage = f;"], ["globalThis.top.onmessage = f;"], ["(window as any).parent.onmessage = f;"], ["(window?.parent).onmessage = f;"],
+      ["window!.parent!.onmessage = f;"], ["el.ownerDocument.defaultView.onmessage = f;"], ["frame.contentWindow.onmessage = f;"],
+      ["top.document.defaultView.onmessage = f;"], ["const w = self.parent; w.onmessage = f;"], ["var w = frames; w.onmessage = f;"],
+      ["const { parent: p } = window; p.onmessage = f;"], ["const { frames: { top: t } } = window; t.onmessage = f;"],
+      ["frames[0].onmessage = f;"], ["window[0].onmessage = f;"], ["window[\"1\"].onmessage = f;"], ["parent.frames[0].onmessage = f;"],
+      ["window.frames.frames[0].onmessage = f;"], ["fr\\u0061mes.onmessage = f;"], ["top[\"onmessageerror\"] = f;"],
+      ["e.target.onmessage = f;"], ["ev.view.onmessage = f;"], ["e.currentTarget.onmessage = f;"], ["e.srcElement.onmessage = f;"],
+      ["parent.onmessage = null;"],
+    ]],
+    [/listener added to a window other than this page's own/, false, [
+      ["parent.addEventListener(\"message\", (e) => { go(e.data); });"], ["frames[0].addEventListener(\"message\", f);"],
+      ["top.addEventListener(\"messageerror\", f);"], ["frame.contentWindow.addEventListener(\"message\", f);"],
+      ["window.opener?.addEventListener(\"message\", f);"],
+    ]],
+    // a receiver the census cannot resolve to this page's window or to a socket
+    [UNRESOLVED, true, [
+      ["document.body.onmessage = f;"], ["document.body.onmessageerror = f;"], ["document.querySelector(\"body\").onmessage = f;"],
+      ["document.getElementsByTagName(\"frameset\")[0].onmessage = f;"], ["function g(w) { w.onmessage = f; }"],
+      ["let w; w = window; w.onmessage = f;"], ["const o = { w: window }; o.w.onmessage = f;"], ["getWin().onmessage = f;"],
+      ["(x || window).onmessage = f;"], ["window.window.window.window.window.window.onmessage = f;"], ["let w; (w = window).onmessage = f;"],
+      ["(0, window).onmessage = f;"], ["(c ? window : self).onmessage = f;"], ["const [w] = [window]; w.onmessage = f;"],
+      ["const { x: w = window } = {}; w.onmessage = f;"], ["for (const w of [window]) w.onmessage = f;"],
+      ["ws.onmessage = f;"], ["let ws = new WebSocket(u); ws = window; ws.onmessage = f;"],
+      ["let ws = new WebSocket(u); [ws] = [window]; ws.onmessage = f;"], ["let ws = new WebSocket(u); ({ ws } = { ws: window }); ws.onmessage = f;"],
+      ["let ws = new WebSocket(u); ({ x: ws = window } = {}); ws.onmessage = f;"], ["let ws = new WebSocket(u); [ws = window] = []; ws.onmessage = f;"],
+      ["let ws = new WebSocket(u); (() => { ws = window; })(); ws.onmessage = f;"], ["let ws = new WebSocket(u); ws ||= window; ws.onmessage = f;"],
+      ["const ws = new WebSocket(u); const ws2 = ws; ws2.onmessage = f;"], ["const ws = new Wrapper(u); ws.onmessage = f;"],
+      ["function g(ws = new WebSocket(u)) { ws.onmessage = f; }"], ["const g = (ws = new WebSocket(u)) => { ws.onmessage = f; };"],
+      ["let ws = new WebSocket(u); try { throw window; } catch (ws) { ws.onmessage = f; ws = new WebSocket(u); }"],
+      ["for (let ws of [window]) { ws.onmessage = f; ws = new WebSocket(u); }"],
+      ["const port = new MessageChannel().port1; port.onmessage = f;"], ["const wk = new Worker(u); wk.onmessage = f;"],
+      ["const bc = new BroadcastChannel(\"notes-api\"); bc.onmessage = f;"], ["const es = new EventSource(u); es.onmessage = f;"],
+      ["class C { m() { this.onmessage = f; } }"], ["const b = document.body; b[\"onmessage\"] = f;"],
+      ["function h(undefined) { document.body.onmessage = undefined; }", "webview/probe.js"],
+      ["x.onmessage = y = f;"],
+      // a constructor of the name WebSocket that is not the global one makes no socket (the name is refused below too)
+      ["class WebSocket { constructor() { return window; } } const ws = new WebSocket(u); ws.onmessage = f;"],
+      ["function g(WebSocket: any) { const ws = new WebSocket(u); ws.onmessage = f; }"],
+      // a var of the socket's name declared again in its var scope, or in a for...in or for...of head there
+      ["var ws = new WebSocket(u); var ws = window; ws.onmessage = f;", "webview/probe.js"],
+      ["var ws = new WebSocket(u); var ws: any = window; ws.onmessage = f;"],
+      ["var ws = new WebSocket(u); for (var ws of [window]) {} ws.onmessage = f;", "webview/probe.js"],
+      ["var ws = new WebSocket(u); for (var ws in o) {} ws.onmessage = f;", "webview/probe.js"],
+      ["var ws = new WebSocket(u); { var ws = window; } ws.onmessage = f;", "webview/probe.js"],
+      ["function g() { var ws = new WebSocket(u); if (c) { var ws = window; } ws.onmessage = f; }", "webview/probe.js"],
+    ]],
+    // a with statement answers the names inside it from its object
+    [/a with statement/, false, [
+      ["var ws = new WebSocket(u); with (o) { ws = window; } ws.onmessage = f;", "webview/probe.js"],
+      ["const o = { WebSocket: function () { return window; } }; with (o) { var ws = new WebSocket(u); } ws.onmessage = f;", "webview/probe.js"],
+      ["with ({ undefined: f }) { document.body.onmessage = undefined; }", "webview/probe.js"],
+      ["const o = { w: window }; with (o) { w.onmessage = f; }", "webview/probe.js"],
+      ["with (document.body) { onmessage = f; }", "webview/probe.js"],
+    ]],
+    // a global WebSocket replaced makes `new WebSocket(...)` any object
+    [/the name WebSocket other than as the constructor a new calls/, false, [
+      ["window.WebSocket = function () { return window; } as any; const ws = new WebSocket(u); ws.onmessage = f;"],
+      ["WebSocket = function () { return window; }; const ws = new WebSocket(u); ws.onmessage = f;", "webview/probe.js"],
+      ["Object.defineProperty(window, \"WebSocket\", { value: function () { return window; } }); const ws = new WebSocket(u); ws.onmessage = f;"],
+      ["globalThis.WebSocket = X; const ws = new window.WebSocket(u); ws.onmessage = f;"],
+      ["class WebSocket { constructor() { return window; } } const ws = new WebSocket(u); ws.onmessage = f;"],
+      ["Object.assign(window, { WebSocket: X }); const ws = new WebSocket(u); ws.onmessage = f;"],
+      ["const W = WebSocket; const ws = new W(u);"], ["if (x instanceof WebSocket) go();"],
+    ]],
+    // a member of an indexed window, of the body element or of an event's window member, by a computed name
+    [COMPUTED, false, [
+      ["frames[0][k] = f;"], ["Reflect.set(frames[0], k, f);"], ["Object.assign(window[0], { [k]: f });"],
+      ["Object.defineProperty(parent.frames[0], k, { value: f });"], ["Object.getOwnPropertyDescriptor(frames[0], k).set.call(frames[0], f);"],
+      ["window.frames.frames[0][k] = f;"], ["frames[0][\"add\" + \"EventListener\"](\"message\", f);"],
+      ["document.body[k] = f;"], ["const b = document.body; b[\"on\" + \"message\"] = f;"], ["window.document.body[k] = f;"],
+      ["Reflect.set(document.body, k, f);"], ["Object.assign(document.body, { [k]: f });"], ["document[\"body\"][k] = f;"],
+      ["const doc = document; doc.body[k] = f;"], ["const doc = document; Reflect.set(doc.body, k, f);"],
+      ["const { body } = document; body[k] = f;"], ["const { body: b } = document; b[k] = f;"], ["el.ownerDocument.body[k] = f;"],
+      ["const { document: { body } } = window; body[k] = f;"], ["frame.contentDocument.body[k] = f;"],
+      ["Reflect.set(HTMLBodyElement.prototype, k, f, document.body);"],
+      ["e.view[k] = f;"], ["Reflect.set(e.view, k, f);"], ["Object.assign(ev.view, { [k]: f });"], ["e.target[k] = f;"],
+      ["ev.currentTarget[k] = f;"], ["e.srcElement[k] = f;"],
+    ]],
+    // a messageerror handler set another way
+    [/an onmessageerror handler set some way other than an assignment the census reads/, false, [
+      ["Object.assign(window, { onmessageerror: f });"], ["Reflect.set(window, \"onmessageerror\", f);"], ["window.onmessageerror ??= f;"],
+    ]],
+  ];
+  for (const [why, noSite, rows] of byReason) {
+    for (const [src, file] of rows) {
+      const got = roads(src, file);
+      if (!got.some((w) => why.test(w))) missed.push("not refused for " + why + ": " + src + " (refused for: " + JSON.stringify(got) + ")");
+      if (noSite && sitesIn(file || "webview/probe.ts", src).some((x) => x.kind === "onmessage")) missed.push("an onmessage site: " + src);
+    }
+  }
+  assert.deepEqual(missed, [], "a handler the census accepts refused, a road not refused for its reason, or a refused handler that is a census site:\n" + missed.join("\n"));
 });
 
 type Leg = { site: string; arm?: string };   // a leg's listener (file:line) and the arm it names, if any
@@ -1483,9 +1947,10 @@ test("the census rule reads what it claims: a listener that acts before the chec
   assert.match(String(probe('(e) => { if (!e.data || note(e.data)) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a call in an early return's condition is an arm");
   assert.match(String(probe('(e) => { const m = e.data; if (m) seen = m; if (windowSender(e) === "foreign") return; }')), /runs before/);
   // a getter read, or a value coerced by a loose or relational operator, in an early return's condition runs an arm before
-  // the check: a property or element access reads off nothing but the event or a message read (a MessageEvent's data is a
-  // structured clone with no accessors), and ==, !=, <, >, <=, >=, in, instanceof and a substituted template are refused
-  // (the strict === and !== stay). Every listener's real pre-check still passes.
+  // the check: a property or element access reads nothing but the event's data (any depth: a structured clone with no
+  // accessors), one level of the event's own origin, source, ports or lastEventId, or a message read (any depth), and ==,
+  // !=, <, >, <=, >=, in, instanceof and a substituted template are refused (the strict === and !== stay). Every
+  // listener's real pre-check still passes.
   assert.match(String(probe('(e) => { const m = e.data; if (m && m.type === "hostUp" && !kick.go) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a getter read off a free object");
   assert.match(String(probe('(e) => { if (kick.go) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a getter read off a free object, no message read");
   assert.match(String(probe('(e) => { const m = e.data; if (m[go()]) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a call in an element-access index of a message read");
@@ -1493,6 +1958,15 @@ test("the census rule reads what it claims: a listener that acts before the chec
   assert.match(String(probe('(e) => { const m = e.data; if (m.type > kick) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a relational operator coerces its operand");
   assert.match(String(probe('(e) => { const m = e.data; if (m.type instanceof Kick) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "instanceof runs Symbol.hasInstance");
   assert.match(String(probe('(e) => { const m = e.data; if (`${kick}`) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a substituted template coerces its expression");
+  // the event's target, currentTarget and srcElement are the receiving window, its view is a window, and a member of its
+  // source is a member of the sending window: a read through any of them can run a getter the page defined
+  const preCheck = (c: string) => probe("(e) => { if (" + c + ") return; if (windowSender(e) === \"foreign\") return; }");
+  assert.deepEqual(["e.target.x.y", "e.currentTarget.x.y", "e.srcElement.x.y", "e.source.parent.x.y", "e.target.x", "e.source.top", "e.view",
+                    "e.ports.length", "e[\"source\"][\"opener\"]", "e[k]"].filter((c) => !/runs before/.test(String(preCheck(c)))), [],
+    "a read through the event beyond its own attributes, accepted ahead of the check");
+  assert.deepEqual(["e.origin === \"null\"", "!e.source", "e.data && e.data.type === \"x\"", "!e.ports", "e.lastEventId === \"\"", "e[\"data\"].a.b.c",
+                    "!e[\"origin\"]"].filter((c) => preCheck(c) !== null), [],
+    "one level of the event's own attributes, or its data at any depth, refused ahead of the check");
   assert.equal(probe('(e) => { const m = e.data; if (!m) return; if (windowSender(e) === "foreign") return; }'), null, "the file browser's pre-check");
   assert.equal(probe('(e) => { const m = e.data; if (!m || !live) return; if (windowSender(e) === "foreign") return; }'), null, "the comments panel's pre-check reads a bare closure name");
   assert.equal(probe('(e) => { const m = e.data; if (!m || m.type !== "settingsSync" || !m.settings) return; if (windowSender(e) === "foreign") return; }'), null, "the settings sync's pre-check reads only the message");
