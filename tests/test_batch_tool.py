@@ -2038,12 +2038,13 @@ class VerifyBehind(_Base):
         self.assertEqual(fx.calls("pr", "merge"), [], "nothing merged")
 
 
-# A gh for one test: on the repository-settings read (which land makes after its verify) it pushes one
-# commit to main from the author clone, once, then hands every call to the fake gh.
+# A gh for one test: on the first call that starts with MOVE_MAIN_ON (default the repository-settings read, which land
+# makes after its verify) it pushes one commit to main from the author clone, once, then hands every call to the fake gh.
 MOVE_MAIN_GH = r"""#!%(python)s
 import os, subprocess, sys
 flag = os.environ["MOVE_MAIN_AUTHOR"] + ".moved"
-if sys.argv[1:3] == ["repo", "view"] and not os.path.exists(flag):
+on = os.environ.get("MOVE_MAIN_ON", "repo view").split()
+if sys.argv[1:1 + len(on)] == on and not os.path.exists(flag):
     open(flag, "w").close()
     a = os.environ["MOVE_MAIN_AUTHOR"]
     run = lambda *c: subprocess.run(["git", *c], cwd=a, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -2492,9 +2493,16 @@ class LandAndFinish(_Base):
         self.assertFalse(os.path.exists(fx.wt("b1")))
         self.assertEqual(fx.dev_git("rev-parse", "--verify", "--quiet", "batch/b1", check=False), "")
         self.assertIn("batch #900 landed, 2 member(s) marked merged; no CI runs on the merge to main; "
-                      "the batch head's CI run: https://example.invalid/actions/runs/1", p.stdout)
-        self.assertEqual(fx.calls("run", "list")[-1], ["run", "list", "--workflow", "ci.yml", "--commit", tip, "--limit", "1", "--json", "url"],
-                         "finish names the CI run of the batch head, not the newest run of any workflow on main")
+                      "the batch head's CI run: green, https://example.invalid/actions/runs/1", p.stdout)
+        # Round 1, correctness-7: finish reads the run with land's own filtered read (batch_ci_run), not the newest run of
+        # any event at the commit.
+        self.assertEqual(fx.calls("run", "list")[-1], ["run", "list", "--workflow", "ci.yml", "--branch", "batch/b1", "--event", "push",
+                                                       "--commit", tip, "--limit", "20", "--json", batch.CI_RUN_FIELDS],
+                         "finish names the CI run of the push to the batch branch at the head, the one land gated on")
+        self.assertEqual(len(fx.calls("run", "list")), 2, "land's read before the merge and finish's after it")
+        # Pre-round item 4: the merge commit's first parent is the main verify read, so finish reports nothing loud.
+        self.assertNotIn("FIRST PARENT", p.stdout + p.stderr)
+        self.assertEqual(fx.state("b1")["finished"]["report"]["first_parent"], {"merge": main_after, "first_parent": main_before, "verified_main": main_before, "ok": True})
         self.assertIn("retargeted to main: #112", p.stdout)
         self.assertIn("pr-orphans.sh: clean", p.stdout)
         rep = fx.state("b1")["finished"]["report"]
@@ -2502,6 +2510,105 @@ class LandAndFinish(_Base):
         self.assertEqual(rep["deleted"], ["a", "b"], "the fake keeps indirectly merged heads, so finish deleted them and said so")
         self.assertTrue(any("finish deleted head branches" in o for o in rep["observations"]))
         self.assertIn("postal (kind: coordinate) to the owners of #101, #102", p.stdout)
+
+    def test_finish_names_the_push_run_land_gated_on_not_a_later_manual_run_at_the_head(self):
+        """Round 1, correctness-7, regression-3 and extra7-9: finish named the newest ci.yml run of any event at the batch
+        head, so a manual run started after land's green push run (a macOS dispatch, red) was reported as the batch head's
+        run. It reads the run land gated on, and prints its case."""
+        fx = self.fx
+        self.ready()
+        tip = fx.state("b1")["assembly"]["head"]
+        fx.ci("b1", event="workflow_dispatch", conclusion="failure", sha=tip)
+        p = fx.ok("land", "b1")
+        self.assertNotIn("actions/runs/2", p.stdout, "the later manual run is not the batch head's run")
+        self.assertIn("the batch head's CI run: green, https://example.invalid/actions/runs/1", p.stdout)
+        self.assertEqual(fx.state("b1")["finished"]["report"]["ci"],
+                         {"case": "green", "url": "https://example.invalid/actions/runs/1", "status": "completed",
+                          "conclusion": "success", "error": None})
+
+    def test_finish_reports_the_ci_run_unread_after_the_merge_and_carries_on(self):
+        """finish runs after the merge, so a run list that fails there is reported as unread, with gh's error, and never
+        as "nothing merged"; the cleanup still runs and finish exits 0. A missing run is named as missing."""
+        fx = self.fx
+        self.ready()
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0)
+        p = fx.run("finish", "b1", gh_fail="run list")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("the batch head's CI run: unread after the merge: could not read the batch head's CI run (gh run list): "
+                      "fake gh: HTTP 502", p.stdout)
+        self.assertNotIn("nothing merged", p.stdout + p.stderr)
+        self.assertEqual(fx.bare_rev("batch/b1"), "", "the cleanup ran")
+        self.assertEqual(fx.state("b1")["finished"]["report"]["ci"]["case"], "unread")
+        fx.set_gh(runs=[])
+        tip = fx.state("b1")["assembly"]["head"]
+        p = fx.ok("finish", "b1")
+        self.assertIn("the batch head's CI run: missing: GitHub lists no run of ci.yml from a push to batch/b1 at %s" % tip, p.stdout)
+
+    def move_main_on(self, call):
+        """Hand the tool a gh that pushes one commit to main from the author clone on the first call starting with `call`,
+        then goes on to the fake gh."""
+        fx = self.fx
+        wrapper = os.path.join(fx.tmp, "gh-moves-main")
+        with open(wrapper, "w") as f:
+            f.write(MOVE_MAIN_GH % {"python": sys.executable})
+        os.chmod(wrapper, 0o755)
+        fx.env.update(ROMP_GH=wrapper, MOVE_MAIN_AUTHOR=fx.author, MOVE_MAIN_FAKE_GH=os.path.join(fx.bin, "gh"), MOVE_MAIN_ON=call)
+
+    def test_finish_reports_loudly_a_merge_whose_first_parent_is_not_the_main_verify_read(self):
+        """Pre-round item 4: a batch merged by hand after main moved lands a tree no sweep or CI run tested. finish does its
+        cleanup, then fails naming the merge commit, its first parent, the main verify read, and the remedy (a sweep at
+        the merge commit)."""
+        fx = self.fx
+        self.ready()
+        seen = fx.bare_rev("main")
+        moved = fx.commit_main({"README.md": "# notes-api\n\nmoved\n"}, "main moved")
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0, "the button reads nothing")
+        merge = fx.bare_rev("main")
+        p = fx.run("finish", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FIRST PARENT MISMATCH: batch PR #900's merge commit %s has first parent %s, not %s, the main verify read"
+                      % (merge, moved, seen), p.stderr)
+        self.assertIn("so the tree on main is not the batch head's tree, and no sweep or CI run tested it", p.stderr)
+        self.assertIn("`git worktree add --detach ../romp-merge-b1 %s`, then `scripts/sweep.py run --tree ../romp-merge-b1`"
+                      % merge, p.stderr)
+        self.assertIn("batch #900 landed, ", p.stdout, "the cleanup ran first")
+        self.assertEqual(fx.bare_rev("batch/b1"), "")
+        self.assertEqual(fx.state("b1")["finished"]["report"]["first_parent"], {"merge": merge, "first_parent": moved, "verified_main": seen, "ok": False})
+        p = fx.run("finish", "b1")
+        self.assertEqual(p.returncode, 1, "a re-run reports it again")
+        self.assertIn("FIRST PARENT MISMATCH", p.stderr)
+
+    def test_land_reports_a_main_move_its_last_read_could_not_catch(self):
+        """The Q1 residual as finish's loud report: main moves after land's last read, on the merge call itself, so the
+        merge lands on the moved main. land merges (the merge pins the head, not the base), and its finish fails naming
+        both shas."""
+        fx = self.fx
+        self.ready()
+        seen = fx.bare_rev("main")
+        self.move_main_on("pr merge")
+        p = fx.run("land", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("merged batch PR #900", p.stdout)
+        merge = fx.bare_rev("main")
+        parents = fx._git("rev-list", "--parents", "-n1", merge, cwd=fx.bare).split()[1:]
+        self.assertNotEqual(parents[0], seen, "the wrapper moved main before the merge")
+        self.assertIn("FIRST PARENT MISMATCH: batch PR #900's merge commit %s has first parent %s, not %s" % (merge, parents[0], seen),
+                      p.stderr)
+
+    def test_finish_with_no_main_recorded_by_verify_says_it_could_not_check(self):
+        fx = self.fx
+        self.ready()
+        path = os.path.join(fx.dev, ".git", "batch", "b1.json")
+        with open(path) as f:
+            st = json.load(f)
+        st["verified"]["main"] = None
+        with open(path, "w") as f:
+            json.dump(st, f)
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0)
+        p = fx.run("finish", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FIRST PARENT NOT CHECKED: batch PR #900's merge commit %s has first parent" % fx.bare_rev("main"), p.stderr)
+        self.assertIn("verify recorded no main for batch b1", p.stderr)
 
     def test_land_auto_needs_the_setting_and_rules_on_main_and_says_which(self):
         """--auto is refused by name until the repository allows auto-merge AND something is required

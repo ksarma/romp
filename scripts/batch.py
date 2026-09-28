@@ -2278,7 +2278,7 @@ def ci_attempt_gate(root, run, flakes):
              "url": rec.get("html_url") or run.get("url"), "flake": flakes[(rid, n)]} for n, rec in failed]
 
 
-def batch_ci_run(root, name, head):
+def batch_ci_run(root, name, head, tail="; nothing merged"):
     """The batch head's one GitHub run, read from GitHub now: the newest run of ci.yml that a push to
     batch/<name> started at exactly `head`. Returns (case, run): case is green (completed, success), pending
     (not completed), red (completed with any other conclusion) or missing (no such run; run None). gh's
@@ -2286,16 +2286,17 @@ def batch_ci_run(root, name, head):
     sha, event, branch or workflow never stands in for it. The newest is the latest createdAt, then the highest
     databaseId, whatever order gh lists the rows in; a matching row with no valid databaseId or createdAt (the
     zero time included) raises Fail naming it (round 1, extra4-4). A read that fails raises Fail with gh's error:
-    a failed read is not a missing run."""
+    a failed read is not a missing run. `tail` ends each Fail's text: land's says nothing merged, and finish,
+    which reads the same run after the merge, passes its own."""
     br = branch_of(name)
     proc = gh("run", "list", "--workflow", CI_WORKFLOW, "--branch", br, "--event", "push", "--commit", head, "--limit", "20",
               "--json", CI_RUN_FIELDS, cwd=root, check=False)
     if proc.returncode != 0:
-        raise Fail("could not read the batch head's CI run (gh run list): %s; nothing merged" % (proc.stderr + proc.stdout).strip())
+        raise Fail("could not read the batch head's CI run (gh run list): %s%s" % ((proc.stderr + proc.stdout).strip(), tail))
     try:
         rows = json.loads(proc.stdout or "[]")
     except json.JSONDecodeError as e:
-        raise Fail("gh run list returned something that is not JSON (%s); nothing merged" % e)
+        raise Fail("gh run list returned something that is not JSON (%s)%s" % (e, tail))
     runs = [r for r in (rows if isinstance(rows, list) else []) if isinstance(r, dict) and r.get("headSha") == head
             and r.get("event") == "push" and r.get("headBranch") == br and r.get("workflowName") == CI_WORKFLOW_NAME]
     if not runs:
@@ -2304,8 +2305,8 @@ def batch_ci_run(root, name, head):
         fault = run_row_fault(r)
         if fault:
             raise Fail("the batch head's CI run cannot be chosen: gh run list gave a matching run (%s) with %s; the newest run "
-                       "decides, and a row that cannot be ordered by time and id is refused, not guessed at; nothing merged"
-                       % (r.get("url") or "no url", fault))
+                       "decides, and a row that cannot be ordered by time and id is refused, not guessed at%s"
+                       % (r.get("url") or "no url", fault, tail))
     run = max(runs, key=lambda r: (run_created(r["createdAt"]), r["databaseId"]))
     if run.get("status") != "completed":
         return "pending", run
@@ -2444,6 +2445,14 @@ def cmd_finish(args):
     merge_sha = (bpr.get("mergeCommit") or {}).get("oid")
     if merge_sha and not is_ancestor(merge_sha, remote_main(), root):
         raise Fail("batch PR #%d's merge commit %s is not an ancestor of %s; was it squashed or rebased?" % (b, short(merge_sha), remote_main()))
+    # Pre-round item 4: the merge commit's first parent must be the main verify read. land reads main once more right
+    # before the merge call, but GitHub's merge pins the head, not the base, and the button or `gh pr merge` reads
+    # nothing; a first parent that is another commit means main moved before the merge, so the tree on main is not the
+    # batch head's tree and no sweep or CI run tested it (none runs on main). Read here and reported loudly at the end,
+    # after the cleanup, which does not depend on it.
+    first_parent = {"merge": merge_sha, "first_parent": (parents_of(merge_sha, root) or [None])[0] if merge_sha else None,
+                    "verified_main": (state.get("verified") or {}).get("main")}
+    first_parent["ok"] = bool(first_parent["first_parent"]) and first_parent["first_parent"] == first_parent["verified_main"]
     members = members_by_n(state)
     landing = in_batch(state)
     member_refs = {members[e["n"]]["head_ref"] for e in landing} | {branch_of(args.name)}
@@ -2538,26 +2547,33 @@ def cmd_finish(args):
         git("branch", "-D", branch_of(args.name), cwd=root)
     orphans = _run([os.path.join(root, "scripts", "pr-orphans.sh")], cwd=root, check=False)
     report["orphans"] = {"exit": orphans.returncode, "out": (orphans.stdout + orphans.stderr).strip()}
-    # CI does not run on the merge to main: the run that tested the merged tree is ci.yml's run of the push
-    # to the batch branch, at the head that landed (the merge commit's tree is that head's).
-    run_url = "none found"
+    # CI does not run on the merge to main: the run that tested the batch head's tree is ci.yml's run of the push to
+    # the batch branch at the head that landed, read with batch_ci_run, the filtered read land gated on (the push
+    # event, batch/<name>, ci.yml by its name, the sha checked on every row), so a manual or scheduled run at the same
+    # commit never stands in for it. The merge has happened, so a read that fails is reported as unread, not raised.
     landed_head = (state.get("verified") or {}).get("head") or state["assembly"].get("head")
-    runs = gh("run", "list", "--workflow", "ci.yml", "--commit", landed_head, "--limit", "1", "--json", "url", cwd=root, check=False)
-    if runs.returncode == 0:
-        try:
-            rows = json.loads(runs.stdout or "[]")
-            if rows:
-                run_url = rows[0].get("url") or run_url
-        except json.JSONDecodeError:
-            pass
+    try:
+        ci_case, ci_found = batch_ci_run(root, args.name, landed_head, tail="")
+        ci_error = None
+    except Fail as e:
+        ci_case, ci_found, ci_error = "unread", None, str(e)
+    ci_found = ci_found or {}
+    report["ci"] = {"case": ci_case, "url": ci_found.get("url"), "status": ci_found.get("status"),
+                    "conclusion": ci_found.get("conclusion"), "error": ci_error}
+    ci_text = {"green": "green, %s" % ci_found.get("url"),
+               "red": "red (conclusion %s), %s" % (ci_found.get("conclusion"), ci_found.get("url")),
+               "pending": "pending (status %s), %s" % (ci_found.get("status"), ci_found.get("url")),
+               "missing": "missing: GitHub lists no run of %s from a push to %s at %s" % (CI_WORKFLOW, branch_of(args.name), landed_head),
+               "unread": "unread after the merge: %s" % ci_error}[ci_case]
     for e in (state.get("ci") or {}).get("excused") or []:
         report["observations"].append("the batch head's CI run was green on a re-run: attempt %d concluded %s (%s) and land "
                                       "excused it as a known flake: %s" % (e["attempt"], e.get("conclusion") or e.get("status"),
                                                                             e.get("url"), e.get("flake")))
+    report["first_parent"] = first_parent
     state["finished"] = {"at": now(), "report": report}
     save_state(root, state)
     print("batch #%d landed, %d member(s) marked merged; no CI runs on the merge to %s; the batch head's CI run: %s"
-          % (b, len(report["merged"]), MAIN, run_url))
+          % (b, len(report["merged"]), MAIN, ci_text))
     if report["open"]:
         print("STILL OPEN (told on the PR): %s" % ", ".join("#%d" % n for n in report["open"]))
     if report["retargeted"]:
@@ -2571,6 +2587,27 @@ def cmd_finish(args):
     if report["merged"]:
         print("postal (kind: coordinate) to the owners of %s: batch %s merged; remove your worktree and local branch (%s); the remote branch is gone."
               % (", ".join("#%d" % n for n in report["merged"]), args.name, ", ".join(members[n]["head_ref"] for n in report["merged"])))
+    if not first_parent["ok"]:
+        raise Fail(first_parent_report(args.name, b, first_parent))
+
+
+def first_parent_report(name, b, fp):
+    """finish's loud report when the merge commit's first parent is not the main verify read (pre-round item 4): both
+    shas, what it means, and the remedy, a sweep at the merge commit, which owes every leg as any head does."""
+    merge, parent, seen = fp.get("merge"), fp.get("first_parent"), fp.get("verified_main")
+    remedy = ("Sweep the merge commit now: `git worktree add --detach ../romp-merge-%s %s`, then `scripts/sweep.py run --tree "
+              "../romp-merge-%s` (it owes every leg there), and tell the maintainer what it finds." % (name, merge or "<merge>", name))
+    if not merge:
+        return ("FIRST PARENT NOT CHECKED: GitHub reports no merge commit for batch PR #%d, so finish cannot say that the tree "
+                "on %s is the batch head's (verify read %s at %s). Find the merge commit on %s, then: %s"
+                % (b, MAIN, MAIN, seen or "nothing", MAIN, remedy))
+    if not seen:
+        return ("FIRST PARENT NOT CHECKED: batch PR #%d's merge commit %s has first parent %s, and verify recorded no %s for "
+                "batch %s to compare it with, so no one checked that the tree on %s is the batch head's. %s"
+                % (b, merge, parent, MAIN, name, MAIN, remedy))
+    return ("FIRST PARENT MISMATCH: batch PR #%d's merge commit %s has first parent %s, not %s, the %s verify read: %s moved "
+            "before the merge, so the tree on %s is not the batch head's tree, and no sweep or CI run tested it (none runs "
+            "on the merge to %s). %s" % (b, merge, parent, seen, MAIN, MAIN, MAIN, MAIN, remedy))
 
 
 def cmd_bisect(args):
