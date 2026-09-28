@@ -152,7 +152,7 @@ class DefaultViewAndFolds(unittest.TestCase):
 
     def test_every_fold_opens_with_no_script(self):
         self.assertGreaterEqual(len(self.text.folds), 1, "the page has a fold")
-        self.assertEqual([f.start for f in self.text.folds if f.summary is None], [], "each fold has the summary line that opens it")
+        self.assertEqual([f for f in self.text.folds if f.summary is None], [], "each fold has the summary line that opens it")
         self.assertEqual([e.start for e in served_css.elements(HTML) if e.kind == "script"], [], "the page has no script element")
         self.assertEqual([name for _, name, in_fold in self.text.attrs if in_fold and name.startswith("on")], [],
                          "no event handler inside a fold: the browser opens a <details> by itself")
