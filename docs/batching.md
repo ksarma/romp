@@ -193,18 +193,19 @@ subject; `verify` refuses the branch otherwise.
    and tooling node tests, the ledger check, `npm run typecheck`, `npm test`, `npm run build` and
    the served leg: every leg at every head, whatever it changed, since the webview tests and the
    served tests also read files outside `kernel/kernel.py`, `ui/` and `vscode-extension/`. The
-   served leg runs what CI's served step runs. The runner finds that step by its name ("Browser-backed
-   served-page tests (pytest)") in whichever job of the head's `ci.yml` holds it, and runs the
-   files its globs select (`tests/test_*_browser.py` and `tests/test_*_served.py` today) with the
-   step's own `env:` block (`ROMP_SERVED_TESTS_REQUIRE`, which turns a skip in those files into a
-   failure, and `ROMP_SERVED_TESTS_ENGINES`). It runs them in `--python` itself, not in the venv,
-   because CI runs them without the SDK, and with `-n`, where CI's served step runs one process.
-   The pytest leg leaves the same files out, since CI's Python cells skip them for lack of a
-   browser. A `--python` that has the SDK, or that lacks pytest, pytest-xdist, pytest-timeout or a
-   package the served step installs, refuses the sweep, and so does a served step the runner does
-   not read in full (an expression in its `env:`, an `env:` on its job or the workflow, a line in
-   its `run:` other than a pip install and the one pytest line). The served leg runs last, as CI
-   runs the served step after its Build step. The pane bench
+   served leg runs what CI's served step runs. The runner finds that step by its name,
+   "Browser-backed served-page tests (pytest)", in whichever job of the head's `ci.yml` holds it.
+   It runs the files the step's globs select (`tests/test_*_browser.py` and
+   `tests/test_*_served.py` today) with the step's own `env:` block: `ROMP_SERVED_TESTS_REQUIRE`,
+   which turns a skip in those files into a failure, and `ROMP_SERVED_TESTS_ENGINES`. It runs them
+   in `--python` itself rather than in the pytest leg's venv, because CI runs them without the
+   SDK. It also passes `-n`, where CI's served step runs one process. The pytest leg leaves the
+   same files out, as CI's Python cells skip them for lack of a browser. The runner refuses the
+   sweep when `--python` has the SDK, or lacks pytest, pytest-xdist, pytest-timeout or a package
+   the served step installs. It also refuses a served step it does not read in full: an
+   expression in its `env:`, an `env:` on its job or the workflow, or a line in its `run:` other
+   than a pip install and the one pytest line. The served leg runs last, because CI runs the
+   served step after its Build step. The pane bench
    (`tests/ui-bench.test.mjs`), the Browser legs step (its roster checks, and the rostered browser
    tests with `ROMP_BROWSER_LEGS_REQUIRE=1`; the sweep's `npm test` runs those tests without the
    switch, so a Chromium that fails to launch there skips instead of failing), the other Python
