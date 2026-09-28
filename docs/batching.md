@@ -32,12 +32,14 @@ reached main (it also runs on every push to main).
    label on 2026-09-08 and still accepts the old spelling), is accepted too. A `major-feature` PR is
    discussed before it joins a batch; a `hold` label keeps a PR out of the next batch.
 3. Sweep your head before its review round and again before its closing check:
-   `scripts/sweep.py run --tree <your worktree>`. The round and the check read that result
-   (`scripts/sweep.py check --tree <your worktree>`) where they read CI before, and it must pass
-   at the head they read; a push after the sweep needs a new one. `scripts/batch.py plan` leaves out
-   a PR whose head has no passing result, naming the case (missing, stale, red and the rest), and
-   `assemble --repin` refuses a new head without one. Both read the batcher's state dir, so a
-   result recorded on another machine is missing there: say so, and the batcher sweeps your head.
+   `scripts/sweep.py run --tree <your worktree>`. It owes every leg at your head, as at a batch
+   head, the webview legs included, whatever you changed. The round and the check read that result
+   (`scripts/sweep.py check --tree <your worktree>`, which reads it as `verify` and `plan` do)
+   where they read CI before, and it must pass at the head they read; a push after the sweep
+   needs a new one. `scripts/batch.py plan` leaves out a PR whose head has no passing result,
+   naming the case (missing, stale, red and the rest), and `assemble --repin` refuses a new head
+   without one. Both read the batcher's state dir, so a result recorded on another machine is
+   missing there: say so, and the batcher sweeps your head.
 4. Optionally end the body with a trailer the batch body reads:
    `<!-- romp-pr: {"tier":"fix","rounds":8,"sweep":{"pytest":"8461 passed","bats":528,"npm":3013,"typecheck":"clean"},"sweep_head":"<sha>","flakes":[]} -->`.
    A missing trailer is not a failure; the member is listed under "Read these first" with "not
@@ -160,9 +162,9 @@ subject; `verify` refuses the branch otherwise.
    head's exact sha under the state dir, verified against the sha's tree first, never in the batch
    worktree: the worktree need not be clean, and its uncommitted edits are not swept (the runner
    prints how many there are). It runs `npm ci` from the sha's lockfile, pytest, bats, the manager
-   and tooling node tests and the ledger check, plus `npm run typecheck`, `npm test` and
-   `npm run build` when `kernel/kernel.py`, `ui/` or `vscode-extension/` changed since the merge
-   base with origin/main (the webview rule in CLAUDE.md). The pane bench
+   and tooling node tests, the ledger check, `npm run typecheck`, `npm test` and `npm run build`:
+   every leg at every head, whatever it changed, since the webview tests also read files outside
+   `kernel/kernel.py`, `ui/` and `vscode-extension/`. The pane bench
    (`tests/ui-bench.test.mjs`), the other Python versions and macOS run only in the batch's CI. Each
    leg gets an allowlisted environment: a private HOME and state dir, a PATH built from the tool
    directories, CI's switches, and nothing of your shell's (no key, token or session variable, no
@@ -234,7 +236,7 @@ subject; `verify` refuses the branch otherwise.
    the merge commit's first parent is the main that verify saw (`git rev-parse <merge>^1` against
    the SHA the body's first block names), then run `scripts/batch.py finish <name>` alone. If it is
    not, the tree on main was never swept or tested: run `scripts/sweep.py run` on a worktree at the
-   merge commit now and tell the maintainer what it finds.
+   merge commit now (it owes every leg there, as at any head) and tell the maintainer what it finds.
 
 ## Checked on the first batch
 

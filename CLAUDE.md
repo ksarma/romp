@@ -320,10 +320,11 @@ refactor that touches no `ui/` file and no JavaScript line can still turn it red
 our PR 994 to the project (2026-09-20) lifted the route bodies into functions and turned the
 project's `vscode-extension` CI job red on that one test of 5224. The leg may be skipped only
 when `kernel/kernel.py`, `ui/` and `vscode-extension/` are ALL untouched; `scripts/sweep.py`
-applies this rule when it decides which legs a batch head owes, and records the decision in its
-result. Corollary for the pins themselves: a pin keyed on WHERE code lives says in its message
-what it guards (the route still reaches the function) and points to the executed test that
-proves the behaviour, so a reader never mistakes the weaker guarantee for the stronger one.
+never skips it: it owes the three webview legs (typecheck, `npm test`, build) at every head it
+sweeps, a member PR's included, whatever changed. Corollary for the pins themselves: a pin keyed
+on WHERE code lives says in its message what it guards (the route still reaches the function) and
+points to the executed test that proves the behaviour, so a reader never mistakes the weaker
+guarantee for the stronger one.
 
 ### A test that mints its own state root pins `session-hosts` off (2026-09-11)
 Per-session hosts are ON by default (T348): a backend over a state directory with no
