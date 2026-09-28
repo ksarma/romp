@@ -133,8 +133,8 @@ const SAFARI_BARS = 633;   // the common Safari pane: the 664px window of the iP
 const SAFARI_TOP = 709;   // a Safari pane with the toolbars collapsed: a 740px window less the tab bar
 const APP_PANE = 732;   // the installed app's pane on a 390x844 phone: its window is the screen less the status bar, less the app's 65px tab bar
 const BOUNDARY = 720;   // the stated boundary: the recorded 8-line detail shows in full from a 720px pane (a 751px Safari window)
-// one pixel under each engine's own boundary (720 in Chromium; 717 in WebKit and Firefox, whose 8-line detail is 250px, not 250.5)
-const BELOW_BOUNDARY: Record<string, number> = { chromium: 719, firefox: 716, webkit: 716 };
+// one pixel under each engine's own boundary (720 in Chromium, 717 in WebKit, 718 in Firefox; measured in both panes)
+const BELOW_BOUNDARY: Record<string, number> = { chromium: 719, firefox: 717, webkit: 716 };
 const REST_TALL = 1080;   // a tall window at rest (the review record's extra10-4 measured the regression at this height)
 const REST_SHORT = 300;   // a window at rest short enough that 12em is the larger term (34.8% of 300 is 104px)
 const REST_SHARE = 0.348;   // the detail's cap at rest: max(12em, 34.8% of the window's height) (styles.css, where the share is derived)
@@ -608,8 +608,8 @@ for (const name of ["chromium", "firefox", "webkit"]) {
   // the resolved cap (a share past the band makes the room the smaller), and the recorded 8-line detail (t4) in full. In
   // Safari's panes the chip todo fits with its detail under the cap (at 620 and 633 its room is the smaller, and the
   // shrink sets it), and the 8-line detail shows the cap and scrolls the rest. The stated boundary is a 720px pane (717
-  // in WebKit and Firefox): the 8-line detail is pinned in full at 720 and not in full one pixel under each engine's own
-  // boundary, so a share that moves the boundary is named as that.
+  // in WebKit, 718 in Firefox): the 8-line detail is pinned in full at 720 and not in full one pixel under each engine's
+  // own boundary, so a share that moves the boundary is named as that.
   // This leg lays the sheet out in the box's fallback font (the served stylesheet's font urls 404 here), where the chat's
   // file chip takes a row of its own and the chip todo's room differs from the served shell's; the served leg
   // tests/test_reply_sheet_served.py reads the same pins with the webfont loaded, in CI
@@ -708,9 +708,9 @@ for (const name of ["chromium", "firefox", "webkit"]) {
           } finally { await cancelReply(); }
         });
       }
-      // the recorded 8-line detail under the stated boundary (styles.css: in full from a 720px pane, 717 in WebKit and
-      // Firefox): in Safari's panes and one pixel under the engine's own boundary it shows the cap and scrolls the rest. It is
-      // read whole first, so a share that shows it in full here is named as the boundary having moved
+      // the recorded 8-line detail under the stated boundary (styles.css: in full from a 720px pane, 717 in WebKit, 718 in
+      // Firefox): in Safari's panes and one pixel under the engine's own boundary it shows the cap and scrolls the rest. It
+      // is read whole first, so a share that shows it in full here is named as the boundary having moved
       for (const h of [SAFARI_16E, SAFARI_BARS, SAFARI_TOP, below]) {
         await t.test(`at rest at ${h}, under the stated boundary: the recorded 8-line detail shows the cap and scrolls the rest`, async () => {
           await setHeight(h, false);

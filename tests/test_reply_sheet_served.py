@@ -53,7 +53,7 @@ one) and 620, where that todo's room in the pane is under the cap, the cap is th
 detail's height under it and the sheet fits the same way; under the keyboard at 508 on the other todo's sheet at open
 (12em); and the stated boundary on a third todo whose detail is the recorded 8-line one (styles.css: in full from a
 720px pane): in full at 732 and at 720, not in full one pixel under the engine's own boundary (719 in Chromium, 716 in
-WebKit and Firefox) and at 633, where it shows the cap and scrolls the rest. The page is served with its webfont, as a
+WebKit, 717 in Firefox) and at 633, where it shows the cap and scrolls the rest. The page is served with its webfont, as a
 phone gets it, so these are the geometries styles.css states. The detail's cap reads the keyboard where the shell
 does (restCap; kernel.py kbOpen): these pages are top-level, so the driver stubs the page's visualViewport.height a
 keyboard's height under its innerHeight while the keyboard is up and removes the stub at rest.
@@ -126,8 +126,8 @@ TID_OTHER = "ut-0000a001"   # the short-ask todo: the drag guard is read on its 
 TID_EIGHT = "ut-0000a003"   # a short ask and the 8-line detail: the stated boundary is read on its sheet, last
 REST_SHARE = 0.348   # the detail's cap at rest: max(12em, 34.8% of the window's height) (styles.css, where the share is derived)
 BOUNDARY = 720   # the stated boundary: the 8-line detail shows in full from a 720px pane (a 751px Safari window)
-# one pixel under each engine's own boundary (720 in Chromium; 717 in WebKit and Firefox, whose 8-line detail is 250px, not 250.5)
-BELOW_BOUNDARY = {"chromium": 719, "firefox": 716, "webkit": 716}
+# one pixel under each engine's own boundary (720 in Chromium, 717 in WebKit, 718 in Firefox; measured in both panes)
+BELOW_BOUNDARY = {"chromium": 719, "firefox": 717, "webkit": 716}
 
 
 def _free_port():
@@ -314,7 +314,7 @@ class ReplySheetServed(unittest.TestCase):
                     self.assertTrue(self._inside_clip(m, b), where + label + ": %s is inside the box's clip: %r" % (b, m))
                 self.assertEqual(m["hitAtSend"], "target", where + label + ": a finger at Send's painted centre reaches Send: %r" % (m,))
         # the stated boundary on the third todo, the recorded 8-line detail (styles.css: in full from a 720px pane, 717 in
-        # WebKit and Firefox): in full at the app's 732 and at 720; not in full one pixel under this engine's own boundary and
+        # WebKit, 718 in Firefox): in full at the app's 732 and at 720; not in full one pixel under this engine's own boundary and
         # at Safari's common 633, where it shows the cap (about 220 of its 251px) and scrolls the rest. Read whole first, so a
         # share that moves the boundary is named as that
         e = r.get("eight", {"error": "the boundary step did not run"})
