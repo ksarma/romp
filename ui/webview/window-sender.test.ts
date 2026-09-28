@@ -21,10 +21,10 @@ test("a sourceless event with no origin is this document's own dispatch; a missi
 test("a sourceless event that carries an origin is judged by its origin, never counted as this document's dispatch", () => {
   assert.equal(windowSender({ source: null, origin: "null" }, framed), "foreign", "an opaque origin");
   assert.equal(windowSender({ source: null, origin: "https://example.invalid" }, framed), "foreign", "another origin");
-  assert.equal(windowSender({ source: null, origin: ORIGIN }, framed), "peer", "this document's origin");
+  assert.equal(windowSender({ source: null, origin: ORIGIN }, framed), "peer", "this page's location.origin");
   const opaque = { parent, location: { origin: "null" } };
-  assert.equal(windowSender({ source: null, origin: "null" }, opaque), "foreign", "an opaque origin, on a page whose own origin is opaque");
-  assert.equal(windowSender({ source: null, origin: "" }, opaque), "dispatch", "no origin, on a page whose own origin is opaque");
+  assert.equal(windowSender({ source: null, origin: "null" }, opaque), "foreign", "an opaque origin, on a page whose location.origin is opaque");
+  assert.equal(windowSender({ source: null, origin: "" }, opaque), "dispatch", "no origin, on a page whose location.origin is opaque");
 });
 
 // Every source against every origin, for a pane framed in the romp shell, each row's expected class written out. The
@@ -111,7 +111,7 @@ test("in a VS Code webview, a window on another webview's origin is foreign, wit
   }
 });
 
-test("another window on this document's origin is a peer; any other origin is foreign", () => {
+test("another window on this page's location.origin is a peer; any other origin is foreign", () => {
   assert.equal(windowSender({ source: other, origin: ORIGIN }, framed), "peer", "a second chat column");
   assert.equal(windowSender({ source: other, origin: "null" }, framed), "foreign", "a sandboxed iframe's opaque origin");
   assert.equal(windowSender({ source: other, origin: "https://example.invalid" }, framed), "foreign");
@@ -130,7 +130,7 @@ test("an origin whose text overlaps this page's location.origin is still another
   }
 });
 
-test("an opaque own origin never makes a peer: \"null\" matches nothing", () => {
+test("an opaque location.origin never makes a peer: \"null\" matches nothing", () => {
   const opaque = { parent, location: { origin: "null" } };
   assert.equal(windowSender({ source: other, origin: "null" }, opaque), "foreign");
   assert.equal(windowSender({ source: parent, origin: "null" }, opaque), "embedder", "the parent is still the parent");
