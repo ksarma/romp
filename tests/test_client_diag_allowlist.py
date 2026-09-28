@@ -82,8 +82,9 @@ SHARED = {"nav": {"type": "reload", "responseEnd": 210, "domContentLoaded": 656,
 # had missed the chat surface, whose sid, id, ids and active are the tab ids
 # the page holds, which federation.ts prefixes for every remote session (prefixInbound on SCALAR_ID and ARRAY_ID, the tab records
 # through OBJ_ID); the cut at CLIENT_DIAG_STR_MAX keeps the head of a string, prefix included, and a suffix survives it by 64
-# less the head's length. The kernel admits a surface's top-level keys and cuts nested string values; it inspects no nested key
-# and no value's form, so every class here names the writer that holds the shape.
+# less the head's length. The kernel admits a surface's top-level keys and cuts nested string values; it inspects no nested key,
+# and for a key without a CLIENT_DIAG_VALUES entry no value's form (a key with one, chat's view and federation's road, is compared
+# with its closed set of words before the scrub), so every class here names the writer that holds the shape.
 # test_every_admitted_key_is_classified_by_the_content_its_value_can_carry ties this table to CLIENT_DIAG_KEYS both ways, so a
 # key added to the table without a row here fails, and the disclosure copies are read back against the host-carrying surfaces
 # this table derives (test_the_disclosure_copies_state_the_content_rule_and_name_every_host_carrying_surface).
@@ -1616,14 +1617,18 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         field failure, a word per relation). The feedDelta-stale row carries host, buildId and why and nothing else, so
         its word is the whole signal a reader of the file has. Every word of STALE_WHY_WORDS is driven through the real
         dispatch, the road the fixture test posts through, and stored whole: the admit filters a row's top-level KEYS against
-        the surface's table and tests no value for admission (an admitted key's value is stored through _client_diag_scrub,
-        a string cut at CLIENT_DIAG_STR_MAX, 64 characters, which no word approaches: the 65-character word below is stored
-        cut to 64, the row marked and the cut said once (the author's pass 4), so the value is read and never gated), so a new WORD under the admitted `why` key needs
+        the surface's table and, for a key without a CLIENT_DIAG_VALUES entry, as `why` is (asserted below), tests no value for
+        admission (an admitted key's value is stored through _client_diag_scrub, a string cut at CLIENT_DIAG_STR_MAX, 64
+        characters, which no word approaches: the 65-character word below is stored cut to 64, the row marked and the cut said
+        once (the author's pass 4), so the value is read and never gated), so a new WORD under the admitted `why` key needs
         no table change where a new KEY does (PR 861: a pane-side marker under a key the table did not name was dropped).
         Green at the head before the word existed in federation.ts, by that mechanism; the failing-before is the control: the
         same row carrying `rev` and `through`, keys the minter does not send and the table does not admit, is stored without
         them and each is said once, so a minter that grew a field to explain its word would lose the field here, and a kernel
         that stopped dropping would fail this test."""
+        self.assertNotIn(("federation", "why"), km.CLIENT_DIAG_VALUES, "the premise of the scoped statements (this docstring, the assertion "
+                         "message below and federation.ts's ladder comment): the stale row's why has no CLIENT_DIAG_VALUES entry, so its value "
+                         "is not tested for admission; an entry here makes a new word a table change, and those statements go with it")
         for i, word in enumerate(STALE_WHY_WORDS):
             row = {"host": "TESTHOST", "buildId": "b%d" % i, "why": word}
             self.assertEqual(self.post("federation", "feedDelta-stale", row), "", "%s: admitted with no stderr line" % word)
@@ -1632,7 +1637,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         long_word = "d" * (km.CLIENT_DIAG_STR_MAX + 1)
         err = self.post("federation", "feedDelta-stale", {"host": "TESTHOST", "buildId": "b8", "why": long_word})
         self.assertEqual(self.rows()[-1]["data"], {"host": "TESTHOST", "buildId": "b8", "why": long_word[:km.CLIENT_DIAG_STR_MAX], km.CLIENT_DIAG_CUT_KEY: ["why"]},
-                         "an over-long word under the admitted key is admitted (the admit gates on no value) and stored cut at CLIENT_DIAG_STR_MAX, "
+                         "an over-long word under the admitted key is admitted (the admit gates on no value of a key without a CLIENT_DIAG_VALUES "
+                         "entry) and stored cut at CLIENT_DIAG_STR_MAX, "
                          "the row carrying the cut marker naming the key (the maintainer's round 3, kernel-2: a cut must not look like a whole value), so the ladder's words are whole because they are short")
         lines = [l for l in err.splitlines() if l]
         self.assertEqual(len(lines), 1, err)

@@ -1596,9 +1596,10 @@ export class FederationManager {
         // base and through have each passed, and "disagree" only once every field has. Nine words, the stale row's whole
         // vocabulary: six field words for five fields (newGen has one failure), two relation words for the base and the
         // through against the held rev, and one for the rev against the through. The kernel's admit road (kernel.py
-        // _client_diag_admit) filters the row's top-level KEYS against CLIENT_DIAG_KEYS and tests no value for admission
-        // (an admitted key's value is stored as posted, a string cut at CLIENT_DIAG_STR_MAX, 64 characters, which no word
-        // here approaches), so a new word needs no allowlist change where a new key does; tests/test_client_diag_allowlist.py
+        // _client_diag_admit) filters the row's top-level KEYS against CLIENT_DIAG_KEYS, and for a key without a
+        // CLIENT_DIAG_VALUES entry, as this row's why is, tests no value for admission (an admitted key's value is stored as
+        // posted, a string cut at CLIENT_DIAG_STR_MAX, 64 characters, which no word here approaches), so a new word needs no
+        // allowlist change where a new key does, while the key has no such entry; tests/test_client_diag_allowlist.py
         // drives each word through it, and a 65-character word through the cut, and holds its list to this ladder. The row
         // is latched on the event it describes (sayDeltaOnce, keyed on the word and the remote's build: Conn.saidDelta says
         // the bound), as the view-delta road's two breadcrumbs are: the same refusal again from the same build files no
