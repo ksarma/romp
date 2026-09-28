@@ -2370,6 +2370,13 @@ class LandReadsTheCI(_Base):
             json.dump(st, f)
         fx.run("verify", "b1")
         self.assertIsNone(fx.state("b1")["ci"], "verify clears land's record")
+        with open(path) as f:
+            st = json.load(f)
+        st["ci"] = {"run": url, "id": 1, "attempt": 2, "head": self.head, "excused": []}
+        with open(path, "w") as f:
+            json.dump(st, f)
+        fx.ok("assemble", "b1", "--without", "102")
+        self.assertIsNone(fx.state("b1")["ci"], "so does a rebuild")
 
     def test_finish_reports_no_excuse_of_a_run_it_did_not_read(self):
         """With land's record still in the state (refused after its CI read, no new verify), a later push run at the same
