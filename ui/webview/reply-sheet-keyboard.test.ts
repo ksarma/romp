@@ -22,7 +22,10 @@
 // nothing); a short window pins the sheet to the top under the picker's 12px frame; and the box scrolls at every
 // height, the backstop for a window the floors alone overflow. In each builder one closure, kbFit, toggles kb-tight
 // on THIS window's own resize (the shell sizes the pane iframe to the visible height, so the keyboard opening or
-// closing IS a resize here; render.ts's picker keys on the same event, at the same 480px) and re-runs grow, and
+// closing IS a resize here; render.ts's picker keys on the same event, at the same 480px), re-runs restCap (the
+// detail's cap at rest, the maintainer's ruling at the merge with main: with the keyboard down the cap is the larger of
+// 12em and 37% of the window's height, which restCap publishes on the overlay; with the keyboard up, read as
+// the shell's kbOpen reads it on the parent window, it withdraws it and the cap is 12em) and re-runs grow, and
 // close() removes the listener, which also removes itself when the overlay was replaced by a second Reply; grow lets
 // the box follow the answer up to the room the box has left, never under the three-row floor, and stands down for a
 // height the person dragged (file-comments.ts autosize's guard); on the resize path (kbFit's grow(true)) that height is
@@ -64,6 +67,7 @@ function line(src: string, re: RegExp, what: string, name: string): string {
   return m![0];
 }
 const KBFIT = /^\s*const kbFit = .*$/m;
+const RESTCAP = /^\s*const restCap = .*$/m;   // the detail's cap at rest: the window's height published on the overlay with the keyboard down
 const CLOSE = /^\s*const close = .*$/m;
 const KB_ARM = /window\.addEventListener\("resize", kbFit\);\n\s*kbFit\(\);/;
 const GROW_ARM = /input\.addEventListener\("input", \(\) => grow\(\)\);/;   // the keystroke path: grow with no argument (kbFit's resize path is grow(true))
@@ -104,15 +108,17 @@ type Fold = { kbFit: () => void; close: () => void };
 // node under a body, so isConnected is the tree's answer), the window stand-in, stand-ins for the other names the
 // close line removes (onKey, onFocus) and the document it removes them from, and grow, the answer box's handler kbFit
 // re-runs on the same resize (the room the box has left changes with the window), as a counter
-function fold(name: string, src: string, overlay: unknown, win: Win): Fold & { doc: Win; grown: () => number } {
+function fold(name: string, src: string, overlay: unknown, win: Win): Fold & { doc: Win; grown: () => number; calls: string[] } {
   const doc = new Win();
   let grown = 0;
-  const grow = () => { grown++; };
+  const calls: string[] = [];   // restCap and grow, in the order kbFit calls them
+  const grow = () => { grown++; calls.push("grow"); };
+  const restCap = () => { calls.push("restCap"); };   // the detail's cap at rest, executed on its own below
   const body = line(src, KBFIT, "the kbFit line", name) + "\n" + line(src, CLOSE, "the close line", name) + "\n" + line(src, KB_ARM, "the arming lines", name) + "\nreturn { kbFit, close };";
   const onKey = () => { /* the modal's Escape handler, by reference only */ };
   const onFocus = () => { /* waiting.ts's focus-return listener, by reference only */ };
-  const r = new Function("overlay", "window", "document", "onKey", "onFocus", "grow", body)(overlay, win, doc, onKey, onFocus, grow) as Fold;
-  return { ...r, doc, grown: () => grown };
+  const r = new Function("overlay", "window", "document", "onKey", "onFocus", "grow", "restCap", body)(overlay, win, doc, onKey, onFocus, grow, restCap) as Fold;
+  return { ...r, doc, grown: () => grown, calls };
 }
 function world() {
   const body = makeNode("body"), overlay = makeNode("div");
@@ -137,6 +143,7 @@ for (const [name, src] of BUILDERS) {
     w.win.innerHeight = 480; w.win.fire("resize");
     assert.equal(w.tight(), false, "480px is not");
     assert.equal(f.grown(), 4, "one grow per resize while the modal is up");
+    assert.deepEqual(f.calls, ["restCap", "grow", "restCap", "grow", "restCap", "grow", "restCap", "grow"], "each fit re-reads the keyboard for the detail's cap at rest, then grows: the room grow reads is the room under the cap restCap just set");
     assert.equal(w.win.count("resize"), 1, "the listener stays for the next resize while the modal is up");
     assert.equal(w.overlay.isConnected, true, "the fold never removes the modal");
   });
@@ -172,6 +179,74 @@ for (const [name, src] of BUILDERS) {
     w.win.fire("resize");
     assert.equal(w.win.removed.length, 1, "and nothing runs on the resize after that");
     assert.deepEqual(f.doc.removed, [], "close() never ran: the Escape handler is still the document's");
+  });
+}
+
+// ── the detail's cap at rest, executed out of each builder ───────────────────────────────────────
+// restCap publishes THIS window's height (innerHeight) on the overlay (--ut-rest-h) with the keyboard down, which
+// styles.css's max(12em, calc(0.37 * var(--ut-rest-h, 0px))) turns into the cap at rest, and removes it with the keyboard
+// up, where the cap is 12em (the maintainer's ruling at the merge with main). The keyboard is the parent window's visual
+// viewport more than 120px shorter than its layout viewport (kernel.py kbOpen's test, on the window that owns the screen:
+// inside the shell the pane's own two heights agree whatever the keyboard does). Run against stand-ins: the overlay's
+// style records every setProperty and removeProperty, the window carries an innerHeight, a visualViewport of its own
+// (which restCap does not read: a pinch zoom shrinks it and must leave the cap alone) and a parent, the parent its own
+// innerHeight and visualViewport
+function restCapper(name: string, src: string, overlay: unknown, win: unknown): () => void {
+  return new Function("overlay", "window", line(src, RESTCAP, "the restCap line", name) + "\nreturn restCap;")(overlay, win) as () => void;
+}
+for (const [name, src] of BUILDERS) {
+  test(`${name}: restCap publishes the window's height for the detail's cap at rest and withdraws it with the keyboard up, read on the parent window as the shell's kbOpen reads it`, () => {
+    const props = new Map<string, string>();
+    const log: string[] = [];
+    const overlay = { style: {
+      setProperty: (k: string, v: string) => { props.set(k, v); log.push("set " + k + " " + v); },
+      removeProperty: (k: string) => { props.delete(k); log.push("remove " + k); return ""; },
+    } };
+    const shell = { innerHeight: 844, visualViewport: { height: 844, scale: 1 } };
+    const win: any = { innerHeight: 800, visualViewport: { height: 800, scale: 1 }, parent: shell };
+    const restCap = restCapper(name, src, overlay, win);
+    // the keyboard down: the shell's two heights agree, and the pane's own height is published
+    restCap();
+    assert.equal(props.get("--ut-rest-h"), "800px", "at rest: THIS window's height (the pane's, not the shell's), for styles.css's 37% term");
+    // the pane's own visual viewport is not what is published: a pinch zoom that halves it leaves the published height alone
+    win.visualViewport.height = 400; win.visualViewport.scale = 2;
+    restCap();
+    assert.equal(props.get("--ut-rest-h"), "800px", "a pinch zoom shrinks only the visual viewport: the window's height, and so the cap, stay");
+    win.visualViewport.height = 800; win.visualViewport.scale = 1;
+    // the keyboard up: the shell's visual viewport is 336px shorter than its layout viewport, and the pane was resized to 508
+    shell.visualViewport.height = 508; win.innerHeight = 508; win.visualViewport.height = 508;
+    restCap();
+    assert.equal(props.has("--ut-rest-h"), false, "keyboard up: the property is withdrawn, so the term is 0px and the cap is 12em, the head's (no viewport term enters)");
+    // the threshold is the shell's: more than 120px
+    shell.visualViewport.height = 724;   // 844 - 120
+    restCap();
+    assert.equal(props.get("--ut-rest-h"), "508px", "120px shorter is not the keyboard (kbOpen's > 120)");
+    shell.visualViewport.height = 723;
+    restCap();
+    assert.equal(props.has("--ut-rest-h"), false, "121px shorter is");
+    // a pinch zoom on the shell shrinks its visual viewport by its scale: height times scale is the layout's again, not a keyboard
+    shell.visualViewport.height = 422; shell.visualViewport.scale = 2;
+    restCap();
+    assert.equal(props.get("--ut-rest-h"), "508px", "a 2x pinch on the shell (422 x 2 = 844) is not the keyboard");
+    // standalone: the parent is this window itself, and its own two heights decide
+    const alone: any = { innerHeight: 900, visualViewport: { height: 900, scale: 1 } }; alone.parent = alone;
+    const restCapAlone = restCapper(name, src, overlay, alone);
+    restCapAlone();
+    assert.equal(props.get("--ut-rest-h"), "900px", "standalone at rest");
+    alone.visualViewport.height = 564;
+    restCapAlone();
+    assert.equal(props.has("--ut-rest-h"), false, "standalone with the keyboard up (a top-level page's visual viewport shrinks, its layout viewport does not)");
+    // a cross-origin host (a VS Code webview): reading the parent throws, read as no keyboard
+    const hosted: any = { innerHeight: 700, visualViewport: { height: 700, scale: 1 } };
+    const denied = { get innerHeight(): number { throw new Error("SecurityError"); }, get visualViewport(): unknown { throw new Error("SecurityError"); } };
+    Object.defineProperty(hosted, "parent", { get: () => denied });
+    restCapper(name, src, overlay, hosted)();
+    assert.equal(props.get("--ut-rest-h"), "700px", "a cross-origin parent throws: no keyboard, the cap at rest");
+    // an engine with no visualViewport: no keyboard
+    const bare: any = { innerHeight: 600, visualViewport: null }; bare.parent = bare;
+    restCapper(name, src, overlay, bare)();
+    assert.equal(props.get("--ut-rest-h"), "600px", "no visualViewport: no keyboard, this window's height");
+    assert.ok(log.every((l) => /^(set --ut-rest-h \d+px|remove --ut-rest-h)$/.test(l)), "restCap writes one property and nothing else: " + JSON.stringify(log));
   });
 }
 
@@ -384,6 +459,7 @@ for (const [name, src] of BUILDERS) {
 test("the two builders stay twins for this fix: the same kbFit line, the same grow line, the same threshold as the picker's fold", () => {
   const [[, w], [, r]] = BUILDERS;
   assert.equal(line(w, KBFIT, "kbFit", "waiting.ts").trim(), line(r, KBFIT, "kbFit", "render.ts").trim(), "one kbFit line in both builders");
+  assert.equal(line(w, RESTCAP, "restCap", "waiting.ts").trim(), line(r, RESTCAP, "restCap", "render.ts").trim(), "one restCap line in both builders (executed above)");
   assert.equal(growBlock(w, "waiting.ts"), growBlock(r, "render.ts"), "one grow block in both builders, byte for byte");
   for (const [what, re] of [["the press record", PRESS_RECORD], ["the press listener", PRESS_ARM], ["the backdrop's click", DISMISS]] as Array<[string, RegExp]>) {
     assert.equal(line(w, re, what, "waiting.ts").trim(), line(r, re, what, "render.ts").trim(), `one ${what} line in both builders (executed above)`);
@@ -391,7 +467,8 @@ test("the two builders stay twins for this fix: the same kbFit line, the same gr
   for (const [name, src] of BUILDERS) {
     assert.match(line(src, KBFIT, "kbFit", name), /overlay\.classList\.toggle\("kb-tight", window\.innerHeight < 480\)/, name + ": the picker's 480px threshold (render.ts showPicker), so the two folds agree on what a short window is");
     assert.match(line(src, KBFIT, "kbFit", name), /if \(!overlay\.isConnected\) \{ window\.removeEventListener\("resize", kbFit\); return; \}/, name + ": the listener drops itself when the overlay was replaced");
-    assert.match(line(src, KBFIT, "kbFit", name), /window\.innerHeight < 480\); grow\(true\); \};$/, name + ": the fold re-runs grow after its own toggle, on the resize path (grow(true): a dragged height is clamped to the room there and returned toward when the room comes back; executed above), so the room is read with the fold's cap applied (one grow per resize)");
+    assert.match(line(src, KBFIT, "kbFit", name), /window\.innerHeight < 480\); restCap\(\); grow\(true\); \};$/, name + ": the fold re-runs restCap and then grow after its own toggle, on the resize path (grow(true): a dragged height is clamped to the room there and returned toward when the room comes back; executed above), so the room is read with the fold's cap and the detail's cap applied (one grow per resize)");
+    assert.ok(src.search(RESTCAP) < src.search(KBFIT), name + ": restCap is declared before kbFit, which calls it");
     assert.ok(src.search(KBFIT) < src.indexOf(GROW_HEAD), name + ": kbFit is declared before grow and reads it only when called; the first call is kbFit() after the append, past grow's declaration");
     assert.match(line(src, CLOSE, "close", name), /window\.removeEventListener\("resize", kbFit\)/, name + ": close() removes it too");
     const armAt = src.search(KB_ARM), appendAt = src.indexOf("document.body.appendChild(overlay);");
@@ -457,7 +534,7 @@ test("the detail is the part that gives way: it shrinks (a scroll container's fl
   assert.match(r, /flex: 1 1 auto;/);
   assert.match(r, /min-height: 32px; min-height: 2lh;/, "the FLOOR: two of the detail's own lines (2lh), the px value ahead of it so an engine without the lh unit falls to two lines at the default size, never to zero; without it the detail resolved to 0px at 390x508 with the answer grown (invisible, unscrollable), the dead end the picker's fold forbids its list with min-height: 52px (one row). The browser legs measure it: the detail's height is at least twice its computed line-height in every deficit state");
   assert.doesNotMatch(r, /min-height: 0;/, "no zero floor beside the real one: the later declaration in a block wins, and the executed legs pin the floor, not this string");
-  assert.match(r, /max-height: 12em;/, "the cap at rest: 12em of the detail's own font, about eight and a half of its lines at line-height 1.4 (the browser legs pin the height at 900px to 12 times the computed font size); with the keyboard up the flex shrink and the two-line floor govern, not this. A 35dvh arm stood beside it in round 1 as the keyboard-up cap and never bound (177.8px against 134px at 508; under about 383px the shrink is already below both), so it is gone");
+  assert.match(r, /max-height: max\(12em, calc\(0\.37 \* var\(--ut-rest-h, 0px\)\)\);/, "the cap: the larger of 12em of the detail's own font (about eight and a half of its lines at line-height 1.4) and 37% of the window's height, which restCap publishes only with the keyboard down (executed above); with the property absent the term is 0px and the cap is 12em, the keyboard-up cap, where the flex shrink and the two-line floor govern. This spelling is not the guarantee: the browser legs measure the cap at rest at 844, 900 and 1080 (the viewport term), at rest at 300 (12em, read from the computed max-height), and under the keyboard at 508 (12em), in three engines, and the served leg at 900, 1080 and under the keyboard in CI. A 35dvh arm stood beside 12em in round 1 as the keyboard-up cap and never bound (177.8px against 134px at 508), so it is gone");
   assert.doesNotMatch(r, /dvh/, "no viewport arm presented as the keyboard's mechanism: the keyboard case is the shrink and the floor, measured by execution");
   assert.match(r, /overflow-y: auto;/, "the rest of the detail is a scroll away, never clipped. The spelling pins of this test alone guard the declaration (this one and the sequence pin below): since overflow-x: hidden stands beside it, either half alone makes the detail a scroll container (CSS Overflow: a visible half beside a non-visible half computes to auto, measured in Chromium, Firefox and WebKit), so commenting this one out changes nothing an engine can read and no execution pin reds it; the browser legs' scrollTop pin guards the PAIR, and reds once both halves are gone");
   assert.match(r, /overscroll-behavior: contain;/, "a swipe past its end does not scroll the box or the page under it (#pinned-notes's rule)");

@@ -19,9 +19,20 @@
 // measured after the answer has grown and the window then shrinks (900 to 508 and 420: kbFit re-runs grow), at 420
 // under the fold, at 490 with a todo that has no detail, and at 900.
 //
+// THE DETAIL'S CAP AT REST (the maintainer's ruling at the merge with main): with the keyboard down the cap is the larger
+// of 12em and 37% of the window's height, so a tall window shows more of a long detail; with the keyboard up it
+// is 12em, as at the head, and the flex shrink governs. Its own test per engine measures the viewport term at rest at
+// 844, 900 and 1080, 12em at rest at 300 (the computed max-height: the room sets the rendered height there), 12em under
+// the keyboard at 508 with the sheet opened at rest and the keyboard then raised and lowered under it, the recorded
+// 8-line detail in full at 844 and 900, and the chip todo at its cap under its room at both.
+//
 // The browser legs (Chromium, Firefox, and WebKit when the box has them) open the page at the phone's width and drive
 // the viewport's HEIGHT as the keyboard would (inside the shell the chat iframe is sized to the visible height, so its
-// innerHeight is the keyboard's signal). The composition tap is its own test per engine, its outcome asserted first,
+// innerHeight is the fold's signal). The detail's cap reads the keyboard where the shell does (restCap; kernel.py
+// kbOpen): the visual viewport of the window that owns the screen shorter than its layout viewport. This page is
+// top-level, so that window is this one: with the keyboard up the leg stubs its visualViewport.height to its innerHeight
+// less a phone keyboard's 336px, and removes the stub at rest; every window under 900 is the keyboard up unless a step
+// says it is at rest. The composition tap is its own test per engine, its outcome asserted first,
 // so the deciding figure has a red of its own on a tree without the fix; the chip todo is also measured at 420, where
 // the chat's column fits the fold's cap (the pane's does not: waiting-reply-sheet-browser.test.ts measures that
 // backstop state). On the base tree at 508 the focus had scrolled the overflow-hidden box to the textarea, so the
@@ -95,12 +106,16 @@ const DETAIL = Array.from({ length: 40 }, (_, i) => `Option ${i + 1}: the summar
 const LONG_TEXT = "Which layout should the quarterly report use for the regional tables, the summary section and the appendix, given that the notes under each table now run to several lines and the reviewers asked for the totals to lead every page rather than close it?";
 const FILE = "/srv/notes-api/docs/quarterly-report-layout.md";
 const LINK = "https://github.com/example-org/notes-api/pull/398";
+// the recorded 8-line detail (the review record's extra10-4, 251px at this width): the share of the detail's cap at rest is
+// measured so that it shows in full at 844 and 900 (styles.css #ut-reply-prompt .ut-detail.open)
+const DETAIL8 = Array.from({ length: 8 }, (_, i) => `Option ${i + 1}: the summary section leads and the tables follow, with the notes folded under each table.`).join("\n");
 const LINKED_DETAIL = "The earlier draft is at https://github.com/example-org/notes-api/pull/398 and the reviewers' notes follow.\n" + DETAIL;
 type Todo = { id: string; text: string; detail?: string; file?: string; link?: string };
 const TODOS: Todo[] = [
   { id: "t1", text: TEXT, detail: DETAIL },
   { id: "t2", text: LONG_TEXT, detail: LINKED_DETAIL, file: FILE, link: LINK },
   { id: "t3", text: TEXT },
+  { id: "t4", text: TEXT, detail: DETAIL8 },
 ];
 const ANSWER = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n");
 const PHONE_W = 390;
@@ -108,6 +123,11 @@ const KEYBOARD_UP = 508;   // above the fold's threshold: the squeeze fix alone
 const KEYBOARD_TIGHT = 420;   // under it: the fold too
 const ONSET = 490;   // the shared box rule's clip band began here (extra9-2's refuter): above the fold, under the old clip
 const TALL = 900;
+const PHONE_REST = 844;   // a phone's visible height at rest (the labs' phone window)
+const REST_TALL = 1080;   // a tall window at rest (the review record's extra10-4 measured the regression at this height)
+const REST_SHORT = 300;   // a window at rest short enough that 12em is the larger term (37% of 300 is 111px)
+const REST_SHARE = 0.37;   // the detail's cap at rest: max(12em, 37% of the window's height) (styles.css, where the share is derived)
+const KEYBOARD_H = 336;   // a phone keyboard's height (844 less 508), the stub's gap between the layout and the visual viewport
 // the chat page: an empty transcript, the builder's bundle; the test opens the sheet through window.__openReply
 const PAGE_HTML = (js: string) => `<!DOCTYPE html><html><head><meta charset=utf-8><link href=/dist/styles.css rel=stylesheet></head><body>
 <div id="content"></div>
@@ -120,7 +140,7 @@ type Rect = { top: number; bottom: number; left: number; right: number };
 type Sheet = {
   frameH: number; tight: boolean; alignItems: string; paddingTop: string;
   inputH: number; floorH: number; lineHeight: string; inputStyleH: string;
-  detailScrollH: number; detailClientH: number; detailOverflowY: string; detailLineH: number; detailFontPx: number; detailScrolls: boolean;
+  detailScrollH: number; detailClientH: number; detailOverflowY: string; detailLineH: number; detailFontPx: number; detailMaxH: number; detailScrolls: boolean;
   detailTextRight: number; detailRight: number; detailOverflowX: string; detailScrollW: number; detailOffsetW: number;
   actionsBottom: number; boxTop: number; boxBottom: number; boxScrollH: number; boxClientH: number; boxOverflowY: string;
   sendRect: Rect; cancelRect: Rect; hitAtSend: string; hitAtCancel: string; kinds: string[]; quoteChips: string[];
@@ -149,12 +169,23 @@ async function boot(browser: any) {
   });
   await page.goto("http://romp.test/chat");
   const settle = () => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
-  // the keyboard: the viewport's height, which the page's window sees as its own resize
-  const setHeight = async (h: number) => {
+  // the keyboard's signal for the detail's cap (restCap, kernel.py kbOpen's test): the visual viewport of the window that
+  // owns the screen shorter than its layout viewport. This page is top-level, so that window is this one: with the keyboard
+  // up its visualViewport.height is stubbed to its innerHeight less a keyboard's height; at rest the stub is removed and
+  // the engine's getter answers (the viewport's own height)
+  const keyboard = (on: boolean) => page.evaluate(([o, kh]: [boolean, number]) => {
+    const vv = window.visualViewport as any;
+    if (!o) delete vv.height; else Object.defineProperty(vv, "height", { configurable: true, get: () => Math.max(0, window.innerHeight - kh) });
+  }, [on, KEYBOARD_H] as [boolean, number]);
+  // the keyboard: the viewport's height, which the page's window sees as its own resize; a window under 900 is the keyboard
+  // up unless the step says it is at rest. The keyboard's state is set before the resize, so kbFit reads it
+  const setHeight = async (h: number, kb = h < TALL) => {
+    await keyboard(kb);
     await page.setViewportSize({ width: PHONE_W, height: h });
     await page.waitForFunction((hh: number) => window.innerHeight === hh, h, { timeout: 10000 });
     await settle();
   };
+  await keyboard(true);   // the page opens at 508, the keyboard up
   const measure = (): Promise<Sheet | null> => page.evaluate(() => {
     const overlay = document.getElementById("ut-reply-prompt");
     if (!overlay) return null;
@@ -183,6 +214,7 @@ async function boot(browser: any) {
       inputH: input.clientHeight, floorH, lineHeight: cs(input).lineHeight, inputStyleH: input.style.height,
       detailScrollH: detail ? detail.scrollHeight : 0, detailClientH: detail ? detail.clientHeight : 0, detailOverflowY: detail ? cs(detail).overflowY : "",
       detailLineH: detail ? parseFloat(cs(detail).lineHeight) : 0, detailFontPx: detail ? parseFloat(cs(detail).fontSize) : 0,
+      detailMaxH: detail ? parseFloat(cs(detail).maxHeight) : 0,   // the cap the engine resolved: which arm of the max won
       // the detail's sideways overflow: scrollWidth against offsetWidth (the border box; clientWidth is narrowed by a classic
       // scrollbar in WebKit headless while the text lays out to the border box); the widest text rect beside it for the
       // record only, since a trailing space hanging at a soft wrap ends a few pixels past the line box
@@ -422,9 +454,10 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.notEqual(m.alignItems, "flex-start", "the sheet centers again (.confirm-overlay)");
       assert.ok(m.inputH >= m.floorH - 1, `tall, the answer box holds three rows (${m.inputH} against ${m.floorH}px)`);
       assert.ok(m.actionsBottom <= m.frameH + 0.5, "the buttons are inside the viewport");
-      // the cap at rest, where nothing squeezes: 12em of the detail's own font (about eight and a half lines), the whole of it
-      // executed rather than a spelling; the keyboard-up heights above are the shrink and the floor, not this cap
-      assert.ok(Math.abs(m.detailClientH - 12 * m.detailFontPx) <= 1.5, `tall, the forty-line detail sits at its cap: ${m.detailClientH}px against 12em of its ${m.detailFontPx}px font (${(12 * m.detailFontPx).toFixed(1)}px)`);
+      // the cap at rest, where nothing squeezes: the larger of 12em and 37% of the window's height, here the viewport term
+      // (333px at 900 against 12em's 134px), executed rather than a spelling; the keyboard-up heights above are the shrink and
+      // the floor under a 12em cap (the detail's cap at rest has its own test below)
+      assert.ok(Math.abs(m.detailClientH - Math.max(12 * m.detailFontPx, REST_SHARE * m.frameH)) <= 1.5, `tall, the keyboard down: the forty-line detail sits at its cap at rest, 37% of the window's height: ${m.detailClientH}px against ${(REST_SHARE * m.frameH).toFixed(1)}px (12em of its ${m.detailFontPx}px font is ${(12 * m.detailFontPx).toFixed(1)}px, the head's cap)`);
       // ── the answer grown TALL, then the keyboard: the window shrinks under an answer already grown, and the resize re-fits it
       await fill(ANSWER(14));
       m = (await measure())!;
@@ -545,6 +578,91 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assertFits(m, "490px, no detail, the answer grown");
       await cancelReply();
       assert.deepEqual(errors, [], "no script error on the page");
+    } finally { await browser.close(); }
+  });
+
+  // THE DETAIL'S CAP AT REST AND UNDER THE KEYBOARD (the maintainer's ruling at the merge with main), its own test so each
+  // regime has its own red: with the keyboard down the cap is the larger of 12em and 37% of the window's height;
+  // with the keyboard up it is 12em, as at the head. Which term binds: 37% of the window passes 12em (134.16px at the
+  // detail's 11.18px font) above about 363px, so at rest the viewport term binds at 844 (312.3px), 900 (333px) and 1080
+  // (399.6px), and 12em at 300 (37% is 111px), where the room, not the cap, sets the rendered height, so the computed
+  // max-height is what shows which arm won; under the keyboard the term is withdrawn and 12em binds (at 508 the room would
+  // hold 174px, so a cap that let the term in there shows as a taller detail). The recorded lengths the share was measured
+  // against (styles.css): the 8-line detail (t4) shows in full at 844 and 900 with the answer box at three rows and Send
+  // inside the box; the chip todo (t2: the wrapped ask with both chips, the forty-one-line detail) keeps the cap under its
+  // room at both, so the cap sets its detail's height and the box does not scroll
+  test(`in ${name}: the detail's cap at rest is the larger of 12em and 37% of the window's height (the viewport term at 844, 900 and 1080, 12em at 300), and 12em under the keyboard, as at the head`, async (t) => {
+    if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; the served leg tests/test_reply_sheet_served.py measures the cap at rest and under the keyboard in CI's Browser-backed served-page tests (pytest) step"); return; }
+    let browser: any;
+    try { browser = await pw[name].launch(); }
+    catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's Browser-backed served-page tests (pytest) step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
+    try {
+      const { setHeight, measure, openReply, cancelReply, waitTight, errors } = await boot(browser);
+      const em12 = (m: Sheet) => 12 * m.detailFontPx;
+      const term = (m: Sheet) => REST_SHARE * m.frameH;
+      // at rest, the viewport term the larger: the resolved cap and the forty-line detail's height are 37% of the window
+      const atRestTerm = (m: Sheet, what: string) => {
+        assert.equal(m.tight, false, `${what}: no fold`);
+        assert.ok(term(m) > em12(m) + 20, `${what}: 37% of the window (${term(m).toFixed(1)}px) is the larger term against 12em (${em12(m).toFixed(1)}px)`);
+        assert.ok(Math.abs(m.detailMaxH - term(m)) <= 0.5, `${what}: the cap is 37% of the window's height (${m.detailMaxH}px against ${term(m).toFixed(1)}px); the head's cap was 12em at every height (${em12(m).toFixed(1)}px)`);
+        assert.ok(Math.abs(m.detailClientH - term(m)) <= 1.5, `${what}: the long detail shows at the cap, ${m.detailClientH}px against ${term(m).toFixed(1)}px (${m.detailScrollH}px of it)`);
+        assert.ok(m.inputH >= m.floorH - 1, `${what}: the answer box holds three rows (${m.inputH} against ${m.floorH}px)`);
+        assertFits(m, what);
+      };
+      // each window is its own subtest, so each pin reports its own red or green; they run in order on one page, and a sheet
+      // a subtest opens is closed in its finally so the next one opens its own
+      await t.test("at rest at 900: the viewport term (the forty-line detail)", async () => {
+        await setHeight(TALL, false);
+        await openReply(TODOS[0]);
+        atRestTerm((await measure())!, "at rest at 900, the forty-line detail");
+      });
+      await t.test("the keyboard up at 508 under the open sheet: 12em, as at the head", async () => {
+        await setHeight(KEYBOARD_UP, true);
+        const m = (await measure())!;
+        assert.equal(m.tight, false, "508px: no fold, so the cap is the only change the keyboard makes to the detail here");
+        assert.ok(Math.abs(m.detailMaxH - em12(m)) <= 0.5, `the keyboard up at 508: the cap is 12em (${m.detailMaxH}px against ${em12(m).toFixed(1)}px), no viewport term (37% of 508 would be ${term(m).toFixed(1)}px)`);
+        assert.ok(Math.abs(m.detailClientH - em12(m)) <= 1.5, `the keyboard up at 508: the forty-line detail shows 12em (${m.detailClientH}px), its height at the head; a cap that let the viewport term in would show it taller here, up to the room the box has`);
+        assert.ok(m.inputH >= m.floorH - 1, `the keyboard up at 508: three rows (${m.inputH} against ${m.floorH}px)`);
+        assertFits(m, "the keyboard up at 508");
+      });
+      await t.test("the keyboard down again at 900: the viewport term is back", async () => {
+        await setHeight(TALL, false);
+        atRestTerm((await measure())!, "the keyboard down again at 900");
+      });
+      await t.test("at rest at 1080, a tall window: the viewport term", async () => {
+        await setHeight(REST_TALL, false);
+        atRestTerm((await measure())!, "at rest at 1080");
+      });
+      await t.test("at rest at 300, a window short enough that 12em is the larger term", async () => {
+        try {
+          await setHeight(REST_SHORT, false);   // the fold is on: a short window, not the keyboard
+          await waitTight(true);
+          const m = (await measure())!;
+          assert.ok(term(m) < em12(m) - 20, `at rest at 300: 12em (${em12(m).toFixed(1)}px) is the larger term against 37% of the window (${term(m).toFixed(1)}px)`);
+          assert.ok(Math.abs(m.detailMaxH - em12(m)) <= 0.5, `at rest at 300: the cap is 12em (${m.detailMaxH}px against ${em12(m).toFixed(1)}px): the max's other arm, executed at rest`);
+          assert.ok(m.detailClientH <= m.detailMaxH + 0.5 && m.detailClientH >= floorOf(m.detailLineH), `at rest at 300: the room, under the cap, sets the detail's height, never under its floor (${m.detailClientH}px)`);
+        } finally { await cancelReply(); }
+      });
+      // the recorded lengths, at a phone's visible height at rest and at the tallest phone window the labs drive
+      for (const h of [PHONE_REST, TALL]) {
+        await t.test(`at rest at ${h}: the recorded 8-line detail shows in full, the answer box at three rows, Send inside the box`, async () => {
+          await setHeight(h, false);   // no sheet is up: the next one opens at this height
+          await openReply(TODOS[3]);
+          try {
+            const m = (await measure())!;
+            assert.ok(m.detailScrollH > em12(m) + 60, `the 8-line detail is longer than 12em (${m.detailScrollH}px against ${em12(m).toFixed(1)}px), so the head showed only part of it`);
+            assert.ok(m.detailScrollH <= m.detailClientH + 1, `at rest at ${h} the recorded 8-line detail shows in full: ${m.detailClientH} of ${m.detailScrollH}px under a ${m.detailMaxH}px cap (the head's 12em showed ${em12(m).toFixed(1)}px of it)`);
+            assert.ok(m.inputH >= m.floorH - 1, `at rest at ${h}, the 8-line detail: three rows (${m.inputH} against ${m.floorH}px)`);
+            assertFits(m, `at rest at ${h}, the 8-line detail in full`);
+          } finally { await cancelReply(); }
+        });
+        await t.test(`at rest at ${h}: the chip todo at its cap, under its room`, async () => {
+          await openReply(TODOS[1]);
+          try { atRestTerm((await measure())!, `at rest at ${h}, the chip todo: the cap under its room`); }
+          finally { await cancelReply(); }
+        });
+      }
+      assert.deepEqual(errors, [], "no script error in the page");
     } finally { await browser.close(); }
   });
 

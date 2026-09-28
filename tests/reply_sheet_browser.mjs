@@ -1,7 +1,7 @@
 // The browser driver for tests/test_reply_sheet_served.py: the todo Reply sheet, as the kernel serves it in the Waiting
 // pane (/waiting) and the chat page (/chat), on a phone with the keyboard up, against a hermetic lab kernel. The
 // composition the maintainer's round 1 ruling on PR 859 asked for: at 390 by 508 (the pane's own innerHeight IS the
-// keyboard's signal: inside the shell the pane iframe is sized to the visible height), a todo with a wrapped ask, a file
+// fold's signal: inside the shell the pane iframe is sized to the visible height), a todo with a wrapped ask, a file
 // chip, a link chip and a forty-line detail whose first line carries an address and whose last line is an unbreakable
 // token; the sheet opened, fourteen lines typed, then a real click at Send's painted centre. Read back: the box's children
 // (the tree each builder emits), Send's and Cancel's rects against the box's clip and the frame, what elementFromPoint
@@ -32,6 +32,13 @@
 // the tap, waits for it to be replaced after the send where the card is rebuilt (the chat), opens the sheet with one
 // fresh click on the button, and records a button that vanished under it or did not open the sheet as its own failure
 // line naming the element, never a bare exception.
+// The detail's cap at rest (the maintainer's ruling at the merge with main): with the keyboard down it is the larger of
+// 12em and 37% of the window's height, with the keyboard up 12em, as before. Read at rest at 900 and 1080 on the
+// composition's todo with its answer box cleared (the viewport term), and under the keyboard at 508 on the other todo's
+// sheet at open (12em). The detail's cap reads the keyboard where the shell does (restCap; kernel.py kbOpen): the visual
+// viewport of the window that owns the screen shorter than its layout viewport. These pages are top-level, so that
+// window is the page itself: with the keyboard up the driver stubs its visualViewport.height to its innerHeight less a
+// phone keyboard's 336px, and removes the stub at rest; every window under 900 here is the keyboard up.
 // Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip), 4
 // when the LAB kernel is not healthy (cfg.healthz names the lab port, asserted before any request; never a live kernel).
 // Synthetic sessions and todos only.
@@ -44,7 +51,7 @@ const playwright = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
 const engine = cfg.engine || "chromium";
 const out = { engine, pane: cfg.pane, errors: [] };
-const W = 390, KEYBOARD_UP = 508, TIGHT = 420, SHORT = 300, TALL = 900;
+const W = 390, KEYBOARD_UP = 508, TIGHT = 420, SHORT = 300, TALL = 900, REST_TALL = 1080, KEYBOARD_H = 336;
 const ANSWER = Array.from({ length: 14 }, (_, i) => `line ${i + 1}`).join("\n");
 
 const healthz = await new Promise((resolve) => {
@@ -75,7 +82,15 @@ await page.addInitScript(() => {
   WebSocket.prototype.send = function (data) { try { window.__wsSent.push(String(data).slice(0, 600)); } catch (e) { /* not text */ } return send.call(this, data); };
 });
 const settle = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
-const setHeight = async (h) => {
+// the keyboard's signal for the detail's cap (restCap): this top-level page's visual viewport stubbed shorter than its
+// layout viewport by a keyboard's height, or the stub removed (at rest the engine's getter answers, the viewport's height)
+const keyboard = (on) => page.evaluate(([o, kh]) => {
+  if (!o) delete window.visualViewport.height;
+  else Object.defineProperty(window.visualViewport, "height", { configurable: true, get: () => Math.max(0, window.innerHeight - kh) });
+}, [on, KEYBOARD_H]);
+// a window under 900 is the keyboard up; the keyboard's state is set before the resize, so kbFit reads it
+const setHeight = async (h, kb = h < TALL) => {
+  await keyboard(kb);
   await page.setViewportSize({ width: W, height: h });
   await page.waitForFunction((hh) => window.innerHeight === hh, h, { timeout: 10000 });
   await settle();
@@ -115,6 +130,7 @@ const measure = () => page.evaluate(() => {
     detailOverflowX: detail ? cs(detail).overflowX : null, detailScrollW: detail ? detail.scrollWidth : null, detailOffsetW: detail ? detail.offsetWidth : null,
     detailTextRight: detail ? textRight(detail) : null, detailRight: detail ? +detail.getBoundingClientRect().right.toFixed(1) : null,
     detailLineH: detail ? parseFloat(cs(detail).lineHeight) : null,
+    detailFontPx: detail ? parseFloat(cs(detail).fontSize) : null, detailMaxH: detail ? parseFloat(cs(detail).maxHeight) : null,   // the cap the engine resolved
     box: rect(box), boxScrollH: box.scrollHeight, boxClientH: box.clientHeight, boxOverflowY: cs(box).overflowY,
     send: rect(send), cancel: rect(cancel), hitAtSend: hit(send), hitAtCancel: hit(cancel),
     kinds: Array.from(box.children).map((c) => (["wt-file", "wt-link", "ut-file", "ut-link"].find((k) => c.classList.contains(k)) || (c.className || c.tagName).split(" ")[0])),
@@ -247,6 +263,7 @@ try {
     await page.click(`#tabs .tab[data-id="${cfg.sid}"]`);   // every session's thread is in the document; the active one is shown
     await page.waitForFunction((sid) => { const t = document.querySelector(`.thread[data-session="${sid}"]`); return !!t && getComputedStyle(t).display !== "none"; }, cfg.sid, { timeout: 30000 });
   }
+  await keyboard(true);   // the page opens at 508, the keyboard up
   await openReply(cfg.tid);
   out.opened = await measure();
   // the short window: the fold on, the floors alone past the cap
@@ -266,6 +283,13 @@ try {
   // the room (the cap's stated purpose)
   await setHeight(TALL);
   await waitTight(false);
+  // the keyboard down: the detail's cap at rest with the answer box empty (the answer typed at 420 is cleared, so the room
+  // holds more than the cap), the viewport term at 900 and at 1080; the answer is typed again at 900 below
+  await fill("");
+  out.restTall = await measure();
+  await setHeight(REST_TALL);
+  out.restTaller = await measure();
+  await setHeight(TALL);
   await fill(ANSWER);
   out.tall = await measure();
   await setHeight(KEYBOARD_UP);
@@ -304,6 +328,9 @@ try {
       await settle();
       const typed = await measure();
       out.drag = { openStyleH: at.inputStyleH, openH: at.inputH, draggedStyleH: dragged.inputStyleH, draggedH: dragged.inputH, afterKeyStyleH: typed.inputStyleH, afterKeyH: typed.inputH };
+      // the detail's cap under the keyboard, on this sheet at open at 508 (the other todo: a short ask, no chips, the forty-line
+      // detail, so the room would hold more than 12em): 12em, as before
+      out.kbCap = { frameH: at.frameH, tight: at.tight, detailH: at.detailH, detailScrollH: at.detailScrollH, detailMaxH: at.detailMaxH, detailFontPx: at.detailFontPx };
     } catch (e) { out.drag = { error: String(e).slice(0, 400) }; }
     // the dragged height is a PREFERENCE clamped to the room (composition-3): written to 215px as the grip leaves it, it stands at
     // 508 (the room holds it); the frame at 420 clamps it to the room the box has, not to the content; back at 508 it returns to

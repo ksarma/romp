@@ -10875,9 +10875,9 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   if (todoFile) d.append(" ", todoFileChip(todoFile, sid));   // the file the todo names, as on the row: the body delegate opens it from here too
   if (todoLink) d.append(" ", todoLinkChip(todoLink));   // the address it carries, as on the row: the document's anchor delegate opens it
   // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress, without opening
-  // the fold first: capped (12em) and scrolling within itself, never under two of its lines, so the answer
-  // box keeps its rows and the buttons stay in reach with the keyboard up (styles.css #ut-reply-prompt
-  // .ut-detail.open); a bare ask adds nothing here
+  // the fold first: capped (12em, or 37% of the window's height at rest when that is more; restCap below) and
+  // scrolling within itself, never under two of its lines, so the answer box keeps its rows and the buttons stay
+  // in reach with the keyboard up (styles.css #ut-reply-prompt .ut-detail.open); a bare ask adds nothing here
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
   if (dd) { dd.textContent = todoDetail; linkTodoDetailPaths(dd, sid); linkifyPrRefs(dd, prRepoFor(sid)); }
   const input = document.createElement("textarea");
@@ -10887,15 +10887,27 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
   const send = el("button", "picker-action confirm-btn"); send.textContent = "Send";
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  // THE DETAIL'S CAP AT REST (the maintainer's ruling at the merge with main, on the tall-window cap the pass left open):
+  // with the keyboard down the detail's cap is the larger of 12em and 37% of this window's height, so a tall window shows
+  // more of a long detail; with the keyboard up it is 12em and the flex shrink governs, as before (styles.css
+  // #ut-reply-prompt .ut-detail.open, where the share is derived). This publishes the window's height for that term at
+  // rest (--ut-rest-h on the overlay) and withdraws it with the keyboard up. The height is innerHeight, this window's visual
+  // viewport height but under a pinch zoom, which shrinks only the visual viewport and so leaves the cap alone (inside the
+  // shell the pane's iframe is sized to the visible height and never zoomed on its own). The keyboard is read as the shell
+  // reads it (kernel.py kbOpen): the visual viewport of the window that owns the screen more than 120px shorter than its
+  // layout viewport. That window is the parent: this window's own two heights agree whatever the keyboard does, and its
+  // height alone cannot tell the keyboard from a short window; standalone the parent is this window, and a cross-origin
+  // host (VS Code) throws, read as no keyboard. kbFit runs it at open and on every resize, before grow reads the room.
+  const restCap = () => { let up = false; try { const p = window.parent, pv = p.visualViewport; up = !!pv && p.innerHeight - pv.height * (pv.scale || 1) > 120; } catch { up = false; } if (up) overlay.style.removeProperty("--ut-rest-h"); else overlay.style.setProperty("--ut-rest-h", window.innerHeight + "px"); };
   // THE KEYBOARD (the user 2026-09-19, a phone screenshot: the detail filled the sheet and the answer box was one squeezed
   // line). The shell sizes this iframe to the VISIBLE height, so the on-screen keyboard opening or closing lands here as
   // this window's own resize: the picker's fold (kbFit in showPicker), on this overlay: short window → kb-tight, and
   // styles.css pins the sheet to the top under a 12px frame and lets the box scroll (#ut-reply-prompt.kb-tight, the
-  // .picker-overlay.kb-tight rules the class shares). The same resize re-runs grow: the answer's cap is the room the
-  // box has left, and the keyboard opening or closing changes the room. Gone with the modal: close() drops it, and it
-  // drops itself when the overlay was removed some other way (a second Reply replacing this one). waiting.ts showReply
-  // is the twin.
-  const kbFit = () => { if (!overlay.isConnected) { window.removeEventListener("resize", kbFit); return; } overlay.classList.toggle("kb-tight", window.innerHeight < 480); grow(true); };
+  // .picker-overlay.kb-tight rules the class shares). The same resize re-runs restCap (above: the detail's cap at rest)
+  // and then grow: the answer's cap is the room the box has left, and the keyboard opening or closing changes the room.
+  // Gone with the modal: close() drops it, and it drops itself when the overlay was removed some other way (a second
+  // Reply replacing this one). waiting.ts showReply is the twin.
+  const kbFit = () => { if (!overlay.isConnected) { window.removeEventListener("resize", kbFit); return; } overlay.classList.toggle("kb-tight", window.innerHeight < 480); restCap(); grow(true); };
   const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", kbFit); };
   const go = () => {
     const text = input.value.trim();

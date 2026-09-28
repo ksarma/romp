@@ -13,8 +13,8 @@ showUserTodoReply in /chat), so it is the guard the node legs name where they sk
 
 The composition the ruling asked for, per pane, asserted FIRST so that on a tree without the fix the tap's own outcome
 is the red (on the round-1 tree the first red used to be a computed-style read before it): a viewport of 390 by 508
-(inside the shell the pane iframe is sized to the visible height, so the pane's own innerHeight is the keyboard's
-signal; 508 is a phone's visible height with the keyboard up, above the fold's 480px threshold), a todo with a
+(inside the shell the pane iframe is sized to the visible height, so the pane's own innerHeight is the fold's signal;
+508 is a phone's visible height with the keyboard up, above the fold's 480px threshold), a todo with a
 near-300-character ask, a file chip, a link chip and a forty-line detail whose first line carries an address and whose
 last line is an unbreakable token; Reply tapped, fourteen lines typed, then a real click at Send's painted centre.
 Asserted: the click puts a userTodoAnswer frame for the todo on the page's socket and the sheet closes by that send
@@ -42,6 +42,14 @@ to the textarea), and a plain tap on the backdrop, press and release both on it,
 builder emits, read from the real pages: the pane's chips are
 flex children of the box, the chat's sit inside the quoted line, and the elements the fix's four rules key on match
 their selectors in both.
+
+The detail's cap at rest (the maintainer's ruling at the merge with main): with the keyboard down it is the larger of
+12em and 37% of the window's height, with the keyboard up 12em, as before. Asserted at rest at 900 and 1080 on
+the composition's todo with its answer box cleared (the viewport term: the cap is 37% of the window's height and the long
+detail shows at it, the sheet fitting with Send under a finger), and under the keyboard at 508 on the other todo's sheet
+at open (12em). The detail's cap reads the keyboard where the shell does (restCap; kernel.py kbOpen): these pages are
+top-level, so the driver stubs the page's visualViewport.height a keyboard's height under its innerHeight while the
+keyboard is up and removes the stub at rest.
 
 After the composition's send the chat page's card is rebuilt by the kernel's pushes that follow it (the other todo's
 Reply button becomes a new node), so the driver waits for that rebuild before it opens the other todo's sheet and records
@@ -248,6 +256,22 @@ class ReplySheetServed(unittest.TestCase):
         self.assertFalse(tall["tight"], where + "900px: no fold: %r" % (tall,))
         self.assertGreater(tall["inputH"], tall["floorH"] + 60, where + "900px, fourteen lines: the answer box grew well past the floor: %r" % (tall,))
         self.assertLess(t["inputH"], tall["inputH"], where + "900 then 508: the window's shrink re-fitted the answer box (grow ran on the resize): %d at 900, %d at 508: %s" % (tall["inputH"], t["inputH"], rec))
+        # the detail's cap at rest (the maintainer's ruling at the merge with main): with the keyboard down it is the larger of
+        # 12em and 37% of the window's height, here the viewport term (333px at 900 and 399.6px at 1080, against 12em's
+        # 134px), read on the composition's todo with its answer box cleared, where the room holds more than the cap
+        em12 = lambda m: 12 * m["detailFontPx"]
+        for label, m in (("at rest at 900", r["restTall"]), ("at rest at 1080", r["restTaller"])):
+            with self.subTest(window=label):   # each window its own red or green
+                term = 0.37 * m["frameH"]
+                self.assertFalse(m["tight"], where + label + ": no fold: %r" % (m,))
+                self.assertGreater(term, em12(m) + 20, where + label + ": 37%% of the window (%.1fpx) is the larger term against 12em (%.1fpx): %r" % (term, em12(m), m))
+                self.assertAlmostEqual(m["detailMaxH"], term, delta=0.5, msg=where + label + ": the cap is 37%% of the window's height, %.1fpx (the head's cap was 12em at every height, %.1fpx): %r" % (term, em12(m), m))
+                self.assertAlmostEqual(m["detailH"], term, delta=1.5, msg=where + label + ": the long detail shows at the cap, %.1fpx: %r" % (term, m))
+                self.assertGreaterEqual(m["inputH"], m["floorH"] - 1, where + label + ": three rows: %r" % (m,))
+                self.assertLessEqual(m["boxScrollH"], m["boxClientH"] + 1, where + label + ": the sheet fits with the detail at its cap, nothing is a scroll away: %r" % (m,))
+                for b in ("send", "cancel"):
+                    self.assertTrue(self._inside_clip(m, b), where + label + ": %s is inside the box's clip: %r" % (b, m))
+                self.assertEqual(m["hitAtSend"], "target", where + label + ": a finger at Send's painted centre reaches Send: %r" % (m,))
         # the tree each builder emits, and the elements the fix's rules key on: the pane's chips are flex children of the
         # box (waiting.ts showReply), the chat's sit inside the quoted line (render.ts showUserTodoReply); the shared
         # skeleton is the title, the quoted line, the detail, the answer box and the buttons, in that order
@@ -307,6 +331,13 @@ class ReplySheetServed(unittest.TestCase):
         self.assertGreater(d["draggedH"], d["openH"] + 30, where + "the written height laid out taller than the floor: %r" % (d,))
         self.assertEqual(d["afterKeyStyleH"], "150px", where + "one keystroke after the drag: the inline height the person set stands, grow stood down (before the guard it snapped back to the content's height): %r" % (d,))
         self.assertGreaterEqual(d["afterKeyH"], d["draggedH"] - 1, where + "and the box keeps the dragged height: %r" % (d,))
+        # the detail's cap under the keyboard, on that sheet at open at 508 (a short ask, no chips, the forty-line detail, so the
+        # room would hold more than 12em): 12em, as before; no viewport term enters with the keyboard up
+        k = r["kbCap"]
+        self.assertEqual(k["frameH"], 508, where + "the keyboard up at 508: %r" % (k,))
+        self.assertFalse(k["tight"], where + "508px: no fold: %r" % (k,))
+        self.assertAlmostEqual(k["detailMaxH"], em12(k), delta=0.5, msg=where + "the keyboard up at 508: the cap is 12em, %.1fpx, no viewport term (37%% of 508 would be %.1fpx): %r" % (em12(k), 0.37 * 508, k))
+        self.assertAlmostEqual(k["detailH"], em12(k), delta=1.5, msg=where + "the keyboard up at 508: the forty-line detail shows 12em, its height before the change; a cap that let the viewport term in would show it taller here: %r" % (k,))
         # the dragged height is a PREFERENCE clamped to the room (the author's pass after the maintainer's round 1,
         # composition-3): written to 215px as the grip leaves it, on this todo's sheet it stands at 508 (the room holds it); the
         # frame at 420 clamps it to the room the box has, not to the content's height, the box fitting its cap and Send inside
