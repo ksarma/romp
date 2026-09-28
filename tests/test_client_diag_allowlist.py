@@ -73,11 +73,11 @@ SHARED = {"nav": {"type": "reload", "responseEnd": 210, "domContentLoaded": 656,
 # front, <host>:<uuid>, when the row concerns a remote session), KEYED (a map whose keys are host names), SUFFIX (a host name as
 # the tail of a postal message id inside the value, <epoch>.<pid>_<hex>.<host>: postal_service.py _unique bakes self_host() in);
 # a fifth would classify itself. NONE names the producer chain and answers whether any branch reaches a host name. A shorthand
-# reason (_BOOL, _INT, _ENUM) is a claim about EVERY writer of the key, checked by the fixture rows in
+# reason (_BOOL, _INT, _INT_OR_NULL, _ENUM) is a claim about EVERY writer of the key, checked by the fixture rows in
 # test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else and, for the perf, pane-shim and
 # reload-core surfaces, test_todays_rows_pass_whole_and_quietly: one row per call site with the values the writers post, and
-# every value posted under a shorthand row asserted to the row's shape (assert_shorthand_shapes: a number, a boolean, a
-# string), so a fixture value of another shape reds (the author's pass-4 fixer pass: the pass-whole loop compares the stored row to the
+# every value posted under a shorthand row asserted to the row's shape (assert_shorthand_shapes: a number, a number or null, a
+# boolean, a string), so a fixture value of another shape reds (the author's pass-4 fixer pass: the pass-whole loop compares the stored row to the
 # posted one and reads no shape, and three chat values had contradicted their rows green). A census keyed on the NAME `host`
 # had missed the chat surface, whose sid, id, ids and active are the tab ids
 # the page holds, which federation.ts prefixes for every remote session (prefixInbound on SCALAR_ID and ARRAY_ID, the tab records
@@ -90,6 +90,7 @@ SHARED = {"nav": {"type": "reload", "responseEnd": 210, "domContentLoaded": 656,
 # this table derives (test_the_disclosure_copies_state_the_content_rule_and_name_every_host_carrying_surface).
 BARE, PREFIXED, KEYED, SUFFIX, NONE = "bare", "prefixed", "keyed", "suffix", "none"
 _ENUM, _INT, _BOOL = "a fixed word", "a number", "a boolean"
+_INT_OR_NULL = "a number or null"   # a number on every writer's road but one that posts null, named beside the row (the coordinator's ruling at the merge of main 1d591384e)
 CENSUS = {
     "perf": {   # perf-telemetry.ts: the minute and slowframe rows; every key's shape is the collector's
         "app": (NONE, "the pane word the collector is created with"), "since": (NONE, _INT), "span_ms": (NONE, _INT),
@@ -178,9 +179,9 @@ CENSUS = {
                         "only writer), or null; no build ever posted a boolean"),
         "recovered": (NONE, _BOOL), "hadRestore": (NONE, _BOOL), "perMinute": (NONE, _INT), "writer": (NONE, "the writing function's name"),
         "before": (NONE, _INT), "after": (NONE, _INT), "delta": (NONE, _INT), "stick": (NONE, _BOOL), "gesture": (NONE, _BOOL),
-        "sh": (NONE, "the scroller's scrollHeight, a number; null on the spacer row of a view the scroller did not measure in its frame, the row that carries view "
-                     "(scroll-write.ts spacerRow, number | null)"),
-        "ch": (NONE, "the scroller's clientHeight, a number; null on the same spacer road as sh (spacerRow, number | null)"),
+        # sh and ch: the scroller's scrollHeight and clientHeight, a number; null on the spacer row of a view the scroller did not measure
+        # in its frame, the row that carries view (scroll-write.ts spacerRow, number | null)
+        "sh": (NONE, _INT_OR_NULL), "ch": (NONE, _INT_OR_NULL),
         "anchor": (SUFFIX, "landmiss: the last 12 characters of whatever scrollToAnchor was called with (uuid.slice(-12)): a rendered turn's data-uuid, a kept or restored row's "
                            "uuid, the chatWindow reply's echoed ask, a feed card's anchorUuid the kernel relays (showOnTimeline), a branch token, or a deep link URL's anchor query "
                            "forwarded verbatim by the kernel's deepLink road (the timeline bridge's __rompTimelineOpenExternal, timeline-boot.ts, the extension's URI handler), which "
@@ -209,8 +210,9 @@ CENSUS = {
                        "posted by the kernel's deepLink road (a string any link can carry, cut at 64; first-party links send user or nothing); not a host by construction on any "
                        "first-party road, the standing error and strip's err have; spacer-dropped: the literal spacer (render.ts dropSpacerRowsOnVisibility)"),
         "keep": (NONE, "regionask: whether a keep-offset restore is armed, pendingAnchorKeepY != null, a boolean"), "reland": (NONE, _BOOL),
-        "view": (NONE, "spacer: the literal inactive, spread by scroll-write.ts spacerRow only when handed that word, on the row of a view the scroller did not measure in "
-                       "its frame; CLIENT_DIAG_VALUES bounds the key to that word and the kernel refuses any other value; no host"),
+        # view: the spacer row's literal inactive, spread by scroll-write.ts spacerRow only when handed that word, on the row of a view the
+        # scroller did not measure in its frame; CLIENT_DIAG_VALUES bounds the key to that word and the kernel refuses any other value; no host
+        "view": (NONE, _ENUM),
     },
     "strip": {   # strip.ts: the host popover's fetch and toggle rows
         "ok": (NONE, _BOOL), "tunnels": (NONE, _INT), "err": (NONE, "the page's own /tunnels fetch failure as String(err), cut"), "open": (NONE, _BOOL),
@@ -706,7 +708,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(len(km.CLIENT_DIAG_VALUES[("federation", "road")]), 2, "two fixed words, one per writer of the road key")
 
     def assert_shorthand_shapes(self, surface, what, data):
-        """Every value a fixture posts under a census row whose reason is a shorthand (_INT, _BOOL, _ENUM) has that shape
+        """Every value a fixture posts under a census row whose reason is a shorthand (_INT, _INT_OR_NULL, _BOOL, _ENUM) has that shape
         (the author's pass-4 fixer pass, 2026-09-20): the header's claim that the fixture rows check the shorthand reasons had been
         satisfied by no assertion (the pass-whole loop compares the stored row to the posted one and reads no shape), and
         three chat values contradicted their rows green. A bool is an int in Python, so a number must not be one."""
@@ -714,6 +716,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             reason = CENSUS[surface][key][1]
             if reason == _INT:
                 ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+            elif reason == _INT_OR_NULL:
+                ok = value is None or (isinstance(value, (int, float)) and not isinstance(value, bool))
             elif reason == _BOOL:
                 ok = isinstance(value, bool)
             elif reason == _ENUM:
