@@ -2267,6 +2267,11 @@ class LandReadsTheCI(_Base):
                   "createdAt '0001-01-01T00:00:00Z', a placeholder before 2000 (the zero time 0001-01-01T00:00:00Z is one)"),
                  ("the Unix epoch", {"createdAt": "1970-01-01T00:00:00Z"}, "createdAt '1970-01-01T00:00:00Z', a placeholder"),
                  ("not RFC 3339", {"createdAt": "2026-01-01 00:09:00"}, "createdAt '2026-01-01 00:09:00', not an RFC 3339 time"),
+                 # an RFC 3339 form that names no real date is not a placeholder: its own reason, not the zero time's
+                 ("an impossible date", {"createdAt": "2026-02-30T00:09:00Z"},
+                  "createdAt '2026-02-30T00:09:00Z', RFC 3339 in form but not a real date and time"),
+                 ("an impossible offset", {"createdAt": "2026-01-01T00:09:00+24:00"},
+                  "createdAt '2026-01-01T00:09:00+24:00', RFC 3339 in form but not a real date and time"),
                  ("no databaseId", {"databaseId": MISSING}, "no databaseId"),
                  ("a databaseId string", {"databaseId": "9"}, "databaseId '9', not a positive integer"),
                  ("a databaseId bool", {"databaseId": True}, "databaseId True, not a positive integer"),

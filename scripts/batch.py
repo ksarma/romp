@@ -2197,25 +2197,34 @@ _RFC3339 = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+
 RUN_TIME_FLOOR = _dt.datetime(2000, 1, 1, tzinfo=_dt.timezone.utc)
 
 
-def run_created(value):
-    """A run's createdAt as an aware datetime, or None when it is not a time GitHub set: not a string, not RFC 3339,
-    not a real date, or before RUN_TIME_FLOOR (the zero time among them)."""
+def run_time(value):
+    """(a run's createdAt as an aware datetime, None), or (None, why it is not a time GitHub set): not a string or not
+    RFC 3339, RFC 3339 in form but not a real date or time (a February 30th), or before RUN_TIME_FLOOR (the zero time
+    among them)."""
     m = _RFC3339.fullmatch(value) if isinstance(value, str) else None
     if m is None:
-        return None
+        return None, "not an RFC 3339 time"
     y, mo, d, h, mi, s, frac, _tz, sign, oh, om = m.groups()
-    off = _dt.timedelta(hours=int(oh), minutes=int(om)) * (-1 if sign == "-" else 1) if sign else _dt.timedelta(0)
     try:
+        off = _dt.timedelta(hours=int(oh), minutes=int(om)) * (-1 if sign == "-" else 1) if sign else _dt.timedelta(0)
         t = _dt.datetime(int(y), int(mo), int(d), int(h), int(mi), int(s), int((frac or "0")[:6].ljust(6, "0")),
                          tzinfo=_dt.timezone(off))
     except ValueError:
-        return None
-    return t if t >= RUN_TIME_FLOOR else None
+        return None, "RFC 3339 in form but not a real date and time"
+    if t < RUN_TIME_FLOOR:
+        return None, ("a placeholder before %d (the zero time 0001-01-01T00:00:00Z is one), not a time GitHub set"
+                      % RUN_TIME_FLOOR.year)
+    return t, None
+
+
+def run_created(value):
+    """A run's createdAt as an aware datetime, or None when it is not a time GitHub set (run_time says why)."""
+    return run_time(value)[0]
 
 
 def run_row_fault(row):
     """Why a matching `gh run list` row cannot be ordered among the others, or None: its databaseId is not a positive
-    integer, or its createdAt is not a time GitHub set (run_created). The newest run decides, and a row that cannot be
+    integer, its createdAt is not a time GitHub set (run_time), or its attempt is not a positive integer. The newest run decides, and a row that cannot be
     placed by time and id would decide by accident, so it is refused rather than guessed at."""
     rid = row.get("databaseId")
     if "databaseId" not in row or rid is None:
@@ -2225,11 +2234,9 @@ def run_row_fault(row):
     created = row.get("createdAt")
     if "createdAt" not in row or created is None:
         return "no createdAt"
-    if run_created(created) is None:
-        if isinstance(created, str) and _RFC3339.fullmatch(created):
-            return "createdAt %r, a placeholder before %d (the zero time 0001-01-01T00:00:00Z is one), not a time GitHub set" % (
-                created, RUN_TIME_FLOOR.year)
-        return "createdAt %r, not an RFC 3339 time" % (created,)
+    when, why = run_time(created)
+    if when is None:
+        return "createdAt %r, %s" % (created, why)
     attempt = row.get("attempt")
     if "attempt" not in row or attempt is None:
         return "no attempt"
