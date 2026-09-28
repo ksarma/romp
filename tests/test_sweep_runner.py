@@ -2132,10 +2132,11 @@ class PytestEnvironment(_Base):
         for ctl, text in cases:
             with self.subTest(ctl=ctl):
                 w.ctl(ctl)
+                before = len(w.calls())
                 p = w.run(check=2)
                 self.assertIn(text, p.stderr)
                 self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
-                self.assertEqual(w.legs_called(), [], "no leg ran")
+                self.assertEqual(w.legs_called()[before:], [], "no leg ran")
                 left = os.listdir(w.sdk_root())
                 self.assertEqual(sorted(n for n in left if not n.endswith((".log", ".lock"))), [], "the venv is removed")
                 with open(os.path.join(w.sdk_root(), [n for n in left if n.endswith(".log")][0])) as f:
@@ -2195,10 +2196,11 @@ class PytestEnvironment(_Base):
         for label, ci, host, text in cases:
             with self.subTest(case=label):
                 w.change({".github/workflows/ci.yml": ci, "kernel/session_host.py": host}, msg=label)
+                before = len(w.calls())
                 p = w.run(check=2)
                 self.assertIn(text, p.stderr)
                 self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
-                self.assertEqual(w.legs_called(), [], "no leg ran")
+                self.assertEqual(w.legs_called()[before:], [], "no leg ran")
 
     def test_a_leg_rerun_of_pytest_runs_in_the_venv_and_one_of_another_leg_builds_none(self):
         w = self.w

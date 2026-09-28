@@ -170,13 +170,14 @@ subject; `verify` refuses the branch otherwise.
    an earlier member's head) gets no merge commit of its own; it is recorded as contained, lands
    with the batch, and the body lists it as such under "Read these first" and in its table row.
 3. Run the local sweep at the batch head: `scripts/sweep.py run --tree ../romp-batch-<name>`.
-   pytest runs in a venv the runner builds from `--python` (default: the interpreter running
-   `sweep.py`) under `<state dir>/sweeps/sdk/`, holding what the batch head's `ci.yml` installs in
-   CI's Python cells: pytest and its plugins, cryptography, and the Claude Agent SDK at the pin its
-   SDK step reads, so the SDK-gated tests run as they do in CI. The first sweep at a new pin or
-   interpreter builds it (a download of about 110 MB) and later ones reuse it; a build that fails
-   refuses the sweep with nothing recorded, naming the step and its log, and so does a head whose
-   `ci.yml` lacks one of those install steps (merge main into it). `--wrap LEG=PREFIX` runs a leg
+   pytest runs in a venv holding what the batch head's `ci.yml` installs in CI's Python cells
+   (pytest and its plugins, cryptography, and the Claude Agent SDK at the pin its SDK step reads),
+   so the SDK-gated tests run as they do in CI. The runner builds the venv from `--python`
+   (default: the interpreter running `sweep.py`) under `<state dir>/sweeps/sdk/`: the first sweep at
+   a new pin or interpreter builds it (a download of about 110 MB), and later sweeps reuse it. If
+   the build fails, the sweep is refused with nothing recorded, and the message names the failed
+   step and its log. A head whose `ci.yml` lacks one of those install steps is refused the same way;
+   merge main into it. `--wrap LEG=PREFIX` runs a leg
    under this machine's slot or scope wrapper (the wrap keeps your environment; the leg does not
    see what it sets). The legs run in a private clone of the batch
    head's exact sha under the state dir, verified against the sha's tree first, never in the batch
