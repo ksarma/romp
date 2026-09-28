@@ -939,7 +939,7 @@ class UpdateListing(unittest.TestCase):
         self.addCleanup(srv.shutdown)
         def get(path):
             c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
-            c.request("GET", path, headers={"X-Romp-Token": km.TOKEN})     # the serve token gates every route
+            c.request("GET", path, headers={"X-Romp-Token": km.TOKEN})     # the serve token (or a browser sign-in) gates every route
             resp = c.getresponse()
             raw = resp.read()
             c.close()

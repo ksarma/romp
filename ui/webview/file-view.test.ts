@@ -586,7 +586,7 @@ test("a file opened FROM the listing offers the way back — close only the view
 // kernel.py: the view allowlists are a rendering choice, not a security boundary). ──
 
 test("the title bar offers Download as the lightbox's tray glyph, in the file group beside Copy path, at the same-origin download URL (T367)", () => {
-  // the URL is fileUrl + the download switch: same origin, cookie-authed, and federation-aware for
+  // the URL is fileUrl + the download switch: same origin, capped through fileUrl, and federation-aware for
   // free — fileUrl already routes a remote session's file through the /remote/<host>/file relay
   assert.match(VIEW, /const dlUrl = fileUrl\(path, sid\) \+ "&download=1";/);
   assert.match(VIEW, /dl\.innerHTML = ICON_DOWNLOAD;/, "the one tray drawing (icons.ts), not a word");
