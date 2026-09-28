@@ -687,21 +687,56 @@ def _route_tables(tree):
     return out
 
 
+# Every field of Python's syntax tree that holds an identifier, sorted by whether the identifier is a name the node binds
+# (or declares, for global and nonlocal) in the scope it sits in. _bound_names reads the first table: Name.id binds only
+# as a store, and an import binds the first part of its dotted name unless it has an as name. The second table's fields
+# hold an attribute's name, a module's dotted name or a call's keyword, none a binding. A node an older interpreter lacks
+# (the type parameters, 3.12 on) is skipped there. test_every_identifier_field_of_the_grammar_is_sorted re-derives the
+# fields from the running interpreter's ast module, so a field a later grammar adds fails there until it is sorted here.
+_BINDING_FIELDS = {"Name": ("id",), "arg": ("arg",), "alias": ("name", "asname"), "FunctionDef": ("name",),
+                   "AsyncFunctionDef": ("name",), "ClassDef": ("name",), "ExceptHandler": ("name",), "MatchAs": ("name",),
+                   "MatchStar": ("name",), "MatchMapping": ("rest",), "Global": ("names",), "Nonlocal": ("names",),
+                   "TypeVar": ("name",), "ParamSpec": ("name",), "TypeVarTuple": ("name",)}
+_NON_BINDING_FIELDS = {"Attribute": ("attr",), "ImportFrom": ("module",), "MatchClass": ("kwd_attrs",), "keyword": ("arg",)}
+
+
+def _identifier_fields():
+    """{(node class name, field)} for every field the running interpreter's ast module types as an identifier, read off
+    each concrete node class's signature (its __doc__: `FunctionDef(identifier name, arguments args, ...)`)."""
+    out = set()
+    for name in dir(ast):
+        c = getattr(ast, name)
+        if isinstance(c, type) and issubclass(c, ast.AST) and getattr(c, "_fields", ()) and c.__doc__:
+            for m in re.finditer(r"\bidentifier[?*]? (\w+)", c.__doc__.split("\n")[0]):
+                if m.group(1) in c._fields:
+                    out.add((name, m.group(1)))
+    return out
+
+
+def _bound_names(n):
+    """The names node `n` binds or declares in the scope it sits in, read by _BINDING_FIELDS."""
+    if isinstance(n, ast.Name):
+        return [n.id] if isinstance(n.ctx, ast.Store) else []
+    if isinstance(n, ast.alias):
+        return [(n.asname or n.name).split(".")[0]]
+    out = []
+    for f in _BINDING_FIELDS.get(type(n).__name__, ()):
+        v = getattr(n, f, None)
+        out.extend(v if isinstance(v, list) else [v] if v else [])
+    return out
+
+
 def _table_reads(fn, tables):
     """{local name: [value names]} for each name `fn` binds only by reading a route table, `x = TABLE.get(...)` or
-    `x = TABLE[...]` (each value of the table is what it can hold). A name bound any other way as well (another
-    assignment, a parameter, a loop, a with, an import, in `fn` or in a function nested in it) is not here, so a body that
-    calls it stays unresolved."""
+    `x = TABLE[...]` (each value of the table is what it can hold). A name bound or declared any other way as well, in
+    `fn` or in a function or class nested in it, is not here, so a body that calls it stays unresolved: every binding
+    _bound_names reads counts (another assignment, a parameter, a loop, a with, an import, a walrus, a def or a class of
+    that name, an except's as name, a match capture, star or mapping rest, a type parameter, a global or nonlocal
+    declaration). The name of `fn` itself binds in the scope around it, not in `fn`, and does not count."""
     reads, stores = {}, {}
     for n in ast.walk(fn):
-        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
-            stores[n.id] = stores.get(n.id, 0) + 1
-        elif isinstance(n, ast.arg):
-            stores[n.arg] = stores.get(n.arg, 0) + 1
-        elif isinstance(n, (ast.Import, ast.ImportFrom)):
-            for a in n.names:
-                k = (a.asname or a.name).split(".")[0]
-                stores[k] = stores.get(k, 0) + 1
+        for k in ([] if n is fn else _bound_names(n)):
+            stores[k] = stores.get(k, 0) + 1
         if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
             v, table = n.value, None
             if isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "get" \
@@ -758,8 +793,8 @@ def _typed_responses():
     """({builder of each literal-script-typed _send's body: {the literal types it is sent with}}, {(function, type
     expression): count} for every other _send or Content-Type header whose type is not a literal, _send's own header
     aside), read from kernel.py's syntax tree. A body called or named through a local bound only by reading a route table
-    (`_page = _PAGE_RENDERERS.get(p)`, _table_reads) counts as each builder the table holds; a local bound any other way
-    counts as its own name, which SERVED_BUILDERS lists no builder by."""
+    (`_page = _PAGE_RENDERERS.get(p)`, _table_reads) counts as each builder the table holds; a local also bound or
+    declared any other way (_bound_names) counts as its own name, which SERVED_BUILDERS lists no builder by."""
     builders, other = _typed_responses_cached()
     return {k: set(v) for k, v in builders.items()}, dict(other)
 
@@ -791,20 +826,55 @@ class ServedScriptPopulation(unittest.TestCase):
 
     def test_a_body_through_a_route_table_counts_as_each_builder_the_table_holds(self):
         # the derivation, over sources of our own: a local bound only by a read of a module-level table of names counts as
-        # every name in the table (.get or an index); a local bound any other way as well (a second assignment, a
-        # parameter, a loop) counts as itself, which SERVED_BUILDERS lists no builder by, so the census reds
+        # every name in the table (.get or an index); a local bound or declared any other way as well counts as itself,
+        # which SERVED_BUILDERS lists no builder by, so the census reds. One row per binding form _BINDING_FIELDS holds
+        # (the type parameters only where the grammar has them), each in f's body ahead of the read, or in a function
+        # nested in f
         table = "T = {'/a': _a, '/b': _b}\n"
+        send = "    return self._send(200, g(), 'text/html')\n"
         for src, want in (
-                ("def f(self, p):\n    g = T.get(p)\n    return self._send(200, g(), 'text/html')\n", {"_a", "_b"}),
-                ("def f(self, p):\n    g = T[p]\n    return self._send(200, g(), 'text/html')\n", {"_a", "_b"}),
-                ("def f(self, p):\n    g = T.get(p)\n    g = h\n    return self._send(200, g(), 'text/html')\n", {"g"}),
-                ("def f(self, g):\n    g = T.get(p)\n    return self._send(200, g(), 'text/html')\n", {"g"}),
-                ("def f(self, p):\n    for g in x: pass\n    g = T.get(p)\n    return self._send(200, g(), 'text/html')\n",
-                 {"g"}),
-                ("def f(self, p):\n    g = U.get(p)\n    return self._send(200, g(), 'text/html')\n", {"g"})):
+                ("def f(self, p):\n    g = T.get(p)\n" + send, {"_a", "_b"}),
+                ("def f(self, p):\n    g = T[p]\n" + send, {"_a", "_b"}),
+                ("def f(self, p):\n    g = T.get(p)\n    h = g\n" + send, {"_a", "_b"}),
+                ("def g(self, p):\n    g = T.get(p)\n" + send, {"_a", "_b"}),
+                ("def f(self, p):\n    g = U.get(p)\n" + send, {"g"})):
             with self.subTest(src=src):
                 builders, _other = _typed_responses_of(ast.parse(table + src))
                 self.assertEqual(set(builders), want)
+        rebinds = [("a second assignment", "g = h"), ("a loop", "for g in x: pass"), ("a with", "with x as g: pass"),
+                   ("an import", "import g"), ("a dotted import", "import g.h"), ("an import's as name", "from m import h as g"),
+                   ("a walrus", "(g := h)"), ("a comprehension", "[g for g in x]"), ("a lambda's parameter", "lambda g: 0"),
+                   ("a def", "def g(): pass"), ("an async def", "async def g(): pass"), ("a class", "class g: pass"),
+                   ("an except's as name", "try: pass\n    except E as g: pass"),
+                   ("a match capture", "match x:\n        case g: pass"),
+                   ("a match capture's as name", "match x:\n        case [1] as g: pass"),
+                   ("a match star", "match x:\n        case [*g]: pass"),
+                   ("a mapping's rest", "match x:\n        case {**g}: pass"), ("a global declaration", "global g"),
+                   ("a nested function's store", "def h():\n        g = 1")]
+        if hasattr(ast, "TypeVar"):   # the type parameters, 3.12 on
+            rebinds += [("a type parameter", "def h[g](): pass"), ("a ParamSpec", "def h[**g](): pass"),
+                        ("a TypeVarTuple", "def h[*g](): pass")]
+        for what, line in rebinds:
+            with self.subTest(what=what):
+                src = "def f(self, p):\n    %s\n    g = T.get(p)\n%s" % (line, send)
+                builders, _other = _typed_responses_of(ast.parse(table + src))
+                self.assertEqual(set(builders), {"g"}, what + ": a second binding leaves the local unresolved")
+        with self.subTest(what="a parameter"):
+            builders, _other = _typed_responses_of(ast.parse(table + "def f(self, g):\n    g = T.get(p)\n" + send))
+            self.assertEqual(set(builders), {"g"})
+        with self.subTest(what="a nonlocal declaration"):
+            src = "def o():\n    g = h\n    def f(self, p):\n        nonlocal g\n        g = T.get(p)\n    " + send
+            builders, _other = _typed_responses_of(ast.parse(table + src))
+            self.assertEqual(set(builders), {"g"})
+
+    def test_every_identifier_field_of_the_grammar_is_sorted(self):
+        # _table_reads counts a second binding by _BINDING_FIELDS; a field of the running interpreter's grammar that holds an
+        # identifier and sits in neither table is a binding form the count may not see
+        fields = _identifier_fields()
+        self.assertTrue({("Name", "id"), ("FunctionDef", "name"), ("keyword", "arg")} <= fields,
+                        "the derivation reads the grammar's signatures: %r" % sorted(fields))
+        self.assertEqual(fields, {(c, f) for t in (_BINDING_FIELDS, _NON_BINDING_FIELDS) for c, fs in t.items() for f in fs
+                                  if hasattr(ast, c)}, "an identifier field sorted into neither table, or a listed one gone")
 
     def test_each_page_is_read_as_send_writes_it(self):
         # a page of the page class (a builder the route table routes to) carries the sign-in seed and then the page-key
