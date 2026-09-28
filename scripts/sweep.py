@@ -7,7 +7,7 @@ sweep of its exact head (docs/batching.md).
          sweep the commit the tree's HEAD names, in a private checkout of it; exit 0 pass, 1 red, 2 refused
          to start, 3 invalid
   check  [SHA|HEAD] [--tree DIR] [--branch BR]
-         read the result for a commit, as batch.py does; exit 0 on a pass, 1 otherwise
+         read the result for a commit as batch.py verify does; exit 0 on a pass, 1 otherwise
 
 The result is `<state dir>/sweeps/<full sha>.json`, the state dir resolved as bin/romp resolves it
 (ROMP_STATE_DIR, else XDG_STATE_HOME/romp, else ~/.local/state/romp); leg logs go under
@@ -112,8 +112,8 @@ WEBVIEW_WHY = "owed at every head: the webview legs read files outside kernel/ke
 VERDICTS = ("pass", "red", "running", "invalid")
 # The one reason the runner gives for deps and the webview legs not owed: the sha's tree has no extension. A result
 # that marks one of them not owed for any other reason did not come from this runner (every checkout is fresh, so it
-# never holds node_modules, and no diff excuses a webview leg), and batch.py accepts this one only when the sha's tree
-# really has no such file.
+# never holds node_modules, and no diff excuses a webview leg), and batch.py and `check` accept this one only when the
+# sha's tree really has no such file (excuse_contradiction).
 NO_PACKAGE_JSON = "no vscode-extension/package.json"
 EXIT_PASS, EXIT_RED, EXIT_REFUSED, EXIT_INVALID = 0, 1, 2, 3
 
@@ -593,6 +593,24 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
     return done("pass", "sweep at %s: pass, finished %s (%s%s%s); %s" % (
         short(sha), rec.get("finished"), ", ".join(ran), ("; not owed: " + ", ".join(skipped)) if skipped else "",
         ("; " + "; ".join(notes)) if notes else "", path), rec)
+
+
+def excuse_contradiction(tree, result, sha, subject="HEAD"):
+    """The legs a result marks not owed for having no vscode-extension/package.json (the one reason the runner gives
+    for deps and the webview legs, round 1's excuse rule) while the sha's tree does hold that file, as a line naming
+    them; None when none is so marked or the tree really has no such file. Read with the runner's own git hygiene (no
+    inherited GIT_*, no global or system config, refs/replace ignored). batch.py's verify, plan and --repin and this
+    script's check apply it after a pass."""
+    legs = (result or {}).get("legs") or {}
+    excused = [n for n in LEGS if not is_owed(n, legs.get(n)) and (legs.get(n) or {}).get("why") == NO_PACKAGE_JSON]
+    if not excused:
+        return None
+    p = subprocess.run(["git", "-C", tree, "cat-file", "-e", "%s:vscode-extension/package.json" % sha], env=_git_env(),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if p.returncode != 0:
+        return None
+    return ("sweep invalid at %s: the result marks %s not owed for having %s, but %s's tree holds vscode-extension/package.json; "
+            "sweep again with this checkout's scripts/sweep.py" % (short(sha), ", ".join(excused), NO_PACKAGE_JSON, subject))
 
 
 # ── the runner ────────────────────────────────────────────────────────────────
@@ -1607,11 +1625,24 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
 
 
 def cmd_check(args):
+    """What verify reads for the batch head, and plan and --repin for a member's head: the reader's case, the branch
+    told apart from the sha (a result for the tree's branch at another sha reads stale, not missing), then the excuse
+    rule against the sha's tree."""
     tree = os.path.realpath(args.tree or os.getcwd())
     sha = git(tree, "rev-parse", "--verify", (args.sha or "HEAD") + "^{commit}")
-    a = assess(sha, subject="HEAD" if not args.sha or args.sha == "HEAD" else sha[:10], branch=args.branch, tree_hint=tree)
-    print(("ok   " if a["case"] == "pass" else "FAIL ") + a["line"])
-    return EXIT_PASS if a["case"] == "pass" else EXIT_RED
+    subject = "HEAD" if not args.sha or args.sha == "HEAD" else sha[:10]
+    branch = args.branch
+    if branch is None and sha == git(tree, "rev-parse", "--verify", "HEAD^{commit}"):
+        # verify names the batch branch and plan the member's head branch; for the tree's own HEAD that is its branch
+        branch = git(tree, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip() or None
+    a = assess(sha, subject=subject, branch=branch, tree_hint=tree)
+    line, ok = a["line"], a["case"] == "pass"
+    if ok:
+        fault = excuse_contradiction(tree, a["result"], sha, subject=subject)
+        if fault:
+            line, ok = fault, False
+    print(("ok   " if ok else "FAIL ") + line)
+    return EXIT_PASS if ok else EXIT_RED
 
 
 def main(argv=None):
@@ -1647,11 +1678,15 @@ def main(argv=None):
                         "--leg leg; repeatable")
     p.set_defaults(func=cmd_run)
     p = sub.add_parser("check", help="read the result for a commit, as scripts/batch.py verify does",
-                       description="Read the result recorded for a commit and name its case: pass, or missing, stale, "
-                                   "unfinished, red, invalid, incomplete, unreadable. Exit 0 on a pass, 1 otherwise.")
+                       description="Read the result recorded for a commit and name its case as scripts/batch.py verify "
+                                   "reads it (and plan and assemble --repin for a member's head): pass, or missing, stale, "
+                                   "unfinished, red, invalid, incomplete, unreadable; a pass that marks a leg not owed for "
+                                   "having no vscode-extension/package.json while the sha's tree holds one reads invalid. "
+                                   "Exit 0 on a pass, 1 otherwise.")
     p.add_argument("sha", nargs="?", metavar="SHA", help="the commit (default: HEAD of --tree)")
     p.add_argument("--tree", metavar="DIR", help="the repository to resolve SHA in (default: the current directory)")
-    p.add_argument("--branch", metavar="BR", help="tell a missing result apart from a stale one recorded for this branch")
+    p.add_argument("--branch", metavar="BR", help="tell a missing result apart from a stale one recorded for this branch "
+                                                  "(default, when SHA is the tree's HEAD: the branch the tree has checked out)")
     p.set_defaults(func=cmd_check)
     args = ap.parse_args(argv)
     try:

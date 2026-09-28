@@ -840,6 +840,58 @@ class Runner(_Base):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn("ok   sweep at %s: pass" % w.head()[:10], p.stdout)
 
+    def check(self, *extra):
+        return subprocess.run([sys.executable, str(SWEEP), "check", "--tree", self.w.tree, *extra], env=self.w.env, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def test_check_tells_a_stale_result_for_the_trees_branch_from_a_missing_one(self):
+        """Round 1, extra5-7: check reads the tree's HEAD as verify reads the batch head, with the branch: --branch
+        defaults to the branch the tree has checked out, so a result recorded for that branch at an older sha reads
+        stale, as verify and plan say, not missing. An explicit SHA other than HEAD is read without it."""
+        w = self.w
+        w.change({"README.md": "one\n"})
+        old = w.head()
+        w.run(check=0)
+        w.change({"README.md": "two\n"})
+        p = self.check()
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL sweep stale: the newest result for work is at %s" % old[:10], p.stdout)
+        p = self.check("--branch", "elsewhere")
+        self.assertIn("FAIL sweep missing: no result for HEAD %s" % w.head(), p.stdout, "a --branch given is the one read")
+        p = self.check(old)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("ok   sweep at %s: pass" % old[:10], p.stdout)
+        seed = w.git("rev-parse", "main")
+        p = self.check(seed)
+        self.assertIn("FAIL sweep missing: no result for %s %s" % (seed[:10], seed), p.stdout,
+                      "a SHA other than HEAD is not read against the tree's branch")
+
+    def test_check_refuses_what_verify_refuses_after_a_pass(self):
+        """Round 1, extra5-7 and C1: check prints what verify reads. A result that marks a webview leg not owed for any
+        reason but a missing extension reads invalid (the reader's refusal, so check has it too), and one that marks deps
+        and the webview legs not owed for having no vscode-extension/package.json reads invalid when the sha's tree holds
+        one, which the reader alone cannot tell (verify, plan and --repin read the tree)."""
+        w = self.w
+        w.run(check=0)
+        data = w.data()
+        run = data["runs"][-1]
+        run["legs"]["typecheck"] = {"owed": False, "rc": None, "why": "ui/ untouched"}
+        run["verdict"] = sweep.run_verdict(run)
+        sweep.write_result(w.result_path(), data)
+        p = self.check()
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL sweep invalid at %s: typecheck marked not owed for a reason other than "
+                      "'no vscode-extension/package.json' ('ui/ untouched')" % w.head()[:10], p.stdout)
+        for n in sweep.EXTENSION_LEGS:
+            run["legs"][n] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
+        run["verdict"] = sweep.run_verdict(run)
+        sweep.write_result(w.result_path(), data)
+        self.assertEqual(sweep.assess(w.head(), env=w.env)["case"], "pass", "the reader alone reads no tree")
+        p = self.check()
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL sweep invalid at %s: the result marks deps, typecheck, npm-test, build not owed for having no "
+                      "vscode-extension/package.json, but HEAD's tree holds vscode-extension/package.json" % w.head()[:10], p.stdout)
+
 
 def _kill_quietly(pid):
     """Cleanup for a writer pid a test recorded itself, in case the runner under test did not stop it."""

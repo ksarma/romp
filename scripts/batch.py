@@ -1537,20 +1537,9 @@ def check_contains_main(root, name, head, lines):
 
 
 def excuse_contradiction(root, sweep, result, head, subject="the batch head"):
-    """The legs a result marks not owed for having no vscode-extension/package.json (the one reason the runner gives
-    for deps and the webview legs, round 1's excuse rule) while the sha's tree does hold that file, as a line naming
-    them; None when none is so marked or the tree really has no such file. Read with the runner's own git hygiene
-    (no inherited GIT_*, no global or system config, refs/replace ignored)."""
-    legs = (result or {}).get("legs") or {}
-    excused = [n for n in sweep.LEGS if not sweep.is_owed(n, legs.get(n)) and (legs.get(n) or {}).get("why") == sweep.NO_PACKAGE_JSON]
-    if not excused:
-        return None
-    p = subprocess.run(["git", "-C", root, "cat-file", "-e", "%s:vscode-extension/package.json" % head], env=sweep._git_env(),
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if p.returncode != 0:
-        return None
-    return ("sweep invalid at %s: the result marks %s not owed for having %s, but %s's tree holds vscode-extension/package.json; "
-            "sweep again with this checkout's scripts/sweep.py" % (short(head), ", ".join(excused), sweep.NO_PACKAGE_JSON, subject))
+    """Round 1's excuse rule, read against the head's tree: scripts/sweep.py's excuse_contradiction, which its own
+    check applies too, so check prints what verify reads."""
+    return sweep.excuse_contradiction(root, result, head, subject=subject)
 
 
 def member_sweep_fault(root, sweep, m):
