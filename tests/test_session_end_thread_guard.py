@@ -105,9 +105,12 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
 - The guard runs AFTER THE RUNNER HAS TORN DOWN EVERY FIXTURE. The scratch conftest carries two autouse fixtures, one
   session-scoped and one function-scoped, each starting a non-daemon thread that waits on its own event and is stopped
   and joined only at the fixture's teardown. Every run above stays free of their names and the green runs pass, so a
-  thread a fixture stops at teardown is never waited for or named. A guard moved before the runner's teardown (tryfirst,
-  or no ordering, since pytest's runner plugin registers before any conftest and pluggy calls later registrations first)
-  waits its cap for them and fails the green runs naming them.
+  thread a fixture stops at teardown is never waited for or named. A guard moved before the runner's teardown (its
+  check before the wrapper's yield, or a plain implementation marked tryfirst or not ordered, since pytest's runner
+  plugin registers before any conftest and pluggy calls later registrations first) waits its cap for them and fails the
+  green runs naming them. A last test whose own fixture fails at teardown is checked too, after the runner's error: the
+  report names the leaked thread after the fixture's error, unmarked serially, and under an xfail mark serially and
+  under -n 2, where pytest's skipping plugin would otherwise make that error an xfail and leave the run green.
 
 - A thread listed while its start() is still running, which Thread.join refuses with a RuntimeError, is read again on
   the guard's next pass rather than raised (JoinRace, in this process under the conftest: a thread never started, which
@@ -127,9 +130,11 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   pytest-worker, Timers whose functions are in pytest_asyncio and pytest_testmon).
 
 Each child-run pin was run with the guard removed from tests/conftest.py and fails there: the leak, idle-worker,
-daemon-started-pool, missing-table, xfail, redaction, stderr-header and table-changing runs pass (exit 0, no error), the
-green runs' witness finds the within-cap threads alive at sessionfinish, and the two-error runs (the redaction one among
-them), red on the TestCase's own errors, find no thread named in the report. The two-error runs also fail with the guard
+daemon-started-pool, missing-table, xfail (the fixture-teardown one under xfail among them), redaction, stderr-header
+and table-changing runs pass (exit 0, no error), the green runs' witness finds the within-cap threads alive at
+sessionfinish, and the two-error runs (the redaction one among them) and the unmarked fixture-teardown run, red on the
+TestCase's or the fixture's own errors, find no thread named in the report. The fixture-teardown runs also fail with
+the guard as it was before it ran after a failing teardown of the runner, on the same outcomes. The two-error runs also fail with the guard
 as it was before it wrote to stderr, on the same missing name.
 The pins for the exit-join tables, as this file has them, were run serially on 3.12 against the guard as it was before
 it read the tables, when it waited for non-daemon threads only, and every one that reads the guard fails there. Of the
@@ -479,6 +484,29 @@ def test_leak_under_xfail_body_passes():
     _start("xfail-passes", [threading.Thread(target=_leaked, name="plant-leaked")])
 '''
 
+# a last test whose own fixture raises at teardown, with a leaked non-daemon thread: the runner's teardown raises before
+# the guard runs, and under an xfail mark pytest's skipping plugin makes that error an xfail
+FIXTURE_TEARDOWN_FAILS = '''
+import pytest
+
+
+@pytest.fixture
+def fails_at_teardown():
+    yield
+    raise RuntimeError("plant: the fixture's teardown failed")
+
+'''
+FIXTURE_TEARDOWN_FAILS_TEST = FIXTURE_TEARDOWN_FAILS + '''
+def test_leak_fixture_teardown_fails(fails_at_teardown):
+    _start("fixture-teardown-fails", [threading.Thread(target=_leaked, name="plant-leaked")])
+'''
+FIXTURE_TEARDOWN_FAILS_XFAIL_TEST = FIXTURE_TEARDOWN_FAILS + '''
+@pytest.mark.xfail(reason="plant: the body is expected to fail")
+def test_leak_fixture_teardown_fails_under_xfail(fails_at_teardown):
+    _start("fixture-teardown-fails-xfail", [threading.Thread(target=_leaked, name="plant-leaked")])
+    raise AssertionError("plant: the body failed, as its xfail mark expects")
+'''
+
 
 class SessionEndThreadGuard(unittest.TestCase):
     def _run(self, plant, *, cap=None, workers=None, drop=None, env_extra=None, conftest_extra=""):
@@ -682,6 +710,39 @@ class SessionEndThreadGuard(unittest.TestCase):
     def test_under_two_workers_a_leak_after_an_xfail_marked_last_test_fails_the_run(self):
         rc, out, started, _ended, finish, marks = self._run(XFAIL_BODY_FAILS_TEST, cap=LEAK_CAP_S, workers=2)
         self._assert_leak_reported(rc, out, started, finish, marks)
+        self.assertRegex(out, r"\b1 xfailed\b", "the body's own outcome is still reported:\n" + out)
+        self.assertRegex(out, r"ERROR at teardown of test_\w+ _+\n\[gw\d+\] ", "the report came from a worker:\n" + out)
+
+    # -- a last test whose own teardown fails: the guard still runs, after the runner's error -------------------------
+
+    def _assert_fixture_teardown_error_and_leak_reported(self, rc, out, started, finish, marks):
+        """The last test's fixture raised at teardown, before the guard ran: the teardown report carries the fixture's
+        error, the guard's text after it (the leak's assertions: one error, the thread named once in the report and on
+        stderr)."""
+        self._assert_leak_reported(rc, out, started, finish, marks)
+        report, _err = self._channels(out)
+        self.assertIn("RuntimeError: plant: the fixture's teardown failed", report, "the premise: the teardown report "
+                      "carries the fixture's error:\n" + out)
+        self.assertLess(report.index("RuntimeError: plant: the fixture's teardown failed"),
+                        report.index("thread 'plant-leaked' ("), "the guard's text follows the fixture's error:\n" + out)
+
+    def test_a_last_test_whose_fixture_fails_at_teardown_is_still_checked_serially(self):
+        """The runner's teardown of the last test raises (its fixture's teardown fails) before the guard runs; the guard
+        runs all the same, after it. Unmarked, the run was red already on the fixture's error, and the report now names
+        the leaked thread too. Under an xfail mark pytest's skipping plugin makes the fixture's error an xfail, so a guard
+        that did not run there left the run green with the thread unnamed on either channel."""
+        for plant, body in ((FIXTURE_TEARDOWN_FAILS_TEST, None), (FIXTURE_TEARDOWN_FAILS_XFAIL_TEST, "xfailed")):
+            with self.subTest(xfail=body is not None):
+                rc, out, started, _ended, finish, marks = self._run(plant, cap=LEAK_CAP_S)
+                self._assert_fixture_teardown_error_and_leak_reported(rc, out, started, finish, marks)
+                if body is not None:
+                    self.assertRegex(out, r"\b1 %s\b" % body, "the body's own outcome is still reported:\n" + out)
+                    self.assertNotRegex(out, r"\b2 %s\b" % body, "the teardown is not reported as the body is:\n" + out)
+
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
+    def test_under_two_workers_a_last_test_whose_fixture_fails_at_teardown_under_xfail_is_still_checked(self):
+        rc, out, started, _ended, finish, marks = self._run(FIXTURE_TEARDOWN_FAILS_XFAIL_TEST, cap=LEAK_CAP_S, workers=2)
+        self._assert_fixture_teardown_error_and_leak_reported(rc, out, started, finish, marks)
         self.assertRegex(out, r"\b1 xfailed\b", "the body's own outcome is still reported:\n" + out)
         self.assertRegex(out, r"ERROR at teardown of test_\w+ _+\n\[gw\d+\] ", "the report came from a worker:\n" + out)
 
@@ -895,8 +956,8 @@ class SessionEndThreadGuard(unittest.TestCase):
         self.assertEqual(names, sorted(expected), "the plant started its threads:\n" + out)
         # the fixtures' threads: one per test from the function-scoped fixture, and one in every process that ran tests
         # from the session-scoped one, each stopped only by its fixture's teardown. A guard that ran before the runner's
-        # teardown (tryfirst, or no ordering at all, since the runner's plugin registers before any conftest) would wait
-        # its cap for them and then fail the run naming them.
+        # teardown (its check before the wrapper's yield, or a plain implementation marked tryfirst or not ordered, since
+        # the runner's plugin registers before any conftest) would wait its cap for them and then fail the run naming them.
         fx = [n for ns in started.values() for n, _daemon in ns if n.startswith("plant-fx-")]
         self.assertEqual(sorted(n for n in fx if n != "plant-fx-session"), ["plant-fx-test_%d" % i for i in range(TESTS)],
                          "the function-scoped fixture started a thread for each test:\n" + out)

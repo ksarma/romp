@@ -1567,15 +1567,16 @@ def wait_for_census(before, timeout=5.0):
 # names do not keep the process from exiting, and the guard fails on them too: an idle concurrent.futures worker and a
 # thread stopped only after the check (both below). This guard restores the signal in every process that runs tests, the
 # one serial process or each worker. When the process's LAST test tears down (nextitem is None), after the runner has
-# torn down every fixture of every scope, session ones included (this implementation is trylast, so it runs after the
-# runner's own pytest_runtest_teardown), each guarded thread still alive, every non-daemon thread and every thread in
-# those tables, is given until one shared deadline to end, and the threads still alive at the deadline fail that
-# teardown, each named with its target and its stack. Not waited for: daemon threads outside those tables (the
-# interpreter's shutdown joins none of them; an atexit handler may join one, and the guard does not read atexit
-# handlers), the main thread, the thread running this check, and any thread whose name starts with pytest_timeout, or
-# whose target's module, or a Timer's function's module, starts with pytest_timeout. That exclusion exists for
-# pytest-timeout's timer for the running test, a non-daemon threading.Timer that the plugin cancels and joins only after
-# the test's protocol returns, so under CI's --timeout-method=thread it is always alive here.
+# torn down every fixture of every scope, session ones included (this implementation is a wrapper whose check follows
+# its yield, so it runs after the runner's own pytest_runtest_teardown, whether or not that raised), each guarded thread
+# still alive, every non-daemon thread and every thread in those tables, is given until one shared deadline to end, and
+# the threads still alive at the deadline fail that teardown, each named with its target and its stack. Not waited for:
+# daemon threads outside those tables (the interpreter's shutdown joins none of them; an atexit handler may join one,
+# and the guard does not read atexit handlers), the main thread, the thread running this check, and any thread whose
+# name starts with pytest_timeout, or whose target's module, or a Timer's function's module, starts with pytest_timeout.
+# That exclusion exists for pytest-timeout's timer for the running test, a non-daemon threading.Timer that the plugin
+# cancels and joins only after the test's protocol returns, so under CI's --timeout-method=thread it is always alive
+# here.
 # HOW THE REPORT REACHES THE CONTROLLER: by two channels. The first is the teardown phase's test report. A worker sends
 # every test report to the controller over xdist's channel, this one included; the controller prints it as `ERROR at
 # teardown of <that test>` and counts it in the run's exit status. It is the channel that fails the run, since a
@@ -1585,9 +1586,10 @@ def wait_for_census(before, timeout=5.0):
 # stored error (a body and a cleanup that both fail) into the report in place of the guard's, which then names no
 # thread. So the guard records its failure in the item's stash, and this file's one pytest_runtest_makereport
 # hookwrapper, which runs outside both plugins' report hooks (pluggy calls the hookwrapper registered last first, and
-# this file registers after pytest's plugins), marks that teardown report failed and, when another error took the
-# guard's place in it, adds the guard's text after that error (_guard_failure_into_report); the wrapper then redacts the
-# report as it redacts every report. The second is stderr: the guard writes the same text there
+# this file registers after pytest's plugins), marks that teardown report failed and, when it carries another error
+# (the TestCase's, or a fixture's teardown error the runner raised before the guard ran, which that teardown then
+# raises), adds the guard's text after that error (_guard_failure_into_report); the wrapper then redacts the report as
+# it redacts every report. The second is stderr: the guard writes the same text there
 # (_guard_failure_to_stderr), through the same redaction, and no report hook can change it. A worker's stderr is the
 # controller's, so the text reaches the log serially and under xdist; a line from the terminal reporter at session
 # finish would not, since in a worker the reporter writes to that /dev/null stdout. Run serially, both print before the
@@ -1605,7 +1607,8 @@ def wait_for_census(before, timeout=5.0):
 # work, so it bounds no exit latency. The cap is about twice 5.03 s and exactly twice tests/test_thread_stop_census.py's
 # BOUND_S (5 s, the longest wait that census reads as bounded). A run that leaves no thread pays nothing, since a join
 # returns the moment its thread ends; a run that leaks one pays the cap once per process, then fails. A last test whose
-# own teardown fails skips the check (the runner's teardown raised first), in a run that is red already.
+# own teardown fails (a fixture's teardown raised) is checked too, after the runner's teardown: the report carries that
+# error with the guard's text after it, and under an xfail mark, which would make that error an xfail, stays an error.
 # AFTER THE CHECK, which runs at the last test's teardown. A thread STARTED after it, in a pytest_sessionfinish or
 # pytest_unconfigure hook or an atexit handler, is not checked. A thread STOPPED only after it, by a config.add_cleanup
 # callback, pytest_sessionfinish or pytest_unconfigure, is checked and fails the guard, although the process would exit:
@@ -1786,7 +1789,9 @@ def _guard_failure_into_report(item, call, rep):
     into the report in place of the guard's, which then names no thread. So a teardown report whose item's stash holds
     the guard's failure (pytest_runtest_teardown records it there) is marked failed, and loses the skipping plugin's
     wasxfail (pytest's session counts a failed report toward the run's exit status only without one), and when the error
-    it carries is not the guard's, the guard's text is added after that error. The wrapper redacts the report after this
+    it carries is not the guard's, the guard's text is added after that error. That is the unittest case, and also a
+    teardown whose runner raised first (a fixture's teardown failed): pytest_runtest_teardown runs the guard after that
+    error and raises that error again, so it is the one the report carries. The wrapper redacts the report after this
     step, so the added text goes through the same redaction as the rest of the report and the guard's stderr copy."""
     if call.when != "teardown":
         return
@@ -1801,7 +1806,8 @@ def _guard_failure_into_report(item, call, rep):
     lr = rep.longrepr
     parts = [] if lr is None else [lr[2] if isinstance(lr, tuple) and len(lr) == 3 else str(lr)]
     parts += ["[tests/conftest.py, the session-end thread guard] this teardown also failed the guard. The error above "
-              "took the place of the guard's error in this report; the guard's error follows.", str(failure)]
+              "is the one this report carries (a fixture's teardown that failed, or an error pytest's unittest plugin "
+              "put in the guard's place); the guard's error follows.", str(failure)]
     # _redacted_longrepr keeps the crash location of the error the report carries, which the short summary's line
     # reads; the text it is handed is redacted by the wrapper's next step
     rep.longrepr = _redacted_longrepr(lr, "\n\n".join(parts))
@@ -1834,21 +1840,44 @@ def _guard_failure_to_stderr(item, failure):
         sys.stderr.flush()
 
 
-@pytest.hookimpl(trylast=True)
+@pytest.hookimpl(wrapper=True, trylast=True)
 def pytest_runtest_teardown(item, nextitem):
     """The session-end thread guard (above): at the process's last test only, after the runner has torn down every
     fixture, the guarded threads still alive at THREAD_GUARD_CAP_S fail this teardown, each named with its stack. Every
     failure of the guard takes two channels: this teardown's report, which this file's pytest_runtest_makereport keeps
     failed and naming the threads from the failure recorded here in the item's stash (_guard_failure_into_report), and
-    the same text on stderr (_guard_failure_to_stderr)."""
-    if nextitem is not None:
-        return
+    the same text on stderr (_guard_failure_to_stderr). A wrapper, so the guard runs after the runner's teardown
+    whether or not that raised (trylast: the innermost wrapper, around the runner's own implementation and inside
+    the capture plugin's). When it raised (a fixture's teardown failed), that error stays the one this teardown raises,
+    and the report step adds the guard's text after it; under an xfail mark the skipping plugin would otherwise make
+    that error an xfail, and a guard that did not run there left the run green with the threads unnamed. Not on
+    KeyboardInterrupt or pytest.exit, which end the session at once."""
+    try:
+        result = yield
+    except (KeyboardInterrupt, pytest.exit.Exception):
+        raise
+    except BaseException:           # pytest.fail and pytest.skip raise BaseExceptions, not Exceptions
+        if nextitem is None:
+            _guard_into_both_channels(item)
+        raise
+    if nextitem is None:
+        failure = _guard_into_both_channels(item)
+        if failure is not None:
+            raise failure
+    return result
+
+
+def _guard_into_both_channels(item):
+    """Runs the guard for pytest_runtest_teardown. Its failure, when it fails, is recorded in the item's stash for the
+    report step (_guard_failure_into_report), written to stderr (_guard_failure_to_stderr), and returned; None when it
+    passes."""
     try:
         _session_end_thread_guard(item)
     except pytest.fail.Exception as failure:
         item.stash[_GUARD_FAILURE] = failure
         _guard_failure_to_stderr(item, failure)
-        raise
+        return failure
+    return None
 
 
 def _session_end_thread_guard(item):
