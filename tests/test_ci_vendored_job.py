@@ -74,16 +74,23 @@ literal, and any change to it is red until the literal changes with it, on purpo
    place of the expression (`Vendored tooling (node --test, ubuntu-latest)`, the name GitHub shows): a twin that runs true
    under the name would put a second check of that name beside the real one. That count reads one line's text, so a
    second check over the same files, read the same way, holds every name: line to its whole name (check_name_lines). A
-   name: line is one whose `name` key, bare or quoted and in any case, opens the line after its indentation and any list
-   dashes. It is red when its value is empty, is a block indicator (`|` or `>`, with any chomping or indentation
-   indicator), holds a backslash, is an alias (`*`) or is a quoted scalar left open, or when the next line that is not
-   blank is indented past the key (a comment line too, on the safe side): each is a name YAML assembles from later lines
-   or from an anchor, or decodes from an escape. A line inside a block scalar that looks like a name: line is read too,
-   which only refuses more. Every name: line of the workflow files passes the check today, and EachCheckRedsOnItsDefect
-   plants in a second workflow file the three twins the fork PR's re-check found green: a name continued over two lines
-   as a plain scalar, a name folded through `>-`, and a name spelled through `\\x20`. Not read here: a name key inside a
-   flow mapping (`{name: ...}`), written as an explicit key (`? name`), through an escape in a quoted key, after a tag or
-   an anchor (`!!str name:`, `&k name:`), or as an alias of an anchored `name` (`*k :`).
+   name: line is one whose `name` key, bare or quoted and in any case, opens the line after its indentation and any of
+   the indicators `-` (a list item), `?` (an explicit key) and `:` (an explicit key's value), each followed by a blank,
+   so a job written as an explicit key (`? twin`) whose value line opens with `: name:` is read; the key's column is the
+   end of those indicators. It is red when its value is empty, is a block indicator (`|` or `>`, with any chomping or
+   indentation indicator), holds a backslash, starts with a tag or an anchor (`!` or `&`: the tests after it read the
+   value's first character, so a quoted value left open behind one would pass them), is an alias (`*`) or is a quoted
+   scalar left open, or when the next line that is not blank is indented past the key (a comment line too, on the safe
+   side): each is a name YAML assembles from later lines or from an anchor, or decodes from an escape. A line inside a
+   block scalar that looks like a name: line is read too, which only refuses more. Every name: line of the workflow files
+   passes the check today, and EachCheckRedsOnItsDefect plants in a second workflow file the three twins the fork PR's
+   re-check found green (a name continued over two lines as a plain scalar, a name folded through `>-`, and a name spelled
+   through `\\x20`), one plant per refusal and per indicator besides the dash, a name continued after a blank line, and a
+   CR inside a name line, which check_name_lines reports itself. Check 6 is CLOSED: it is a pin beyond the ruled list, so
+   a name form found after this goes into the list below as one line, with no re-check of this check. Not read here: a
+   name key inside a flow mapping (`{name: ...}`); written as an explicit key (`? name`, its value on the next line's
+   `:`); through an escape in a quoted key; after a tag or an anchor on the key (`!!str name:`, `&k name:`; one on the
+   value is refused above); or as an alias of an anchored `name` (`*k :`).
    tests/test_ci_sdk_pin.py's YAML allowlist refuses all five forms in ci.yml; in the other workflow files no
    tests/test_ci_*.py module refuses them. Nor is a name assembled from pieces by an expression
    (`Vendored ${{ 'tooling' }} ...`).
@@ -207,9 +214,10 @@ JOB_KEY_LINE = re.compile(r"  (?P<key>[^ \t#:][^:]*?)[ \t]*:(?:[ \t].*)?")
 # A line whose value is a block scalar's indicator (`|` or `>`, with its chomping and indentation indicators), or a line that
 # is that indicator alone. Read on the safe side: a plain value ending in ` |` counts too, which only keeps more lines.
 BLOCK_SCALAR = re.compile(r"(?:^|[ \t])[|>][1-9+-]{0,2}[ \t]*(?:#.*)?$")
-# A name: line: a `name` key, bare or quoted, in any case, at the line's start after its indentation and any list dashes;
-# `lead` runs to the key's column, `value` is the text after the colon.
-NAME_KEY_LINE = re.compile(r"(?P<lead>[ \t]*(?:-[ \t]+)*)(?P<q>[\"']?)name(?P=q)[ \t]*:(?P<value>(?:[ \t].*)?)", re.I)
+# A name: line: a `name` key, bare or quoted, in any case, at the line's start after its indentation and any of the
+# indicators `-` (a list item), `?` (an explicit key) and `:` (an explicit key's value), each followed by a blank; `lead`
+# runs to the key's column, `value` is the text after the colon.
+NAME_KEY_LINE = re.compile(r"(?P<lead>[ \t]*(?:[-?:][ \t]+)*)(?P<q>[\"']?)name(?P=q)[ \t]*:(?P<value>(?:[ \t].*)?)", re.I)
 # node named as a word (not setup-node, node-version or node_modules), and a --test flag.
 NODE_WORD = re.compile(r"(?<![\w.-])node(?:js)?(?![\w.-])")
 TEST_FLAG = re.compile(r"(?<![\w-])--test(?![\w-])")
@@ -484,6 +492,9 @@ def name_line_fault(ls, i, m):
         return "its value holds a backslash, which a double-quoted scalar decodes as an escape"
     if BLOCK_SCALAR.search(value):
         return "its value is a block scalar's indicator, so YAML reads the name from the lines below"
+    if value[0] in "!&":
+        return ("its value starts with a tag or an anchor, and the tests after this one read the value's first character, so "
+                "a quoted value left open behind one would pass them")
     if value.startswith("*"):
         return "its value is an alias, so the name is written where the anchor is"
     rest = value[1:].replace("''", "") if value[0] == "'" else value[1:]
@@ -801,25 +812,30 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
         docs = ["name: Docs", "on: [push]", "jobs:", "  build:", "    runs-on: ubuntu-latest", "    steps:",
                 "      - name: Build", "        run: mkdocs build --strict", ""]
 
-        def with_twin(name_lines):
-            return "\n".join(docs + ["  twin:"] + name_lines + ["    runs-on: ubuntu-latest", "    steps:",
-                                                                 '      - run: "true"', ""])
+        def with_twin(name_lines, key="  twin:"):
+            """docs.yml with a second job, keyed by the line `key`, whose name is written as the lines name_lines."""
+            return "\n".join(docs + [key] + name_lines + ["    runs-on: ubuntu-latest", "    steps:",
+                                                          '      - run: "true"', ""])
 
         self.assertEqual(check_name_lines([("ci.yml", src), ("docs.yml", "\n".join(docs))]), [],
                          "green on the synthetic workflow and a second file whose name lines are whole")
         self.assertNotEqual(check_name_lines([]), [], "red when no workflow text is read")
         self.assertNotEqual(check_name_lines([("docs.yml", "on: [push]\njobs: {}\n")]), [], "red when no name: line is read")
-        for label, name_lines in (
+        for label, name_lines, *key in (
                 ("a pipe inside a plain value", ["    name: a | b"]),
                 ("a single-quoted value holding an escaped quote", ["    name: 'it''s whole'"]),
                 ("a double-quoted value holding a colon", ['    name: "Twin: whole"']),
                 ("a comment line at the key's column after the name", ["    name: whole", "    # a comment"]),
-                ("a blank line after the name", ["    name: whole", ""])):
+                ("a blank line after the name", ["    name: whole", ""]),
+                # the key's column is the end of the lead, so the job's keys at the column after `: ` continue nothing
+                ("the job written as an explicit key, its name whole after the value's indicator, its keys at the name's "
+                 "column", ["  : name: whole"], "  ? twin")):
             with self.subTest("green: " + label):
-                self.assertEqual(check_name_lines([("docs.yml", with_twin(name_lines))]), [], label)
+                self.assertEqual(check_name_lines([("docs.yml", with_twin(name_lines, *key))]), [], label)
         # The three twins the fork PR's re-check planted in a second workflow file, each left green by check 6's count,
-        # then one plant per refusal that no other refusal reds, each red for its own reason.
-        for label, name_lines, reason in (
+        # then one plant per refusal that no other refusal reds, each red for its own reason, and one plant per indicator
+        # the key's lead admits besides the dash, each left unread before the lead admitted it.
+        for label, name_lines, reason, *key in (
                 ("the re-check's plain scalar continued over two lines",
                  ["    name: Vendored tooling", "      (node --test, ubuntu-latest)"], "is indented past the key"),
                 ("the re-check's name folded through >-",
@@ -840,12 +856,33 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
                 ("a key in another case", ["    Name: *n"], "is an alias"),
                 ("a step's name continued past its dash's key", ["    steps:", "      - name: Vendored tooling",
                                                                  "          (node --test, ubuntu-latest)"],
-                 "is indented past the key")):
+                 "is indented past the key"),
+                # the continuation read skips blank lines: YAML continues a plain scalar past one
+                ("a name continued after a blank line", ["    name: Vendored tooling", "", "      (node --test, ubuntu-latest)"],
+                 "line %d, the next line that is not blank, is indented past the key" % (len(docs) + 4)),
+                ("a tag before a double-quoted value left open, continued at the key's column",
+                 ['    name: !!str "Vendored tooling', '    (node --test, ubuntu-latest)"'], "a tag or an anchor"),
+                ("an anchor before a single-quoted value left open, continued at the key's column",
+                 ["    name: &n 'Vendored tooling", "    (node --test, ubuntu-latest)'"], "a tag or an anchor"),
+                ("the job written as an explicit key, its name after the value's indicator continued on the next line",
+                 ["  : name: Vendored tooling", "      (node --test, ubuntu-latest)"], "is indented past the key", "  ? twin"),
+                # YAML reads this key as a mapping, not a job's name key; the lead reads it on the safe side
+                ("a name key after an explicit key's indicator, folded through >-",
+                 ["    ? name: >-", "        Served pages", "        (pytest, ubuntu-latest)"], "block scalar's indicator")):
             with self.subTest(label):
-                faults = check_name_lines([("ci.yml", src), ("docs.yml", with_twin(name_lines))])
+                faults = check_name_lines([("ci.yml", src), ("docs.yml", with_twin(name_lines, *key))])
                 self.assertEqual(len(faults), 1, "%s: one fault, %r" % (label, faults))
                 self.assertIn("docs.yml line ", faults[0])
                 self.assertIn(reason, faults[0], label)
+        # check_name_lines refuses a line break other than LF in every file it reads, not only in ci.yml, where check 1
+        # reads the file whole: here a CR inside a name line of a second workflow file, where YAML reads the text after the
+        # CR as a line of its own, indented past the key, and this module's LF split reads one line.
+        with self.subTest("a CR inside a name line of a second workflow file"):
+            cr = with_twin(["    name: Vendored tooling\r      (node --test, ubuntu-latest)"])
+            self.assertEqual(check_line_breaks(src), [], "check 1 is green on ci.yml, which holds no CR")
+            faults = check_name_lines([("ci.yml", src), ("docs.yml", cr)])
+            self.assertEqual(len(faults), 1, "one fault, %r" % faults)
+            self.assertIn("docs.yml holds line breaks other than LF (line %d: CR)" % (len(docs) + 2), faults[0])
 
     def test_each_foreign_line_break_reds_every_check(self):
         src = self.synthetic()

@@ -33,13 +33,16 @@ equal their literals. The checks here:
    with its runner slot as an expression, would put a second check of that name beside the real one. The count reads one
    line's text, and the other module's name-line check (check_name_lines, in its check 6) covers this name too: it
    refuses, in every workflow file, a name: line whose name YAML would assemble from later lines or from an anchor, or
-   decode from an escape (an empty value, a block indicator, a backslash, an alias, a quoted value left open, a value
-   continued on the next line), so a twin whose name is folded over lines (`name: >-`, one of the three twins the fork
-   PR's re-check planted) or spelled through an escape is red there. check_name_lines reads no name key inside a flow
-   mapping, written as an explicit key, through an escape in a quoted key, after a tag or an anchor, or as an alias (the
-   other module lists the five forms). The count still reds a twin under such a key whose name is whole on one line, but a
-   twin whose name is split over lines or spelled through an escape is read by neither check. tests/test_ci_sdk_pin.py
-   refuses those forms in ci.yml, and in the other workflow files no tests/test_ci_*.py module refuses them.
+   decode from an escape (an empty value, a block indicator, a backslash, a value that starts with a tag or an anchor, an
+   alias, a quoted value left open, a value continued on the next line), so a twin whose name is folded over lines
+   (`name: >-`, one of the three twins the fork PR's re-check planted) or spelled through an escape is red there. It reads
+   a name key after the indicator `-`, `?` or `:` (a list item, an explicit key, an explicit key's value), and reads no
+   name key inside a flow mapping, written as an explicit key itself (`? name`, its value on the next line's `:`),
+   through an escape in a quoted key, after a tag or an anchor on the key, or as an alias (the other module's check 6
+   lists these forms; that check is closed, so a form found later joins that list). The count still reds a twin under
+   such a key whose name is whole on one line, but a twin whose name is split over lines or spelled through an escape is
+   read by neither check. tests/test_ci_sdk_pin.py refuses those
+   five forms in ci.yml, and in the other workflow files no tests/test_ci_*.py module refuses them.
 A job's key written twice is refused by job_block with the reason (the other module's check 2 states which spellings it
 reads).
 
