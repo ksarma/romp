@@ -117,12 +117,13 @@ the census bounds, 2026-09-28; readers_of): an alias (`r2 = resp`), a subscript 
 membership over the tuple, and the reads of a name bound whole and later rebound to such a tuple (the walk is flow-insensitive, so
 the rebinding hides the whole binding). A Name in a helper's return is followed to its
 bindings inside the helper (`body = r.read(); return r.status, body, r.headers` reads at `body`'s position), and a returned Name
-the follow cannot place (bound only by an unpack of a call's answer, a for or with target, an except name) makes the call a fetch
-that binds every name, so no read behind it leaves both censuses in silence (the rulings on the census pass, 2026-09-28;
-_response_reads). A returned element that holds a read the follow does not place (a read under any wrapper but a `.decode` chain,
-`r.read().strip()`, `str(r.read(), "utf-8")`, `r.read() or b""`, a conditional, `raw[3:]`; a Name bound to one; an attribute the
-helper assigns one, `self.body = r.read()`) is REFUSED: every fetch of a page route through that helper is an unclassified row the
-reader census fails on (the rulings on the census bounds, 2026-09-28; _response_reads, readers_of).
+the follow cannot place (bound only by an unpack of a call's answer, a synchronous for or a with target, an except name) makes the
+call a fetch that binds every name, so no read behind a Name returned bare leaves both censuses in silence (the rulings on the
+census pass, 2026-09-28; _response_reads). A returned element that holds a read the follow does not place (a read under any
+wrapper but a `.decode` chain, `r.read().strip()`, `str(r.read(), "utf-8")`, `r.read() or b""`, a conditional, `raw[3:]`; a Name
+bound to one; an attribute the helper assigns one, `self.body = r.read()`) is REFUSED: every fetch of a page route through that
+helper is an unclassified row the reader census fails on (the rulings on the census bounds, 2026-09-28; _response_reads,
+readers_of).
 
 Bound: a url built otherwise than as a bare or `%`-formatted literal or a concatenation led by the whole path (a `Request`
 object, an f-string, `.format`, `"/chat" + rest`), a formatted
@@ -141,10 +142,19 @@ over-bound, so its reads are rows over the page, never silent), a name bound to 
 (it reads as that text throughout, so `resp[0]`, the status before the rebinding, is a slice row over it: over-bound, never
 silent), a tuple target holding a starred name over a fetch (`first, *rest = self._req("/")`: each plain name binds as the text
 whatever its position, the status too, and the starred name binds nothing, so a read of the body inside it is in neither census,
-in silence; p7 in test_a_fetched_tuple_binds_the_position_its_helper_reads_a_response_at), a getter called WITH
+in silence; p7 in test_a_fetched_tuple_binds_the_position_its_helper_reads_a_response_at), a returned element that wraps a Name
+the follow cannot place, or a Name bound to such a wrapper (`status, raw = _raw(path)` and then `return 200, raw.strip()`, `return
+200, raw[3:]`, `return raw.strip()`, or `text = raw.strip(); return 200, text`: no position, so its call is no fetch; a literal pin
+over a name the call is assigned to reds the floor through the textual census, and any other read of that name, a regex or a split,
+is in neither census, in silence; x1 in test_d of
+test_a_returned_name_is_followed_to_its_binding_in_the_helper), a subscript of the fetch call itself by a constant index (`page =
+self._req("/?token=x")[1]` binds nothing: a literal pin over `page` reds the floor through the textual census, and any other read
+of it, or of the subscript inline, is in neither census, in silence; x2 and x3 in that test_d), a getter called WITH
 arguments (`_shim_core_js("chat")` renders another text), a text served under a name with none of the suffixes the rules
 read (the web app manifest; the `_reload_core` function), a name bound outside the function, a literal bound by assignment
-rather than a loop, and assertNotIn (a comment can red it, never green it) are outside this derivation.
+rather than a loop, and assertNotIn (a comment can red it, never green it) are outside this derivation. One claim is stated
+narrower than the code: an `async for` target returned by name is read as a for target is (_BINDERS), but no case pins that, so
+the claims above stop at a synchronous for.
 
 Where the two census tests run (2026-09-21, the author's pass after the maintainer's round 5): on ONE CI cell, the kernel's
 interpreter, Python 3.12 (the interpreter the deployed kernel is pinned to, docs/install.md's ROMP_PYTHON), and every other
@@ -451,8 +461,8 @@ def _name_bindings(node):
     """[(Name, value)] for the Names one node binds in the function holding it, the value None where the node binds a Name to no
     expression of its own: an assignment's Name target, and a Name inside a tuple or list target over a tuple or list of the same
     length, by position, bind to their value, as do an annotated assignment with a value, a walrus and an augmented assignment
-    (`body += r.read()`); a Name of a tuple target over any other value (`status, body = self._raw(r)`), a for or with target and
-    an except name bind to None."""
+    (`body += r.read()`); a Name of a tuple target over any other value (`status, body = self._raw(r)`), a for target (an `async
+    for` target too, which no case pins: a stated bound), a with target and an except name bind to None."""
     out = []
     def pair(t, v):
         if isinstance(t, ast.Name):
@@ -543,9 +553,14 @@ def _response_reads(tree):
     function (_name_bindings; the rulings on the census pass, 2026-09-28): `body = r.read(); return r.status, body, r.headers`
     gives {1}, through an alias or a `.decode(...)` too (`raw = r.read(); body = raw.decode()`), and a binding is an assignment, an
     annotated or augmented one, a walrus, or a tuple or list target paired by position with a value of the same length. A returned
-    Name the follow cannot place, one the function binds to no expression of its own (an unpack of a call's answer, a for or with
-    target, an except name) or to a Name so bound, and never to a read, gives "unknown", so a read behind it does not leave both
-    censuses in silence: the call is a fetch (_fetched) and binds as a helper the module does not define does, every name (_bind).
+    Name the follow cannot place, one the function binds to no expression of its own (an unpack of a call's answer, a synchronous
+    for or a with target, an except name; an `async for` target is read the same way, unpinned) or to a Name so bound, and never to
+    a read, gives "unknown", so a read behind it does not leave both censuses in silence: the call is a fetch (_fetched) and binds
+    as a helper the module does not define does, every name (_bind). That holds only for such a Name returned BARE. A returned
+    element that wraps one (`status, raw = _raw(path); return 200, raw.strip()`, `raw[3:]`), or a Name bound to such a wrapper,
+    gives no position, so its call is no fetch and a read of the body behind it is in neither census unless a literal pin reds the
+    floor through the textual census (a stated bound: x1 in test_d of
+    test_a_returned_name_is_followed_to_its_binding_in_the_helper).
     A returned element that HOLDS a read the follow does not place gives "refused" (the rulings on the census bounds, 2026-09-28): a
     read call inside it under anything but a `.decode(...)` chain (`r.read().strip()`, `str(r.read(), "utf-8")`, `r.read() or b""`,
     `r.read() if ok else ""`), a Name bound to a read inside it (`raw[3:]`), or a Name or an attribute chain the function binds to
@@ -639,7 +654,9 @@ def _fetched(node, names, routes, reads=None):
     ("refused") is a fetch only where another of its returns places one, and readers_of refuses its fetches of a page route (the
     rulings on the census bounds, 2026-09-28). Bound: a helper the module defines that returns an
     unread response for its caller to read (`return urlopen(path)`) or reads it through another call in its return (`return
-    r.status, self._body(r)`) is not a fetch here; none is in the suite. Where such a call is assigned to names (`body =
+    r.status, self._body(r)`) is not a fetch here (none is in the suite), nor is one that returns a wrapper over a Name its follow
+    cannot place (`status, raw = _raw(path); return 200, raw.strip()`; _response_reads), nor a subscript of a fetch call by a
+    constant index (`self._req("/?token=x")[1]`, which is no call). Where such a call is assigned to names (`body =
     self._open("/").read()`) the textual census binds them (_FETCH_DEF), so a literal pin over one reds the floor; any other read
     of such a name (a regex, a split, a slice) is in neither census, in silence."""
     if not isinstance(node, ast.Call):
@@ -761,8 +778,10 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
     the helper's returns show: each plain Name in it binds as the text, the status `first` too (over-bound), and the starred name
     binds nothing, so a read of the body inside it (`rest[0]`) is in neither census, in silence; the textual census reads no
     starred target either (a stated bound: p6 and p7 in test_a_fetched_tuple_binds_the_position_its_helper_reads_a_response_at).
-    `sliced`, when given, tracks the Names bound through a slice, a fetched
-    tuple's position or an unpack of one (forms the textual census does not read; the author's pass 8)."""
+    A subscript of the fetch call itself by a constant index (`page = self._req("/?token=x")[1]`) binds nothing (a stated bound:
+    x2 and x3 in test_d of test_a_returned_name_is_followed_to_its_binding_in_the_helper). `sliced`, when given,
+    tracks the Names bound through a slice, a fetched tuple's position or an unpack of one (forms the textual census does not read;
+    the author's pass 8)."""
     if isinstance(value, ast.Tuple) and len(targets) == 1 and isinstance(targets[0], ast.Tuple) \
             and len(targets[0].elts) == len(value.elts):
         pairs = list(zip(targets[0].elts, value.elts))
@@ -2273,8 +2292,11 @@ def _spread(path):
         # or list of the same length pairs by position, so the read binds and the status does not (_tuplepair, _listpair: d9 and
         # d11 are no rows); a Name bound to an unknown Name is unknown (_opaque2); a nested def's bindings are its own, so a
         # helper whose inner def binds `body = r.read()` while its own `body` is not a read is no fetch (_outer2: d13 is no row);
-        # and two definitions of one name, a helper per class, give the union of their positions (_two: both names bind). The rows
-        # of both derivations are named, never inferred.
+        # and two definitions of one name, a helper per class, give the union of their positions (_two: both names bind). test_d
+        # holds two stated bounds (the check on the census bounds found them silent; the module docstring lists them): a
+        # wrapper over a Name the follow cannot place gives no position, so _opaque3's call is no fetch and x1 is in neither census,
+        # and a subscript of a fetch call by a constant index binds nothing, assigned (x2) or read inline (x3). The rows of both
+        # derivations are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import re, unittest
 def _named(path):
@@ -2368,6 +2390,12 @@ class T(unittest.TestCase):
         re.search("w16", v2)
         l1, l2 = self._attr_list("/")
         re.search("w17", l2)
+    def test_d(self):
+        q1, q2 = _opaque3("/")
+        re.search("x1", q2)
+        page = _named("/")[1]
+        re.search("x2", page)
+        re.search("x3", _named("/")[1])
     def _kept(self, path):
         self.body = urlopen(path).read()
         return 200, self.body
@@ -2450,6 +2478,9 @@ def _opaque2(path):
     status, body = _raw(path)
     text = body
     return 200, text
+def _opaque3(path):
+    status, raw = _raw(path)
+    return 200, raw.strip()
 def _outer2(path):
     def inner(r):
         body = r.read()
@@ -2497,7 +2528,7 @@ def _outer2(path):
                           "_kept": ["refused"], "_strip": ["refused"], "_str": ["refused"], "_or": ["refused"], "_ifexp": ["refused"], "_cut": ["refused"],
                           "_whole": ["refused"], "_mixed": [-1, 1, "refused"], "_json": ["refused"], "_gv": ["refused"], "_attr_tuple": ["refused"],
                           "_attr_ann": ["refused"], "_attr_aug": ["refused"], "_deep": ["refused"], "_via_name": ["refused"],
-                          "_attr_list": ["refused"]})
+                          "_attr_list": ["refused"], "test_d": [], "_opaque3": []})
 
     def test_a_call_is_a_fetch_only_where_its_callee_reads_a_response(self):
         # the rulings at the merge of main's login cookie split (2026-09-28), P2: a call to a Name or a self.<method> whose first
