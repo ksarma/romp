@@ -176,7 +176,7 @@ subject; `verify` refuses the branch otherwise.
    `kernel/kernel.py`, `ui/` and `vscode-extension/`. The pane bench
    (`tests/ui-bench.test.mjs`), the other Python versions and macOS run only in the batch's CI. Each
    leg gets an allowlisted environment: a private HOME and state dir, a PATH built from the tool
-   directories, CI's switches, and nothing of your shell's (no key, token or session variable, no
+   directories, npm's global config and git's system config off, CI's switches, and nothing of your shell's (no key, token or session variable, no
    PYTEST_ADDOPTS or NODE_OPTIONS); `npm test` also gets this machine's 8 GB heap cap
    (`NODE_OPTIONS=--max-old-space-size=8192`), which CI does not set. The allowlist governs
    variables only: the legs run as your user, so a file stays readable at its absolute path (a

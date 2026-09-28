@@ -83,7 +83,7 @@ else:
 keep = ("TMPDIR", "HOME", "PATH", "SHELL", "LANG", "CI", "USER", "LOGNAME", "XDG_STATE_HOME", "npm_config_cache",
         "PLAYWRIGHT_BROWSERS_PATH", "NODE_OPTIONS", "SWEEP_WRAPPED", "ROMP_SERVED_TESTS_REQUIRE", "ROMP_SERVED_TESTS_ENGINES",
         "ROMP_GITLEAKS_REQUIRE", "BATS_TEST_TIMEOUT", "ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT",
-        "ROMP_POSTAL_PORT")
+        "ROMP_POSTAL_PORT", "npm_config_globalconfig", "GIT_CONFIG_NOSYSTEM")
 marker = ctl.get("marker")
 home = os.path.expanduser("~")
 # every file the runner put in the leg's private state root (names and contents), read without naming any
@@ -1392,7 +1392,9 @@ class LegEnvironment(_Base):
         env = dict(w.env, PATH=decoy + os.pathsep + w.env["PATH"])
         env.update(HOME=self.batcher_home(), SHELL="/usr/bin/zsh", LANG="fr_FR.UTF-8", LC_ALL="fr_FR.UTF-8", CI="",
                    ROMP_MANAGER_PORT="29801", ROMP_KERNEL_PORT="29855", ROMP_SERVE_PORT="29855", ROMP_POSTAL_PORT="25302",
-                   BATS_TEST_TIMEOUT="5", ROMP_GITLEAKS_REQUIRE="0", ROMP_SERVED_TESTS_ENGINES="chromium,firefox")
+                   BATS_TEST_TIMEOUT="5", ROMP_GITLEAKS_REQUIRE="0", ROMP_SERVED_TESTS_ENGINES="chromium,firefox",
+                   NPM_CONFIG_GLOBALCONFIG=os.path.join(w.tmp, "npmrc"), npm_config_globalconfig=os.path.join(w.tmp, "npmrc"),
+                   GIT_CONFIG_SYSTEM=os.path.join(w.tmp, "gitconfig"))
         w.run(env=env, check=0)
         calls = w.calls()
         self.assertEqual(len(calls), len(sweep.LEGS))
@@ -1407,6 +1409,11 @@ class LegEnvironment(_Base):
                 self.assertIn("ROMP_POSTAL_PORT", sweep.PORT_FLOOR, "the postal bus falls back to the live bus's port")
                 self.assertEqual((v["CI"], v["SHELL"], v["LANG"]), ("true", "/bin/bash", "C.UTF-8"))
                 self.assertNotIn("LC_ALL", c["names"])
+                # npm's global config (<prefix>/etc/npmrc, beside a node the batcher installed) and git's system config
+                # live outside HOME, so the private HOME does not replace them: both are off, whatever the runner names
+                self.assertEqual((v.get("npm_config_globalconfig"), v.get("GIT_CONFIG_NOSYSTEM")), (os.devnull, "1"))
+                self.assertNotIn("NPM_CONFIG_GLOBALCONFIG", c["names"])
+                self.assertNotIn("GIT_CONFIG_SYSTEM", c["names"])
                 path = v["PATH"].split(os.pathsep)
                 self.assertEqual(path[0], w.bin, "the pytest interpreter's directory leads PATH")
                 tool_dirs = {os.path.dirname(shutil.which(t, path=env["PATH"]) or "") for t in sweep.PATH_TOOLS} - {""}

@@ -53,12 +53,13 @@ sets everything else. PATH is the pytest interpreter's directory and those of no
 gitleaks, then /usr/bin and /bin; HOME is a private empty directory and XDG_STATE_HOME a private state root
 (session hosts off) under TMPDIR, a fresh short directory under /tmp removed at the end; npm_config_cache and
 PLAYWRIGHT_BROWSERS_PATH point at the shared caches the batcher's environment names; SHELL=/bin/bash,
-LANG=C.UTF-8 and CI=true, as CI's runner has them; every ROMP_*_PORT the tree reads is a dead port (a box
+LANG=C.UTF-8 and CI=true, as CI's runner has them; npm's global config and git's system config, which live
+outside HOME, are off (npm_config_globalconfig=/dev/null, GIT_CONFIG_NOSYSTEM=1); every ROMP_*_PORT the tree reads is a dead port (a box
 floor CI does not need); and each leg gets the switches CI sets on the matching step (LEG_ENV), plus the box
 rule's 8 GB heap cap for npm test (NODE_OPTIONS), which CI does not set. So no credential, session identity or
 test-narrowing variable (PYTEST_ADDOPTS, PYTHONPATH, NODE_OPTIONS) of the batcher's shell reaches a leg, and
 no dotfile of the batcher's HOME does (an .npmrc, a git config and its hooks, a shell rc, the live
-deployment's SDK). pytest also runs with `-c /dev/null --rootdir=. --confcutdir=.`, so no pytest.ini or
+deployment's SDK), nor the npmrc of a node installed under it. pytest also runs with `-c /dev/null --rootdir=. --confcutdir=.`, so no pytest.ini or
 conftest.py above the tree configures it. --wrap prefixes run with the runner's environment, and the
 allowlist applies after them (`env -i`), so nothing a wrap sets reaches the leg. What the allowlist does not
 govern: files stay readable at their absolute paths (a credential file, an agent's socket), and every leg can
@@ -160,6 +161,12 @@ PATH_FLOOR = ("/usr/bin", "/bin")
 # Fixed values, as GitHub's ubuntu runner has them, whatever the batcher's are. CI=true because that runner sets it
 # and pytest reads it (with CI set, its short summary prints each error's message whole).
 LEG_FIXED = {"SHELL": "/bin/bash", "LANG": "C.UTF-8", "CI": "true"}
+# The tools' configuration files that live outside HOME, so the private HOME does not replace them, each turned off:
+# npm's global config, <prefix>/etc/npmrc, where <prefix> is the node install's own directory (user-writable when
+# node comes from nvm, fnm, volta or a ~/.local prefix; its node-options would reach every npm leg as NODE_OPTIONS,
+# replacing npm test's heap cap), and git's system config (user-writable under a Homebrew git; a core.hooksPath there
+# would run in the fixture repos of the bats files that set neither GIT_CONFIG_GLOBAL nor HOME).
+TOOL_CONFIG_OFF = {"npm_config_globalconfig": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 # The box floor, which CI does not need: every port variable the tree reads is set to a dead port, so leg code its own
 # suite does not floor cannot reach a live manager, kernel, dashboard or postal bus on this machine (each falls back to
 # the live deployment's port when unset). XDG_STATE_HOME, the state root, is private per run (leg_sets).
@@ -1148,10 +1155,11 @@ def leg_context(tmpdir, python, env=None):
 
 def leg_sets(leg, ctx):
     """{name: value} the runner sets for `leg`: PATH, the private HOME and XDG_STATE_HOME, TMPDIR, the two shared caches
-    (a private HOME has none), LEG_FIXED, PORT_FLOOR and the leg's LEG_ENV."""
+    (a private HOME has none), LEG_FIXED, TOOL_CONFIG_OFF, PORT_FLOOR and the leg's LEG_ENV."""
     sets = {"PATH": ctx["path"], "HOME": ctx["home"], "TMPDIR": ctx["tmpdir"], "XDG_STATE_HOME": ctx["xdg"],
             "npm_config_cache": ctx["npm_cache"], "PLAYWRIGHT_BROWSERS_PATH": ctx["browsers"]}
     sets.update(LEG_FIXED)
+    sets.update(TOOL_CONFIG_OFF)
     sets.update(PORT_FLOOR)
     sets.update(LEG_ENV.get(leg, {}))
     return sets
