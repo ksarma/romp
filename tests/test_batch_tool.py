@@ -2628,6 +2628,7 @@ class LandAndFinish(_Base):
         # Pre-round item 4: the merge commit's first parent is the main verify read, so finish reports nothing loud.
         self.assertNotIn("FIRST PARENT", p.stdout + p.stderr)
         self.assertEqual(fx.state("b1")["finished"]["report"]["first_parent"], {"merge": main_after, "first_parent": main_before, "verified_main": main_before, "ok": True})
+        self.assertEqual(fx.state("b1")["finished"]["report"]["landed_head"], {"merge": main_after, "second_parent": tip, "verified_head": tip, "ok": True})
         self.assertIn("retargeted to main: #112", p.stdout)
         self.assertIn("pr-orphans.sh: clean", p.stdout)
         rep = fx.state("b1")["finished"]["report"]
@@ -2756,6 +2757,55 @@ class LandAndFinish(_Base):
         self.assertNotEqual(parents[0], seen, "the wrapper moved main before the merge")
         self.assertIn("FIRST PARENT MISMATCH: batch PR #900's merge commit %s has first parent %s, not %s" % (merge, parents[0], seen),
                       p.stderr)
+
+    def test_finish_reports_loudly_a_merge_whose_second_parent_is_not_the_head_verify_read(self):
+        """A commit pushed to the batch branch after verify, then the batch PR merged by the button (which pins no head):
+        the head that landed is not the one the sweep read. finish does its cleanup, reads the CI run at the head that
+        landed (the merge's second parent), then fails naming both shas and the sweep owed at the merge commit. The stage
+        1 to 3 head exited 0 there and named the verified head's run as the one that tested the tree."""
+        fx = self.fx
+        self.ready()
+        verified = fx.state("b1")["verified"]["head"]
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "late.txt"), "w") as f:
+            f.write("pushed after verify\n")
+        fx._git("add", "late.txt", cwd=wt)
+        fx._git("commit", "-q", "-m", "batch: a late commit no sweep or verify read", cwd=wt)
+        fx._git("push", "-q", "origin", "batch/b1", cwd=wt)
+        late = fx._git("rev-parse", "HEAD", cwd=wt)
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0, "the button reads nothing")
+        merge = fx.bare_rev("main")
+        p = fx.run("finish", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("HEAD MISMATCH: batch PR #900's merge commit %s has second parent %s, not %s, the batch head verify read: "
+                      "a commit reached batch/b1 after verify, so the tree on main is not the tree the sweep read" % (merge, late, verified),
+                      p.stderr)
+        self.assertIn("`git worktree add --detach ../romp-merge-b1 %s`" % merge, p.stderr)
+        self.assertNotIn("FIRST PARENT", p.stderr, "main did not move")
+        self.assertEqual(fx.calls("run", "list")[-1][fx.calls("run", "list")[-1].index("--commit") + 1], late,
+                         "the CI run is read at the head that landed")
+        self.assertIn("the batch head's CI run: missing: GitHub lists no run of ci.yml from a push to batch/b1 at %s" % late, p.stdout)
+        self.assertEqual(fx.bare_rev("batch/b1"), "", "the cleanup ran first")
+        self.assertEqual(fx.state("b1")["finished"]["report"]["landed_head"],
+                         {"merge": merge, "second_parent": late, "verified_head": verified, "ok": False})
+
+    def test_finish_with_no_merge_commit_reported_says_it_could_not_check(self):
+        """Pre-round item 4's third branch: GitHub reports the batch PR MERGED with no merge commit, so finish cannot read
+        either parent: it exits 1 saying the first parent was not checked (and adds no head line, which needs the same
+        merge commit)."""
+        fx = self.fx
+        self.ready()
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0)
+        st = fx.gh()
+        st["prs"]["900"]["mergeCommit"] = None
+        fx.gh_state = st
+        fx._save_gh()
+        p = fx.run("finish", "b1")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FIRST PARENT NOT CHECKED: GitHub reports no merge commit for batch PR #900, so finish cannot say that the "
+                      "tree on main is the batch head's", p.stderr)
+        self.assertNotIn("HEAD MISMATCH", p.stderr)
+        self.assertEqual(fx.state("b1")["finished"]["report"]["first_parent"]["ok"], False)
 
     def test_finish_with_no_main_recorded_by_verify_says_it_could_not_check(self):
         fx = self.fx

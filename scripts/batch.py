@@ -66,10 +66,11 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     no read can stop, a move between the last read and GitHub's merge (the merge pins the head, not the
     base) or before an --auto merge fires later (--auto is refused until the repository allows auto-merge
     and a rule on main gates a merge; the fork had neither on 2026-09-27), finish reports: it fails loudly,
-    after its cleanup, when the merge commit's first parent is not the main verify read, naming both shas
+    after its cleanup, when the merge commit's first parent is not the main verify read, or its second parent
+    not the batch head verify read (a commit pushed after verify and merged by the button), naming both shas
     and the sweep at the merge commit that is owed;
-  - finish names the batch head's CI run with land's own filtered read (the push run at the landed head),
-    and reports a read that fails after the merge as unread;
+  - finish names the batch head's CI run with land's own filtered read (the push run at the landed head, the
+    merge commit's second parent), and reports a read that fails after the merge as unread;
   - land requires the batch head's CI run green, read from GitHub at land time before anything changes:
     the newest run of ci.yml from a push to the batch branch at exactly the verified head (by createdAt,
     then databaseId; a matching row with either, or its attempt, missing or malformed, the zero time
@@ -2531,9 +2532,16 @@ def cmd_finish(args):
     # nothing; a first parent that is another commit means main moved before the merge, so the tree on main is not the
     # batch head's tree and no sweep or CI run tested it (none runs on main). Read here and reported loudly at the end,
     # after the cleanup, which does not depend on it.
-    first_parent = {"merge": merge_sha, "first_parent": (parents_of(merge_sha, root) or [None])[0] if merge_sha else None,
+    merge_parents = parents_of(merge_sha, root) if merge_sha else []
+    first_parent = {"merge": merge_sha, "first_parent": (merge_parents or [None])[0],
                     "verified_main": (state.get("verified") or {}).get("main")}
     first_parent["ok"] = bool(first_parent["first_parent"]) and first_parent["first_parent"] == first_parent["verified_main"]
+    # The same for the head that landed: the merge commit's second parent must be the batch head verify read. A commit
+    # pushed to the batch branch after verify and merged by the button lands a head no sweep read (land pins the head
+    # with --match-head-commit; the button and a bare `gh pr merge` do not). Reported with the first parent's check.
+    landed = {"merge": merge_sha, "second_parent": merge_parents[1] if len(merge_parents) > 1 else None,
+              "verified_head": (state.get("verified") or {}).get("head")}
+    landed["ok"] = bool(landed["second_parent"]) and landed["second_parent"] == landed["verified_head"]
     members = members_by_n(state)
     landing = in_batch(state)
     member_refs = {members[e["n"]]["head_ref"] for e in landing} | {branch_of(args.name)}
@@ -2632,7 +2640,9 @@ def cmd_finish(args):
     # the batch branch at the head that landed, read with batch_ci_run, the filtered read land gated on (the push
     # event, batch/<name>, ci.yml by its name, the sha checked on every row), so a manual or scheduled run at the same
     # commit never stands in for it. The merge has happened, so a read that fails is reported as unread, not raised.
-    landed_head = (state.get("verified") or {}).get("head") or state["assembly"].get("head")
+    # The head that landed is the merge commit's second parent; verify's head (or the assembly's) only when GitHub
+    # reported no merge commit to read it from.
+    landed_head = landed["second_parent"] or (state.get("verified") or {}).get("head") or state["assembly"].get("head")
     try:
         ci_case, ci_found, _older = batch_ci_run(root, args.name, landed_head, tail="")
         ci_error = None
@@ -2651,6 +2661,7 @@ def cmd_finish(args):
                                       "excused it as a known flake: %s" % (e["attempt"], e.get("conclusion") or e.get("status"),
                                                                             e.get("url"), e.get("flake")))
     report["first_parent"] = first_parent
+    report["landed_head"] = landed
     state["finished"] = {"at": now(), "report": report}
     save_state(root, state)
     print("batch #%d landed, %d member(s) marked merged; no CI runs on the merge to %s; the batch head's CI run: %s"
@@ -2668,8 +2679,26 @@ def cmd_finish(args):
     if report["merged"]:
         print("postal (kind: coordinate) to the owners of %s: batch %s merged; remove your worktree and local branch (%s); the remote branch is gone."
               % (", ".join("#%d" % n for n in report["merged"]), args.name, ", ".join(members[n]["head_ref"] for n in report["merged"])))
-    if not first_parent["ok"]:
-        raise Fail(first_parent_report(args.name, b, first_parent))
+    loud = ([first_parent_report(args.name, b, first_parent)] if not first_parent["ok"] else []) + \
+        ([landed_head_report(args.name, b, landed)] if merge_sha and not landed["ok"] else [])
+    if loud:
+        raise Fail("\n".join(loud))
+
+
+def landed_head_report(name, b, lh):
+    """finish's loud report when the merge commit's second parent is not the batch head verify read: both shas, what it
+    means, and the remedy, a sweep at the merge commit (as for the first parent)."""
+    merge, second, seen = lh.get("merge"), lh.get("second_parent"), lh.get("verified_head")
+    remedy = ("Sweep the merge commit now: `git worktree add --detach ../romp-merge-%s %s`, then `scripts/sweep.py run --tree "
+              "../romp-merge-%s` (it owes every leg there), and tell the maintainer what it finds." % (name, merge, name))
+    if not second or not seen:
+        return ("HEAD NOT CHECKED: batch PR #%d's merge commit %s has %s, and verify recorded %s, so no one checked that the "
+                "head that landed is the one the sweep read. %s" % (b, merge, "second parent %s" % second if second else
+                                                                      "no second parent", "head %s" % seen if seen else "no head",
+                                                                      remedy))
+    return ("HEAD MISMATCH: batch PR #%d's merge commit %s has second parent %s, not %s, the batch head verify read: a commit "
+            "reached %s after verify, so the tree on %s is not the tree the sweep read. %s"
+            % (b, merge, second, seen, branch_of(name), MAIN, remedy))
 
 
 def first_parent_report(name, b, fp):
