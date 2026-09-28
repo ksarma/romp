@@ -2916,10 +2916,11 @@ class ServedLeg(_Base):
                    "SKIPPED tests/test_c_bundle.py::BundleBuild::test_build - Skipped: extension deps absent (npm ci not run here)\n"
                    "SKIPPED tests/test_a_served.py::test_a - no playwright browser on this box\n"
                    "SKIPPED tests/test_d_mac.py::test_mac - macOS only\n"
+                   "SKIPPED tests/test_b_browser.py::test_b - macOS only\n"
                    "SKIPPED tests/test_e_lab.py - esbuild.js cannot load here: node found no package 'esbuild' to require\n"
                    "(the extension's node_modules are absent or incomplete: npm ci not run)\n"
                    "SKIPPED tests/test_f_node.py::test_x[a b] - Skipped: no playwright: set ROMP_PLAYWRIGHT_NODE_PATH\n"
-                   "3 passed, 5 skipped in 0.01s\n")
+                   "3 passed, 6 skipped in 0.01s\n")
         also = ["tests/test_c_bundle.py::BundleBuild::test_build", "tests/test_e_lab.py", "tests/test_f_node.py::test_x[a b]"]
         w.ctl({"out": {PYTEST_LEG: summary}, "rc": {"served": 1}})
         w.run(check=1)
@@ -2930,7 +2931,7 @@ class ServedLeg(_Base):
         self.assertEqual(r["legs"][PYTEST_LEG]["deps_skipped"]["tests"], also)
         self.assertEqual(r["legs"][PYTEST_LEG]["deps_skipped"]["unselected"], [["tests/test_d_mac.py::test_mac", "macOS only"]],
                          "every other skip outside the served globs is recorded with its reason, so a deps reason the rule "
-                         "misses can be seen")
+                         "misses can be seen; a served file's skip for another reason is not among them")
         self.assertEqual(r["legs"]["served"]["also"], {"tests": also, "count": 3, "why": sweep.DEPS_SKIP_WHY})
         self.assertEqual(r["legs"]["served"]["cmd"][3:3 + len(SEED_SERVED_FILES) + len(also)], SEED_SERVED_FILES + also)
         # a --leg re-run of served runs the recorded set again

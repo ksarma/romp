@@ -2338,8 +2338,8 @@ class VenvHold:
     the build's marker, so the next run that reads the venv finds no finished build and builds it again: the marker is
     inside the venv, where a leg can write, so a leg that changed the venv can also have rewritten the tree the marker
     records to match, and the next run's check (_venv_check) would then pass it. The runner retires a venv whose tree
-    changed as soon as it sees the change and again after the reap, while it still holds the shared lock: every other
-    run holding it checked the venv before, and a rebuild waits for them all."""
+    changed on its way out, after the reap, while it still holds the shared lock: every other run holding it checked
+    the venv before, and a rebuild waits for them all."""
 
     def __init__(self, lock, venv, built, marker):
         self.lock, self.venv, self.built, self.marker = lock, venv, built, marker
@@ -3187,11 +3187,10 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                                        known=known)
             # A4 reads the pytest and served legs' environments too: a leg that changed its venv changed what it, or
             # another run's leg using the same venv, ran in, as a leg that changed the checkout changed the tree later
-            # legs run on. The runner removes the venv's marker then (VenvHold.retire), so the next run that uses it builds
-            # it again whatever the leg wrote into the marker.
+            # legs run on. The run ends here, and on its way out, after the reap, the runner removes the venv's marker
+            # (VenvHold.retire), so the next run that uses it builds it again whatever the leg wrote into the marker.
             own = {"pytest": hold, SERVED_LEG: served_hold}.get(name)
             moved = own.changes() if own is not None else []
-            unretired = own.retire() if moved else None
             if changed or moved:
                 # A4, the runner's one producer of invalid: a leg changed the checkout, so later legs would not run on
                 # the sha's tree, or its own environment, so it may not have run in what its build installed.
@@ -3199,10 +3198,10 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
                 if changed:
                     parts.append("after the %s leg the checkout is not the sha's tree: %s" % (name, describe_faults(changed)))
                 if moved:
-                    parts.append("after the %s leg its environment %s is not the tree its build wrote (%d path%s: %s%s); %s"
-                                 % (name, own.venv, len(moved), "" if len(moved) == 1 else "s", ", ".join(moved[:3]),
-                                    ", ..." if len(moved) > 3 else "", "the next run that uses it builds it again"
-                                    if unretired is None else "%s, so remove the venv by hand" % unretired))
+                    parts.append("after the %s leg its environment %s is not the tree its build wrote (%d path%s: %s%s); "
+                                 "the next run that uses it builds it again" % (name, own.venv, len(moved), "" if len(moved) == 1
+                                                                                 else "s", ", ".join(moved[:3]),
+                                                                                 ", ..." if len(moved) > 3 else ""))
                 run["invalid"] = "; ".join(parts) + "; the legs after it did not run"
                 write_result(path, data)
                 break
@@ -3212,9 +3211,9 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
     finally:
         reap_descendants()
         # The shared locks on the legs' environments are held to here, after the reap, so no rebuild removes a venv while
-        # anything this run started may still be running from it. A venv whose tree changed, seen after a leg or only now
-        # (something the run started wrote to it after its leg's check), is retired first, under the lock, so the next run
-        # that uses it builds it again.
+        # anything this run started may still be running from it. A venv whose tree changed (seen after a leg, which ends
+        # the run as invalid, or only now, when the run was stopped during a leg) is retired first, under the lock and after
+        # the reap, so nothing this run started can write the marker again, and the next run that uses it builds it again.
         for h in (hold, served_hold):
             if h is None:
                 continue
