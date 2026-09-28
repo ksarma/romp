@@ -306,9 +306,10 @@ test("in a browser (the Slice 7 review's round 1): a <picture>'s label names the
 // and a loaded picture's title kept its query and fragment. A second local http server on another port stands for the remote
 // hosts: the page reaches it as http://example.test, https://example.test and https://bucket.example.test through a context
 // route that relays the bytes (file-figure-open-browser.test.ts's shape), answering /ok.svg with a picture and every other path
-// with a 404, and the hosts are on figureHosts before the open, so no figure is gated. CI skips this leg (the Test step runs
-// before the job's Chromium install), so file-view-figure-error.test.ts holds the rule on the label builder and through the
-// listener over the stand-in, which CI runs. Every planted value is assembled at run time: no credential-shaped literal here.
+// with a 404, and the hosts are on figureHosts before the open, so no figure is gated. The Test step skips this leg (it runs
+// before the job's Chromium install) and the Browser legs step runs it after that install, and file-view-figure-error.test.ts
+// holds the rule on the label builder and through the listener over the stand-in in the Test step too. Every planted value is
+// assembled at run time: no credential-shaped literal here.
 /** The remote server: every request logged by its path, /ok.svg a 300 by 200 picture, anything else a 404. */
 function remoteServer(log: string[]): Promise<{ port: number; close: () => Promise<void> }> {
   return new Promise((resolve) => {

@@ -3245,11 +3245,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // Firefox and WebKit; and a foreign tap by the same pen under the same pointerId. The residual needs an element that appears
   // over the picture during a tap, and where the viewer's window held the focus, a cover that cancels its mousedown and appears
   // over the picture during a tap. The elements of the dashboard's top page that cancel a press are the pane gutters, which
-  // cancel their mousedown and stay put during a press, and the update banner's drag handle, which cancels its pointerdown, a
-  // cover that opened nothing in WebKit when the blur's rule was measured (0 of 36), and which, by reading, captures the pointer
-  // at its press, so its release and its click stay on it (a census of every pointerdown and mousedown handler of the top
-  // page's scripts, kernel.py's shell page and the bundles it loads): no element of the dashboard is a road today. Whether to
-  // accept the residual is the owner's decision.
+  // cancel their mousedown and sit between the panes, never over one, and the update banner's drag handle, which cancels its
+  // pointerdown, a cover that opened nothing in WebKit in the third order's measurement below (0 of 36), and which, by reading,
+  // captures the pointer at its press, so its release and its click stay on it (a census of every pointerdown and mousedown
+  // handler of the top page's scripts, kernel.py's shell page and the bundles it loads): no element of the dashboard is a road
+  // today. Whether to accept the residual is the owner's decision.
   // Two orders of the class outside the residual opened the tab with the sign covered at the start of another document's gesture,
   // at 142ade155, at 1a6470e72 and at 09f58bec6 (a check of these fixes, the closing check at 142ade155 after the fixes for the
   // file review's round 18), and both are closed here. First, this window
