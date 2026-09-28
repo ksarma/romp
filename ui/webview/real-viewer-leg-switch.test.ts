@@ -20,7 +20,7 @@
 // each child's temporary directory sit in one scratch directory under out-tests/ that the test removes, and the test asserts
 // that each child's leg reports its own temporary directory, under that scratch directory, and that the scratch directory is
 // gone after the children ran (without those temporary directories, each run of this test left six such directories in
-// this process's temporary directory, as 860's copy did). On a box
+// this process's temporary directory, two per child; 860's two-arm copy, by the same mechanism, left four). On a box
 // with a browser the outer leg launches and passes; the switch test passes on any box, since its child never sees the
 // browser. tools/ci-browser-legs.test.mjs pins the phrase the step's script reads a lost browser by to the helper's source
 // text and names this file as the test of the behaviour; a green there with a red here is a helper that carries the words

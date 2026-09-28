@@ -3635,9 +3635,11 @@ CLIENT_DIAG_KEYS = {
 # marker of a view that was not the element the scroller measured in its frame: the one word the owner approved and no host name (the
 # owner 2026-09-21, who approved the field). Federation's `road` on the feedDelta-apply row: wire or local, the one word each of its two
 # writers posts (federation.ts refuseRemoteApply and refuseLocalApply; the coordinator's ruling at the merge of main 1d591384e, which
-# bounded the key as the table's rule states). Each set is stated HERE once and read by tests/test_client_diag_allowlist.py, which spells
-# the words nowhere but its fixture rows, the page's own spelling, and holds road's set to the words the writers post (the maintainer's
-# round 5 ruling on PR E, tests-1: a key-only allowlist on a page-to-kernel field admitted any text under the approved key).
+# bounded the key as the table's rule states). Each set is stated HERE once and read by tests/test_client_diag_allowlist.py. That test
+# reads view's word from this table and posts it as a literal only in its fixture row, the page's own spelling; road's two words it
+# spells in its fixture rows, its census reason and its road-site assertion, and it holds road's set equal to the words federation.ts's
+# writers post (the maintainer's round 5 ruling on PR E, tests-1: a key-only allowlist on a page-to-kernel field admitted any text
+# under the approved key).
 CLIENT_DIAG_VALUES = {
     ("chat", "view"): frozenset(("inactive",)),
     ("federation", "road"): frozenset(("wire", "local",)),

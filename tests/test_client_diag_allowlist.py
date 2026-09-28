@@ -2,8 +2,8 @@
 """The clientDiag handler admits each surface's known top-level data keys and bounds the row (2026-09-18, the beacon
 extension). The file used to take whatever a page posted, of any shape and size. Now: a key outside the surface's
 allowlist (CLIENT_DIAG_KEYS) is dropped and said once on stderr per surface and key; an admitted key whose value is outside the
-closed set CLIENT_DIAG_VALUES states for it (chat's `view`, one fixed word) is dropped the same way, the line naming the key and the
-reason and never the value; a data that is not an object is
+closed set CLIENT_DIAG_VALUES states for it (chat's `view`, one fixed word; federation's `road`, wire or local) is dropped the same
+way, the line naming the key and the reason and never the value; a data that is not an object is
 stored as null; every string value is cut at CLIENT_DIAG_STR_MAX characters at any depth, and a row a value of which was cut,
 or nulled past CLIENT_DIAG_DEPTH_MAX, carries CLIENT_DIAG_CUT_KEY naming the admitted keys it happened under, said once per
 surface and key (the maintainer's round 3 of wsBytesByHost, 2026-09-20: the one silent loss on this road); a row whose JSON runs past
