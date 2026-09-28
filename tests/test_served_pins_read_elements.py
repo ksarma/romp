@@ -1954,7 +1954,10 @@ def _fits(case, ceiling):
                     ("<p>&#x0b;</p>", "control or noncharacter"),
                     ("<p>a\x00b</p>", "a NUL in text"),
                     ("<![CDATA[x]]><p>y</p>", "CDATA"),
-                    ("<p>x</p>&a", "flush differently"))
+                    # the end-of-page refusal's two halves, a lower-case and an upper-case letter: the builds part on both the same
+                    # way (some hand the letter over as data, dropping the &, others report a reference)
+                    ("<p>x</p>&a", "flush differently"),
+                    ("<p>x</p>&G", "flush differently"))
         for page, message in refusals:
             with self.assertRaises(AssertionError, msg=page) as cm:
                 served_css.fold_text(page)
