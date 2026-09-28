@@ -59,7 +59,8 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   child's environment holds, under a credential-shaped variable name, so the report's redaction masks it. Neither
   channel carries the raw value, and stderr names the thread by the masked name the report prints, serially and under
   -n 2: CI's logs are public, so the stderr copy goes through the report's redaction. So does the guard's text that
-  tests/conftest.py adds after a TestCase's second error (the two-error shape above, serially).
+  tests/conftest.py adds after a TestCase's second error (the two-error shape above, serially), and so does the stderr
+  header, which names the last test by its node id (a test whose parametrize id is that value, serially).
 - IDLE EXECUTOR WORKERS ALONE (the pool left open and the loop never closed, no other guarded thread) fail the run,
   serially and under -n 2, and the process exits: every process that ran tests writes its atexit marker. The message's
   wording, that such a worker lets the process exit, is pinned by its text; the markers are the executed evidence.
@@ -408,6 +409,15 @@ ENV_NAMED_TEST = '''
 def test_leak_named_by_an_env_value():
     _start("env-named", [threading.Thread(target=_leaked, name="plant-leaked-" + os.environ[%r])])
 ''' % ENV_NAMED_VAR
+# a leaked thread in a test whose node id carries that value: the guard's stderr header names the test by its node id
+ENV_NAMED_ID_TEST = '''
+import pytest
+
+
+@pytest.mark.parametrize("n", [0], ids=[os.environ[%r]])
+def test_leak_with_an_env_value_in_its_id(n):
+    _start("env-id", [threading.Thread(target=_leaked, name="plant-leaked")])
+''' % ENV_NAMED_VAR
 # the TestCase whose body and cleanup both fail, its leaked thread named the same way: the guard's text is added to the
 # report after the cleanup's error, and is redacted there too
 TWO_ERRORS_ENV_NAMED_TEST = TWO_ERRORS_TEST.replace('name="plant-leaked"',
@@ -713,6 +723,22 @@ class SessionEndThreadGuard(unittest.TestCase):
         err = self._assert_env_value_masked_on_both_channels(rc, out)
         self.assertRegex(err, r"this process's last test \(pytest-xdist worker gw\d+\)", "the worker's text reached "
                          "the controller's stderr:\n" + out)
+
+    @unittest.skipUnless("tests.conftest" in sys.modules, "reads the redaction's marker from tests/conftest.py")
+    def test_a_value_in_the_last_tests_node_id_is_masked_in_the_stderr_header(self):
+        """Everything the guard writes to stderr goes through the redaction, its header too, which names the process's
+        last test by its node id. (The report's own headline and short summary print the node id as pytest renders it;
+        that is the report's redaction, which scrubs a report's text and not its node id, and is not checked here.)"""
+        value = self._env_value()
+        rc, out, _started, _ended, _finish, _marks = self._run(ENV_NAMED_ID_TEST, cap=LEAK_CAP_S,
+                                                               env_extra={ENV_NAMED_VAR: value})
+        _report, err = self._channels(out)
+        self.assertEqual(rc, 1, "the leaked thread fails the run:\n" + out)
+        self.assertEqual(err.count("thread 'plant-leaked' (ident "), 1, "stderr names the leaked thread:\n" + out)
+        self.assertNotIn(value, err, "stderr carries the raw value in the last test's node id:\n" + out)
+        self.assertIn("the session-end thread guard] the teardown of test_plant.py::test_leak_with_an_env_value_in_its_id"
+                      "[%s], this process's last test" % sys.modules["tests.conftest"].ENV_VALUE_REDACTED, err,
+                      "the stderr header names the test by its masked node id:\n" + out)
 
     @unittest.skipUnless("tests.conftest" in sys.modules, "reads the redaction's marker from tests/conftest.py")
     def test_a_value_the_report_masks_is_masked_in_the_guards_text_after_a_testcases_second_error(self):
