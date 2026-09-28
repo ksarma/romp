@@ -168,15 +168,21 @@
 // measured in the three engines, the other tab in Firefox alone, in a probe kept out of the tree (file-view.ts's gate comment
 // states the figures), and no tap or
 // chain cell of this leg changed under it.
-// The cells of a figure at this origin's /file route (the coordinator's ruling on the same-origin figure after the file review's
-// round 19) run in Chromium, Firefox and WebKit, each form in a page of its own under a page key, on the chat modal: a figure
-// written with this origin's /file address, in the plain spelling, an escaped route (/%66ile), a .. segment or a . segment,
-// wears the local words, and its control opens the file the query names in the viewer, in the session it names (another than
-// the report's), through the viewer's own capped /file URL, with Back to the report and no tab, red at dcaa80ec4, where each opened a tab at the address as written, which carries
-// no cap, so the kernel's cap rule refuses it (by reading); a /file address on another origin, or on this host at another
-// port, still opens a web tab at its address. The cap pass leaves the escaped route's src as written, and it loads here only
-// because the harness answers it (file-view.ts ownFileRoute says why the form counts all the same); file-figure-open.test.ts
-// runs the classifier over these forms and more in CI.
+// The cells of a figure at this origin's file routes (the coordinator's ruling on the same-origin figure after the file review's
+// round 19, read over the route's other forms by a check of that build) run in Chromium, Firefox and WebKit, each form in a
+// page of its own under a page key, on the chat modal: a figure written with this origin's /file address, in the plain
+// spelling, an escaped route (/%66ile), a .. segment or a . segment, and, with a cap the author copied, respelled with a double
+// slash or params the kernel drops (//file, /file;x), wears the local words, and its control opens the file the query names in
+// the viewer, in the session it names (another than the report's), through the viewer's own capped /file URL, with Back to the
+// report and no tab; a figure at the relay's route (/remote/gpu1/file) opens the same way in that host's session, through the
+// viewer's own capped relay URL; a host-prefixed sid at the /file route and a pin beside the path wear no control and open
+// nothing on a click or a Cmd/Ctrl-click. The first four forms red at dcaa80ec4, where each opened a tab at the address as
+// written, which carries no cap, so the kernel's cap rule refuses it; the next five red at d140285a4, where the respelled
+// forms opened a tab whose address kept the author's cap, the relay's route and the host-prefixed sid a tab at the address as
+// written, and the pin the live file in the viewer. A /file address on another origin, or on this host at another port,
+// still opens a web tab at its address. The cap pass leaves the escaped route's src and the respelled forms' as written, and
+// the escaped route loads here only because the harness answers it (file-view.ts ownFileRoute says when it loads at the
+// kernel); file-figure-open.test.ts runs the classifier over these forms and more in CI.
 // This leg stays off the shared roster of browser legs that PR 887 landed, vscode-extension/ci-browser-legs.txt, since
 // that roster's job installs Chromium alone, so a WebKit or Firefox test in a rostered file would not run there.
 // Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, and no job installs Firefox
@@ -324,17 +330,23 @@ test("in WebKit (Playwright's, on Linux), the chat modal, the Files pane and the
   assert.deepEqual(errored, { chat: 0, pane: 0, feed: 0 }, "the opens on each surface that raised a window error (a property pin over the page's error events)");
 });
 
-// ── a figure at this origin's /file route, in the three engines (the coordinator's ruling on the same-origin figure after the
+// ── a figure at this origin's file routes, in the three engines (the coordinator's ruling on the same-origin figure after the
 // file review's round 19) ── Each form in a page of its own under a page key, the chat modal at 900 by 700, window.open recorded.
 const OWN_PIC = ROOT + "/docs/figs/b.svg";
 const OWN_SID = "22222222-3333-4444-5555-666666666666";   // the session the figure's address names, another than the report's, so the open is seen to take the address's
 const OWN_Q = "?path=" + encodeURIComponent(OWN_PIC) + "&sid=" + OWN_SID;
 const OWN_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="#1f78b4"/></svg>';
-const OWN_FORMS: Array<[string, string, "file" | "web"]> = [
+const AUTHORED_CAP = "&cap=" + "A".repeat(22);   // a cap the author copied into the address, assembled at run time (no credential-shaped literal)
+const OWN_FORMS: Array<[string, string, "file" | "relay" | "none" | "web"]> = [
   ["the plain spelling", ORIGIN + "/file" + OWN_Q, "file"],
   ["an escaped route", ORIGIN + "/%66ile" + OWN_Q, "file"],
   ["a .. segment", ORIGIN + "/x/../file" + OWN_Q, "file"],
   ["a . segment", ORIGIN + "/./file" + OWN_Q, "file"],
+  ["a double slash before the route, with a cap the author copied", ORIGIN + "//file" + OWN_Q + AUTHORED_CAP, "file"],
+  ["params on the route, with a cap the author copied", ORIGIN + "/file;x" + OWN_Q + AUTHORED_CAP, "file"],
+  ["the relay's route", ORIGIN + "/remote/gpu1/file" + OWN_Q, "relay"],
+  ["a host-prefixed sid at the /file route", ORIGIN + "/file?path=" + encodeURIComponent(OWN_PIC) + "&sid=gpu1:" + OWN_SID, "none"],
+  ["a pin beside the path", ORIGIN + "/file" + OWN_Q + "&pin=" + "0".repeat(32), "none"],
   ["another origin", "http://other.test/file" + OWN_Q, "web"],
   ["this host at another port", "http://notes-api.test:8080/file" + OWN_Q, "web"],
 ];
@@ -354,14 +366,20 @@ async function ownFormScene(browser: any, dest: string, key: string): Promise<{ 
   try {
     await page.evaluate(() => { const w = window as any; w.__opened = []; window.open = ((u: unknown) => { w.__opened.push(String(u)); return { opener: null }; }) as unknown as typeof window.open; });
     const gated = await page.evaluate(() => { const g = document.querySelector('.fileview-md [data-act="fv-load"]') as HTMLElement | null; if (g) g.click(); return !!g; });   // another host's figure waits behind its box: loaded first
-    await page.waitForFunction(() => { const i = document.querySelector(".fileview-md img") as HTMLImageElement | null; return !!i && i.complete && i.naturalWidth > 0 && !!(i.nextElementSibling && i.nextElementSibling.hasAttribute("data-fv-figopen")); }, null, { timeout: 10000 });
-    await frames(page, 3);
-    const pre = await page.evaluate(() => { const i = document.querySelector(".fileview-md img")!; return { src: i.getAttribute("src") || "", words: i.nextElementSibling!.getAttribute("title") }; });
+    await page.waitForFunction(() => { const i = document.querySelector(".fileview-md img") as HTMLImageElement | null; return !!i && i.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
+    await frames(page, 3);   // the control's decision runs at the load (armFigureControls), so three frames after it every form wears its control or none
+    const pre = await page.evaluate(() => { const i = document.querySelector(".fileview-md img")!; const c = i.nextElementSibling && i.nextElementSibling.hasAttribute("data-fv-figopen") ? i.nextElementSibling : null; return { src: i.getAttribute("src") || "", words: c ? c.getAttribute("title") : null }; });
     await page.locator(".fileview-md img").hover();
     await frames(page, 2);
-    await page.locator(".fileview-md [data-fv-figopen]").click();
-    await page.waitForFunction(() => (window as any).__opened.length > 0 || /b\.svg/.test((document.querySelector(".fileview-base") || { textContent: "" }).textContent || ""), null, { timeout: 10000 });
-    await page.waitForFunction(() => (window as any).__opened.length > 0 || !!document.querySelector("img.fileview-img"), null, { timeout: 10000 });
+    if (pre.words !== null) {
+      await page.locator(".fileview-md [data-fv-figopen]").click();
+      await page.waitForFunction(() => (window as any).__opened.length > 0 || /b\.svg/.test((document.querySelector(".fileview-base") || { textContent: "" }).textContent || ""), null, { timeout: 10000 });
+      await page.waitForFunction(() => (window as any).__opened.length > 0 || !!document.querySelector("img.fileview-img"), null, { timeout: 10000 });
+    } else {
+      await page.locator(".fileview-md img").click();   // a form with no control: the plain click on the picture, which opens its target where it has one
+      await page.locator(".fileview-md img").click({ modifiers: ["ControlOrMeta"] });   // and the Cmd/Ctrl-click, its own tab's gesture
+      await frames(page, 5);   // nothing is due: the reads below find no tab, the report still shown
+    }
     await frames(page, 3);
     const after = await page.evaluate(() => { const i = document.querySelector("img.fileview-img"); const b = document.querySelector(".fileview-nav-back") as HTMLElement | null; const shown = !!b && !b.closest("[hidden]") && b.getAttribute("aria-disabled") !== "true"; return { opened: ((window as any).__opened as string[]).slice(), base: (document.querySelector(".fileview-base") || { textContent: null }).textContent, shown: i ? i.getAttribute("src") : null, back: shown ? b!.title : null }; });
     return { read: { gated, capped: /[?&]cap=/.test(pre.src), words: pre.words, ...after }, errors };
@@ -369,7 +387,7 @@ async function ownFormScene(browser: any, dest: string, key: string): Promise<{ 
 }
 for (const engine of ["chromium", "firefox", "webkit"] as const) {
   const named = engine === "chromium" ? "Chromium" : engine === "firefox" ? "Firefox" : "WebKit (Playwright's, on Linux)";
-  test("in " + named + ", under a page key, a figure written with this origin's /file address opens in the viewer and no tab, in the plain spelling, an escaped route, a .. segment and a . segment, as a local picture opens: the control wears the local words, the viewer shows the file the query names, in the session it names, through its own capped /file URL, and Back returns to the report; a /file address on another origin, or on this host at another port, still opens a web tab at its address (the coordinator's ruling on the same-origin figure after the file review's round 19; the four forms red at dcaa80ec4, where each opened a tab at the address as written, which carries no cap)", async (t) => {
+  test("in " + named + ", under a page key, a figure written with this origin's /file address opens in the viewer and no tab, in the plain spelling, an escaped route, a .. segment and a . segment, and, with a cap the author copied, respelled with a double slash or params the kernel drops, as a local picture opens: the control wears the local words, the viewer shows the file the query names, in the session it names, through its own capped /file URL, and Back returns to the report; a figure at the relay's route opens the same way in its host's session, through the viewer's own capped relay URL; a host-prefixed sid at the /file route and a pin beside the path, which the viewer cannot open as the picture shown, wear no control and open nothing on a click or a Cmd/Ctrl-click; a /file address on another origin, or on this host at another port, still opens a web tab at its address (the coordinator's ruling on the same-origin figure after the file review's round 19, read over the route's other forms by a check of that build; the first four forms red at dcaa80ec4, where each opened a tab at the address as written, which carries no cap, and the next five red at d140285a4, where the two respelled forms opened a tab whose address kept the author's cap, the relay's route and the host-prefixed sid a tab at the address as written, and the pin the live file in the viewer)", async (t) => {
     const key = "k" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);   // a page key minted at run time
     const got: Array<[string, OwnRead]> = [];
     const errs: string[] = [];
@@ -381,11 +399,14 @@ for (const engine of ["chromium", "firefox", "webkit"] as const) {
     if (!ran) return;   // no browser: inBrowser skipped the case loudly
     t.diagnostic("record " + JSON.stringify(got));
     const viewerSrc = "/file?path=" + encodeURIComponent(OWN_PIC) + "&sid=" + OWN_SID + "&cap=";
-    const want = OWN_FORMS.map(([what, dest, kind]): [string, unknown] => [what, kind === "file"
-      ? { gated: false, capped: what !== "an escaped route", words: "Open the picture", opened: [], base: "b.svg", shown: "the viewer's own capped /file URL", back: "Back to report.md" }
-      : { gated: true, capped: false, words: "Open the picture in a new tab at " + new URL(dest).host, opened: [new URL(dest).href], base: "report.md", shown: null, back: null }]);
-    const seen = got.map(([what, r]): [string, unknown] => [what, { ...r, shown: r.shown !== null && r.shown.startsWith(viewerSrc) ? "the viewer's own capped /file URL" : r.shown }]);
-    assert.deepEqual(seen, want, "each form: whether it waited behind its host's box (a precondition: another host's figure does, this origin's does not), whether the cap pass capped its src (a precondition: the escaped route's is left as written), the control's words, the tabs opened, the file the bar names, the viewer's picture and Back (a property pin over window.open's calls and the viewer's own DOM)");
+    const relaySrc = "/remote/gpu1/file?path=" + encodeURIComponent(OWN_PIC) + "&sid=" + OWN_SID + "&cap=";
+    const want = OWN_FORMS.map(([what, dest, kind]): [string, unknown] => [what, kind === "file" || kind === "relay"
+      ? { gated: false, capped: what !== "an escaped route", words: "Open the picture", opened: [], base: "b.svg", shown: kind === "file" ? "the viewer's own capped /file URL" : "the viewer's own capped relay URL", back: "Back to report.md" }
+      : kind === "none"
+        ? { gated: false, capped: true, words: null, opened: [], base: "report.md", shown: null, back: null }
+        : { gated: true, capped: false, words: "Open the picture in a new tab at " + new URL(dest).host, opened: [new URL(dest).href], base: "report.md", shown: null, back: null }]);
+    const seen = got.map(([what, r]): [string, unknown] => [what, { ...r, shown: r.shown !== null && r.shown.startsWith(viewerSrc) ? "the viewer's own capped /file URL" : r.shown !== null && r.shown.startsWith(relaySrc) ? "the viewer's own capped relay URL" : r.shown }]);
+    assert.deepEqual(seen, want, "each form: whether it waited behind its host's box (a precondition: another host's figure does, this origin's does not), whether its src carries a cap (a precondition: the cap pass caps the /file route and the relay's, leaves the escaped route's as written, and keeps the cap an author copied into a respelled route), the control's words (none for a form the viewer cannot open as shown), the tabs opened, the file the bar names, the viewer's picture and Back (a property pin over window.open's calls and the viewer's own DOM)");
     assert.deepEqual(errs, [], "no page errors");
   });
 }

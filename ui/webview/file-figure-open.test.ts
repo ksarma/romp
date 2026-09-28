@@ -16,6 +16,7 @@ import { hostSheets } from "./host-sheets.mjs";
 import { codeOnly } from "../test-code-only";   // the comment stripper the count pin and the Mouse-call census read through (the compiler's ranges; file-view-seam.test.ts self-checks it)
 import * as ts from "typescript";   // the Mouse-call census's compiler walk (mouseCalls; the test build keeps typescript a runtime require, esbuild.js testBuild)
 import { ownFileRoute } from "./file-view";
+import { fileUrl } from "./preview";   // the viewer's own URL, whose relay form ownFileRoute reads back below
 import { hostOf } from "./host-prefix";   // the host-prefix rule ownFileRoute writes out, held to one answer with it below   // the classifier of a figure at this origin's /file route, run over its forms below (the coordinator's ruling on the same-origin figure after the file review's round 19)
 
 const ROOT = path.resolve(process.cwd(), "..");
@@ -110,15 +111,15 @@ test("what it opens (figureTarget): the model's figurePath for a source on the s
   assert.match(fn, /const p = figurePath\(filePath, dest\);\n\s*if \(p !== null\) return \{ kind: "file", path: p \};/);
   assert.match(fn, /if \(\/\^https\?:\/i\.test\(dest\) \|\| dest\.startsWith\("\/\/"\)\) return \{ kind: "web", href: absUrl\(dest\), src: dest \};/, "an http source: a tab, resolved as the browser resolved the fetch, with the source as the author wrote it beside it, which the words read for the sign-in rule");
   assert.match(fn, /return null;\n\}/, "a data: URL or any other scheme: nothing to open");
-  assert.match(fn, /const own = ownFileRoute\(dest, document\.baseURI, location\.origin\);\n\s*if \(own !== null\) return \{ kind: "file", path: own\.path, sid: own\.sid \};\n(?:\s*\/\/[^\n]*\n)*\s*if \(\/\^https\?:/, "this origin's /file route is read before the web arm, against the page's base and origin, and is a file in the session its address names (the coordinator's ruling on the same-origin figure after the file review's round 19; the next test runs the classifier over its forms, and file-figure-open-engines-browser.test.ts opens each form in the three engines)");
+  assert.match(fn, /const own = ownFileRoute\(dest, document\.baseURI, location\.origin\);\n\s*if \(own === "none"\) return null;\n\s*if \(own !== null\) return \{ kind: "file", path: own\.path, sid: own\.sid \};\n(?:\s*\/\/[^\n]*\n)*\s*if \(\/\^https\?:/, "this origin's file routes are read before the web arm, against the page's base and origin: a file in the session its address names, or nothing to open (\"none\": no target, so no control and no gesture opens anything), never the web arm (the coordinator's ruling on the same-origin figure after the file review's round 19; the next two tests run the classifier over its forms, and file-figure-open-engines-browser.test.ts opens each form in the three engines)");
 });
 
-test("what it opens for a figure at this origin's /file route (ownFileRoute, the coordinator's ruling on the same-origin figure after the file review's round 19): a source with a scheme or a leading // parsed against the page, its origin the page's own and its path /file once its escapes are decoded and its dot segments resolved, is the file its query names in the session it names, the plain, escaped, .. and . spellings alike; another origin, this host at another port, another path, a path figure, an address naming no path and a sid with a host prefix are none, and stay what they were", () => {
+test("what it opens for a figure at this origin's /file route (ownFileRoute, the coordinator's ruling on the same-origin figure after the file review's round 19): a source with a scheme or a leading // parsed against the page, its origin the page's own and its path /file once its escapes are decoded and its dot segments resolved, is the file its query names in the session it names, the plain, escaped, .. and . spellings alike; another origin, this host at another port, another path and a path figure are null, what they were; an address naming no path and a sid with a host prefix are \"none\", nothing to open and never a web tab", () => {
   const PAGE = "http://notes-api.test/files", HERE = "http://notes-api.test";
   const P = "/repo/notes-api/docs/figs/b.svg", S = "11111111-2222-3333-4444-555555555555";
   const q = "?path=" + encodeURIComponent(P) + "&sid=" + S;
   const FILE = { path: P, sid: S };
-  const rows: Array<[string, string, { path: string; sid: string | null } | null]> = [
+  const rows: Array<[string, string, { path: string; sid: string | null } | "none" | null]> = [
     ["the plain spelling", HERE + "/file" + q, FILE],
     ["an escaped route", HERE + "/%66ile" + q, FILE],
     ["a .. segment", HERE + "/x/../file" + q, FILE],
@@ -139,16 +140,58 @@ test("what it opens for a figure at this origin's /file route (ownFileRoute, the
     ["an escaped slash before a trailing ., decoded before the dots resolve", HERE + "/file%2F." + q, null],
     ["a path figure, the model's join", "figs/file" + q, null],
     ["a root-relative figure, a path of the disk", "/file" + q, null],
-    ["no path", HERE + "/file?sid=" + S, null],
-    ["a sid with a host prefix, which the viewer's URL would relay", HERE + "/file?path=" + encodeURIComponent(P) + "&sid=gpu1:" + S, null],
+    ["no path", HERE + "/file?sid=" + S, "none"],
+    ["a sid with a host prefix, which the viewer's URL would relay", HERE + "/file?path=" + encodeURIComponent(P) + "&sid=gpu1:" + S, "none"],
     ["a malformed escape", HERE + "/%E0%A4%A" + q, null],
   ];
   const got = rows.map(([what, dest]) => [what, ownFileRoute(dest, PAGE, HERE)]);
-  assert.deepEqual(got, rows.map(([what, , want]) => [what, want]), "each form's file, or none: this origin's /file route after its escapes are decoded and its dot segments resolved, and nothing else");
+  assert.deepEqual(got, rows.map(([what, , want]) => [what, want]), "each form's file, \"none\" or null: this origin's /file route after its escapes are decoded and its dot segments resolved, and nothing else");
   assert.equal(ownFileRoute(HERE + "/file" + q, PAGE, ""), null, "a page with no origin to compare (a stand-in outside a browser) reads no source as its own");
   // the host prefix: ownFileRoute refuses a sid exactly where hostOf, the rule the viewer's URL routes by, names a host
   const sids = [S, "gpu1:" + S, ":" + S, "a:b:" + S, "gpu1:", "x"];
-  assert.deepEqual(sids.map((s) => ownFileRoute(HERE + "/file?path=" + encodeURIComponent(P) + "&sid=" + encodeURIComponent(s), PAGE, HERE) === null), sids.map((s) => hostOf(s) !== ""), "a sid is refused where hostOf reads a host in it, and only there: " + JSON.stringify(sids));
+  assert.deepEqual(sids.map((s) => ownFileRoute(HERE + "/file?path=" + encodeURIComponent(P) + "&sid=" + encodeURIComponent(s), PAGE, HERE) === "none"), sids.map((s) => hostOf(s) !== ""), "a sid is refused where hostOf reads a host in it, and only there: " + JSON.stringify(sids));
+});
+
+test("what it opens for a figure at this origin's file routes read as the kernel reads them (ownFileRoute, the coordinator's ruling on the same-origin figure after the file review's round 19, read over the route's other forms by a check of that build): a leading run of slashes and the last segment's ;params, which CPython's parse_request and urlparse drop, still name the /file route and open its file; the relay's route /remote/<host>/file is the file its query names in that host's session, the inverse of the viewer's own URL; a query naming more than the path, the session and a credential (a pin, a download), a relay host of another shape, a relay address with no sid or a host-prefixed one, and a respelled relay route are \"none\", never a web tab", () => {
+  const PAGE = "http://notes-api.test/files", HERE = "http://notes-api.test";
+  const P = "/repo/notes-api/docs/figs/b.svg", S = "11111111-2222-3333-4444-555555555555";
+  const q = "?path=" + encodeURIComponent(P) + "&sid=" + S;
+  const FILE = { path: P, sid: S }, RELAYED = { path: P, sid: "gpu1:" + S };
+  const rows: Array<[string, string, { path: string; sid: string | null } | "none" | null]> = [
+    ["a double slash before the route, which the kernel folds into one", HERE + "//file" + q, FILE],
+    ["three slashes before the route", HERE + "///file" + q, FILE],
+    ["params on the route, which urlparse drops", HERE + "/file;x" + q, FILE],
+    ["empty params on the route", HERE + "/file;" + q, FILE],
+    ["params with a value on the route", HERE + "/file;a=b" + q, FILE],
+    ["params before a slash, which urlparse keeps", HERE + "/file;x/" + q, null],
+    ["a cap the author copied, a credential", HERE + "/file" + q + "&cap=" + "A".repeat(22), FILE],
+    ["a blank pin, which the kernel's parse_qs drops", HERE + "/file" + q + "&pin=", FILE],
+    ["a pin, whose snapshot the viewer's URL cannot carry", HERE + "/file" + q + "&pin=" + "0".repeat(32), "none"],
+    ["a download", HERE + "/file" + q + "&download=1", "none"],
+    ["any other name", HERE + "/file" + q + "&v=2", "none"],
+    ["an escaped colon in a host-prefixed sid", HERE + "/file?path=" + encodeURIComponent(P) + "&sid=gpu1%3A" + S, "none"],
+    ["the relay's route", HERE + "/remote/gpu1/file" + q, RELAYED],
+    ["the relay's route, its host escaped", HERE + "/remote/gpu%31/file" + q, RELAYED],
+    ["the relay's route with a double slash before it", HERE + "//remote/gpu1/file" + q, RELAYED],
+    ["the relay's route with params", HERE + "/remote/gpu1/file;x" + q, RELAYED],
+    ["the relay's route with a pin", HERE + "/remote/gpu1/file" + q + "&pin=" + "0".repeat(32), "none"],
+    ["the relay's route with no sid", HERE + "/remote/gpu1/file?path=" + encodeURIComponent(P), "none"],
+    ["the relay's route with a host-prefixed sid", HERE + "/remote/gpu1/file?path=" + encodeURIComponent(P) + "&sid=gpu2:" + S, "none"],
+    ["the relay's route with no path", HERE + "/remote/gpu1/file?sid=" + S, "none"],
+    ["a relay host of two segments", HERE + "/remote/a/b/file" + q, "none"],
+    ["a relay host with a colon", HERE + "/remote/a%3Ab/file" + q, "none"],
+    ["a relay host left blank", HERE + "/remote/file" + q, "none"],
+    ["a malformed escape in the relay host", HERE + "/remote/gpu%E0/file" + q, "none"],
+    ["the relay's route respelled, which WebKit sends decoded", HERE + "/remote/gpu1/%66ile" + q, "none"],
+    ["the relay's route on another origin", "http://other.test/remote/gpu1/file" + q, null],
+    ["another route under /remote/", HERE + "/remote/gpu1/files" + q, null],
+  ];
+  const got = rows.map(([what, dest]) => [what, ownFileRoute(dest, PAGE, HERE)]);
+  assert.deepEqual(got, rows.map(([what, , want]) => [what, want]), "each form's file, \"none\" or null: this origin's file routes as the kernel reads them");
+  // the relay's route is the inverse of the viewer's own URL: fileUrl for a host's session (no page key in node, so no cap) reads back as that file and session
+  for (const [p, sid] of [[P, "gpu1:" + S], ["~/notes/a b.png", "host-2:" + S], ["rel/c.svg", "h:" + S]] as Array<[string, string]>) {
+    assert.deepEqual(ownFileRoute(HERE + fileUrl(p, sid), PAGE, HERE), { path: p, sid }, "fileUrl(" + JSON.stringify(p) + ", " + JSON.stringify(sid) + ") = " + fileUrl(p, sid) + " reads back");
+  }
 });
 
 test("where it is decided: mdBlock's file arm after the anchors are sorted; a figure the browser answers for after the paint through one capture-phase load and error pair on the body, armed per open and dropped with the viewer; a URL document adds none", () => {
