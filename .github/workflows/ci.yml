@@ -354,8 +354,11 @@ jobs:
   shell:
     name: Shell (bats, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Generous on purpose: the suite takes ~1min on Linux but
-    # ~16min on macOS, so anything near 15 would kill a PASSING job.
+    # Generous on purpose: the suite took ~1min on Linux when this was set but
+    # ~16min on macOS, so anything near 15 would kill a PASSING job. Run bats has
+    # grown since (700 s on Linux at the fork's main 1d591384e, run 36388144219).
+    # The vendored tooling tests that ran after it moved to a job of their own
+    # (vendored-tooling, below) instead of this cap being raised to hold them.
     timeout-minutes: 35
     strategy:
       fail-fast: false
@@ -430,13 +433,6 @@ jobs:
           node-version: '22'
       - name: Manager handshake tests (node --test)
         run: node --test tests/manager-*.test.js
-      # The node-side tests of the file-comments loop (plans/file-review.md, Slice 1): the vendored
-      # track-changents copy's drift test (pin plus patch series, tools/vendor-drift.test.mjs), the
-      # behaviour tests for its patches, the file-comments host script, and the vendored guard's own
-      # suite (which now spawns the guard as a process). Same pinned node as the step above; nothing
-      # else under tools/ or vendor/ runs anywhere in CI, so this is their only runner.
-      - name: Vendored tooling and host-script tests (node --test)
-        run: node --test tools/*.test.mjs vendor/track-changents/hooks/*.test.mjs
 
   secrets:
     name: Secret scan (gitleaks)
@@ -500,6 +496,68 @@ jobs:
         if: ${{ !cancelled() }}
         run: gitleaks dir . --no-banner --redact -v --config .gitleaks.toml
 
+  vendored-tooling:
+    name: Vendored tooling (node --test, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # The vendored tooling step has a job of its own (since 2026-09-28) because it outgrew the Shell
+    # job, where it ran after Run bats. At the fork's main 1d591384e (run 36388144219) the Shell job
+    # took 31 min 50 s of its 35-minute cap: Run bats 700 s, then this step 1180 s, where at
+    # ffab236bd (run 36308512751) the step took 67 s. The growth is fork PR #780's tracked-changes
+    # bash guard: batch 925, the one merge between the two heads, added 27,628 lines under tools/
+    # and vendor/track-changents/, about 25,700 of them #780's. node --test runs files side by side
+    # but a file's tests one after another, and the tests of one file,
+    # tools/romp-track-bash-guard.test.mjs, which run the guard as a process and real bash and dash
+    # over tables of shell texts (zsh too where it is installed; the Linux runner has none), add up
+    # to about 1100 s in that run's log (the slowest single test 222 s). That file sets the step's
+    # length; the other 104 files finish inside it.
+    # Raising the Shell cap instead would hide the growth, and with the step inside the Shell job a
+    # PR that added more than about three minutes of bats time (the job's margin at 1d591384e was
+    # 190 s) ran that job past its cap.
+    # The cap here is the expected time and half again. Linux: 1180 s is 19 min 40 s, and half
+    # again is about 30 minutes. macOS has never run this step on the fork (it came after Run bats,
+    # which was red on every macOS run there). The macOS cells ran the Python suite about twice as
+    # long as the Linux cells (the python job's comment above), and macOS has zsh, whose legs the
+    # Linux runner skips. On a development box zsh adds about 18 to 29 percent to that file: 1368 s
+    # against CI's 1121 s, less 44 s of work only the box does (a history sweep CI's shallow
+    # checkout skips, and a slower strace leg), and 1571 s against 1222 s in two matched concurrent
+    # runs with and without zsh. So the rule gives about 70 to 76 minutes (twice 19 min 40 s, 18 to
+    # 29 percent more, and half again). The macOS cap stays 60, the python job's macOS cap: the
+    # first macOS run (a dispatch or the weekly schedule) measures the step and may be cut at 60.
+    # The PR checks run the Linux cell alone, so they are not affected.
+    # Follow-ups, in this order: (1) make the hook's per-paren case check linear (skipNested in
+    # hooks/romp-track-bash-guard.mjs tests /\bcase\b/ over the whole slice read so far at every
+    # `)`: about 210 s of this step on CI, and a stall of about 16 s in the hook itself on a command
+    # nested 2000 deep, on a development box); (2) split tools/romp-track-bash-guard.test.mjs so
+    # node runs its parts side by side.
+    # The manager handshake step stays in the Shell job for T224's reason (upstream's ruleset
+    # requires that job's check). This step is the fork's alone (upstream's ci.yml has no such
+    # step), and the fork has no ruleset or branch protection: a batch reads every check of a PR,
+    # this job's among them, so a red here holds a batch as any other red does.
+    # Placed between the secrets job and the vscode-extension job: tests/test_ci_sdk_pin.py splices
+    # its synthetic Shell-job steps in before the secrets job's key and appends others at the end of
+    # the file, where the vscode-extension job must stay last.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && 60 || 30 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS only on a manual run (workflow_dispatch) or the weekly schedule, as in the Shell job; see the header note.
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      # Node 22, pinned as the Shell job pins it for the handshake step, so the step never rides
+      # whatever node the image has.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # The node-side tests of the file-comments loop (plans/file-review.md, Slice 1): the vendored
+      # track-changents copy's drift test (pin plus patch series, tools/vendor-drift.test.mjs), the
+      # behaviour tests for its patches, the file-comments host script, and the vendored guard's own
+      # suite (which now spawns the guard as a process). No other step in CI runs these files,
+      # tools/pdf-smoke.test.mjs aside, which the vscode-extension job runs again with its dependency
+      # installed (it skips here), so this is their only runner.
+      - name: Vendored tooling and host-script tests (node --test)
+        run: node --test tools/*.test.mjs vendor/track-changents/hooks/*.test.mjs
+
   vscode-extension:
     name: vscode-extension (typecheck + test + build)
     runs-on: ubuntu-latest
@@ -543,8 +601,8 @@ jobs:
         run: npm test
       - name: PDF renderer dependency smoke test (node --test)
         # tools/pdf-smoke.test.mjs opens a synthetic PDF with the pdfjs-dist this job's npm ci installed
-        # (plans/file-review.md, Slice 4). The shell job's tools/*.test.mjs step picks the file up too, but
-        # that job installs nothing, so the test SKIPS there by design and asserts here. Repo root: the
+        # (plans/file-review.md, Slice 4). The vendored-tooling job's tools/*.test.mjs step picks the file up too,
+        # but that job installs nothing, so the test SKIPS there by design and asserts here. Repo root: the
         # test locates node_modules relative to itself.
         working-directory: ${{ github.workspace }}
         run: node --test tools/pdf-smoke.test.mjs
@@ -605,7 +663,7 @@ jobs:
         # passing test of its own, a skipped test, a failure inside a todo, or a file that failed as a whole is red too,
         # naming the leg or the test, within the scope the script's header states; an empty roster prints "no legs in
         # the roster" and exits 0 without starting node --test, whose default glob would rerun the whole suite
-        # (tools/ci-browser-legs.test.mjs, in the shell job, runs the script over synthetic trees).
+        # (tools/ci-browser-legs.test.mjs, in the vendored-tooling job, runs the script over synthetic trees).
         # Two bounds: this step's timeout-minutes (the job comment above says it fits within the margin under the
         # job's cap at the measured head), so a roster whose legs together exceed it fails this step by name instead of
         # cancelling the job nameless; and node's --test-timeout in the script, a per-FILE bound under the step's, so
@@ -615,7 +673,7 @@ jobs:
         # its own run, raises the step's timeout-minutes and the job's cap together when the total needs it (the job
         # comment above), and node's --test-timeout when one leg's own bound or its whole-file seconds need it. Step
         # seconds, job minutes and the job's 40-minute cap:
-        # (measured on the runner at 74db18d9c, the merge of the fork's main into this branch before the review's round 3, the merge whose title says so, one leg rostered, the launcher's own switch test: 15 s for this step in a job of 35 min 0 s, under the 40-minute cap, a margin of 300 s. The script then also ran a census of the tree's test modules and checks over an exclusions file before node --test; both have left this branch since (the fork's branch ci-browser-legs-census keeps them), so this step now runs less than was measured: at b6fd829bf, the author's landing merge for the review's round 11, whose subject names main at ffab236bd, three runs of this step's command from vscode-extension/ on a development box, with the bundles built and the switch set, took 1.87 s, 1.89 s and 1.87 s at a load average of about 22 on 60 cores (node's own duration in the first, 1.77 s). Three runs at 84cc6c142, the commit of the review's round 11 whose subject names condition 4 first, took 2.69 s, 2.70 s and 2.55 s at a load average of about 46 (node's own duration in the first, 2.55 s), three at 789b8252c, the commit of the author's closing pass after the review's round 11 whose subject names the script's header first, took 2.90 s, 2.65 s and 2.89 s at a load average of about 46, three at c0046a3b8, the commit of the review's round 11 whose subject names correctness-4 first and then seen_at and the post-run key, took 2.31 s, 2.38 s and 2.46 s at a load average of about 28, three at 2e4104fad, the commit of the author's closing pass after the review's round 10 whose subject names the reporter's file-level mark first, took 1.89 s, 1.99 s and 2.03 s at a load average of about 18, three at 345805840, the commit of the review's round 10 whose subject names extra5-1 first, took 1.69 s, 1.67 s and 1.84 s at a load average of about 17, and three at f6f736f31, the commit of the review's round 9 whose subject names regression-1 first, took 1.82 s each at a load average of about 12. The files this step runs are the roster (vscode-extension/ci-browser-legs.txt), each rostered leg's source (today ui/webview/real-viewer-leg-switch.test.ts alone), the script (scripts/ci-browser-legs.sh), its reporter (scripts/ci-browser-legs-reporter.mjs) and the launcher (ui/webview/real-viewer-leg.ts): between 74db18d9c and f6f736f31 the roster changes in its header comment alone, the reporter in its header comment alone, the script by that removal, by refusing a bundle path that is not canonical, by the wording of its reds and by its comments, and the switch test by its narrowed title and comments and by an assertion that reads the script's phrase, and the roster's one line and the launcher are as measured; between f6f736f31 and 2e4104fad, through 345805840, the roster, the reporter and the script change in their comments alone, and the switch test and the launcher not at all; between 2e4104fad and c0046a3b8 the roster changes in its header comment alone, the script by handing awk two values through its environment in place of -v (the line its duplicate check compares and the path its post-run pass keys on) and by its comments, the switch test by its comments, its second test's title and one assertion's message, and the reporter and the launcher not at all; between c0046a3b8 and 789b8252c the script changes by one line of its header comment and by the wording of its skip red under the switch, and the roster, the switch test, the reporter and the launcher not at all; between 789b8252c and 84cc6c142 the script changes in its header comment alone, and the roster, the switch test, the reporter and the launcher not at all; and between 84cc6c142 and b6fd829bf the switch test changes by giving each child run a temporary directory of its own, in a scratch directory it removes, with two assertions on them, by its first test's report of its temporary directory and by its comments, the roster and the script change in their comments alone, the launcher changes by the fork's main that b6fd829bf merges, where PR 912 adds a clause to bundleViewer's docstring and previewFull to its esbuild entry, and the reporter not at all. A later commit, or a merge of the fork's main when the branch takes one, is read against the same files from its diff, and one that changes none of them leaves those files as measured (the Playwright version vscode-extension/package-lock.json pins, which fixes the Chromium the install step fetches, and the runner can still move the step's seconds). The step's seconds and the job's length, which moves with the suite, are re-read from CI at each pushed head in the PR's body. This description of the measured heads and of what changed after them is NOT PINNED: tools/ci-browser-legs.test.mjs pins the figures beside it by shape and against the cap and the step's own bound, and each head is named by its sha and by its merge's title or its commit's subject, which the fork's merge-commit landings keep in main's history (a rebase or an offer elsewhere re-measures and renames them), while the Shell job checks out at depth 1, so no pin there can read a sha's title, subject or diff, and a reader checks them against the branch's history. The margin is the job's other phases' to spend, so a job that grows toward the cap with the roster unchanged re-measures here and lowers this bound or raises the cap; the first pushed head, with the roster empty, took 9 s inside a job that lasted 33 min 51 s; each PR that adds a leg states its own leg's numbers in its body.)
+        # (measured on the runner at 74db18d9c, the merge of the fork's main into this branch before the review's round 3, the merge whose title says so, one leg rostered, the launcher's own switch test: 15 s for this step in a job of 35 min 0 s, under the 40-minute cap, a margin of 300 s. The script then also ran a census of the tree's test modules and checks over an exclusions file before node --test; both have left this branch since (the fork's branch ci-browser-legs-census keeps them), so this step now runs less than was measured: at b6fd829bf, the author's landing merge for the review's round 11, whose subject names main at ffab236bd, three runs of this step's command from vscode-extension/ on a development box, with the bundles built and the switch set, took 1.87 s, 1.89 s and 1.87 s at a load average of about 22 on 60 cores (node's own duration in the first, 1.77 s). Three runs at 84cc6c142, the commit of the review's round 11 whose subject names condition 4 first, took 2.69 s, 2.70 s and 2.55 s at a load average of about 46 (node's own duration in the first, 2.55 s), three at 789b8252c, the commit of the author's closing pass after the review's round 11 whose subject names the script's header first, took 2.90 s, 2.65 s and 2.89 s at a load average of about 46, three at c0046a3b8, the commit of the review's round 11 whose subject names correctness-4 first and then seen_at and the post-run key, took 2.31 s, 2.38 s and 2.46 s at a load average of about 28, three at 2e4104fad, the commit of the author's closing pass after the review's round 10 whose subject names the reporter's file-level mark first, took 1.89 s, 1.99 s and 2.03 s at a load average of about 18, three at 345805840, the commit of the review's round 10 whose subject names extra5-1 first, took 1.69 s, 1.67 s and 1.84 s at a load average of about 17, and three at f6f736f31, the commit of the review's round 9 whose subject names regression-1 first, took 1.82 s each at a load average of about 12. The files this step runs are the roster (vscode-extension/ci-browser-legs.txt), each rostered leg's source (today ui/webview/real-viewer-leg-switch.test.ts alone), the script (scripts/ci-browser-legs.sh), its reporter (scripts/ci-browser-legs-reporter.mjs) and the launcher (ui/webview/real-viewer-leg.ts): between 74db18d9c and f6f736f31 the roster changes in its header comment alone, the reporter in its header comment alone, the script by that removal, by refusing a bundle path that is not canonical, by the wording of its reds and by its comments, and the switch test by its narrowed title and comments and by an assertion that reads the script's phrase, and the roster's one line and the launcher are as measured; between f6f736f31 and 2e4104fad, through 345805840, the roster, the reporter and the script change in their comments alone, and the switch test and the launcher not at all; between 2e4104fad and c0046a3b8 the roster changes in its header comment alone, the script by handing awk two values through its environment in place of -v (the line its duplicate check compares and the path its post-run pass keys on) and by its comments, the switch test by its comments, its second test's title and one assertion's message, and the reporter and the launcher not at all; between c0046a3b8 and 789b8252c the script changes by one line of its header comment and by the wording of its skip red under the switch, and the roster, the switch test, the reporter and the launcher not at all; between 789b8252c and 84cc6c142 the script changes in its header comment alone, and the roster, the switch test, the reporter and the launcher not at all; and between 84cc6c142 and b6fd829bf the switch test changes by giving each child run a temporary directory of its own, in a scratch directory it removes, with two assertions on them, by its first test's report of its temporary directory and by its comments, the roster and the script change in their comments alone, the launcher changes by the fork's main that b6fd829bf merges, where PR 912 adds a clause to bundleViewer's docstring and previewFull to its esbuild entry, and the reporter not at all. A later commit, or a merge of the fork's main when the branch takes one, is read against the same files from its diff, and one that changes none of them leaves those files as measured (the Playwright version vscode-extension/package-lock.json pins, which fixes the Chromium the install step fetches, and the runner can still move the step's seconds). The step's seconds and the job's length, which moves with the suite, are re-read from CI at each pushed head in the PR's body. This description of the measured heads and of what changed after them is NOT PINNED: tools/ci-browser-legs.test.mjs pins the figures beside it by shape and against the cap and the step's own bound, and each head is named by its sha and by its merge's title or its commit's subject, which the fork's merge-commit landings keep in main's history (a rebase or an offer elsewhere re-measures and renames them), while the vendored-tooling job, which runs that test, checks out at depth 1, so no pin there can read a sha's title, subject or diff, and a reader checks them against the branch's history. The margin is the job's other phases' to spend, so a job that grows toward the cap with the roster unchanged re-measures here and lowers this bound or raises the cap; the first pushed head, with the roster empty, took 9 s inside a job that lasted 33 min 51 s; each PR that adds a leg states its own leg's numbers in its body.)
         timeout-minutes: 5
         env:
           ROMP_BROWSER_LEGS_REQUIRE: "1"
