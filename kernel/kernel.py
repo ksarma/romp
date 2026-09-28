@@ -73863,11 +73863,13 @@ class Handler(BaseHTTPRequestHandler):
     # A page on another origin can open the 414 as a top-level document (a long URL is enough), so these carry the
     # opener policy _send's comment describes. send_error writes its headers in end_headers, so the header is added
     # there, and only while send_error runs: _send writes its own copy, and a second copy leaves a browser with no
-    # policy. A request line whose version is missing, malformed (a word after the version makes it so), HTTP/0.9
-    # itself, or HTTP/2.0 or later, none of which a browser sends, gets every reply in HTTP/0.9's shape, a body with no
-    # status line and no headers: http.server's refusals (its 400 and 505 for the line, and its 431s and 501 for a line
-    # that gets past those) and the kernel's own reply to the request alike, the page itself for a GET. No header can
-    # ride those replies, so the 431s and the 501 carry the policy only on a request line whose version is below
+    # policy. http.server writes the 414 before it parses the request line, so a line over 65536 bytes gets the full 414
+    # with the policy whatever version it names. A request line of at most 65536 bytes whose version is missing,
+    # malformed (a word after the version makes it so), HTTP/0.9 itself, or HTTP/2.0 or later, none of which a browser
+    # sends, gets every reply in HTTP/0.9's shape, a body with no status line and no headers: http.server's refusals
+    # (its 400 and 505 for the line, and its 431s and 501 for a line that gets past those) and the kernel's own reply to
+    # the request alike, the page itself for a GET (a bare `GET /chat` is answered with a page and no headers). No header
+    # can ride those replies, so the 431s and the 501 carry the policy only on a request line whose version is below
     # HTTP/2.0 and not HTTP/0.9, which gets a full reply (HTTP/0.5, say).
     def send_error(self, code, message=None, explain=None):
         self._in_send_error = True

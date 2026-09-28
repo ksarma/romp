@@ -613,13 +613,15 @@ class OpenerIsolation(unittest.TestCase):
     both 415 refusals (a file no view shows, a text-named file that is not text). Each shape is served once per entry of
     NAVIGATIONS (tests/document_navigations.py): bare, and with the headers a browser sends on a navigation typed,
     opened by the dashboard, and opened by another origin, which is where a browser reads the policy, signed in by the
-    session cookie as a browser's navigation is, a /file shape with the cap its URL carries. Read off a live socket (_wire_get), so a header written anywhere, a
-    send_response or end_headers override included, is seen, and each carries it exactly once: a second copy, even of
-    the same value, leaves a browser with a header it cannot parse and so with no policy. The /remote/<host>/file
-    relay's shapes are tests/test_kernel_remote_file_relay.py's, read the same way. The one reply without it is one in
-    HTTP/0.9's shape, to a request line whose version is missing, malformed, HTTP/0.9 itself, or HTTP/2.0 or later,
-    which no browser sends: it has no status line and no headers at all
-    (test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all)."""
+    session cookie as a browser's navigation is, a /file shape with the cap its URL carries. Read off a live socket
+    (_wire_get), so a header written anywhere, a send_response or end_headers override included, is seen, and each
+    carries it exactly once: a second copy, even of the same value, leaves a browser with a header it cannot parse and
+    so with no policy. The /remote/<host>/file relay's shapes are tests/test_kernel_remote_file_relay.py's, read the
+    same way. The one reply without it is one in HTTP/0.9's shape, to a request line of at most 65536 bytes whose
+    version is missing, malformed, HTTP/0.9 itself, or HTTP/2.0 or later, which no browser sends: it has no status line
+    and no headers at all (test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all). A line over 65536
+    bytes gets the full 414 with the policy whatever its version
+    (test_a_request_line_over_65536_bytes_gets_the_full_414_whatever_its_version)."""
 
     @classmethod
     def setUpClass(cls):
@@ -692,12 +694,12 @@ class OpenerIsolation(unittest.TestCase):
                 self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], what + ": one header, same-origin")
 
     def test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all(self):
-        # The one reply without the policy (Handler.send_error's comment names it): a request line whose version is
-        # missing, malformed (a word after the version makes it so), HTTP/0.9 itself, or HTTP/2.0 or later gets every
-        # reply in HTTP/0.9's shape, the body alone, so no header can ride it. No browser sends one. A GET with no version
-        # or with HTTP/0.9 is answered with the page itself, here the sign-in page, as bare as http.server's refusals, and
-        # so are http.server's 431 and 501 and the kernel's own reply to any other request (the second loop). Any other
-        # version below HTTP/2.0 gets a full reply with the policy once (the last case).
+        # The one reply without the policy (Handler.send_error's comment names it): a request line of at most 65536 bytes
+        # whose version is missing, malformed (a word after the version makes it so), HTTP/0.9 itself, or HTTP/2.0 or
+        # later gets every reply in HTTP/0.9's shape, the body alone, so no header can ride it. No browser sends one. A GET
+        # with no version or with HTTP/0.9 is answered with the page itself, here the sign-in page, as bare as
+        # http.server's refusals, and so are http.server's 431 and 501 and the kernel's own reply to any other request
+        # (the second loop). Any other version below HTTP/2.0 gets a full reply with the policy once (the last case).
         for what, line in (("a word after the version", "GET /chat HTTP/1.1 extra"), ("a malformed version", "GET / HTTP/x.y"),
                            ("HTTP/2.0", "GET / HTTP/2.0"), ("two words, not a GET", "PUT /"), ("one word", "GET"),
                            ("a bare GET", "GET /"), ("a GET with HTTP/0.9 itself", "GET / HTTP/0.9")):
@@ -720,6 +722,20 @@ class OpenerIsolation(unittest.TestCase):
             status, msg, body = _wire_raw(self.port, b"GET / HTTP/0.5\r\n\r\n")
             self.assertEqual(status, 200, "a full reply: %r" % body[:60])
             self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], "one header, same-origin")
+
+    def test_a_request_line_over_65536_bytes_gets_the_full_414_whatever_its_version(self):
+        # http.server refuses a request line over 65536 bytes before it parses the line, so the version the line names
+        # never shapes the reply: each form the test above answers with no headers at all gets the full 414 here, with the
+        # policy once, as a line ending in HTTP/1.1 does
+        long = "GET /chat?x=" + "a" * 70000
+        for what, line in (("no version", long), ("HTTP/0.9 itself", long + " HTTP/0.9"), ("HTTP/2.0", long + " HTTP/2.0"),
+                           ("a word after the version", long + " HTTP/1.1 extra"), ("a malformed version", long + " HTTP/x.y"),
+                           ("one word", "G" * 70000), ("HTTP/1.1", long + " HTTP/1.1")):
+            with self.subTest(what=what):
+                status, msg, body = _wire_raw(self.port, (line + "\r\n\r\n").encode())
+                self.assertIsNotNone(msg, what + ": a reply with headers: %r" % body[:80])
+                self.assertEqual(status, 414, what)
+                self.assertEqual(msg.get_all("Cross-Origin-Opener-Policy"), ["same-origin"], what + ": one header, same-origin")
 
     def _file_coop(self, name, data, want_status, cap=None):
         """Serve `data`, written to a file called `name`, through /file once per NAVIGATIONS entry (_coop). Returns
