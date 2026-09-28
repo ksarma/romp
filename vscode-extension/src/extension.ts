@@ -36,9 +36,10 @@ import {
 
 const HOST = "127.0.0.1";
 
-// The kernel serve token — required on EVERY kernel request, loopback included (Jupyter's model:
-// the 0600 state file, not the socket, is the same-user trust boundary; /healthz and /version stay
-// exempt). Same resolution order as the kernel's _load_token: env override, else the state file.
+// The kernel serve token: required on EVERY kernel request, loopback included, presented directly
+// or, by a browser, through a sign-in made with it (Jupyter's model: the 0600 state file, not the
+// socket, is the same-user trust boundary; /healthz and /version stay exempt). Same resolution
+// order as the kernel's _load_token: env override, else the state file.
 // Read per call (a tiny local file): a freshly minted token is picked up on the next
 // fetch/reconnect without a window reload.
 function serveToken(): string {

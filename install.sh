@@ -395,12 +395,13 @@ echo "  romp launches in ROMPHOME (default: $ROMP_DIR), never \$HOME."
 echo "  Override:  export ROMPHOME=\"/path/you/prefer\""
 
 # The finish line: the dashboard link, tokened so the first click signs this
-# browser in (the kernel token-gates every request, loopback included; the first
-# open sets a year-long cookie, after which the bare URL works). The kernel mints
-# the token moments after the login service loads, so wait for the file it
-# persists (bounded poll on the mint event's artifact; ROMP_INSTALL_TOKEN_TRIES
-# is the test seam) — and when it isn't there yet, say how to get the link
-# instead of printing one that would bounce to the login page.
+# browser in (the kernel gates every request on the token or a sign-in made with
+# it, loopback included; the first open sets a year-long cookie, after which the
+# bare URL works). The kernel mints the token moments after the login service
+# loads, so wait for the file it persists (bounded poll on the mint event's
+# artifact; ROMP_INSTALL_TOKEN_TRIES is the test seam), and when it isn't there
+# yet, say how to get the link instead of printing one that would bounce to the
+# login page.
 _state_dir="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
 _kport="${ROMP_KERNEL_PORT:-29855}"
 _tok="$(cat "$_state_dir/serve-token" 2>/dev/null || true)"

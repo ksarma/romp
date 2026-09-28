@@ -37,6 +37,7 @@ import { canPreview, fileUrl } from "./preview";
 import { sanitizeMd } from "./md-sanitize";
 import { Marked } from "marked";
 import { stripRemoteLoads } from "./file-preview";
+import { capAuthoredFileUrls } from "./authored-file-caps";
 import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { initFileBrowse, openFileBrowse } from "./file-browse";
 import { VIEW_STATE_KEY, parseViewState, serializeViewState, pruneViewState, capViewState, type FeedViewState, threadKey, threadKeys } from "./feed-view-state";
@@ -2038,6 +2039,7 @@ function noticeBodyNodes(md: string): Node[] {
   try {
     const clean = sanitizeMd(noticeMarked.parse(md) as string);
     stripRemoteLoads(clean, (typeof window !== "undefined" && window.location ? window.location.origin : ""), "");
+    capAuthoredFileUrls(clean);   // a same-origin /file picture or link the notice names carries this page's cap (authored-file-caps.ts)
     return Array.from(clean.childNodes);
   } catch (e) {
     return [document.createTextNode(md)];

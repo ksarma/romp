@@ -142,10 +142,13 @@ class AuthCookieSurvivesAppLaunches(unittest.TestCase):
         # app booted cookieless onto the login page. Lax attaches on top-level navigations (the
         # launch) while still never riding a cross-site POST or subresource — and every
         # state-changing kernel route is a POST, so the gate is unchanged.
-        status, _, headers = _serve_get("/sw.js?token=" + km.TOKEN)   # any gated route sets it
+        # a page NAVIGATION (a launch) is what seeds the session cookie; a static/JSON ?token= sets none
+        status, _, headers = _serve_get("/?token=" + km.TOKEN,
+                                        headers={"Accept": "text/html", "Sec-Fetch-Dest": "document"})
         self.assertEqual(status, 200)
         cookie = headers.get("Set-Cookie") or ""
-        self.assertIn("romp_token=", cookie)
+        self.assertIn(km._SESSION_COOKIE + "=", cookie)   # the per-kernel session cookie, not the serve token
+        self.assertNotIn("romp_token=", cookie)
         self.assertIn("SameSite=Lax", cookie)
         self.assertNotIn("Strict", cookie)
         self.assertIn("HttpOnly", cookie)                 # still no script access
