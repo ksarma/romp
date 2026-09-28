@@ -47,7 +47,8 @@
 // third holds that every addEventListener in ui/ is a call the first can read, and a fourth refuses the roads that spell
 // neither (a method of the window, of the body element or of a prototype read by a computed name, a function run with
 // the window as its `this`, an onmessage handler set other than by an assignment the fourth accepts, a handler or a
-// message listener on a window other than this page's own, code run from a string, a `with` statement, and the name
+// message listener on a window other than this page's own, code run from a string (a module imported from a data: URL
+// or from a URL built at run time among it), a test or types file imported as a module, a `with` statement, and the name
 // WebSocket anywhere but as the constructor a `new` calls, or in a type). What those cannot see is listed at the fourth.
 // Synthetic world only: the notes-api demo, placeholder ids.
 import { test } from "node:test";
@@ -470,16 +471,20 @@ test("the legs of a listener declared in ARMS tell its arms apart: in each leg's
 // ── the census: every window message listener in ui/ ──
 
 /** The classes every file under ui/ falls into, by its path relative to ui/ (forward slashes), tried in this order, the
- *  first whose test matches taking the file: tests and types (a `.test.` file of any module suffix, a `.d.` file of a
- *  TypeScript one); modules, every suffix esbuild 0.21.5's default loaders read as code (.ts .tsx .mts .cts .js .jsx .mjs
- *  .cjs) in any directory, the files every census here reads; and the files no census reads, each class named:
- *  stylesheets, the anchor map's fixtures (its directory's data: markdown, json, a python file, an html page with no
- *  script, a csv, an svg, a .gitattributes) and the markdown at ui/'s own top (its README and CLAUDE.md). A file no class
- *  takes reds uiPartition, named with its suffix, so a file of a kind no class names is loud, never dropped. Every
+ *  first whose test matches taking the file: tests and types (a `.test.` file of any module suffix, and a .d.ts, .d.mts
+ *  or .d.cts file; a .d.tsx is a module, since TypeScript reads it as no declaration file and esbuild bundles it); modules,
+ *  every suffix esbuild 0.21.5's default loaders read as code (.ts .tsx .mts .cts .js .jsx .mjs .cjs) in any directory,
+ *  the files every census here reads; and the files no census reads, each class named: stylesheets, the anchor map's
+ *  fixtures (its directory's data: markdown, json, a python file, an html page with no script, a csv, an svg, a
+ *  .gitattributes) and the markdown at ui/'s own top (its README and CLAUDE.md). No census reads a test or types file,
+ *  and esbuild bundles either like any module when a module imports it, so the road census refuses that import. A file no
+ *  class takes reds uiPartition, named with its suffix, so a file of a kind no class names is loud, never dropped. Every
  *  directory is walked, one named node_modules or dist included: a module there is one a ui/ module can import and esbuild
- *  bundles, so it is read like any other, and any other file there has no class. */
+ *  bundles, so it is read like any other; a stylesheet, a test or a types file there takes its class as it does anywhere;
+ *  and any other file there (a package.json, a README) has no class, since the fixtures and the markdown are named by
+ *  where they sit. */
 const UI_CLASSES: Array<[string, RegExp]> = [
-  ["tests and types", /\.test\.([mc]?[tj]s|[tj]sx)$|\.d\.([mc]?ts|tsx)$/],
+  ["tests and types", /\.test\.([mc]?[tj]s|[tj]sx)$|\.d\.[mc]?ts$/],
   ["modules", /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/],
   ["stylesheets", /\.css$/],
   ["the anchor map's fixtures", /^webview\/anchor-map-fixtures\/[^/]+$/],
@@ -518,15 +523,21 @@ function uiSources(): string[] {
  *  does not count: the listener takes one parameter, the event, a plain name with no default (a parameter's default runs
  *  before the body, so a default on it or on a second parameter would run ahead of the check), and every statement before
  *  the check must be a read of the message (a declaration initialised to <event>.data) or an early return whose condition
- *  runs no code (inert): no call, construct, tagged or substituted template, delete, await, yield, ++/--, assignment, or a
- *  binary operator that coerces an operand (==, !=, <, >, <=, >=, in, instanceof; the strict === and !== do not coerce and
- *  stay), and every property or element access reads what no page code produces: off the event, its data at any depth (a
- *  structured clone, with no accessors) or, one level and no deeper, its own origin, source, ports or lastEventId; off a
- *  name a message read bound to <event>.data, any depth. A read any further through the event can run a getter the page
- *  defined: its target, currentTarget and srcElement are the receiving window, its view is a window where the event has
- *  one, and a member of its source is a member of the sending window, so e.target.x, e.view and e.source.parent are not
- *  inert, nor is a getter read or a coercion off any other object. Each would run an arm for a foreign sender before the
- *  check. So no arm runs before the check. */
+ *  inert accepts: no call, construct, tagged or substituted template, delete, await, yield, ++/--, assignment, or binary
+ *  operator but &&, ||, ??, ===, !== and the comma (every other one can convert an operand: ==, !=, <, >, <=, >=, +, in,
+ *  instanceof and the rest), and every property or element access reads off the event or a message read: off the event,
+ *  its data at any depth (a structured clone, whose own members are plain data) or, one level and no deeper, its own
+ *  origin, source, ports or lastEventId; off a name a message read bound to <event>.data, any depth. A read any further
+ *  through the event can run a getter the page defined: its target, currentTarget and srcElement are the receiving window,
+ *  its view is a window where the event has one, and a member of its source is a member of the sending window, so
+ *  e.target.x, e.view and e.source.parent are refused, as is a member read off any other name. The rule is judged by form,
+ *  not by what runs, and some forms it accepts can still run page code ahead of the check: a read of a member the
+ *  message's data does not hold itself, which comes from its prototype, where the page can define a getter; in a message
+ *  read, a destructuring default or computed key (any expression, a call included) and an array pattern, which runs the
+ *  array iterator; and in an early return's condition, a read of a global name the page defines as a getter, a unary +, -
+ *  or ~ and a computed or element key, each of which converts an object, a spread (an iterator, or an object's getters), a
+ *  class expression (its heritage reads the superclass's prototype, and a decorator is a call) and a JSX element, a call
+ *  once compiled. */
 function headCheck(site: Site): string | null {
   const fn = site.fn;
   if (ts.isIdentifier(fn)) return "the listener is a name no const holding a function written in place binds (sitesIn): " + fn.text;
@@ -553,9 +564,10 @@ function headCheck(site: Site): string | null {
   const EVENT_OWN = new Set(["origin", "source", "ports", "lastEventId"]);
   /** The leftmost node of a property or element access chain, casts and parentheses removed. */
   const accessRoot = (n: any): any => { n = unwrap(n); while (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) n = unwrap(n.expression); return n; };
-  /** Whether `n` runs no code. `allowed` is the names a property or element access may read off: the event (its data at any
-   *  depth, or one of EVENT_OWN one level deep) and every name a message read has bound to <event>.data so far (any depth; a
-   *  getter cannot run on a MessageEvent's structured-clone data). */
+  /** Whether `n` runs no code, judged by its form (headCheck's docstring names the accepted forms that can still run page
+   *  code). `allowed` is the names a property or element access may read off: the event (its data at any depth, or one of
+   *  EVENT_OWN one level deep) and every name a message read has bound to <event>.data so far (any depth: a structured
+   *  clone's own members are plain data). */
   const inert = (n: any, allowed: Set<string>): boolean => {
     if (ts.isCallExpression(n) || ts.isNewExpression(n) || ts.isTaggedTemplateExpression(n) || ts.isTemplateExpression(n)
         || ts.isDeleteExpression(n) || ts.isAwaitExpression(n) || ts.isYieldExpression(n)
@@ -594,11 +606,14 @@ function headCheck(site: Site): string | null {
   }
   return "no `if (windowSender(" + ev + ") === \"foreign\") return;` in the listener's body";
 }
-// The gated sites, by file and count. An addEventListener("message", …) on something that is not a window, which no
-// other page can post to, would be listed in EXEMPT with its reason; there is none in ui/ today. An onmessage handler on
-// something other than this page's window is no census site: the road census accepts a WebSocket's own handler
-// (federation.ts's sockets, a binding that only ever holds `new WebSocket(...)`) and refuses every other receiver it
-// cannot resolve, so a MessagePort's, a worker's, a BroadcastChannel's or an EventSource's handler is refused, fail-closed.
+// The gated sites, by file and count. EXEMPT is for a site the census counts that no other page can post to (an
+// addEventListener("message", …) on something that is not a window), listed with its reason; there is none in ui/ today.
+// A listed site is left out of the per-file count and the head check only: the spelling assertion in the census test and
+// the leg census still read every site, so such a listener also needs those two to leave it out before the census
+// passes. An onmessage handler on something other than this page's window is no census site: the road census accepts a
+// WebSocket's own handler (federation.ts's sockets, a binding that only ever holds `new WebSocket(...)`) and refuses every
+// other receiver it cannot resolve, so a MessagePort's, a worker's, a BroadcastChannel's or an EventSource's handler is
+// refused, fail-closed.
 const GATED: Array<[string, number]> = [
   ["webview/file-browse.ts", 1], ["webview/file-comments.ts", 1], ["webview/file-view.ts", 2], ["webview/frame-listener.ts", 1],
   ["webview/gear.js", 6], ["webview/palette-main.ts", 2], ["webview/settings.ts", 1], ["webview/strip.ts", 1], ["webview/waiting.ts", 1],
@@ -1162,17 +1177,22 @@ test("census: every file under ui/ is in a named class, and the censuses read th
   assert.deepEqual(uiSources(), parts["modules"], "the censuses walk the modules class");
 });
 
-test("the file classes read what they claim: a module of every suffix esbuild reads as code is read by the censuses in any directory, a test or a types file of each is not, and a file of any other kind outside the named classes has no class", () => {
+test("the file classes read what they claim: a module of every suffix esbuild reads as code is read by the censuses in any directory, a .d.tsx among them; a test file of each suffix and a .d.ts, .d.mts or .d.cts file is not; a stylesheet, test or types file under node_modules or dist takes its class; and a file of any other kind outside the named classes has no class", () => {
   // synthetic names only: uiClassOf reads a name, and no fixture file may sit in ui/
   const NAMES: Array<[string, string | null]> = [
     ["webview/probe.ts", "modules"], ["webview/probe.tsx", "modules"], ["webview/probe.mts", "modules"], ["webview/probe.cts", "modules"],
     ["webview/probe.js", "modules"], ["webview/probe.jsx", "modules"], ["webview/probe.mjs", "modules"], ["webview/probe.cjs", "modules"],
     ["probe.ts", "modules"], ["webview/deep/er/probe.tsx", "modules"], ["webview/anchor-map-fixtures/probe.js", "modules"],
+    // a .d.tsx is no declaration file to TypeScript, and esbuild bundles it (import "./probe.d" finds it): a module
+    ["webview/probe.d.tsx", "modules"],
     ["webview/probe.test.ts", "tests and types"], ["webview/probe.test.tsx", "tests and types"], ["webview/probe.test.mjs", "tests and types"],
     ["webview/probe.test.cjs", "tests and types"], ["webview/probe.test.jsx", "tests and types"], ["webview/probe.d.ts", "tests and types"],
     ["webview/probe.d.mts", "tests and types"], ["webview/probe.d.cts", "tests and types"],
     ["webview/probe.css", "stylesheets"], ["webview/anchor-map-fixtures/probe.json", "the anchor map's fixtures"],
     ["webview/anchor-map-fixtures/.gitattributes", "the anchor map's fixtures"], ["README.md", "ui's own markdown"],
+    // under node_modules or dist a stylesheet, a test or a types file takes its class as anywhere; nothing else does
+    ["webview/node_modules/pkg/index.d.ts", "tests and types"], ["webview/node_modules/pkg/style.css", "stylesheets"],
+    ["webview/dist/a.test.js", "tests and types"], ["webview/node_modules/pkg/package.json", null], ["dist/README.md", null],
     ["webview/probe.html", null], ["webview/probe.json", null], ["webview/probe.md", null], ["webview/probe.vue", null],
     ["webview/probe", null], ["webview/anchor-map-fixtures/deeper/probe.md", null],
   ];
@@ -1243,8 +1263,9 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     method);
 //   - a window other than this page's own: frames (which a browser answers with the window itself; refused with the rest
 //     here, so no reader has to know that), top, parent and opener, unshadowed; any of those reached through a window
-//     (window.parent, parent.top), and anything reached through another window; an indexed window (frames[0], window[0],
-//     a frame's); a frame's contentWindow; the defaultView of any document the census cannot tell is this page's
+//     (window.parent, parent.top); another window's own names for itself (parent.self, top.window) and its document's
+//     defaultView (top.document.defaultView); an indexed window (frames[0], window[0], parent.frames[0]); a frame's
+//     contentWindow; the defaultView of any document the census cannot tell is this page's
 //     (el.ownerDocument.defaultView); and an event's view, target, currentTarget or srcElement, each of which can hold a
 //     window; and a local initialised to any of these or destructured from one (const { parent: p } = window);
 //   - the body element, whose onmessage is its window's: the body of any document (this page's, a window's, any
@@ -1281,7 +1302,12 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //   - a message or messageerror listener added to a window other than this page's own (parent.addEventListener(...)),
 //     where a check at its head could not be about this page's senders;
 //   - code run from a string: eval, the Function constructor (by name, or reached through a function's .constructor),
-//     and setTimeout or setInterval handed a string;
+//     setTimeout or setInterval handed a string, an import() whose specifier is not a string literal (the URL it builds
+//     at run time can be a data: or blob: URL holding code), and a module specifier that is a data: URL (in an import, an
+//     export ... from, an import() or a require; esbuild bundles the URL's text as code);
+//   - a module specifier naming a test or types file (one UI_CLASSES' first class takes, as written or with a suffix
+//     esbuild adds or swaps: ./x.d finds x.d.ts, ./x.test.js finds x.test.ts), which esbuild bundles like any module and
+//     no census reads; a type-only import is erased, and left;
 //   - a `with` statement, which answers any name inside it from an object the census cannot read (a write to a socket's
 //     binding, the WebSocket constructor, undefined);
 //   - the name WebSocket, as a name or a string, anywhere but as the constructor a `new` calls (bare or as a member) and
@@ -1313,9 +1339,11 @@ test("an imported event name is read from the one file esbuild bundles for its b
 const OTHER_WINDOW_NAMES = new Set(["frames", "top", "parent", "opener"]);
 /** Every name a script reaches a window by: its own and the others. */
 const WINDOW_GLOBALS = new Set([...WINDOW_NAMES, ...OTHER_WINDOW_NAMES]);
-/** The members that are a window whatever holds them: a document's window, a frame's, and an event's view, target,
- *  currentTarget and srcElement. A defaultView is this page's own window when its document is this page's (memberKind);
- *  every other one of these is a window the census cannot tell from another. */
+/** The members the census treats as a window whatever holds them: a document's window (defaultView), a frame's
+ *  (contentWindow), and view, target, currentTarget and srcElement, which on an event can each hold a window. They are
+ *  read so on every holder, fail-closed, though on most they hold no window (an anchor's target is a string, a click's an
+ *  element). A defaultView is this page's own window when its document is this page's (memberKind); every other one of
+ *  these is a window the census cannot tell from another. */
 const WINDOW_MEMBERS = new Set(["defaultView", "contentWindow", "view", "target", "currentTarget", "srcElement"]);
 /** The name of `x.name`, or of `x["name"]` with a literal key; else null. */
 const memberName = (n: any): string | null => ts.isPropertyAccessExpression(n) ? n.name.text
@@ -1507,6 +1535,13 @@ const isNewCallee = (n: any): boolean => {
   const m = outer(n.parent);
   return ts.isNewExpression(m.parent) && m.parent.expression === m;
 };
+/** Whether a module specifier names a test or types file: UI_CLASSES' tests and types class takes it as written, with a
+ *  suffix esbuild adds (RESOLVE_ORDER: ./x.d finds x.d.ts), or with the .ts esbuild tries for a .js, .mjs or .cjs one
+ *  (./x.test.js finds x.test.ts). */
+function namesTestOrTypes(spec: string): boolean {
+  const testsAndTypes = UI_CLASSES.find(([k]) => k === "tests and types")![1];
+  return [spec, spec.replace(/\.([mc]?)js$/, ".$1ts"), ...RESOLVE_ORDER.map((x) => spec + x)].some((c) => testsAndTypes.test(c));
+}
 /** Every road in `src` the comment above lists, with where it is and why, and how many onmessage and onmessageerror names
  *  it read. */
 function looseRoads(file: string, src: string): { onmessage: number; loose: LooseAdd[] } {
@@ -1561,6 +1596,19 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
     if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isObjectLiteralExpression(unwrap(n.left))
         && holdsWindowMethods(n.right) && computedKeyIn(unwrap(n.left))) {
       refuse(n, "a member of a window, the body element or a prototype destructured by a computed key, which the censuses cannot read");
+    }
+    // a module whose code no census reads: an import() of a URL built at run time, a data: URL's text, a test or types file
+    const spec = ts.isImportDeclaration(n) || ts.isExportDeclaration(n) ? (n.moduleSpecifier ? unwrap(n.moduleSpecifier) : null)
+      : ts.isExternalModuleReference(n) ? unwrap(n.expression)
+      : ts.isCallExpression(n) && (n.expression.kind === ts.SyntaxKind.ImportKeyword || calleeName(n.expression) === "require") && n.arguments[0] ? unwrap(n.arguments[0])
+      : null;
+    if (ts.isCallExpression(n) && n.expression.kind === ts.SyntaxKind.ImportKeyword && !(spec && ts.isStringLiteralLike(spec))) {
+      refuse(n, "an import() whose specifier is not a string literal, which can run code from a string as a module");
+    }
+    const typeOnly = (ts.isImportDeclaration(n) && !!n.importClause && n.importClause.isTypeOnly) || (ts.isExportDeclaration(n) && n.isTypeOnly);
+    if (spec && ts.isStringLiteralLike(spec) && !typeOnly) {
+      if (/^\s*data:/i.test(spec.text)) refuse(spec, "a module specifier that is a data: URL, whose text esbuild bundles as code no census reads");
+      else if (namesTestOrTypes(spec.text)) refuse(spec, "a module specifier naming a test or types file, which esbuild bundles like any module and no census reads");
     }
     if (ts.isIdentifier(n) && n.text === "eval" && !inType(n)) refuse(n, "eval, which runs code from a string");
     if (ts.isStringLiteralLike(n) && (n.text === "eval" || n.text === "Function") && ts.isElementAccessExpression(n.parent) && n.parent.argumentExpression === n) {
@@ -1621,7 +1669,7 @@ function looseRoads(file: string, src: string): { onmessage: number; loose: Loos
   return { onmessage, loose };
 }
 
-test("census: no ui/ source reaches a window listener by a computed name, runs a function with the window as its this, sets an onmessage handler other than by an assignment the census accepts, adds a message listener to another window, runs code from a string, holds a with statement, or names WebSocket but to construct one", () => {
+test("census: no ui/ source reaches a window listener by a computed name, runs a function with the window as its this, sets an onmessage handler other than by an assignment the census accepts, adds a message listener to another window, runs code from a string, imports a test or types file, holds a with statement, or names WebSocket but to construct one", () => {
   const bad: string[] = [];
   const readIn = new Map<string, number>();
   for (const f of uiSources()) {
@@ -1736,6 +1784,11 @@ test("the road census reads what it claims: every road around the spelled regist
     ["const o = { defaultView: 1 }; const { [k]: v } = obj; ({ [k]: v } = other);"],
     ["const wrapped = function (this: object, ...a: unknown[]) { return orig.apply(this, a); };"],
     ["Object.prototype.hasOwnProperty.call(n, \"_nid\"); Array.prototype.forEach.call(nodes, g); g.bind(obj); frames[0].focus();"],
+    // a module named by a string literal that is no data: URL and no test or types file, a type-only import (erased), a
+    // .d.tsx (a module the censuses read), and a data: URL that is no module specifier
+    ["import { a } from \"./x\"; export { b } from \"../y\"; import(\"./lazy\"); import x = require(\"./z\"); const img = \"data:image/png;base64,AAAA\";"],
+    ["import type { T } from \"./vendor-track-changents.d\"; export type { U } from \"./zz.d\"; import \"./zz.d.tsx\";"],
+    ["const g = require(\"./gear.js\"); const h = require(\"./gesture-clock.js\");", "webview/probe.js"],
   ];
   for (const [src, file] of accepted) assert.deepEqual(roads(src, file), [], "accepted: " + src);
   // an onmessage or onmessageerror handler is accepted on this page's own window (a census site the census above holds),
@@ -1850,6 +1903,22 @@ test("the road census reads what it claims: every road around the spelled regist
       ["Reflect.set(HTMLBodyElement.prototype, k, f, document.body);"],
       ["e.view[k] = f;"], ["Reflect.set(e.view, k, f);"], ["Object.assign(ev.view, { [k]: f });"], ["e.target[k] = f;"],
       ["ev.currentTarget[k] = f;"], ["e.srcElement[k] = f;"],
+    ]],
+    // a module whose code no census reads: one imported from a URL built at run time, from a data: URL, or a test or types file
+    [/an import\(\) whose specifier is not a string literal/, false, [
+      ["import(\"data:text/javascript,\" + encodeURIComponent(code));"], ["import(URL.createObjectURL(new Blob([code], { type: \"text/javascript\" })));"],
+      ["const u = \"data:text/javascript,go()\"; import(u);"], ["import(`data:text/javascript,${code}`);"], ["(async () => { await import((spec)); })();"],
+    ]],
+    [/a module specifier that is a data: URL/, false, [
+      ["import(\"data:text/javascript,window.onmessage%3Df\");"], ["import(`data:text/javascript,go()`);"], ["import(\"DATA:text/javascript,go()\");"],
+      ["import \"data:text/javascript,window.onmessage=f\";"], ["import { a } from \"data:text/javascript,export const a = 1\";"],
+      ["export * from \"data:text/javascript,export const a = 1\";"], ["import x = require(\"data:text/javascript,go()\");"],
+      ["require(\"data:text/javascript,window.onmessage=f\");", "webview/probe.js"],
+    ]],
+    [/a module specifier naming a test or types file/, false, [
+      ["import \"./zz.d\";"], ["import { X } from \"./zz.d.ts\";"], ["export { X } from \"./zz.d.mts\";"], ["import { type X, Y } from \"./zz.d.cts\";"],
+      ["import \"./zz.test\";"], ["import(\"./zz.test.js\");"], ["import \"./zz.d.js\";"], ["import x = require(\"./zz.d\");"],
+      ["require(\"./zz.test.ts\");", "webview/probe.js"],
     ]],
     // a messageerror handler set another way
     [/an onmessageerror handler set some way other than an assignment the census reads/, false, [
@@ -1978,8 +2047,9 @@ test("the census rule reads what it claims: a listener that acts before the chec
   assert.match(String(probe('(e) => { const m = e.data; if (m.type > kick) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a relational operator coerces its operand");
   assert.match(String(probe('(e) => { const m = e.data; if (m.type instanceof Kick) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "instanceof runs Symbol.hasInstance");
   assert.match(String(probe('(e) => { const m = e.data; if (`${kick}`) return; if (windowSender(e) === "foreign") return; }')), /runs before/, "a substituted template coerces its expression");
-  // the event's target, currentTarget and srcElement are the receiving window, its view is a window, and a member of its
-  // source is a member of the sending window: a read through any of them can run a getter the page defined
+  // the event's target, currentTarget and srcElement are the receiving window, its view, where the event has one, is a
+  // window, and a member of its source is a member of the sending window: a read through any of them can run a getter the
+  // page defined
   const preCheck = (c: string) => probe("(e) => { if (" + c + ") return; if (windowSender(e) === \"foreign\") return; }");
   assert.deepEqual(["e.target.x.y", "e.currentTarget.x.y", "e.srcElement.x.y", "e.source.parent.x.y", "e.target.x", "e.source.top", "e.view",
                     "e.ports.length", "e[\"source\"][\"opener\"]", "e[k]"].filter((c) => !/runs before/.test(String(preCheck(c)))), [],
