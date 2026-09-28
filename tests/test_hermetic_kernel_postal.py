@@ -365,6 +365,15 @@ else:                                  # the functions, not its classes, so pyte
     from test_ci_pytest_workers import command_on, matrix_os_labels, python_job_steps, worker_counts   # noqa: E402
 import ast_bindings   # noqa: E402  names resolved to their declarations by scope (tests/ast_bindings.py)
 
+# Hermetic state BEFORE the loads: the one load call tests/test_state_isolation_order.py finds here
+# (spec_from_file_location and exec_module, inside the test that proves the collect-report hook's shape) loads a scratch
+# copy of the conftest's hook, not romp code, but that ratchet counts every in-process load, and paying its two lines is
+# cheaper than teaching it to resolve targets; only pytest runs conftest's floor. The census below reads this module's
+# XDG_STATE_HOME write as it reads every other module's, by the licence's value check (LICENSED_MODULE_LEVEL_WRITES),
+# and the pop is no write.
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+
 TRIO = ("ROMP_POSTAL_PORT", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_CLIENT_ONLY")
 
 # -- the spawn scan: a subprocess call whose argv holds the kernel's path, read from the module's ast with every name
@@ -5048,19 +5057,20 @@ def _licence_table_faults(table):
 
 LICENSED_MODULE_LEVEL_WRITES = {
     "XDG_STATE_HOME": _Licence(
-        "the state preamble tests/test_state_isolation_order.py mandates before a module loads bin/romp-*, which bind "
-        "their state root at import: a private root under the run's temp root (tempfile.mkdtemp(), directly or through "
-        "a name bound to one), removed with the run; a child that inherits it writes under that root and nowhere real. "
-        "Licensed 2026-09-22 until the class item is taken, which may retire the mandate, and this licence with it. The "
-        "mandate may add a writer with every new module that loads bin/romp-* (such a module may write ROMP_STATE_DIR "
-        "instead), so the date bounds no writer: the value check on every write is what holds the licence",
+        "the state preamble tests/test_state_isolation_order.py mandates before a module's first in-process load, of "
+        "bin/romp-*, which bind their state root at import, or of any other file, since the mandate counts every load "
+        "call: a private root under the run's temp root (tempfile.mkdtemp(), directly or through a name bound to one), "
+        "removed with the run; a child that inherits it writes under that root and nowhere real. Licensed 2026-09-22 "
+        "until the class item is taken, which may retire the mandate, and this licence with it. The mandate may add a "
+        "writer with every new module that loads a file in-process (such a module may write ROMP_STATE_DIR instead), so "
+        "the date bounds no writer: the value check on every write is what holds the licence",
         value_ok=_a_mkdtemp, since="2026-09-22", until=CLASS_ITEM_871),
     "ROMP_STATE_DIR": _Licence(
         "the other half of the same preamble (a live kernel exports it and it outranks the XDG floor): a private root "
         "(a TemporaryDirectory's name, a path joined onto a mkdtemp), or the shell's own value written back after the "
         "load, in the four modules that do not pop it. Licensed 2026-09-22 until the class item is taken. The mandate "
-        "may add a writer with every new module that loads bin/romp-* (one that writes it rather than popping it), so "
-        "the date bounds no writer: the value check does",
+        "may add a writer with every new module that loads a file in-process (one that writes it rather than popping "
+        "it), so the date bounds no writer: the value check does",
         value_ok=_a_state_dir, since="2026-09-22", until=CLASS_ITEM_871),
     "ROMP_SERVE_TOKEN": _Licence(
         "a synthetic serve token so a kernel or bus loaded in-process mints none under the module's root: a string "
@@ -5119,8 +5129,9 @@ for _name, _lic in LICENSED_MODULE_LEVEL_WRITES.items():
 # WRITER_SETS_DIR derived by the census, and compared with the census by equality, a set and not a count, so a swap is
 # caught and each offender is named: a new writer faults naming itself and the remedy, and a writer that migrated reds
 # until the migrating change removes its line. XDG_STATE_HOME and ROMP_STATE_DIR have no committed set: the isolation-order
-# mandate (tests/test_state_isolation_order.py) adds a writer with every new module that loads bin/romp-*, so their
-# licences rest on the value check of every write. The names only the floor modules write (FLOOR_ONLY_FILE: one
+# mandate (tests/test_state_isolation_order.py) adds a writer with every new module that loads a file in-process
+# (bin/romp-* or any other: the mandate counts every load call; this module is one, for its scratch conftest copy), so
+# their licences rest on the value check of every write. The names only the floor modules write (FLOOR_ONLY_FILE: one
 # "NAME module" line per writer module) are committed the same way, every name but the five leak names, which
 # _leak_writers holds to none but the floor's client-only "1" (fork PR #875 adds that line to tests/conftest.py, and it is
 # passed there whichever of the two lands first). The rest of the census's table is not committed (module_level_env_census

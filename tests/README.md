@@ -219,8 +219,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   (`XDG_STATE_HOME` a bare mkdtemp or one with a literal prefix, never a `dir=`;
   `ROMP_STATE_DIR` a bare `TemporaryDirectory`'s name, a path joined onto such a
   mkdtemp, or the shell's value put back, never a bare mkdtemp, which no writer
-  uses; `tests/test_state_isolation_order.py` mandates the preamble, so every new
-  module that loads `bin/romp-*` is a new writer of `XDG_STATE_HOME` (or
+  uses; `tests/test_state_isolation_order.py` mandates the preamble before a
+  module's first in-process load, of `bin/romp-*` or of any other file, so every
+  new module that loads a file in-process is a new writer of `XDG_STATE_HOME` (or
   `ROMP_STATE_DIR`) and pops or writes `ROMP_STATE_DIR`, no date bounds the
   writers of either name, and their licences rest on the value check of every
   write), `ROMP_SERVE_TOKEN` (a string literal, the shell's value put back, or a
