@@ -123,15 +123,25 @@ if name == "python" and args[:1] == ["-c"]:
     code = args[1] if len(args) > 1 else ""
     if "sweep probe" in code:
         setup("probe")
-        missing = set(ctl.get("missing", [])) if in_venv else set()
+        missing = set(ctl.get("missing", [])) if in_venv else set(ctl.get("base_missing", []))
         if in_venv:
             missing |= {m for m, d in MODULE_DISTS.items() if d not in installs}
-        dists = {d: (ctl.get("sdk_reports") or installs.get(norm(d))) if in_venv else None for d in args[2:]}
+        asked = [a for a in args[2:] if not a.startswith("import:")]
+        modules = [a[len("import:"):] for a in args[2:] if a.startswith("import:")]
+        if in_venv:
+            dists = {d: ctl.get("sdk_reports") or installs.get(norm(d)) for d in asked}
+            found = {m: any(norm(d).replace("-", "_") == m.lower() for d in installs) for m in modules}
+        else:
+            # --python outside any venv (the served leg's interpreter): it has every distribution asked for but the ones
+            # ctl says it lacks (by default the SDK, as CI's served step has none), at the versions ctl gives
+            base_dists, lacks = ctl.get("base_dists", {}), ctl.get("base_lacks", ["claude-agent-sdk"])
+            dists = {d: base_dists.get(norm(d), None if norm(d) in lacks else "9.9.9") for d in asked}
+            found = {m: m in ctl.get("base_found", []) for m in modules}
         version = ctl.get("probe_version", "3.99.0")
         if in_venv and ctl.get("venv_probe_version"):    # a venv whose interpreter is not the one it was built from
             version = ctl["venv_probe_version"]
         print(json.dumps({"version": version, "full": version + " (fake)", "missing": sorted(missing),
-                          "ensurepip": ctl.get("ensurepip", True), "dists": dists}))
+                          "ensurepip": ctl.get("ensurepip", True), "dists": dists, "found": found}))
         sys.exit(0)
     imported = re.fullmatch(r"import ([A-Za-z_][A-Za-z0-9_.]*)", code)
     if imported:
@@ -148,7 +158,8 @@ if args in (["--version"], ["version"]):     # the runner's tool version record;
     print(name + " 0.0.0-fake")
     sys.exit(0)
 if name == "python":
-    leg = "pytest"
+    # the served leg names the served files as its arguments; the pytest leg names them only in --ignore=
+    leg = "served" if any(re.fullmatch(r"tests/test_[^/]*_(?:browser|served)[.]py", a) for a in args) else "pytest"
 elif name == "npm":
     leg = {"ci": "deps", "test": "npm-test"}.get(args[0] if args else "") or {"typecheck": "typecheck", "build": "build"}.get(args[1] if len(args) > 1 else "", "npm?")
 elif name == "node":
@@ -200,7 +211,7 @@ root = checkout_root(os.getcwd())
 with open(LOG, "a") as f:
     f.write(json.dumps({"leg": leg, "argv": args, "cwd": os.getcwd(), "names": sorted(os.environ), "root": root,
                         "tree": tree_of(root) if root else None,
-                        "values": {k: os.environ[k] for k in keep if k in os.environ},
+                        "values": {k: v for k, v in os.environ.items() if k in keep or k.startswith("ROMP_")},
                         # the names whose value carries the test's marker, and what the batcher's HOME would hand a leg
                         "marked": sorted(k for k, v in os.environ.items() if marker and marker in v),
                         "home_files": sorted(n for n in (".npmrc", ".gitconfig", ".zshenv") if os.path.exists(os.path.join(home, n))),
@@ -364,7 +375,7 @@ elif act == "idle":
 # What each test leg's real tool prints at the end of a run (pytest -q's summary, bats' TAP, node's TAP summary):
 # the runner counts the tests a leg ran from its log, and a test leg with rc 0 and no test counted is red.
 out = {"pytest": "3 passed in 0.01s\n", "bats": "1..1\nok 1 a\n", "manager": "# pass 1\n# fail 0\n",
-       "tools": "# pass 2\n# fail 0\n", "npm-test": "# pass 4\n# fail 0\n"}
+       "tools": "# pass 2\n# fail 0\n", "npm-test": "# pass 4\n# fail 0\n", "served": "2 passed in 0.01s\n"}
 sys.stdout.write(ctl.get("out", {}).get(leg, out.get(leg, "")))
 if ctl.get("signal", {}).get(leg):                 # the leg dies by this signal instead of exiting
     sys.stdout.flush()
@@ -387,7 +398,7 @@ name, args = (os.path.basename(cmd[0]), cmd[1:]) if cmd else ("", [])
 if "scripts/upstream-ledger.py" in args:
     leg = "ledger"
 elif name.startswith("python"):
-    leg = "pytest"
+    leg = "served" if any(re.fullmatch(r"tests/test_[^/]*_(?:browser|served)[.]py", a) for a in args) else "pytest"
 elif name == "npm":
     leg = {"ci": "deps", "test": "npm-test", "run": {"typecheck": "typecheck", "build": "build"}.get(args[1] if len(args) > 1 else "")}.get(args[0] if args else "")
 elif name == "node":
@@ -416,6 +427,18 @@ SEED_SDK_STEP = """      - name: Install the Claude Agent SDK
           python -m pip install "claude-agent-sdk==$pin"
           python -c "import claude_agent_sdk"
 """
+# The served step the served leg is read from (sweep.py's read_served_step, found by its name in any job): its env: block
+# is the leg's switches and its pytest line's globs the files the leg runs (the seed's tests/test_b_browser.py and
+# tests/test_a_served.py) and the pytest leg leaves out.
+SEED_SERVED_STEP = """      - name: Browser-backed served-page tests (pytest)
+        working-directory: ${{ github.workspace }}
+        env:
+          ROMP_SERVED_TESTS_REQUIRE: "1"
+          ROMP_SERVED_TESTS_ENGINES: chromium
+        run: |
+          python -m pip install --upgrade pip pytest pytest-timeout cryptography
+          python -m pytest tests/test_*_browser.py tests/test_*_served.py -q -rs -p no:cacheprovider -p no:anyio --durations=20 --timeout=600 --timeout-method=thread
+"""
 SEED_CI = """name: CI
 on:
   push:
@@ -431,8 +454,19 @@ jobs:
         run: python -m pip install cryptography
 """ + SEED_SDK_STEP + """      - name: Run pytest
         run: python -m pytest -q
-"""
+  vscode-extension:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: vscode-extension
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: npm ci
+""" + SEED_SERVED_STEP
 SEED_HOST = 'SDK_TESTED_VERSION = "%s"\n' % SEED_PIN
+# The files the seed's served step selects, in the order its globs expand them (one glob after the other).
+SEED_SERVED_FILES = ["tests/test_b_browser.py", "tests/test_a_served.py"]
 
 SEED = {
     ".gitignore": "vscode-extension/node_modules\n",
@@ -443,6 +477,8 @@ SEED = {
     "vscode-extension/package.json": "{\"name\": \"notes-api-ext\"}\n",
     "vscode-extension/src/a.ts": "export const a = 1;\n",
     "tests/a.bats": "@test 'a' { true; }\n",
+    "tests/test_a_served.py": "def test_a():\n    pass\n",
+    "tests/test_b_browser.py": "def test_b():\n    pass\n",
     "tests/manager-a.test.js": "// manager\n",
     "tools/a.test.mjs": "// tools\n",
     "vendor/track-changents/hooks/a.test.mjs": "// hooks\n",
@@ -657,7 +693,10 @@ class Runner(_Base):
                 for name in sweep.WEBVIEW_LEGS:
                     self.assertIs(r["legs"][name]["owed"], True, "%s after a change to %s" % (name, path))
                     self.assertEqual(r["legs"][name]["why"], sweep.WEBVIEW_WHY)
-                self.assertEqual(r["owed"], {"webview": {"owed": True, "why": sweep.WEBVIEW_WHY}})
+                self.assertIs(r["legs"]["served"]["owed"], True, "served after a change to %s" % path)
+                self.assertEqual(r["legs"]["served"]["why"], sweep.SERVED_WHY)
+                self.assertEqual(r["owed"], {"webview": {"owed": True, "why": sweep.WEBVIEW_WHY},
+                                             "served": {"owed": True, "why": sweep.SERVED_WHY}})
                 self.assertNotIn("base", r, "no leg is decided by a merge base, so none is recorded")
 
     def test_a_sweep_at_a_merge_commit_owes_the_webview_legs(self):
@@ -677,7 +716,7 @@ class Runner(_Base):
             self.assertIs(r["legs"][name]["owed"], True, "%s at the merge commit" % name)
 
     def test_a_sha_without_the_extension_marks_deps_and_the_webview_legs_not_owed_for_that_alone(self):
-        """The one reason the runner gives for deps and the webview legs not owed: the sha has no
+        """The one reason the runner gives for deps, the webview legs and served not owed: the sha has no
         vscode-extension/package.json."""
         w = self.w
         w.change({"vscode-extension/package.json": None})
@@ -685,7 +724,9 @@ class Runner(_Base):
         r = w.result()
         for name in sweep.EXTENSION_LEGS:
             self.assertEqual((r["legs"][name]["owed"], r["legs"][name]["why"]), (False, sweep.NO_PACKAGE_JSON), name)
-        self.assertEqual(r["owed"], {"webview": {"owed": False, "why": sweep.NO_PACKAGE_JSON}})
+        self.assertIn("served", sweep.EXTENSION_LEGS)
+        self.assertEqual(r["owed"], {"webview": {"owed": False, "why": sweep.NO_PACKAGE_JSON},
+                                     "served": {"owed": False, "why": sweep.NO_PACKAGE_JSON}})
         self.assertEqual(w.legs_called(), [n for n in sweep.LEGS if n not in sweep.EXTENSION_LEGS])
 
     def test_a_dirty_tree_is_swept_at_its_sha_and_the_edits_named_as_not_swept(self):
@@ -825,7 +866,7 @@ class Runner(_Base):
         p = w.run("--wrap", "*=true", check=1)
         r = w.result()
         self.assertEqual(r["verdict"], "red", p.stdout + p.stderr)
-        self.assertEqual(r["red"], [PYTEST_LEG, "bats", "manager", "tools", "npm-test"])
+        self.assertEqual(r["red"], [PYTEST_LEG, "bats", "manager", "tools", "npm-test", "served"])
         for name in r["red"]:
             self.assertEqual(r["legs"][name]["rc"], 0, name)
             self.assertIn(r["legs"][name].get("tests"), (None, 0), name)
@@ -1156,9 +1197,9 @@ class Runner(_Base):
 
     def test_check_refuses_what_verify_refuses_after_a_pass(self):
         """Round 1, extra5-7 and C1: check prints what verify reads. A result that marks a webview leg not owed for any
-        reason but a missing extension reads invalid (the reader's refusal, so check has it too), and one that marks deps
-        and the webview legs not owed for having no vscode-extension/package.json reads invalid when the sha's tree holds
-        one, which the reader alone cannot tell (verify, plan and --repin read the tree)."""
+        reason but a missing extension reads invalid (the reader's refusal, so check has it too), and one that marks deps,
+        the webview legs and served not owed for having no vscode-extension/package.json reads invalid when the sha's tree
+        holds one, which the reader alone cannot tell (verify, plan and --repin read the tree)."""
         w = self.w
         w.run(check=0)
         data = w.data()
@@ -1177,7 +1218,7 @@ class Runner(_Base):
         self.assertEqual(sweep.assess(w.head(), env=w.env)["case"], "pass", "the reader alone reads no tree")
         p = self.check()
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
-        self.assertIn("FAIL sweep invalid at %s: the result marks deps, typecheck, npm-test, build not owed for having no "
+        self.assertIn("FAIL sweep invalid at %s: the result marks deps, typecheck, npm-test, build, served not owed for having no "
                       "vscode-extension/package.json, but HEAD's tree holds vscode-extension/package.json" % w.head()[:10], p.stdout)
 
 
@@ -1847,6 +1888,8 @@ class LegEnvironment(_Base):
             with self.subTest(leg=c["leg"]):
                 self.assertEqual(c["marked"], [], "a planted value reached the leg")
                 allowed = set(sweep.LEG_ALLOW) | set(sweep.leg_sets(c["leg"], CTX_SHAPE))
+                if c["leg"] == "served":     # and the served step's env: block, read from the sha's ci.yml
+                    allowed |= set(w.result()["runner"]["served"]["env"])
                 self.assertEqual(sorted(set(c["names"]) - allowed), [], "only allowlisted and runner-set names reach a leg")
                 for n in sorted(set(narrowing) - {"NODE_OPTIONS"}):
                     self.assertNotIn(n, c["names"])
@@ -1904,8 +1947,12 @@ class LegEnvironment(_Base):
         by_leg = {c["leg"]: c["values"] for c in calls}
         self.assertEqual({k: by_leg["bats"].get(k) for k in ("BATS_TEST_TIMEOUT", "ROMP_GITLEAKS_REQUIRE")},
                          {"BATS_TEST_TIMEOUT": "180", "ROMP_GITLEAKS_REQUIRE": "1"})
-        self.assertEqual({k: by_leg[PYTEST_LEG].get(k) for k in ("ROMP_SERVED_TESTS_REQUIRE", "ROMP_SERVED_TESTS_ENGINES")},
+        # the served step's switches reach the served leg as ci.yml writes them, whatever the batcher's are, and the
+        # pytest leg carries none of them (CI's Run pytest sets none)
+        self.assertEqual({k: by_leg["served"].get(k) for k in ("ROMP_SERVED_TESTS_REQUIRE", "ROMP_SERVED_TESTS_ENGINES")},
                          {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"})
+        self.assertEqual({k: by_leg[PYTEST_LEG].get(k) for k in ("ROMP_SERVED_TESTS_REQUIRE", "ROMP_SERVED_TESTS_ENGINES")},
+                         {"ROMP_SERVED_TESTS_REQUIRE": None, "ROMP_SERVED_TESTS_ENGINES": None})
         self.assertEqual(by_leg["npm-test"]["NODE_OPTIONS"], "--max-old-space-size=8192")
         rec = w.result()["legs"]["bats"]
         self.assertEqual({k: rec["env_set"][k] for k in ("BATS_TEST_TIMEOUT", "ROMP_GITLEAKS_REQUIRE")},
@@ -2078,8 +2125,14 @@ class PytestEnvironment(_Base):
         self.assertEqual([(s["exe"], s["module"]) for s in w.setups() if s["kind"] == "import"],
                          [(sdk["python"], "claude_agent_sdk")], "the SDK step's own import check ran in the venv")
         self.assertEqual(sorted(call["tmp"]), ["home", "xdg-state"], "the build's own directory under TMPDIR is gone before the legs")
-        self.assertTrue(all(s["home"].startswith(os.path.dirname(call["values"]["HOME"]) + os.sep + "sdk-") for s in w.setups()),
+        tmp = os.path.dirname(call["values"]["HOME"])
+        served_probes = [s for s in w.setups() if any(a.startswith("import:") for a in s["argv"])]
+        self.assertEqual([(s["kind"], s["exe"]) for s in served_probes], [("probe", w.python)],
+                         "the served leg's interpreter, --python, is probed once")
+        self.assertTrue(all(s["home"].startswith(tmp + os.sep + "sdk-") for s in w.setups() if s not in served_probes),
                         "the build ran under a private HOME of its own, in its directory under the run's TMPDIR")
+        self.assertTrue(served_probes[0]["home"].startswith(tmp + os.sep + "served-"),
+                        "the served leg's probe ran under a private HOME of its own, under the run's TMPDIR")
         for c in w.calls():
             if c["leg"] != PYTEST_LEG:
                 self.assertIsNone(c["venv_installs"], "only the pytest leg runs in the venv (%s)" % c["leg"])
@@ -2232,7 +2285,7 @@ class PytestEnvironment(_Base):
                                                                                        "      run:\n        working-directory: kernel\n"),
              SEED_HOST, "the python job has defaults:, which the runner does not read"),
             ("a workflow-level env:", SEED_CI.replace("jobs:\n", "env:\n  PIP_CONSTRAINT: constraints.txt\njobs:\n"), SEED_HOST,
-             "has a workflow-level env:, which reaches the install steps of its python job"),
+             "has a workflow-level env:, which reaches"),
             ("a shell other than bash", SEED_CI.replace("        shell: bash\n", "        shell: sh\n"), SEED_HOST,
              "step 'Install the Claude Agent SDK' runs under shell: sh"),
             ("a step name given twice", SEED_CI.replace(PYTEST, CRYPTO + "        run: python -m pip install cryptography\n" + PYTEST),
@@ -2493,6 +2546,247 @@ class PytestEnvironment(_Base):
         self.assertEqual(w.result()["legs"][PYTEST_LEG]["cmd"][0], sdk["python"])
 
 
+class ServedLeg(_Base):
+    """The served ruling (2026-09-28): the runner mirrors CI's structure. The files CI's served step selects (the globs on
+    its pytest line, read from ci.yml by the step's name, in whichever job holds it) run in a leg of their own, as
+    --python itself, never in the pytest leg's venv where the SDK imports, with the step's own env: block
+    (ROMP_SERVED_TESTS_REQUIRE and the engines, read from ci.yml, never restated); the pytest leg leaves exactly those
+    files out, as CI's Python cells skip them. The seed's served step selects tests/test_b_browser.py and
+    tests/test_a_served.py (SEED_SERVED_FILES). FAKE tells the served leg from the pytest leg by its arguments."""
+
+    FLAKE = "tests/test_a_served.py::test_a (a known flake, recorded in the notes)"
+
+    def by_leg(self):
+        out = {}
+        for c in self.w.calls():
+            out.setdefault(c["leg"], []).append(c)
+        return out
+
+    def test_the_pytest_leg_leaves_out_the_served_files_and_the_served_leg_runs_them(self):
+        w = self.w
+        w.run(check=0)
+        calls = self.by_leg()
+        pytest_argv = calls[PYTEST_LEG][0]["argv"]
+        # compared as text: a list literal that starts `-m pytest` reads as a pytest launcher to tests/test_ci_sdk_pin.py's
+        # census of child launchers
+        self.assertEqual(" ".join(pytest_argv[:3]), "-m pytest tests", "the pytest leg collects tests/")
+        self.assertEqual(sorted(a for a in pytest_argv if a.startswith("--ignore=")),
+                         sorted(["--ignore=tests/test_cut_turn_tree_kill.py"] + ["--ignore=" + f for f in SEED_SERVED_FILES]),
+                         "the pytest leg leaves out exactly the files the served step's globs select")
+        self.assertEqual([a for a in pytest_argv if a.startswith("tests/")], [], "and names no served file to run")
+        self.assertIn("served", sorted(calls), "the served files run in a leg of their own")
+        served_argv = calls["served"][0]["argv"]
+        self.assertEqual(" ".join(served_argv[:2]), "-m pytest")
+        self.assertEqual([a for a in served_argv if a.startswith("tests/")], SEED_SERVED_FILES,
+                         "the served leg runs those files, in the order the globs expand them")
+        self.assertEqual(w.legs_called()[-1], "served", "the served leg runs last, as CI runs its step after the Build step")
+        r = w.result()
+        self.assertEqual(r["legs"][PYTEST_LEG]["left_out"], {"globs": ["tests/test_*_browser.py", "tests/test_*_served.py"],
+                                                             "files": 2, "why": sweep.SERVED_LEFT_OUT})
+        self.assertEqual(r["legs"]["served"]["globs"], ["tests/test_*_browser.py", "tests/test_*_served.py"])
+        self.assertEqual((r["legs"]["served"]["tests"], r["legs"]["served"]["failed"]), (2, 0), "counted from pytest's summary")
+
+    def test_the_served_leg_runs_as_python_itself_where_no_sdk_imports(self):
+        """The served leg runs as --python, never as the pytest leg's venv interpreter: not in a venv of the runner's,
+        --python's directory leading its PATH and the venv's bin absent from it, and no SDK switch."""
+        w = self.w
+        w.run(check=0)
+        calls = self.by_leg()
+        self.assertIn("served", sorted(calls), "the served files run in a leg of their own")
+        call = calls["served"][0]
+        sdk = w.result()["runner"]["sdk"]
+        self.assertEqual(call["exe"], w.python, "the served leg runs as --python itself")
+        self.assertNotEqual(call["exe"], sdk["python"], "not as the venv's interpreter, where the SDK imports")
+        self.assertIsNone(call["venv_installs"], "the served leg's interpreter is no venv of the runner's")
+        path = call["values"]["PATH"].split(os.pathsep)
+        self.assertEqual(path[0], w.bin, "--python's directory leads the served leg's PATH")
+        self.assertNotIn(os.path.dirname(sdk["python"]), path, "the pytest leg's venv is not on it")
+        self.assertNotIn("ROMP_SDK_REQUIRE", call["names"], "CI's served step declares no SDK")
+        self.assertEqual(calls[PYTEST_LEG][0]["exe"], sdk["python"], "the pytest leg still runs in the venv")
+        served = w.result()["runner"]["served"]
+        self.assertEqual((served["python"], served["job"], served["step"]), (w.python, "vscode-extension", sweep.SERVED_STEP))
+        self.assertEqual(served["packages"], {"pytest": "9.9.9", "pytest-timeout": "9.9.9", "cryptography": "9.9.9"},
+                         "the packages the served step's pip line installs, pip aside, as --python reports them")
+
+    def test_a_python_that_has_the_sdk_or_lacks_what_the_leg_needs_is_refused(self):
+        """--python is what the served leg runs in, so one where the SDK imports (the SDK step's distribution installed,
+        or its module found) is refused before anything is recorded, as is one that lacks a module the leg needs or a
+        package the served step installs."""
+        w = self.w
+        cases = (({"base_dists": {"claude-agent-sdk": "0.0.9"}},
+                  "has the SDK the python job installs (claude-agent-sdk 0.0.9 installed)"),
+                 ({"base_found": ["claude_agent_sdk"]}, "has the SDK the python job installs (module claude_agent_sdk importable)"),
+                 ({"base_missing": ["pytest_timeout"]}, "lacks pytest_timeout, which the served leg needs"),
+                 ({"base_lacks": ["claude-agent-sdk", "cryptography"]},
+                  "lacks cryptography, which .github/workflows/ci.yml's step 'Browser-backed served-page tests (pytest)' "
+                  "installs (the vscode-extension job)"))
+        for ctl, text in cases:
+            with self.subTest(ctl=ctl):
+                w.ctl(ctl)
+                before = len(w.calls())
+                p = w.run(check=2)
+                self.assertIn("the served leg's interpreter %s (--python) " % w.python, p.stderr)
+                self.assertIn(text, p.stderr)
+                self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
+                self.assertEqual(w.legs_called()[before:], [], "no leg ran")
+        w.ctl({})
+        w.run(check=0)
+
+    def test_the_served_leg_carries_the_served_steps_env_as_ci_yml_writes_it(self):
+        """The served leg's switches are the served step's env: block at the swept sha, read and never restated: another
+        value or another name there reaches the leg, and one dropped there is gone from it. The pytest leg carries none
+        (CI's Run pytest sets none), and the batcher's own values of those names reach no leg."""
+        w = self.w
+        w.run(env=dict(w.env, ROMP_SERVED_TESTS_ENGINES="webkit", ROMP_SERVED_TESTS_REQUIRE="0"), check=0)
+
+        def switches(leg):
+            calls = [c for c in w.calls() if c["leg"] == leg]
+            self.assertTrue(calls, "no %s leg ran" % leg)
+            return {k: v for k, v in calls[-1]["values"].items() if k.startswith("ROMP_SERVED_TESTS_")}
+        self.assertEqual(switches("served"), {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"})
+        self.assertEqual(switches(PYTEST_LEG), {}, "the pytest leg carries none of the served step's switches")
+        rec = w.result()["legs"]["served"]["env_set"]
+        self.assertEqual({k: rec.get(k) for k in ("ROMP_SERVED_TESTS_REQUIRE", "ROMP_SERVED_TESTS_ENGINES")},
+                         {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"}, "recorded as set values")
+        self.assertEqual(w.result()["runner"]["served"]["env"], {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium"})
+        hash_before = w.result()["runner"]["leg_env"]["hash"]
+        engines = "          ROMP_SERVED_TESTS_ENGINES: chromium\n"
+        require = '          ROMP_SERVED_TESTS_REQUIRE: "1"\n'
+        self.assertEqual((SEED_CI.count(engines), SEED_CI.count(require)), (1, 1))
+        w.change({".github/workflows/ci.yml": SEED_CI.replace(engines, "          ROMP_SERVED_TESTS_ENGINES: 'chromium,firefox'\n"
+                                                                       '          ROMP_SERVED_TESTS_NOTE: "2"\n')})
+        w.run(check=0)
+        self.assertEqual(switches("served"), {"ROMP_SERVED_TESTS_REQUIRE": "1", "ROMP_SERVED_TESTS_ENGINES": "chromium,firefox",
+                                              "ROMP_SERVED_TESTS_NOTE": "2"}, "read from ci.yml, not restated")
+        self.assertEqual(w.result()["runner"]["leg_env"]["hash"], hash_before,
+                         "the step's values are the sha's own, recorded, not part of the runner's policy hash")
+        w.change({".github/workflows/ci.yml": SEED_CI.replace(require, "")})
+        w.run(check=0)
+        self.assertEqual(switches("served"), {"ROMP_SERVED_TESTS_ENGINES": "chromium"}, "a switch dropped from the step is gone")
+
+    def test_the_served_step_is_read_by_its_name_in_a_job_of_its_own(self):
+        """Fork PR 928 moves the served step into a job of its own: the runner reads it there by its name, with that
+        job's defaults: and the step's working-directory: back at the repository root."""
+        w = self.w
+        own = ("  served-pages:\n    runs-on: ubuntu-24.04\n    strategy:\n      fail-fast: false\n    defaults:\n      run:\n"
+               "        working-directory: vscode-extension\n    steps:\n      - uses: actions/checkout@v4\n")
+        ci = SEED_CI.replace(SEED_SERVED_STEP, "") + own + SEED_SERVED_STEP
+        self.assertEqual(ci.count(SEED_SERVED_STEP), 1)
+        w.change({".github/workflows/ci.yml": ci})
+        w.run(check=0)
+        self.assertEqual(w.result()["runner"]["served"]["job"], "served-pages")
+        call = [c for c in w.calls() if c["leg"] == "served"][-1]
+        self.assertEqual([a for a in call["argv"] if a.startswith("tests/")], SEED_SERVED_FILES)
+        self.assertEqual(call["values"].get("ROMP_SERVED_TESTS_REQUIRE"), "1")
+
+    def test_a_served_step_the_runner_cannot_read_is_refused_by_name(self):
+        """Anything in ci.yml that could change what CI's served step runs, or with what, without changing what the
+        runner reads is refused by name, nothing recorded: the runner runs no served leg it has not read in full."""
+        w = self.w
+        step, env_line = SEED_SERVED_STEP, '          ROMP_SERVED_TESTS_REQUIRE: "1"\n'
+        wd = "        working-directory: ${{ github.workspace }}\n"
+        pytest_line = "          python -m pytest tests/test_*_browser.py"
+        for anchor in (step, env_line, wd, pytest_line, "jobs:\n", "    runs-on: ubuntu-24.04\n"):
+            self.assertEqual(SEED_CI.count(anchor), 1, anchor)
+        name = "step 'Browser-backed served-page tests (pytest)' of the vscode-extension job"
+        cases = (
+            ("no served step", SEED_CI.replace(step, ""), "has no step 'Browser-backed served-page tests (pytest)' in any job"),
+            ("two served steps", SEED_CI + step, "has 2 steps named 'Browser-backed served-page tests (pytest)'"),
+            ("an expression in its env", SEED_CI.replace(env_line, "          ROMP_SERVED_TESTS_REQUIRE: ${{ runner.os == 'Linux' && '1' || '' }}\n"),
+             "an expression the runner does not evaluate"),
+            ("a value YAML reads as a boolean", SEED_CI.replace(env_line, "          ROMP_SERVED_TESTS_REQUIRE: yes\n"),
+             "a form the runner does not read"),
+            ("a name the runner sets itself", SEED_CI.replace(env_line, env_line + "          HOME: /home/ci\n"),
+             "%s sets HOME, which the runner sets itself" % name),
+            ("an env: on its job", SEED_CI.replace("    runs-on: ubuntu-24.04\n", "    runs-on: ubuntu-24.04\n    env:\n      ROMP_X: \"1\"\n"),
+             "the vscode-extension job has env:, which reaches the step"),
+            ("a workflow-level env:", SEED_CI.replace("jobs:\n", "env:\n  ROMP_X: \"1\"\njobs:\n"), "has a workflow-level env:, which reaches"),
+            ("another working directory", SEED_CI.replace(wd, "        working-directory: kernel\n"), "%s runs in kernel" % name),
+            ("no working directory under the job's defaults", SEED_CI.replace(wd, ""),
+             "%s names no working-directory: and its job has a defaults:" % name),
+            ("a key it does not read", SEED_CI.replace(wd, wd + "        uses: example/run@v1\n"), "%s has uses:, which the runner does not read" % name),
+            ("a line it does not read", SEED_CI.replace(pytest_line, "          export ROMP_Y=1\n" + pytest_line),
+             "the line 'export ROMP_Y=1' is not one the runner reads"),
+            ("a second pytest line", SEED_CI.replace(pytest_line, "          python -m pytest tests/test_a_served.py\n" + pytest_line),
+             "%s has 2 python -m pytest lines" % name),
+            ("a pytest line naming a file outside tests/", SEED_CI.replace(pytest_line, "          python -m pytest kernel/x.py"),
+             "its pytest line names 'kernel/x.py', which the runner does not read as a glob"),
+            ("a substitution", SEED_CI.replace(pytest_line, pytest_line + " $EXTRA"), "holds an expansion, a substitution"),
+        )
+        for label, ci, text in cases:
+            with self.subTest(case=label):
+                w.change({".github/workflows/ci.yml": ci}, msg=label)
+                before = len(w.calls())
+                p = w.run(check=2)
+                self.assertIn(text, p.stderr)
+                self.assertFalse(os.path.exists(w.result_path()), "nothing recorded")
+                self.assertEqual(w.legs_called()[before:], [], "no leg ran")
+
+    def test_a_served_leg_with_no_test_passing_is_red(self):
+        """The served leg is a test leg counted from pytest's summary line: rc 0 with every test skipped (a skip the
+        step's switch leaves alone) is red, and errors count as failures."""
+        cases = (("2 skipped in 0.01s\n", "served (rc 0 but no test ran)"),
+                 ("1 passed, 1 error in 0.01s\n", "served (rc 0 but its log shows 1 failed)"))
+        for out, named in cases:
+            with self.subTest(out=out):
+                w = World()
+                self.addCleanup(w.close)
+                w.ctl({"out": {"served": out}})
+                p = w.run(check=1)
+                self.assertEqual(w.result()["red"], ["served"])
+                self.assertIn(named, p.stdout)
+
+    def test_a_leg_rerun_of_served_installs_the_deps_and_reads_the_step_again(self):
+        w = self.w
+        w.ctl({"rc": {"served": 1}})
+        w.run(check=1)
+        self.assertEqual(w.result()["red"], ["served"])
+        w.ctl({})
+        before = len(w.calls())
+        w.run("--leg", "served", "--flake", self.FLAKE, check=0)
+        self.assertEqual(w.legs_called()[before:], ["deps", "served"], "npm ci first, as its setup, then the served leg alone")
+        call = w.calls()[-1]
+        self.assertEqual([a for a in call["argv"] if a.startswith("tests/")], SEED_SERVED_FILES)
+        self.assertEqual(call["values"].get("ROMP_SERVED_TESTS_REQUIRE"), "1")
+        self.assertEqual(call["exe"], w.python)
+        r = w.result()
+        self.assertNotIn("sdk", r["runner"], "a re-run without the pytest leg builds no venv")
+        self.assertEqual(r["runner"]["served"]["job"], "vscode-extension")
+        self.assertEqual(sweep.assess(w.head(), env=w.env)["case"], "pass")
+
+
+def _partition_run(test, cmd):
+    """(rc, the node ids pytest ran) of `cmd` (a runner command, with -n replaced by nothing) over a checkout holding a
+    plain test module, a served one and a browser one, each test printing its id; real pytest, this interpreter."""
+    tmp = tempfile.mkdtemp(prefix="sweepsv-")
+    test.addCleanup(shutil.rmtree, tmp, True)
+    checkout = os.path.join(tmp, "checkout")
+    os.makedirs(os.path.join(checkout, "tests"))
+    for name in ("test_plain.py", "test_x_served.py", "test_y_browser.py"):
+        with open(os.path.join(checkout, "tests", name), "w") as f:
+            f.write("def test_it():\n    pass\n")
+    i = cmd.index("-n")
+    argv = cmd[:i] + cmd[i + 2:] + ["-rA"]
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": tmp, "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8"}
+    p = subprocess.run(argv, cwd=checkout, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       stdin=subprocess.DEVNULL, timeout=300)
+    return p.returncode, sorted(set(re.findall(r"^PASSED (tests/\S+)", p.stdout, re.M))), p.stdout
+
+
+class ServedPartition(unittest.TestCase):
+    """Real pytest, this interpreter: under the runner's own flags and PYTEST_ISOLATION, the pytest leg's command with
+    the served files as its left-out list collects none of them, and the served leg's command runs exactly them, so the
+    two legs split tests/ where the served step's globs do."""
+
+    SERVED = ["tests/test_y_browser.py", "tests/test_x_served.py"]
+
+    def test_the_pytest_leg_collects_no_served_file_and_the_served_leg_runs_only_those(self):
+        rc, ran, out = _partition_run(self, sweep.pytest_cmd(sys.executable, 0, self.SERVED))
+        self.assertEqual((rc, ran), (0, ["tests/test_plain.py::test_it"]), out[-2000:])
+        rc, ran, out = _partition_run(self, sweep.served_cmd(sys.executable, 0, self.SERVED))
+        self.assertEqual((rc, ran), (0, ["tests/test_x_served.py::test_it", "tests/test_y_browser.py::test_it"]), out[-2000:])
+
+
 class ReadSed(unittest.TestCase):
     r"""read_sed evaluates the pin read in ci.yml's SDK step (`sed -n 's/RE/\1/p' FILE`) without running sed. Held to
     the sed on this machine over the real line and cases around it; a shape it does not read is refused, not guessed."""
@@ -2644,9 +2938,50 @@ def ci_job(job, src=None):
     return {"keys": keys, "steps": steps}
 
 
-def ci_steps(job):
+def ci_steps(job, src=None):
     """{label: (env, run)} of one ci.yml job's steps (ci_job)."""
-    return {label: (st["env"], st["run"]) for label, st in ci_job(job)["steps"].items()}
+    return {label: (st["env"], st["run"]) for label, st in ci_job(job, src)["steps"].items()}
+
+
+def ci_jobs(src=None):
+    """The ids of ci.yml's jobs, in order: every `  ID:` line under the top-level jobs: key, up to the next top-level
+    key. Read here on its own, not through the runner's workflow_jobs."""
+    src = CI_YML.read_text(encoding="utf-8") if src is None else src
+    lines = src.split("\n")
+    out = []
+    for line in lines[lines.index("jobs:") + 1:]:
+        if re.match(r"[A-Za-z_]", line):
+            break
+        m = re.fullmatch(r"  ([A-Za-z_][A-Za-z0-9_-]*):", line)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+# The served step's name. The runner reads the served leg from the step of this name wherever ci.yml holds it
+# (sweep.py's SERVED_STEP, held equal to this below), and CiParity finds it the same way, by name, in any job.
+SERVED_LABEL = "Browser-backed served-page tests (pytest)"
+VENDORED_LABEL = "Vendored tooling and host-script tests (node --test)"
+
+
+def served_pytest_line(run):
+    """(the words of the one `python -m pytest` line of the served step's run text, its globs: the words after
+    `python -m pytest` that name files under tests/). Read here on its own, not through the runner's read_served_step."""
+    lines = [line.strip() for line in run.splitlines() if line.strip().startswith("python -m pytest")]
+    if len(lines) != 1:
+        raise AssertionError("the served step has %d pytest lines: re-anchor CiParity" % len(lines))
+    words = shlex.split(lines[0])
+    return words, [w for w in words[3:] if w.startswith("tests/")]
+
+
+def expand_globs(root, globs):
+    """What bash expands `globs` to in `root`: each glob in turn, its matches sorted (C.UTF-8 sorts by bytes, as Python
+    sorts these names), read here with glob on its own."""
+    import glob
+    out = []
+    for g in globs:
+        out += sorted(os.path.relpath(p, root) for p in glob.glob(os.path.join(root, g)))
+    return out
 
 
 def _expr(text):
@@ -2664,37 +2999,76 @@ def _units(tokens):
 
 class CiParity(unittest.TestCase):
     """B6 (fresh-1): the legs' commands are hand copies of ci.yml's, so this reads ci.yml's steps by name and compares
-    them with what the runner builds (pytest_cmd, plan_legs' commands, LEG_ENV). Every difference is named here with
-    its reason; a change to either side that adds one reds. Every named step of the four jobs is either compared with a
-    leg or named as CI-only, so a new step reds until it is placed. The python job's install steps are not hand copies:
-    the runner reads them from ci.yml and builds the pytest leg's venv with them (the SDK ruling), and the cases below
-    hold that read to the file and run it."""
+    them with what the runner builds (pytest_cmd, served_cmd, plan_legs' commands, LEG_ENV). Every difference is named
+    here with its reason; a change to either side that adds one reds. Every step of every job is either compared with a
+    leg or named as CI-only, by its name wherever it stands, so a new step reds until it is placed, and a step that
+    moves to another job is still read (fork PR 928 moves the served step and the vendored tooling step into jobs of
+    their own; CiParityServedJobOfItsOwn runs every case here over ci.yml as 928 leaves it). The python job's install
+    steps are not hand copies: the runner reads them from ci.yml and builds the pytest leg's venv with them (the SDK
+    ruling), and the cases below hold that read to the file and run it. Nor is the served step: the runner reads its
+    env: block and its globs from ci.yml by its name (the served ruling, 2026-09-28), and the cases below hold that read
+    to the file, run it, and compare the served leg's command with the step, and the pytest leg's exclusion of those
+    files with CI's Python cells, which collect them and skip them for want of a browser."""
 
     CI_ONLY = {
         # the unnamed setup steps: the checkout (the runner makes its own) and the toolchains (the runner uses the
-        # batcher's; the pytest leg's venv is built from --python, the one interpreter it runs)
-        ("python", "uses: actions/checkout"), ("python", "uses: actions/setup-python"), ("shell", "uses: actions/checkout"),
-        ("shell", "uses: actions/setup-node"), ("secrets", "uses: actions/checkout"),
-        ("vscode-extension", "uses: actions/checkout"), ("vscode-extension", "uses: actions/setup-node"),
-        ("vscode-extension", "uses: actions/setup-python"),
+        # batcher's; the pytest leg's venv is built from --python, the interpreter the served leg runs in)
+        "uses: actions/checkout", "uses: actions/setup-python", "uses: actions/setup-node",
         # setup that installs the tools the runner finds on the batcher's machine instead
-        ("shell", "Install bats (Linux)"),
-        ("shell", "Install bats (macOS)"), ("shell", "Install gitleaks (Linux)"), ("secrets", "Install gitleaks"),
-        ("vscode-extension", "Cache Playwright's browsers"), ("vscode-extension", "Install the pinned Playwright Chromium"),
+        "Install bats (Linux)", "Install bats (macOS)", "Install gitleaks (Linux)", "Install gitleaks",
+        "Cache Playwright's browsers", "Install the pinned Playwright Chromium",
         # the history and tree scans: the pre-push hook scans what a push publishes; CI scans all of history
-        ("secrets", "Scan every commit"), ("secrets", "Scan the tree as it stands"),
+        "Scan every commit", "Scan the tree as it stands",
         # the pane bench runs only in CI (the runner's docstring and docs/batching.md say so)
-        ("vscode-extension", "Dashboard pane bench (node --test)"),
+        "Dashboard pane bench (node --test)",
         # the rostered browser legs' run under ROMP_BROWSER_LEGS_REQUIRE=1 after CI's Chromium install (PR 887): the
         # sweep's npm-test leg runs the same bundles in its npm test with this machine's Playwright browsers, without
         # the switch, so a launch that fails there skips, as in CI's Test step, instead of failing (the runner's
         # docstring and docs/batching.md say so)
-        ("vscode-extension", "Browser legs (node --test over ci-browser-legs.txt)"),
+        "Browser legs (node --test over ci-browser-legs.txt)",
     }
+    COMPARED = {"Install pytest", "Install cryptography", "Install the Claude Agent SDK", "Run pytest", "Run bats",
+                "Manager handshake tests (node --test)", VENDORED_LABEL, "Install deps", "Typecheck", "Test", "Build",
+                "PDF renderer dependency smoke test (node --test)", SERVED_LABEL}
+    # The steps a job of the served step's own repeats from the extension job (its own checkout, node, npm ci, build and
+    # Chromium install, as PR 928's ruling describes that job) and the unnamed setup every job has: each may stand in
+    # more than one job, and every copy of a compared one is compared. Every other placed step stands in one job, since
+    # a comparison reads it by name and a copy elsewhere would be a step no comparison reads.
+    SHARED = {"uses: actions/checkout", "uses: actions/setup-python", "uses: actions/setup-node", "Install deps", "Build",
+              "Cache Playwright's browsers", "Install the pinned Playwright Chromium"}
+
+    def ci_text(self):
+        """The workflow every case reads: this tree's ci.yml (a subclass gives another)."""
+        return CI_YML.read_text(encoding="utf-8")
 
     def setUp(self):
-        self.jobs = {j: ci_steps(j) for j in ("python", "shell", "secrets", "vscode-extension")}
-        self.legs = sweep.plan_legs(str(ROOT), "python", 2)
+        self.text = self.ci_text()
+        self.jobs = {j: ci_steps(j, self.text) for j in ci_jobs(self.text)}
+        # a directory holding this ci.yml and the file its SDK step reads its pin from, for the runner's own reads
+        self.ci_tree = tempfile.mkdtemp(prefix="ciparity-")
+        self.addCleanup(shutil.rmtree, self.ci_tree, True)
+        os.makedirs(os.path.join(self.ci_tree, ".github", "workflows"))
+        os.makedirs(os.path.join(self.ci_tree, "kernel"))
+        with open(os.path.join(self.ci_tree, ".github", "workflows", "ci.yml"), "w", encoding="utf-8") as f:
+            f.write(self.text)
+        shutil.copy(ROOT / "kernel" / "session_host.py", os.path.join(self.ci_tree, "kernel", "session_host.py"))
+        self.served = sweep.read_served_step(self.ci_tree, "HEAD")
+        self.legs = sweep.plan_legs(str(ROOT), "python", 2, served=self.served)
+
+    def found(self, label):
+        """[(job, env, run)] of every step read as `label`, in whichever jobs hold it."""
+        return [(j, steps[label][0], steps[label][1]) for j, steps in self.jobs.items() if label in steps]
+
+    def step(self, label):
+        """(job, env, run) of the one step read as `label`, wherever ci.yml holds it."""
+        hits = self.found(label)
+        self.assertEqual(len(hits), 1, "ci.yml holds %d steps read as %r (%s): re-anchor CiParity"
+                         % (len(hits), label, ", ".join(h[0] for h in hits)))
+        return hits[0]
+
+    def served_globs(self):
+        """The globs on the served step's pytest line (CiParity's own read)."""
+        return served_pytest_line(self.step(SERVED_LABEL)[2])[1]
 
     def test_the_tree_holds_nothing_the_pytest_legs_two_differences_would_hide(self):
         """Two of the pytest leg's named differences hold only while the tree keeps two properties, read here from the
@@ -2716,51 +3090,137 @@ class CiParity(unittest.TestCase):
                           "it; name the difference in PYTEST_ISOLATION's comment or pass it to the leg" % name)
 
     def test_every_step_is_compared_or_named_as_ci_only(self):
-        """Every step of the four jobs, named or not and whatever key comes first (ci_job reads each), so a step that
-        installs something (an unnamed `- run: python -m pip install ...`, or one whose name is its second key) reds
-        here until it is placed."""
-        compared = {("python", "Install pytest"), ("python", "Install cryptography"), ("python", "Install the Claude Agent SDK"),
-                    ("python", "Run pytest"), ("shell", "Run bats"), ("shell", "Manager handshake tests (node --test)"),
-                    ("shell", "Vendored tooling and host-script tests (node --test)"), ("vscode-extension", "Install deps"),
-                    ("vscode-extension", "Typecheck"), ("vscode-extension", "Test"), ("vscode-extension", "Build"),
-                    ("vscode-extension", "PDF renderer dependency smoke test (node --test)"),
-                    ("vscode-extension", "Browser-backed served-page tests (pytest)")}
-        seen = {(j, n) for j, steps in self.jobs.items() for n in steps}
-        self.assertEqual(sorted(seen - compared - self.CI_ONLY), [], "a ci.yml step neither compared with a leg nor named CI-only")
+        """Every step of every job, named or not and whatever key comes first (ci_job reads each), placed by its name
+        wherever it stands: a step that installs something (an unnamed `- run: python -m pip install ...`, or one whose
+        name is its second key) reds here until it is placed, a placed step that moves to another job stays placed, and a
+        step a comparison reads by name stands in one job (SHARED aside)."""
+        seen = [(j, n) for j, steps in self.jobs.items() for n in steps]
+        placed = self.COMPARED | self.CI_ONLY
+        self.assertEqual(sorted((j, n) for j, n in seen if n not in placed), [],
+                         "a ci.yml step neither compared with a leg nor named CI-only")
         self.assertIn(("python", "uses: actions/setup-python"), seen, "ci_job reads the unnamed steps")
-        self.assertEqual(sorted((compared | self.CI_ONLY) - seen), [], "a step this pin names is gone from ci.yml")
+        self.assertEqual(sorted(placed - {n for _j, n in seen}), [], "a step this pin names is gone from ci.yml")
+        self.assertLessEqual(self.SHARED, placed)
+        jobs_of = {n: [j for j, m in seen if m == n] for n in sorted(placed - self.SHARED)}
+        self.assertEqual({n: js for n, js in jobs_of.items() if len(js) != 1}, {},
+                         "a step a comparison reads by name stands in one job")
 
     def test_the_pytest_command_differs_from_run_pytest_only_as_named(self):
-        env, run = self.jobs["python"]["Run pytest"]
+        job, env, run = self.step("Run pytest")
+        self.assertEqual(job, "python", "the runner reads the python job's steps by the job's name")
         ci = shlex.split(_expr(run))
-        ours = sweep.pytest_cmd("python", "<expr>")
+        files = expand_globs(str(ROOT), self.served_globs())
+        ours = sweep.pytest_cmd("python", "<expr>", files)
+        self.assertEqual(self.legs[PYTEST_LEG]["cmd"], sweep.pytest_cmd("python", 2, files), "the planned command is this one")
         self.assertEqual(ci[:3], ours[:3], "python -m pytest")
         ci_units, our_units = _units(ci[3:]), _units(ours[3:])
         named = [("tests",),                              # CI collects from the root; test modules live only under tests/
                  ("-p", "no:cacheprovider")]              # nothing written to a .pytest_cache in the checkout
         named += _units(sweep.PYTEST_ISOLATION)           # B4: no ini or conftest above the checkout
         named += [("--ignore=%s" % p,) for p in sorted(sweep.PYTEST_IGNORED)]   # Q6
+        # the served files: the served leg runs them, and CI's Python cells collect them and skip them (the next case)
+        named += [("--ignore=%s" % f,) for f in files]
         for u in named:
             self.assertIn(u, our_units, "a named difference the runner no longer has: %r" % (u,))
         # the -n count: CI's expression (2 or 0 by runner) against the runner's idle cores
         self.assertIn(("-n", "<expr>"), ci_units)
         self.assertEqual(sorted(u for u in our_units if u not in named), sorted(ci_units))
 
-    def test_the_served_steps_switches_are_the_pytest_legs(self):
-        env, _run = self.jobs["vscode-extension"]["Browser-backed served-page tests (pytest)"]
-        served = {k: v for k, v in env.items() if k.startswith("ROMP_SERVED_TESTS_")}
-        self.assertEqual(served, {k: v for k, v in sweep.LEG_ENV[PYTEST_LEG].items() if k.startswith("ROMP_SERVED_TESTS_")})
-        self.assertEqual(sorted(sweep.LEG_ENV[PYTEST_LEG]), sorted(set(served) | {"ROMP_SDK_REQUIRE"}),
-                         "the pytest leg's switches are the served step's and the Run pytest step's SDK switch")
+    def test_the_pytest_legs_exclusion_is_what_the_python_cells_skip(self):
+        """The pytest leg leaves out exactly the files the served step's globs select, and nothing else beyond
+        PYTEST_IGNORED: CI's Python cells collect those files and skip them, since the python job installs no browser
+        and no node dependencies (no setup-node step, and no step of it runs npm, npx, node or playwright, or installs
+        playwright), and its Run pytest sets no switch that would turn their skips into failures. The served leg runs
+        them (the cases after this one)."""
+        files = expand_globs(str(ROOT), self.served_globs())
+        self.assertGreater(len(files), 50, "the served globs select the served labs in this tree")
+        left_out = [a[len("--ignore="):] for a in self.legs[PYTEST_LEG]["cmd"]
+                    if a.startswith("--ignore=") and a[len("--ignore="):] not in sweep.PYTEST_IGNORED]
+        self.assertEqual(left_out, files)
+        self.assertEqual(self.legs[PYTEST_LEG]["left_out"], {"globs": self.served_globs(), "files": len(files),
+                                                            "why": sweep.SERVED_LEFT_OUT})
+        python_job = self.jobs["python"]
+        self.assertNotIn("uses: actions/setup-node", python_job, "the Python cells install no node")
+        for label, (env, run) in python_job.items():
+            with self.subTest(step=label):
+                self.assertNotRegex(run or "", r"\b(?:npm|npx|node|playwright)\b", "the Python cells install no browser or node deps")
+        self.assertEqual([k for k in python_job["Run pytest"][0] if k.startswith("ROMP_SERVED_TESTS_")], [],
+                         "the Python cells' skips of the served files stay skips")
+
+    def test_the_runner_reads_the_served_step_as_written(self):
+        """The runner's read of the served step (read_served_step) against CiParity's own: the step's job, its env:
+        block, which is the served leg's switches, and its globs. The served leg's environment carries every one of
+        those switches, its PATH leads with --python's directory and never the pytest leg's venv, and it carries no SDK
+        switch, since CI's served step installs none."""
+        job, env, run = self.step(SERVED_LABEL)
+        self.assertEqual(sweep.SERVED_STEP, SERVED_LABEL)
+        self.assertEqual((self.served["job"], self.served["env"], self.served["globs"]), (job, env, self.served_globs()))
+        self.assertEqual(env.get("ROMP_SERVED_TESTS_REQUIRE"), "1", "the switch that turns a skip in the served files into a failure")
+        self.assertIn("ROMP_SERVED_TESTS_ENGINES", env, "the engines the step's job installs")
+        ctx = sweep.leg_context(os.path.join(os.sep + "nonexistent", "sweep-000000"), os.path.join(os.sep + "nonexistent", "base", "python"),
+                                env={"PATH": ""}, pytest_python=os.path.join(os.sep + "nonexistent", "venv", "bin", "python"),
+                                served_env=self.served["env"])
+        sets = sweep.leg_sets(sweep.SERVED_LEG, ctx)
+        self.assertEqual({k: sets.get(k) for k in env}, env, "the served leg carries the step's env: block as written")
+        path = sets["PATH"].split(os.pathsep)
+        self.assertEqual(path[0], os.path.join(os.sep + "nonexistent", "base"), "--python's directory leads the served leg's PATH")
+        self.assertNotIn(os.path.join(os.sep + "nonexistent", "venv", "bin"), path, "the pytest leg's venv is not on it")
+        self.assertNotIn("ROMP_SDK_REQUIRE", sets, "CI's served step declares no SDK: its job installs none")
+        self.assertEqual(self.legs[sweep.SERVED_LEG]["cmd"][0], "python", "the served leg's command runs --python itself")
+
+    def test_the_served_command_differs_from_the_served_step_only_as_named(self):
+        _job, _env, run = self.step(SERVED_LABEL)
+        words, globs = served_pytest_line(run)
+        files = expand_globs(str(ROOT), globs)
+        ours = sweep.served_cmd("python", "<n>", files)
+        self.assertEqual(self.legs[sweep.SERVED_LEG]["cmd"], sweep.served_cmd("python", 2, files), "the planned command is this one")
+        self.assertEqual(words[:3], ours[:3], "python -m pytest")
+        ci_units = [u for u in _units(words[3:]) if u[0] not in globs]
+        our_units = _units(ours[3:])
+        named = [(f,) for f in files]                     # the runner passes the globs' expansion, CI the globs
+        named += [("-n", "<n>")]                          # the pytest leg's workers; CI's served step runs one process
+        named += _units(sweep.PYTEST_ISOLATION)           # B4: no ini or conftest above the checkout
+        for u in named:
+            self.assertIn(u, our_units, "a named difference the runner no longer has: %r" % (u,))
+        self.assertEqual(sorted(u for u in our_units if u not in named), sorted(ci_units))
+
+    def test_the_served_leg_runs_the_served_steps_files_in_its_env_in_the_plain_interpreter(self):
+        """Run: the runner over a world holding this ci.yml and kernel/session_host.py, FAKE standing in for every
+        tool. The served leg runs the files the served step's globs select in that world (CiParity's own expansion),
+        with every variable of the step's env: block at its value, as --python itself (never in the pytest leg's venv,
+        where the SDK imports), with --python's directory leading its PATH; the pytest leg leaves exactly those files
+        out and carries none of those variables."""
+        real = {".github/workflows/ci.yml": self.text,
+                "kernel/session_host.py": (ROOT / "kernel" / "session_host.py").read_text(encoding="utf-8")}
+        w = World(dict(SEED, **real))
+        self.addCleanup(w.close)
+        w.run(check=0)
+        _job, env, _run = self.step(SERVED_LABEL)
+        files = expand_globs(w.tree, self.served_globs())
+        self.assertEqual(files, SEED_SERVED_FILES)
+        calls = {c["leg"]: c for c in w.calls()}
+        served, pytest_call = calls[sweep.SERVED_LEG], calls[PYTEST_LEG]
+        self.assertEqual([a for a in served["argv"] if a.startswith("tests/")], files, "the files the step's globs select")
+        self.assertEqual(sorted(a[len("--ignore="):] for a in pytest_call["argv"]
+                                if a.startswith("--ignore=") and a[len("--ignore="):] not in sweep.PYTEST_IGNORED), sorted(files))
+        self.assertEqual({k: served["values"].get(k) for k in env}, env, "the served leg carries the step's env: block")
+        self.assertEqual([k for k in env if k in pytest_call["names"]], [], "the pytest leg carries none of it")
+        self.assertEqual(served["exe"], w.python, "the served leg runs as --python, never in the pytest leg's venv")
+        self.assertIsNone(served["venv_installs"], "the served leg's interpreter is no venv of the runner's")
+        self.assertEqual(served["values"]["PATH"].split(os.pathsep)[0], w.bin, "--python's directory leads its PATH")
+        self.assertNotIn(os.path.dirname(w.result()["runner"]["sdk"]["python"]), served["values"]["PATH"].split(os.pathsep))
+        self.assertEqual(w.result()["runner"]["served"]["job"], self.step(SERVED_LABEL)[0])
 
     def test_the_run_pytest_steps_env_is_the_pytest_legs_but_the_gil_setting(self):
-        env, _run = self.jobs["python"]["Run pytest"]
+        job, env, _run = self.step("Run pytest")
         self.assertEqual(sorted(env), ["PYTHON_GIL", "ROMP_SDK_REQUIRE"])
+        self.assertEqual(sorted(sweep.LEG_ENV[PYTEST_LEG]), ["ROMP_SDK_REQUIRE"], "the pytest leg's switches are the Run pytest step's")
         self.assertEqual(sweep.LEG_ENV[PYTEST_LEG]["ROMP_SDK_REQUIRE"], env["ROMP_SDK_REQUIRE"])
         # PYTHON_GIL, the named difference: CI's free-threaded cell alone sets it (to 0); the runner runs the one --python
         # and sets nothing, so a free-threaded --python runs with its own default
         self.assertEqual(env["PYTHON_GIL"], "${{ endsWith(matrix.python-version, 't') && '0' || '' }}")
         self.assertNotIn("PYTHON_GIL", sweep.LEG_ENV[PYTEST_LEG])
+        self.assertNotIn(sweep.SERVED_LEG, sweep.LEG_ENV, "the served leg's switches are read from ci.yml, never restated")
 
     def pin(self):
         """kernel/session_host.py's SDK_TESTED_VERSION, read by this test on its own (ci.yml's SDK step reads the same
@@ -2775,7 +3235,7 @@ class CiParity(unittest.TestCase):
         runner reads (no env:, if: or working-directory:) and its env is empty, a shell: is bash, the python job's keys
         are the runner's, and the workflow has no top-level env: or defaults:. The runner refuses each of them too
         (read_install_plan; the next case runs that over this ci.yml)."""
-        job = ci_job("python")
+        job = ci_job("python", self.text)
         self.assertEqual([k for k in job["keys"] if k not in sweep.PYTHON_JOB_KEYS], [], "a python job key the runner does not read")
         for name in sweep.INSTALL_STEPS:
             st = job["steps"][name]
@@ -2783,19 +3243,18 @@ class CiParity(unittest.TestCase):
                 self.assertEqual([k for k in st["keys"] if k not in sweep.INSTALL_STEP_KEYS], [])
                 self.assertEqual(st["env"], {}, "an install step's env changes what it installs")
                 self.assertIn(st["values"].get("shell", "bash"), ("bash",), "the runner reads a step bash runs")
-        src = CI_YML.read_text(encoding="utf-8")
-        self.assertEqual(re.findall(r"(?m)^(env|defaults):", src), [], "a workflow-level env: or defaults: reaches every step")
+        self.assertEqual(re.findall(r"(?m)^(env|defaults):", self.text), [], "a workflow-level env: or defaults: reaches every step")
 
     def test_the_runner_refuses_what_it_does_not_read_in_this_workflow(self):
-        """The adversary pass's five ci.yml mutants (finding 2), applied to this tree's ci.yml: each passed every reader
-        of the file before the runner read a step's keys and every step. Each is refused by name now."""
-        src = CI_YML.read_text(encoding="utf-8")
+        """The adversary pass's five ci.yml mutants (finding 2), applied to this ci.yml: each passed every reader of the
+        file before the runner read a step's keys and every step. Each is refused by name now."""
+        src = self.text
         crypto = "        run: python -m pip install cryptography\n"
         sdk = "        shell: bash\n        run: |\n          set -euo pipefail\n          pin="
         pytest_step = "      - name: Run pytest\n"
         for anchor in (crypto, sdk, pytest_step):
             self.assertEqual(src.count(anchor), 1, "re-anchor: %r" % anchor)
-        n = len(ci_job("python")["steps"])           # the added step's number: it goes in just before Run pytest, the last
+        n = len(ci_job("python", src)["steps"])      # the added step's number: it goes in just before Run pytest, the last
         cases = (("C1 an env: on Install cryptography", src.replace(crypto, "        env:\n          PIP_ONLY_BINARY: \":none:\"\n" + crypto),
                   "step 'Install cryptography' has env:, which the runner does not read"),
                  ("C2 an if: on Install cryptography", src.replace(crypto, "        if: runner.os == 'macOS'\n" + crypto),
@@ -2820,7 +3279,7 @@ class CiParity(unittest.TestCase):
                     sweep.read_install_plan(tmp, "HEAD")
                 self.assertIn(refusal, str(cm.exception))
                 if label[:2] in ("C4", "C5"):
-                    self.assertEqual(sorted(set(ci_job("python", text)["steps"]) - set(ci_job("python")["steps"])),
+                    self.assertEqual(sorted(set(ci_job("python", text)["steps"]) - set(ci_job("python", src)["steps"])),
                                      ["run: python -m pip install hypothesis" if label[:2] == "C4" else "Install hypothesis"],
                                      "CiParity's own read sees the added step, so the every-step case reds on it too")
 
@@ -2831,7 +3290,7 @@ class CiParity(unittest.TestCase):
         self.assertEqual([n for n in self.jobs["python"] if n != "Run pytest" and not n.startswith("uses: ")],
                          list(sweep.INSTALL_STEPS),
                          "the runner reads every install step of the python job, and only those")
-        plan = sweep.read_install_plan(str(ROOT), "HEAD")
+        plan = sweep.read_install_plan(self.ci_tree, "HEAD")
         pin = self.pin()
         self.assertEqual((plan["dist"], plan["pin"], plan["module"]), ("claude-agent-sdk", pin, "claude_agent_sdk"))
         by_step = {step["step"]: step["commands"] for step in plan["steps"]}
@@ -2841,10 +3300,10 @@ class CiParity(unittest.TestCase):
                                                    ("check", ["python", "-c", "import claude_agent_sdk"])])
 
     def test_the_runners_environment_holds_what_the_install_steps_install(self):
-        """Run: the runner over a world holding this tree's ci.yml and kernel/session_host.py, FAKE standing in for
+        """Run: the runner over a world holding this ci.yml and kernel/session_host.py, FAKE standing in for
         pip. The venv the pytest leg runs in holds every requirement the python job's install steps name, the SDK at
         the pin the SDK step reads, and nothing else; the population is read from ci.yml here, not from the runner."""
-        real = {".github/workflows/ci.yml": CI_YML.read_text(encoding="utf-8"),
+        real = {".github/workflows/ci.yml": self.text,
                 "kernel/session_host.py": (ROOT / "kernel" / "session_host.py").read_text(encoding="utf-8")}
         w = World(dict(SEED, **real))
         self.addCleanup(w.close)
@@ -2863,29 +3322,114 @@ class CiParity(unittest.TestCase):
         self.assertEqual(w.result()["runner"]["sdk"]["version"], pin)
 
     def test_bats_and_the_node_legs_run_ci_s_commands(self):
-        env, run = self.jobs["shell"]["Run bats"]
+        _job, env, run = self.step("Run bats")
         self.assertEqual(shlex.split(run), self.legs["bats"]["cmd"][:2] + list(sweep.GLOBS["bats"]),
                          "the runner passes the glob's expansion, CI the glob")
         # ROMP_GITLEAKS_REQUIRE is CI's Linux value: the Linux cell installs the pinned gitleaks
         self.assertEqual(env.get("ROMP_GITLEAKS_REQUIRE"), "${{ runner.os == 'Linux' && '1' || '' }}")
         self.assertEqual({"BATS_TEST_TIMEOUT": env["BATS_TEST_TIMEOUT"], "ROMP_GITLEAKS_REQUIRE": "1"}, sweep.LEG_ENV["bats"])
-        for step, leg in (("Manager handshake tests (node --test)", "manager"),
-                          ("Vendored tooling and host-script tests (node --test)", "tools")):
-            _env, run = self.jobs["shell"][step]
+        for step, leg in (("Manager handshake tests (node --test)", "manager"), (VENDORED_LABEL, "tools")):
+            _job, _env, run = self.step(step)
             self.assertEqual(shlex.split(run), self.legs[leg]["cmd"][:2] + list(sweep.GLOBS[leg]))
         # tools/pdf-smoke.test.mjs, its own step in the extension job, is in the tools leg's glob
-        _env, run = self.jobs["vscode-extension"]["PDF renderer dependency smoke test (node --test)"]
+        _job, _env, run = self.step("PDF renderer dependency smoke test (node --test)")
         self.assertEqual(shlex.split(run), ["node", "--test", "tools/pdf-smoke.test.mjs"])
         self.assertIn("tools/pdf-smoke.test.mjs", self.legs["tools"]["cmd"])
 
     def test_the_webview_legs_run_the_extension_jobs_commands(self):
-        steps = self.jobs["vscode-extension"]
-        self.assertEqual(shlex.split(steps["Install deps"][1]), list(sweep.DEPS_CMD[:2]),
-                         "npm ci; the runner adds --no-audit --no-fund, which change what npm prints, not what it installs")
+        """Typecheck and Test stand in the extension job alone; npm ci and the build stand there and in any job of the
+        served step's own (SHARED), and every copy runs the leg's command."""
+        for _job, _env, run in self.found("Install deps"):
+            self.assertEqual(shlex.split(run), list(sweep.DEPS_CMD[:2]),
+                             "npm ci; the runner adds --no-audit --no-fund, which change what npm prints, not what it installs")
         self.assertEqual(list(sweep.DEPS_CMD[2:]), ["--no-audit", "--no-fund"])
         for step, leg in (("Typecheck", "typecheck"), ("Test", "npm-test"), ("Build", "build")):
-            self.assertEqual(shlex.split(steps[step][1]), self.legs[leg]["cmd"], step)
+            hits = self.found(step)
+            self.assertTrue(hits, step)
+            for job, _env, run in hits:
+                self.assertEqual(shlex.split(run), self.legs[leg]["cmd"], "%s in the %s job" % (step, job))
             self.assertEqual(self.legs[leg]["cwd"], "vscode-extension")
+        self.assertEqual([j for j, _e, _r in self.found("Typecheck") + self.found("Test")], ["vscode-extension"] * 2)
+
+
+def _job_span(lines, job):
+    """[start, end) of `job` in ci.yml's lines: its `  <job>:` line up to the next job's line, the next top-level key or
+    the end, trailing blank lines left out."""
+    start = lines.index("  %s:" % job)
+    end = start + 1
+    while end < len(lines) and not re.match(r"(?:  )?[A-Za-z_]", lines[end]):
+        end += 1
+    while lines[end - 1].strip() == "":
+        end -= 1
+    return start, end
+
+
+def _step_span(lines, job, label):
+    """[start, end) of the step named `label` in `job`: its `      - name: <label>` line up to the job's next step or
+    the job's end."""
+    start, end = _job_span(lines, job)
+    hits = [i for i in range(start, end) if lines[i] == "      - name: %s" % label]
+    if len(hits) != 1:
+        raise AssertionError("ci.yml's %s job holds %d steps named %r: re-anchor served_job_of_its_own" % (job, len(hits), label))
+    i = hits[0] + 1
+    while i < end and not lines[i].startswith("      - "):
+        i += 1
+    return hits[0], i
+
+
+def served_job_of_its_own(src):
+    """ci.yml as fork PR 928 leaves it, built from `src` (this tree's ci.yml) as 928's round-1 rulings describe it: the
+    served step moves out of the extension job, with the setup-python step before it, into a job of its own with its own
+    setup (the checkout, node, npm ci, the build, and the extension job's Playwright cache and Chromium install, copied)
+    and fail-fast off; and the vendored tooling step moves out of the Shell job into a job of its own. Each block is cut
+    from the real file by its anchors, each held to one occurrence, so a change to ci.yml that this construction no
+    longer reads reds here by name."""
+    lines = src.split("\n")
+    ext_start, ext_end = _job_span(lines, "vscode-extension")
+    s_start, s_end = _step_span(lines, "vscode-extension", SERVED_LABEL)
+    if s_end != ext_end:
+        raise AssertionError("the served step is not the extension job's last step: re-anchor served_job_of_its_own")
+    py = [i for i in range(ext_start, s_start) if lines[i] == "      - uses: actions/setup-python@v5"]
+    if len(py) != 1 or any(lines[i].startswith("      - ") for i in range(py[0] + 1, s_start)):
+        raise AssertionError("the extension job's setup-python step does not come right before the served step: re-anchor "
+                             "served_job_of_its_own")
+    cache = lines[slice(*_step_span(lines, "vscode-extension", "Cache Playwright's browsers"))]
+    chromium = lines[slice(*_step_span(lines, "vscode-extension", "Install the pinned Playwright Chromium"))]
+    v_start, v_end = _step_span(lines, "shell", VENDORED_LABEL)
+    if v_end != _job_span(lines, "shell")[1] or not v_end < py[0]:
+        raise AssertionError("the vendored tooling step is not the Shell job's last step, before the extension job: re-anchor "
+                             "served_job_of_its_own")
+    moved_vendored, moved_served = lines[v_start:v_end], lines[py[0]:s_end]
+    out = lines[:v_start] + lines[v_end:py[0]] + lines[s_end:]
+    while out and out[-1] == "":
+        out.pop()
+    out += ["", "  vendored-tooling:", "    name: Vendored tooling (node --test)", "    runs-on: ubuntu-latest",
+            "    timeout-minutes: 30", "    steps:", "      - uses: actions/checkout@v4", "      - uses: actions/setup-node@v4",
+            "        with:", "          node-version: '22'"] + moved_vendored
+    out += ["", "  served-pages:", "    name: Browser-backed served-page tests", "    runs-on: ubuntu-latest",
+            "    timeout-minutes: 40", "    strategy:", "      fail-fast: false", "    defaults:", "      run:",
+            "        working-directory: vscode-extension", "    steps:", "      - uses: actions/checkout@v4",
+            "      - uses: actions/setup-node@v4", "        with:", "          node-version: '22'", "      - name: Install deps",
+            "        run: npm ci", "      - name: Build", "        run: npm run build"] + cache + chromium + moved_served
+    return "\n".join(out) + "\n"
+
+
+class CiParityServedJobOfItsOwn(CiParity):
+    """Every CiParity case over ci.yml as fork PR 928 leaves it (served_job_of_its_own): the served step in a job of its
+    own, and the vendored tooling step in another. The runner finds the served step by its name there and nothing in
+    CiParity reads a compared step by its job, so this branch holds when 928 lands (the served ruling, 2026-09-28)."""
+
+    def ci_text(self):
+        return served_job_of_its_own(CI_YML.read_text(encoding="utf-8"))
+
+    def test_the_construction_moves_both_steps(self):
+        self.assertEqual(self.step(SERVED_LABEL)[0], "served-pages")
+        self.assertEqual(self.step(VENDORED_LABEL)[0], "vendored-tooling")
+        self.assertEqual(self.served["job"], "served-pages", "the runner read the step in its new job")
+        self.assertNotIn(SERVED_LABEL, self.jobs["vscode-extension"])
+        self.assertNotIn(VENDORED_LABEL, self.jobs["shell"])
+        self.assertEqual(ci_jobs(self.text), ci_jobs() + ["vendored-tooling", "served-pages"])
+        self.assertEqual([j for j, _e, _r in self.found("Install deps")], ["vscode-extension", "served-pages"])
 
 
 # The private-checkout record every run of the runner carries (runner.checkout); a reader refuses a run without one.
@@ -2909,8 +3453,8 @@ class Reader(unittest.TestCase):
 
     def legs(self, **rcs):
         """A full run's legs as the runner writes them at a sha with no vscode-extension/package.json: every leg that
-        is always owed, and the ledger, run with rc 0 (or `rcs`), and deps and the webview legs not owed for that
-        reason alone."""
+        is always owed, and the ledger, run with rc 0 (or `rcs`), and deps, the webview legs and served not owed for
+        that reason alone."""
         legs = {n: {"owed": True, "rc": rcs.get(n, 0), "started": "2026-01-01T00:00:01Z", "finished": "2026-01-01T00:00:02Z",
                     "log": "logs/%s.log" % n} for n in sweep.LEGS}
         for n in sweep.TEST_LEGS:
@@ -2954,7 +3498,7 @@ class Reader(unittest.TestCase):
         case, line = self.case()
         self.assertEqual(case, "pass")
         self.assertIn("sweep at 1234567890: pass, finished 2026-01-01T00:01:00Z (pytest 0, bats 0, manager 0, tools 0, ledger 0; "
-                      "not owed: deps, typecheck, npm-test, build)", line)
+                      "not owed: deps, typecheck, npm-test, build, served)", line)
 
     def test_a_malformed_failed_count_reads_red_and_is_named(self):
         """Round 1, extra5-6: a test leg at rc 0 whose failed count is not an int of 0 or more (a string, a float, a bool,
@@ -3042,9 +3586,9 @@ class Reader(unittest.TestCase):
 
 
     def test_a_not_owed_mark_the_runner_never_writes_is_invalid(self):
-        """The runner always owes pytest, bats, manager and tools, marks deps and the webview legs not owed only when
-        the sha has no vscode-extension/package.json (round 1, decision 11: every head owes the webview legs, whatever
-        it changed), and the ledger only with a reason. A record that says otherwise did not come from the runner (or
+        """The runner always owes pytest, bats, manager and tools, marks deps, the webview legs and served not owed only
+        when the sha has no vscode-extension/package.json (round 1, decision 11: every head owes the webview legs, whatever
+        it changed, and the served ruling: the served leg on the same terms), and the ledger only with a reason. A record that says otherwise did not come from the runner (or
         came from a runner with another roster), and a leg it marks not owed ran nothing, so the reader refuses it by
         name: verify, plan, --repin and check read through it."""
         cases = []
@@ -3078,6 +3622,10 @@ class Reader(unittest.TestCase):
         legs["npm-test"] = {"owed": False, "rc": None, "why": "skipped on this box"}
         cases.append(("one webview leg", legs, "npm-test marked not owed for a reason other than 'no vscode-extension/package.json' "
                                                "('skipped on this box')"))
+        legs = self.legs()
+        legs["served"] = {"owed": False, "rc": None, "why": untouched}
+        cases.append(("the served leg by the changed-path rule", legs,
+                      "served marked not owed for a reason other than 'no vscode-extension/package.json' ('%s')" % untouched))
         for label, legs, named in cases:
             with self.subTest(label):
                 self.write(self.result(legs=legs))
