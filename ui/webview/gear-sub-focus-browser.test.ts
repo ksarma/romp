@@ -894,9 +894,13 @@ test("the picker-open state, the one the panel leg did not enter (the maintainer
     assert.equal(c1.focusVisible, true, "the rig: a Tab is :focus-visible");
     assert.equal((await pickerRow("rs-cmap-list")).hovered, true, "the rig: the pointer still rests on the colormap row");
     assert.deepEqual(c1.shown, ["rs-pal-btn"], "exactly one description, the focused palette row's");
-    // (d) a pick closes the list through the same writer: the class goes
+    // (d) a pick closes the list through the same writer: the class goes. The row's hover is not read here: the pick leaves the
+    // pointer where the option was, a few pixels under the row's bottom edge (the list hangs below the row), and Chromium moves
+    // :hover at its next frame, so a read right after the click races that update (measured: true at once, false two animation
+    // frames later; a run of the browser-legs step's command at a load average of about 38 read false and failed)
     await page.click("#rs-cmap-list .rs-cmap-opt");
-    assert.deepEqual(await pickerRow("rs-cmap-list"), { open: false, picking: false, hovered: true }, "closed by a pick: hidden and no class");
+    const picked = await pickerRow("rs-cmap-list");
+    assert.deepEqual({ open: picked.open, picking: picked.picking }, { open: false, picking: false }, "closed by a pick: hidden and no class");
     // (e) the outside-click closer, on the palette picker: open by its button, close by a click on the card's title
     await page.click("#rs-pal-btn");
     assert.deepEqual(await pickerRow("rs-pal-list"), { open: true, picking: true, hovered: true }, "the palette list open under the pointer, its row wearing the class");
