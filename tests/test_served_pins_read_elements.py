@@ -139,7 +139,9 @@ census), a helper whose returns differ in length (the union of their positions: 
 `return r.status, r.read()` give {1, -1, -2}, so `resp[-1]` binds as the page though it is the headers on the first road;
 over-bound, so its reads are rows over the page, never silent), a name bound to a fetched tuple and later rebound to a whole text
 (it reads as that text throughout, so `resp[0]`, the status before the rebinding, is a slice row over it: over-bound, never
-silent), a getter called WITH
+silent), a tuple target holding a starred name over a fetch (`first, *rest = self._req("/")`: each plain name binds as the text
+whatever its position, the status too, and the starred name binds nothing, so a read of the body inside it is in neither census,
+in silence; p7 in test_a_fetched_tuple_binds_the_position_its_helper_reads_a_response_at), a getter called WITH
 arguments (`_shim_core_js("chat")` renders another text), a text served under a name with none of the suffixes the rules
 read (the web app manifest; the `_reload_core` function), a name bound outside the function, a literal bound by assignment
 rather than a loop, and assertNotIn (a comment can red it, never green it) are outside this derivation.
@@ -753,10 +755,13 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
     the body on a 2-tuple road and the headers on a 3-tuple one: over-bound). Before the merge's ruling every unpacked name
     bound, the status and the response headers too, and main's helpers returning (status, body, headers) put 19 reads of the
     headers (`.get`, `.get_all`, a base-class helper handed them) and of the status into the reader census as reads of the page. A
-    helper the module does not define, a helper with a returned Name _response_reads cannot place ("unknown"; the rulings on the
-    census pass, 2026-09-28), and a tuple target holding a starred name over the call itself (`first, *rest = self._req("/")`)
-    bind every name, the reading before the merge's ruling (the census cannot see which position is the body). `sliced`, when
-    given, tracks the Names bound through a slice, a fetched
+    helper the module does not define and a helper with a returned Name _response_reads cannot place ("unknown"; the rulings on
+    the census pass, 2026-09-28) bind every name, the reading before the merge's ruling (the census cannot see which position is
+    the body). A tuple target holding a starred name over a fetch (`first, *rest = self._req("/")`) reads no position, whatever
+    the helper's returns show: each plain Name in it binds as the text, the status `first` too (over-bound), and the starred name
+    binds nothing, so a read of the body inside it (`rest[0]`) is in neither census, in silence; the textual census reads no
+    starred target either (a stated bound: p6 and p7 in test_a_fetched_tuple_binds_the_position_its_helper_reads_a_response_at).
+    `sliced`, when given, tracks the Names bound through a slice, a fetched
     tuple's position or an unpack of one (forms the textual census does not read; the author's pass 8)."""
     if isinstance(value, ast.Tuple) and len(targets) == 1 and isinstance(targets[0], ast.Tuple) \
             and len(targets[0].elts) == len(value.elts):
@@ -2110,8 +2115,10 @@ def _kw(self, lit, body):
         # headers (`headers.get_all("Set-Cookie")`, `assertEqual(status, 200)`) were reads of the page, unclassified ones red. A
         # synthetic module pins the rule: the position the helper's own returns read a response at binds (`r.read()` in a method,
         # `h.wfile.getvalue().decode(...)` in a module function), the status and headers positions do not, a helper whose returns
-        # read no response binds no name (p3), and a helper the module does not define, or a target holding a starred name, binds
-        # every name, the reading before the ruling (p5, p6). The rows of both derivations are named, never inferred.
+        # read no response binds no name (p3), and a helper the module does not define binds every name, the reading before the
+        # ruling (p5). A target holding a starred name binds each plain name in it whatever its position, the status too (p6), and
+        # its starred name not at all, so the body inside it is in neither census (p7, a stated bound). The rows of both
+        # derivations are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest
 def _serve(path):
@@ -2139,6 +2146,7 @@ class T(unittest.TestCase):
         self.assertIn("p5", s2)
         first, *rest = self._req("/")
         self.assertIn("p6", first)
+        self.assertIn("p7", rest[0])
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
