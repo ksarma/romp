@@ -2220,8 +2220,9 @@ _WS_FRAME_WRITERS = {"_ws_sender", "_ws_send", "_ws_pong"}   # WebSocket frames 
 def _raw_socket_writers(src, bypasses):
     """Every raw write to a socket in kernel.py (a `sendall(...)` call, or a `write(...)` on a `wfile`, read off the AST), classified (the author's pass-5 verify, extra6-1's third road):
     the stamping writer (Handler._send's own write), a bypassing `send_response` block's (`bypasses`, the census above: the HEAD roads and
-    the two attachments), the _remote_ws splice (the remote kernel's status line, headers and frames pumped to the client byte for byte,
-    the one road bytes leave a handler with no send_response at all), or a WebSocket frame writer (_WS_FRAME_WRITERS). Anything else is
+    the two attachments), the _remote_ws splice (a head _ws_head_allowlist rebuilt from the remote kernel's 101, this kernel's own status
+    line and the allowlisted handshake headers, then the remote's frames pumped to the client byte for byte: the one road bytes leave a
+    handler with no send_response at all), or a WebSocket frame writer (_WS_FRAME_WRITERS). Anything else is
     `unclassified`, so a new raw writer of an HTTP response reds the census."""
     tree = ast.parse(src)
     spans = _kernel_functions(tree)
@@ -2690,11 +2691,14 @@ class LazyPanes(unittest.TestCase):
 
     def test_every_raw_socket_write_is_the_stamping_writers_a_bypassing_blocks_the_remote_ws_splices_or_a_websocket_frames(self):
         # the author's pass-5 verify (extra6-1's third road): the two censuses above read `_send` calls and `send_response(` sites, and neither
-        # sees bytes that leave a handler with NO send_response: _remote_ws writes a remote kernel's status line and headers to the client
-        # (`down.sendall(head)`) and pumps its body, byte for byte. Today no document can arrive by that road (the route answers 400
-        # text/plain without a Sec-WebSocket-Key, a header no navigation or fetch can set, pinned by tests/test_kernel_remote_ws_proxy.py),
-        # so the gap was in the pins, not the behaviour: a future raw writer of a text/html 200 (a second splice, a streaming relay) would
-        # have shipped unstamped with both censuses green. This census classifies every `sendall(` and `wfile.write(` in kernel.py: the
+        # sees bytes that leave a handler with NO send_response: _remote_ws writes a response head to the client with a raw sendall and
+        # pumps the remote kernel's frames byte for byte. Since main's fork PR #919 the head is the one _ws_head_allowlist rebuilds from
+        # the remote's 101 (this kernel's own status line and the allowlisted handshake headers; any other answer is a text/plain 502
+        # through _send, pinned by tests/test_remote_ws_set_cookie_strip.py). Today no document can arrive by that road (the route
+        # answers 400 text/plain without a Sec-WebSocket-Key, a header no navigation or fetch can set, pinned by
+        # tests/test_kernel_remote_ws_proxy.py, and the one status line the relay writes raw is that 101), so the gap was in the pins,
+        # not the behaviour: a future raw writer of a text/html 200 (a second splice, a streaming relay) would have shipped unstamped with
+        # both censuses green. This census classifies every `sendall(` and `wfile.write(` in kernel.py: the
         # stamping writer's own, a bypassing send_response block's, the _remote_ws splice's, or a WebSocket frame writer's (named); a raw
         # writer anywhere else is unclassified and reds. Red under mutation: a `self.connection.sendall(b"HTTP/1.1 200 OK…")` in do_GET.
         src = _kernel_source()
@@ -2703,7 +2707,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(kinds["unclassified"], [], "a raw socket write outside the stamping writer, the bypassing blocks, the _remote_ws splice and the WebSocket frame writers: classify it (an HTTP response written raw carries no stamp): %r" % ([st for st in sites if st["kind"] == "unclassified"],))
         self.assertEqual(len(kinds["send"]), 1, "the stamping writer's one write: %r" % (sites,))
         self.assertTrue(kinds["bypass"], "the bypassing blocks' body writes were seen (the attachments): %r" % (sites,))
-        self.assertGreaterEqual(len(kinds["remote-ws"]), 2, "the splice's writes to the client (the remote's head, its pumped frames) were seen: %r" % (sites,))
+        self.assertGreaterEqual(len(kinds["remote-ws"]), 2, "the splice's writes to the client (the head it rebuilt, the remote's pumped frames) were seen: %r" % (sites,))
         self.assertTrue(kinds["ws-frame"], "the WebSocket frame writers were seen: %r" % (sites,))
         self.assertIn("_remote_ws", km._stamp_served_html.__doc__, "the stamp's docstring names the splice as the road outside both censuses")
         self.assertIn("Sec-WebSocket-Key", km._stamp_served_html.__doc__, "…with its gate")

@@ -74245,12 +74245,15 @@ def _stamp_served_html(code, body, ctype):
     eight `send_response` sites bypass it, and the rule holds over text/html 200s because none of them writes one: they are HEAD roads
     with no body, 206 ranges, the 204 preflight, the 101 upgrade, and two 200 attachments with application/octet-stream hardcoded, a
     census tests/test_pane_state_broadcast.py pins over the writers (every `send_response(` outside _send is a non-200, a bodiless
-    road, or an octet-stream attachment). One road lies outside both censuses (the author's pass-5 verify): _remote_ws writes the remote
-    kernel's status line and headers to the client with `down.sendall(head)` and pumps its frames, with no send_response at all; no
-    document can arrive by it (the route answers 400 text/plain without a Sec-WebSocket-Key, a header no navigation or fetch can set,
-    pinned by tests/test_kernel_remote_ws_proxy.py), and a third census in the same module classifies every raw `sendall(` and
-    `wfile.write(` in this file (this writer's, a bypassing block's, that splice's, or a WebSocket frame's), so a new raw writer of an
-    HTTP response reds it. A body with no <html> tag is returned as it came, unstamped, so served at a pane url it
+    road, or an octet-stream attachment). One road lies outside both censuses (the author's pass-5 verify): _remote_ws writes a response
+    head to the client with a raw sendall and then pumps the remote kernel's frames, with no send_response at all. Since main's fork PR
+    #919 that head is not the remote's bytes: _ws_head_allowlist rebuilds it from the remote's 101 as this kernel's own status line,
+    `HTTP/1.1 101 Switching Protocols`, and the allowlisted handshake headers, and any other answer is this kernel's own text/plain 502
+    through _send (tests/test_remote_ws_set_cookie_strip.py). No document can arrive by it: the route answers 400 text/plain without a
+    Sec-WebSocket-Key, a header no navigation or fetch can set (tests/test_kernel_remote_ws_proxy.py), and the one status line the
+    relay writes raw is that 101. A third census in the same module classifies every raw `sendall(` and `wfile.write(` in this file
+    (this writer's, a bypassing block's, that splice's, or a WebSocket frame's), so a new raw writer of an HTTP response reds it. A body
+    with no <html> tag is returned as it came, unstamped, so served at a pane url it
     would read as a failure; the paste-the-token page at / is one today, and / is not a pane url (correctness-2, regression-1, extra6-2:
     the rule with its shape condition, the token page an example and not a list). The phone shell's docState (_LANDING_MOBILE_JS) reads it
     off a pane frame's same-origin document: one with the pane shim's marker is the pane's own; one with this stamp and no marker
