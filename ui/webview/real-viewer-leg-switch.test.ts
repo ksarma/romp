@@ -2,16 +2,13 @@
 // switch, inBrowser FAILS a launch it cannot make, naming the switch and the reason, instead of skipping, where without it
 // the leg skips naming the reason (CI's browser-legs step sets the switch after the job's Chromium install; the Test step,
 // before any install, does not). The test below began as fork PR 860's test of this behaviour, copied with its mechanism
-// unchanged (two lines differed: the comment's name for the leg it drives, and the --test-name-pattern that picks it); this
-// branch adds a third arm, the switch set to a non-"1" non-empty value ("yes"), which executes the arming rule every header
-// states (any non-empty value counts) and is OFFERED to 860 for its copy. Until 860 takes the arm the two branches do not
-// carry one test, and their mechanisms differ as well: this branch alone gives each child a temporary directory of its own
-// (below). Beside the third arm, whose words already made the test's title differ from 860's, this branch narrows the title
-// from the browser legs' skip to the skip of a leg that launches through the shared launch: inBrowser's read of the switch
-// changes that skip alone.
-// This branch also asserts, under both armed arms, that the failure's message begins with the phrase the step's script
-// reads a lost browser by, read at run time from vscode-extension/scripts/ci-browser-legs.sh, which 860 does not have, so
-// that assertion stays this branch's and the offer to 860 is the third arm alone.
+// unchanged (two lines differed: the comment's name for the leg it drives, and the --test-name-pattern that picks it); the
+// copy here adds a third arm, the switch set to a non-"1" non-empty value ("yes"), which executes the arming rule every
+// header states (any non-empty value counts), gives each child a temporary directory of its own (below), and narrows the
+// title from the browser legs' skip to the skip of a leg that launches through the shared launch: inBrowser's read of the
+// switch changes that skip alone. It also asserts, under both armed arms, that the failure's message begins with the
+// phrase the step's script reads a lost browser by, read at run time from vscode-extension/scripts/ci-browser-legs.sh.
+// 860 retired its own two-arm copy once this test ran in the step, so this file is the one executed test of the switch.
 // The leg it drives is this file's own, above it, which opens a page through inBrowser. The mechanism: a child
 // `node --test --test-name-pattern=<leg> <this bundle>` with an env BUILT from three of this process's variables, PATH, HOME
 // and NODE_OPTIONS (never inherited: the runner's NODE_TEST_CONTEXT would put the child's report on this process's channel,
@@ -22,8 +19,8 @@
 // directory (Playwright makes both before it finds no browser, and removes neither), so the empty browsers directory and
 // each child's temporary directory sit in one scratch directory under out-tests/ that the test removes, and the test asserts
 // that each child's leg reports its own temporary directory, under that scratch directory, and that the scratch directory is
-// gone after the children ran. This branch adds those temporary directories and their two assertions, which 860's copy does
-// not have (without them, each run of this test left six such directories in this process's temporary directory). On a box
+// gone after the children ran (without those temporary directories, each run of this test left six such directories in
+// this process's temporary directory, as 860's copy did). On a box
 // with a browser the outer leg launches and passes; the switch test passes on any box, since its child never sees the
 // browser. tools/ci-browser-legs.test.mjs pins the phrase the step's script reads a lost browser by to the helper's source
 // text and names this file as the test of the behaviour; a green there with a red here is a helper that carries the words

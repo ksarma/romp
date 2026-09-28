@@ -52,8 +52,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { spawnSync } from "node:child_process";
-import { inBrowser, playwrightInstalled } from "./real-viewer-leg";   // the launch every browser leg of the fork shares, and its switch read
+import { inBrowser } from "./real-viewer-leg";   // the launch every browser leg of the fork shares, which reads the switch
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -441,37 +440,6 @@ test("the share switch's description opens on a keyboard focus and is placed: at
     assert.equal(high.subBelowRow, true, "and it shows below the row");
     assert.deepEqual(errors, [], "no page error");
   });
-});
-
-test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the browser legs' skip into a failure that names the switch and the reason, and without it the skip stands naming the reason: CI's browser-legs step after the Chromium install sets it", { timeout: 120000 }, (t) => {
-  // a child run of this file's share-switch leg with playwright pointed at an empty browsers directory (the pane bench's probe):
-  // under the switch the leg fails naming the switch and the reason; without it the leg skips, as the Test step's run does.
-  // The reason the child names is this machine's: with the module installed and its browsers hidden, no browser; with the module
-  // absent, no module (the maintainer's round 6, tests-6: the regex demanded the browser reason alone, so a runner without the
-  // module reported a FAILURE here where the file's contract says every browser leg skips with a stated reason); derived from
-  // the same module read the helper's launch guards on (playwrightInstalled), never a two-way alternation. The assertions read
-  // the property (the switch's name and the reason on the failure's line; the reason on the skip) and not the helper's
-  // connective wording, which is the shared helper's to choose.
-  const why = playwrightInstalled() ? "no playwright browser" : "playwright is not installed under vscode-extension";
-  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  t.diagnostic("the reason a browser leg names on this machine: " + why);
-  const empty = fs.mkdtempSync(path.join(EXT, "out-tests", "no-browsers-"));
-  try {
-    // the child's environment is built, not inherited: under `node --test` this process carries the runner's NODE_TEST_CONTEXT,
-    // and a child inheriting it reports on the runner's channel instead of its stdout
-    const base: Record<string, string> = {};
-    for (const k of ["PATH", "HOME", "TMPDIR", "NODE_OPTIONS"]) if (process.env[k] !== undefined) base[k] = process.env[k] as string;
-    const run = (env: Record<string, string>) => spawnSync(process.execPath, ["--test", "--test-name-pattern=share switch", __filename],
-      { cwd: EXT, encoding: "utf8", timeout: 100000, env: { ...base, ...env, PLAYWRIGHT_BROWSERS_PATH: empty } });
-    const req = run({ ROMP_BROWSER_LEGS_REQUIRE: "1" });
-    assert.match(req.stdout, /^# fail 1$/m, "the leg failed under the switch\n" + req.stdout.slice(-1500));
-    assert.match(req.stdout, new RegExp("ROMP_BROWSER_LEGS_REQUIRE[^\\n]*" + esc(why)), "the switch: a failure naming it and the reason (" + why + ") on one line\n" + req.stdout.slice(-1500));
-    const plain = run({});
-    assert.match(plain.stdout, /^# skipped 1$/m, "without the switch the leg skips\n" + plain.stdout.slice(-1500));
-    assert.match(plain.stdout, new RegExp(esc(why)), "and the skip names the reason (" + why + ")\n" + plain.stdout.slice(-1500));
-  } finally {
-    fs.rmSync(empty, { recursive: true, force: true });
-  }
 });
 
 test("the degradation on an engine without :has(), modelled: with every :has() rule removed from the sheet (such an engine drops a rule it cannot parse whole) a hover still shows the row's description and a keyboard focus shows nothing, the keyboard road alone lost; before the split of the show rule nothing showed on either road; and the Fast mode BOX loses its own pointer road too: a hover on the box shows the row's description, the box's own by no road", { timeout: 120000 }, async (t) => {
