@@ -988,17 +988,64 @@ class Checkout(_Base):
                 self.assertFalse(os.path.exists(w.result_path()))
                 self.assertEqual(os.listdir(os.path.join(w.xdg, "romp", "sweeps", "trees")), [])
 
-    def test_node_modules_in_an_ancestor_of_the_checkout_is_refused(self):
-        """A2: node's require() and tsc's typeRoots read node_modules (and node_modules/@types) in every ancestor
-        directory, so one above the checkout would reach the webview legs from outside the sha."""
-        w = self.w
-        planted = os.path.join(w.xdg, "node_modules")
-        os.makedirs(os.path.join(planted, "@types", "planted"))
-        p = w.run(check=2)
-        self.assertIn("has node_modules in an ancestor directory (ancestor 1: %s)" % planted, p.stderr)
-        self.assertEqual(w.calls(), [])
-        self.assertFalse(os.path.exists(w.result_path()))
-        self.assertEqual(os.listdir(self.trees()), [])
+    # What each name in an ancestor directory does to a leg: node_modules/@types reaches tsc and require(); a
+    # package.json's "type" changes how node loads a .js file with no nearer one; a tsconfig.json or jsconfig.json is the
+    # nearest one esbuild finds above a ui/ file (its paths can map an import to a file outside the sha).
+    ANCESTOR_PLANTS = (("node_modules", None), ("package.json", '{"type": "module"}\n'),
+                       ("tsconfig.json", '{"compilerOptions": {"paths": {"marked": ["./planted.js"]}}}\n'),
+                       ("jsconfig.json", '{"compilerOptions": {"paths": {"marked": ["./planted.js"]}}}\n'))
+
+    @staticmethod
+    def plant_above(d, name, text):
+        full = os.path.join(d, name)
+        os.makedirs(d, exist_ok=True)
+        if text is None:
+            os.makedirs(os.path.join(full, "@types", "planted"))
+        else:
+            with open(full, "w") as f:
+                f.write(text)
+        return full
+
+    def test_a_tool_config_name_in_an_ancestor_of_the_checkout_is_refused(self):
+        """A2: node_modules, package.json, tsconfig.json and jsconfig.json are each looked up in every ancestor directory
+        by node, tsc or esbuild, so one above the checkout (here in the state root) would reach the legs from outside
+        the sha: each refuses the run by name, one pin per name, nothing run or recorded, the checkout removed."""
+        for name, text in self.ANCESTOR_PLANTS:
+            with self.subTest(name=name):
+                w = World()
+                self.addCleanup(w.close)
+                planted = self.plant_above(w.xdg, name, text)
+                p = w.run(check=2)
+                self.assertIn("has %s in an ancestor directory (1: %s), which node, tsc or esbuild would read from outside "
+                              "the sha" % (name, planted), p.stderr)
+                self.assertEqual(w.calls(), [])
+                self.assertFalse(os.path.exists(w.result_path()))
+                self.assertEqual(os.listdir(os.path.join(w.xdg, "romp", "sweeps", "trees")), [])
+        self.assertEqual(tuple(n for n, _t in self.ANCESTOR_PLANTS), sweep.ANCESTOR_NAMES, "one pin per name the runner refuses")
+
+    def test_a_tool_config_name_that_appears_above_the_checkout_during_a_leg_makes_the_run_invalid(self):
+        """A4: the refusal before the first leg reads the ancestors once; one of the names made in an ancestor during a
+        leg (here by the bats leg, standing for any process of the batcher's user) would reach the legs after it, so the
+        re-read after every leg names it and the run is invalid, the legs after it not run."""
+        for name, text in self.ANCESTOR_PLANTS:
+            with self.subTest(name=name):
+                w = World()
+                self.addCleanup(w.close)
+                real = os.path.join(w.tmp, "realbin")
+                os.makedirs(real)
+                os.rename(os.path.join(w.bin, "bats"), os.path.join(real, "bats"))
+                target = os.path.join(w.xdg, name)
+                make = ("mkdir -p '%s/@types/planted'" % target) if text is None else ("printf '%%s' '%s' > '%s'" % (text, target))
+                with open(os.path.join(w.bin, "bats"), "w") as f:
+                    # not on the runner's `bats --version` read, which comes before any leg
+                    f.write("#!/bin/sh\n[ \"$1\" = --version ] || %s\nexec '%s' \"$@\"\n" % (make, os.path.join(real, "bats")))
+                os.chmod(os.path.join(w.bin, "bats"), 0o755)
+                p = w.run(check=3)
+                self.assertTrue(os.path.lexists(target))
+                r = w.result()
+                self.assertEqual(r["verdict"], "invalid")
+                self.assertIn("after the bats leg the checkout is not the sha's tree: ancestor 1 (%s)" % target, r["invalid"])
+                self.assertEqual(w.legs_called(), ["deps", PYTEST_LEG, "bats"], p.stdout + p.stderr)
 
     def test_sigterm_stops_the_leg_its_descendants_and_removes_tmpdir_and_the_checkout(self):
         """A5: SIGTERM during a leg whose children write into TMPDIR, one in the leg's process group and one under

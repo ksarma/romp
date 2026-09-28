@@ -22,10 +22,11 @@ refs/replace ignored. A clone copies none of the batcher's repository config, at
 sparse patterns, index flags or replace refs, so the legs see the sha's tree plus the tool installs, and
 nothing from the checkout's parents. Before any leg the runner verifies the checkout against `git ls-tree -r
 <sha>` (every path, executable bit, symlink target and blob), and refuses (exit 2, nothing recorded) on a
-difference or on node_modules in any ancestor directory, which node and tsc would read. After every leg it
-reads the checkout again, and a tracked path changed or gone, or an untracked path the tracked .gitignore
-does not ignore, records the run invalid naming the paths and the leg (the runner's one producer of invalid;
-the legs after it do not run). The batcher's tree is read for its HEAD sha and branch only, so it need not
+difference or on node_modules, package.json, tsconfig.json or jsconfig.json in any ancestor directory, which
+node, tsc and esbuild would read. After every leg it reads the checkout again, and a tracked path changed or
+gone, an untracked path the tracked .gitignore does not ignore, or one of those names now in an ancestor
+directory, records the run invalid naming the paths and the leg (the runner's one producer of invalid; the
+legs after it do not run). The batcher's tree is read for its HEAD sha and branch only, so it need not
 be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
 during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
 untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
@@ -888,7 +889,8 @@ def recheck_checkout(path, sha, entries):
     """[(class, [paths])] where the checkout differs from the sha's tree after a leg: every tracked entry as
     _entry_faults reads it, what `git status` in the private clone calls changed, and every untracked path the tracked
     .gitignore does not ignore (untracked). Ignored build products (node_modules, dist/, out-tests/, bytecode) are
-    allowed; an unignored file one leg leaves could be read by a later one (a root conftest.py, which pytest loads)."""
+    allowed; an unignored file one leg leaves could be read by a later one (a root conftest.py, which pytest loads). A
+    name of ANCESTOR_NAMES in an ancestor directory is a change too (ancestor)."""
     faults = _entry_faults(path, entries)
     p = subprocess.run(["git", "-C", path, "status", "--porcelain=v1", "-z", "--untracked-files=all"], env=_git_env(),
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -898,7 +900,11 @@ def recheck_checkout(path, sha, entries):
         seen = {n for k in faults for n in faults[k]}
         faults["untracked"] = sorted(n for xy, n in _status_entries(p.stdout) if xy == "??")
         faults["changed"] = sorted(n for xy, n in _status_entries(p.stdout) if xy != "??" and n not in seen)
-    return [(k, sorted(faults[k])) for k in ("missing", "content", "mode", "symlink", "changed", "untracked") if faults.get(k)]
+    # A name of ANCESTOR_NAMES that appeared above the checkout during the leg (the refusal before the first leg saw
+    # none) would reach the legs after it.
+    faults["ancestor"] = [os.fsencode(a) for a in ancestor_hits(path)]
+    return [(k, sorted(faults[k])) for k in ("missing", "content", "mode", "symlink", "changed", "untracked", "ancestor")
+            if faults.get(k)]
 
 
 def describe_faults(faults, shown=3):
@@ -906,14 +912,19 @@ def describe_faults(faults, shown=3):
                                        ", ..." if len(v) > shown else "") for k, v in faults)
 
 
-def ancestor_node_modules(path):
-    """Each ancestor directory of `path` (its real path, up to /) that holds node_modules: node's require() and tsc's
-    default typeRoots search every ancestor for node_modules and node_modules/@types, so one there would reach the
-    webview legs from outside the sha."""
+# The names a leg's tools look up in every ancestor directory of the file they work on, so one above the checkout would
+# reach a leg from outside the sha: node_modules (node's require() and tsc's default typeRoots, node_modules/@types),
+# package.json (node reads the nearest one for a .js file's module type, and esbuild for its fields), tsconfig.json and
+# jsconfig.json (esbuild, which vscode-extension/esbuild.js runs with no tsconfig option, takes the nearest one above
+# each file it bundles; ui/ has none of its own, so for ui/ files that search leaves the checkout).
+ANCESTOR_NAMES = ("node_modules", "package.json", "tsconfig.json", "jsconfig.json")
+
+
+def ancestor_hits(path):
+    """Each path in an ancestor directory of `path` (its real path, up to /) named in ANCESTOR_NAMES, nearest first."""
     hits, d = [], os.path.dirname(os.path.realpath(path))
     while True:
-        if os.path.lexists(os.path.join(d, "node_modules")):
-            hits.append(os.path.join(d, "node_modules"))
+        hits += [os.path.join(d, n) for n in ANCESTOR_NAMES if os.path.lexists(os.path.join(d, n))]
         up = os.path.dirname(d)
         if up == d:
             return hits
@@ -1550,11 +1561,12 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
         if faults:
             raise Refused("the checkout of %s is not the sha's tree (%s); it is removed, and nothing was run or recorded"
                           % (short(sha), describe_faults(faults)))
-        above = ancestor_node_modules(checkout)
+        above = ancestor_hits(checkout)
         if above:
-            raise Refused("the checkout of %s has node_modules in an ancestor directory (ancestor %d: %s), which node's "
-                          "require() and tsc's typeRoots would read from outside the sha; remove it and sweep again"
-                          % (short(sha), len(above), ", ".join(above[:3])))
+            raise Refused("the checkout of %s has %s in an ancestor directory (%d: %s), which node, tsc or esbuild would read "
+                          "from outside the sha; remove %s and sweep again" % (short(sha), " and ".join(sorted(set(
+                              os.path.basename(a) for a in above))), len(above), ", ".join(above[:3]),
+                              "it" if len(above) == 1 else "them"))
         run["runner"]["checkout"] = {"form": "clone", "path": checkout, "create_s": create_s,
                                      "verify_s": round(time.monotonic() - t0, 2), "files": len(entries), "setup": None}
         if not only:
