@@ -666,7 +666,11 @@ class Runner(_Base):
             red = f.read()
         w.ctl({})
         before = len(w.calls())
-        for extra, named in ((("--leg", "pytest"), "--leg re-runs a leg only after a known flake: name it with --flake"),
+        # round 1, extra7-7: the remedy for a failure that is not a known flake is a fix and a new head, never a full sweep
+        # at the same sha, which cannot count over the failed run without --flake
+        for extra, named in ((("--leg", "pytest"), "--leg re-runs a leg only after a known flake: name it with --flake (the test "
+                                                   "and where it is recorded as a known flake); anything else is a failure: fix "
+                                                   "it and sweep the new head"),
                              (("--leg", "pytest", "--flake", "  "), "--leg re-runs a leg only after a known flake"),
                              (("--flake", self.FLAKE), "--flake on a full run names the leg it is for: --flake LEG=TEXT"),
                              (("--leg", "bats", "--flake", self.FLAKE), "bats passed at %s; there is no failure to re-run" % w.head()[:10])):

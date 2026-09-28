@@ -565,7 +565,9 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
     rec.update(flake_notes=flake_notes(history), invalid_notes=invalid_notes(history))
     if history["never"]:
         return done("invalid", "sweep invalid at %s: %s; a later run counts over a failed one only with --flake naming the "
-                               "leg and its known-flake entry, once per leg; sweep again" % (short(sha), "; ".join(history["never"])), rec)
+                               "leg and its known-flake entry, once per leg; the runner adds no run to a result holding such "
+                               "records (results are append-only): move it aside to sweep this sha again"
+                    % (short(sha), "; ".join(history["never"])), rec)
     stray = sorted(set(recorded_hash(r) for r in runs[rec["full_run"] - 1:]) - {policy_hash()}, key=str)
     if stray:
         recorded = stray[0]
@@ -1430,7 +1432,7 @@ def cmd_run(args):
     flakes = parse_flakes(args.flake, only)
     if only and any(name not in flakes for name in only):
         raise Refused("--leg re-runs a leg only after a known flake: name it with --flake (the test and where it is recorded "
-                      "as a known flake); anything else is a failure, and the full sweep runs again")
+                      "as a known flake); anything else is a failure: fix it and sweep the new head")
     if only and set(flakes) - set(only):
         raise Refused("--flake names %s, which this --leg re-run does not run" % ", ".join(sorted(set(flakes) - set(only))))
     # The batcher's tree is read for its HEAD sha and its branch only: the legs run in a private checkout of the sha,

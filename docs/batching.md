@@ -58,17 +58,24 @@ reached main (`finish` runs it, and it also runs on every push to main).
    (kind: coordinate); it re-pins your head and rebuilds. A push after the cut leaves your PR open
    after the batch merges, and `finish` reports that rather than hiding it.
 8. When the batch merges, remove your worktree and local branch. `finish` deletes the remote one.
-9. Expect no CI on your PR. Its one check is the tier label, which runs when the PR opens or
-   reopens and when its labels change, not on a push. The tests run in your own sweep at your head
-   (item 3), in the batch's sweep at the batch head, and in the one CI run on the batch branch.
+9. Expect no CI on your PR. Its Checks tab shows the tier-label check after the PR opens or
+   reopens or its labels change, not after a push, and Tier policy's skipped rows, which evaluate
+   nothing on the fork. The tests run in your own sweep at your head (item 3), in the batch's sweep
+   at the batch head, and in the one CI run on the batch branch.
 
 ## If you are the maintainer
 
 Once, already done on this fork: delete branches on merge, squash and rebase merges off, so
 "Create a merge commit" is the only button. A ruleset on main (required checks by name, strict mode
-on, admin bypass) is optional and comes after the first batch has shown the check names. On a batch
-PR a required CI check is met by the run of the push to its branch, which attaches to the batch head.
-Strict mode ("require branches to be up to date") makes GitHub itself refuse a batch PR that is
+on, admin bypass) is optional and comes after the first batch has shown the check names. The checks
+to require are the job checks a batch push reports: `Python <version> (ubuntu-latest)` for each
+Linux cell (3.10, 3.11, 3.12, 3.13 and 3.14t), `Shell (bats, ubuntu-latest)`, `Secret scan
+(gitleaks)` and `vscode-extension (typecheck + test + build)`. Do not require `Exactly one tier
+label` on the fork: its copy runs only when a PR opens or reopens or its labels change, never on a
+push, so a batch head pushed after the last label event has no run of it, and a ruleset requiring
+it would hold that batch. On a batch PR a required CI check is expected to be met by the run of the
+push to its branch, attached to the batch head; the first batch confirms that ("Checked on the
+first batch", below). Strict mode ("require branches to be up to date") makes GitHub itself refuse a batch PR that is
 behind main, which is the case the no-CI-on-main rule cannot allow; without it only `scripts/batch.py
 land` checks. A member PR has no CI checks and never merges by itself: a single PR lands as a
 one-member batch, and `scripts/land.sh` runs `scripts/batch.py land`.
@@ -170,7 +177,11 @@ subject; `verify` refuses the branch otherwise.
    (`tests/ui-bench.test.mjs`), the other Python versions and macOS run only in the batch's CI. Each
    leg gets an allowlisted environment: a private HOME and state dir, a PATH built from the tool
    directories, CI's switches, and nothing of your shell's (no key, token or session variable, no
-   PYTEST_ADDOPTS or NODE_OPTIONS). A leg that changes the checkout (a tracked file, or an untracked
+   PYTEST_ADDOPTS or NODE_OPTIONS); `npm test` also gets this machine's 8 GB heap cap
+   (`NODE_OPTIONS=--max-old-space-size=8192`), which CI does not set. The allowlist governs
+   variables only: the legs run as your user, so a file stays readable at its absolute path (a
+   credential file, an agent's socket), and a leg can read `/proc/<pid>/environ` of the runner and
+   of your other processes, your shell and sessions included. A leg that changes the checkout (a tracked file, or an untracked
    file `.gitignore` does not cover) makes the run invalid. It writes every run to
    `<state dir>/sweeps/<full sha>.json`, which keeps every run at that sha. The state dir is
    `$ROMP_STATE_DIR`, else `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and
@@ -201,11 +212,12 @@ subject; `verify` refuses the branch otherwise.
    each pushed commit's tree, so a batch tip that inherits a pre-scrub string trips it although the
    new commits are merges; read what tripped and fix the member or ask. Never bypass the hook. Then
    `scripts/batch.py summarize <name>` and watch the one CI run: the push to `batch/<name>` starts
-   it, the batch PR shows its checks on its head, and a newer push to the branch cancels the older
-   run. The batch PR carries the `batch` label and no tier; the fork's copy of the `PR tier` check
-   counts `batch` as its one label, so that check is green when the PR opens. It does not run on a
-   push, so after a rebuild the new head shows no `PR tier` check until a label changes; nothing
-   gates on it. If CI is red:
+   it. The batch PR is expected to show its checks on its head, and a newer push to the branch to
+   cancel the older run; the first batch confirms both ("Checked on the first batch", below). The
+   batch PR carries the `batch` label and no tier; the fork's copy of the `PR tier` check counts
+   `batch` as its one label, so that check is green when the PR opens. It does not run on a push,
+   so after a rebuild the new head shows no `PR tier` check until a label changes; nothing gates on
+   it, and nothing should (the maintainer section says which checks to require). If CI is red:
    `scripts/batch.py bisect <name> -- <failing test>` names the member;
    `scripts/batch.py pull <name> N` rebuilds without it and says so on the PR.
 6. When a member's owner pushes a fix after the cut (they tell you by postal), run

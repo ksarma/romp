@@ -109,8 +109,10 @@ so there is no list to write. **gitleaks** covers them, in two places:
   It needs `fetch-depth: 0`: a default checkout scans one commit and reports
   clean. Since 2026-09-27 CI scans neither a PR push nor a merge to `main`
   (see the publish step below): between batches the pre-push hook is the only
-  scan. Three things go unscanned until the next batch push or the weekly run:
-  a push from a machine without gitleaks, a push from a clone where
+  scan. Five things go unscanned until the next batch push, the weekly run or
+  a manual run: a push from a machine without gitleaks, a push with
+  `ROMP_NO_GITLEAKS=1` (the hook skips its credential scan), a push with
+  `git push --no-verify` (no hook runs), a push from a clone where
   `install.sh` never linked the hook into git's hooks directory (no hook runs
   at all), and a commit GitHub makes itself (a web edit or suggestion, the
   Update branch button).
@@ -206,8 +208,9 @@ broad `git add` will sweep up your work). Conventions:
      must land alone lands as a one-member batch (`scripts/batch.py plan --only N`) on the
      user's word; `scripts/land.sh` runs `scripts/batch.py land`. Opening a PR against the upstream
      project is a separate decision only the user makes.
-  A fork PR runs no CI of its own (2026-09-27): its one check is the tier label (next
-  bullet), which runs when the PR opens and when its labels change. GitHub's CI runs once
+  A fork PR runs no CI of its own (2026-09-27): its Checks tab shows the tier-label check (next
+  bullet) after the PR opens or reopens or its labels change, and Tier policy's skipped rows,
+  which evaluate nothing on the fork. GitHub's CI runs once
   per batch, on the push to `batch/<name>`, and not on the merge to `main`. The landing
   gate is the local sweep, `scripts/sweep.py`, whose result for the batch head's full
   sha `scripts/batch.py verify` and `land` read. `land` also requires that batch push's CI

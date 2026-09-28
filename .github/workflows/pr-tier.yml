@@ -48,7 +48,11 @@ name: PR tier
 # 2026-09-20 ran this check 986 times, about 4,300 minutes a month. The cost is that a
 # push to a PR leaves its new head with no run of this check until the next
 # label event; on the fork no ruleset requires the check, and scripts/batch.py
-# reads the tier from the labels themselves, not from this check.
+# reads the tier from the labels themselves, not from this check. So on the fork
+# this check must not be made a required one: a batch head pushed after the
+# PR's last label event has no run of it, and a ruleset requiring it would hold
+# that batch (docs/batching.md, the maintainer section, names the checks to
+# require).
 
 on:
   pull_request:
