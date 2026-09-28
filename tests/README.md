@@ -255,17 +255,25 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   counts none of the fixtures of a conftest with a hook or fixture keyed on
   `-p no:anyio`, given or not given, by an honest road: a read an author
   writes to key on the option (`config.getoption`, `config.option`,
-  `config.pluginmanager`, `sys.argv`, the invocation params,
+  `config.pluginmanager`, `sys.argv` and xdist's copy of it,
+  `config.workerinput["mainargv"]`, the invocation params,
   `PYTEST_ADDOPTS`), followed through the aliases and helpers of the
-  conftest's text, and through a module of the repository it imports
-  directly in the two shapes the reviewer's ruling names: the conftest's read
-  of a function there that returns a value, or of a name there, whose code
-  reads what the rule refuses. A function that returns nothing, such as
+  conftest's text (the key `mainargv` is refused wherever the text holds
+  it, so a helper handed it is refused too), and through a module of the
+  repository it imports directly in the two shapes the reviewer's ruling
+  names: the conftest's read of a function there that returns a value, or
+  of a name there, whose code reads what the rule refuses, directly or
+  through another such function or name of the module (for a name, the
+  statement that binds it or the module-level statement it stands under,
+  such as an `if` over `sys.argv`). A function that returns nothing, such as
   `write_owner_marker` in `tests/__init__.py`, is not refused. The rule also
   refuses an import of a module it finds neither among the directories it
   reads nor, through the import system, outside the repository (a module on
   a directory put on the import path, say), and the conftest's read of
-  `sys.path`.
+  `sys.path`. It refuses the conftest's use of a module of the repository
+  it imports directly as a whole value, other than through an attribute of
+  the module (the module bound by a loop, held in a container or handed to
+  `getattr`), since the check cannot follow the module there.
   A road no honest author writes, whose only effect is to escape the check, is
   refused where one syntactic check does it; otherwise it passes and is
   listed. The listed roads include a carrier reached through a name the rule
