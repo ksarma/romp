@@ -129,10 +129,10 @@ EXIT_PASS, EXIT_RED, EXIT_REFUSED, EXIT_INVALID = 0, 1, 2, 3
 
 # The pytest command the runner builds (pytest_cmd): `<python> -m pytest tests -n <workers>`, then these flags, then
 # PYTEST_ISOLATION and one --ignore per PYTEST_IGNORED entry. Against CI's Run pytest step (.github/workflows/ci.yml,
-# `python -m pytest -q -n <2 or 0> --durations=10 --timeout=600 --timeout-method=thread`, collecting from the root,
-# where test modules live only under tests/) the differences are: -n at this machine's idle cores; -p no:cacheprovider,
-# so nothing is written to a .pytest_cache in the checkout; -p no:anyio (PR 872 puts it on CI); PYTEST_ISOLATION;
-# and the --ignore list. tests/test_sweep_runner.py (CiParity) holds the two sides to exactly these differences.
+# `python -m pytest -q -n <2 or 0> -p no:anyio --durations=10 --timeout=600 --timeout-method=thread`, collecting from
+# the root, where test modules live only under tests/) the differences are: -n at this machine's idle cores; -p
+# no:cacheprovider, so nothing is written to a .pytest_cache in the checkout; PYTEST_ISOLATION; and the --ignore list.
+# tests/test_sweep_runner.py (CiParity) holds the two sides to exactly these differences.
 PYTEST_FLAGS = ("-q", "-p", "no:cacheprovider", "-p", "no:anyio", "--durations=10", "--timeout=600", "--timeout-method=thread")
 # No pytest.ini or conftest.py above the checkout configures the leg: an empty inifile, the rootdir pinned to the
 # checkout (a bare `-c /dev/null` would move it to /dev), and conftest.py files read from the checkout down only.

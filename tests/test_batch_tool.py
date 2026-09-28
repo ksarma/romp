@@ -3347,7 +3347,7 @@ class Helpers(unittest.TestCase):
         flat = " ".join(doc.split())
         sentence = ("`rounds` counts the review rounds whose reviewer has reported, so a push that answers round 5's "
                     "findings still says 5, and the count moves to 6 when round 6's report comes in.")
-        example = '"sweep_head":"<sha>","flakes":[]} -->`.'
+        example = '"rounds":8,"flakes":[]} -->`.'
         self.assertIn(example + " " + sentence, flat, "the definition follows the trailer's example")
         self.assertEqual(flat.count("`rounds` counts"), 1, "and is written once")
         self.assertIn('"rounds":', flat[:flat.index(sentence)], "the example it follows carries the key")

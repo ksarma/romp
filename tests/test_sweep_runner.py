@@ -1980,12 +1980,19 @@ class CiParity(unittest.TestCase):
     CI_ONLY = {
         # setup that installs the tools the runner finds on the batcher's machine instead
         ("python", "Install pytest"), ("python", "Install cryptography"), ("shell", "Install bats (Linux)"),
+        # the SDK install (PR 872): the pytest leg runs --python as it is, so the SDK-gated tests skip there unless
+        # that interpreter has the SDK
+        ("python", "Install the Claude Agent SDK"),
         ("shell", "Install bats (macOS)"), ("shell", "Install gitleaks (Linux)"), ("secrets", "Install gitleaks"),
         ("vscode-extension", "Cache Playwright's browsers"), ("vscode-extension", "Install the pinned Playwright Chromium"),
         # the history and tree scans: the pre-push hook scans what a push publishes; CI scans all of history
         ("secrets", "Scan every commit"), ("secrets", "Scan the tree as it stands"),
         # the pane bench runs only in CI (the runner's docstring and docs/batching.md say so)
         ("vscode-extension", "Dashboard pane bench (node --test)"),
+        # the rostered browser legs' run under ROMP_BROWSER_LEGS_REQUIRE=1 after CI's Chromium install (PR 887): the
+        # sweep's npm-test leg runs the same bundles in its npm test with this machine's Playwright browsers, without
+        # the switch, so a launch that fails there skips, as in CI's Test step, instead of failing
+        ("vscode-extension", "Browser legs (node --test over ci-browser-legs.txt)"),
     }
 
     def setUp(self):
@@ -2028,8 +2035,7 @@ class CiParity(unittest.TestCase):
         self.assertEqual(ci[:3], ours[:3], "python -m pytest")
         ci_units, our_units = _units(ci[3:]), _units(ours[3:])
         named = [("tests",),                              # CI collects from the root; test modules live only under tests/
-                 ("-p", "no:cacheprovider"),              # nothing written to a .pytest_cache in the checkout
-                 ("-p", "no:anyio")]                      # PR 872
+                 ("-p", "no:cacheprovider")]              # nothing written to a .pytest_cache in the checkout
         named += _units(sweep.PYTEST_ISOLATION)           # B4: no ini or conftest above the checkout
         named += [("--ignore=%s" % p,) for p in sorted(sweep.PYTEST_IGNORED)]   # Q6
         for u in named:
