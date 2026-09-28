@@ -1,13 +1,15 @@
 # The modules under tests/ that write ROMP_KERNEL_NO_OPEN at module level, one path per line relative to tests/, the floor
 # modules aside; derived by the census of tests/test_hermetic_kernel_postal.py at round 2 of fork PR #894's review,
-# and derived again at that PR's landing merge with main, which took in the writers of two modules that batch
-# fork PR #921 added (fork PR #842's test_nudge_walk_one_load_per_pass.py and fork PR #913's
-# test_record_cache_agent_end.py).
+# and derived again at each of that PR's landing merges with main: the first took in the writers of two modules that
+# batch fork PR #921 added (fork PR #842's test_nudge_walk_one_load_per_pass.py and fork PR #913's
+# test_record_cache_agent_end.py), and the second the writers of six modules that batch fork PR #925 added, all
+# fork PR #919's (test_fetch_wrapper_census.py, test_file_cap_binding.py, test_login_cookie_not_token.py,
+# test_remote_ws_set_cookie_strip.py, test_session_cookie_auth.py and test_session_cookie_per_kernel.py).
 # The census pin compares it with the census by equality (_writer_set_faults): a module that writes the name and is
 # not here faults as a new writer, and a module here that no longer writes it faults until its line is removed.
 # Lines leave as writers migrate; a new writer is not added (omit the write or move it to the conftest floor),
-# except as a rename of a line here; the landing merge's lines were added on the reviewer's ruling of round 2 on
-# fork PR #894, which had the file derived again at that merge.
+# except as a rename of a line here; the landing merges' lines were added on the reviewer's rulings of round 2 on
+# fork PR #894, which had the file derived again at each merge.
 bench_chatbuild.py
 permission_ask_feeder_drive.py
 test_anchor_mints.py
@@ -109,6 +111,8 @@ test_feed_memo_inputs.py
 test_feed_session_memo.py
 test_feed_session_started.py
 test_feed_status_lists.py
+test_fetch_wrapper_census.py
+test_file_cap_binding.py
 test_file_comments.py
 test_file_comments_e2e.py
 test_file_editing_gate.py
@@ -344,6 +348,7 @@ test_listdir.py
 test_live_tail_rev.py
 test_locate_audit_settle_fields.py
 test_log_opener_moved_served.py
+test_login_cookie_not_token.py
 test_login_flow.py
 test_login_records.py
 test_lost_send_event.py
@@ -427,6 +432,7 @@ test_reference_todo_file.py
 test_reference_todo_file_withdraw.py
 test_relay_context.py
 test_remote_clone_discovery.py
+test_remote_ws_set_cookie_strip.py
 test_remotes_panel_render.py
 test_remotes_stale_and_persist.py
 test_rename_route.py
@@ -454,6 +460,8 @@ test_sdk_venv_abi.py
 test_server_bind_skips_reverse_dns.py
 test_serving_mirror.py
 test_session_auth.py
+test_session_cookie_auth.py
+test_session_cookie_per_kernel.py
 test_session_emoji.py
 test_session_env.py
 test_session_events_ledger.py

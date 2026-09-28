@@ -335,8 +335,10 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   module-level write (planted). This tier rests on an untampered run (pytest and
   its plugins as installed, and no code outside the conftest changing what
   pytest runs for a test) and on a reviewed conftest: the filter refuses any
-  hook it does not list, so only code it takes on trust can key a removal on
-  such a signal. And
+  hook it does not list, except a `pytest_make_collect_report` whose body, and
+  the body of every function it calls, the filter reads and proves drops no
+  test from a collector's report and sets no outcome but a failure, so only code
+  it takes on trust can key a removal on such a signal. And
   `ROMP_MODELS_URL` (read at kernel import,
   port 9 of 127.0.0.1 and no other); a check over the table itself holds every
   licence to a per-write condition and every temporary one to a since date and a

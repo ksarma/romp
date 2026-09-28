@@ -1500,6 +1500,7 @@ _OWN_TREE_ROADS = (
     "HermeticKernelPostal._the_drops_count_body",
     "HermeticKernelPostal.test_a_bare_name_is_a_call_only_as_a_decorator_or_a_metaclass_and_a_base_runs_its_init_subclass",
     "HermeticKernelPostal.test_a_call_chain_longer_than_the_cap_raises_naming_the_chain_and_a_cycle_is_cut",
+    "HermeticKernelPostal.test_a_collect_report_hook_is_admitted_by_the_shape_the_reader_proves_and_any_other_is_refused_naming_why",
     "HermeticKernelPostal.test_a_fixture_another_modules_code_registers_over_by_name_re_asserts_nothing",
     "HermeticKernelPostal.test_a_hook_that_may_keep_pytest_from_running_a_fixture_refuses_it_on_both_roads",
     "HermeticKernelPostal.test_a_name_is_read_through_its_first_binding_alone_and_a_later_binding_or_a_parameter_makes_it_loud",
@@ -5349,19 +5350,47 @@ _LISTED_HOOKS = {
 }
 #   THE HOOKS A MODULE MAY IMPLEMENT and still have its fixtures counted (the verifier's finding at round 2's thirty-first
 #   commit of fork PR #894: a conftest hook kept pytest from running a fixture the reader counted, on both roads),
-#   {spec: when pytest calls it and what it reads from it}: the five tests/conftest.py implements. Pytest reads no result
-#   from any of them that decides whether a fixture runs before a test, where other hooks decide it
-#   (pytest_fixture_setup's result replaces the fixture's run, pytest_generate_tests can parametrize the fixture's name
+#   {spec: when pytest calls it and what it reads from it}: five of the six hooks tests/conftest.py implements (the sixth,
+#   pytest_make_collect_report, is admitted by the shape the reader proves of its body, not by its name: _SHAPE_HOOKS).
+#   Pytest reads no result from any of them that decides whether a fixture runs before a test, where other hooks decide
+#   it (pytest_fixture_setup's result replaces the fixture's run, pytest_generate_tests can parametrize the fixture's name
 #   over it, pytest_collection_modifyitems can take it out of a test's fixtures, pytest_runtest_protocol and
 #   pytest_runtestloop replace the runner), so every hook off this list refuses every fixture of the module, a hook
-#   pytest adds in a later release included. ONE EXCEPTION on the list: pytest reads pytest_runtest_makereport's setup
+#   pytest adds in a later release included, unless it is a hook of _SHAPE_HOOKS whose shape the reader proves. ONE
+#   EXCEPTION on the list: pytest reads pytest_runtest_makereport's setup
 #   report to decide whether the test's body runs, so a report made to pass where the setup failed would run the body
 #   after a fixture raised before its re-assert. What a listed hook can still do through its code (that report, a
 #   plugin registered from pytest_configure, a collected node edited) is refused on the text road, which reads a hook's
 #   body by THE PROVEN LIST (no call, no attribute write) and refuses a hook that returns or yields a value, and taken on
 #   trust on the module road (_conftest_reasserted_names names it: tests/conftest.py's pytest_runtest_makereport turns a
-#   skip into a failure and redacts text). The list equals the hooks tests/conftest.py implements (a pin compares them
-#   by equality), so a hook the conftest drops leaves the list with it.
+#   skip into a failure and redacts text). The list and the specs of _SHAPE_HOOKS together equal the hooks
+#   tests/conftest.py implements (a pin compares them by equality), so a hook the conftest drops leaves the list with it.
+_SHAPE_HOOKS = {
+    "pytest_make_collect_report": "pytest calls it for each collector, which collects inside it, and reads its result as "
+                                  "the collector's report: the items of a passed report (report.result) are the ones it "
+                                  "collects further and runs, and a failed report is a collection error",
+}
+#   THE HOOKS A MODULE MAY IMPLEMENT BY A PROVEN SHAPE, NOT BY THEIR NAME (the reviewer's ruling at fork PR #894's landing
+#   merge with main, where fork PR #872's never-skips belt added a pytest_make_collect_report to tests/conftest.py and
+#   the reader, which proved only the hooks of _LISTED_HOOKS, refused every fixture of the conftest), {spec: when pytest
+#   calls it and what it reads from it}. An implementation of pytest_make_collect_report can drop the test a fixture
+#   runs before, or make a failed collection pass or skip, so it is admitted only where the reader proves THE SHAPE
+#   (_collect_report_shape_faults) on the road the module is read by (_collect_report_module_faults on the module road,
+#   _collect_report_text_faults on the text road); any other implementation is refused, naming each fact the reader
+#   could not prove.
+_SHAPE_BUILTINS = {"getattr": (2, 3), "hasattr": (2, 2), "isinstance": (2, 2), "len": (1, 1), "str": (1, 1)}
+#   the builtins a body of THE SHAPE may call, {name: (fewest arguments, most)}, getattr's and hasattr's second argument a
+#   string literal: each reads its arguments and sets nothing. A name the module binds, or a module with a star import,
+#   is never read as a builtin, and on the module road the builtin the name reaches must be the builtin itself
+_SHAPE_STD_CALLS = {("os", "path", "basename"): 1}
+#   the functions of the standard library a body of THE SHAPE may call, {dotted name: its number of arguments}, each
+#   reached through a module-level `import os` bound once (on the module road, the module the name holds must be the
+#   one in sys.modules): os.path.basename reads a string
+_SHAPE_REPORT_WRITES = {"outcome": "failed", "longrepr": None}
+#   the attributes of the report a body of THE SHAPE may set, {attribute: the one literal it may be set to, or None for
+#   any proven value}: outcome to "failed" alone, and longrepr, the failure's text; beside them `del <report>.wasxfail`,
+#   an attribute pytest reads (Session.pytest_collectreport, its pytest_runtest_logreport under a second name) to count a
+#   failed report toward the exit status only when it is absent
 
 
 def _import_roots(where):
@@ -5457,6 +5486,319 @@ def _returns_a_value(fn):
     return False
 
 
+def _shape_resolver(tree, module=None):
+    """resolve(parts) -> (kind, what) for a call a body of THE SHAPE makes (_collect_report_shape_faults), `parts` the
+    dotted name it calls (_dotted), resolved BY BINDING over `tree`, the module's text, and on the module road over
+    `module` too, the module Python imported from that text: ("def", the def) for a name whose one binding in the module
+    is a def at its top with no decorator (on the module road, the module's attribute of that name must be the function
+    that def makes: its code's file the module's file, its code's name and first line the def's, the module's own
+    globals and no closure); ("builtin", name) for a name of _SHAPE_BUILTINS that the module never binds, in a module
+    with no star import (on the module road, the name absent from the module's globals and its builtins' entry the
+    builtin itself); ("std", parts) for a dotted name of _SHAPE_STD_CALLS whose first name has one binding, a `import os`
+    at the top of the module (on the module road, the module's os the one in sys.modules); else (None, why not)."""
+    bindings, star = _module_name_bindings(tree)
+    tops, imported = collections.defaultdict(list), collections.Counter()
+    for s in tree.body:
+        if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            tops[s.name].append(s)
+        elif isinstance(s, ast.Import):
+            imported.update(a.name for a in s.names if a.asname is None and "." not in a.name)
+    space = None if module is None else vars(module)
+    file = None if module is None else os.path.realpath(getattr(module, "__file__", None) or os.devnull)
+
+    def resolve(parts):
+        name, dotted = parts[0], ".".join(parts)
+        if len(parts) == 1 and bindings[name] == 1 and len(tops[name]) == 1:
+            d = tops[name][0]
+            if d.decorator_list:
+                return None, "a call of %s, a def with a decorator, whose name may hold a function other than the def's" % name
+            if space is not None:
+                obj = space.get(name)
+                code = getattr(obj, "__code__", None)
+                if not (inspect.isfunction(obj) and os.path.realpath(code.co_filename) == file and code.co_name == name
+                        and code.co_firstlineno == d.lineno and obj.__globals__ is space and obj.__closure__ is None):
+                    return None, ("a call of %s, which the module holds as something other than the function its def at "
+                                  "line %d makes" % (name, d.lineno))
+            return "def", d
+        if len(parts) == 1 and name in _SHAPE_BUILTINS and bindings[name] == 0 and not star:
+            if space is not None:
+                held = space.get("__builtins__", builtins)
+                held = vars(held) if inspect.ismodule(held) else held
+                if name in space or not isinstance(held, dict) or held.get(name) is not getattr(builtins, name):
+                    return None, "a call of %s, which the module does not reach as the builtin of that name" % name
+            return "builtin", name
+        if tuple(parts) in _SHAPE_STD_CALLS and bindings[name] == 1 and imported[name] == 1:
+            if space is not None and space.get(name) is not sys.modules.get(name):
+                return None, "a call of %s, whose %s the module holds as something other than the module of that name" % (
+                    dotted, name)
+            return "std", tuple(parts)
+        return None, ("a call of %s, which the reader resolves neither to a def at the top of the module that is its "
+                      "name's one binding, nor to a builtin of _SHAPE_BUILTINS the module does not bind, nor to a function "
+                      "of _SHAPE_STD_CALLS through the module's one import of it" % dotted)
+    return resolve
+
+
+def _collect_report_shape_faults(hook, resolve):
+    """[why] for each fact of THE SHAPE the reader cannot prove of the def `hook`, an implementation of
+    pytest_make_collect_report its caller has read as registered as an old-style hookwrapper, each naming its line;
+    empty when it proves them all. `resolve` resolves each call by its binding (_shape_resolver). THE SHAPE (the
+    reviewer's ruling at fork PR #894's landing merge with main): the result pytest reads is the report made by the
+    implementation the hook wraps, never replaced, none of that report's items dropped, and its outcome left as it was
+    or turned into "failed", never into a pass or a skip. The reader proves it by reading the hook's body and the body of
+    every def it calls, at any depth, by these rules; anything off them is a fault:
+    - THE HOOK: a plain def (not async) whose parameters are collector or none (pytest passes an implementation its
+      arguments by name, and collector is this hook's one), none defaulted, no *args, keyword-only or **kwargs; its body,
+      after a docstring, begins `<name> = yield`, the one yield of the def, which binds the hookwrapper's outcome to a name
+      bound nowhere else and read only as `<name>.get_result()` with no argument (force_result and force_exception, or
+      the outcome handed on, may replace the report pytest reads); it returns no value;
+    - EVERY DEF IT CALLS: resolved, so a def at the top of the module that is its name's one binding, with no decorator,
+      its parameters positional and none defaulted, called with as many positional arguments and no keyword; it does not
+      yield;
+    - THE REPORT, followed by binding: the value of `<outcome>.get_result()`, and a name that holds it, a parameter a call
+      hands it or a local name assigned it, which must be that name's one binding in its def (a parameter never rebound);
+    - THE STATEMENTS: a string (a docstring), an if, an assignment of a proven value to one local name, a call as a
+      statement, a pass, and a return (of a proven value in a def the hook calls); an assignment to an attribute only of
+      a name that holds the report and only of _SHAPE_REPORT_WRITES (outcome to "failed" alone, longrepr to a proven
+      value); a del only of the report's wasxfail; every other statement is off (a for, a while, a with, a try, a raise,
+      an augmented or annotated assignment, a subscript or starred target, an import, a global, a nested def or class);
+    - THE VALUES: a literal, an f-string, a tuple, list, set or dict display with no unpacking, a name, an attribute or a
+      subscript read, an operator, a comparison and a conditional expression, over proven parts, and a call the resolver
+      resolves: a def of the module, proven in turn with the report followed into its parameters, or a builtin of
+      _SHAPE_BUILTINS or a function of _SHAPE_STD_CALLS with its number of arguments (getattr's and hasattr's name a
+      string literal); every other value is off (a call it cannot resolve, among them one through a name bound in the
+      def and a method of any object, a lambda, a comprehension, a walrus, an await, a yield, a starred value).
+    So nothing writes the report's items, nor anything but the report's outcome, to "failed", and its text, and no call
+    reaches code the reader did not read. What it takes on trust, as the proven list does: the methods the forms it
+    admits call implicitly (an attribute or subscript read, an operator, a comparison, isinstance's check, str(), an
+    f-string's formatting), which on a report, its text, a collector and the module's own values it reads by name
+    (tests/conftest.py's _NEVER_SKIP_FILES, a tuple of strings) read and change nothing; and an exception, which any
+    read may raise: the
+    old-style hookwrapper raises it out of the hook's call, and pytest ends the run with an internal error (exit status
+    3), never a pass or a skip (a run by hand at the eighty-second commit of round 2, pytest 9.1.1 and pluggy 1.6.0; not
+    pinned)."""
+    faults, seen = [], set()
+
+    def prove(d, reports, called):
+        key = (id(d), reports)
+        if key in seen:
+            return
+        seen.add(key)
+        is_hook = d is hook
+        where = "" if is_hook else " (in %s, line %d, reached by %s)" % (d.name, d.lineno, " > ".join(called))
+
+        def fault(node, why):
+            faults.append("line %d: %s%s" % (getattr(node, "lineno", d.lineno), why, where))
+        if len(called) > _CALL_DEPTH_CAP:
+            fault(d, "a chain of calls longer than %d" % _CALL_DEPTH_CAP)
+            return
+        a = d.args
+        if isinstance(d, ast.AsyncFunctionDef) or a.posonlyargs or a.vararg or a.kwonlyargs or a.kwarg or a.defaults:
+            fault(d, "%s is not a plain def whose parameters are positional with no default" % d.name)
+            return
+        params = [p.arg for p in a.args]
+        if is_hook and any(p != "collector" for p in params):
+            fault(d, "the hook's parameters %s are not collector or none, the one argument pytest passes it" % params)
+            return
+        body = d.body
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+            body = body[1:]
+        stores = collections.Counter(n.id for s in d.body for n in ast.walk(s)
+                                     if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)))
+        local = set(params) | set(stores)
+        yields = [n for s in d.body for n in ast.walk(s) if isinstance(n, (ast.Yield, ast.YieldFrom))]
+        outcome = None
+        if is_hook:
+            first = body[0] if body else d
+            if not (isinstance(first, ast.Assign) and len(first.targets) == 1 and isinstance(first.targets[0], ast.Name)
+                    and isinstance(first.value, ast.Yield) and first.value.value is None and len(yields) == 1):
+                fault(first, "the hook's body does not begin, after a docstring, with `<name> = yield` as the one yield of "
+                             "the def (it has %d), which binds the hookwrapper's outcome" % len(yields))
+                return
+            outcome, body = first.targets[0].id, body[1:]
+            if stores[outcome] != 1 or outcome in params:
+                fault(first, "the name %s, which the yield binds to the hookwrapper's outcome, is bound again" % outcome)
+        elif yields:
+            fault(yields[0], "a yield, which makes %s a generator, whose body a call does not run" % d.name)
+            return
+
+        def got(n):
+            return (outcome is not None and isinstance(n, ast.Call) and not n.args and not n.keywords
+                    and isinstance(n.func, ast.Attribute) and n.func.attr == "get_result"
+                    and isinstance(n.func.value, ast.Name) and n.func.value.id == outcome)
+        mine, grew = set(reports), True
+        while grew:     # loop-ok: bounded by the names the def binds
+            grew = False
+            for n in (n for s in body for n in ast.walk(s)):
+                if (isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+                        and n.targets[0].id not in mine
+                        and (got(n.value) or (isinstance(n.value, ast.Name) and n.value.id in mine))):
+                    mine.add(n.targets[0].id)
+                    grew = True
+        for name in sorted(mine):
+            if stores[name] != (0 if name in params else 1):
+                fault(d, "the name %s, which holds the report, is bound again in the def, so what it holds where a write "
+                         "goes through it is not read as the report" % name)
+
+        def report(n):
+            return got(n) or (isinstance(n, ast.Name) and n.id in mine)
+
+        def call(n):
+            if got(n):
+                return
+            text = ast.unparse(n.func)
+            parts = _dotted(n.func)
+            if n.keywords or any(isinstance(x, ast.Starred) for x in n.args):
+                fault(n, "a call of %s that passes a keyword or unpacks its arguments" % text)
+                return
+            if parts is None:
+                fault(n, "a call of %s, which the reader cannot resolve: its callee is no dotted name" % text)
+                return
+            if parts[0] == outcome:
+                fault(n, "the hookwrapper's outcome used as %s(...), where the reader admits %s.get_result() alone "
+                         "(force_result and force_exception replace the report pytest reads)" % (text, outcome))
+                return
+            if parts[0] in local:
+                fault(n, "a call of %s, through %s, a name bound in the def, which the reader cannot resolve"
+                         % (text, parts[0]))
+                return
+            kind, what = resolve(parts)
+            if kind is None:
+                fault(n, what)
+                return
+            for x in n.args:
+                value(x)
+            if kind == "builtin":
+                low, high = _SHAPE_BUILTINS[what]
+                if not low <= len(n.args) <= high or (what in ("getattr", "hasattr") and not (
+                        isinstance(n.args[1], ast.Constant) and isinstance(n.args[1].value, str))):
+                    fault(n, "a call of %s with %d arguments or a name that is no string literal, where the reader "
+                             "reads it with %d to %d and a literal name" % (what, len(n.args), low, high))
+            elif kind == "std":
+                if len(n.args) != _SHAPE_STD_CALLS[what]:
+                    fault(n, "a call of %s with %d arguments" % (text, len(n.args)))
+            elif len(n.args) != len(what.args.args):
+                fault(n, "a call of %s with %d arguments, where its def at line %d has %d parameters"
+                         % (text, len(n.args), what.lineno, len(what.args.args)))
+            else:
+                prove(what, frozenset(p.arg for p, x in zip(what.args.args, n.args) if report(x)), called + (what.name,))
+
+        def value(n):
+            if n is None or isinstance(n, ast.Constant):
+                return
+            if isinstance(n, ast.Name):
+                if n.id == outcome:
+                    fault(n, "the hookwrapper's outcome %s read other than as %s.get_result() (force_result and "
+                             "force_exception, or the outcome handed on, may replace the report pytest reads)"
+                             % (outcome, outcome))
+                return
+            if isinstance(n, ast.Call):
+                call(n)
+                return
+            if isinstance(n, ast.Dict) and any(k is None for k in n.keys):
+                fault(n, "a dict display that unpacks a mapping")
+                return
+            parts = {ast.Attribute: ("value",), ast.Subscript: ("value", "slice"), ast.Slice: ("lower", "upper", "step"),
+                     ast.BoolOp: ("values",), ast.BinOp: ("left", "right"), ast.UnaryOp: ("operand",),
+                     ast.Compare: ("left", "comparators"), ast.IfExp: ("test", "body", "orelse"),
+                     ast.JoinedStr: ("values",), ast.FormattedValue: ("value", "format_spec"), ast.Tuple: ("elts",),
+                     ast.List: ("elts",), ast.Set: ("elts",), ast.Dict: ("keys", "values")}.get(type(n))
+            if parts is None:
+                fault(n, "a %s expression, which THE SHAPE does not read" % type(n).__name__)
+                return
+            for field in parts:
+                got_ = getattr(n, field)
+                for x in (got_ if isinstance(got_, list) else [got_]):
+                    value(x)
+
+        def stmts(block):
+            for s in block:
+                if isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and isinstance(s.value.value, str):
+                    continue
+                if isinstance(s, ast.Expr) and isinstance(s.value, ast.Call):
+                    value(s.value)
+                elif isinstance(s, ast.If):
+                    value(s.test)
+                    stmts(s.body)
+                    stmts(s.orelse)
+                elif isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name):
+                    value(s.value)
+                elif (isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Attribute)
+                      and isinstance(s.targets[0].value, ast.Name) and s.targets[0].value.id in mine):
+                    attr, want = s.targets[0].attr, _SHAPE_REPORT_WRITES.get(s.targets[0].attr)
+                    if attr not in _SHAPE_REPORT_WRITES:
+                        fault(s, "a write of %s, an attribute of the report other than those of _SHAPE_REPORT_WRITES "
+                                 "(outcome, to \"failed\" alone, and longrepr)" % ast.unparse(s.targets[0]))
+                    elif want is not None and not (isinstance(s.value, ast.Constant) and s.value.value == want
+                                                   and isinstance(s.value.value, str)):
+                        fault(s, "the report's %s set to %s, where the one value THE SHAPE sets it to is %r"
+                                 % (attr, ast.unparse(s.value), want))
+                    else:
+                        value(s.value)
+                elif isinstance(s, ast.Delete):
+                    for t in s.targets:
+                        if not (isinstance(t, ast.Attribute) and t.attr == "wasxfail" and isinstance(t.value, ast.Name)
+                                and t.value.id in mine):
+                            fault(s, "a del of %s, where THE SHAPE deletes the report's wasxfail alone" % ast.unparse(t))
+                elif isinstance(s, ast.Return):
+                    if is_hook and s.value is not None:
+                        fault(s, "the hook returns a value, which pytest may read as its result")
+                    value(s.value)
+                elif isinstance(s, ast.Pass):
+                    continue
+                elif isinstance(s, ast.Assign):
+                    fault(s, "an assignment to %s, a target other than one local name or an attribute of a name that "
+                             "holds the report" % ", ".join(ast.unparse(t) for t in s.targets))
+                else:
+                    fault(s, "a %s statement, which THE SHAPE does not read" % type(s).__name__)
+        stmts(body)
+    prove(hook, frozenset(), (hook.name,))
+    return faults
+
+
+def _collect_report_module_faults(module, attr, tree):
+    """[why] for each fact the reader cannot prove of the hook implementation pytest takes from `module` under `attr`
+    (_pytest_hook_impls) as THE SHAPE, read on THE MODULE ROAD, with `tree` the module's text (the text road's reader,
+    _reassert_sites, parsed it from the same file); empty when it proves them all. The routine must be a function Python
+    compiled from one def at the top of that text (its code's file the module's file, its code's name the def's and its
+    first line the first decorator's, the code match of _why_pytest_does_not_run), in the module's own globals and with no
+    closure; the installed pytest must register it as an old-style hookwrapper (PytestPluginManager.parse_hookimpl_opts,
+    the parse pytest registers a conftest's hooks by: hookwrapper and not wrapper); and the def must have THE SHAPE
+    (_collect_report_shape_faults), its calls resolved over the module and its text (_shape_resolver)."""
+    fn = getattr(module, attr, None)
+    code = getattr(fn, "__code__", None)
+    defs = [d for d in tree.body if isinstance(d, (ast.FunctionDef, ast.AsyncFunctionDef)) and code is not None
+            and d.name == code.co_name and (d.decorator_list[0] if d.decorator_list else d).lineno == code.co_firstlineno]
+    if not (inspect.isfunction(fn) and len(defs) == 1 and fn.__globals__ is vars(module) and fn.__closure__ is None
+            and os.path.realpath(code.co_filename) == os.path.realpath(getattr(module, "__file__", None) or os.devnull)):
+        return ["%s is not a function compiled from one def at the top of the module's text, in the module's own globals "
+                "and with no closure, so the reader has no body to read" % attr]
+    from _pytest.config import PytestPluginManager
+    opts = PytestPluginManager().parse_hookimpl_opts(module, attr) or {}
+    faults = []
+    if not opts.get("hookwrapper") or opts.get("wrapper"):
+        faults.append("pytest registers %s with hookwrapper=%r and wrapper=%r, not as an old-style hookwrapper, where the "
+                      "result pytest reads is the result of the implementation it wraps"
+                      % (attr, opts.get("hookwrapper", False), opts.get("wrapper", False)))
+    return faults + _collect_report_shape_faults(defs[0], _shape_resolver(tree, module))
+
+
+def _collect_report_text_faults(fn, tree, pytest_path):
+    """[why] for each fact the reader cannot prove of the def `fn`, an implementation of pytest_make_collect_report at the
+    top of `tree`, as THE SHAPE, read on THE TEXT ROAD (_unproven_statements' hook clause); empty when it proves them
+    all. Its one decorator must be pytest.hookimpl, as the clause's own `pytest_path` reaches it, called with
+    hookwrapper=True and with no keyword but tryfirst, trylast and specname, each a literal (hook_spec has read specname);
+    and the def must have THE SHAPE (_collect_report_shape_faults), its calls resolved over the text (_shape_resolver)."""
+    faults = []
+    marks = [d for d in fn.decorator_list if isinstance(d, ast.Call) and pytest_path(d.func) == ("hookimpl",)]
+    kw = {k.arg: k.value for k in marks[0].keywords} if len(fn.decorator_list) == 1 and len(marks) == 1 else {}
+    if not (isinstance(kw.get("hookwrapper"), ast.Constant) and kw["hookwrapper"].value is True) or any(
+            k not in ("hookwrapper", "tryfirst", "trylast", "specname") or not isinstance(v, ast.Constant) for k, v in kw.items()):
+        faults.append("%s is not decorated by pytest.hookimpl(hookwrapper=True) alone (tryfirst, trylast and specname "
+                      "aside, each a literal), so the reader does not read it as an old-style hookwrapper, where the result "
+                      "pytest reads is the result of the implementation it wraps" % fn.name)
+    return faults + _collect_report_shape_faults(fn, _shape_resolver(tree))
+
+
 def _unproven_statements(tree, where=None):
     """[(line, what)] for every statement of `tree`, wherever it stands, that is off THE PROVEN LIST below, and every
     hook implementation of the module THE HOOK CLAUSE does not prove, each named with why the reader cannot prove it
@@ -5515,9 +5857,11 @@ def _unproven_statements(tree, where=None):
     THE HOOK CLAUSE: every module-level name beginning pytest_ that the module binds (pytest's prefix for the hook
     implementations it takes from a plugin, which _pytest_hook_impls reads on the module road) is bound once, by a def at
     the top of the module, whose spec (the string literal its one pytest.hookimpl decorator passes as specname=, else its
-    name) is one of _LISTED_HOOKS, and whose own body neither returns nor yields a value (_returns_a_value); a hookimpl
-    that passes a positional argument, unpacked keywords or a specname= that is not a literal is off the list, and so is
-    pytest_plugins, which pytest reads to import plugins.
+    name) is one of _LISTED_HOOKS, or one of _SHAPE_HOOKS whose shape _collect_report_text_faults proves of the def (by
+    that shape, never by its name: the reviewer's ruling at fork PR #894's landing merge with main), and whose own body
+    neither returns nor yields a value (_returns_a_value); a hookimpl that passes a positional argument, unpacked
+    keywords or a specname= that is not a literal is off the list, and so is pytest_plugins, which pytest reads to
+    import plugins.
     What the list takes on trust, all of it outside the module's text: code that runs before the module whatever its text
     says (its package's __init__.py, which Python imports first, a plugin, the interpreter's startup), which may rebind
     pytest.fixture or an attribute of the standard library before the module's first line; a directory ahead of the
@@ -5824,9 +6168,15 @@ def _unproven_statements(tree, where=None):
         spec, why = hook_spec(fn)
         if why:
             off(fn, why)
+        elif spec in _SHAPE_HOOKS:
+            faults = _collect_report_text_faults(fn, tree, pytest_path)
+            if faults:
+                off(fn, "a hook implementation of %s, which the reader admits only by the shape it proves of it "
+                        "(_SHAPE_HOOKS), and cannot prove: %s" % (spec, "; ".join(faults)))
         elif spec not in _LISTED_HOOKS:
             off(fn, "a hook implementation of %s, which pytest may call to decide whether a fixture runs before a test, "
-                    "or in its place: the reader proves only the hooks of _LISTED_HOOKS" % spec)
+                    "or in its place: the reader proves only the hooks of _LISTED_HOOKS, and those of _SHAPE_HOOKS by "
+                    "their shape" % spec)
         if _returns_a_value(fn):
             off(fn, "the hook %s returns or yields a value, which pytest may read as the hook's result (a report made to "
                     "pass, a fixture's value)" % name)
@@ -5957,21 +6307,31 @@ def _pytest_hook_impls(module):
     return out
 
 
-def _why_a_hook_may_stop_it(hooks):
-    """None when every hook implementation in `hooks` (_pytest_hook_impls) is of a spec on _LISTED_HOOKS and the module
-    has no pytest_plugins, else why not, naming each other one: the module road's half for the hooks (the verifier's
-    finding at round 2's thirty-first commit of fork PR #894: a conftest's pytest_fixture_setup, pytest_generate_tests or
-    pytest_collection_modifyitems kept pytest from running a fixture whose registration the reader had proven). A hook
-    off the list refuses every fixture of the module, since one hook can reach every fixture."""
+def _why_a_hook_may_stop_it(hooks, module=None, tree=None):
+    """None when every hook implementation in `hooks` (_pytest_hook_impls) is of a spec on _LISTED_HOOKS, or of a spec of
+    _SHAPE_HOOKS whose shape the reader proves of `module`'s implementation (_collect_report_module_faults, over `tree`,
+    the module's text), and the module has no pytest_plugins, else why not, naming each other one: the module road's
+    half for the hooks (the verifier's finding at round 2's thirty-first commit of fork PR #894: a conftest's
+    pytest_fixture_setup, pytest_generate_tests or pytest_collection_modifyitems kept pytest from running a fixture whose
+    registration the reader had proven). A hook off the list refuses every fixture of the module, since one hook can
+    reach every fixture, and so does a hook of _SHAPE_HOOKS whose shape the reader cannot prove, or has no module and
+    text to read it from."""
     whys = []
     for attr, spec in hooks:
         if spec is None:
             whys.append("it has pytest_plugins, which pytest reads to import plugins whose hooks and fixtures the reader "
                         "does not read")
+        elif spec in _SHAPE_HOOKS:
+            faults = (_collect_report_module_faults(module, attr, tree) if module is not None and tree is not None
+                      else ["the reader was handed no module and text to read its shape from"])
+            if faults:
+                whys.append("it implements the hook %s%s, which the reader admits only by the shape it proves of it "
+                            "(_SHAPE_HOOKS), and cannot prove: %s"
+                            % (spec, "" if attr == spec else " (as %s)" % attr, "; ".join(faults)))
         elif spec not in _LISTED_HOOKS:
             whys.append("it implements the hook %s%s, which pytest may call to decide whether a fixture runs before a test, "
-                        "or in its place: the reader proves only the hooks of _LISTED_HOOKS"
-                        % (spec, "" if attr == spec else " (as %s)" % attr))
+                        "or in its place: the reader proves only the hooks of _LISTED_HOOKS, and those of _SHAPE_HOOKS by "
+                        "their shape" % (spec, "" if attr == spec else " (as %s)" % attr))
     return "; ".join(whys) or None
 
 
@@ -5988,7 +6348,8 @@ def _registration_refusals(tree, candidates, real, where=None):
     autouse fixture defs of `tree`), by the reader's two roads. THE MODULE ROAD, for tests/conftest.py (`real`): the
     fixtures of the module Python imported (_real_conftest_module), read the way pytest registers them
     (_pytest_registrations, _why_pytest_does_not_run), and its hook implementations, read the way pytest takes them
-    (_pytest_hook_impls, _why_a_hook_may_stop_it: a hook off _LISTED_HOOKS, or pytest_plugins, refuses every fixture); a
+    (_pytest_hook_impls, _why_a_hook_may_stop_it: a hook off _LISTED_HOOKS, unless it is a hook of _SHAPE_HOOKS whose
+    shape the reader proves of the module's implementation over `tree`, or pytest_plugins, refuses every fixture); a
     module that cannot be imported, is not tests/conftest.py, or whose fixtures or hooks cannot be read so refuses every
     fixture, naming why. THE TEXT ROAD, for a source handed in: every fixture is refused while any statement of the
     module, wherever it stands, or any of its hook implementations is off the proven list (_unproven_statements), and
@@ -6015,7 +6376,7 @@ def _registration_refusals(tree, candidates, real, where=None):
         except Exception as e:
             return dict.fromkeys(map(id, candidates), "the reader could not read the module's hook implementations the way "
                                  "pytest takes them (%s: %s)" % (type(e).__name__, e))
-        stop = _why_a_hook_may_stop_it(hooks)
+        stop = _why_a_hook_may_stop_it(hooks, module, tree)
         if stop:
             return dict.fromkeys(map(id, candidates), stop)
         return {id(fn): _why_pytest_does_not_run(fn, registrations, file) for fn in candidates}
@@ -6034,8 +6395,9 @@ def _conftest_reasserted_names(src=None, where=None):
     two frozensets kept apart (a pin that reads a pop asks for the removals), and one line per fixture refused.
     THE RULE (the ruling on the verifier's findings at round 2's twentieth commit of fork PR #894, and the hook clause
     since its thirty-first): a function-scoped autouse fixture counts only when the reader proves that the fixture pytest
-    runs under the name this def is registered by is this def and that no hook of the module but those on _LISTED_HOOKS
-    can keep pytest from running it, and anything it cannot prove is refused, named in `refused`. It reads for
+    runs under the name this def is registered by is this def and that no hook of the module but those on _LISTED_HOOKS,
+    and those of _SHAPE_HOOKS whose shape it proves (never by their name, since the reviewer's ruling at the PR's
+    landing merge with main), can keep pytest from running it, and anything it cannot prove is refused, named in `refused`. It reads for
     tests/conftest.py the fixtures and the hooks of the module Python imported, as pytest registers them, and for a
     source handed in its text alone, where every statement, wherever it stands, and every hook implementation must be on
     the proven list and every name the def could be registered under bound once in the module, by the def or its literal
@@ -6078,7 +6440,9 @@ def _conftest_reasserted_names(src=None, where=None):
     since the reader reads tests/conftest.py alone. On the module road, what tests/conftest.py's own code does beyond
     what pytest registers from it, which the reader takes on trust since it would refuse the conftest if it read that
     code by the proven list (the text road refuses it on the statements the registration test prints): its import-time
-    code, its fixtures' bodies and the bodies of its hooks on _LISTED_HOOKS may register a plugin, patch pytest's code,
+    code, its fixtures' bodies and the bodies of its hooks on _LISTED_HOOKS (not its pytest_make_collect_report, whose
+    body and every def it calls the reader reads, THE SHAPE of _collect_report_shape_faults) may register a plugin,
+    patch pytest's code,
     change pytest's options or edit a test's fixtures (a fixture that registers a plugin whose hook takes `_f` out of
     each test's fixtures is planted, a pop the reader counts and pytest never runs, and so are an in-place operator
     that empties a test's list of fixtures in a listed pytest_collectreport and in an autouse fixture, and one that
@@ -6187,7 +6551,10 @@ def _conftest_reasserted_names(src=None, where=None):
     a test changes in the test process after pytest registered it. This tier rests on two conditions the proof does not
     check. The run is untampered: pytest and its plugins as installed, and no code outside tests/conftest.py changing
     what pytest runs for a test. And tests/conftest.py is reviewed: the filter refuses every fixture of a module with a
-    hook off _LISTED_HOOKS (test_a_hook_that_may_keep_pytest_from_running_a_fixture_refuses_it_on_both_roads), so the
+    hook off _LISTED_HOOKS (test_a_hook_that_may_keep_pytest_from_running_a_fixture_refuses_it_on_both_roads) but a hook
+    of _SHAPE_HOOKS whose shape it proves, which keys no removal on any signal that leaves the run green: it drops no
+    item from a report, and the one outcome it sets is "failed", a collection error
+    (test_a_collect_report_hook_is_admitted_by_the_shape_the_reader_proves_and_any_other_is_refused_naming_why), so the
     conftest reaches this tier only by code the module road takes on trust (import-time code, a fixture's body, a listed
     hook's body) that keys a removal on such a signal, code a review of the conftest reads."""
     sites, refused = _reassert_sites(src, where)
@@ -10414,7 +10781,10 @@ class HermeticKernelPostal(unittest.TestCase):
         off the list, under its own name, by specname=, a lambda or a builtin, and pytest_plugins, each refused naming
         it; a listed hook, a non-routine and a routine whose name does not begin pytest_ pass, and a routine the module's
         __dir__ leaves out is read as pytest reads a plugin, through dir(), so not at all. THE REAL
-        tests/conftest.py: its hooks are the listed five, by equality."""
+        tests/conftest.py: its hooks are the listed five and the one hook of _SHAPE_HOOKS, pytest_make_collect_report,
+        by equality, the last admitted by the shape the reader proves of it on the module road
+        (test_a_collect_report_hook_is_admitted_by_the_shape_the_reader_proves_and_any_other_is_refused_naming_why pins
+        that shape's refusals)."""
         drop = ("        if '_f' in {i}.fixturenames and str({i}.path).startswith(os.path.dirname(os.path.realpath(__file__))):\n"
                 "            {i}.fixturenames.remove('_f')\n")
 
@@ -10612,9 +10982,150 @@ class HermeticKernelPostal(unittest.TestCase):
         hidden = module(pytest_configure=hook, pytest_fixture_setup=hook, __dir__=lambda: ["pytest_configure"])
         self.assertEqual(_pytest_hook_impls(hidden), [("pytest_configure", "pytest_configure")],
                          "pytest registers a plugin's hooks from dir() (a module's own __dir__ included), and so does the reader")
-        real = _pytest_hook_impls(_real_conftest_module())
-        self.assertEqual((sorted(spec for _a, spec in real), _why_a_hook_may_stop_it(real)), (sorted(_LISTED_HOOKS), None),
-                         "THE REAL tests/conftest.py implements exactly the listed hooks, and has no pytest_plugins")
+        real_module = _real_conftest_module()
+        real = _pytest_hook_impls(real_module)
+        real_tree = ast.parse(open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read())
+        self.assertEqual((sorted(spec for _a, spec in real), _why_a_hook_may_stop_it(real, real_module, real_tree)),
+                         (sorted(set(_LISTED_HOOKS) | set(_SHAPE_HOOKS)), None),
+                         "THE REAL tests/conftest.py implements exactly the listed hooks and the hooks of _SHAPE_HOOKS, the "
+                         "reader proves the shape of each of the latter, and it has no pytest_plugins")
+
+    def test_a_collect_report_hook_is_admitted_by_the_shape_the_reader_proves_and_any_other_is_refused_naming_why(self):
+        """THE SHAPE (the reviewer's ruling at fork PR #894's landing merge with main: fork PR #872's never-skips belt added
+        a pytest_make_collect_report to tests/conftest.py, the reader refused it by its name and with it every fixture of
+        the conftest, and 13 tests of this module were red on the merge). A pytest_make_collect_report is admitted only
+        where the reader proves the shape of its body (_collect_report_shape_faults: the report pytest reads is the one the
+        wrapped implementation made, none of its items dropped, its outcome kept or turned into "failed"), never by its
+        name. ADMITTED: the real conftest's hook on the module road, and a COPY of that hook and of every def it reaches
+        by name, taken from tests/conftest.py's own text by ast (its population derived, not listed) into a synthetic
+        conftest imported from a scratch file, on the module road (_why_a_hook_may_stop_it over the hooks pytest takes
+        from it), and on the text road with no fault of the hook clause (the proven list still refuses the copy's calls of
+        its own defs, as it refuses tests/conftest.py's). REFUSED, each a mutant of that copy, on the module road and,
+        where it has a text, on the text road, each refusal naming the fact the reader could not prove: an item dropped
+        (the report's items cleared by a method of them, and filtered by an attribute write), a failure turned into a
+        skip and into a pass (the flip's own outcome), a def the hook reaches that sets the outcome to "passed" on one
+        branch, the report replaced (force_result, and a wrapper=True implementation that returns a report of its own),
+        the outcome read other than by get_result(), a callee the reader cannot resolve (one reached through a subscript,
+        one through a name bound in the hook, one whose name the module binds twice, and, on the module road alone, one
+        the module holds as a function other than the one its def makes), a plain implementation that is no hookwrapper,
+        and a hook of _SHAPE_HOOKS read with no module and text to read its shape from. Each refusal is a subtest red
+        under a reader that admits the hook by its name alone (run at the commit that added this test)."""
+        src = open(os.path.join(HERE, "conftest.py"), encoding="utf-8").read()
+        tree = ast.parse(src)
+        real = _real_conftest_module()
+        self.assertEqual(_collect_report_module_faults(real, "pytest_make_collect_report", tree), [],
+                         "THE REAL tests/conftest.py's pytest_make_collect_report has THE SHAPE on the module road")
+        tops = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        reach, todo = [], ["pytest_make_collect_report"]
+        while todo:     # loop-ok: bounded by the conftest's top-level defs
+            name = todo.pop(0)
+            if name not in reach:
+                reach.append(name)
+                todo += [c.func.id for c in ast.walk(tops[name])
+                         if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id in tops]
+        self.assertIn("_fail_skipped_report", reach, "the conftest's hook reaches the flip every belt uses: %s" % reach)
+        lines = src.splitlines(keepends=True)
+
+        def segment(name):
+            d = tops[name]
+            return "".join(lines[(d.decorator_list[0] if d.decorator_list else d).lineno - 1:d.end_lineno])
+        hook = segment("pytest_make_collect_report")
+        copy = ("import os\n\nimport pytest\n\n_NEVER_SKIP_FILES = %r\n\n\n" % (real._NEVER_SKIP_FILES,)
+                + "\n\n".join(segment(name) for name in reach))
+        home = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, home, True)
+        made = []
+
+        def load(text, tweak=None):
+            d = os.path.join(home, "m%02d" % len(made))
+            os.mkdir(d)
+            path = os.path.join(d, "conftest.py")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            spec = importlib.util.spec_from_file_location("_shape_copy_%02d" % len(made), path)
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+            made.append(m)
+            if tweak is not None:
+                tweak(m)
+            return m, ast.parse(text), d
+
+        def clause(t, d):
+            return [w for _l, w in _unproven_statements(t, where=d) if "a hook implementation of pytest_make_collect_report" in w]
+        m, t, d = load(copy)
+        self.assertEqual(_collect_report_module_faults(m, "pytest_make_collect_report", t), [],
+                         "THE COPY has THE SHAPE on the module road:\n%s" % copy)
+        self.assertIsNone(_why_a_hook_may_stop_it(_pytest_hook_impls(m), m, t), "THE COPY's hooks stop no fixture")
+        self.assertEqual(clause(t, d), [], "THE COPY's hook passes the text road's hook clause")
+
+        def swap(old, new):
+            def mutate(text):
+                self.assertEqual(text.count(old), 1, "the mutation lands once: %r" % old)
+                return text.replace(old, new)
+            return mutate
+        call = "    _require_never_skip_collected(collector, outcome.get_result())\n"
+        flip = '    rep.outcome = "failed"\n'
+        refusal = "it implements the hook pytest_make_collect_report, which the reader admits only by the shape it proves"
+        # (label, the mutation of the copy's text, the word of the module road's refusal, the word of the text road's
+        # refusal (None: a mutant of the module object alone), a change to the imported module or None)
+        cases = (("an item dropped: the report's items cleared by a method of them",
+                  swap(call, call + "    outcome.get_result().result.clear()\n"),
+                  "a call of outcome.get_result().result.clear, which the reader cannot resolve", None, None),
+                 ("an item dropped: the report's items filtered by an attribute write",
+                  swap("    if rep.skipped and _node_file(collector) in _NEVER_SKIP_FILES:\n",
+                       "    rep.result = [i for i in rep.result or () if 'test_ci_sdk_pin' not in str(i)]\n"
+                       "    if rep.skipped and _node_file(collector) in _NEVER_SKIP_FILES:\n"),
+                  "a write of rep.result, an attribute of the report other than those of _SHAPE_REPORT_WRITES", None, None),
+                 ("a failure turned into a skip by the flip", swap(flip, '    rep.outcome = "skipped"\n'),
+                  "the report's outcome set to 'skipped', where the one value THE SHAPE sets it to is 'failed'", None, None),
+                 ("a failure turned into a pass by the flip", swap(flip, '    rep.outcome = "passed"\n'),
+                  "the report's outcome set to 'passed', where the one value THE SHAPE sets it to is 'failed'", None, None),
+                 ("a def the hook reaches that sets the outcome to passed on one branch",
+                  swap(flip, flip + '    if getattr(rep, "sections", None):\n        rep.outcome = "passed"\n'),
+                  "the report's outcome set to 'passed', where the one value THE SHAPE sets it to is 'failed' (in "
+                  "_fail_skipped_report", None, None),
+                 ("the report replaced by force_result",
+                  swap(call, "    rep = outcome.get_result()\n    _require_never_skip_collected(collector, rep)\n"
+                             "    outcome.force_result(type(rep)(rep.nodeid, 'passed', None, []))\n"),
+                  "the hookwrapper's outcome used as outcome.force_result(...)", None, None),
+                 ("the outcome read other than by get_result()",
+                  swap(call, "    _require_never_skip_collected(collector, outcome._result)\n"),
+                  "the hookwrapper's outcome outcome read other than as outcome.get_result()", None, None),
+                 ("a callee reached through a subscript",
+                  swap(call, "    (_require_never_skip_collected,)[0](collector, outcome.get_result())\n"),
+                  "which the reader cannot resolve: its callee is no dotted name", None, None),
+                 ("a callee through a name bound in the hook",
+                  swap(call, "    check = _require_never_skip_collected\n    check(collector, outcome.get_result())\n"),
+                  "a call of check, through check, a name bound in the def", None, None),
+                 ("a callee whose name the module binds twice",
+                  lambda text: text + "\n\n_require_never_skip_collected = lambda collector, rep: rep.result.clear()\n",
+                  "a call of _require_never_skip_collected, which the reader resolves neither to a def at the top of the "
+                  "module that is its name's one binding", None, None),
+                 ("a callee the module holds as a function other than the one its def makes", lambda text: text,
+                  "a call of _fail_skipped_report, which the module holds as something other than the function its def",
+                  False, lambda m: setattr(m, "_fail_skipped_report", lambda rep, longrepr: None)),
+                 ("a wrapper=True implementation that returns a report of its own",
+                  swap(hook, "@pytest.hookimpl(wrapper=True)\ndef pytest_make_collect_report(collector):\n    rep = yield\n"
+                             "    return type(rep)(rep.nodeid, 'passed', None, [])\n"),
+                  "with hookwrapper=False and wrapper=True, not as an old-style hookwrapper",
+                  "is not decorated by pytest.hookimpl(hookwrapper=True) alone", None),
+                 ("a plain implementation that is no hookwrapper",
+                  swap(hook, "def pytest_make_collect_report(collector):\n    return None\n"),
+                  "with hookwrapper=False and wrapper=False, not as an old-style hookwrapper",
+                  "is not decorated by pytest.hookimpl(hookwrapper=True) alone", None))
+        for label, mutate, module_word, text_word, tweak in cases:
+            with self.subTest(case=label):
+                m, t, d = load(mutate(copy), tweak)
+                why = _why_a_hook_may_stop_it(_pytest_hook_impls(m), m, t) or ""
+                self.assertTrue(why.startswith(refusal) and module_word in why,
+                                "THE MODULE ROAD refuses %s, naming %r: %s" % (label, module_word, why))
+                if text_word is not False:
+                    got = clause(t, d)
+                    self.assertTrue(len(got) == 1 and (text_word or module_word) in got[0],
+                                    "THE TEXT ROAD's hook clause refuses %s, naming %r: %s" % (label, text_word or module_word, got))
+        with self.subTest(case="a hook of _SHAPE_HOOKS read with no module and text"):
+            why = _why_a_hook_may_stop_it([("pytest_make_collect_report", "pytest_make_collect_report")]) or ""
+            self.assertTrue(why.startswith(refusal) and "handed no module and text" in why, why)
 
     def test_a_re_asserted_licence_holds_only_where_a_child_pytest_sees_the_fixtures_own_re_assert(self):
         """THE EXECUTION PROOF (the reviewer's ruling of 2026-09-24 21:09Z on round 2 of fork PR #894, (1): the static
