@@ -3072,8 +3072,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   element first hit at the compatibility mousedown, with the button down, or a mouse resting in the viewer, with none, and
   //   before that rule a tap on that element over the control, which goes away during the press, took the slot the viewer's
   //   tap filled and opened the tab with the sign covered at that tap's start (Firefox's cells of both shapes, red at ddb446fae
-  //   and under a gate without that rule, the shape with a mouse resting in the viewer also under one whose mouseout needs a
-  //   button down; each of its two clears defensive given the other, below); the rule ends at the tap's own mousedown, which
+  //   and under a gate without that rule and without the blur's rule, the shape with a mouse resting in the viewer also under
+  //   one whose mouseout needs a button down and that reads no blur, since the blur's rule refuses those cells too where the
+  //   viewer's window held the focus, as it does in them, while the node guard's rows red under a gate without that rule alone;
+  //   each of its two clears defensive given the other, below); the rule ends at the tap's own mousedown, which
   //   clears the flag, so the mouseout Firefox sends 20 to 35 ms after the viewer's own tap's click finds it clear. A blur of
   //   this window while a tap's compatibility mousedown is due empties the slot and clears that flag too (the same round's
   //   extra5-1, extra8-1 and extra8-2, with the coordinator's decisions on them): where the viewer's window held the focus, the
@@ -3118,11 +3120,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // its test of a primary contact and its clear at the tap's
   // own mousedown are pinned over the stand-in alone (the guard's rows of a contact that is not primary, whose primary contact
   // pressed another document, and of a tap whose click never came after its compatibility mousedown, each then another
-  // document's tap; no browser cell drives either order). The mouseout's rule is pinned as a whole: without it Firefox's cells of
-  // a tap whose compatibility events went to another document are red, and so are the node guard's rows of that mouseout with the
-  // button down and with none. Its two clears are each defensive given the other wherever that tap's compatibility mousedown
-  // reaches this window: with its clear of the slot dropped alone, its clear of the flag lets that mousedown empty the slot, so
-  // no test is red and no Firefox or WebKit cell changes, and its clear of the flag is defensive, above; the slot's clear alone
+  // document's tap; no browser cell drives either order). The mouseout's rule is pinned as a whole: without it the node guard's
+  // rows of that mouseout with the button down and with none are red, and so are Firefox's cells of a tap whose compatibility
+  // events went to another document once the blur's rule is dropped too, since the blur refuses them as well where the viewer's
+  // window held the focus, as it does in those cells (at this head they read the same under a gate without the mouseout's rule
+  // alone and opened under one without both); where no blur comes the mouseout's rule closes those shapes by itself (the
+  // round's probe under this gate's rules but the blur's read them 0 of 48, where the gate at ddb446fae opened 48 of 48,
+  // below). Its two clears are each defensive given the other wherever that tap's compatibility mousedown reaches this window:
+  // with its clear of the slot dropped alone, its clear of the flag lets that mousedown empty the slot, so no test is red and
+  // no Firefox or WebKit cell changes, and its clear of the flag is defensive, above; the slot's clear alone
   // decides only where no mousedown comes between that mouseout and a mouseup of detail 1 with its click, an order no engine was
   // measured to send. Its condition on the flag is defensive in every order an engine was measured to send: a mouseout that
   // empties the slot whatever the flag gives the same verdict on every recorded row of the three engines, and differs only on
@@ -3144,8 +3150,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // no pointerout, so they guard the other rules without the refusal of a record whose pointer left; the leave's arm for no
   // button has Chromium's frame-hide cells, a mouse's moved click with the frame shown again at once and 300 ms later and a
   // pen's still click with it shown 300 ms later, and the node guards' rows of that pointerout in Chromium's order, in
-  // Firefox's and by a pen, each red at ddb446fae and under a gate without that arm, the pen's cell and row also under one
-  // whose arm marks the mouse's records alone;
+  // Firefox's and by a pen, each red at ddb446fae, the rows also under a gate without that arm and the pen's row under one
+  // whose arm marks the mouse's records alone, and the cells under a gate without that arm and without the blur's rule, the
+  // pen's cell also under one whose arm marks the mouse's records alone and that reads no blur, since the blur's rule refuses
+  // those cells too where the viewer's window held the focus, as it does in them (at this head the three cells read the same
+  // under a gate without that arm alone and opened under one without both; where the element cancels its mousedown no blur
+  // comes and the arm alone closes those shapes, Chromium's grid 0 of 1,850 with and without the blur's rule in its
+  // measurement);
   // the autoscroll's order, WebKit's touch ending in a touchcancel and a pen in the touch order have node guards alone, since no
   // cell in the tree drives them: no browser here drives a pen in the touch order, no cell a touchcancel, and the autoscroll's
   // order needs Firefox's autoscroll preference set at the browser's launch, which the legs' shared launcher (real-viewer-leg.ts
