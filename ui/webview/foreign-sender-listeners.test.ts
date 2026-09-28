@@ -525,8 +525,9 @@ function uiSources(): string[] {
  *  runs before the body, so a default on it or on a second parameter would run ahead of the check), and every statement
  *  before the check must be a read of the message (a declaration initialised to <event>.data) or an early return whose
  *  condition inert accepts: no call, construct, tagged or substituted template, delete, await, yield, ++/--,
- *  assignment, or binary operator but &&, ||, ??, ===, !== and the comma (every other one can convert an operand: ==,
- *  !=, <, >, <=, >=, +, in, instanceof and the rest), and every property or element access reads off the event or a
+ *  assignment, or binary operator but &&, ||, ??, ===, !== and the comma (every other one can run page code: ==, !=,
+ *  <, >, <=, >=, + and the rest convert an operand, in converts its key and can hit a Proxy trap, and instanceof runs
+ *  Symbol.hasInstance), and every property or element access reads off the event or a
  *  message read: off the event, its data at any depth (a structured clone, whose own members are plain data) or, one
  *  level and no deeper, its own origin, source, ports or lastEventId; off a name a message read bound to <event>.data,
  *  any depth. A read any further through the event can run a getter the page defined: its target, currentTarget and
@@ -562,8 +563,9 @@ function headCheck(site: Site): string | null {
   const NON_COERCING = new Set<number>([ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken,
     ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
     ts.SyntaxKind.CommaToken]);
-  /** The event's own attributes a pre-check may read one level deep: none runs page code, and a member of any of them could
-   *  (a member of its source is a member of the sending window). */
+  /** The event's own attributes a pre-check may read one level deep. A member of any of them is refused, since reading
+   *  it can run page code (a member of its source is a member of the sending window); a read of one of them runs its
+   *  getter on MessageEvent.prototype, which the page can replace, as headCheck's docstring says. */
   const EVENT_OWN = new Set(["origin", "source", "ports", "lastEventId"]);
   /** The leftmost node of a property or element access chain, casts and parentheses removed. */
   const accessRoot = (n: any): any => { n = unwrap(n); while (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) n = unwrap(n.expression); return n; };
@@ -1189,7 +1191,8 @@ test("the file classes read what they claim: a module of every suffix esbuild re
     // a .d.tsx is no declaration file to TypeScript, and esbuild bundles it (import "./probe.d" finds it): a module
     ["webview/probe.d.tsx", "modules"],
     ["webview/probe.test.ts", "tests and types"], ["webview/probe.test.tsx", "tests and types"], ["webview/probe.test.mjs", "tests and types"],
-    ["webview/probe.test.cjs", "tests and types"], ["webview/probe.test.jsx", "tests and types"], ["webview/probe.d.ts", "tests and types"],
+    ["webview/probe.test.cjs", "tests and types"], ["webview/probe.test.jsx", "tests and types"], ["webview/probe.test.mts", "tests and types"],
+    ["webview/probe.test.cts", "tests and types"], ["webview/probe.d.ts", "tests and types"],
     ["webview/probe.d.mts", "tests and types"], ["webview/probe.d.cts", "tests and types"],
     ["webview/probe.css", "stylesheets"], ["webview/anchor-map-fixtures/probe.json", "the anchor map's fixtures"],
     ["webview/anchor-map-fixtures/.gitattributes", "the anchor map's fixtures"], ["README.md", "ui's own markdown"],
@@ -1319,8 +1322,9 @@ test("an imported event name is read from the one file esbuild bundles for its b
 // ui/ has none of these today, so the rules cost nothing. What they cannot see, disclosed:
 //   - a window held where no initialiser shows it: in a parameter, in a let or var assigned later, behind a comma,
 //     conditional, || or ?? expression, in a Proxy, in an object or array it was put in, or returned by a function
-//     (Object(window) among them), and nested more than four names deep. An onmessage handler set on such a receiver is
-//     refused (the census resolves it to nothing); a method read off it by a computed name is not;
+//     (Object(window) among them), and one reached through a chain of more than five names, a local alias counting as
+//     one. An onmessage handler set on such a receiver is refused (the census resolves it to nothing); a method read
+//     off it, or a member written on it, under a computed key is not;
 //   - the body element reached other than as a document's body: a query for it, a frameset,
 //     document.documentElement.lastElementChild. A member written on it under a computed key sets its window's handler;
 //   - an event's source under a computed key (e.source[k] = f): source cannot join the event members above, since two
@@ -1686,7 +1690,7 @@ test("census: no ui/ source reaches a window listener by a computed name, runs a
   assert.deepEqual(bad, [], "a road to a window listener the censuses cannot read: spell the registration so they can\n" + bad.join("\n"));
 });
 
-test("the road census reads what it claims: every road around the spelled registration is refused, each for its reason, and a WebSocket's own handler, a handler cleared with null, a handler on this page's own window, a literal member and code that is no road are accepted", () => {
+test("the road census reads what it claims: every road around the spelled registration is refused, each road the byReason table keys by a reason for that reason, and a WebSocket's own handler, a handler cleared with null, a handler on this page's own window, a literal member and code that is no road are accepted", () => {
   const roads = (src: string, file = "webview/probe.ts") => looseRoads(file, src).loose.map((l) => l.why);
   const refused: Array<[string, string?]> = [
     ["window[\"add\" + \"EventListener\"](\"message\", f);"],

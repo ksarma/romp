@@ -224,8 +224,9 @@ def _page_scripts(html):
 
 
 def _served_documents():
-    """{name: text} for every document and script the kernel serves on its origin that it writes or ships itself: each page
-    SERVED_BUILDERS builds, /sw.js, and each SVG under /media (a document a browser runs script in when it is opened)."""
+    """{name: text} for every page the kernel writes (each page SERVED_BUILDERS builds) and /sw.js, and each SVG under
+    /media (a document a browser runs script in when it is opened). The /dist bundles, which the kernel serves too, are
+    not here: the ui/ census (ui/webview/foreign-sender-listeners.test.ts) reads their sources."""
     out = _served_pages()
     for f in sorted(os.listdir(km.MEDIA)):
         if f.endswith(".svg"):
@@ -709,19 +710,19 @@ class ServedScriptPopulation(unittest.TestCase):
                           ("url", "e()"), ("script", "f()"), ("handler", "g()")])
 
 
-# A stand-in browser for the shell's inline scripts: node's vm runs them in a context whose global answers every name
-# it does not hold with an inert stub (callable, constructible, every property another stub, 0 as a number), so the
-# scripts boot far enough to register their listeners without a DOM. What the checks read is real: location (the
-# shell's origin), document.querySelectorAll('iframe') and window.frames (the shell's frames), window.parent/top (the
-# shell is the top window), and each sending window's parent, top and opener. So are the objects through which the
-# stand-in hears a window's onmessage handler: the shell's window by any name, document.defaultView (the shell's
-# window), document.body itself (whose handler is its window's), window.frames and each frame's window; an onmessage or
-# onmessageerror handler written on any of them, by a set or a define, is heard. A body reached any other way (a query
-# for it, a frame's document, a contentDocument, document.documentElement.lastElementChild) is an inert stub, so a
-# handler written on it is not heard here, and under a computed name no census here reads it. Before any message is
-# tested it runs what the scripts left for later and the exercise (ShellListenersExecuted names the roads). The harness
-# then hands each registered window message listener a message from each sender and counts how often the listener reads
-# the message's data: a listener that returns before reading it acts on nothing.
+# A stand-in browser for the shell's inline scripts: node's vm runs them in a context whose global answers every name it
+# does not hold with an inert stub (callable, constructible, every property another stub, 0 as a number), so the scripts
+# boot far enough to register their listeners without a DOM. What the checks read is real: location (its origin is the
+# shell's location.origin), document.querySelectorAll('iframe') and window.frames (the shell's frames),
+# window.parent/top (the shell is the top window), and each sending window's parent, top and opener. So are the objects
+# through which the stand-in hears a window's onmessage handler: the shell's window by any name, document.defaultView
+# (the shell's window), document.body itself (whose handler is its window's), window.frames and each frame's window; an
+# onmessage or onmessageerror handler written on any of them, by a set or a define, is heard. A body reached any other
+# way (a query for it, a frame's document, a contentDocument, document.documentElement.lastElementChild) is an inert
+# stub, so a handler written on it is not heard here, and under a computed name no census here reads it. Before any
+# message is tested it runs what the scripts left for later and the exercise (ShellListenersExecuted names the roads).
+# The harness then hands each registered window message listener a message from each sender and counts how often the
+# listener reads the message's data: a listener that returns before reading it acts on nothing.
 _HARNESS = r"""
 'use strict';
 const vm = require('vm');
@@ -1276,17 +1277,20 @@ class ShellListenersExecuted(unittest.TestCase):
         # (test_the_stand_in_hears_a_handler_written_on_every_road_to_a_window plants each)
         self.assertEqual(self.run_["onmessage"], [], "an onmessage or onmessageerror handler on the shell's window, its body or a frame's window")
 
-    # Every road to a window's onmessage handler the stand-in hears, each planted as one more script after the shell's: the
-    # window by other names (frames, window.frames, self.frames, top, parent, a local holding it), a document's window
-    # (document.defaultView, and one held in a local), the body element, whose handler is its window's, and a frame's
-    # window (frames[0], window[0], a pane iframe's contentWindow), by a plain write, under a computed name, by a define
-    # or by Object.assign; and an onmessageerror handler. The stand-in hears the body only as document.body itself: a
-    # body reached any other way (a query for it, a frame's document, a contentDocument,
-    # document.documentElement.lastElementChild) is a stub, so a write on it is not heard here. KernelListenerCensus's
-    # text census reads such a write when it spells onmessage (document.querySelector('body').onmessage=), and under a
-    # computed name no census here reads it. A write on the html element, which reflects no window handler, is heard
-    # nowhere (the control).
+    # Every road to a window's onmessage handler the stand-in hears, each planted as one more script after the shell's:
+    # the window by its own name, as the bare global and by other names (frames, window.frames, self.frames, top,
+    # parent, a local holding it), a document's window (document.defaultView, and one held in a local), the body
+    # element, whose handler is its window's, and a frame's window (frames[0], window[0], a pane iframe's
+    # contentWindow), by a plain write, under a computed name, by a define or by Object.assign; and an onmessageerror
+    # handler. The stand-in hears the body only as document.body itself: a body reached any other way (a query for it, a
+    # frame's document, a contentDocument, document.documentElement.lastElementChild) is a stub, so a write on it is not
+    # heard here. KernelListenerCensus's text census reads such a write when it spells onmessage
+    # (document.querySelector('body').onmessage=), and under a computed name no census here reads it. A write on the
+    # html element, which reflects no window handler, is heard nowhere (the control).
     HANDLER_ROADS = {
+        "the window by its name": "window.onmessage=function(e){go(e.data)};",
+        "the window by its name, under a computed name": "window['on'+'message']=function(e){go(e.data)};",
+        "the bare global": "onmessage=function(e){go(e.data)};",
         "frames": "frames.onmessage=function(e){go(e.data)};",
         "window.frames": "window.frames.onmessage=function(e){go(e.data)};",
         "self.frames": "self.frames.onmessage=function(e){go(e.data)};",
@@ -1595,8 +1599,8 @@ class AdoptedCheckExecuted(unittest.TestCase):
     """The adopted lines, run: true only for an iframe of this document, posting on its location.origin, that is not
     marked data-protocol=none; false for every other sender (a sandboxed iframe of the shell, listed in its frames; a frame
     nested in a pane, which shares the shell's top; a window whose parent reads as the shell but that no iframe holds; a
-    window the shell opened; the page that opened it, on another origin or on the shell's own) and when the frame walk
-    throws."""
+    window the shell opened; the page that opened it, on another origin or on the shell's location.origin) and when the
+    frame walk throws."""
 
     def test_the_truth_table(self):
         node = shutil.which("node")

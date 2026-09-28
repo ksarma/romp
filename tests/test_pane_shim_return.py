@@ -1701,10 +1701,11 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
     # member), and each must be one of the shim's own sockets and channel, counted in SHIM_ONMESSAGE_RECEIVERS: park's and
     # abandon's detaches of a dead socket (`var d=ws;`, d.onopen=d.onmessage=...=null), the socket's own handler
     # (ws.onmessage=function(ev){) and the dispatch channel's (ch.port1.onmessage=flush). The shim's writes are also held
-    # to a subset of tests/test_shell_source_check.py's ONMESSAGE_RECEIVERS, which counts every such assignment in all of
-    # kernel.py and on every page it serves, read from that module's source (_shell_onmessage_receivers). Like that table,
-    # this one counts receivers by name, not by binding: a listed name rebound to a window passes it, and only the executed
-    # test below catches that, on the roads its stand-in drives
+    # to a subset of tests/test_shell_source_check.py's ONMESSAGE_RECEIVERS, read from that module's source
+    # (_shell_onmessage_receivers), which counts every such assignment in kernel.py's code; every page the kernel serves
+    # is held there to those receivers by name, not by count. Like that table, this one counts receivers by name, not by
+    # binding: a listed name rebound to a window passes it, and only the executed test below catches that, on the roads its
+    # stand-in drives
     MESSAGE_LISTEN = re.compile(r"(?:(?<![\w$])addEventListener|\[\s*(['\"`])addEventListener\1\s*\])\s*\(\s*(['\"`])message(?:error)?\2")
     ONMESSAGE_ANY = re.compile(r"(?:(?<![\w$])(onmessage(?:error)?)|\[\s*(['\"`])(onmessage(?:error)?)\2\s*\])\s*=(?!=)")
     CHAIN_BEFORE = re.compile(r"(?<![\w$.)\]])((?:[\w$]+\s*\.\s*)*[\w$]+)\s*$")
@@ -1856,8 +1857,8 @@ out({threw:threw,afterForeign:afterForeign,afterShell:{sockets:sockets.length,aw
 
     # The stand-in browser the executed census below boots the shim in, set up before the core runs: an onmessage or
     # onmessageerror handler written, by a set or a define, on one of these objects is heard: the pane's window by the
-    # names the harness gives it (window, self, frames, which in a browser is the window itself, and
-    # document.defaultView, as bare names and as the window's members), the shell above it (window.parent, top), and
+    # names the harness gives it (window and document.defaultView as bare names, and self and frames, which in a browser
+    # is the window itself, as bare names and as the window's members), the shell above it (window.parent, top), and
     # document.body, whose handler is its window's. Not heard here: a write through globalThis, the bare global or the
     # file's top-level this, since the harness's window is a var and not node's global (the receiver census above reads
     # such a write when it spells onmessage, and tests/test_shell_source_check.py ServedPagesExecuted, which runs every
