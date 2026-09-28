@@ -94,6 +94,10 @@ call to an attribute named `urlopen` whose first argument is a string literal,
 bare or `%`-formatted, of the form `http://127.0.0.1:%d/<route>?...token=...` (the `with ... as r` target is what it binds;
 the fixer pass of the author's pass 8: the tokened fetches in tests/test_kernel.py carried 39 pins over five pages outside the population, one
 of them satisfiable by three comments of the timeline page); a method call on another object (`path.split("/")`) is not one.
+A fetched value unpacked into a tuple binds only the position the helper's own return statements read a response at (`status,
+body, headers = self._req("/")` binds `body` where `_req` returns `r.status, r.read(), r.headers`), and no name where its
+returns read none; a helper the module does not define binds every name (the rulings at the merge of main's login cookie
+split, 2026-09-28; _bind).
 
 Bound: a url built otherwise than as a bare or `%`-formatted literal or a concatenation led by the whole path (a `Request`
 object, an f-string, `.format`, `"/chat" + rest`), a formatted
@@ -388,6 +392,57 @@ def _text(node, getters, constants):
     return None
 
 
+def _reads_response(node):
+    """Whether an expression reads a response: `<x>.read(...)` or `<x>.getvalue(...)`, alone or under any chain of `.decode(...)`
+    (`r.read()`, `h.wfile.getvalue().decode("utf-8", "replace")`)."""
+    while isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "decode":
+        node = node.func.value
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("read", "getvalue")
+
+
+def _own_returns(fn):
+    """The Return statements of one function, the ones of a function, lambda or class nested inside it excluded."""
+    out, todo = [], list(ast.iter_child_nodes(fn))
+    while todo:
+        node = todo.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        if isinstance(node, ast.Return):
+            out.append(node)
+        todo.extend(ast.iter_child_nodes(node))
+    return out
+
+
+def _response_reads(tree):
+    """{name: frozenset of positions} for every function and method a module defines, read from its own return statements (the
+    rulings at the merge of main's login cookie split, 2026-09-28): the index of each element of a returned tuple that reads a
+    response (_reads_response), and "whole" where a returned value that is no tuple reads one. `return r.status, r.read(),
+    r.headers` gives {1}; `return r.status, r.headers` gives the empty set. Two definitions of one name (a helper per class) give
+    the union of their positions."""
+    out = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            at = set()
+            for ret in _own_returns(fn):
+                if isinstance(ret.value, ast.Tuple):
+                    at |= {i for i, e in enumerate(ret.value.elts) if _reads_response(e)}
+                elif ret.value is not None and _reads_response(ret.value):
+                    at.add("whole")
+            out[fn.name] = out.get(fn.name, frozenset()) | frozenset(at)
+    return out
+
+
+def _callee(call):
+    """The name a call to a Name or a self.<method> calls (`_serve_get(...)` gives `_serve_get`, `self._req(...)` gives `_req`);
+    None for any other callee."""
+    f = call.func
+    if isinstance(f, ast.Name):
+        return f.id
+    if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self":
+        return f.attr
+    return None
+
+
 def _fetched(node, names, routes):
     """The served text a fetched value stands for (the author's pass 8, 2026-09-20): a call to a Name or a self.<method> whose first argument
     is a string literal beginning with `/` that, without its ?query, is a route in `routes` (`_serve_get("/sw.js", ...)`,
@@ -436,11 +491,17 @@ def _resolve(node, names, attrs, getters, constants):
     return t
 
 
-def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=None):
+def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=None, reads=None):
     """Record Name and self.<attr> targets bound to a served text, or to a slice of one; a tuple assignment binds by position; a
-    FETCHED value (_fetched, with `routes`) binds every Name it is unpacked into (`_, body = _serve_get("/sw.js")`: the status
-    too, a name no membership reads). `sliced`, when given, tracks the Names bound through a slice (a form the textual census
-    does not read; the author's pass 8)."""
+    FETCHED value (_fetched, with `routes`) unpacked into a tuple binds the positions its helper's own return statements read a
+    response at (`reads`, the module's _response_reads; the rulings at the merge of main's login cookie split, 2026-09-28):
+    `status, body, headers = self._req("/")` binds `body` alone where `_req` returns `r.status, r.read(), r.headers`, and a
+    helper whose returns read no response binds no name. Before that ruling every unpacked name bound, the status and the
+    response headers too, and main's helpers returning (status, body, headers) put 19 reads of the headers (`.get`,
+    `.get_all`, a base-class helper handed them) and of the status into the reader census as reads of the page. A helper the
+    module does not define, and a tuple target holding a starred name, bind every name, the reading before the ruling (the
+    census cannot see which position is the body). `sliced`, when given, tracks the Names bound through a slice (a form the
+    textual census does not read; the author's pass 8)."""
     if isinstance(value, ast.Tuple) and len(targets) == 1 and isinstance(targets[0], ast.Tuple) \
             and len(targets[0].elts) == len(value.elts):
         pairs = list(zip(targets[0].elts, value.elts))
@@ -466,9 +527,11 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
             names[t.id] = g
             if sliced is not None:
                 (sliced.add if via_slice else sliced.discard)(t.id)
-        elif isinstance(t, ast.Tuple) and fetched:   # `status, body = fetch("/x")`: every name the fetch binds
-            for e in t.elts:
-                if isinstance(e, ast.Name):
+        elif isinstance(t, ast.Tuple) and fetched:   # `status, body = fetch("/x")`: the positions the helper reads a response at
+            callee = _callee(v)
+            at = reads.get(callee) if reads is not None and callee is not None and not any(isinstance(e, ast.Starred) for e in t.elts) else None
+            for i, e in enumerate(t.elts):
+                if isinstance(e, ast.Name) and (at is None or i in at):
                     names[e.id] = g
                     if sliced is not None:
                         sliced.discard(e.id)
@@ -540,6 +603,7 @@ def rows_of(path, getters, constants, routes=None):
     functions = (ast.FunctionDef, ast.AsyncFunctionDef)
     groups = [[n for n in cls.body if isinstance(n, functions)] for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)]
     groups.append([n for n in tree.body if isinstance(n, functions)])   # module-level test functions (the author's pass 6, 2026-09-20)
+    reads = _response_reads(tree)   # the positions each helper of the module reads a response at (_bind)
     modnames = _module_bindings(tree, getters, constants, routes)   # a served text bound at module level is read in every function (the fixer pass of the author's pass 9)
     binds = {}
     def bindings(fn):   # in walk order, so a with-item's `as` target is bound before the assignments in its body read it; read once per function
@@ -557,11 +621,11 @@ def rows_of(path, getters, constants, routes=None):
         attrs = {}
         for fn in fns:   # a setUp's self.<attr> binding is visible to every method
             for targets, value in bindings(fn):
-                _bind(targets, value, {}, attrs, getters, constants, None, routes)
+                _bind(targets, value, {}, attrs, getters, constants, None, routes, reads)
         for fn in fns:
             names, sliced = dict(modnames), set()
             for targets, value in bindings(fn):   # an assignment, or a with-item's `as` target (`with urlopen(...) as r`; the fixer pass of the author's pass 8)
-                _bind(targets, value, names, attrs, getters, constants, sliced, routes)
+                _bind(targets, value, names, attrs, getters, constants, sliced, routes, reads)
             text_of = lambda x: _resolve(x, names, attrs, getters, constants)
             readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced)
             rows = []
@@ -773,10 +837,10 @@ _VALUE_USES = {"dumps", "len", "print", "isinstance", "write", "repr", "str", "t
 def _module_bindings(tree, getters, constants, routes):
     """{Name: served text} for the module-level assignments that bind a served text (`JS = km._LANDING_APIH_JS`; the fixer pass of
     the author's pass 9: three suite modules bind one at import time and read it in every test, and neither census had seen the binding)."""
-    names = {}
+    names, reads = {}, _response_reads(tree)
     for st in tree.body:
         if isinstance(st, ast.Assign):
-            _bind(st.targets, st.value, names, {}, getters, constants, None, routes)
+            _bind(st.targets, st.value, names, {}, getters, constants, None, routes, reads)
     return names
 
 
@@ -826,6 +890,7 @@ def readers_of(path, getters, constants, routes=None):
     `container=`), the text read, a served text in the member position being compared whole (`assertIn("x" + km._SVG, page)` is an
     `assert` over the page). Before the close each of these was no row at all, or the assertRegex an `assert`."""
     tree, lines = _parsed(path)
+    reads = _response_reads(tree)   # the positions each helper of the module reads a response at (_bind)
     seg = lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
     nodes = list(ast.walk(tree))   # one walk of the module for the patterns and the classes below
     patterns = {t.id for node in nodes if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
@@ -922,7 +987,7 @@ def readers_of(path, getters, constants, routes=None):
 
     def walk(fn, names, attrs, depth, derived, methods):
         for targets, value in bindings(fn):
-            _bind(targets, value, names, attrs, getters, constants, None, routes)
+            _bind(targets, value, names, attrs, getters, constants, None, routes, reads)
             derive(targets, value, names, attrs, derived)
         loops = _loops(fn)   # read once: the loop bindings here and the loop literals below
         for var, it, _ in loops:   # a for over served texts binds its variable (to the first text: one form per variable)
@@ -1028,7 +1093,7 @@ def readers_of(path, getters, constants, routes=None):
         attrs, methods = {}, {n.name: n for n in fns}
         for fn in fns:
             for targets, value in bindings(fn):
-                _bind(targets, value, {}, attrs, getters, constants, None, routes)
+                _bind(targets, value, {}, attrs, getters, constants, None, routes, reads)
         for fn in fns:
             out += walk(fn, dict(modnames), attrs, 0, dict(modderived), methods)
     return sorted(set(out))
@@ -1617,6 +1682,57 @@ def _kw(self, lit, body):
                 self.assertEqual(_imports_parser(f.name), on_road, text)
             finally:
                 os.unlink(f.name)
+
+    def test_a_fetched_tuple_binds_the_position_its_helper_reads_a_response_at(self):
+        # the rulings at the merge of main's login cookie split (2026-09-28), P1: main's fetch helpers return (status, body,
+        # headers), and the census had bound every name a fetch is unpacked into, so 19 reads of a status or of the response
+        # headers (`headers.get_all("Set-Cookie")`, `assertEqual(status, 200)`) were reads of the page, unclassified ones red. A
+        # synthetic module pins the rule: the position the helper's own returns read a response at binds (`r.read()` in a method,
+        # `h.wfile.getvalue().decode(...)` in a module function), the status and headers positions do not, a helper whose returns
+        # read no response binds no name (p3), and a helper the module does not define, or a target holding a starred name, binds
+        # every name, the reading before the ruling (p5, p6). The rows of both derivations are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import unittest
+def _serve(path):
+    return captured.get("status"), h.wfile.getvalue().decode("utf-8"), captured.get("headers", {})
+def _heads(path, headers=None):
+    return r.status, r.headers
+class T(unittest.TestCase):
+    def _req(self, path):
+        try:
+            return r.status, r.read(), r.headers
+        except E as e:
+            return e.code, e.read(), e.headers
+    def test_a(self):
+        status, body, headers = self._req("/?token=x")
+        self.assertEqual(status, 200)
+        headers.get_all("Set-Cookie")
+        self.assertIn("p1", body)
+        st, page, hd = _serve("/")
+        self.assertIn("p2", page)
+        hd.get("Content-Type")
+        code, heads = _heads("/")
+        self.assertIn("p3", heads)
+        s2, b2 = elsewhere("/sw.js")
+        self.assertIn("p4", b2)
+        self.assertIn("p5", s2)
+        first, *rest = self._req("/")
+        self.assertIn("p6", first)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = rows_of(f.name, getters, constants, routes)
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual([r[:4] for r in rows], [(16, "p1", "_landing", "in"), (18, "p2", "_landing", "in"), (23, "p4", "_sw_js", "in"),
+                                                 (24, "p5", "_sw_js", "in"), (26, "p6", "_landing", "in")])
+        self.assertEqual([r[:3] for r in readers], [(16, "assert", "_landing"), (18, "assert", "_landing"), (23, "assert", "_sw_js"),
+                                                    (24, "assert", "_sw_js"), (26, "assert", "_landing")],
+                         "no read of a status or of the response headers is a read of the page")
+        self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
+                         {"_serve": [1], "_heads": [], "_req": [1], "test_a": []})
 
     def test_the_route_walk_reads_equality_and_membership(self):
         # the author's pass 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A
