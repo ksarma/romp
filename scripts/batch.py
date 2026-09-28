@@ -1094,6 +1094,7 @@ def continue_after_resolution(root, wt, state, reviewed):
         state["assembly"].setdefault("main_merges", []).append({"merge": sha, "main": cur["main"], "resolved": resolved})
         state["assembly"]["head"] = sha
         state["verified"] = None
+        state["ci"] = None           # land's CI record belongs to the head it read
     else:
         state["assembly"]["merged"].append({"n": cur["n"], "merge": sha, "resolved": resolved})
     state["assembly"]["cursor"] = None
@@ -1170,6 +1171,7 @@ def merge_main(root, wt, state):
     state["assembly"].setdefault("main_merges", []).append({"merge": sha, "main": main_sha, "resolved": resolved})
     state["assembly"]["head"] = sha
     state["verified"] = None
+    state["ci"] = None
     log(state, "merged %s (%s) into %s -> %s%s" % (remote_main(), short(main_sha), branch_of(state["name"]), short(sha),
                                                    (" with " + resolved["how"]) if resolved else ""))
     save_state(root, state)
@@ -1203,6 +1205,7 @@ def run_assembly(root, state, resolve_set, resume):
     state["assembly"]["pending"] = []
     state["assembly"]["cursor"] = None
     state["verified"] = None
+    state["ci"] = None
     log(state, "assembled %s at %s: %d merged, %d already contained, %d held back"
         % (branch_of(state["name"]), short(state["assembly"]["head"]), len(state["assembly"]["merged"]),
            len(state["assembly"].get("contained", [])), len(state["assembly"].get("held", []))))
@@ -1596,8 +1599,9 @@ def cmd_verify(args, quiet=False):
     sweep = sweep_reader()
     # The earlier verdict is cleared first: a verify that dies half-way (a gh error) must not leave
     # a green verification behind for summarize to publish.
-    if state.get("verified"):
+    if state.get("verified") or state.get("ci"):
         state["verified"] = None
+        state["ci"] = None            # and land's CI record, which belongs to the head a verify read
         save_state(root, state)
     fetch(root, args.no_fetch)
     lines, ok = [], True
@@ -2425,7 +2429,7 @@ def cmd_land(args):
         raise Fail("the batch head's CI run is red (conclusion %s): %s; `scripts/batch.py bisect %s -- <failing test>` names "
                    "the member to pull; nothing merged" % (run.get("conclusion"), run.get("url"), args.name))
     excused = ci_attempt_gate(root, run, older, flakes)
-    state["ci"] = {"run": run.get("url"), "id": run["databaseId"], "attempt": run["attempt"], "excused": excused}
+    state["ci"] = {"run": run.get("url"), "id": run["databaseId"], "attempt": run["attempt"], "head": head, "excused": excused}
     save_state(root, state)
     print("ok   CI: the run of the push to %s at %s is green: %s%s" % (
         br, short(head), run.get("url"), "".join("; %sattempt %d concluded %s and is excused as a known flake (%s): %s"
@@ -2656,7 +2660,12 @@ def cmd_finish(args):
                "pending": "pending (status %s), %s" % (ci_found.get("status"), ci_found.get("url")),
                "missing": "missing: GitHub lists no run of %s from a push to %s at %s" % (CI_WORKFLOW, branch_of(args.name), landed_head),
                "unread": "unread after the merge: %s" % ci_error}[ci_case]
-    for e in (state.get("ci") or {}).get("excused") or []:
+    # land's excused attempts are reported only when they belong to the run finish read (a run's id names its sha too):
+    # the state's CI record is land's last, and a land refused after it (main moved), then another push run, leaves
+    # another run's there. A new assembly and verify clear it.
+    ci_rec = state.get("ci") or {}
+    same_run = ci_found.get("databaseId") is not None and ci_rec.get("id") == ci_found.get("databaseId")
+    for e in (ci_rec.get("excused") or []) if same_run else []:
         report["observations"].append("the batch head's CI run was green on a re-run: attempt %d concluded %s (%s) and land "
                                       "excused it as a known flake: %s" % (e["attempt"], e.get("conclusion") or e.get("status"),
                                                                             e.get("url"), e.get("flake")))

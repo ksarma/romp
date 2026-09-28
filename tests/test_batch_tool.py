@@ -2306,10 +2306,83 @@ class LandReadsTheCI(_Base):
                       "as a known flake (%s/attempts/1): %s" % (self.head[:10], url, url, self.FLAKE), p.stdout)
         self.assertEqual(len(fx.calls("pr", "merge")), 1)
         st = fx.state("b1")
-        self.assertEqual(st["ci"], {"run": url, "id": 1, "attempt": 2, "excused": [
+        self.assertEqual(st["ci"], {"run": url, "id": 1, "attempt": 2, "head": self.head, "excused": [
             {"run": 1, "attempt": 1, "status": "completed", "conclusion": "failure", "url": url + "/attempts/1", "flake": self.FLAKE}]})
         self.assertIn("observed: the batch head's CI run was green on a re-run: attempt 1 concluded failure (%s/attempts/1) and "
                       "land excused it as a known flake: %s" % (url, self.FLAKE), p.stdout)
+
+    def land_refused_after_the_ci_read(self, *args):
+        """land with `args`, main moved on the repository-settings read: land reads the CI run, records it, then refuses on
+        its own read of main."""
+        fx = self.fx
+        wrapper = os.path.join(fx.tmp, "gh-moves-main")
+        with open(wrapper, "w") as f:
+            f.write(MOVE_MAIN_GH % {"python": sys.executable})
+        os.chmod(wrapper, 0o755)
+        env = dict(fx.env)
+        fx.env.update(ROMP_GH=wrapper, MOVE_MAIN_AUTHOR=fx.author, MOVE_MAIN_FAKE_GH=os.path.join(fx.bin, "gh"), MOVE_MAIN_ON="repo view")
+        p = fx.run("land", "b1", *args)
+        fx.env = env
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("after verify read", p.stderr)
+        return p
+
+    def test_finish_reports_an_excused_attempt_only_for_the_run_it_read(self):
+        """land's CI record in the state names the run and the head it read, and verify (or a new assembly) clears it:
+        after a land that excused attempt 1 of run 1 and was then refused (main moved), a merge of main, a new sweep and
+        verify, a green run 2 at the new head and a merge by hand, finish names run 2 and reports no excused attempt.
+        The stage 1 to 3 head reported run 1's excuse as the landed head's. A merge by hand of the same head, with the
+        state's record still land's, reports it."""
+        fx = self.fx
+        self.ready()
+        url = fx.ci("b1", attempt=2, attempts=[{"conclusion": "failure"}])
+        self.land_refused_after_the_ci_read("--flake", "1/1=" + self.FLAKE)
+        self.assertEqual(fx.state("b1")["ci"]["head"], self.head)
+        fx.ok("assemble", "b1", "--merge-main")
+        self.assertIsNone(fx.state("b1")["ci"], "a new assembly clears land's record")
+        fx.sweep("b1")
+        fx.ok("verify", "b1")
+        fx.push_batch("b1")
+        url2 = fx.ci("b1")
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0)
+        p = fx.ok("finish", "b1")
+        self.assertIn("the batch head's CI run: green, %s" % url2, p.stdout)
+        self.assertNotIn("land excused it", p.stdout)
+        self.assertNotIn(url + "/attempts/1", p.stdout)
+
+    def test_finish_reports_the_excused_attempt_of_the_run_it_read(self):
+        """The same record, with the head unchanged and merged by hand after land's refusal: it is the run finish reads,
+        so finish reports the excused attempt; a verify alone clears the record too."""
+        fx = self.fx
+        self.ready()
+        url = fx.ci("b1", attempt=2, attempts=[{"conclusion": "failure"}])
+        self.land_refused_after_the_ci_read("--flake", "1/1=" + self.FLAKE)
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0)
+        p = fx.run("finish", "b1")
+        self.assertIn("observed: the batch head's CI run was green on a re-run: attempt 1 concluded failure (%s/attempts/1) and "
+                      "land excused it as a known flake: %s" % (url, self.FLAKE), p.stdout)
+        path = os.path.join(fx.dev, ".git", "batch", "b1.json")
+        with open(path) as f:
+            st = json.load(f)
+        st["ci"] = {"run": url, "id": 1, "attempt": 2, "head": self.head, "excused": []}
+        st["verified"] = dict(st["verified"], ok=True)
+        with open(path, "w") as f:
+            json.dump(st, f)
+        fx.run("verify", "b1")
+        self.assertIsNone(fx.state("b1")["ci"], "verify clears land's record")
+
+    def test_finish_reports_no_excuse_of_a_run_it_did_not_read(self):
+        """With land's record still in the state (refused after its CI read, no new verify), a later push run at the same
+        head is the run finish reads, so the record's excused attempt, run 1's, is not reported as that run's."""
+        fx = self.fx
+        self.ready()
+        fx.ci("b1", attempt=2, attempts=[{"conclusion": "failure"}])
+        self.land_refused_after_the_ci_read("--flake", "1/1=" + self.FLAKE)
+        url2 = fx.ci("b1")
+        self.assertEqual(fx.fake_gh("pr", "merge", "900", "--merge").returncode, 0)
+        p = fx.run("finish", "b1")
+        self.assertIn("the batch head's CI run: green, %s" % url2, p.stdout)
+        self.assertNotIn("land excused it", p.stdout)
 
     def test_every_earlier_attempt_that_did_not_pass_counts(self):
         """A cancelled earlier attempt did not pass either, and two earlier attempts that did not pass are refused
