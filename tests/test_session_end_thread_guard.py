@@ -84,14 +84,14 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   plain daemon thread beside it is not. The tables are read again after every pass: a busy worker started, by a worker
   of a pool a daemon thread started, after the guard's first read is returned. A read that raises RuntimeError, as
   iterating a WeakKeyDictionary does on 3.10 to 3.13 when another thread inserts into it, is read again (a stand-in
-  table raises on its first read), up to the guard's one deadline: a table that changes during every read ends the
-  guard at its deadline, failing it by the table's name and naming the non-daemon thread still alive beside it, but not
-  a plain daemon thread (a stand-in that adds to itself during every read, with the process-wide time.monotonic frozen,
-  the guard run under a backstop whose firing is the defect of a retry with no bound, or one bounded on that frozen
-  clock). The same failure in a child run (a stand-in table whose every read raises, in place for the session, beside a
-  leaked non-daemon thread) fails the run with one error whose report prints the table's failure once, with no
-  exception chain: raised inside the handler of the table's own failure, it would print that one first, under "During
-  handling of the above exception". Stderr prints it once too.
+  table raises on its first read, and the pin drives the guard's clock, so no real time passes), up to the guard's one
+  deadline: a table that changes during every read ends the guard at its deadline, failing it by the table's name and
+  naming the non-daemon thread still alive beside it, but not a plain daemon thread (a stand-in that adds to itself
+  during every read, with the process-wide time.monotonic frozen, the guard run under a backstop whose firing is the
+  defect of a retry with no bound, or one bounded on that frozen clock). The same failure in a child run (a stand-in
+  table whose every read raises, in place for the session, beside a leaked non-daemon thread) fails the run with one
+  error whose report prints the table's failure once, with no exception chain: raised inside the handler of the table's
+  own failure, it would print that one first, under "During handling of the above exception". Stderr prints it once too.
 - Threads that END WITHIN THE CAP (each test starts one that sleeps WITHIN_S and exits) and plain DAEMON threads that
   run past the session (one per test, released at unconfigure) leave the run green, serially and under -n 2, at the
   guard's own cap. The guard's wait is WITNESSED, not assumed: the scratch conftest records at pytest_sessionfinish,
@@ -1131,8 +1131,12 @@ class ExitJoinTables(unittest.TestCase):
         concurrent.futures.thread's table raises RuntimeError ("dictionary changed size during iteration"), and the guard
         reads the table again. (On 3.14 the iteration walks a copy and does not raise.) Stood in for, on every Python, by
         a table whose first iteration raises that error and whose later ones yield a live daemon thread: the guard
-        returns that thread. The stand-in passes any insert on to the real table, so a pool another thread starts while
-        it is in place is still recorded where the exit hook reads."""
+        returns that thread, after exactly one retry. The stand-in passes any insert on to the real table, so a pool
+        another thread starts while it is in place is still recorded where the exit hook reads. The pin drives the
+        guard's clock (its own binding, _monotonic) from the stand-in's reads: it reads 0 until the table's second read,
+        so the deadline is the cap and the retry after the first read falls before it, and then the deadline itself, so
+        the guard returns the thread it found without joining it. No real time passes on the guard's clock, so the pin
+        does not depend on the cap or on how long the machine takes to reach the retry."""
         import concurrent.futures.thread as cft
         cf = sys.modules["tests.conftest"]
         real_table = cft._threads_queues
@@ -1141,6 +1145,7 @@ class ExitJoinTables(unittest.TestCase):
         self.addCleanup(join_started, stop, (worker,), 60)
         worker.start()
         reads = []
+        cap = 0.2
 
         class ChangesOnFirstRead:
             def __iter__(self):
@@ -1153,10 +1158,11 @@ class ExitJoinTables(unittest.TestCase):
                 real_table[key] = value
 
         with mock.patch.object(cft, "_threads_queues", ChangesOnFirstRead()), \
-                mock.patch.object(cf, "_enumerate", return_value=[threading.main_thread(), worker]):
-            left = cf.threads_left_at_session_end(0.2)
+                mock.patch.object(cf, "_enumerate", return_value=[threading.main_thread(), worker]), \
+                mock.patch.object(cf, "_monotonic", new=lambda: 0.0 if len(reads) < 2 else cap):
+            left = cf.threads_left_at_session_end(cap)
         self.assertEqual(left, [worker], "the guard returned the daemon thread its second read of the table found")
-        self.assertGreaterEqual(len(reads), 2, "the guard read the table again after the read that raised")
+        self.assertEqual(reads, [1, 2], "the guard read the table again once, after the read that raised")
 
     def test_a_table_that_changes_during_every_read_ends_the_guard_at_its_deadline_naming_the_table_and_threads(self):
         """A table another thread adds to without pause changes during every read, so every read raises RuntimeError.
