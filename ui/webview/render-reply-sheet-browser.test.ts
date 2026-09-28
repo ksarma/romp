@@ -689,8 +689,8 @@ for (const name of ["chromium", "firefox", "webkit"]) {
             const m = (await measure())!;
             const what = `at rest at ${h}, the 8-line detail`;
             assert.ok(m.detailScrollH > em12(m) + 60, `the 8-line detail is longer than 12em (${m.detailScrollH}px against ${em12(m).toFixed(1)}px)`);
-            assert.ok(Math.abs(m.detailClientH - term(m)) <= 1.5, `${what}: it shows at the cap, ${m.detailClientH}px against ${term(m).toFixed(1)}px`);
             assert.ok(m.detailScrollH > m.detailClientH + 1, `${what}: not in full, ${m.detailClientH} of ${m.detailScrollH}px: the pane is under the stated boundary (in full from 678px); in full here, the share moved the boundary that styles.css and the ledger entry state`);
+            assert.ok(Math.abs(m.detailClientH - term(m)) <= 1.5, `${what}: it shows at the cap, ${m.detailClientH}px against ${term(m).toFixed(1)}px`);
             assert.ok(m.inputH >= m.floorH - 1, `${what}: three rows (${m.inputH} against ${m.floorH}px)`);
             assertFits(m, what);
           } finally { await cancelReply(); }
