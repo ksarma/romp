@@ -5877,9 +5877,12 @@ print(json.dumps(out))
         the word, and a restarted hub relays nothing). Our via row stays reachable (the hub's link) and unanswered, and
         the arm holds every sid nothing names at cannot-determine, across the hub's exchanges, until the hub's answer to a
         dial this bus built after the hub's last roster carrying F's cached word, taken after F answered the hub again,
-        reaches here (a dial of the hub merges and releases nothing), or, this bus holding F directly, until F's answer to
-        a dial of this bus while F's bus is the one the hub's word names (not F's own dials; while F's row speaks); the
-        hub's restart is no release since
+        reaches here naming F, under the held word's name or with its bus id, with an answered word, or omitting F, from
+        the hub process whose roster last named F, for a far bus heard answering in this process (any other omission
+        holds the word: for any other far bus, cost (a), and from a restarted hub or a hub that sends no bus id, cost (g),
+        both in the writer's docstring) (a dial of the hub merges and releases nothing), or, this bus holding F directly,
+        until F's answer to a dial of this bus has released F's row, while F's bus is the one the hub's word names (not
+        F's own dials; while F's row speaks); the hub's restart is no release since
         the thirty-first commit (the hub-restart witnesses below), and this bus's restart none since round 6 (the
         reviewer's decision 4 on round 5: F's via row is carried unanswered and holds the arm). No false settle. Until the
         twenty-ninth commit, rule 5 here.

@@ -5125,9 +5125,13 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
     word, and a restarted hub relays nothing); the via row here stays reachable (the hub's link) and unanswered, and
     the arm holds every sid on this machine at cannot-determine until the hub's answer to a dial this bus built after
     the hub's last roster carrying the host's cached word, taken after the host answered the hub again, reaches here
-    (a dial of the hub merges and releases nothing), or, for a host this bus holds directly, until that host's answer
-    to a dial of this bus while its bus is the one the word names, not its own dials (the fold consumes the via row
-    while that host's row speaks; held down after, the hub's word stands again). A far bus restarted since that word
+    naming the host, under the held word's name or with its bus id, with an answered word, or omitting it, from the
+    hub process whose roster last named it, for a far bus heard answering in this process (_via_held; any other
+    omission holds the word: for any other far bus, cost (a) below, and from a restarted hub or a hub that sends no
+    bus id, cost (g) below) (a dial of the hub merges and releases nothing), or, for a host this bus holds directly,
+    until that host's answer to a dial of this bus has released its row (_direct_row_speaks), while its bus is the one
+    the word names, not its own dials (the fold consumes the via row while that host's row speaks; held down after,
+    the hub's word stands again). A far bus restarted since that word
     carries a new id, and its row here does not speak for the word, since a known different bus id beats the name
     (_direct_row_speaks), so its own answers here end nothing: once the host answers the hub again, the hub's word
     naming its current bus folds into its row here, where that row speaks, only the entries it re-names, and an entry
