@@ -1998,9 +1998,11 @@ def _fits(case, ceiling):
     def test_the_route_walk_reads_equality_and_membership(self):
         # the author's pass 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A
         # synthetic handler with both shapes pins the two: the landing's membership tuple and the equality routes; a route
-        # returning json.dumps, a getter called with arguments and a prefix test bind nothing. An equality-only walk misses the
-        # landing here. On the kernel the landing is served through the route table since the merge of main's login cookie split
-        # (the next test pins that shape), and the service worker by equality.
+        # returning json.dumps, a getter called with arguments, a getter called bare inside another call in the return (the
+        # rulings at the merge of main's login cookie split, 2026-09-28: the walk reads a getter only as a DIRECT argument of the
+        # returned call, and a walk over the whole return reds here on /wrapped) and a prefix test bind nothing. An equality-only
+        # walk misses the landing here. On the kernel the landing is served through the route table since the merge of main's
+        # login cookie split (the next test pins that shape), and the service worker by equality.
         handler = '''
 def do_GET(self):
     p = "/x"
@@ -2014,6 +2016,8 @@ def do_GET(self):
         return self._send(200, json.dumps({}), "application/json")
     if p == "/shim":
         return self._send(200, _shim_core_js("chat"), "text/javascript")
+    if p == "/wrapped":
+        return self._send(200, wrap(_timeline_page()), "text/html")
     if p.startswith("/dist/"):
         return self._send_file(p)
 '''
@@ -2034,7 +2038,9 @@ def do_GET(self):
         # lookup in one function with the call in another bind nothing. A walk without the table branch reds here (the synthetic
         # table's three routes missing) and on the kernel (no landing, no pane page). The rulings at the merge (2026-09-28) add the
         # no-argument condition's case: a lookup whose result a return calls WITH an argument, positional or by keyword, renders
-        # another text and binds nothing (a walk that drops either half of the condition reds here on /settings or /waiting).
+        # another text and binds nothing (a walk that drops either half of the condition reds here on /settings or /waiting); and
+        # a lookup whose result a return calls bare INSIDE another call (`wrap(wrapped())`) binds nothing, since the looked-up name
+        # counts only as a direct argument of the returned call (a walk over the whole return reds here on /wrapped).
         handler = '''
 PAGES = {"": _landing, "/": _landing, "/chat": _chat_page, "/shim": lambda: _shim_core_js("chat"), "/nope": _not_a_getter}
 UNREAD = {"/feed": _feed_page}
@@ -2042,6 +2048,7 @@ UNCALLED = {"/timeline": _timeline_page}
 APART = {"/files": _files_page}
 POSITIONAL = {"/settings": _settings_page}
 KEYWORD = {"/waiting": _waiting_page}
+WRAPPED = {"/wrapped": _feed_page}
 def do_GET(self):
     p = "/x"
     page = PAGES.get(p)
@@ -2056,6 +2063,9 @@ def do_GET(self):
     named = KEYWORD.get(p)
     if named is not None:
         return self._send(200, named(path=p), "text/html")
+    wrapped = WRAPPED.get(p)
+    if wrapped is not None:
+        return self._send(200, wrap(wrapped()), "text/html")
     if p == "/sw.js":
         return self._send(200, _sw_js(), "text/javascript")
 def lookup_only(self, p):
