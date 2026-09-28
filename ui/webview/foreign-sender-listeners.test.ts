@@ -32,24 +32,24 @@
 // The census reads the population instead of a list: every addEventListener("message", …) or
 // addEventListener("messageerror", …) call in a ui/ source file (test and types files excluded; uiSources lists the
 // files), the method named or a computed member, whatever its receiver, and every onmessage or onmessageerror handler
-// assigned to this page's own window, the receiver resolved by its binding (window, self, globalThis, the bare global,
-// this page's document.defaultView, a local initialised to one of them, the global `this`), must take the event as its
-// one parameter, with no default, have the check, preceded by nothing but reads of the message and early returns whose
-// condition the census judges to run no code (headCheck's docstring lists the forms), judged by form, not by what runs,
-// and be one of the gated sites below, each with an executed leg here. A messageerror event carries the sender's origin
-// and source as a message does, and a sender causes one by posting what the page cannot deserialize, so it is counted
-// as a message. A listener handed over by name is read at the function written in place that a const of that name
-// holds, found by the name's binding; any other name fails. A new window listener anywhere in ui/ fails it until it is
-// gated and given a leg. A second census reads what the name windowSender is bound to: in every ui/ file that calls the
-// check, it is the helper's own import (gear.js: its require), bound once and never written, so a local helper of the
-// same name that lets one more sender through cannot stand in for it. The first census reads the listeners the source
-// spells, so two more hold the source to spellings it can read: a third holds that every addEventListener in ui/ is a
-// call the first can read, and a fourth refuses the roads that spell neither (a method of the window, of the body
-// element or of a prototype read by a computed name, a function run with the window as its `this`, an onmessage handler
-// set other than by an assignment the fourth accepts, a handler or a message listener on a window other than this
-// page's own, code run from a string (a module imported from a data: URL or from a URL built at run time among it), a
-// test or types file imported as a module, a `with` statement, and the name WebSocket anywhere but as the constructor a
-// `new` calls, or in a type). What those cannot see is listed at the fourth.
+// assigned to this page's own window, the receiver resolved by its binding (window, self, globalThis, frames, the bare
+// global, this page's document.defaultView, a local initialised to one of them, the global `this`), must take the event
+// as its one parameter, with no default, have the check, preceded by nothing but reads of the message and early returns
+// whose condition the census judges to run no code (headCheck's docstring lists the forms), judged by form, not by what
+// runs, and be one of the gated sites below, each with an executed leg here. A messageerror event carries the sender's
+// origin and source as a message does, and a sender causes one by posting what the page cannot deserialize, so it is
+// counted as a message. A listener handed over by name is read at the function written in place that a const of that
+// name holds, found by the name's binding; any other name fails. A new window listener anywhere in ui/ fails it until
+// it is gated and given a leg. A second census reads what the name windowSender is bound to: in every ui/ file that
+// calls the check, it is the helper's own import (gear.js: its require), bound once and never written, so a local
+// helper of the same name that lets one more sender through cannot stand in for it. The first census reads the
+// listeners the source spells, so two more hold the source to spellings it can read: a third holds that every
+// addEventListener in ui/ is a call the first can read, and a fourth refuses the roads that spell neither (a method of
+// the window, of the body element or of a prototype read by a computed name, a function run with the window as its
+// `this`, an onmessage handler set other than by an assignment the fourth accepts, a handler or a message listener on a
+// window other than this page's own, code run from a string (a module imported from a data: URL or from a URL built at
+// run time among it), a test or types file imported as a module, a `with` statement, and the name WebSocket anywhere
+// but as the constructor a `new` calls, or in a type). What those cannot see is listed at the fourth.
 // Synthetic world only: the notes-api demo, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -245,12 +245,13 @@ for (const leg of INSTALLED) {
 type Site = { file: string; line: number; receiver: string; fn: any; text: string; kind: "addEventListener" | "onmessage";
                event?: string };   // the event it hears, "message" or "messageerror" (an onmessage kind: its handler's name less "on")
 const parsed = new Map<string, Site[]>();
-/** The names a script reaches its own window by: window, self and globalThis, unshadowed. With the bare global they are
- *  where refKind (at the road census below) starts this page's own window; a receiver it resolves to a window other than
+/** The names a script reaches its own window by: window, self, globalThis and frames (which a browser answers with the
+ *  window itself; an indexed frames[i] is a frame's window, another), unshadowed. With the bare global they are where
+ *  refKind (at the road census below) starts this page's own window; a receiver it resolves to a window other than
  *  this page's own, or cannot resolve, is no census site. The road census refuses a handler assigned on another window
  *  whatever its value, and one assigned on a receiver refKind cannot resolve unless the value sets no handler (null, an
  *  unshadowed undefined) or the receiver is a binding that only ever holds a WebSocket (socketBinding). */
-const WINDOW_NAMES = new Set(["window", "self", "globalThis"]);
+const WINDOW_NAMES = new Set(["window", "self", "globalThis", "frames"]);
 /** The events a window listener hears a sender's post as: a message, and a messageerror, which carries the sender's origin
  *  and source too and which a sender causes by posting what the page cannot deserialize. */
 const MESSAGE_EVENTS = new Set(["message", "messageerror"]);
@@ -663,6 +664,13 @@ test("the census reads every spelling of a window message listener: addEventList
     ["addEventListener messageerror on window"]);
   assert.deepEqual(found("window.onmessageerror = " + listener + ";"), ["onmessageerror on window"]);
   assert.deepEqual(found("parent.addEventListener(\"message\", " + listener + ");"), ["addEventListener on parent"], "a listener on any receiver is a site, held off the gated spelling");
+  // frames is this page's own window: a listener on it is a census site the road census leaves to the census above, which
+  // holds it off the gated spelling; a frame, frames[0], is another window, whose listener the road census refuses
+  assert.deepEqual(found("frames.addEventListener(\"message\", " + listener + ");"), ["addEventListener on frames"]);
+  assert.deepEqual(looseRoads("webview/probe.ts", "frames.addEventListener(\"message\", " + listener + "); window.frames.addEventListener(\"messageerror\", " + listener + ");").loose, [],
+    "a listener on frames, this page's own window, is no refused road");
+  assert.ok(looseRoads("webview/probe.ts", "frames[0].addEventListener(\"message\", " + listener + ");").loose.some((r) => /listener added to a window other than this page's own/.test(r.why)),
+    "a listener on frames[0], a frame's window, is refused");
   // an onmessage or onmessageerror handler on a receiver the census resolves by its binding to this page's own window is
   // exactly one census site, and the census's spelling predicate (spelledAsGated) fails it, so it keeps the census red
   const OWN_WINDOW: Array<[string, string?]> = [
@@ -674,6 +682,9 @@ test("the census reads every spelling of a window message listener: addEventList
     ["const { defaultView } = document; defaultView.onmessage = f;"], ["const { document: { defaultView: dv } } = window; dv.onmessage = f;"],
     ["const { window: w } = self; w.onmessage = f;"],
     ["w\\u0069ndow.onmessage = f;"], ["document.def\\u0061ultView.onmessage = f;"],
+    // frames is the window itself (a frame is frames[i], below): each of its names is this page's own window
+    ["frames.onmessage = f;"], ["window.frames.onmessage = f;"], ["self.frames[\"onmessage\"] = f;"], ["var w = frames; w.onmessage = f;"],
+    ["const { frames: w } = window; w.onmessage = f;"], ["fr\\u0061mes.onmessageerror = f;"],
     ["this.onmessage = f;", "webview/probe.js"], ["(function () { this.onmessage = f; })();", "webview/probe.js"],
   ];
   const notOneSite: string[] = [], spelled: string[] = [];
@@ -686,7 +697,7 @@ test("the census reads every spelling of a window message listener: addEventList
   assert.deepEqual(spelled, [], "the census's spelling predicate (spelledAsGated) passes it");
   // a handler on a window other than this page's own, on a socket, or on a receiver the census cannot resolve is no site
   // (the road census refuses all but the socket's)
-  const sited = ["frames.onmessage = f;", "parent.onmessage = f;", "top[\"onmessage\"] = f;", "opener.onmessage = f;", "frames[0].onmessage = f;",
+  const sited = ["parent.onmessage = f;", "top[\"onmessage\"] = f;", "opener.onmessage = f;", "frames[0].onmessage = f;",
     "window[0].onmessage = f;", "frame.contentWindow.onmessage = f;", "el.ownerDocument.defaultView.onmessage = f;", "e.target.onmessage = f;",
     "document.body.onmessage = f;", "getWin().onmessage = f;", "const ws = new WebSocket(u); ws.onmessage = f;"].filter((src) => found(src).length !== 0);
   assert.deepEqual(sited, [], "a site on a receiver that is not this page's own window");
@@ -1262,16 +1273,15 @@ test("an imported event name is read from the one file esbuild bundles for its b
 // The censuses above read what the source spells: an addEventListener call, an onmessage assignment, the names they
 // reach. More roads reach a window listener without spelling either, and this census refuses each in a ui/ source file
 // (test and types files excluded), read by the TypeScript parser. It resolves each receiver by its binding (refKind):
-//   - this page's own window: window, self and globalThis, unshadowed; any of them reached through another
-//     (window.self); this page's document's defaultView (document unshadowed, or this window's document, or a local
-//     initialised to one); a local initialised to any of these or destructured from one (const { defaultView } =
-//     document); and `this` where it is the global object (a plain function's or the file's own, outside any class or
-//     method);
-//   - a window other than this page's own: frames (which a browser answers with the window itself; refused with the rest
-//     here, so no reader has to know that), top, parent and opener, unshadowed; any of those reached through a window
-//     (window.parent, parent.top); another window's own names for itself (parent.self, top.window) and its document's
-//     defaultView (top.document.defaultView); an indexed window (frames[0], window[0], parent.frames[0]); a frame's
-//     contentWindow; the defaultView of any document the census cannot tell is this page's
+//   - this page's own window: window, self, globalThis and frames (which a browser answers with the window itself),
+//     unshadowed; any of them reached through another (window.self, window.frames); this page's document's defaultView
+//     (document unshadowed, or this window's document, or a local initialised to one); a local initialised to any of
+//     these or destructured from one (const { defaultView } = document); and `this` where it is the global object (a
+//     plain function's or the file's own, outside any class or method);
+//   - a window other than this page's own: top, parent and opener, unshadowed; any of those reached through a window
+//     (window.parent, parent.top); another window's own names for itself (parent.self, top.window, parent.frames) and
+//     its document's defaultView (top.document.defaultView); an indexed window (frames[0], window[0], parent.frames[0]);
+//     a frame's contentWindow; the defaultView of any document the census cannot tell is this page's
 //     (el.ownerDocument.defaultView); and an event's view, target, currentTarget or srcElement, each of which can hold a
 //     window; and a local initialised to any of these or destructured from one (const { parent: p } = window);
 //   - the body element, whose onmessage is its window's: the body of any document (this page's, a window's, any
@@ -1344,8 +1354,8 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //   - code handed to the DOM as markup or a URL (a script element, an inline handler attribute, a javascript: URL),
 //     which is no JavaScript the parser reads.
 
-/** The windows a script can name that are not its own (WINDOW_NAMES are its own): frames, top, parent and opener. */
-const OTHER_WINDOW_NAMES = new Set(["frames", "top", "parent", "opener"]);
+/** The windows a script can name that are not its own (WINDOW_NAMES are its own): top, parent and opener. */
+const OTHER_WINDOW_NAMES = new Set(["top", "parent", "opener"]);
 /** Every name a script reaches a window by: its own and the others. */
 const WINDOW_GLOBALS = new Set([...WINDOW_NAMES, ...OTHER_WINDOW_NAMES]);
 /** The members the census treats as a window whatever holds them: a document's window (defaultView), a frame's
@@ -1814,6 +1824,7 @@ test("the road census reads what it claims: every road around the spelled regist
     ["const dead = c.ws; dead.onopen = dead.onmessage = dead.onclose = dead.onerror = null;", undefined, 0],
     ["document.body.onmessage = null; x.onmessage = undefined; y.onmessageerror = z.onmessage = null;", undefined, 0],
     ["window.onmessageerror = f; document.defaultView.onmessage = g; const w = window; w.onmessage = h;", undefined, 3],
+    ["frames.onmessage = f; window.frames.onmessageerror = g; var w = frames; w.onmessage = h; fr\\u0061mes[\"onmessage\"] = i;", undefined, 4],
     ["if (port.onmessage) go(); const has = \"onmessage\" in window; type T = { onmessage: ((e: unknown) => void) | null };", undefined, 0],
     ["let t: WebSocket | null = null; type K = typeof WebSocket; const label = \"WebSocket closed\";", undefined, 0],
     ["window.addEventListener(\"messageerror\", f); self.addEventListener(\"message\", g);", undefined, 0],
@@ -1834,13 +1845,14 @@ test("the road census reads what it claims: every road around the spelled regist
   const byReason: Array<[RegExp, boolean, Array<[string, string?]>]> = [
     // a window other than this page's own, whatever the value
     [OTHER_WINDOW, true, [
-      ["frames.onmessage = f;"], ["top.onmessage = f;"], ["parent.onmessage = f;"], ["opener.onmessage = f;"], ["self.parent.onmessage = f;"],
-      ["window.frames.onmessage = f;"], ["globalThis.top.onmessage = f;"], ["(window as any).parent.onmessage = f;"], ["(window?.parent).onmessage = f;"],
+      ["top.onmessage = f;"], ["parent.onmessage = f;"], ["opener.onmessage = f;"], ["self.parent.onmessage = f;"],
+      ["globalThis.top.onmessage = f;"], ["parent.frames.onmessage = f;"], ["top.frames[\"onmessageerror\"] = f;"],
+      ["(window as any).parent.onmessage = f;"], ["(window?.parent).onmessage = f;"],
       ["window!.parent!.onmessage = f;"], ["el.ownerDocument.defaultView.onmessage = f;"], ["frame.contentWindow.onmessage = f;"],
-      ["top.document.defaultView.onmessage = f;"], ["const w = self.parent; w.onmessage = f;"], ["var w = frames; w.onmessage = f;"],
+      ["top.document.defaultView.onmessage = f;"], ["const w = self.parent; w.onmessage = f;"], ["var w = frames[0]; w.onmessage = f;"],
       ["const { parent: p } = window; p.onmessage = f;"], ["const { frames: { top: t } } = window; t.onmessage = f;"],
       ["frames[0].onmessage = f;"], ["window[0].onmessage = f;"], ["window[\"1\"].onmessage = f;"], ["parent.frames[0].onmessage = f;"],
-      ["window.frames.frames[0].onmessage = f;"], ["fr\\u0061mes.onmessage = f;"], ["top[\"onmessageerror\"] = f;"],
+      ["window.frames.frames[0].onmessage = f;"], ["fr\\u0061mes[0].onmessage = f;"], ["top[\"onmessageerror\"] = f;"],
       ["e.target.onmessage = f;"], ["ev.view.onmessage = f;"], ["e.currentTarget.onmessage = f;"], ["e.srcElement.onmessage = f;"],
       ["parent.onmessage = null;"],
     ]],
