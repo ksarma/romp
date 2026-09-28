@@ -33,8 +33,9 @@ function the check is when each message is delivered. The other pages' scripts r
 census (ServedPagesExecuted). ServedScriptPopulation derives the pages every census here reads (SERVED_BUILDERS) from
 kernel.py's syntax tree, each read as the kernel's _send writes it (_as_served: a page of the page class carries the
 sign-in seed and the page-key script _send puts first in its head), and ui/webview/served-script-scopes.test.ts parses
-every script on them (_served_scripts) and refuses a direct eval or a with statement, the two ways code can add a binding at run time to a scope between a listener
-and the global scope. Synthetic only: no session data, a loopback origin.
+every script on them (_served_scripts) and refuses a direct eval or a with statement, the two ways code can add a
+binding at run time to a scope between a listener and the global scope. Synthetic only: no session data, a loopback
+origin.
 
 The line after the adopted three is the fork's LOCK (2026-09-26): it makes the check's property read-only and
 non-configurable once defined, so a later write of it, under any name and on any road (a road the stand-in does not
@@ -172,8 +173,8 @@ SERVED_BUILDERS = {"/": "_landing", "/chat": "_chat_page", "/feed": "_feed_page"
 _BUILDER_ARGS = {"_too_large_page": ("too large", "a.pdf", {})}
 
 
-# One browser's session, minted once for the module, so a page read twice is read the same: the sign-in response _as_served
-# reads a page renderer's document as carries it (the seed holds its page key).
+# One browser's session, minted once for the module, so a page read twice is read the same: _as_served reads a page
+# renderer's document as the response that signs this session in, whose seed holds the session's page key.
 _SESSION = km._mint_session()
 
 
