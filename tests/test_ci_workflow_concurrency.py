@@ -362,8 +362,17 @@ def matrix_os(src, job):
     if "include" in keys:
         for line in _children(mat, keys["include"][1], 8):
             m = re.match(r"^\s*(?:-\s+)?os:\s*(.*)$", line)
+            flow = re.match(r"^\s*-?\s*\{(.*)\}\s*(?:#.*)?$", line)
             if m:
                 includes.append(_unquote(_strip_comment(m.group(1))))
+            elif flow:
+                # a flow-form entry, `- {os: macos-latest, python-version: '3.11'}`: each key: value pair read
+                pairs = [part.split(":", 1) for part in flow.group(1).split(",") if part.strip()]
+                if any(len(pair) != 2 for pair in pairs):
+                    raise LookupError("an include: entry the reader cannot split: %r; re-anchor this pin" % line)
+                includes += [_unquote(v) for k, v in pairs if k.strip() == "os"]
+            elif re.search(r"\bos\s*:", line):
+                raise LookupError("an include: line names os: in a form this reader cannot read: %r; re-anchor this pin" % line)
     return _strip_comment(keys["os"][0]), includes
 
 
@@ -471,22 +480,33 @@ class CiMatrixRunners(unittest.TestCase):
     def setUp(self):
         self.src = _source()
 
-    def runners(self, event, ref):
+    def runners(self, event, ref, src=None):
+        """{job: its runner labels} for EVERY job ci.yml defines (job_keys), not a list of the known ones: a job whose
+        runs-on is `${{ matrix.os }}` gets its matrix's evaluated os: list joined with every include: entry's os, any
+        other job its literal runs-on; a runs-on in neither form is a re-anchor."""
+        src = self.src if src is None else src
         out = {}
-        for job in MATRIX_JOBS:
-            self.assertEqual(job_value(self.src, job, "runs-on"), "${{ matrix.os }}", "the %s job runs on its matrix's os" % job)
-            expr, includes = matrix_os(self.src, job)
-            out[job] = sorted(set(os_list(expr, run(event, ref, SHA_A))) | set(includes))
-        for job in FIXED_JOBS:
-            out[job] = [job_value(self.src, job, "runs-on")]
+        for job in job_keys(src):
+            value = job_value(src, job, "runs-on")
+            if value is None:
+                raise LookupError("the %s job has no runs-on:; re-anchor this pin" % job)
+            if value == "${{ matrix.os }}":
+                expr, includes = matrix_os(src, job)
+                out[job] = sorted(set(os_list(expr, run(event, ref, SHA_A))) | set(includes))
+            elif "${{" in value:
+                raise LookupError("the %s job's runs-on %r is neither ${{ matrix.os }} nor a literal; re-anchor this pin" % (job, value))
+            else:
+                out[job] = [_unquote(value)]
         return out
 
     def test_a_batch_push_runs_every_job_on_linux_alone(self):
         got = self.runners("push", BATCH_X)
-        self.assertEqual(sorted(got), sorted(MATRIX_JOBS + FIXED_JOBS), "re-anchor: the jobs are %r" % sorted(got))
         for job, labels in got.items():
             self.assertEqual(labels, ["ubuntu-latest"], "a batch push runs the %s job on %r; it gets Linux alone (macOS runs "
                                                         "only on the weekly schedule or a manual dispatch)" % (job, labels))
+        self.assertEqual(sorted(got), sorted(MATRIX_JOBS + FIXED_JOBS), "re-anchor: the jobs are %r" % sorted(got))
+        for job in MATRIX_JOBS:
+            self.assertEqual(job_value(self.src, job, "runs-on"), "${{ matrix.os }}", "the %s job runs on its matrix's os" % job)
 
     def test_the_schedule_and_a_dispatch_add_macos_to_both_matrix_jobs(self):
         for event in ("schedule", "workflow_dispatch"):
@@ -494,6 +514,23 @@ class CiMatrixRunners(unittest.TestCase):
             for job in MATRIX_JOBS:
                 with self.subTest(event=event, job=job):
                     self.assertEqual(got[job], ["macos-latest", "ubuntu-latest"])
+
+    def test_a_fifth_job_and_a_flow_form_include_are_read(self):
+        """The two ways round 1's verify put a job on macOS for a batch push past the pin: a fifth job with a literal
+        runs-on (the job set was the fixed list of four) and a flow-form include: entry (the include reader read the
+        block form only). Both are read now, and an include line that names os: in a form the reader cannot read is a
+        re-anchor, not a silent skip."""
+        fifth = self.src.rstrip("\n") + "\n\n  late:\n    runs-on: macos-latest\n    steps:\n      - run: true\n"
+        self.assertEqual(self.runners("push", BATCH_X, src=fifth)["late"], ["macos-latest"])
+        m = re.search(r"^(\s+)include:\s*\n", self.src, re.M)
+        self.assertIsNotNone(m, "the python job's matrix has an include:; re-anchor this pin")
+        pad = m.group(1) + "  "
+        flow = self.src[:m.end()] + "%s- {os: macos-latest, python-version: '3.11'}\n" % pad + self.src[m.end():]
+        got = self.runners("push", BATCH_X, src=flow)
+        self.assertIn("macos-latest", got["python"], got)
+        odd = self.src[:m.end()] + "%s-   os  :  macos-latest\n" % pad + self.src[m.end():]
+        with self.assertRaises(LookupError):
+            self.runners("push", BATCH_X, src=odd)
 
     def test_the_readers_themselves(self):
         ctx = run("push", BATCH_X, SHA_A)
