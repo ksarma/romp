@@ -76,10 +76,13 @@ class BuildGating(unittest.TestCase):
         # federation.js) is unchanged.
         boot = km._TIMELINE_BOOT
         self.assertIn("if(window.__rompFed&&window.__rompFed.onFrame)window.__rompFed.onFrame(frameListener);", boot)
-        self.assertLess(boot.index('window.addEventListener("message",function(e){if(!heardSender(e))return;frameListener(e);});'),
-                        boot.index("window.__rompFed.onFrame(frameListener)"), "window first, the registry after it (their order in the "
-                        "source; the boot run below, test_the_host_shim_run_the_window_check_and_the_registry_reach_the_panel_and_the_"
-                        "collector, drives both paths)")
+        # find, not index, so a respelled listener fails on the message below instead of a bare ValueError
+        at_window = boot.find('window.addEventListener("message",function(e){if(!heardSender(e))return;frameListener(e);});')
+        self.assertGreaterEqual(at_window, 0, "the window listener, behind the sender check, is in the boot (its spelling; the "
+                                "boot run below drives it)")
+        self.assertLess(at_window, boot.index("window.__rompFed.onFrame(frameListener)"), "window first, the registry after it "
+                        "(their order in the source; the boot run below, test_the_host_shim_run_the_window_check_and_the_registry_"
+                        "reach_the_panel_and_the_collector, drives both paths)")
 
     def test_the_host_shim_run_the_window_check_and_the_registry_reach_the_panel_and_the_collector(self):
         # The boot RUN (review find, 2026-09-08; moved here from the TypeScript lane, which must not break on a
