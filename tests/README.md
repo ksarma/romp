@@ -250,14 +250,23 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   it finds naming anyio or reading what carries the run's `-p` options (`sys.argv`,
   `sys.orig_argv` and the invocation params, `-p`'s list, the ini settings, the
   plugins loaded, `PYTEST_ADDOPTS`) other than by a key it proves names
-  something else, so a conftest with a hook or fixture keyed on `-p no:anyio`,
-  given or not given, by a read the reader sees in its text has none of its
-  fixtures counted. It reads the conftest's text, so it does not see a key
-  built at run time, an attribute read by name through a function it does
-  not list, or the command line read from a file such as
-  `/proc/self/cmdline` (the rule's docstring, `_anyio_option_reads` in
-  `tests/test_hermetic_kernel_postal.py`, names kinds of read it does not
-  see, a list it does not claim complete). A name
+  something else. Under the reviewer's stopping rule, it counts none of the
+  fixtures of a conftest with a hook or fixture keyed on `-p no:anyio`, given
+  or not given, by an honest road: a read an author writes to key on the
+  option (`config.getoption`, `config.option`, `config.pluginmanager`,
+  `sys.argv`, the invocation params, `PYTEST_ADDOPTS`), followed through the
+  aliases and helpers of the conftest's text. A road no
+  honest author writes, whose only effect is to escape the check, is refused
+  where one syntactic check does it, and otherwise passes and is listed. It
+  reads the conftest's text alone, so it passes a carrier reached through a
+  name it cannot fold (a `getattr` whose name is built by a call, say) or
+  through a function that reads by name and that it does not list, the
+  command line read from outside the interpreter's objects
+  (`/proc/self/cmdline`, say), and what another module the conftest imports
+  does. The rule claims no more than this. Its docstring,
+  `_anyio_option_reads` in `tests/test_hermetic_kernel_postal.py`, lists in
+  WHAT IT DOES NOT READ the kinds of road no honest author writes that it
+  leaves unrefused. A name
   is licensed only when a child pytest over a copy of the conftest writes the
   name at each probe module's import and, in each probe
   test, reads it and sets it again, and sees the counted fixture's own code set or
@@ -350,8 +359,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   plugin blocked with no `-k` are granted (planted; no committed test makes a
   real run under either). A road on `-p no:anyio` not given, which no child
   is, is granted by the run, and the reader counts no fixture of a conftest
-  keyed on the flag by a read it sees (above), so no licence rests on such a
-  road where the reader sees its read. Third, unmatchable at any
+  keyed on the flag by an honest road (above), so a licence rests on such a
+  road only where no honest author writes it and the reader leaves it
+  unrefused. Third, unmatchable at any
   cost: a hook condition
   keyed on an open-valued signal (a mark, an environment variable, a host name,
   an option's value such as a `--durations` of 5 where CI's step gives 10, or

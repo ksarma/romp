@@ -6444,7 +6444,8 @@ _ANYIO_CARRIERS = {
     "get_hookimpls": "the plugins that implement a hook",
 }
 #   THE ANYIO RULE's carriers, {attribute: what it holds}: what holds the run's -p options or the plugins it loaded as a
-#   whole, read in no way the rule can tell from a read of -p no:anyio, so every read of one is refused
+#   whole, read in no way the rule can tell from a read of -p no:anyio, so a read of one is refused wherever the rule
+#   finds it (its docstring's third clause says where it looks)
 _ANYIO_KEYED = {"getoption": ("plugins", "-p"), "getvalue": ("plugins", "-p"), "getvalueorskip": ("plugins", "-p"),
                 "getini": ("addopts", "markers"),
                 "has_plugin": (), "hasplugin": (), "is_blocked": (), "get_plugin": (), "getplugin": ()}
@@ -6468,7 +6469,7 @@ _ANYIO_ATTRIBUTE_READERS = frozenset(("getattr", "hasattr", "getattr_static", "a
 #   an attribute of it read, imported under another name) is refused, and so is a value naming one where a carrier's
 #   name is refused (getattr(builtins, "getattr")); each would call it with a name the rule does not read. The item
 #   readers (get, pop, setdefault, __getitem__) are not among them, so one bound to another name passes (_get =
-#   vars(sys).get: a namespace held whole, a kind of read the rule's docstring lists as passing)
+#   vars(sys).get: a namespace held whole, a kind of road the rule's docstring lists in WHAT IT DOES NOT READ)
 _ANYIO_FOLD_CAP = 64
 #   the most values THE ANYIO RULE folds one expression to: a fold past it is refused, since a value beyond it could
 #   name anyio unread
@@ -6480,15 +6481,29 @@ def _anyio_option_reads(tree):
     included), sorted; empty when there is none. THE RULE (the reviewer's ruling at fork PR #894's landing merge with
     main, on the proof's launcher: every child of the proof passes -p no:anyio (_PROOF_CHILD_FLAG), so the execution
     proof refuses a hook keyed on the flag given and cannot refuse one keyed on it not given): a module's code may neither
-    name anyio nor read what carries the run's -p options, but by a key the rule proves names something else, so no hook
-    or fixture of a module the rule passes keys on -p no:anyio, given or not given, by a read the rule sees in its text
-    (KNOWN TO PASS, below, names kinds of read it does not see; that list is not complete), and a module whose code
-    it finds doing either has every fixture refused on both roads (_registration_refusals). A name read in a value the
-    rule folds is followed BY BINDING, by its scope to the declarations that bind it (ast_bindings), not by its
-    spelling, and a bare name spelled as a carrier or a keyed read is resolved the same way to the scope that binds it
-    (the third clause); a call that reads by a name handed it (_ANYIO_BY_NAME) is known by the name it is called
-    through, and one of those that reads an attribute (_ANYIO_ATTRIBUTE_READERS) is admitted only as the callee of a
-    call whose name the rule reads, so one bound to another name is refused where it is read (the fifth clause):
+    name anyio nor read what carries the run's -p options, but by a key the rule proves names something else, and a
+    module whose code it finds doing either has every fixture refused on both roads (_registration_refusals).
+    WHAT IT CLAIMS (the reviewer's stopping rule of 2026-09-28 16:38Z on round 2 of fork PR #894): it refuses every
+    HONEST road, the reads an author writes in a conftest's text to key a hook or fixture on the option, given or not
+    given: config.getoption and its siblings, config.option, config.pluginmanager, sys.argv, the invocation params and
+    PYTEST_ADDOPTS, each through the ordinary aliases and helpers of that text. An honest road it passes is a defect of
+    the rule. A road no honest author writes, whose only effect is to escape the check, is refused where one syntactic
+    check does it and finds no read in tests/conftest.py (the third clause refuses a carrier's bare name wherever a
+    star import, exec or a write to a namespace could bind it, and the fifth refuses getattr and its kin wherever they
+    are read other than as a call's callee, whatever name they are then handed), and otherwise is a line of WHAT IT
+    DOES NOT READ, below. It claims no more than that, and never every read: it reads the conftest's text alone, so
+    what another module the conftest imports holds or does is read by none of it (a helper there returning sys.argv,
+    a name there holding PYTEST_ADDOPTS), and no syntactic check over Python sees every read that text's code can make.
+    HOW IT FOLLOWS A ROAD: a carrier or a keyed read is read as an attribute of anything, so an alias of the object it
+    is read from (sys under another name, the plugin manager bound to a name) changes nothing; a carrier read and
+    bound to a name is refused where it is read, and so is a keyed read taken other than as a call (getoption bound to
+    a name or handed to a helper); and a key handed to a helper as a parameter is one the rule cannot fold, so the
+    helper's keyed read is refused. A name read in a value the rule folds is followed BY BINDING, by its scope to the
+    declarations that bind it (ast_bindings), not by its spelling, and a bare name spelled as a carrier or a keyed read
+    is resolved the same way to the scope that binds it (the third clause); a call that reads by a name handed it
+    (_ANYIO_BY_NAME) is known by the name it is called through, and one of those that reads an attribute
+    (_ANYIO_ATTRIBUTE_READERS) is admitted only as the callee of a call whose name the rule reads, so one bound to
+    another name is refused where it is read (the fifth clause):
     - A VALUE NAMING anyio or PYTEST_ADDOPTS (_ANYIO_WORDS), case folded: every str or bytes literal, and every value
       the rule folds from literals by +, % or *, or by an f-string, through names, each name resolved by its scope to
       the declarations that bind it (ast_bindings) and folded to every value they give it: a plain or annotated
@@ -6529,26 +6544,29 @@ def _anyio_option_reads(tree):
     LIVE: tests/conftest.py has none (its one keyed read, get_plugin("terminalreporter") in _say_at_run_end, folds to a
     name that is neither anyio nor a key of the -p options; the refusal test pins the count at 0, and the module road
     proves every fixture of the conftest).
-    KNOWN TO PASS, each unrefused (kinds of read, not a complete list: the rule reads the conftest's text, and what its
-    code can reach at run time is open): a carrier reached through a name the rule cannot fold (a getattr whose name is
-    a parameter, is built by a call or a subscript, is read from an attribute, a docstring through __doc__ say, or is
+    WHAT IT DOES NOT READ: the roads no honest author writes that the rule leaves unrefused, by kind. A road found
+    passing that is of none of these kinds is one more line here if no honest author writes it, and a defect of the
+    rule if one does (above). A carrier reached through a name the rule cannot fold (a getattr whose name is a
+    parameter, is built by a call or a subscript, is read from an attribute, a docstring through __doc__ say, or is
     passed starred); through a function or method that reads an attribute by a name handed it and that _ANYIO_BY_NAME
     does not list (pydoc.locate("sys.argv"), pkgutil.resolve_name("sys:argv"), a field of a format string,
     "{0.argv}".format(sys), and a pickled global each pass); through a namespace held whole (vars() or __dict__ of the
     config, of sys, of a class or of the module, or globals(), iterated or read through a method of it bound to another
     name, _get = vars(sys).get say; tests/conftest.py calls vars() on other objects, so the rule does not refuse the
-    call); or by a private attribute of pytest's that _ANYIO_CARRIERS does not name; the command line read from a file
-    rather than from the interpreter's objects (/proc/self/cmdline, say; tests/conftest.py's _proc_argv reads
+    call); or by a private attribute of pytest's that _ANYIO_CARRIERS does not name; the command line read from outside
+    the interpreter's objects: from a file (/proc/self/cmdline, say; tests/conftest.py's _proc_argv reads
     /proc/<pid>/cmdline for the processes a test leaves, and the run's own command line read by its pid is spelled the
-    same way, so a refusal by spelling would refuse the live conftest);
+    same way, so a refusal by spelling would refuse the live conftest), or through another process or a library that
+    reads it there (ps run on the process, psutil's Process.cmdline);
     code the module runs from a string (exec, eval), whose reads the rule does not parse as code (a string naming
-    anyio there is still refused as a value); a key naming anyio that it cannot fold (built by a call or a subscript,
-    or brought from outside the module's text: another module, the environment, a file) and handed to a read that is
-    no carrier and no keyed read (sys.modules, a fixture's name); PYTEST_ADDOPTS read through a name it cannot fold or
-    in a read of the whole environment, with such a key; and the plugins the run loaded read through what they change
-    elsewhere (how many modules are imported, how many markers or fixtures are registered), the third tier's
-    open-valued signal (_conftest_reasserted_names). Each is code the module road takes on trust, and a review of the
-    conftest reads."""
+    anyio there is still refused as a value); a key naming anyio that the rule cannot fold (built by a call or a
+    subscript, or brought from outside the module's text: another module, the environment, a file), or one that
+    matches anyio or the flag without naming anyio (a prefix, "any" or "no:a", say), handed to a read that is no carrier
+    and no keyed read (sys.modules, a fixture's name, the environment's values read whole); PYTEST_ADDOPTS read through
+    a name the rule cannot fold (built by a call, say) or among the environment's values read whole; and the plugins
+    the run loaded read through what they change elsewhere (how many modules are imported, how many markers or
+    fixtures are registered), the third tier's open-valued signal (_conftest_reasserted_names). Each is code the module
+    road takes on trust, and a review of the conftest reads."""
     bindings = ast_bindings.Bindings.of(tree)
     parent = {}
     for n in ast.walk(tree):
@@ -6801,8 +6819,10 @@ def _registration_refusals(tree, candidates, real, where=None):
     ANYIO RULE (_anyio_option_reads, the reviewer's ruling at fork PR #894's landing merge with main, on the proof's
     launcher): a module whose code the rule finds naming anyio or reading what carries the run's -p options, but by a
     key the rule proves names something else, has every fixture refused, naming each read, so no hook or fixture of a
-    module whose fixtures the filter counts keys on -p no:anyio, given or not given, by a read the rule sees in its
-    text (the rule's docstring names kinds of read it does not see, a list it does not claim complete)."""
+    module whose fixtures the filter counts keys on -p no:anyio, given or not given, by an honest road, the reads an
+    author writes to key on the option, followed through the aliases and helpers of the module's text (the reviewer's
+    stopping rule; the rule's docstring says what it claims, and lists in WHAT IT DOES NOT READ the kinds of road no
+    honest author writes that it leaves unrefused)."""
     if not candidates:
         return {}
     reads = _anyio_option_reads(tree)
@@ -6877,8 +6897,9 @@ def _conftest_reasserted_names(src=None, where=None):
     reviewer's ruling at the PR's landing merge with main, on the proof's launcher; _anyio_option_reads) refuses every
     fixture of a module whose code it finds naming anyio or reading what carries the run's -p options, but by a key
     the rule proves names something else, so no fixture of a module with a hook or fixture keyed on -p no:anyio, given
-    or not given, by a read the rule sees in its text is counted (the rule's docstring names kinds of read it does not
-    see, a list it does not claim complete).
+    or not given, by an honest road (the reads an author writes to key on the option, followed through the aliases and
+    helpers of the module's text) is counted (the reviewer's stopping rule; the rule's docstring says what it claims,
+    and lists in WHAT IT DOES NOT READ the kinds of road no honest author writes that it leaves unrefused).
     WHY TWO ROADS: before this ruling the reader closed the class one case at a time, each found by a child pytest in
     which a counted fixture never ran (a later binding of the fixture's name, the sixteenth commit; another def given its
     name=, the seventeenth; a name= passed through functools.partial or getattr, the eighteenth; a decorator or a name
@@ -6916,8 +6937,9 @@ def _conftest_reasserted_names(src=None, where=None):
     since the reader reads tests/conftest.py alone. On the module road, what tests/conftest.py's own code does beyond
     what pytest registers from it, which the reader takes on trust since it would refuse the conftest if it read that
     code by the proven list (the text road refuses it on the statements the registration test prints), and reads by
-    THE ANYIO RULE alone (_anyio_option_reads, whose docstring names kinds of read that rule does not see, a list it
-    does not claim complete): its import-time
+    THE ANYIO RULE alone (_anyio_option_reads, which refuses every honest road keyed on the anyio option and whose
+    docstring lists in WHAT IT DOES NOT READ the roads no honest author writes that it leaves unrefused): its
+    import-time
     code, its fixtures' bodies and the bodies of its hooks on _LISTED_HOOKS (not its pytest_make_collect_report, whose
     body and every def it calls the reader reads, THE SHAPE of _collect_report_shape_faults) may register a plugin,
     patch pytest's code,
@@ -7021,9 +7043,9 @@ def _conftest_reasserted_names(src=None, where=None):
     makes a real run under either. A road keyed on -p no:anyio not given, which no child of the proof is (each passes
     the flag, _PROOF_CHILD_FLAG), is granted by the proof (_proof_option_roads' road on it, in the context test), and
     THE ANYIO RULE refuses, on the filter's two roads, every fixture of a conftest with a hook or fixture keyed on the
-    flag, given or not given, by a read the rule sees in its text (_anyio_option_reads, whose docstring names kinds of
-    read it does not see, a list it does not claim complete), so no licence rests on such a road where the rule sees
-    its read.
+    flag, given or not given, by an honest road (_anyio_option_reads, whose docstring says what the rule claims under
+    the reviewer's stopping rule), so a licence rests on such a road only where it is one no honest author writes and
+    the rule leaves unrefused (that docstring lists their kinds in WHAT IT DOES NOT READ).
     THIRD, UNMATCHABLE at any cost: a conftest hook condition keyed on an open-valued signal, a mark of any name, an
     environment variable, a host name, an option's value (a --durations of 5, where CI's step gives 10: the pair
     matches whether an option is given, not its value; _proof_option_roads' road on it is granted), or another
@@ -7235,8 +7257,11 @@ _PROOF_CHILD_FLAG = ("-p", "no:anyio")
 #   it there as one option of two words, as it reads the developer's -p no:cacheprovider (that ruling, (2);
 #   _proof_ci_option_units). Since each child passes it, every run of the proof has the flag and none lacks it, so the
 #   proof grants a road keyed on it not given; THE ANYIO RULE refuses such a road, and a road on the flag given, on the
-#   filter's two roads wherever it sees the road's read in the conftest's text (_anyio_option_reads, whose docstring
-#   names kinds of read it does not see, a list it does not claim complete), so no licence rests on either road there
+#   filter's two roads when it is an honest road, the reads an author writes to key on the option, followed through the
+#   aliases and helpers of the conftest's text (_anyio_option_reads, whose docstring says what the rule claims under the
+#   reviewer's stopping rule, and lists in WHAT IT DOES NOT READ the kinds of road no honest author writes that it
+#   leaves unrefused), so a licence rests on either road only where the road is one no honest author writes and the
+#   rule leaves unrefused
 
 
 def _proof_developer_options():
@@ -11730,11 +11755,13 @@ class HermeticKernelPostal(unittest.TestCase):
         """THE ANYIO RULE (the reviewer's ruling at fork PR #894's landing merge with main, on the proof's launcher: every
         child of the proof passes -p no:anyio (_PROOF_CHILD_FLAG), so the execution proof refuses a hook keyed on the flag
         given and grants one keyed on it not given; one syntactic check of the filter, _anyio_option_reads, now refuses
-        both wherever it sees the read in the conftest's text, and its docstring names kinds of read it does not see, a
-        list it does not claim complete). LIVE: over tests/conftest.py the rule finds no read, and the module road still
-        proves every function-scoped autouse fixture of it. THE PREMISE, run: ONE child pytest, passing -p no:anyio as
-        every child does, over the proof's own two roads on the flag (_proof_option_roads: CI's option -p no:anyio
-        given, and not given), and over the reads the verifier found the rule passing at the commit that added this test
+        both when keyed by any honest road, the reads an author writes to key on the option, and its docstring says what
+        it claims under the reviewer's stopping rule and lists in WHAT IT DOES NOT READ the kinds of road no honest
+        author writes that it leaves unrefused). LIVE: over tests/conftest.py the rule finds no read, and the module
+        road still proves every function-scoped autouse fixture of it. THE PREMISE, run: ONE child pytest, passing
+        -p no:anyio as every child does, over the proof's own two roads on the flag (_proof_option_roads: CI's option
+        -p no:anyio given, and not given), and over the reads the verifier found the rule passing at the commit that
+        added this test
         (-p's list read by -p, its option string, which pytest maps to its dest; argv reached through from sys import *)
         and at the eighty-seventh commit (argv after a star import that an argv = [] above it also binds; sys.argv
         through getattr bound to another name, through object.__getattribute__ and through inspect.getattr_static), each
