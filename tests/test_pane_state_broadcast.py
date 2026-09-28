@@ -1997,6 +1997,65 @@ def _enclosing(spans, line):
     return max(inside, key=lambda sp: sp[0])[2] if inside else None
 
 
+_ROUTE_TABLE = "_PAGE_RENDERERS"   # the page route table main's fork PR #919 added: do_GET dispatches a page as `_page = _PAGE_RENDERERS.get(p)`
+
+
+def _route_table_renderers(tree):
+    """The renderers of the page route table, read off its one module-level dict literal, and the ids of its `.get(...)` reads (merge
+    upkeep for main's fork PR #919, which replaced do_GET's per-page `_send(200, _chat_page(), ...)` branches with one table). Every use
+    of the name is classified, since a renderer that reaches the table any other way would not be read here: the literal's own binding, a
+    membership test (`p in _PAGE_RENDERERS`, Handler._need's auth class) or a one-argument `.get(...)`. Anything else is loud: a second
+    binding, a subscript store, another method, the table passed on, a parameter or an import of the name, a `**` entry or a renderer that
+    is not a plain name. Returns (renderer names, ids of the `.get` calls)."""
+    defs = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == _ROUTE_TABLE for t in n.targets)]
+    if len(defs) != 1 or len(defs[0].targets) != 1 or not isinstance(defs[0].value, ast.Dict):
+        raise AssertionError("kernel.py: %s is not one module-level dict literal (%d bindings); classify it here" % (_ROUTE_TABLE, len(defs)))
+    table = defs[0].value
+    if any(k is None for k in table.keys) or not all(isinstance(v, ast.Name) for v in table.values):
+        raise AssertionError("kernel.py line %d: a %s entry that is a ** splat or a renderer that is not a plain name; classify it here" % (table.lineno, _ROUTE_TABLE))
+    parent = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    gets = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.arg) and node.arg == _ROUTE_TABLE or isinstance(node, (ast.Import, ast.ImportFrom)) and any((a.asname or a.name) == _ROUTE_TABLE for a in node.names):
+            raise AssertionError("kernel.py line %d: %s bound as a parameter or an import, which a .get would read in the table's place; classify it here" % (node.lineno, _ROUTE_TABLE))
+        if not (isinstance(node, ast.Name) and node.id == _ROUTE_TABLE) or node is defs[0].targets[0]:
+            continue
+        up = parent.get(node)
+        if isinstance(node.ctx, ast.Load) and isinstance(up, ast.Compare) and node in up.comparators and all(isinstance(o, (ast.In, ast.NotIn)) for o in up.ops):
+            continue
+        call = parent.get(up)
+        if (isinstance(node.ctx, ast.Load) and isinstance(up, ast.Attribute) and up.attr == "get" and isinstance(call, ast.Call) and call.func is up
+                and len(call.args) == 1 and not call.keywords):
+            gets.add(id(call))
+            continue
+        raise AssertionError("kernel.py line %d: a use of %s this census does not read (a binding, a store, another method, a .get with a default, or the table passed on); classify it here" % (node.lineno, _ROUTE_TABLE))
+    return {v.id for v in table.values}, gets
+
+
+def _bindings_in(fn, name):
+    """Every node binding `name` anywhere inside the function `fn`, its nested scopes included: an over-count only makes the caller refuse,
+    and a binding missed here could let a rebinding pass, so the count leans to the safe side."""
+    out = []
+    for n in ast.walk(fn):
+        if n is fn:
+            continue
+        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)) and n.id == name:
+            out.append(n)
+        elif isinstance(n, ast.arg) and n.arg == name:
+            out.append(n)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name == name:
+            out.append(n)
+        elif isinstance(n, ast.ExceptHandler) and n.name == name:
+            out.append(n)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)) and any((al.asname or al.name.split(".")[0]) == name for al in n.names):
+            out.append(n)
+        elif isinstance(n, (ast.Global, ast.Nonlocal)) and name in n.names:
+            out.append(n)
+        elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name == name or isinstance(n, ast.MatchMapping) and n.rest == name:
+            out.append(n)
+    return out
+
+
 def _text_html_200_writers(src):
     """The kernel's text/html 200 writers, DERIVED from the source (pass 5, the author's label, taking the reviewer's round-4 finding tests-4; every `_send` call classified since the
     author's pass-5 verify, which found the first walk read one shape alone): an AST walk over every `self._send(...)` call, its status, body and
@@ -2006,9 +2065,15 @@ def _text_html_200_writers(src):
     unclassified. A literal text/html type must ride a literal status (a relayed status with a text/html literal is loud), and a 200's
     body is a call of a page function or a constant name (any other shape is loud). Returns the callee names of the bodies built by a call
     (the page functions) and the names of the bodies passed as a constant (the paste-the-token page). A pattern-matched grep is a sample:
-    the reviewer's round-4 refuter's grep missed one of the nine writers; this walks every call."""
+    the reviewer's round-4 refuter's grep missed one of the nine writers; this walks every call. Since main's page route table (fork PR
+    #919) do_GET serves every page through one call, `_send(200, _page(), ...)` with `_page = _PAGE_RENDERERS.get(p)`: a body called
+    through a name whose one binding in its function is such a `.get` read stands for every renderer of the table's literal
+    (_route_table_renderers), so a renderer added to the table reds the population below as a new writer would; a name bound from the
+    table and bound again in that function is loud (resolved by its binding, not by its spelling)."""
     tree = ast.parse(src)
     spans = _kernel_functions(tree)
+    fn_nodes = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    renderers, gets = _route_table_renderers(tree)
     calls, names = set(), set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "_send"):
@@ -2032,7 +2097,17 @@ def _text_html_200_writers(src):
         if code.value != 200:
             continue
         if isinstance(body, ast.Call) and isinstance(body.func, ast.Name):
-            calls.add(body.func.id)
+            fn = max((f for f in fn_nodes if f.lineno <= node.lineno <= f.end_lineno), key=lambda f: f.lineno, default=None)
+            name = body.func.id
+            from_table = [] if fn is None else [a for a in ast.walk(fn) if isinstance(a, ast.Assign) and len(a.targets) == 1
+                                                and isinstance(a.targets[0], ast.Name) and a.targets[0].id == name and id(a.value) in gets]
+            if not from_table:
+                calls.add(name)
+                continue
+            binds = _bindings_in(fn, name)
+            if len(binds) != 1:
+                raise AssertionError("kernel.py line %d (%s): %s is bound from %s and bound again (%d bindings), so the page it calls is not the table's alone; classify it here" % (node.lineno, fn.name, name, _ROUTE_TABLE, len(binds)))
+            calls |= renderers
         elif isinstance(body, ast.Name):
             names.add(body.id)
         else:
@@ -2333,6 +2408,8 @@ class LazyPanes(unittest.TestCase):
         # text/plain 200 and a body with no <html> tag (the paste-the-token page at /, disclosed below) pass through untouched, bytes or str.
         # The population is DERIVED from the writers: an AST walk over kernel.py's `_send(200, <body>, "text/html…")` calls must name exactly
         # the page functions in the bodies loop, and the one constant body (the token page), so a new text/html 200 writer reds this test.
+        # The page dispatch main's route table brought (fork PR #919: `_page = _PAGE_RENDERERS.get(p)`, then one `_send`) counts as every
+        # renderer the table's literal names, so a page added to the table reds it the same way (_text_html_200_writers says how).
         stamp = km._stamp_served_html
         pages = {"chat": km._chat_page, "feed": km._feed_page, "timeline": km._timeline_page, "fleet": km._fleet_page, "waiting": km._waiting_page, "files": km._files_page, "settings": km._settings_page, "landing": km._landing}
         self.assertEqual(sorted(k for k in pages if k != "landing"), sorted([k for k, _ in km._PANE_ORDER] + ["settings"]), "the census: every pane key of _PANE_ORDER has its page here, plus the gear's, plus the shell's landing")
@@ -2358,7 +2435,7 @@ class LazyPanes(unittest.TestCase):
             self.assertEqual(out.count("<html data-romp-served=200"), 1, k + ": one stamp on the <html> tag of a text/html 200")
             self.assertEqual(len(out), len(b) + len(" data-romp-served=200"), k + ": nothing else changes")
             self.assertTrue(re.match(r"\s*<!DOCTYPE html>\s*<html data-romp-served=200[\s>]", out, re.I), k + ": the stamped tag is the document's ROOT, the one documentElement carries (the author's pass-5 verify: the stamp lands on the FIRST <html match, so a leading comment naming the tag would take it, count one and add the same 21 bytes, with the root unstamped and docState reading `other`): %r" % (out[:80],))
-        self.assertNotIn("<html", km._TOKEN_LOGIN_HTML, "the token-less landing (the paste-the-token page at /) writes no root tag, so it is the one 200 the writer cannot stamp: disclosed here; it is served at / alone, never at a pane url, so no pane frame's reader meets it")
+        self.assertNotIn("<html", km._TOKEN_LOGIN_HTML, "the token-less landing (the paste-the-token page at /) writes no root tag, so it is the one 200 the writer cannot stamp: disclosed here; it is served at / (a request with no credential) and at /login (the sign-in page, exempt, since main's fork PR #919), never at a pane url, so no pane frame's reader meets it")
         self.assertEqual(stamp(200, km._TOKEN_LOGIN_HTML, "text/html"), km._TOKEN_LOGIN_HTML, "...and it passes through as it came")
         self.assertEqual(stamp(200, b"<!DOCTYPE html><html lang=en><body>x</body></html>", "text/html"), b"<!DOCTYPE html><html data-romp-served=200 lang=en><body>x</body></html>", "a bytes body is stamped the same")
         self.assertEqual(stamp(200, "<HTML><body>x</body></HTML>", "text/html"), "<HTML data-romp-served=200><body>x</body></HTML>", "the tag's case does not matter")
