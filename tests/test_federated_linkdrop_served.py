@@ -122,8 +122,8 @@ socket until it cleared it after the connect, as kernel.py _remote_ws clears the
 nothing for 5 s was shut, 5 to 10 s after the last frame other than a keepalive under the remote kernel's 10 s keepalive.
 A census shows this (`python3 oldhub_closes.py <report.json>...` outside the repo, run on 2026-09-28 over one copy
 of each distinct old-hub report that the caches of this PR's review drives held at 20:01Z: 55 LinkDropOldLocal.json
-files by content, 167 with the copies). The 41 made while the splice kept that timeout, at the branch's heads from its
-first commit through 1fa8cfd4d (four of those heads since rewritten, several with uncommitted edits: mutated and
+files by content, 167 with the copies). The 41 made while the splice kept that timeout, at heads through 1fa8cfd4d, the earliest two PR 815's last commit and its
+merge with the lab not yet committed (four heads since rewritten, several with uncommitted edits: mutated and
 in-progress trees) and at f3094c4b7 with the timeout put back, hold 358 relay-socket closes outside the drop and the
 restart, every one 4.95 to 10.01 s after its socket's last recorded frame and 345 of them on all three pages at one
 instant. The 14 made with the timeout cleared, at fbd7b3ad0, fd38417e6 and f3094c4b7 and at 1fa8cfd4d with the clear
