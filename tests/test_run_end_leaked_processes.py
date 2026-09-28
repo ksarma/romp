@@ -1129,8 +1129,8 @@ class RunEnd(unittest.TestCase):
         """The premise of the pass-over (the reviewer's closing check of round 2 of fork PR #894's review): the controller's
         own tracker exits with the controller only while no other process holds its pipe, on the versions where a process
         still holding the pipe when the controller exits keeps the tracker running after it; on the other versions the
-        controller's exit waits for that process instead (the comment above LEAK_EXIT_BOUND_S lists both sets). The child
-        run's test starts the tracker and forks a child that keeps a descriptor on the pipe and outlives the test
+        controller's exit waits for the tracker instead (the comment above LEAK_EXIT_BOUND_S names releases of each kind).
+        The child run's test starts the tracker and forks a child that keeps a descriptor on the pipe and outlives the test
         (_fork_keeping_the_trackers_pipe). The child holds no path under a root, so no line of its own names it; the run is
         red, the tracker is named, and its line names the child as a holder of its pipe. Red with the pass-over by identity
         alone: the run ended 0 and said nothing. The child run's process kills and reaps its child at its exit, and the
