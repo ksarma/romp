@@ -30,26 +30,26 @@
 // the wrong arm fails as well as a foreign one that reaches either.
 //
 // The census reads the population instead of a list: every addEventListener("message", …) or
-// addEventListener("messageerror", …) call in a ui/ source file (tests excluded; uiSources lists the files), the method
-// named or a computed member, whatever its receiver, and every onmessage or onmessageerror handler assigned to this page's
-// own window, the receiver resolved by its binding (window, self, globalThis, the bare global, this page's
-// document.defaultView, a local initialised to one of them, the global `this`), must take the event as its one parameter,
-// with no default, have the check, preceded by nothing but reads of the message and early returns whose condition the
-// census judges to run no code (headCheck's docstring lists the forms), judged by form, not by what runs, and be one of
-// the gated sites below, each with an executed leg here. A messageerror event carries the sender's origin and source as a message does, and a
-// sender causes one by posting what the page cannot deserialize, so it is counted as a message. A
-// listener handed over by name is read at the function written in place that a const of that name holds, found by the
-// name's binding; any other name fails. A new
-// window listener anywhere in ui/ fails it until it is gated and given a leg. A second census reads what the name
-// windowSender is bound to: in every ui/ file that calls the check, it is the helper's own import (gear.js: its require),
-// bound once and never written, so a local helper of the same name that lets one more sender through cannot stand in for
-// it. The first census reads the listeners the source spells, so two more hold the source to spellings it can read: a
-// third holds that every addEventListener in ui/ is a call the first can read, and a fourth refuses the roads that spell
-// neither (a method of the window, of the body element or of a prototype read by a computed name, a function run with
-// the window as its `this`, an onmessage handler set other than by an assignment the fourth accepts, a handler or a
-// message listener on a window other than this page's own, code run from a string (a module imported from a data: URL
-// or from a URL built at run time among it), a test or types file imported as a module, a `with` statement, and the name
-// WebSocket anywhere but as the constructor a `new` calls, or in a type). What those cannot see is listed at the fourth.
+// addEventListener("messageerror", …) call in a ui/ source file (test and types files excluded; uiSources lists the
+// files), the method named or a computed member, whatever its receiver, and every onmessage or onmessageerror handler
+// assigned to this page's own window, the receiver resolved by its binding (window, self, globalThis, the bare global,
+// this page's document.defaultView, a local initialised to one of them, the global `this`), must take the event as its
+// one parameter, with no default, have the check, preceded by nothing but reads of the message and early returns whose
+// condition the census judges to run no code (headCheck's docstring lists the forms), judged by form, not by what runs,
+// and be one of the gated sites below, each with an executed leg here. A messageerror event carries the sender's origin
+// and source as a message does, and a sender causes one by posting what the page cannot deserialize, so it is counted
+// as a message. A listener handed over by name is read at the function written in place that a const of that name
+// holds, found by the name's binding; any other name fails. A new window listener anywhere in ui/ fails it until it is
+// gated and given a leg. A second census reads what the name windowSender is bound to: in every ui/ file that calls the
+// check, it is the helper's own import (gear.js: its require), bound once and never written, so a local helper of the
+// same name that lets one more sender through cannot stand in for it. The first census reads the listeners the source
+// spells, so two more hold the source to spellings it can read: a third holds that every addEventListener in ui/ is a
+// call the first can read, and a fourth refuses the roads that spell neither (a method of the window, of the body
+// element or of a prototype read by a computed name, a function run with the window as its `this`, an onmessage handler
+// set other than by an assignment the fourth accepts, a handler or a message listener on a window other than this
+// page's own, code run from a string (a module imported from a data: URL or from a URL built at run time among it), a
+// test or types file imported as a module, a `with` statement, and the name WebSocket anywhere but as the constructor a
+// `new` calls, or in a type). What those cannot see is listed at the fourth.
 // Synthetic world only: the notes-api demo, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -472,17 +472,18 @@ test("the legs of a listener declared in ARMS tell its arms apart: in each leg's
 
 /** The classes every file under ui/ falls into, by its path relative to ui/ (forward slashes), tried in this order, the
  *  first whose test matches taking the file: tests and types (a `.test.` file of any module suffix, and a .d.ts, .d.mts
- *  or .d.cts file; a .d.tsx is a module, since TypeScript reads it as no declaration file and esbuild bundles it); modules,
- *  every suffix esbuild 0.21.5's default loaders read as code (.ts .tsx .mts .cts .js .jsx .mjs .cjs) in any directory,
- *  the files every census here reads; and the files no census reads, each class named: stylesheets, the anchor map's
- *  fixtures (its directory's data: markdown, json, a python file, an html page with no script, a csv, an svg, a
- *  .gitattributes) and the markdown at ui/'s own top (its README and CLAUDE.md). No census reads a test or types file,
- *  and esbuild bundles either like any module when a module imports it, so the road census refuses that import. A file no
- *  class takes reds uiPartition, named with its suffix, so a file of a kind no class names is loud, never dropped. Every
- *  directory is walked, one named node_modules or dist included: a module there is one a ui/ module can import and esbuild
- *  bundles, so it is read like any other; a stylesheet, a test or a types file there takes its class as it does anywhere;
- *  and any other file there (a package.json, a README) has no class, since the fixtures and the markdown are named by
- *  where they sit. */
+ *  or .d.cts file; a .d.tsx is a module, since TypeScript reads it as no declaration file and esbuild bundles it);
+ *  modules, every suffix esbuild 0.21.5's default loaders read as code (.ts .tsx .mts .cts .js .jsx .mjs .cjs) in any
+ *  directory, the files every census here reads; and the files no census reads, each class named: stylesheets, the
+ *  anchor map's fixtures (its directory's data: markdown, json, a python file, an html page with no script, a csv, an
+ *  svg, a .gitattributes) and the markdown at ui/'s own top (its README and CLAUDE.md). No census reads a test or types
+ *  file, and esbuild bundles either like any module when a module imports it, so the road census refuses that import (a
+ *  file the build puts in a page by an entry point or an alias is on the road census's list of what it cannot see). A
+ *  file no class takes reds uiPartition, named with its suffix, so a file of a kind no class names is loud, never
+ *  dropped. Every directory is walked, one named node_modules or dist included: a module there is one a ui/ module can
+ *  import and esbuild bundles, so it is read like any other; a stylesheet, a test or a types file there takes its class
+ *  as it does anywhere; and any other file there (a package.json, a README) has no class, since the fixtures and the
+ *  markdown are named by where they sit. */
 const UI_CLASSES: Array<[string, RegExp]> = [
   ["tests and types", /\.test\.([mc]?[tj]s|[tj]sx)$|\.d\.[mc]?ts$/],
   ["modules", /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/],
@@ -806,7 +807,7 @@ test("the binding census reads what it claims: a local, a parameter, an aliased 
 // (const add = window.addEventListener.bind(window); add("message", f)), a destructured name, or a call whose event type
 // is not a literal (window.addEventListener(type, f)). tests/test_shell_source_check.py refuses those in kernel.py
 // (_loose_add_tokens); this is the same rule for ui/, read by the TypeScript parser, so a spelling in a comment or inside
-// a longer string is none. Every addEventListener in a ui/ source file (tests excluded) must be one of:
+// a longer string is none. Every addEventListener in a ui/ source file (test and types files excluded) must be one of:
 //   - the method called directly with a string literal for its event type (the census above reads the "message" and
 //     "messageerror" ones);
 //   - the method called directly with an event type the parser resolves to strings, none of them "message" or
@@ -1255,7 +1256,7 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //
 // The censuses above read what the source spells: an addEventListener call, an onmessage assignment, the names they
 // reach. More roads reach a window listener without spelling either, and this census refuses each in a ui/ source file
-// (tests excluded), read by the TypeScript parser. It resolves what a receiver is by its binding (refKind):
+// (test and types files excluded), read by the TypeScript parser. It resolves each receiver by its binding (refKind):
 //   - this page's own window: window, self and globalThis, unshadowed; any of them reached through another
 //     (window.self); this page's document's defaultView (document unshadowed, or this window's document, or a local
 //     initialised to one); a local initialised to any of these or destructured from one (const { defaultView } =
@@ -1332,6 +1333,8 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //   - a top-level var of a classic script rebound through the global object (this.ws = window, window.ws = window): the
 //     census reads a var's writes by its name. No ui/ source runs as a classic script today: esbuild bundles each, and
 //     the kernel inlines romp-timeline-view.js inside a function;
+//   - a test or types file the build puts in a page other than through a module specifier: a bundle's entry point or an
+//     alias in vscode-extension/esbuild.js or its tsconfig.json, which no census reads;
 //   - code handed to the DOM as markup or a URL (a script element, an inline handler attribute, a javascript: URL),
 //     which is no JavaScript the parser reads.
 
