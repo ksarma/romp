@@ -700,7 +700,7 @@ class OpenerIsolation(unittest.TestCase):
         # The one reply without the policy (Handler.send_error's comment names it) is a reply in HTTP/0.9's shape, the body
         # alone, with no status line and no headers, so no header can ride it. Which of these request lines, none of which a
         # browser sends, get one depends on the interpreter's http.server. On Python 3.10 to 3.12, and on 3.13 and 3.14
-        # before 3.13.15 and 3.14.7, every case below gets every reply in that shape (each is a line of at most 65536 bytes,
+        # before 3.13.15 and 3.14.7, every case in the table gets every reply in that shape (each is a line of at most 65536 bytes,
         # its line terminator included, whose version is missing, malformed, HTTP/0.9 itself, or HTTP/2.0 or later). 3.13.15
         # and 3.14.7, the first 3.13 and 3.14 releases with CPython's gh-54930, answer such a line's own refusal, its 400 or
         # 505 (the first six cases), with a status line and headers, and the send_error override puts the policy among
