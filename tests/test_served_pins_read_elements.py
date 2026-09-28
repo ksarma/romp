@@ -1883,7 +1883,10 @@ class T(unittest.TestCase):
         # unclassified reader of the page. A synthetic module pins the rule: the module's own helper whose returns read no response
         # (os.pathconf's answer) is no fetch, in an assignment of its own or inside a tuple assignment; one whose return reads a
         # response (`urlopen(path).read().decode()`) is; and a callee the module does not define keeps the reading before the
-        # ruling, a fetch. The rows of both derivations are named, never inferred.
+        # ruling, a fetch. A Return is credited to the innermost function holding it (_response_reads), so a helper whose nested
+        # def reads a response while its own returns read none (`_outer`) is no fetch either (the rulings at the merge, 2026-09-28:
+        # a walk that credits the nested def's returns to the helper binds `st` here). The rows of both derivations are named,
+        # never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest
 def _pathconf(path, name, default):
@@ -1904,8 +1907,14 @@ class T(unittest.TestCase):
         a, b = _pathconf("/", "PC_NAME_MAX", 255), _get("/sw.js")
         self.assertIn("q3", b)
         self.assertIn("q4", a)
+        st = _outer("/")
+        self.assertIn("q5", st)
 def _fits(case, ceiling):
     case.assertGreaterEqual(ceiling - 1, 0)
+def _outer(path):
+    def inner(r):
+        return r.read()
+    return os.stat(path)
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -1918,7 +1927,7 @@ def _fits(case, ceiling):
                          "os.pathconf's answer is no read of the page, and no helper handed it is followed")
         self.assertEqual([r[:4] for r in rows], [(14, "q1", "_landing", "in"), (16, "q2", "_chat_page", "in"), (18, "q3", "_sw_js", "in")])
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
-                         {"_pathconf": [], "_get": ["whole"], "test_a": [], "_fits": []})
+                         {"_pathconf": [], "_get": ["whole"], "test_a": [], "_fits": [], "_outer": [], "inner": ["whole"]})
 
     def test_the_fold_reader_splits_the_text_by_fold_and_refuses_what_it_cannot_place(self):
         # the rulings at the merge of main's login cookie split (2026-09-28): tests/test_token_login_page.py read the token login
