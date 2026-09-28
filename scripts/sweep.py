@@ -36,10 +36,12 @@ removes the checkouts of runs that are no longer running.
 
 The legs, in order (LEGS): deps (`npm ci` from the sha's lockfile, in every checkout, since a fresh one has
 no node_modules; a --leg re-run runs it first as its setup), pytest, bats, manager and tools (node --test),
-ledger (scripts/upstream-ledger.py check), and the three webview legs (typecheck, npm-test, build), owed when
-kernel/kernel.py, ui/ or vscode-extension/ changed since the merge base with origin/main (CLAUDE.md's webview
-rule; with no origin/main they are owed). Every leg runs even after an earlier one is red, so the result
-carries every leg's status.
+ledger (scripts/upstream-ledger.py check), and the three webview legs (typecheck, npm-test, build). Every head
+owes every leg, a member's head included, whatever its diff: the webview legs read files outside kernel/kernel.py,
+ui/ and vscode-extension/ (tests, other kernel modules, docs), so no set of changed paths shows they may be
+skipped. deps and the webview legs are marked not owed only when the sha has no vscode-extension/package.json,
+and the ledger only when it has no ledger script; a reader refuses any other not-owed mark. Every leg runs even
+after an earlier one is red, so the result carries every leg's status.
 
 The leg environment is an allowlist (LEG_ALLOW, leg_sets): USER and LOGNAME pass when set, and the runner
 sets everything else. PATH is the pytest interpreter's directory and those of node, npm, bats, git and
@@ -97,21 +99,23 @@ SCHEMA = 2
 LEGS = ("deps", "pytest", "bats", "manager", "tools", "ledger", "typecheck", "npm-test", "build")
 WEBVIEW_LEGS = ("typecheck", "npm-test", "build")
 TEST_LEGS = ("pytest", "bats", "manager", "tools", "npm-test")
-# The legs the runner owes at every head; the others it marks not owed only with a reason (`why`): deps only when
-# the sha has no vscode-extension/package.json (NO_PACKAGE_JSON), the ledger only when it has no ledger script, and
-# the webview legs by the webview rule or for having no extension.
+# The legs the runner owes at every head; the others it marks not owed only with a reason (`why`): deps and the
+# webview legs (EXTENSION_LEGS) only when the sha has no vscode-extension/package.json (NO_PACKAGE_JSON), and the
+# ledger only when it has no ledger script.
 ALWAYS_OWED = ("pytest", "bats", "manager", "tools")
+# The legs owed wherever the sha has vscode-extension/package.json. The webview legs are owed at every such head,
+# a member's included, whatever its diff (round 1, decision 11): they read files outside kernel/kernel.py, ui/ and
+# vscode-extension/ (a census of their reads found 82 such tracked files), so a rule over the changed paths passes
+# heads that turn them red.
+EXTENSION_LEGS = ("deps",) + WEBVIEW_LEGS
+WEBVIEW_WHY = "owed at every head: the webview legs read files outside kernel/kernel.py, ui/ and vscode-extension/"
 VERDICTS = ("pass", "red", "running", "invalid")
-# The reason the runner gives for deps (and the webview legs) not owed: the sha's tree has no extension. A result that
-# marks deps not owed for any other reason did not come from this runner (every checkout is fresh, so it never holds
-# node_modules), and batch.py accepts this one only when the sha's tree really has no such file.
+# The one reason the runner gives for deps and the webview legs not owed: the sha's tree has no extension. A result
+# that marks one of them not owed for any other reason did not come from this runner (every checkout is fresh, so it
+# never holds node_modules, and no diff excuses a webview leg), and batch.py accepts this one only when the sha's tree
+# really has no such file.
 NO_PACKAGE_JSON = "no vscode-extension/package.json"
 EXIT_PASS, EXIT_RED, EXIT_REFUSED, EXIT_INVALID = 0, 1, 2, 3
-
-# The webview rule (CLAUDE.md, "Any kernel/kernel.py change runs the webview tests"): a head owes the three
-# webview legs unless all of these are untouched.
-WEBVIEW_FILES = ("kernel/kernel.py",)
-WEBVIEW_DIRS = ("ui/", "vscode-extension/")
 
 # The pytest command the runner builds (pytest_cmd): `<python> -m pytest tests -n <workers>`, then these flags, then
 # PYTEST_ISOLATION and one --ignore per PYTEST_IGNORED entry. Against CI's Run pytest step (.github/workflows/ci.yml,
@@ -243,15 +247,11 @@ def write_result(path, data):
 
 # ── the rules: which legs are owed, and the verdict ─────────────────────────
 
-def webview_owed(paths):
-    """The changed paths that make a head owe the webview legs (empty: not owed)."""
-    return [p for p in paths if p in WEBVIEW_FILES or p.startswith(WEBVIEW_DIRS)]
-
-
 def excuse_fault(name, leg):
     """Why a leg's not-owed mark is one the runner never writes, or None: a leg of ALWAYS_OWED marked not
-    owed, another leg marked not owed with no reason, or deps marked not owed for any reason but NO_PACKAGE_JSON
-    (every checkout is fresh, so deps is owed wherever the sha has vscode-extension/package.json)."""
+    owed, another leg marked not owed with no reason, or deps or a webview leg (EXTENSION_LEGS) marked not owed for
+    any reason but NO_PACKAGE_JSON (every checkout is fresh, so deps is owed wherever the sha has
+    vscode-extension/package.json, and every head owes the webview legs whatever its diff)."""
     if not (isinstance(leg, dict) and leg.get("owed") is False):
         return None
     if name in ALWAYS_OWED:
@@ -259,8 +259,8 @@ def excuse_fault(name, leg):
     why = leg.get("why")
     if not (isinstance(why, str) and why.strip()):
         return "%s marked not owed with no reason" % name
-    if name == "deps" and why != NO_PACKAGE_JSON:
-        return "deps marked not owed for a reason other than %r (%r)" % (NO_PACKAGE_JSON, why)
+    if name in EXTENSION_LEGS and why != NO_PACKAGE_JSON:
+        return "%s marked not owed for a reason other than %r (%r)" % (name, NO_PACKAGE_JSON, why)
     return None
 
 
@@ -531,15 +531,27 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
     if absent:
         return done("incomplete", "sweep incomplete at %s: no %s leg in %s; sweep again with this checkout's scripts/sweep.py"
                     % (short(sha), ", ".join(absent), path), rec)
-    faults = [f for f in (excuse_fault(name, legs[name]) for name in LEGS) if f]
-    always = [name for name in ALWAYS_OWED if legs[name].get("owed") is False]
-    if faults:
-        text = [f for f in faults if not f.endswith(" marked not owed")]
-        if always:
-            text.insert(0, "%s marked not owed" % ", ".join(always))
-        return done("invalid", "sweep invalid at %s: %s, which the runner never records (%s always run; the other legs are "
-                               "marked not owed only with a reason); sweep again with this checkout's scripts/sweep.py"
-                    % (short(sha), "; ".join(text), ", ".join(ALWAYS_OWED)), rec)
+    faulty = [name for name in LEGS if excuse_fault(name, legs[name])]
+    if faulty:
+        # One clause for the legs of ALWAYS_OWED, one per reason for the others (the three webview legs marked not owed
+        # for one reason read as one clause naming the three), and each leg with no reason on its own.
+        always = [n for n in faulty if n in ALWAYS_OWED]
+        text = ["%s marked not owed" % ", ".join(always)] if always else []
+        by_why = {}
+        for n in faulty:
+            why = legs[n].get("why")
+            if n in ALWAYS_OWED:
+                continue
+            if isinstance(why, str) and why.strip():
+                by_why.setdefault(why, []).append(n)
+            else:
+                text.append(excuse_fault(n, legs[n]))
+        text += ["%s marked not owed for a reason other than %r (%r)" % (", ".join(names), NO_PACKAGE_JSON, why)
+                 for why, names in by_why.items()]
+        return done("invalid", "sweep invalid at %s: %s, which the runner never records (%s always run; deps and the webview "
+                               "legs are owed at every head that has vscode-extension/package.json, whatever its diff, and "
+                               "the ledger is marked not owed only with a reason); sweep again with this checkout's "
+                               "scripts/sweep.py" % (short(sha), "; ".join(text), ", ".join(ALWAYS_OWED)), rec)
     history = read_history(runs)
     rec.update(flake_notes=flake_notes(history), invalid_notes=invalid_notes(history))
     if history["never"]:
@@ -1199,10 +1211,10 @@ def pytest_cmd(python, workers):
             *("--ignore=%s" % p for p in sorted(PYTEST_IGNORED))]
 
 
-def plan_legs(tree, python, workers, webview):
+def plan_legs(tree, python, workers):
     """{leg: record} with each leg's owed decision, command and cwd, planned over the fresh checkout; nothing runs
-    here. deps (npm ci from the sha's lockfile) is owed whenever the sha has vscode-extension/package.json: a fresh
-    checkout never holds node_modules."""
+    here. deps (npm ci from the sha's lockfile) is owed whenever the sha has vscode-extension/package.json, since a
+    fresh checkout never holds node_modules, and so are the webview legs, whatever the head changed (WEBVIEW_WHY)."""
     legs = {}
     package = os.path.exists(os.path.join(tree, "vscode-extension", "package.json"))
     for name in LEGS:
@@ -1229,10 +1241,8 @@ def plan_legs(tree, python, workers, webview):
             npm = list(NPM_CMDS[name])
             if not package:
                 rec.update(owed=False, why=NO_PACKAGE_JSON)
-            elif webview["owed"]:
-                rec.update(cmd=npm, cwd="vscode-extension", why=webview["why"])
             else:
-                rec.update(owed=False, why=webview["why"])
+                rec.update(cmd=npm, cwd="vscode-extension", why=WEBVIEW_WHY)
         legs[name] = rec
     return legs
 
@@ -1343,23 +1353,6 @@ def run_leg(tree, name, rec, wraps, ctx, logdir):
         if name in TEST_LEGS:
             rec["tests"], rec["failed"] = count_tests(name, log)
     rec["finished"] = now()
-
-
-def webview_state(tree):
-    """{"owed", "why", "paths", "base"} from the merge base with origin/main; owed on the safe side without one."""
-    if not git(tree, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main", check=False).stdout.strip():
-        return {"owed": True, "why": "no origin/main ref, so what changed is unknown: owed", "paths": [], "base": None}
-    base = git(tree, "merge-base", "HEAD", "refs/remotes/origin/main", check=False)
-    if base.returncode != 0 or not base.stdout.strip():
-        return {"owed": True, "why": "no merge base with origin/main, so what changed is unknown: owed", "paths": [], "base": None}
-    base = base.stdout.strip()
-    changed = git(tree, "diff", "--no-renames", "--name-only", base, "HEAD").splitlines()
-    hits = webview_owed(changed)
-    if hits:
-        shown = ", ".join(hits[:5]) + (" and %d more" % (len(hits) - 5) if len(hits) > 5 else "")
-        return {"owed": True, "why": "changed since %s: %s" % (short(base), shown), "paths": hits, "base": base}
-    return {"owed": False, "why": "kernel/kernel.py, ui/ and vscode-extension/ untouched since %s" % short(base),
-            "paths": [], "base": base}
 
 
 def script_blob():
@@ -1536,9 +1529,10 @@ def _run_locked(args, tree, sha, branch, python, version, wraps, only, path, fla
         run["runner"]["checkout"] = {"form": "clone", "path": checkout, "create_s": create_s,
                                      "verify_s": round(time.monotonic() - t0, 2), "files": len(entries), "setup": None}
         if not only:
-            webview = webview_state(tree)
-            run["legs"] = plan_legs(checkout, python, workers, webview)
-            run.update(base=webview["base"], owed={"webview": webview}, order=list(LEGS))
+            run["legs"] = plan_legs(checkout, python, workers)
+            # Every head owes the webview legs (WEBVIEW_WHY); the record says so, or names the missing extension.
+            typecheck = run["legs"]["typecheck"]
+            run.update(owed={"webview": {"owed": typecheck["owed"], "why": typecheck["why"]}}, order=list(LEGS))
             need = (history or {}).get("need") or {}
             owed = [n for n in LEGS if is_owed(n, run["legs"][n])]
             unrun = sorted(set(need) - set(owed))

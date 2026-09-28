@@ -288,30 +288,28 @@ class Fixture:
         self._save_gh()
         return runs[-1]["url"]
 
-    def sweep(self, name, sha=None, webview=None, **over):
+    def sweep(self, name, sha=None, webview=False, **over):
         """A sweep result for batch/<name>'s current head (or `sha`), written through scripts/sweep.py's own
-        writer where the runner writes it: every leg rc 0 but deps, not owed, and the webview legs, owed and rc 0
-        when the head changed kernel/kernel.py, ui/ or vscode-extension/ since main (the rule verify re-derives),
-        else not owed; `webview` True or False sets them instead; `over` replaces top-level keys, and the verdict
-        is the runner's rule over the result unless given."""
+        writer where the runner writes it: every leg rc 0 but deps and the webview legs, not owed for the one reason
+        the runner gives (the fixture's worlds have no vscode-extension/package.json), unless `webview` is True, which
+        records the webview legs owed and rc 0; `over` replaces top-level keys, and the verdict is the runner's rule
+        over the result unless given."""
         sha = sha or self.dev_git("rev-parse", "batch/" + name)
-        if webview is None:
-            base = self.dev_git("merge-base", sha, "origin/main")
-            webview = bool(sweep.webview_owed(self.dev_git("diff", "--no-renames", "--name-only", base, sha).splitlines()))
         return self.result(sha, "batch/" + name, webview=webview, tree=self.wt(name), **over)
 
     def result(self, sha, branch, webview, tree, runs=None, **over):
         """The result the runner would write for `sha`, recorded for `branch`: one full run (schema 2 keeps every run
         at the sha in `runs`), every leg rc 0 but deps, not owed, and the webview legs owed and rc 0 when `webview`,
-        else not owed. `over` replaces keys of that run, `runs` the whole history; a run's verdict is its own legs'
-        unless given."""
+        else not owed; deps and the webview legs are marked not owed for the one reason the runner gives, a sha with no
+        vscode-extension/package.json. `over` replaces keys of that run, `runs` the whole history; a run's verdict is
+        its own legs' unless given."""
         if runs is None:
             stamp = sweep.now()
             legs = {n: {"owed": True, "rc": 0, "cmd": ["true"], "started": stamp, "finished": stamp} for n in sweep.LEGS}
             for n in sweep.TEST_LEGS:
                 legs[n].update(tests=1, failed=0)
             for n in () if webview else sweep.WEBVIEW_LEGS:
-                legs[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
+                legs[n] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
             # the fixture's worlds have no vscode-extension/, and this is the one reason the runner gives for deps
             legs["deps"] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
             run = {"kind": "full", "sha": sha, "branch": branch, "tree": tree, "started": stamp, "finished": stamp,
@@ -600,7 +598,10 @@ class PlanReadsTheMemberSweep(_Base):
         self.assertIn("no passing sweep at its head (sweep invalid at %s: the result marks deps not owed for having no "
                       "vscode-extension/package.json, but #112's head's tree holds vscode-extension/package.json" % head[:10], excl[112])
 
-    def test_a_red_a_stale_and_a_webview_contradicting_result_are_each_named(self):
+    def test_a_red_a_stale_and_a_webview_skipping_result_are_each_named(self):
+        """A member's head owes every leg, the webview legs included, as a batch head does (round 1, decision 11): a
+        result that marks them not owed by a changed-path rule is refused at a head that changed only an unread path,
+        where the head's plan took it."""
         fx = self.fx
         red_head = fx.branch("e", {"e.txt": "e\n"}, swept=False)
         with open(fx.swept("e")) as f:
@@ -609,8 +610,13 @@ class PlanReadsTheMemberSweep(_Base):
         fx.result(red_head, "e", webview=True, tree=fx.author, legs=legs)
         old = fx.branch("f", {"f.txt": "f\n"})
         fx.commit("f", {"f.txt": "f2\n"}, swept=False)
-        ui_head = fx.branch("g", {"ui/pane.js": "export const pane = 1;\n"}, swept=False)
-        fx.result(ui_head, "g", webview=False, tree=fx.author)
+        g_head = fx.branch("g", {"g.txt": "g\n"})
+        untouched = "kernel/kernel.py, ui/ and vscode-extension/ untouched since %s" % fx.bare_rev("main")[:10]
+        with open(sweep.result_path(g_head, env=fx.env)) as f:
+            legs = json.load(f)["runs"][-1]["legs"]
+        for n in sweep.WEBVIEW_LEGS:
+            legs[n] = {"owed": False, "rc": None, "why": untouched}
+        fx.result(g_head, "g", webview=True, tree=fx.author, legs=legs)
         fx.pr(105, "e", labels=["fix"], body=TRAILER)
         fx.pr(106, "f", labels=["fix"], body=TRAILER)
         fx.pr(107, "g", labels=["fix"], body=TRAILER)
@@ -620,9 +626,8 @@ class PlanReadsTheMemberSweep(_Base):
         excl = {e["n"]: e["reason"] for e in st["excluded"]}
         self.assertIn("no passing sweep at its head (sweep red at %s: bats (rc 1)" % red_head[:10], excl[105])
         self.assertIn("no passing sweep at its head (sweep stale: the newest result for f is at %s" % old[:10], excl[106])
-        self.assertIn("no passing sweep at its head (sweep webview: the result at %s marks typecheck, npm-test, build not owed, "
-                      "but ui/pane.js changed between origin/main at %s and #107's head" % (ui_head[:10], fx.bare_rev("main")[:10]),
-                      excl[107])
+        self.assertIn("no passing sweep at its head (sweep invalid at %s: typecheck, npm-test, build marked not owed for a reason "
+                      "other than 'no vscode-extension/package.json' ('%s')" % (g_head[:10], untouched), excl[107])
 
     def test_repin_refuses_a_new_head_without_a_passing_sweep(self):
         fx = self.fx
@@ -1798,27 +1803,29 @@ class VerifyReadsTheSweep(_Base):
         self.assertIn("scripts/sweep.py is missing beside batch.py", p.stderr)
         self.assertNotIn("ok   sweep", p.stdout)
 
-    def test_a_result_that_excuses_webview_legs_the_diff_owes_fails(self):
-        """verify re-derives the webview rule from git (what changed between main and the batch head) rather than
-        trusting the result's own decision: a result that marks the webview legs not owed while the batch changes
-        ui/ fails by name, and one that ran them passes."""
+    def test_a_result_that_skips_a_webview_leg_fails_whatever_the_diff(self):
+        """Round 1, C1 and decision 11: every head owes the webview legs, so verify refuses a batch-head result that
+        marks any of them not owed for any reason but a missing extension, whatever the batch changed. Here it changed
+        notes.txt alone, where the head's verify re-derived the changed-path rule and passed; one that ran them passes."""
         fx = self.fx
-        fx.branch("a", {"notes.txt": "one\ntwo\nthree\nfour\n", "ui/pane.js": "export const pane = 1;\n"})
-        fx.pr(101, "a", title="notes: a pane", labels=["fix"], body=TRAILER)
-        fx.ok("plan", "--name", "b1")
-        fx.ok("assemble", "b1")
-        head = fx.dev_git("rev-parse", "batch/b1")
-        main = fx.bare_rev("main")
-        fx.sweep("b1", webview=False)    # a result that marks the three webview legs not owed
-        self.refused("FAIL sweep webview: the result at %s marks typecheck, npm-test, build not owed, but ui/pane.js changed "
-                     "between %s at %s and the batch head" % (head[:10], "origin/main", main[:10]))
+        head = self.assembled()
+        untouched = "kernel/kernel.py, ui/ and vscode-extension/ untouched since %s" % fx.bare_rev("main")[:10]
+        legs = self.legs()
+        for n in sweep.WEBVIEW_LEGS:
+            legs[n] = {"owed": False, "rc": None, "why": untouched}
+        fx.sweep("b1", legs=legs)
+        self.refused("FAIL sweep invalid at %s: typecheck, npm-test, build marked not owed for a reason other than "
+                     "'no vscode-extension/package.json' ('%s')" % (head[:10], untouched))
+        legs["build"] = {"owed": True, "rc": 0, "started": sweep.now(), "finished": sweep.now()}
+        fx.sweep("b1", legs=legs)
+        self.refused("FAIL sweep invalid at %s: typecheck, npm-test marked not owed for a reason other than" % head[:10])
         legs = self.legs()
         for n in sweep.WEBVIEW_LEGS:
             legs[n] = {"owed": True, "rc": 0, "tests": 1, "failed": 0, "started": sweep.now(), "finished": sweep.now()}
         fx.sweep("b1", legs=legs)
         p = fx.ok("verify", "b1")
         self.assertIn("ok   sweep at %s: pass" % head[:10], p.stdout)
-        self.assertNotIn("sweep webview", p.stdout)
+        self.assertIn("typecheck 0, npm-test 0, build 0", p.stdout)
 
     FLAKE = "tests/test_notes.py::test_order (known)"
 
@@ -1894,9 +1901,8 @@ class VerifyReadsTheSweep(_Base):
         out = {n: {"owed": True, "rc": rcs.get(n, 0), "started": sweep.now(), "finished": sweep.now()} for n in sweep.LEGS}
         for n in sweep.TEST_LEGS:
             out[n].update(tests=1, failed=0)
-        for n in sweep.WEBVIEW_LEGS:
-            out[n] = {"owed": False, "rc": None, "why": "not owed in the fixture"}
-        out["deps"] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
+        for n in sweep.EXTENSION_LEGS:          # the fixture's worlds have no vscode-extension/package.json
+            out[n] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
         return out
 
 

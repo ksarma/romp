@@ -4,8 +4,8 @@
 scripts/batch.py verify and land read a result keyed by the batch head's full sha (tests/test_batch_tool.py
 holds that side). This module holds the writer and the reader: the legs run in a private clone of the exact sha,
 verified before any leg and re-read after every leg (a leg that changes it makes the run invalid), whatever the
-batcher's tree holds or does meanwhile; every leg's rc is recorded, every leg runs after a red one, the webview
-legs follow CLAUDE.md's rule; the leg environment is an allowlist (no credential, session, hook or narrowing
+batcher's tree holds or does meanwhile; every leg's rc is recorded, every leg runs after a red one, every head owes
+every leg (the webview legs included, whatever the head changed); the leg environment is an allowlist (no credential, session, hook or narrowing
 variable, no dotfile of the batcher's HOME); the result keeps every run at the sha (a later green counts over a
 red one only with --flake naming the leg); and nothing is written in the batcher's tree.
 
@@ -385,10 +385,9 @@ class Runner(_Base):
             self.assertIn("cmd", leg, name)
             self.assertIs(type(leg["rc"]), int, name)
             self.assertEqual(leg["rc"], 0, name)
-        self.assertEqual([n for n in sweep.LEGS if r["legs"][n]["owed"] is not False],
-                         ["deps", "pytest", "bats", "manager", "tools", "ledger"],
-                         "untouched webview paths owe no webview leg; an absent node_modules owes deps")
-        self.assertEqual(w.legs_called(), ["deps", "pytest", "bats", "manager", "tools", "ledger"], "run in roster order")
+        self.assertEqual([n for n in sweep.LEGS if r["legs"][n]["owed"] is not False], list(sweep.LEGS),
+                         "every head owes every leg: the webview legs whatever it changed, deps in every fresh checkout")
+        self.assertEqual(w.legs_called(), list(sweep.LEGS), "run in roster order")
         self.assertTrue(r["finished"])
         self.assertIsNone(r["invalid"])
 
@@ -400,36 +399,59 @@ class Runner(_Base):
         self.assertEqual(r["verdict"], "red")
         self.assertEqual(r["red"], ["bats"])
         self.assertEqual(r["legs"]["bats"]["rc"], 1)
-        self.assertEqual(w.legs_called(), ["deps", "pytest", "bats", "manager", "tools", "ledger"], "the legs after the red one ran too")
+        self.assertEqual(w.legs_called(), list(sweep.LEGS), "the legs after the red one ran too")
         self.assertIn("sweep red at %s: bats (rc 1)" % w.head()[:10], p.stdout)
 
-    def test_the_webview_legs_follow_the_rule(self):
-        cases = (("kernel/kernel.py", True), ("ui/x.js", True), ("vscode-extension/src/a.ts", True),
-                 ("README.md", False), ("kernel/other.py", False))
-        for path, owed in cases:
-            with self.subTest(path=path):
+    def test_every_head_owes_the_webview_legs_whatever_it_changed(self):
+        """Round 1, decision 11 (regression-1): the webview legs read files outside kernel/kernel.py, ui/ and
+        vscode-extension/, so every head owes them, whatever its diff and whether or not origin/main exists; the result
+        says so and records no base. The head's runner marked them not owed for a change to kernel/other.py or
+        README.md alone."""
+        cases = [(path, None) for path in ("kernel/kernel.py", "ui/x.js", "vscode-extension/src/a.ts", "README.md", "kernel/other.py")]
+        cases.append(("kernel/other.py", "no origin/main"))
+        for path, road in cases:
+            with self.subTest(path=path, road=road):
                 w = World()
                 self.addCleanup(w.close)
                 w.change({path: "changed\n"})
+                if road:
+                    w.git("update-ref", "-d", "refs/remotes/origin/main")
                 w.run(check=0)
+                self.assertEqual(w.legs_called(), list(sweep.LEGS), "the npm fake ran the webview legs")
                 r = w.result()
                 for name in sweep.WEBVIEW_LEGS:
-                    self.assertIs(r["legs"][name]["owed"], owed, "%s after a change to %s" % (name, path))
-                called = w.legs_called()
-                for name in sweep.WEBVIEW_LEGS:
-                    self.assertEqual(name in called, owed, "the npm fake ran %s: %r" % (name, called))
-                self.assertEqual(r["owed"]["webview"]["paths"], [path] if owed else [])
-                self.assertEqual(r["base"], w.git("rev-parse", "origin/main"))
+                    self.assertIs(r["legs"][name]["owed"], True, "%s after a change to %s" % (name, path))
+                    self.assertEqual(r["legs"][name]["why"], sweep.WEBVIEW_WHY)
+                self.assertEqual(r["owed"], {"webview": {"owed": True, "why": sweep.WEBVIEW_WHY}})
+                self.assertNotIn("base", r, "no leg is decided by a merge base, so none is recorded")
 
-    def test_no_origin_main_owes_the_webview_legs(self):
+    def test_a_sweep_at_a_merge_commit_owes_the_webview_legs(self):
+        """Round 1, C5 (regression-2): the remedy for a batch merged behind main sweeps a checkout at the merge commit M
+        once origin/main holds M. M's second parent changed kernel/kernel.py; the head's runner took the merge base
+        with origin/main, M itself, and marked the webview legs not owed. Every head owes them."""
         w = self.w
-        w.git("update-ref", "-d", "refs/remotes/origin/main")
+        w.change({"kernel/kernel.py": "VERSION = 2\n"})
+        w.git("checkout", "-q", "main")
+        w.git("merge", "-q", "--no-ff", "-m", "Merge the batch", "work")
+        w.git("push", "-q", "origin", "main")
+        self.assertEqual(w.head(), w.git("rev-parse", "origin/main"), "origin/main holds the merge commit")
         w.run(check=0)
+        self.assertEqual(w.legs_called(), list(sweep.LEGS), "the webview legs ran at the merge commit")
         r = w.result()
         for name in sweep.WEBVIEW_LEGS:
-            self.assertIs(r["legs"][name]["owed"], True, name)
-        self.assertIn("no origin/main", r["owed"]["webview"]["why"])
-        self.assertIsNone(r["base"])
+            self.assertIs(r["legs"][name]["owed"], True, "%s at the merge commit" % name)
+
+    def test_a_sha_without_the_extension_marks_deps_and_the_webview_legs_not_owed_for_that_alone(self):
+        """The one reason the runner gives for deps and the webview legs not owed: the sha has no
+        vscode-extension/package.json."""
+        w = self.w
+        w.change({"vscode-extension/package.json": None})
+        w.run(check=0)
+        r = w.result()
+        for name in sweep.EXTENSION_LEGS:
+            self.assertEqual((r["legs"][name]["owed"], r["legs"][name]["why"]), (False, sweep.NO_PACKAGE_JSON), name)
+        self.assertEqual(r["owed"], {"webview": {"owed": False, "why": sweep.NO_PACKAGE_JSON}})
+        self.assertEqual(w.legs_called(), [n for n in sweep.LEGS if n not in sweep.EXTENSION_LEGS])
 
     def test_a_dirty_tree_is_swept_at_its_sha_and_the_edits_named_as_not_swept(self):
         """Round 1, A3 and decision 17 (replacing the dirty-tree refusal): the batcher's tree is read for its HEAD sha
@@ -568,7 +590,7 @@ class Runner(_Base):
         p = w.run("--wrap", "*=true", check=1)
         r = w.result()
         self.assertEqual(r["verdict"], "red", p.stdout + p.stderr)
-        self.assertEqual(r["red"], [PYTEST_LEG, "bats", "manager", "tools"])
+        self.assertEqual(r["red"], [PYTEST_LEG, "bats", "manager", "tools", "npm-test"])
         for name in r["red"]:
             self.assertEqual(r["legs"][name]["rc"], 0, name)
             self.assertIn(r["legs"][name].get("tests"), (None, 0), name)
@@ -1090,7 +1112,7 @@ class CheckoutRoads(unittest.TestCase):
                 p = w.run(env=env)
                 self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
                 calls = w.calls()
-                self.assertEqual(len(calls), 6)
+                self.assertEqual(len(calls), len(sweep.LEGS))
                 for c in calls:
                     self.assertEqual(c["tree"], expected, "%s did not see the sha's tree" % c["leg"])
                 self.assertEqual(w.data()["sha"], sha)
@@ -1109,7 +1131,7 @@ class LegEnvironment(_Base):
     reader compares with its own."""
 
     def all_legs_world(self):
-        """The world's head changes kernel/kernel.py, so the webview legs are owed and all nine legs run."""
+        """A head on a branch of its own; every head owes every leg, so all nine legs run."""
         self.w.change({"kernel/kernel.py": "VERSION = 2\n"})
         return self.w
 
@@ -1264,7 +1286,7 @@ class LegEnvironment(_Base):
         for name in ("node", "npm", "bats"):
             self.assertEqual(tools[name], {"path": os.path.join(w.bin, name), "version": name + " 0.0.0-fake"})
         self.assertTrue(tools["git"]["version"].startswith("git version"), tools["git"])
-        self.assertEqual(w.legs_called(), ["deps", PYTEST_LEG, "bats", "manager", "tools", "ledger"])
+        self.assertEqual(w.legs_called(), list(sweep.LEGS))
 
     def test_a_wrap_sees_the_runners_environment_and_its_leg_does_not(self):
         w = self.w
@@ -1414,7 +1436,7 @@ class CiParity(unittest.TestCase):
 
     def setUp(self):
         self.jobs = {j: ci_steps(j) for j in ("python", "shell", "secrets", "vscode-extension")}
-        self.legs = sweep.plan_legs(str(ROOT), "python", 2, {"owed": True, "why": "compared with ci.yml"})
+        self.legs = sweep.plan_legs(str(ROOT), "python", 2)
 
     def test_every_named_step_is_compared_or_named_as_ci_only(self):
         compared = {("python", "Run pytest"), ("shell", "Run bats"), ("shell", "Manager handshake tests (node --test)"),
@@ -1490,15 +1512,15 @@ class Reader(unittest.TestCase):
     TOP = ("schema", "sha", "branch", "tree")
 
     def legs(self, **rcs):
-        """A full run's legs as the runner writes them: every leg that is always owed run with rc 0 (or `rcs`), and
-        deps and the webview legs not owed with a reason."""
+        """A full run's legs as the runner writes them at a sha with no vscode-extension/package.json: every leg that
+        is always owed, and the ledger, run with rc 0 (or `rcs`), and deps and the webview legs not owed for that
+        reason alone."""
         legs = {n: {"owed": True, "rc": rcs.get(n, 0), "started": "2026-01-01T00:00:01Z", "finished": "2026-01-01T00:00:02Z",
                     "log": "logs/%s.log" % n} for n in sweep.LEGS}
         for n in sweep.TEST_LEGS:
             legs[n].update(tests=1, failed=1 if rcs.get(n) else 0)
-        for n in sweep.WEBVIEW_LEGS:
-            legs[n] = {"owed": False, "rc": None, "why": "not owed here"}
-        legs["deps"] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
+        for n in sweep.EXTENSION_LEGS:
+            legs[n] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
         return legs
 
     def run_rec(self, kind="full", **over):
@@ -1603,9 +1625,11 @@ class Reader(unittest.TestCase):
 
 
     def test_a_not_owed_mark_the_runner_never_writes_is_invalid(self):
-        """The runner always owes pytest, bats, manager and tools, and marks deps, ledger and the webview legs not
-        owed only with a reason. A record that says otherwise did not come from the runner (or came from a runner
-        with another roster), and a leg it marks not owed ran nothing, so the reader refuses it by name."""
+        """The runner always owes pytest, bats, manager and tools, marks deps and the webview legs not owed only when
+        the sha has no vscode-extension/package.json (round 1, decision 11: every head owes the webview legs, whatever
+        it changed), and the ledger only with a reason. A record that says otherwise did not come from the runner (or
+        came from a runner with another roster), and a leg it marks not owed ran nothing, so the reader refuses it by
+        name: verify, plan, --repin and check read through it."""
         cases = []
         legs = self.legs()
         for n in sweep.LEGS:
@@ -1625,6 +1649,18 @@ class Reader(unittest.TestCase):
         cases.append(("deps for a reason the runner no longer gives", legs,
                       "deps marked not owed for a reason other than 'no vscode-extension/package.json' "
                       "('vscode-extension/node_modules present')"))
+        # the head's runner marked the webview legs not owed by a changed-path rule, with this reason
+        untouched = "kernel/kernel.py, ui/ and vscode-extension/ untouched since 1234567890"
+        legs = self.legs()
+        for n in sweep.WEBVIEW_LEGS:
+            legs[n] = {"owed": False, "rc": None, "why": untouched}
+        cases.append(("the webview legs by the changed-path rule", legs,
+                      "typecheck, npm-test, build marked not owed for a reason other than 'no vscode-extension/package.json' "
+                      "('%s')" % untouched))
+        legs = self.legs()
+        legs["npm-test"] = {"owed": False, "rc": None, "why": "skipped on this box"}
+        cases.append(("one webview leg", legs, "npm-test marked not owed for a reason other than 'no vscode-extension/package.json' "
+                                               "('skipped on this box')"))
         for label, legs, named in cases:
             with self.subTest(label):
                 self.write(self.result(legs=legs))
@@ -1688,8 +1724,8 @@ class Reader(unittest.TestCase):
                               line)
 
     def test_a_failed_leg_no_later_run_ran_stays_red(self):
-        """A leg that failed and that a later full run marks not owed (the webview decision moved) is not excused by
-        not running: the result reads red naming the failed run."""
+        """A leg that failed and that a later full run marks not owed (for a missing extension, a record no runner
+        writes at one sha) is not excused by not running: the result reads red naming the failed run."""
         failed = self.legs()
         failed["npm-test"] = {"owed": True, "rc": 1, "tests": 3, "failed": 1, "started": "s", "finished": "f", "log": "logs/n.log"}
         self.write(self.result(runs=[self.run_rec(legs=failed), self.run_rec(started="2026-01-01T00:02:00Z")]))
@@ -1767,7 +1803,8 @@ class Rules(unittest.TestCase):
 
         def result(finished="2026-01-01T00:00:00Z", invalid=None, **legs):
             base = {n: {"owed": False, "rc": None, "why": "not owed here"} for n in sweep.LEGS}
-            base["deps"] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
+            for n in sweep.EXTENSION_LEGS:
+                base[n] = {"owed": False, "rc": None, "why": sweep.NO_PACKAGE_JSON}
             for n in sweep.ALWAYS_OWED:
                 base[n] = {"owed": True, "rc": 0, "tests": 1}
             base.update(legs)
@@ -1788,15 +1825,11 @@ class Rules(unittest.TestCase):
         self.assertEqual(v(result()), "pass")
         self.assertEqual(v(result(pytest={"owed": False, "rc": None, "why": "skipped"})), "red", "pytest is always owed")
         self.assertEqual(v(result(deps={"owed": False, "rc": None})), "red", "not owed takes a reason")
+        self.assertEqual(v(result(build={"owed": False, "rc": None, "why": "ui/ untouched"})), "red",
+                         "a webview leg is not owed only for a missing extension")
         missing = result(pytest={"owed": True, "rc": 0, "tests": 1})
         del missing["legs"]["bats"]
         self.assertEqual(v(missing), "red", "a leg absent from the record is owed")
-
-    def test_webview_owed_is_the_claude_md_rule(self):
-        w = sweep.webview_owed
-        self.assertEqual(w(["kernel/kernel.py", "kernel/other.py", "ui/a/b.ts", "vscode-extension/x", "uix/y", "README.md"]),
-                         ["kernel/kernel.py", "ui/a/b.ts", "vscode-extension/x"])
-        self.assertEqual(w([]), [])
 
     def test_the_state_dir_resolves_as_bin_romp_does(self):
         sd = sweep.state_dir

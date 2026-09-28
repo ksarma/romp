@@ -38,8 +38,8 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     `Depends-on` cycle excludes its members (and their dependents), not the plan; plan --only N plans N
     alone (a single PR lands as a one-member batch), refusing a number that is not an open PR;
   - plan excludes a candidate whose pinned head has no passing sweep result of its own (read through the
-    reader verify uses, its webview decision checked against git), naming the case, and its dependents
-    with it; assemble --repin refuses a re-read head without one;
+    reader verify uses, so a member's head owes every leg, the webview legs included, as a batch head does),
+    naming the case, and its dependents with it; assemble --repin refuses a re-read head without one;
   - assemble refuses when any other `batch/*` ref exists on origin;
   - provenance fails on an undeclared commit and passes on a `batch:` commit;
   - every merge on the chain (a member's or origin/main's) equals the clean merge of its parents,
@@ -52,13 +52,13 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
   - verify refuses a missing, stale, unfinished, red, invalid, incomplete or unreadable sweep result
     for the batch head's full sha, one that marks a leg not owed for having no vscode-extension/package.json
     while the head's tree holds one (plan and --repin refuse the same at a member's head), and a batch head
-    that does not contain main as origin has it now
-    (CI does not run on the merge to main, so the tree that lands must be the tree the sweep and the
-    batch branch's CI ran on), and a result that marks a webview leg not owed while the diff from main
-    to the head owes it; land re-runs verify and refuses the same. The reader reads the result's whole
-    history (append-only runs): a failed run that no later run excused with --flake naming the leg reads
-    red, naming the run and its logs, and a result recorded under another leg environment (the allowlist
-    hash) reads invalid; verify and the body name each invalid run the history holds;
+    that does not contain main as origin has it now (CI does not run on the merge to main, so the tree that
+    lands must be the tree the sweep and the batch branch's CI ran on); a result that marks deps or a webview
+    leg not owed for any other reason reads invalid, whatever the diff (every head owes the webview legs);
+    land re-runs verify and refuses the same. The reader reads the result's whole history (append-only
+    runs): a failed run that no later run excused with --flake naming the leg reads red, naming the run and
+    its logs, and a result recorded under another leg environment (the allowlist hash) reads invalid; verify
+    and the body name each invalid run the history holds;
   - land reads main on origin once more right before the merge call and refuses if it moved since verify;
     the residual is stated, not closed: a move between that read and GitHub's merge (the merge pins the
     head, not the base), and a move before an --auto merge fires later (--auto is refused until the
@@ -499,7 +499,7 @@ def cmd_plan(args):
     # with it, through the fixpoint below).
     sweep = sweep_reader()
     for n, m in list(cands.items()):
-        why = member_sweep_fault(root, sweep, m, base_sha)
+        why = member_sweep_fault(root, sweep, m)
         if why:
             excluded[n] = "no passing sweep at its head (%s)" % why
             del cands[n]
@@ -1233,7 +1233,7 @@ def cmd_assemble(args):
             pr = gh_json("pr", "view", str(k), "--json", "headRefOid,title,body,labels,baseRefName", cwd=root)
             # The re-read head is taken in like plan's: it owes a passing sweep of its own. Refused before anything
             # is re-pinned or rebuilt (nothing is saved until the assembly runs).
-            why = member_sweep_fault(root, sweep, dict(members[k], head=pr["headRefOid"]), git("rev-parse", remote_main(), cwd=root))
+            why = member_sweep_fault(root, sweep, dict(members[k], head=pr["headRefOid"]))
             if why:
                 raise Fail("#%d's head %s has no passing sweep of its own (%s); nothing re-pinned" % (k, short(pr["headRefOid"]), why))
             old = members[k]["head"]
@@ -1536,30 +1536,11 @@ def check_contains_main(root, name, head, lines):
     return None
 
 
-def webview_contradiction(root, sweep, result, main_seen, head, subject="the batch head"):
-    """The result's webview decision checked against git, never taken on its word: the webview legs the
-    result marks not owed while kernel/kernel.py, ui/ or vscode-extension/ changed between main (as verify
-    or plan read it) and the head, as a line naming them; None when the two agree. The runner decides from
-    the merge base with its own origin/main, which is main or older, so its set of changes is never the
-    smaller."""
-    excused = [n for n in sweep.WEBVIEW_LEGS if not sweep.is_owed(n, (result.get("legs") or {}).get(n))]
-    if not excused:
-        return None
-    base = git("merge-base", main_seen, head, cwd=root)
-    hits = sweep.webview_owed(git("diff", "--no-renames", "--name-only", base, head, cwd=root).splitlines())
-    if not hits:
-        return None
-    shown = ", ".join(hits[:5]) + (" and %d more" % (len(hits) - 5) if len(hits) > 5 else "")
-    return ("sweep webview: the result at %s marks %s not owed, but %s changed between %s at %s and %s "
-            "(CLAUDE.md's webview rule owes them); sweep again with this checkout's scripts/sweep.py"
-            % (short(head), ", ".join(excused), shown, remote_main(), short(main_seen), subject))
-
-
 def excuse_contradiction(root, sweep, result, head, subject="the batch head"):
     """The legs a result marks not owed for having no vscode-extension/package.json (the one reason the runner gives
-    for deps, round 1's excuse rule) while the sha's tree does hold that file, as a line naming them; None when none
-    is so marked or the tree really has no such file. Read with the runner's own git hygiene (no inherited GIT_*, no
-    global or system config, refs/replace ignored)."""
+    for deps and the webview legs, round 1's excuse rule) while the sha's tree does hold that file, as a line naming
+    them; None when none is so marked or the tree really has no such file. Read with the runner's own git hygiene
+    (no inherited GIT_*, no global or system config, refs/replace ignored)."""
     legs = (result or {}).get("legs") or {}
     excused = [n for n in sweep.LEGS if not sweep.is_owed(n, legs.get(n)) and (legs.get(n) or {}).get("why") == sweep.NO_PACKAGE_JSON]
     if not excused:
@@ -1572,18 +1553,19 @@ def excuse_contradiction(root, sweep, result, head, subject="the batch head"):
             "sweep again with this checkout's scripts/sweep.py" % (short(head), ", ".join(excused), sweep.NO_PACKAGE_JSON, subject))
 
 
-def member_sweep_fault(root, sweep, m, main_sha):
+def member_sweep_fault(root, sweep, m):
     """A member PR owes a passing sweep of its own head before its review round and before its closing check
     (docs/batching.md), so the steps that take a member in (plan, assemble --repin) read it: None when the result
-    at the member's pinned head is a pass whose webview decision agrees with git, else the reader's line naming
+    at the member's pinned head is a pass (every leg owed, the webview legs included, as at a batch head: the
+    reader refuses a webview leg marked not owed for any reason but a missing extension) and any leg it marks not
+    owed for a missing vscode-extension/package.json is one the head's tree lacks, else the reader's line naming
     the case. The result is read from this machine's state dir; one recorded on another machine is missing here."""
     subject = "#%d's head" % m["n"]
     a = sweep.assess(m["head"], subject=subject, branch=m["head_ref"])
     if a["case"] != "pass":
         return a["line"]
     ensure_object(root, m["head"], m["head_ref"])
-    return (excuse_contradiction(root, sweep, a["result"], m["head"], subject=subject)
-            or webview_contradiction(root, sweep, a["result"], main_sha, m["head"], subject=subject))
+    return excuse_contradiction(root, sweep, a["result"], m["head"], subject=subject)
 
 
 def cmd_verify(args, quiet=False):
@@ -1659,8 +1641,7 @@ def cmd_verify(args, quiet=False):
     a = sweep.assess(head, subject="the batch head", branch=br, tree_hint=worktree_dir(root, args.name))
     contradiction = None
     if a["case"] == "pass":
-        contradiction = excuse_contradiction(root, sweep, a["result"], head) or (
-            webview_contradiction(root, sweep, a["result"], main_seen, head) if main_seen else None)
+        contradiction = excuse_contradiction(root, sweep, a["result"], head)
     if contradiction:
         ok = False
         state["sweep"] = None
