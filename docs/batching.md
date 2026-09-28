@@ -223,7 +223,13 @@ subject; `verify` refuses the branch otherwise.
    of `ci.yml` from a push to `batch/<name>` at exactly the verified head, read at that moment. It
    refuses when that run is missing, pending or red (any conclusion but success, cancelled
    included), or when the read fails; a run of another commit, a manual run and a run on another
-   branch do not count. Then it reads main on origin once more right before the merge call and
+   branch do not count. The newest run is the latest `createdAt`, then the highest run id, and a
+   matching row with either one missing or malformed (the zero time gh prints for a missing time
+   included) is refused by name. A red is not erased by a re-run on GitHub either: land reads the
+   run's earlier attempts, and one that did not pass (cancelled included) is refused unless
+   `land <name> --flake <run>/<attempt>='<the failing test, and where it is recorded as a known
+   flake>'` names it, as the refusal spells out. One attempt per run is excused; land records it,
+   and `finish` reports it. Then it reads main on origin once more right before the merge call and
    refuses if it moved, merges with a merge commit, and runs `finish`. GitHub's merge pins the
    head, not the base, so a merge to main between that last read and GitHub's merge is not caught.
    `land --auto` arms auto-merge instead, after the same CI read (it does not wait for a pending

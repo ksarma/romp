@@ -64,9 +64,12 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
     head, not the base), and a move before an --auto merge fires later (--auto is refused until the
     repository allows auto-merge and a rule on main gates a merge; the fork had neither on 2026-09-27);
   - land requires the batch head's CI run green, read from GitHub at land time before anything changes:
-    the newest run of ci.yml from a push to the batch branch at exactly the verified head; a missing,
-    pending or red run, or a failed read, is refused by name, and a run at another sha, from another
-    event or on another branch does not count;
+    the newest run of ci.yml from a push to the batch branch at exactly the verified head (by createdAt,
+    then databaseId; a matching row with either missing or malformed, the zero time included, is refused
+    by name); a missing, pending or red run, or a failed read, is refused by name, and a run at another
+    sha, from another event or on another branch does not count. An earlier attempt of that run that did
+    not pass is refused unless land's --flake names it (a red is not erased by a GitHub re-run either;
+    one attempt per run is excused), and land records the excused attempt in the state for finish;
   - pull N drops N's dependents, unless N already merged into main;
   - the body stays under GitHub's 65,536-character cap, the members table never cut and the
     details fitted to the budget (entries table, then resolutions, then the log).
@@ -89,6 +92,8 @@ RESOLUTION_LINES = 300     # per conflicted merge, in the "Conflict resolutions"
 PR_LIST_LIMIT = 200
 CI_WORKFLOW = "ci.yml"     # the workflow whose run of the push to the batch branch land requires green,
 CI_WORKFLOW_NAME = "CI"    # and its `name:`, which gh reports as a run's workflowName
+# The fields land reads of each run gh lists (attempt: the run's latest attempt, whose earlier ones land reads too).
+CI_RUN_FIELDS = "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt,attempt"
 MAIN = "main"
 REMOTE = "origin"
 LABEL_MAJOR = "major-feature"
@@ -2191,7 +2196,86 @@ def run_row_fault(row):
             return "createdAt %r, a placeholder before %d (the zero time 0001-01-01T00:00:00Z is one), not a time GitHub set" % (
                 created, RUN_TIME_FLOOR.year)
         return "createdAt %r, not an RFC 3339 time" % (created,)
+    attempt = row.get("attempt")
+    if "attempt" not in row or attempt is None:
+        return "no attempt"
+    if type(attempt) is not int or attempt <= 0:
+        return "attempt %r, not a positive integer" % (attempt,)
     return None
+
+
+def run_attempts(root, run):
+    """[(n, record)] for each earlier attempt of `run` (1 to its attempt - 1), read from GitHub now with
+    `gh api repos/{owner}/{repo}/actions/runs/<id>/attempts/<n>`. A read that fails, one that is not JSON, or a record
+    that is not that run's attempt n (its id and run_attempt) raises Fail: an attempt not read is not one that passed."""
+    out = []
+    for n in range(1, run["attempt"]):
+        what = "attempt %d of the batch head's CI run %s" % (n, run.get("url"))
+        proc = gh("api", "repos/{owner}/{repo}/actions/runs/%d/attempts/%d" % (run["databaseId"], n), cwd=root, check=False)
+        if proc.returncode != 0:
+            raise Fail("could not read %s (gh api): %s; nothing merged" % (what, (proc.stderr + proc.stdout).strip()))
+        try:
+            rec = json.loads(proc.stdout or "")
+        except json.JSONDecodeError as e:
+            raise Fail("%s read as something that is not JSON (%s); nothing merged" % (what, e))
+        rid, num = (rec.get("id"), rec.get("run_attempt")) if isinstance(rec, dict) else (None, None)
+        if not (type(rid) is int and rid == run["databaseId"] and type(num) is int and num == n):
+            raise Fail("%s read as another record (id %r, run_attempt %r); nothing merged" % (what, rid, num))
+        out.append((n, rec))
+    return out
+
+
+def attempt_passed(rec):
+    return rec.get("status") == "completed" and rec.get("conclusion") == "success"
+
+
+def parse_ci_flakes(values):
+    """{(run id, attempt): known-flake entry} from land's --flake RUN/ATTEMPT=TEXT values; a malformed value or one
+    naming an attempt twice is a usage refusal."""
+    out = {}
+    for v in values or []:
+        key, sep, text = v.partition("=")
+        m = re.fullmatch(r"(\d+)/(\d+)", key.strip())
+        if not (sep and m and text.strip()):
+            raise Fail("--flake %r: expected RUN/ATTEMPT=TEXT, the run id and the failed attempt as land's refusal names them, "
+                       "then the failing test and where it is recorded as a known flake" % v, code=2)
+        k = (int(m.group(1)), int(m.group(2)))
+        if k in out:
+            raise Fail("--flake names run %d attempt %d twice" % k, code=2)
+        out[k] = text.strip()
+    return out
+
+
+def ci_attempt_gate(root, run, flakes):
+    """Round 1, decision 13: a red is not erased by a re-run, locally or on GitHub. The green run's earlier attempts are
+    read (run_attempts); one that did not pass (any status or conclusion but completed and success, cancelled included)
+    is refused unless land's --flake names it (RUN/ATTEMPT=TEXT), as a --leg re-run needs --flake naming the failed leg.
+    A known flake is excused once, as the local sweep's is: two earlier attempts that did not pass are refused whatever
+    --flake says. A --flake that names no failed earlier attempt of this run is refused. Returns the excused attempts,
+    [{"attempt", "status", "conclusion", "url", "flake"}], which land records in the state and finish reports."""
+    rid = run["databaseId"]
+    failed = [(n, rec) for n, rec in run_attempts(root, run) if not attempt_passed(rec)]
+    stray = sorted(k for k in flakes if k[0] != rid or k[1] not in {n for n, _rec in failed})
+    if stray:
+        raise Fail("--flake names %s, which %s no failed earlier attempt of the batch head's CI run %s (attempt %d, run %d); "
+                   "nothing merged" % (", ".join("run %d attempt %d" % k for k in stray), "is" if len(stray) == 1 else "are",
+                                       run.get("url"), run["attempt"], rid))
+
+    def said(n, rec):
+        return "attempt %d concluded %s (%s)" % (n, rec.get("conclusion") or "nothing, status %s" % rec.get("status"),
+                                                 rec.get("html_url") or run.get("url"))
+    if len(failed) > 1:
+        raise Fail("the batch head's CI run %s is green on attempt %d, but %s; a known flake is excused once, as the local "
+                   "sweep's is, so this head cannot land: fix it and push a new head; nothing merged"
+                   % (run.get("url"), run["attempt"], " and ".join(said(n, rec) for n, rec in failed)))
+    for n, rec in failed:
+        if (rid, n) not in flakes:
+            raise Fail("the batch head's CI run %s is green on attempt %d, but %s, and a red is not erased by a re-run: if that "
+                       "attempt failed on a known flake, land again with --flake %d/%d='<the failing test, and where it is "
+                       "recorded as a known flake>'; otherwise fix it and push a new head; nothing merged"
+                       % (run.get("url"), run["attempt"], said(n, rec), rid, n))
+    return [{"attempt": n, "status": rec.get("status"), "conclusion": rec.get("conclusion"),
+             "url": rec.get("html_url") or run.get("url"), "flake": flakes[(rid, n)]} for n, rec in failed]
 
 
 def batch_ci_run(root, name, head):
@@ -2205,7 +2289,7 @@ def batch_ci_run(root, name, head):
     a failed read is not a missing run."""
     br = branch_of(name)
     proc = gh("run", "list", "--workflow", CI_WORKFLOW, "--branch", br, "--event", "push", "--commit", head, "--limit", "20",
-              "--json", "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt", cwd=root, check=False)
+              "--json", CI_RUN_FIELDS, cwd=root, check=False)
     if proc.returncode != 0:
         raise Fail("could not read the batch head's CI run (gh run list): %s; nothing merged" % (proc.stderr + proc.stdout).strip())
     try:
@@ -2253,6 +2337,7 @@ def retarget_stacked_members(root, state):
 
 def cmd_land(args):
     root = repo_root()
+    flakes = parse_ci_flakes(args.flake)
     state = cmd_verify(argparse.Namespace(name=args.name, no_fetch=args.no_fetch), quiet=False)
     b = find_batch_pr(root, state)
     if not b:
@@ -2281,7 +2366,12 @@ def cmd_land(args):
     if case == "red":
         raise Fail("the batch head's CI run is red (conclusion %s): %s; `scripts/batch.py bisect %s -- <failing test>` names "
                    "the member to pull; nothing merged" % (run.get("conclusion"), run.get("url"), args.name))
-    print("ok   CI: the run of the push to %s at %s is green: %s" % (br, short(head), run.get("url")))
+    excused = ci_attempt_gate(root, run, flakes)
+    state["ci"] = {"run": run.get("url"), "id": run["databaseId"], "attempt": run["attempt"], "excused": excused}
+    save_state(root, state)
+    print("ok   CI: the run of the push to %s at %s is green: %s%s" % (
+        br, short(head), run.get("url"), "".join("; attempt %d concluded %s and is excused as a known flake (%s): %s"
+                                                 % (e["attempt"], e["conclusion"] or e["status"], e["url"], e["flake"]) for e in excused)))
     cmd = ["pr", "merge", str(b), "--merge", "--match-head-commit", head]
     if args.auto:
         # Both preconditions are read, never assumed (scripts/land.sh applies the same two), and
@@ -2460,6 +2550,10 @@ def cmd_finish(args):
                 run_url = rows[0].get("url") or run_url
         except json.JSONDecodeError:
             pass
+    for e in (state.get("ci") or {}).get("excused") or []:
+        report["observations"].append("the batch head's CI run was green on a re-run: attempt %d concluded %s (%s) and land "
+                                      "excused it as a known flake: %s" % (e["attempt"], e.get("conclusion") or e.get("status"),
+                                                                            e.get("url"), e.get("flake")))
     state["finished"] = {"at": now(), "report": report}
     save_state(root, state)
     print("batch #%d landed, %d member(s) marked merged; no CI runs on the merge to %s; the batch head's CI run: %s"
@@ -2615,7 +2709,8 @@ def main(argv=None):
                        description="On the maintainer's word for this batch: run verify again (pinned heads, main contained, "
                                    "the sweep result at the verified head), read the batch head's CI run from GitHub (the "
                                    "newest run of ci.yml from a push to the batch branch at the verified head; missing, "
-                                   "pending or red is refused, --auto or not), retarget stacked members to %s, read %s on %s "
+                                   "pending or red is refused, --auto or not, and so is an earlier attempt of it that did not "
+                                   "pass, unless --flake names it), retarget stacked members to %s, read %s on %s "
                                    "once more and refuse if it moved since verify, then `gh pr merge --merge "
                                    "--match-head-commit <verified sha>` and finish. The merge pins the head, not the base, so "
                                    "a merge to %s between that last read and GitHub's merge is not caught; with --auto the "
@@ -2628,6 +2723,11 @@ def main(argv=None):
                    help="arm auto-merge instead (lands when the required checks pass; needs the repository's \"Allow auto-merge\" "
                         "setting and a rule on %s that gates a merge: a ruleset rule such as required_status_checks or "
                         "pull_request, or classic protection with required checks or reviews)" % MAIN)
+    p.add_argument("--flake", action="append", metavar="RUN/ATTEMPT=TEXT",
+                   help="an earlier attempt of the batch head's CI run that failed on a known flake (the run id and attempt "
+                        "number as land's refusal names them, then the failing test and where it is recorded as a known "
+                        "flake); without it land refuses a run whose earlier attempt did not pass; one attempt per run can "
+                        "be excused; repeatable")
     p.add_argument("--no-notify", action="store_true", help=HELP_NO_NOTIFY + " (passed on to finish)")
     p.add_argument("--no-fetch", action="store_true", help=HELP_NO_FETCH)
     p.set_defaults(func=cmd_land)

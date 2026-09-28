@@ -32,6 +32,9 @@ named so the fake does not pass as evidence):
     filters them, newest first; there are none unless a test records one (tests/test_batch_tool.py, Fixture.ci).
     With `runs_as_recorded` in the state it serves them in the order they were recorded instead, so a test can
     hand the tool rows in an order gh does not promise.
+  - `api repos/{owner}/{repo}/actions/runs/<id>/attempts/<n>` serves attempt n of the recorded run <id> from the
+    run's `attempts` list (entry n - 1, its keys laid over {id, run_attempt, status, conclusion, html_url}), or
+    GitHub's 404 when the run has no such earlier attempt.
   - FAKE_GH_FAIL (`|`-separated argv prefixes) makes the matching calls fail with an HTTP 502, so
     a test can see what the tool does when a call does not land. `fail` in the state maps an
     endpoint (`rules`, `protection`) to a gh error line the fake prints and exits 1 with, the way a
@@ -43,6 +46,7 @@ Synthetic data only: PR numbers, titles and branches are the tests' inventions.
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -370,6 +374,20 @@ def api(state, argv):
             print(apply_jq(rows, o["--jq"][0]))
         else:
             print(json.dumps(rows))
+        return
+    m = re.fullmatch(r"repos/\{owner\}/\{repo\}/actions/runs/(\d+)/attempts/(\d+)", path)
+    if m:
+        rid, n = int(m.group(1)), int(m.group(2))
+        run = next((r for r in state.get("runs", []) if r.get("databaseId") == rid), None)
+        attempts = (run or {}).get("attempts") or []
+        if run is None or not 1 <= n <= len(attempts):
+            print(json.dumps({"message": "Not Found", "status": "404"}))
+            sys.stderr.write("gh: Not Found (HTTP 404)\n")
+            sys.exit(1)
+        rec = {"id": rid, "run_attempt": n, "status": "completed", "conclusion": "success",
+               "html_url": "%s/attempts/%d" % (run.get("url"), n)}
+        rec.update(attempts[n - 1])
+        print(json.dumps(rec))
         return
     if "/branches/" in path and path.endswith("/protection"):
         if fail.get("protection"):

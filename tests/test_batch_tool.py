@@ -284,15 +284,16 @@ class Fixture:
     def ci(self, name, conclusion="success", status="completed", sha=None, event="push", branch=None, workflow="ci.yml",
            **fields):
         """A GitHub Actions run the fake gh lists: by default the batch head's run, ci.yml from a push to batch/<name>
-        at its current head, completed green. Each new run is newer than the last (databaseId and createdAt).
-        `fields` replaces row fields (databaseId, createdAt, ...); one given as MISSING is left out of the row."""
+        at its current head, completed green, on its first attempt. Each new run is newer than the last (databaseId and
+        createdAt). `fields` replaces row fields (databaseId, createdAt, attempt, ...; `attempts`, the earlier attempts'
+        records the fake's attempts endpoint serves); one given as MISSING is left out of the row."""
         self.gh_state = self.gh()
         runs = self.gh_state.setdefault("runs", [])
         n = len(runs) + 1
         row = {"databaseId": n, "workflow": workflow, "workflowName": {"ci.yml": "CI"}.get(workflow, "PR tier"), "event": event,
                "headBranch": branch or "batch/" + name, "headSha": sha or self.dev_git("rev-parse", "batch/" + name),
                "status": status, "conclusion": conclusion, "createdAt": "2026-01-01T00:%02d:00Z" % n,
-               "url": "https://example.invalid/actions/runs/%d" % n}
+               "url": "https://example.invalid/actions/runs/%d" % n, "attempt": 1}
         for key, value in fields.items():
             if value is MISSING:
                 row.pop(key, None)
@@ -2134,7 +2135,7 @@ class LandReadsTheCI(_Base):
         self.refused("the batch head's CI run is missing: GitHub lists no run of ci.yml from a push to batch/b1 at %s" % self.head)
         self.assertEqual(fx.calls("run", "list")[before:],
                          [["run", "list", "--workflow", "ci.yml", "--branch", "batch/b1", "--event", "push", "--commit", self.head,
-                           "--limit", "20", "--json", "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt"]],
+                           "--limit", "20", "--json", "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt,attempt"]],
                          "land itself asked GitHub for the run of the verified head")
 
     def test_a_pending_run_is_refused_with_or_without_auto(self):
@@ -2200,7 +2201,11 @@ class LandReadsTheCI(_Base):
                  ("not RFC 3339", {"createdAt": "2026-01-01 00:09:00"}, "createdAt '2026-01-01 00:09:00', not an RFC 3339 time"),
                  ("no databaseId", {"databaseId": MISSING}, "no databaseId"),
                  ("a databaseId string", {"databaseId": "9"}, "databaseId '9', not a positive integer"),
-                 ("a databaseId bool", {"databaseId": True}, "databaseId True, not a positive integer"))
+                 ("a databaseId bool", {"databaseId": True}, "databaseId True, not a positive integer"),
+                 # decision 13: the attempt decides which earlier attempts land reads, so it is read as strictly
+                 ("no attempt", {"attempt": MISSING}, "no attempt"),
+                 ("attempt 0", {"attempt": 0}, "attempt 0, not a positive integer"),
+                 ("an attempt string", {"attempt": "2"}, "attempt '2', not a positive integer"))
         for label, fields, named in cases:
             with self.subTest(label):
                 self.setUp()
@@ -2211,6 +2216,81 @@ class LandReadsTheCI(_Base):
                 fx.ci("b1", databaseId=5, createdAt="2026-01-01T00:05:00Z")
                 p = self.refused("the batch head's CI run cannot be chosen: gh run list gave a matching run (%s) with %s" % (url, named))
                 self.assertNotIn("ok   CI", p.stdout)
+
+    FLAKE = "tests/test_notes.py::test_order (a known flake, recorded in the flake census)"
+
+    def test_an_earlier_failed_attempt_is_refused_unless_flake_names_it(self):
+        """Round 1, fresh-2 under decision 13: a red is not erased by a re-run on GitHub either. A run green on attempt 2
+        whose attempt 1 failed is refused, naming the attempt and the --flake that excuses it; with --flake naming it,
+        land merges, its ok line names the excused attempt, the state records it, and finish reports it. The head
+        merged such a run with nothing recorded."""
+        fx = self.fx
+        self.ready()
+        url = fx.ci("b1", attempt=2, attempts=[{"conclusion": "failure"}])
+        before = len(fx.calls("api"))
+        self.refused("the batch head's CI run %s is green on attempt 2, but attempt 1 concluded failure (%s/attempts/1), and a "
+                     "red is not erased by a re-run: if that attempt failed on a known flake, land again with --flake 1/1="
+                     % (url, url))
+        self.assertEqual([c[1] for c in fx.calls("api")[before:]], ["repos/{owner}/{repo}/actions/runs/1/attempts/1"],
+                         "land read the earlier attempt from GitHub")
+        p = fx.ok("land", "b1", "--flake", "1/1=" + self.FLAKE)
+        self.assertIn("ok   CI: the run of the push to batch/b1 at %s is green: %s; attempt 1 concluded failure and is excused "
+                      "as a known flake (%s/attempts/1): %s" % (self.head[:10], url, url, self.FLAKE), p.stdout)
+        self.assertEqual(len(fx.calls("pr", "merge")), 1)
+        st = fx.state("b1")
+        self.assertEqual(st["ci"], {"run": url, "id": 1, "attempt": 2, "excused": [
+            {"attempt": 1, "status": "completed", "conclusion": "failure", "url": url + "/attempts/1", "flake": self.FLAKE}]})
+        self.assertIn("observed: the batch head's CI run was green on a re-run: attempt 1 concluded failure (%s/attempts/1) and "
+                      "land excused it as a known flake: %s" % (url, self.FLAKE), p.stdout)
+
+    def test_every_earlier_attempt_that_did_not_pass_counts(self):
+        """A cancelled earlier attempt did not pass either, and two earlier attempts that did not pass are refused
+        whatever --flake says (a known flake is excused once, as the local sweep's is); a green re-run of a green
+        attempt needs no flake."""
+        fx = self.fx
+        self.ready()
+        url = fx.ci("b1", attempt=2, attempts=[{"conclusion": "cancelled"}])
+        self.refused("is green on attempt 2, but attempt 1 concluded cancelled (%s/attempts/1)" % url)
+        url = fx.ci("b1", attempt=3, attempts=[{"conclusion": "failure"}, {"conclusion": "timed_out"}])
+        self.refused("the batch head's CI run %s is green on attempt 3, but attempt 1 concluded failure (%s/attempts/1) and "
+                     "attempt 2 concluded timed_out (%s/attempts/2); a known flake is excused once" % (url, url, url),
+                     args=("land", "b1", "--flake", "2/1=" + self.FLAKE, "--flake", "2/2=" + self.FLAKE))
+        url = fx.ci("b1", attempt=2, attempts=[{"conclusion": "success"}])
+        p = fx.ok("land", "b1")
+        self.assertIn("ok   CI: the run of the push to batch/b1 at %s is green: %s\n" % (self.head[:10], url), p.stdout)
+        self.assertEqual(fx.state("b1")["ci"]["excused"], [])
+
+    def test_a_flake_that_names_no_failed_attempt_is_refused(self):
+        """--flake must name a failed earlier attempt of the run land read: one of a green first attempt, of an attempt
+        that passed, or of another run is refused, and a malformed value is a usage refusal before anything is read."""
+        fx = self.fx
+        self.ready()
+        fx.ci("b1")
+        self.refused("--flake names run 1 attempt 1, which is no failed earlier attempt of the batch head's CI run",
+                     args=("land", "b1", "--flake", "1/1=" + self.FLAKE))
+        fx.ci("b1", attempt=2, attempts=[{"conclusion": "failure"}])
+        self.refused("--flake names run 9 attempt 1, which is no failed earlier attempt",
+                     args=("land", "b1", "--flake", "9/1=" + self.FLAKE))
+        for bad in ("1=" + self.FLAKE, "2/1=  ", "2/1"):
+            with self.subTest(bad=bad):
+                p = fx.run("land", "b1", "--flake", bad)
+                self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+                self.assertIn("--flake %r: expected RUN/ATTEMPT=TEXT" % bad, p.stderr)
+                self.assertEqual(fx.calls("pr", "merge"), [])
+
+    def test_an_attempt_that_cannot_be_read_is_refused(self):
+        """An earlier attempt read that fails, or that answers with another record, is refused: an attempt not read is
+        not one that passed."""
+        fx = self.fx
+        self.ready()
+        fx.ci("b1", attempt=2, attempts=[{"conclusion": "success"}])
+        self.refused("could not read attempt 1 of the batch head's CI run", "HTTP 502",
+                     gh_fail="api repos/{owner}/{repo}/actions/runs/1/attempts/1")
+        fx.ci("b1", attempt=2, attempts=[{"conclusion": "success", "run_attempt": 2}])
+        self.refused("attempt 1 of the batch head's CI run https://example.invalid/actions/runs/2 read as another record "
+                     "(id 2, run_attempt 2)")
+        fx.ci("b1", attempt=3, attempts=[{"conclusion": "success"}])
+        self.refused("could not read attempt 2 of the batch head's CI run", "HTTP 404")
 
     def test_a_run_list_that_is_not_json_is_refused_by_name(self):
         """Round 1, extra4-8: a `gh run list` that answers with something that is not JSON (an HTML error page) is
@@ -2260,7 +2340,7 @@ import json, os, subprocess, sys
 fake = os.environ["IGNORES_FILTERS_FAKE_GH"]
 if sys.argv[1:3] == ["run", "list"]:
     out = subprocess.run([sys.executable, fake, "run", "list", "--limit", "100", "--json",
-                          "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt"], text=True, stdout=subprocess.PIPE).stdout
+                          "databaseId,status,conclusion,headSha,headBranch,event,workflowName,url,createdAt,attempt"], text=True, stdout=subprocess.PIPE).stdout
     rows = json.loads(out or "[]")
     head = os.environ["IGNORES_FILTERS_HEAD"]
     for n, sha, branch, event, name in ((90, "0" * 40, "batch/b1", "push", "CI"), (91, head, "batch/b1", "workflow_dispatch", "CI"),
