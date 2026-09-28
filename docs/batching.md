@@ -175,7 +175,8 @@ subject; `verify` refuses the branch otherwise.
    so the SDK-gated tests run as they do in CI. The runner builds the venv from `--python`
    (default: the interpreter running `sweep.py`) under `<state dir>/sweeps/sdk/`: the first sweep at
    a new pin or interpreter builds it (a download of about 110 MB), and later sweeps reuse it. A
-   sweep reuses the venv only while its files match what its build wrote (new
+   reused venv keeps the dependency versions pip resolved when it was built, while CI resolves them
+   fresh on every run. A sweep reuses the venv only while its files match what its build wrote (new
    bytecode aside), so a file a test left in it is not carried into later sweeps: the next sweep
    builds it again, and a sweep that finds the venv changed after its pytest leg is invalid. A
    rebuild waits for any other sweep still using the venv. If the build fails, the sweep is refused
@@ -192,7 +193,12 @@ subject; `verify` refuses the branch otherwise.
    and tooling node tests, the ledger check, `npm run typecheck`, `npm test` and `npm run build`:
    every leg at every head, whatever it changed, since the webview tests also read files outside
    `kernel/kernel.py`, `ui/` and `vscode-extension/`. The pane bench
-   (`tests/ui-bench.test.mjs`), the other Python versions and macOS run only in the batch's CI. Each
+   (`tests/ui-bench.test.mjs`), the Browser legs step (its roster checks, and the rostered browser
+   tests with `ROMP_BROWSER_LEGS_REQUIRE=1`; the sweep's `npm test` runs those tests without the
+   switch, so a Chromium that fails to launch there skips instead of failing), the other Python
+   versions and macOS run only in the batch's CI. CI's free-threaded cell runs pytest with
+   `PYTHON_GIL=0`, which the sweep does not set, so a free-threaded `--python` runs with its own
+   default. Each
    leg gets an allowlisted environment: a private HOME and state dir, a PATH built from the tool
    directories, npm's global config and git's system config off, CI's switches, and nothing of your shell's (no key, token or session variable, no
    PYTEST_ADDOPTS or NODE_OPTIONS); `npm test` also gets this machine's 8 GB heap cap

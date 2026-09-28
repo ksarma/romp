@@ -100,8 +100,11 @@ as that user. The result records the allowlist's hash (runner.leg_env), and a re
 recorded under another; it also records the versions of node, npm, bats, git and gitleaks the legs found,
 and whether the private HOME was empty at the end.
 
-The pane bench (tests/ui-bench.test.mjs), the Python versions other than --python's, and macOS run only in
-the batch's CI.
+The pane bench (tests/ui-bench.test.mjs), the Browser legs step (scripts/ci-browser-legs.sh: its roster checks, and
+the rostered browser tests run with ROMP_BROWSER_LEGS_REQUIRE=1; the npm-test leg runs the same tests without that
+switch, so a Chromium that fails to launch there skips instead of failing), the Python versions other than
+--python's, and macOS run only in the batch's CI. CI's free-threaded cell also runs pytest with PYTHON_GIL=0, which the
+runner does not set, so a free-threaded --python runs with its own default.
 
 The result is append-only (schema 2): `runs` keeps every run at the sha, oldest first, and a run is never
 rewritten once it has finished. Every run records the private checkout it ran in (runner.checkout); a reader

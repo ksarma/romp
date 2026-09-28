@@ -2687,7 +2687,8 @@ class CiParity(unittest.TestCase):
         ("vscode-extension", "Dashboard pane bench (node --test)"),
         # the rostered browser legs' run under ROMP_BROWSER_LEGS_REQUIRE=1 after CI's Chromium install (PR 887): the
         # sweep's npm-test leg runs the same bundles in its npm test with this machine's Playwright browsers, without
-        # the switch, so a launch that fails there skips, as in CI's Test step, instead of failing
+        # the switch, so a launch that fails there skips, as in CI's Test step, instead of failing (the runner's
+        # docstring and docs/batching.md say so)
         ("vscode-extension", "Browser legs (node --test over ci-browser-legs.txt)"),
     }
 
