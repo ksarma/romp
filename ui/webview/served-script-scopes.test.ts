@@ -17,8 +17,9 @@
 // What the census does not read, and why none of it can shadow the shim's check:
 //   - eval reached other than by its name as the callee ((0, eval)(s), window.eval(s), an alias, a computed name), the
 //     Function constructor, and a string handed to a timer: each runs its string in the global scope or in a function
-//     of its own. The witness below runs the first two kinds in node and shows a function scope's binding left alone; a
-//     string timer is compiled as a script of its own in the global scope (the HTML standard's timer steps).
+//     of its own. The witness below runs the indirect evals and the Function constructor in node and shows a function
+//     scope's binding left alone; a string timer is compiled as a script of its own in the global scope (the HTML
+//     standard's timer steps).
 //   - markup a page builds at run time (a handler attribute, a script element): its code is a string until then, and
 //     runs as a handler function or a script of its own.
 //   - the /dist bundles a page loads by src: tests/test_shell_source_check.py's population leaves them out, the ui/
@@ -122,8 +123,8 @@ test("a script the parser cannot read is refused", () => {
   assert.equal(scopeRefusals("var = ;")[0].startsWith("a script the parser cannot read"), true);
 });
 
-// Runs `body` in sloppy node code inside a function `around`, itself inside `outer`, which holds the check a listener in
-// `around` reads: check() answers "strict". A binding a form makes in `around`'s scope answers "lax" instead.
+// Runs `form` in sloppy node code inside a function `around`, itself inside `outer`, which holds the check a listener in
+// `around` reads: check() answers "strict". A binding the form makes in `around`'s scope answers "lax" instead.
 const LAX = "var check = function () { return 'lax'; };";
 function checkSeenAfter(form: string): string {
   const src = "var seen; var s = " + JSON.stringify(LAX) + ";\n" +
