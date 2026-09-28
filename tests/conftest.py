@@ -1585,8 +1585,8 @@ def wait_for_census(before, timeout=5.0):
 # error of an xfail-marked test an xfail, which leaves the run green, and its unittest plugin puts a TestCase's second
 # stored error (a body and a cleanup that both fail) into the report in place of the guard's, which then names no
 # thread. So the guard records its failure in the item's stash, and this file's one pytest_runtest_makereport
-# hookwrapper, which runs outside both plugins' report hooks (pluggy calls the hookwrapper registered last first, and
-# this file registers after pytest's plugins), marks that teardown report failed and, when it carries another error
+# hookwrapper, which runs outside both plugins' report hooks (the order, and why it holds, are in the docstring of
+# _guard_failure_into_report), marks that teardown report failed and, when it carries another error
 # (the TestCase's, or a fixture's teardown error the runner raised before the guard ran, which that teardown then
 # raises), adds the guard's text after that error (_guard_failure_into_report); the wrapper then redacts the report as
 # it redacts every report. The second is stderr: the guard writes the same text there
