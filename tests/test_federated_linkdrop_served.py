@@ -59,8 +59,10 @@ the two drives of 2026-09-20 at this code, clean trees at the commits before the
 builder's `r5/lab-head1.log` and `r5/lab-head2.log` outside the repo). ROMP_LINKDROP_HUB_ROOT boots its hub from another
 checkout with its
 PREBUILT vscode-extension/dist (the fails-before lever for the new-hub class). The old-hub class, the storm's own
-witness (the pre-815 half), runs under ROMP_LINKDROP_LAB=1 (a minute and three quarters to two minutes more: 120.3 and
-102.0 s for its setUpClass, the mint and its build included, in those two drives, the module whole at 203 and 185 s;
+witness (the pre-815 half), runs under ROMP_LINKDROP_LAB=1 (about 140 s more: 138.6 and 137.5 s for its setUpClass, the mint and
+its build included, in the drives of 2026-09-28 once the splice kept quiet pairs and each link-up phase's card wait ran to
+its cap, the module whole at 230 and 228 s, `build857z/wip1-lab-knobs.log` and `build857z/c1-lab-knobs-2.log` outside the
+repo;
 skipped as optional without it, and the skip
 reason names what then goes unexecuted and where the mechanisms PR 815 fixed are pinned) with one of two
 hub knobs: ROMP_CORNER_OLD_HUB_ROOT (the corners lab's knob: a checkout of a hub kernel and prebuilt bundle from
@@ -84,14 +86,14 @@ window and over the whole drive, the rows equal, by rev, the feed slot patches t
 received (the hook records a delta frame's rev; the row files the same rev). The count is one drive's, not a
 property of the bundle: 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C in most recorded drives
 (ROMP_LINKDROP_LAB=1 ROMP_LINKDROP_OLD_HUB_BUILD=1 pytest tests/test_federated_linkdrop_served.py). One reviewer
-drive at the head the maintainer's round 1 ruled gave 3 / 0 / 1 / 3 (two relay sockets churned inside phase B and absorbed two notices into
-whole frames: no patch, so no row, and the equality held at 7 / 7), as did one verifier drive at the pass-2 head
+drive at the head the maintainer's round 1 ruled gave 3 / 0 / 1 / 3 (two relay sockets closed inside phase B and their retries' whole frames
+absorbed two notices: no patch, so no row, and the equality held at 7 / 7), as did one verifier drive at the pass-2 head
 whose hook was mutated for a red (its hub rows are real); and three builder drives gave 0 / 0 / 3 / 3 (the Outline's
-relay socket churned 0.7 s into phase A and its retry's whole frame absorbed all three notices: phase A 0 rows to 0
+relay socket closed 0.7 s into phase A and its retry's whole frame absorbed all three notices: phase A 0 rows to 0
 patches, the drive 6 / 6 by rev): one at the pass-3 head, RED there on the per-phase at-least-one-patch floors of the
 storm test and the phase-A drops test with the correspondence intact; one at the 30 s dwell on 2026-09-20, red on the
 margin pin with its floors green; and one at this code the same day, green (`r5/lab-head2.log`). Those are the data
-behind the churn-keyed allowance (_outline_caught_up_whole: an empty phase is excused only when one of its notice posts
+behind the allowance keyed on those closes (_outline_caught_up_whole: an empty phase is excused only when one of its notice posts
 found the Outline holding no open relay socket that had received its first feed-family frame, and then only by a whole
 keyed feed frame the Outline received there after the bundle's last notice could have been posted; in all three the
 socket closed 0.7 s into phase A, between the first and second posts (the first, 0.01 s in, found it open and served;
@@ -109,10 +111,23 @@ B's) filed a row again. A relay redial does not end the storm but restarts it: e
 the old page up once and the next patch freezes it again, so on a hub whose link comes and goes the storm pauses and
 resumes with the link and looks intermittent and self-healing when it is neither. That is why the old-hub class
 stays in this lab: a lab that only proves the fixed behaviour loses the evidence of what was fixed, and a reader in
-three months must be able to learn that a redial used to restart the storm. The new bundle files zero such rows
-across the same drive, and the three mutations recorded in the report (the redial term stripped, the whole-frame
-base write dropped, the local-down gate dropped) each turn one of its assertions red, so a zero here is a zero the
-drive can see through.
+three months must be able to learn that a redial used to restart the storm, and that without one the old page showed no
+change. The new bundle files zero such rows across the same drive, and the three mutations recorded in the report (the
+redial term stripped, the whole-frame base write dropped, the local-down gate dropped) each turn one of its assertions
+red, so a zero here is a zero the drive can see through.
+
+Every relay-socket close those records hold outside the drop and the restart, the closes in the shapes above included,
+was the lab's own and not the old bundle's. LinkProxy, the splice, kept create_connection's 5 s timeout on its upstream
+socket until it cleared it after the connect, as kernel.py _remote_ws clears the relay's, so a pair whose remote side sent
+nothing for 5 s was shut: on all three pages at once, 5 to 10 s after the last frame other than a keepalive, under the
+remote kernel's 10 s keepalive. Each cut was a redial, and its whole frame caught the old page up, so those drives
+recorded the old page catching up 6 to 19 s after each change, and one drive ran phase B's card wait to its 20 s cap: a
+cut can come up to 10 s after the last frame, and late frames inside that phase put it past the wait. With the timeout
+cleared the old page shows no change on a socket it holds. In every link-up phase the card wait runs to its cap with no
+card shown, phase B's on the socket the link's return dialed, and only a redial's whole frame catches the page up
+(phase A's cards after the return, phase B's after the restart). That freeze is the defect PR 815 fixed, and the
+old-hub class asserts it. No socket closes inside a phase now, so the allowance above no longer fires, and a close
+there reds the freeze test.
 
 The driver ends before CI does. CI's served job runs every served lab in one pytest process under pytest-timeout's
 600 s per-test cap (thread method: it ends the whole process), and the drive runs in setUpClass, so the node driver's
@@ -620,7 +635,8 @@ const tunnelsStatus = async () => {
 const waitFor = budget.waitFor;
 const relayFramesTotal = async () => { let n = 0; for (const app of APPS) { const s = await snap(pages[app]); for (const k of s.socks) if (k.relay) n += k.frames.length; } return n; };
 // cfg.quietStepMs with no new relay frame on any page, up to cfg.quietTries tries; a give-up is recorded (out.quietGaveUp),
-// not fatal: the old bundle's socket churn can keep frames coming, and the phase still runs; a spent budget is a give-up too
+// not fatal: a page whose relay socket keeps being replaced keeps frames coming, and the phase still runs; a spent budget
+// is a give-up too
 const quiet = async (what) => {
   for (let i = 0; i < cfg.quietTries; i++) {
     if (budget.left() === 0) { out.quietGaveUp.push(what + " (the driver's wait budget was spent)"); return; }
@@ -686,10 +702,11 @@ try {
   out.provBefore = await provText();
   const chA = await phase("A");
   // (2) the link drops: the splice's listener and every spliced pair close. First the precondition the drop leg reads, made a
-  // designed guarantee (pass 5): every page holds exactly ONE open relay socket. The old bundle's churn closes a page's socket
-  // for its 2 s retry every few seconds, and before this wait the drop landed 0.58 to 0.80 s after the pages' redials reopened
-  // in ten of the sixteen recorded old-hub drives (`python3 held_census.py <report.json>...` outside the repo): the feed page's
-  // redial-to-visible latency plus the settle against the retry, a coincidence and not a guarantee. `held` is the snapshot that
+  // designed guarantee (pass 5): every page holds exactly ONE open relay socket. In the old-hub drives the splice's former
+  // 5 s idle cut closed a page's socket for its 2 s retry every few seconds, and before this wait the drop landed 0.58 to
+  // 0.80 s after the pages' redials reopened in ten of the sixteen recorded old-hub drives
+  // (`python3 held_census.py <report.json>...` outside the repo): the feed page's redial-to-visible latency plus the settle
+  // against the retry, a coincidence and not a guarantee. `held` is the snapshot that
   // satisfied the wait (or the last poll's, when it expired and the wait is recorded), so the drop leg reads what the wait saw.
   const heldNow = async () => { const h = {}; for (const app of APPS) { const s = await snap(pages[app]); h[app] = s.socks.filter((k) => k.relay && k.openAt && !k.closeAt).map((k) => k.i); } return h; };
   let held = await heldNow();
@@ -779,13 +796,14 @@ class _LinkDrop(unittest.TestCase):
     # 4.31 to 14.5 s; rowUp, resume -> rowUp, 0.762 to 13.2 s; redialed, rowUp -> redialed, 0.786 to 4.6 s; localUp,
     # restarted -> localUp, 0.013 to 0.302 s; redialed2, localUp -> redialed2, 0.011 to 1.04 s; held, A1 -> drop, 9 to
     # 36 ms over the 80 drives that carry the held wait.
-    # rowDown is the supervisor's silent-poll window, longest under the old bundle's churn; rowUp a quarter-second pass inside
-    # the supervisor's fast window and its steady 15 s pass outside it; localUp the reopen alone (the restart itself, SIGTERM and
-    # the 3 s held down, is the control door's and not this wait's). held, A1 -> drop (every page holding one open relay socket
+    # rowDown is the supervisor's silent-poll window, longest under the old-hub drives' relay churn (the splice's former idle
+    # cut); rowUp a quarter-second pass inside the supervisor's fast window and its steady 15 s pass outside it; localUp the
+    # reopen alone (the restart itself, SIGTERM and the 3 s held down, is the control door's and not this wait's). held,
+    # A1 -> drop (every page holding one open relay socket
     # before the drop), is new in pass 5 and has no recorded span before it: every drive since carries it (`out.phases.drop.held`
     # in the record), and its span is the snapshot's own time with every page already holding one socket; its cap is closed's,
     # a floor well above the mechanism's worst (a page lacks an open socket for the relay's 2 s retry plus the open, once per
-    # churn of the old bundle's socket), not a fit to those spans.
+    # close of its socket, which the splice's former idle cut made every few seconds), not a fit to those spans.
     waits_ms = {"held": 20000, "closed": 20000, "rowDown": 40000, "rowUp": 40000, "redialed": 30000, "localUp": 30000, "redialed2": 30000}
     page_wait_ms = 30000      # the start, per page: its load, its first relay socket, that socket's whole frame
     driver_budget_ms = 225000  # every wait the driver places draws on this one budget. The budget is a DEADLINE, not a meter of the
@@ -793,24 +811,28 @@ class _LinkDrop(unittest.TestCase):
     #                            the fixed dwells and the control-door calls run to their own bounds whether or not it has passed (their
     #                            time before it draws it down too). So the budget less the record's budget.leftMs is the drive's WALL
     #                            CLOCK from the launch to the end mark, the 42 s dwell and the settles included, not a sum of its waits:
-    #                            78.4 s on the new bundle and 97.2 s on the old in the drive of 2026-09-20 at this code (225000 less
-    #                            budget.leftMs in `r6-margin/lab-head1.log`'s reports, the builder's lab logs outside the repo; the old
-    #                            bundle's frozen feed page shows a phase's cards only at the next churned socket's whole frame, so its
-    #                            drives run longer). 225 s, not 240, so the worst case holds the 42 s dwell under DRIVER_TIMEOUT_S.
+    #                            78.4 s on the new bundle in the drive of 2026-09-20 (225000 less budget.leftMs in
+    #                            `r6-margin/lab-head1.log`'s reports, the builder's lab logs outside the repo), and 133.0 and 132.4 s on
+    #                            the old in the drives of 2026-09-28 once the splice kept quiet pairs (the reports of
+    #                            `build857z/wip1-lab-knobs.log` and `build857z/c1-lab-knobs-2.log`): the old page shows no change on a
+    #                            socket it holds, so each link-up phase's card wait runs its full wait_ms and its drives run longer.
+    #                            225 s, not 240, so the worst case holds the 42 s dwell under DRIVER_TIMEOUT_S.
     # The row stays down this long after phase D's post, and the gate DEPENDS on it (the maintainer's round 2's ruling): the while-down read of D
     # comes DOWN_WINDOW_MARGIN times the drive's own slowest link-up delivery after the post, asserted by both classes' gate legs
     # (_assert_the_down_window_outlasts_the_drives_slowest_delivery). The dwell is sized against the lab's own cap on that
-    # delivery, not against the drives seen: a phase's delivery is seen.waitedMs, and waitVisible caps every wait it holds at
+    # delivery, not against the drives seen: on this checkout's bundle a phase's delivery is seen.waitedMs, and waitVisible caps every wait it holds at
     # wait_ms and records each wait's outcome (seen.expired), so the margin leg itself refuses a phase whose wait ran to its cap
     # (pass 6), beside the visibility legs, and every delivery it measures is a wait that RESOLVED, before its cap; the dwell is
     # DOWN_WINDOW_MARGIN x wait_ms plus DOWN_READ_ROOM_MS of room for the reads that follow the wait, so the pin holds for every
     # drive whose link-up waits all resolved and showed, the reads inside the room, and reds only for a window shorter than that
-    # (tests/test_federated_linkdrop_driver_bound.py pins the relation). The old bundle's frozen feed page shows a change only at
-    # the next churned socket's whole frame, and a change whose three notices straddle a churn waits for the frame after that, so
-    # the slowest delivery recorded is the old bundle's, 19,013 ms over the 30 unmutated old-hub records as of the
+    # (tests/test_federated_linkdrop_driver_bound.py pins the relation). In the old-hub records the splice's former idle cut was
+    # a redial every few seconds whose whole frame caught the frozen old page up, and a change whose three notices straddled a
+    # cut waited for the frame after that, so the slowest delivery recorded is the old bundle's, 19,013 ms over the 30 unmutated old-hub records as of the
     # drive at `r10/lab-ci9.log` (2026-09-21), the maximum of the phases' seen.waitedMs; the new bundle's is 1,367 ms
     # over the 50 new-bundle records as of that drive (one derivation with the waits paragraph above,
-    # `population_drive.py`, which prints this sentence whole and checks it here).
+    # `population_drive.py`, which prints this sentence whole and checks it here). With the cut gone the old page shows no change
+    # inside the cap at all, and the old-hub class times its gate by the Outline's patch (LinkDropOldLocal._link_up_delivery_ms),
+    # well under a second in its drives, so the new bundle's cap is what sizes the dwell.
     # A dwell of 30 s, sized at twice the 12.9 s
     # then recorded, redded on the very next drive (19.0 s): a threshold fitted to the data at hand is no threshold, which is
     # why the cap sizes it. driver_worst_case_s stays under DRIVER_TIMEOUT_S with the budget at driver_budget_ms (472.5 s for
@@ -1267,9 +1289,12 @@ class _LinkDrop(unittest.TestCase):
         notice could have been posted and before k1 + slack_s, returned ONLY when at least one of the phase's notice posts
         happened while the Outline held no open relay socket that had already received its first feed-family frame
         (_outline_served_at at each derived post time; every post served means nothing could have swallowed a notice, so no
-        later frame excuses the window). The mechanism excused: the old bundle's socket churn (its relay socket closes every
-        few seconds, the 2 s retry redials, the remote serves the new socket a whole frame), whose whole frame absorbs the
-        notices posted while the socket was down, so that phase's change crosses as no patch and files no row. The
+        later frame excuses the window). The mechanism excused: a relay socket closing inside the phase (the 2 s retry
+        redials, the remote serves the new socket a whole frame), whose whole frame absorbs the notices posted while the
+        socket was down, so that phase's change crosses as no patch and files no row. In the old-hub records every such close
+        was the splice's idle cut, every few seconds until LinkProxy cleared its upstream timeout, not the old bundle; with
+        the cut gone no phase holds such a gap, and a close inside a phase reds
+        test_without_a_redial_the_old_page_does_not_show_the_change. The
         distinguishing datum an empty window needs (the maintainer's round 2's ruling on correctness-1: the allowance is keyed on this EVENT,
         read from the hook's frames, never a dropped requirement). Pass 8 added the gap (the maintainer's round 3, extra6-1) because the frame alone was no key:
         on the old bundle a routine redial produces a whole frame after the phase's notices were already delivered as
@@ -1336,7 +1361,7 @@ class _LinkDrop(unittest.TestCase):
         slot patches the Outline's own relay sockets received there, and every such row names the feed slot. With
         patches_due the window must hold at least one patch OR the churn excuse (_outline_caught_up_whole: a notice post found
         the Outline without an open, served relay socket AND a whole keyed feed frame reached it there after the bundle's last
-        notice could have been posted: a churned socket's retry absorbs the notices into one whole frame and files no row, so
+        notice could have been posted: a closed socket's retry absorbs the notices into one whole frame and files no row, so
         a count is one drive's, and a window with neither a patch nor that excuse is a change that reached the Outline as
         nothing, not the storm); without, both sides are empty. With attach_after (a mark) the return window's allowance
         reaches into this window's right pad: a card-less feed-family patch at or after that mark is the connect push's
@@ -1364,7 +1389,7 @@ class _LinkDrop(unittest.TestCase):
             wholes = self._outline_caught_up_whole(k0, k1) if k0 and k1 else []
             self.assertTrue(patches or wholes, "the Outline received a feed slot patch in %s (the storm has a patch to file a row for), or a notice post found "
                                                "it without an open, served relay socket and a whole keyed feed frame caught it up there after the bundle's last "
-                                               "notice could have been posted (the old bundle's socket churn: the retry's whole frame absorbs the notices posted "
+                                               "notice could have been posted (a relay socket closed inside the phase, as the splice's former idle cut closed them: the retry's whole frame absorbs the notices posted "
                                                "while the socket was down, so no patch and no row; a frame before the last notice explains nothing, and a frame "
                                                "while every post found an open, served socket explains nothing); neither happened" % where)
         else:
@@ -1415,7 +1440,7 @@ class _LinkDrop(unittest.TestCase):
         for app in self.apps:
             held = drop["held"].get(app) or []
             self.assertEqual(len(held), 1, "the %s page held ONE open relay socket at the drop (the driver waits for that before it drops, waitsMs.held, so this "
-                                           "reads a designed precondition and not the drop's timing against the old bundle's churn): %r" % (app, held))
+                                           "reads a designed precondition and not the drop's timing against the old-hub drives' relay churn, the splice's former idle cut): %r" % (app, held))
             s = self._page(app)["socks"][held[0]]
             self.assertIsNotNone(s["closeAt"], "the %s page's relay socket closed after the drop (the hub's splice lost its upstream): %r" % (app, {k: s[k] for k in ("url", "openAt", "closeAt", "code")}))
             self.assertGreaterEqual(s["closeAt"], m["drop"], "…after the drop, not before")
@@ -1848,7 +1873,7 @@ class LinkDropOldLocal(_LinkDrop):
         super()._knobs()
         if (os.environ.get("ROMP_LINKDROP_LAB") or "").strip() != "1":
             raise unittest.SkipTest("optional: ROMP_LINKDROP_LAB unset: the old-hub class waits out the hub's supervisor twice and restarts its "
-                                    "hub kernel against a pre-815 bundle (about two minutes, the mint and its build included), so %s; set it to 1 "
+                                    "hub kernel against a pre-815 bundle (about 140 s, the mint and its build included), so %s; set it to 1 "
                                     "with one of the hub knobs to run" % cls.UNEXECUTED)
         cls.hub_root = _root_knob("ROMP_CORNER_OLD_HUB_ROOT")
         if cls.hub_root:
