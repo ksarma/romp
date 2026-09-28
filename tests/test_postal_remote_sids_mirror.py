@@ -83,14 +83,16 @@ state vouching for presence alone, and the declared-name road with the fold that
 of fork PR #897, the reviewer's ruling, found by its refuters through the real handler and this writer): a heard host
 the kernel holds up whose exchange served the last answered rows through a kernel blink vouches for presence alone,
 the bit riding both payload builders (the real request builder and the real response builder, one module playing both
-buses) and recorded by both recorders, released by the next exchange that carries an answered listing, a payload
+buses) and recorded by both recorders, released by the host's answer to a dial this bus built after the row's last
+unanswered roster (a dial releases nothing: round 6 of fork PR #897, the reviewer's round-5 ruling C), a payload
 lacking the field or carrying a non-boolean reading unanswered, a via row carrying the far host's bit and not the
 hub's, and the bit stated for a heartbeat, the legacy list and a row carried from a file that predates the field; and
 the hub's word beside a CACHED direct row (the reviewer's verifier at the eleventh commit, by execution through the real
 builder, handler, writer and reader): a heard row over a cache is the third state, beside carried and held down, in
 which a direct row speaks for nothing about a session started on its host since, so a hub's answered word about such a
 session stands as a via row beside the cached row, carrying the far host's bit as the hub stamped it, and with the hub
-not heard the carried via row stands beside the cached row, until the far host's exchange that answers, the event (at
+not heard the carried via row stands beside the cached row, until the far host's answer to a dial this bus built after
+its row's last unanswered roster, the event (at
 the eleventh commit the gate read heard and not held down alone, the hub's word folded into the cached row, and the
 hub, vouching for absence, let rule 5 presume a live session closed for one exchange interval of the far host); a
 hub's HELD word (round 4 of fork PR #897, the thirty-first commit): a far host's unanswered word through a hub stays
@@ -154,6 +156,7 @@ import io
 import json
 import os
 import re
+import socket
 import sys
 import tempfile
 import threading
@@ -1676,9 +1679,11 @@ class Mirror(unittest.TestCase):
     def _seed(self, links, known=()):
         """The kernel's tunnel list read at the bus's start, through the REAL seed (_seed_peers_from_kernel) with its transport
         stubbed: `links` is [(host, status)], and `known` the kernel's remembered unattached hosts, each of which the seed
-        applies as an ORIGIN-ONLY row (a tier, no port: no link). The seed applies each row through peer_update, which writes
-        the mirror for a link, and then sets _PEERS_SEEDED, which this returns for the caller to assert after its own
-        verdicts; the transport is put back as found."""
+        applies as an ORIGIN-ONLY row (a tier, no port: no link). The seed applies each row through peer_update with its
+        mirror write off and then sets _PEERS_SEEDED, which this returns for the caller to assert after its own verdicts;
+        this then writes the mirror once when the seed applied a link, as serve() does after its bind (round 7 of fork PR
+        #897, the reviewer's round-6 ruling R4 on kernel-1: until then the seed's peer_update wrote the mirror for each
+        link, before serve()'s bind). The transport is put back as found."""
         body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": st} for h, st in links],
                            "known": [{"host": h, "trust": "trusted"} for h in known]}).encode()
 
@@ -1694,9 +1699,11 @@ class Mirror(unittest.TestCase):
         real = pm.urllib.request.urlopen
         pm.urllib.request.urlopen = lambda req, timeout=None: Answer()
         try:
-            pm._seed_peers_from_kernel()
+            links = pm._seed_peers_from_kernel()
         finally:
             pm.urllib.request.urlopen = real
+        if links:
+            pm._write_remote_sids()                   # serve()'s one mirror write after its bind
         return pm._PEERS_SEEDED[0]
 
     def _heard_now(self, host, sids):
@@ -1915,13 +1922,14 @@ class Mirror(unittest.TestCase):
         """Round 3 of fork PR #897, the reviewer's ruling of 14:57Z, clause 2 (the twenty-second commit): the mark is carried by
         every write, and across a restart, until the bus process that read the kernel's list of links at its start has heard
         every host that list put in PEERS since the mark (_remote_sids_lost_cleared). A restarted bus seeds both links up
-        through the real seed, whose own writes read the unreadable file and mark the document; HOST heard while HUB, linked,
+        through the real seed, and the one write after it (serve()'s after its bind, since round 7 of fork PR #897: until
+        then the seed's own writes) reads the unreadable file and marks the document; HOST heard while HUB, linked,
         is not: the mark stands (a clearing on one host heard drops it here, and HUB's lost rows with it); a further restart
         carries it, the same cause and second; HOST and then HUB heard: cleared, said once, and no later write brings it back."""
         self.path.write_text("{not json\n")
-        seeded = self._seed([(HOST, "up"), (HUB, "up")])   # the seed's own writes read the file: the mark
+        seeded = self._seed([(HOST, "up"), (HUB, "up")])   # the write after the seed reads the file: the mark
         mark = self._mark()
-        self.assertIsNotNone(mark, "the seed's first write read the unreadable file and marked the document")
+        self.assertIsNotNone(mark, "the write after the seed read the unreadable file and marked the document")
         self.assertTrue(seeded, "the seed read the kernel's list")
         self._heard_now(HOST, [B])
         self.assertEqual(self._mark(), mark, "HOST heard, HUB linked and not heard since the mark: the mark stands")
@@ -2017,7 +2025,7 @@ class Mirror(unittest.TestCase):
         self.path.write_text("{not json\n")
         seeded = self._seed([(HOST, "up"), (HUB, "down")])
         mark = self._mark()
-        self.assertIsNotNone(mark, "the seed's first write marked the document")
+        self.assertIsNotNone(mark, "the write after the seed marked the document")
         self.assertTrue(seeded, "the seed read the kernel's list")
         self._heard_now(HOST, [B])
         pm._write_remote_sids()
@@ -2096,7 +2104,7 @@ class Mirror(unittest.TestCase):
         self.assertTrue(self._seed([(HOST, "up")], known=[FAR]), "the seed read the kernel's list")
         self.assertEqual((pm.PEERS[FAR].get("originOnly"), pm.PEERS[FAR].get("port")), (True, None),
                          "the seed applied the remembered host as an origin-only row, no port")
-        self.assertIsNotNone(self._mark(), "the seed's write read the unreadable file and marked the document")
+        self.assertIsNotNone(self._mark(), "the write after the seed read the unreadable file and marked the document")
         self._heard_now(HOST, [B])
         self.assertIsNone(self._mark(), "the one link heard since the mark: cleared, the origin-only row no link")
 
@@ -2131,9 +2139,10 @@ class Mirror(unittest.TestCase):
                 pm.PEERS.clear()
                 self.assertTrue(self._seed([(HUB, "up")]), "the restarted bus's seed read the list")
                 if road == "lost":
-                    self.assertIsNotNone(self._mark(), "the seed's write read the file made not JSON and marked the document")
+                    self.assertIsNotNone(self._mark(), "the write after the seed read the file made not JSON and marked the "
+                                         "document")
                 elif road == "first":
-                    self.assertIsNone(self._mark(), "a first start's seed writes no mark: nothing was lost")
+                    self.assertIsNone(self._mark(), "a first start's write after the seed writes no mark: nothing was lost")
                 gossip([], "bus-hub-2")               # HUB restarted since: heard, gossiping nothing about FAR
                 vouch = self._vouch()
                 if road == "intact":
@@ -2147,6 +2156,94 @@ class Mirror(unittest.TestCase):
                     rows[road] = (self._rows(), vouch)
         self.assertEqual(rows.get("lost", "no lost road"), rows.get("first", "no first road"), "the lost file, once the mark "
                          "clears, and a first start write the same rows with the same flags")
+
+    def _serve_seeding(self, links, port, server=None):
+        """One real serve() of this module over `port`, its fixed-port check passed, its seed's transport stubbed with
+        `links` up ([host]), and every call of the mirror's writer recorded in order beside `server`'s own events (a
+        _LoopbackServer subclass that records its bind and returns from serve_forever at once, or None for the real class).
+        Returns (serve()'s return, the events). The dialer, the monitor and the retry loop are not under test."""
+        events = []
+        body = json.dumps({"tunnels": [{"host": h, "busPort": 50002, "status": "up"} for h in links], "known": []}).encode()
+
+        class Answer:
+            def read(self):
+                return body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+        write = pm._write_remote_sids
+        saved = {k: getattr(pm, k) for k in ("PORT", "_fixed_port_refusal", "_write_remote_sids", "_LoopbackServer",
+                                             "_monitor", "_retry_loop")}
+        for k, v in saved.items():
+            self.addCleanup(setattr, pm, k, v)
+        real = pm.urllib.request.urlopen
+        self.addCleanup(setattr, pm.urllib.request, "urlopen", real)
+        pm.PORT, pm._fixed_port_refusal = port, lambda: None
+        pm._write_remote_sids = lambda *a, **k: (events.append("write"), write(*a, **k))[1]
+        pm._monitor = pm._retry_loop = lambda *a, **k: None
+        if server is not None:
+            pm._LoopbackServer = server(events)
+        pm.urllib.request.urlopen = lambda req, timeout=None: Answer()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = pm.serve()
+        return rc, events
+
+    def test_a_serve_whose_bind_fails_writes_no_mirror_and_one_that_binds_writes_it_once_after_the_bind(self):
+        """THE PRE-BIND WRITE (round 7 of fork PR #897, the reviewer's round-6 ruling R4 on kernel-1). serve() seeds the
+        peer table from the kernel's list of links before its bind (the handler must not serve before PEERS holds the
+        kernel's rows), and until this round each seeded link's peer_update wrote the mirror, so a serve() whose bind fails
+        (a second bus over a live bus's root: ensure()'s spawn when a ping fails, or one racing a re-exec'd image for the
+        port) rewrote STATE/remote-sids from its empty memory, the live bus's heard, answered, vouching row carried unheard,
+        until the live bus's next write. Now the seed writes no mirror, and serve() writes it once after its bind succeeds
+        and before it serves. Through the real serve() with its port held by another socket and one link seeded up: the
+        file is byte-identical after serve() returns, no write was made, and the live row's session is still rule 4's (at
+        the eightieth commit one write, the file changed and the session named by an unreachable host). The control, a
+        serve() over a free port whose serve_forever returns at once: one write, in the order bind, write, serve_forever
+        (at the eightieth commit write, bind, serve_forever), the seeded link in PEERS and _PEERS_SEEDED set."""
+        self._notify(HOST, up=True)                   # the live bus: HOST heard, answered and vouching, written
+        self._peer(HOST, [{"id": B, "name": "api"}])
+        pm._write_remote_sids()
+        before = self.path.read_bytes()
+        self.assertEqual(self._verdict(B), RULE_4, "the live bus's row names B")
+        self._restart()                               # the duplicate's memory: a fresh process over the same root
+        pm.PEERS.clear()
+        held = socket.socket()
+        held.bind(("127.0.0.1", 0))
+        held.listen(1)
+        self.addCleanup(held.close)
+        rc, events = self._serve_seeding([HOST], held.getsockname()[1])
+        self.assertEqual((rc, self.path.read_bytes() == before, events), (0, True, []),
+                         "a serve() whose bind fails leaves the mirror byte-identical and writes nothing")
+        self.assertEqual((self._verdict(B), sorted(pm.PEERS)), (RULE_4, [HOST]),
+                         "the live row still names B; the duplicate's seed applied its link before the failed bind")
+        self._restart()
+        pm.PEERS.clear()
+        self.path.unlink()
+
+        def once(events):
+            class Once(pm._LoopbackServer):
+                def __init__(self, *a, **k):
+                    events.append("bind")
+                    super().__init__(*a, **k)
+
+                def serve_forever(self, *a, **k):
+                    events.append("serve_forever")
+                    self.server_close()
+            return Once
+        free = socket.socket()
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]
+        free.close()
+        rc, events = self._serve_seeding([HOST], port, once)
+        self.assertEqual((rc, events), (0, ["bind", "write", "serve_forever"]),
+                         "the control: the bound serve() writes the mirror once, after its bind and before it serves")
+        self.assertEqual(({h: [r.get("port"), r.get("up")] for h, r in pm.PEERS.items()}, pm._PEERS_SEEDED[0],
+                          self.path.exists()), ({HOST: [50002, True]}, True, True),
+                         "the one write follows the seed: HOST linked, the seed flag set, the mirror written")
 
     def test_a_standing_mark_survives_a_mark_of_another_shape_and_a_stray_byte_inside_a_top_level_key(self):
         """Round 3 of fork PR #897, the twenty-second commit: a mark read back as written is carried as written; a mark in a
@@ -2474,8 +2571,9 @@ class Mirror(unittest.TestCase):
         session closed. Now the answered bit the sender already computes rides the payload (`presenceAnswered`, beside
         `presence`, in the request builder and the response builder alike), both recorders keep it on the PEER_STATE row,
         and the writer gives every row `answered`: a row whose last exchange served a cache is reachable (the sids it names
-        were live at the last answered listing, rule 4) and does not vouch for absence, released by the next exchange that
-        carries an answered listing, the event. A payload lacking the field, an older peer's, or carrying any value but JSON
+        were live at the last answered listing, rule 4) and does not vouch for absence, released by the host's answer to a
+        dial this bus built after its cached roster, the event (its answered dial holds: a dial releases nothing, round 6
+        of fork PR #897, the reviewer's round-5 ruling C). A payload lacking the field, an older peer's, or carrying any value but JSON
         true (TRUTHY_NOT_TRUE: a string, which bool() reads True, and the numbers 1 and 1.0, which == True reads True),
         reads unanswered at both recorders (the dialer's fold pinned for a string since the thirty-fourth commit, and both
         recorders for the numbers since the thirty-fifth, round 4 of fork PR #897): the restricted side, so no older peer
@@ -2523,7 +2621,8 @@ class Mirror(unittest.TestCase):
                          "reviewer's round-5 ruling C and its decision 4): presence alone")
         self.assertEqual(answered_row, ((True, False, False, True, [B]), (True, True, True), True, True),
                          "released by X's answer to our dial: it vouches for presence and absence, the recorder's bit True")
-        # the event: X's next exchange with an answered listing, which now names the session started during the blink
+        # X's next exchanges with an answered listing, which name the session started during the blink: its dial holds,
+        # and its answer to our dial built after the cached roster is the event
         self._local_listing_answered([{"id": B, "name": "api"}, {"id": C, "name": "tests"}])
         req = x_dials_us()
         self.assertEqual(req.get("presenceAnswered"), True)
@@ -2961,8 +3060,9 @@ class Mirror(unittest.TestCase):
         stands as a via row beside the cached row, carrying the far host's bit as the hub stamped it, answered, so the
         reader answers rule 4 for the session; with the hub NOT heard, the carried via row stands beside the cached row
         (a carry letting the cached row speak drops it, and the session is in no row while any other host vouches). The
-        far host's next exchange that answers is the event: its row speaks, the via row is dropped by the carry, and
-        the hub's next gossip folds. The composition with the reader's verdicts is tests/test_dead_session_staleness.py
+        far host's answer to a dial this bus built after its cached roster is the event (its answered dial holds: a dial
+        releases nothing, round 6 of fork PR #897, the reviewer's round-5 ruling C): its row speaks, the via row is
+        dropped by the carry, and the hub's next gossip folds. The composition with the reader's verdicts is tests/test_dead_session_staleness.py
         ReaderFollowsTheWriter (the cached roster phase, the hub's word beside the cached row)."""
         self._forget_presence_cache()
         self._notify(FAR, up=True)
@@ -3018,7 +3118,8 @@ class Mirror(unittest.TestCase):
                          "cannot-determine by nothing, and rule 5's as soon as any other host vouches for absence)")
         self.assertEqual((self._vouch()[FAR], self._vouch()[VIA_FAR]), ((True, True, False), (False, True, False)),
                          "the cached row vouches for presence alone; the carried via row, the seed's linkUp, for nothing")
-        # the event: the far host's next exchange that answers, naming the session
+        # the far host's next exchanges with an answered listing, naming the session: its dial holds, and its answer to
+        # our dial built after the cached roster is the event
         self._local_listing_answered([{"id": C, "name": "tests"}, {"id": D, "name": "api"}])
         req = far_dials_us()
         self.assertEqual(req.get("presenceAnswered"), True)
@@ -3454,7 +3555,13 @@ def _peer_state_lock_census(source):
         so a writer in the callee is a writer too; names propagate to a fixpoint, flow-insensitively (a name once
         bound to a row stays one in its function), and a nested function reads its enclosing functions' names. A
         store or a mutating call rooted at a local container of rows (a copy of the items, a dict of rows) is a
-        writer where it reaches a row: a store from depth two, a call from depth one.
+        writer where it reaches a row: a store from depth two, a call from depth one. A dict of rows built by a
+        comprehension, dict(...) or .copy() is followed. Stated limits of this rule (round 7 of fork PR #897, the
+        reviewer's round-6 ruling R4 on extra7-1; the bus uses neither shape), each with a witness asserted accepted
+        in PeerStateLock beside a control the census refuses: a row returned by a call to any function other than
+        list, tuple, sorted, reversed, iter or dict over a table or rows value is not followed, even when that
+        function copies under the lock; and a row stored into a container by a subscript or attribute store is not
+        followed, the store binding no name.
       ITERATIONS: every read of the name PEER_STATE other than the three atomic ones (a .get(...) call, a subscript
         read, a membership test): .items(), .values(), a loop, a copy, the name handed on. This covers the two
         readers the ruling names, the canonicalization (_canon_peer_name, reading every row) and the mirror's
@@ -4139,7 +4246,9 @@ class PeerStateLock(unittest.TestCase):
     derives a hub's held words from the row it replaces; with no lock, a roster one stored between the other's read and its
     store lost a far host's unanswered word, and a session whose mail rode it answered rule 5 while another row vouched
     (every vote of the round reproduced it through the real recorders). _PEER_STATE_LOCK is held by every read-modify-write
-    of the table and every iteration takes its copy under it. The census (_peer_state_lock_census) derives both populations
+    of the table and every iteration runs under it: the two that read every row in place (_canon_peer_name and
+    _peer_name_dupes) inside the recorders' holds or the /peer-exchange route's canonicalization hold, and every other
+    iteration on its copy taken under it. The census (_peer_state_lock_census) derives both populations
     from the bus's source by AST and refuses a node outside the lock, a re-entry and a lock-order inversion; the
     interleavings through the real recorders are tests/test_dead_session_staleness.py ReaderFollowsTheWriter's
     test_the_recorders_race_* witnesses (executed, the reader's answer). Each census rule has a plant here that it refuses by
@@ -4271,8 +4380,9 @@ class PeerStateLock(unittest.TestCase):
         test_every_read_modify_write_and_iteration_of_peer_state_holds_its_one_lock, catches the defect in the bus, red
         at the forty-ninth commit, where the live iterations took no copy under a lock; this plant catches a census that
         loses the rule, and passes at any bus head. Its red is the census mutant ITERATIONS UNREFUSED, whose refusal loop
-        reads the writers alone, so that no iteration is refused: it accepts both plants, and the census over the real
-        bus passes under it."""
+        reads the writers alone, so that the ITERATIONS rule refuses nothing: it accepts both plants, while ONE MIRROR
+        WRITE still refuses an iteration in the mirror write's reach outside its one hold (a read of the table outside
+        the one copy), and the census over the real bus passes under it."""
         got = self._plant("def _planted_iteration():\n    return [h for h, st in PEER_STATE.items()]\n")
         self.assertTrue(any("iteration outside the lock in _planted_iteration" in r for r in got["refused"]), got["refused"])
         got = self._plant("def _planted_iteration():\n    return sorted(PEER_STATE)\n")
@@ -4280,6 +4390,36 @@ class PeerStateLock(unittest.TestCase):
         got = self._plant("def _planted_iteration():\n    with _PEER_STATE_LOCK:\n        rows = list(PEER_STATE.items())\n"
                           "    return [h for h, st in rows]\n")
         self.assertEqual(got["refused"], [], "the control: the copy taken under the lock, iterated after it")
+
+    def test_a_row_returned_by_a_helper_or_stored_into_a_container_is_a_stated_limit_of_writers_beside_a_refused_control(self):
+        """WRITERS' two stated limits (round 7 of fork PR #897, the reviewer's round-6 ruling R4 on extra7-1, under the
+        reviewer's second ruling on group A's fix-up: say less, since the bus uses neither shape). A row returned by a
+        helper that copies the items under the lock, written outside the lock, and a row stored into a local container
+        under the lock and written through that container outside it, are each accepted: the census does not follow
+        them. Beside each stands its control, refused by name: the same copy taken inline (a value target of a loop over
+        a copy of the items) and the same container built by a dict comprehension (a dict of rows, which the census
+        follows). A census that comes to follow either shape turns that limit's witness red, so the WRITERS paragraph's
+        limit line moves with the census; the controls' red is the census mutant WRITERS UNREFUSED. The plants are
+        censused alone, not over the bus's source, as the split-hold plants below are: the rule is per function."""
+        def alone(text):                              # the census over the plant alone (the rule is per function)
+            return _peer_state_lock_census(text)["refused"]
+        limits = {   # the limit's witness, its control
+            "a row returned by a helper": (
+                "def _planted_rows():\n    with _PEER_STATE_LOCK:\n        return list(PEER_STATE.items())\n"
+                "def _planted_mark():\n    for h, st in _planted_rows():\n        st[\"linkDown\"] = True\n",
+                "def _planted_mark():\n    with _PEER_STATE_LOCK:\n        rows = list(PEER_STATE.items())\n"
+                "    for h, st in rows:\n        st[\"linkDown\"] = True\n"),
+            "a row stored into a container": (
+                "def _planted_mark(host):\n    rows = {}\n    with _PEER_STATE_LOCK:\n        rows[host] = PEER_STATE.get(host)\n"
+                "    rows[host][\"linkDown\"] = True\n",
+                "def _planted_mark(host):\n    with _PEER_STATE_LOCK:\n"
+                "        rows = {h: st for h, st in PEER_STATE.items() if h == host}\n    rows[host][\"linkDown\"] = True\n"),
+        }
+        for name, (text, control) in limits.items():
+            with self.subTest(limit=name):
+                self.assertEqual(alone(text), [], "a stated limit, not followed: %s" % name)
+                got = alone(control)
+                self.assertTrue(any("writer outside the lock in _planted_mark" in r for r in got), ("the control, refused", got))
 
     def test_the_census_refuses_the_answered_set_read_outside_the_lock_or_handed_on_by_name(self):
         """THE ANSWERED SET (round 6 of fork PR #897, the reviewer's round-5 ruling B): the far bus ids heard answering

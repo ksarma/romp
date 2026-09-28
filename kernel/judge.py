@@ -19406,8 +19406,10 @@ def _remote_sids_mirror():
     nested past the JSON parser's depth raises RecursionError, which is not a ValueError, and raised out of the
     ladder the same way until the twentieth commit; it lands in the same arm (found by that commit's builder, the
     same class as the bytes). THE LOST-CARRY MARK (the same ruling): a document whose previous file the bus could
-    not read whole carries "carryLost", {"cause": str, "at": int}, until the bus has heard every host its kernel
-    links to since (postal_service.py _remote_sids_lost_cleared); it is returned beside the table, and a mark in
+    not read whole carries "carryLost", {"cause": str, "at": int}, until the bus clears it by the rule
+    postal_service.py _remote_sids_lost_cleared states (a bus process that read the kernel's list of links at its
+    start, holding at least one dialable link, has heard every linked host since the mark; no bus on the legacy
+    scheme clears it); it is returned beside the table, and a mark in
     any other shape, a second before 1970 or past the year 9999 among them (the verdict prints it, and time.gmtime
     raises past the platform's range), makes the file unparsable. Returns (hosts, None, lost) with the table as the bus wrote it and
     the mark, or None; (None, "no-mirror", None) when there is no file (the bus has not written under this root);
@@ -19515,13 +19517,14 @@ def _source_causes(rows):
     source heard in this process whose last exchange served a cached roster, its kernel listing not answering, so
     it vouches for presence alone whatever its link, round 3 of fork PR #897), sorted by key; "no source" for an
     empty table. No link state is a cause only for a row that would otherwise vouch (heard, not expired, not held
-    down): a down row's link says why it cannot vouch. Listing unanswered is a cause for every row whose bit is
-    False: heard in this process, held down or not (the thirtieth commit of round 4: a held-down host can dial this
-    bus over its cache, and a down notify can follow the exchange that served one, so a down row's bit does not
-    predate the drop and the reason says so, "(link down, listing unanswered)"), or carried from before the bus's
-    restart with its last process's bit False, "(not heard, listing unanswered)" (round 6 of fork PR #897, the
-    reviewer's decision 4 on round 5: until then a carried row's bit held nothing and not heard alone said why it
-    could not vouch). No link state and listing unanswered can hold at once, in the fixed order, and
+    down): a down row's link says why it cannot vouch. Listing unanswered is a cause for every row _holds_the_arm
+    holds: a row heard in this process with its bit False, held down or not (the thirtieth commit of round 4: a
+    held-down host can dial this bus over its cache, and a down notify can follow the exchange that served one, so a
+    down row's bit does not predate the drop and the reason says so, "(link down, listing unanswered)"), or a host's
+    row (`kind` peer or via) carried from before the bus's restart with its last process's bit False, "(not heard,
+    listing unanswered)" (round 6 of fork PR #897, the reviewer's decision 4 on round 5: until then a carried row's
+    bit held nothing and not heard alone said why it could not vouch); the legacy list's row, whose bit the writer
+    defaults to False, reads not heard alone. No link state and listing unanswered can hold at once, in the fixed order, and
     so can link down and listing unanswered. A heartbeat row under the bus's legacy
     singleton scheme, `answered` True and vouching by its TTL, reaches neither; in peer mode the writer withholds
     its vouch (a beat filed there is a local session's, recorded during a listing blink; round 3 of fork PR #897,
@@ -19616,8 +19619,10 @@ def _presumed_closed_verdict(sid, now):
     for absence, none names the sid and no heard or carried host's roster is unanswered, but the bus's LOST-CARRY
     MARK stands ("carry-lost", its cause and its second: the bus could not
     read its previous file whole, so a session a lost row named is in no row; round 3 of fork PR #897, the
-    reviewer's ruling of 14:57Z, the twenty-second commit), which the bus clears once it has heard every host
-    its kernel links to since. After the clear the mirror knows what a fresh bus knows, and rule 5 there is the
+    reviewer's ruling of 14:57Z, the twenty-second commit), which the bus clears by the rule
+    postal_service.py _remote_sids_lost_cleared states (a bus process that read the kernel's list of links at its
+    start, holding at least one dialable link, has heard every linked host since the mark; no bus on the legacy
+    scheme clears it). After the clear the mirror knows what a fresh bus knows, and rule 5 there is the
     design's first-start answer (the reviewer's ruling of 15:45Z, the twenty-fourth commit): a session on a host
     that no linked host hears now is outside every source after the clear, as on a first start, and answers rule
     5 while a host vouches for absence and no heard or carried host's roster is unanswered (postal_service.py
@@ -19671,7 +19676,9 @@ def _presumed_closed_verdict(sid, now):
     whole (text that is not JSON, bytes that are not UTF-8 in a file that is not a document at v 2 after that
     decode, an empty file, a value of neither shape, a path it cannot open) carries no row, so the bus marks
     the document and this ladder answers carry-lost, cannot-determine, where rule 5 would fire, until the bus
-    has heard every host its kernel links to since the mark. Until that commit such a file carried nothing
+    clears the mark by the rule _remote_sids_lost_cleared states (a bus process that read the kernel's list of
+    links at its start, holding at least one dialable link, has heard every linked host since the mark; no bus on
+    the legacy scheme clears it). Until that commit such a file carried nothing
     and a session it named on a host the new process had not heard answered rule 5 while a heard host
     vouched. postal_service.py _remote_sids_previous and _remote_sids_lost_cleared have the files, the
     clearing rule and its bound, and ReaderFollowsTheWriter's one-byte, byte-order-mark and lost-carry phases

@@ -47,7 +47,8 @@ host whose exchange served a CACHED roster, its kernel listing not answering whi
 answered rows, vouches for presence alone (the reviewer's ruling, the road found by its refuters through the real handler
 and writer): the exchange carries `presenceAnswered` in both payload builders, both recorders keep it, the writer's rows
 carry `answered` (the seventh flag the reader requires) and rule 5 needs an answered listing behind the roster, released
-by the next exchange that answers; the reader's reason names the cause (listing unanswered). At the tenth commit such a
+by the host's answer to a dial this bus built after its cached roster (a dial releases nothing: round 6 of fork PR #897, the
+reviewer's round-5 ruling C); the reader's reason names the cause (listing unanswered). At the tenth commit such a
 host vouched for absence, and a session started there during the blink was presumed closed (the cached roster phase).
 Since the fifteenth commit a heard row over a cache is the third state, beside carried and held down, in which a direct
 row speaks for nothing about a session started on its host since, so a hub's word about that host stands as a via row
@@ -60,7 +61,9 @@ coerced, never dropped (the reviewer's ruling on its refuters' corrections). Sin
 ruling of 14:57Z) one bad byte in the previous file costs the writer one sid, never the document (its previous-read decodes
 with replacement for the JSON parse alone and drops a sid that fails the session-id shape), a byte-order mark is read by
 both modules, and a previous file the writer cannot read whole marks the mirror, so where rule 5 would fire the ladder
-answers carry-lost, cannot-determine, until the bus has heard every host its kernel links to since the mark.
+answers carry-lost, cannot-determine, until the bus clears the mark by the rule postal_service.py _remote_sids_lost_cleared
+states (a bus process that read the kernel's list of links at its start, holding at least one dialable link, has heard every
+linked host since the mark; no bus on the legacy scheme clears it).
 Since the twenty-fourth commit (the reviewer's ruling of 15:45Z) the clear's answer is stated as the design's first-start
 answer: a session on a host that no linked host hears now is outside every source after the clear, as on a first start.
 Since the twenty-ninth commit (round 4 of fork PR #897, the reviewer's ruling on its round-3 refuters' finding) rule 5
@@ -1033,7 +1036,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     writer, A's row with it;
       the lost carry  the same ruling, clauses 2 and 3. The writer's own document made not JSON (a stray brace); a
                     seventeenth restart whose seed reads the kernel's list with both links up (the real seed, its transport
-                    stubbed), its own writes reading the file and marking the mirror with the cause and the second; B heard
+                    stubbed), the write after it reading the file and marking the mirror with the cause and the second; B heard
                     first: A's live session, its row lost, and a sid nothing names are carry-lost, cannot-determine, and
                     B's session is rule 4's (at the twenty-first commit both answered rule 5). An eighteenth restart whose
                     seed fails, B and A notified one at a time and heard: the mark stands, carried. A nineteenth restart
@@ -1054,7 +1057,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     carry-lost (a host with no seenAt read as second 0 cleared it); A heard: cleared;
       as on a first start  the reviewer's ruling of 15:45Z, clause 5, its named witness (the twenty-fourth commit). A
                     twenty-third restart seeded with B alone, the only link; B, a hub, names a session on the spoke; the
-                    file made not JSON; a twenty-fourth restart seeded with B alone, whose own writes mark the mirror; B
+                    file made not JSON; a twenty-fourth restart seeded with B alone, whose write after the seed marks the mirror; B
                     heard after its own restart, no longer hearing the spoke: the mark clears, B's row is the one row
                     and vouches for absence, and the spoke's session answers rule 5. A twenty-fifth restart over no
                     file, a first start seeded with B alone, B heard the same way: the same rows and verdicts;
@@ -1507,7 +1510,7 @@ out["cacheResponseAnswers"] = cache_phase(pm11, resp)
 # (hub_named) starts on B meanwhile; B's dial to us serves the cache; the hub, its own exchange with B answered, names the
 # session through the real fold. The cached row speaks for nothing about it, so the hub's word stands as a via row beside it.
 # Then the same with the hub NOT heard: an eleventh restart, B heard first over the cache, a second hub vouching for absence.
-# B's exchange that answers is the event
+# B's answered dial holds (a dial releases nothing), and B's answer to our dial built after its cached roster is the event
 def cache_hub_phase(bus, payload):                 # cache_phase plus the verdict for the session the hub names
     got = cache_phase(bus, payload)
     got["hubNamed"] = verdict(hub_named)
@@ -1701,7 +1704,8 @@ out["bomWritten"] = mirror_phase(carried=carried, other=other, nobody=dead)
 out["bomWritten"]["busLog"] = [ln for ln in err.getvalue().splitlines() if "remote-sids" in ln]
 # THE LOST CARRY (the reviewer's ruling of 14:57Z, clause 2): A heard beside B; the writer's own document made not JSON (a stray
 # brace); a seventeenth restart whose seed reads the kernel's list, both links up (the REAL seed, its transport stubbed), and whose
-# seed writes read the file and mark the mirror; B heard first, A linked and not heard. An eighteenth restart whose seed fails
+# one write after the seed (serve()'s after its bind; until round 7 of fork PR #897 the seed's own writes) reads the file and
+# marks the mirror; B heard first, A linked and not heard. An eighteenth restart whose seed fails
 # (nothing answers), B and A notified one at a time and heard. A nineteenth restart whose seed reads the list; B heard; A heard,
 # the last linked host heard since the mark: the event that clears it
 def seed(bus, links):                              # the kernel's tunnel list read at the bus's start, every link up, and one
@@ -1717,9 +1721,11 @@ def seed(bus, links):                              # the kernel's tunnel list re
     real = bus.urllib.request.urlopen
     bus.urllib.request.urlopen = lambda req, timeout=None: Answer()
     try:
-        bus._seed_peers_from_kernel()
-    finally:
+        links = bus._seed_peers_from_kernel()      # its rows write no mirror (round 7 of fork PR #897): the write after it,
+    finally:                                       # serve()'s one write after its bind, is this helper's
         bus.urllib.request.urlopen = real
+    if links:
+        bus._write_remote_sids()
     return bus._PEERS_SEEDED[0]
 notify(pm17, host_a, True)
 exchange(pm17, host_a, [carried])
@@ -1730,7 +1736,7 @@ pm18.KERNEL_BASE = "http://127.0.0.1:9"
 out["lostFloor"] = int(time.time())
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
-    out["lostSeeded"] = seed(pm18, [host_a, host_b])   # the seed's own writes read the file: the mark
+    out["lostSeeded"] = seed(pm18, [host_a, host_b])   # the write after the seed reads the file: the mark
     exchange(pm18, host_b, [other], bus_id="bus-b2")   # B heard first; A linked and not heard
 out["lostCeiling"] = int(time.time())
 out["lostWritten"] = mirror_phase(carried=carried, other=other, nobody=dead)
@@ -1783,7 +1789,7 @@ pm22.KERNEL_BASE = "http://127.0.0.1:9"
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
     out["boundLostSeeded"] = seed(pm22, [host_a, host_b])
-    out["boundLostMark"] = mirror_mark()           # the seed's own writes read the file: the mark
+    out["boundLostMark"] = mirror_mark()           # the write after the seed read the file: the mark
     exchange(pm22, host_a, [carried])
     b_gossips(pm22, "bus-b4", [])                  # B restarted again: heard, gossiping nothing about the spoke
 out["boundLost"] = mirror_phase(farLost=far_lost, other=other, carried=carried, nobody=dead)
@@ -1806,7 +1812,7 @@ exchange(pm23, host_a, [carried])
 out["zeroAHeard"] = mirror_phase(carried=carried, other=other, nobody=dead)
 # AS ON A FIRST START, THE RULED ROAD (the reviewer's ruling of 15:45Z, clause 5, its named witness): a twenty-third restart seeded
 # with B ALONE, the only link (A is no longer linked); B, a hub, gossips a session on the spoke; the file made not JSON; a
-# twenty-fourth restart seeded with B alone, whose own writes mark the mirror; B heard after its own restart, no longer hearing
+# twenty-fourth restart seeded with B alone, whose write after the seed marks the mirror; B heard after its own restart, no longer hearing
 # the spoke: the mark clears, and the spoke's session, outside every source, answers rule 5 while B, the one row, vouches for
 # absence. Then a twenty-fifth restart over NO file, a first start seeded with B alone, B heard the same way: the same answer
 def link_hosts(bus):                               # the hosts PEERS holds as links (a dialable row: a port)
@@ -1822,7 +1828,7 @@ pm25.KERNEL_BASE = "http://127.0.0.1:9"
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
     out["oneLinkLostSeeded"] = seed(pm25, [host_b])
-    out["oneLinkMark"] = mirror_mark()             # the seed's own writes read the file: the mark
+    out["oneLinkMark"] = mirror_mark()             # the write after the seed read the file: the mark
     out["oneLinkLinks"] = link_hosts(pm25)
     b_gossips(pm25, "bus-b7", [])                  # B restarted since: heard, no longer hearing the spoke
 out["oneLinkCleared"] = mirror_phase(farLost=far_lost, other=other, nobody=dead)
@@ -1832,7 +1838,7 @@ pm26, out["restartMemory25"] = restarted("romp_postal_oneroot_restarted_twenty_f
 pm26.KERNEL_BASE = "http://127.0.0.1:9"
 out["firstStartSeeded"] = seed(pm26, [host_b])
 out["firstStartLinks"] = link_hosts(pm26)
-out["firstStartMark"] = mirror_mark()              # the seed's own writes over no file: nothing lost, no mark
+out["firstStartMark"] = mirror_mark()              # the write after the seed, over no file: nothing lost, no mark
 b_gossips(pm26, "bus-b8", [])                      # B heard, hearing nothing on the spoke
 out["firstStart"] = mirror_phase(farLost=far_lost, other=other, nobody=dead)
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
@@ -3646,9 +3652,11 @@ def seed(bus, links):                              # the kernel's tunnel list re
     real = bus.urllib.request.urlopen
     bus.urllib.request.urlopen = lambda req, timeout=None: Answer()
     try:
-        bus._seed_peers_from_kernel()
-    finally:
+        links = bus._seed_peers_from_kernel()      # its rows write no mirror (round 7 of fork PR #897): the write after it,
+    finally:                                       # serve()'s one write after its bind, is this helper's
         bus.urllib.request.urlopen = real
+    if links:
+        bus._write_remote_sids()
     return bus._PEERS_SEEDED[0]
 def mark(bus):                                     # our mirror's lost-carry mark, or None
     try:
@@ -4086,13 +4094,17 @@ step(road, "hubDialAfterFarAnswersIt", us, newOnFar=S["new"], nobody=S["nobody"]
 # sixtieth commit, its road rvA4FarRestartedInProcess), in one process of ours: F's cached exchange with the hub carries a
 # new session's mail here, and F stops exchanging with the hub, which keeps gossiping F's last word; F links us, dials and
 # answers our dial. With F's bus restarted since that word, F's row here carries a new id and does not speak for it: the
-# word holds across the hub's next dial and answer, until F answers the hub again. The control: F's bus not restarted
-for road, restarted in (("residual3bFarBusRestartedSinceItsWordHoldsThroughItsOwnAnswer", True),
-                        ("residual3bFarBusNotRestartedEndsItsWordByItsOwnAnswer", False)):
+# word holds across the hub's next dial and answer, until F answers the hub again. The control: F's bus not restarted.
+# THE (3c) CLAUSE (round 7 of fork PR #897, the reviewer's round-6 ruling R4 on extra8-1): F's restarted listing drops the
+# sid its cached word named, so the hub's word naming F's new bus re-names none of the old entries: the hub's dial merges
+# and keeps the old bus's entry, which holds, and the hub's answer to our dial built after it ends it
+for road, restarted, drops in (("residual3bFarBusRestartedSinceItsWordHoldsThroughItsOwnAnswer", True, False),
+                               ("residual3bFarBusNotRestartedEndsItsWordByItsOwnAnswer", False, False),
+                               ("residual3cFarBusRestartedDropsASidItsWordNamedHeldUntilOurDial", True, True)):
     us, f, hub, c = far_behind_hub(road, HUB)
     out["roads"][road] = {}
     LISTINGS["f"] = None
-    out["roads"][road]["park"] = park(f, S["new"], "px-3b" + ("re" if restarted else "ctl"))
+    out["roads"][road]["park"] = park(f, S["new"], "px-3" + ("cdrop" if drops else "bre" if restarted else "bctl"))
     out["roads"][road]["landingAtHub"] = mail_dial(f, F, hub, HUB)
     out["roads"][road]["landingHere"] = mail_dial(hub, HUB, us, US)
     dial(us, US, hub, HUB)                         # our dial's answer gossips F's cached word too: held
@@ -4103,7 +4115,7 @@ for road, restarted in (("residual3bFarBusRestartedSinceItsWordHoldsThroughItsOw
         f = load_bus("f", Path(others_root) / road / "f")   # F's bus restarts over its own root: a new bus id
     with As(f):
         f.peer_update({"host": US, "port": 50001, "up": True})   # F links us; it no longer exchanges with the hub
-    LISTINGS["f"] = [S["other"], S["new"]]
+    LISTINGS["f"] = [S["new"]] if drops else [S["other"], S["new"]]
     out["roads"][road]["farDial"] = dial(f, F, us, US)
     dial(us, US, f, F)                             # F's answer to our dial releases F's row
     out["roads"][road]["busIds"] = [old_bus != str(f.BUS_ID), via_bus_of(us, "via:%s/%s" % (HUB, F)) == old_bus,
@@ -4115,7 +4127,14 @@ for road, restarted in (("residual3bFarBusRestartedSinceItsWordHoldsThroughItsOw
         f.peer_update({"host": HUB, "port": 50002, "up": True})
     hear(f, F, hub, HUB)                           # F answers the hub again
     dial(hub, HUB, us, US)                         # the hub's word names F's current bus: it folds into F's row
-    step(road, "hubDialsAfterFarAnswersIt", us, newOnFar=S["new"], nobody=S["nobody"])
+    step(road, "hubDialsAfterFarAnswersIt", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+    if drops:                                      # the old bus's entries, kept by the merge, and the hub's next dial
+        out["roads"][road]["keptAfterHubDial"] = [w for w in hub_words_of_f(us, old_bus) if w[2]]
+        dial(hub, HUB, us, US)
+        step(road, "hubDialsAgain", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
+        dial(us, US, hub, HUB)                     # the hub's answer to our dial built after that word: the entry goes
+        out["roads"][road]["keptAfterOurDial"] = [w for w in hub_words_of_f(us, old_bus) if w[2]]
+        step(road, "ourDialAfterFarAnswersIt", us, newOnFar=S["new"], nobody=S["nobody"], other=S["other"])
 # X3'S NAME AT ITS LATEST RECORDING (round 6 of fork PR #897, the reviewer's verifier at the fifty-ninth commit, its road rv5
 # and mutant MV14): a session BOTH rows of the fold name, the staying row's naming before this bus's dial was built and the
 # forgotten row's after it. The alias's row names a session of the hub's old process; the hub's bus restarts and dials us
@@ -4169,8 +4188,8 @@ step(road, "olderAnswerFolded", us, x3revived=S["x3revived"], nobody=S["nobody"]
 # names the host under the name the word carries or with the word's bus id (_via_held); once F upgrades (a new process, a
 # new bus id), the hub's word under the other name matches it by neither
 F_DECL = F + "-hostname"                           # the hostname F declares; F, the alias, is the name the hub's kernel dials
-def renamed_world(road):                           # F on its release behind the hub, whose kernel knows F by the alias alone
-    us = fresh_us(); f, hub, c = other(road, "f"), other(road, "hub"), other(road, "c")
+def renamed_world(road, hub_name=HUB):             # F on its release behind the hub, whose kernel knows F by the alias alone;
+    us = fresh_us(); f, hub, c = other(road, "f"), other(road, "hub"), other(road, "c")   # hub_name: the name its dials land under
     LISTINGS["f"], LISTINGS["hub"], LISTINGS["c"], LISTINGS["us"] = [S["other"]], [S["hubsid"]], [S["csid"]], [S["web"]]
     notify(us, HUB, True); notify(us, C, True)
     with As(hub):
@@ -4179,7 +4198,7 @@ def renamed_world(road):                           # F on its release behind the
     with As(f):
         f.peer_update({"host": HUB, "port": 50002, "up": True})
     dial(c, C, us, US); dial(us, US, c, C)
-    dial(hub, HUB, us, US)
+    dial(hub, hub_name, us, US)
     out["roads"][road] = {}
     return us, f, hub, c, {f.BUS_ID: "f"}
 def renamed_new_f(road, label, buses):             # F runs this head: a new process, a new bus id
@@ -4196,25 +4215,25 @@ def renamed_view(road, name, us, hub, buses):      # the hub's row here and the 
         "roster": sorted([pa.get("via"), pa.get("id"), buses.get(pa.get("viaBus"), "?"), pa.get("viaAnswered")]
                          for pa in st.get("presence") or [] if pa.get("via")),
         "hubRows": sorted([k, buses.get(r.get("busId"), "?")] for k, r in hub.PEER_STATE.items() if k in (F, F_DECL))}
-def renamed_upgraded(road):                        # held under F_DECL, then named again under the alias with a new bus id
-    us, f, hub, c, buses = renamed_world(road)
+def renamed_upgraded(road, hub_name=HUB):          # held under F_DECL, then named again under the alias with a new bus id
+    us, f, hub, c, buses = renamed_world(road, hub_name)
     dial(f, F_DECL, hub, HUB, strip_answered=True)     # F's own dial reaches the hub first: filed under the name it declares
-    dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+    dial(hub, hub_name, us, US); dial(us, US, hub, HUB)
     LISTINGS["f"] = []                                 # F's sessions end: its next dial, still under F_DECL, is empty
-    dial(f, F_DECL, hub, HUB, strip_answered=True); dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+    dial(f, F_DECL, hub, HUB, strip_answered=True); dial(hub, hub_name, us, US); dial(us, US, hub, HUB)
     renamed_view(road, "held", us, hub, buses)
     step(road, "held", us, nobody=S["nobody"])
     dial(hub, HUB, f, F, strip_answered=True)          # the hub's dial to the alias folds F under F, answered empty
-    dial(hub, HUB, us, US); dial(us, US, hub, HUB)     # our dial's answer omits F: the word held under F_DECL
+    dial(hub, hub_name, us, US); dial(us, US, hub, HUB)   # our dial's answer omits F: the word held under F_DECL
     renamed_view(road, "afterHubFold", us, hub, buses)
     f2 = renamed_new_f(road, "f2", buses)
     LISTINGS["f"] = [S["goss"]]                        # a session on the new process
     dial(hub, HUB, f2, F)                              # the hub's dial reaches the new process first: filed under the alias
-    dial(hub, HUB, us, US); dial(us, US, hub, HUB)     # the hub's answer to our dial names F again, answered, under the alias
+    dial(hub, hub_name, us, US); dial(us, US, hub, HUB)   # the hub's answer to our dial names F again, answered, under the alias
     renamed_view(road, "namedAgainUnderTheAlias", us, hub, buses)
     step(road, "namedAgainUnderTheAlias", us, nobody=S["nobody"], goss=S["goss"])
     dial(f2, F_DECL, hub, HUB)                         # the new process's own dial: its bus id known, filed under the alias
-    dial(hub, HUB, us, US); dial(us, US, hub, HUB)
+    dial(hub, hub_name, us, US); dial(us, US, hub, HUB)
     renamed_view(road, "itsOwnDial", us, hub, buses)
     step(road, "itsOwnDial", us, nobody=S["nobody"])
     return us, f2, hub, c, buses
@@ -4290,6 +4309,52 @@ us = load_bus("us2")                               # our bus restarts over the s
 notify(us, HUB, True); notify(us, C, True)
 dial(c, C, us, US); dial(hub, HUB, us, US); dial(us, US, c, C); dial(us, US, hub, HUB)
 step(road, "ourBusRestarted", us, nobody=S["nobody"], goss=S["goss"])
+# COST (a) WHEN A RESTARTED HUB DECLARES A NAME OF ITS OWN (round 7 of fork PR #897, the reviewer's round-6 ruling R4 on
+# tests-2, extra6-1 and extra9-1; found as the reviewer's verifier's road vfy2DeclHubRestartsFoldsFFirst at the
+# seventy-fourth commit, by execution): the first road's world with the hub's dials landing here under the hostname it
+# declares (HUB_DECL) throughout, so this bus files them on a row of that name until its own dial to the hub folds it. The
+# word is held under F_DECL on this bus's row for the hub; the hub restarts, F's own dial reaches it first (filed under
+# F_DECL, naming F's session), and the restarted hub's dial reaches us first, naming F under F_DECL on the HUB_DECL row;
+# the hub's dial to the alias folds F there, and our dial's answer names F under the alias alone and folds the HUB_DECL
+# row: the naming under the held word's name was on the row the fold forgot, and the word stays held, through two more
+# exchanges and our restart. The control: our dial's answer before the hub's fold names F under F_DECL, which replaces
+# the held word with the new process's, held there and released at the next exchanges
+def decl_view(road, name, us, hub, buses):         # this bus's rows for the hub under both names, and the hub's rows for F
+    def one(st):
+        return {"held": sorted([pa.get("via"), pa.get("id"), buses.get(pa.get("viaBus"), "?")] for pa in st.get("viaHeld") or []),
+                "roster": sorted([pa.get("via"), pa.get("id"), buses.get(pa.get("viaBus"), "?"), pa.get("viaAnswered")]
+                                 for pa in st.get("presence") or [] if pa.get("via"))}
+    out["roads"][road].setdefault("words", {})[name] = {
+        "here": {k: one(us.PEER_STATE.get(k) or {}) for k in (HUB, HUB_DECL) if k in us.PEER_STATE},
+        "hubRows": sorted([k, buses.get(r.get("busId"), "?")] for k, r in hub.PEER_STATE.items() if k in (F, F_DECL))}
+for road, ours_first in (("declHubRestartsFoldsFFirst", False), ("declHubRestartsOurDialFirst", True)):
+    us, f2, hub, c, buses = renamed_upgraded(road, HUB_DECL)
+    hub = load_bus("hub", Path(others_root) / road / "hub")   # the hub's bus restarts over its own root: a new bus id
+    LISTINGS["hub"] = [S["hubsid"]]
+    with As(hub):
+        hub.peer_update({"host": US, "port": 50001, "up": True})
+        hub.peer_update({"host": F, "port": 50003, "up": True})
+    dial(f2, F_DECL, hub, HUB)                     # F's own dial reaches it first: filed under F_DECL, naming F's session
+    dial(hub, HUB_DECL, us, US)                    # the restarted hub's dial reaches us first, filed here under HUB_DECL
+    decl_view(road, "namedUnderTheHeldName", us, hub, buses)
+    step(road, "namedUnderTheHeldName", us, nobody=S["nobody"], goss=S["goss"])
+    if ours_first:
+        dial(us, US, hub, HUB)                     # our dial's answer before the hub's fold of F
+        dial(hub, HUB, f2, F)
+    else:
+        dial(hub, HUB, f2, F)                      # the hub's dial to the alias folds F there
+        dial(us, US, hub, HUB)                     # our dial's answer names F under the alias alone
+    decl_view(road, "afterOurFold", us, hub, buses)
+    step(road, "afterOurFold", us, nobody=S["nobody"], goss=S["goss"])
+    for _ in range(2):
+        dial(hub, HUB_DECL, us, US); dial(us, US, hub, HUB)
+    decl_view(road, "twoMoreExchanges", us, hub, buses)
+    step(road, "twoMoreExchanges", us, nobody=S["nobody"], goss=S["goss"])
+    us = load_bus("us2")                           # our bus restarts over the same root
+    notify(us, HUB, True); notify(us, C, True)
+    dial(c, C, us, US); dial(hub, HUB_DECL, us, US); dial(us, US, c, C); dial(us, US, hub, HUB)
+    dial(hub, HUB_DECL, us, US); dial(us, US, hub, HUB)
+    step(road, "ourBusRestarted", us, nobody=S["nobody"], goss=S["goss"])
 # THE ORIGIN HOLD (round 7 of fork PR #897, the reviewer's round-6 ruling R1 on extra5-1, and its decisions 1 and 2): a
 # session S on F mails our session through the hub; the hub parks it, its bus restarts, and the restarted hub, which has
 # not heard F, relays it. The relay carries its origin and the exchange no word of F; a relay from an origin the hub's
@@ -5379,7 +5444,8 @@ print(json.dumps(out))
         vouches for the presence of the sid it names (rule 4) and not for the absence of one it does not, so a session
         started on B during the blink is cannot-determine, the reason naming B with its listing unanswered, never rule 5
         (at the tenth commit B vouched for absence over the cache, and rule 5 presumed that session closed while its mail
-        rode the same exchange). B's next exchange with an answered listing is the event. Both halves: B's request built by
+        rode the same exchange). B's answer to a dial this bus built after its cached roster is the event; B's answered
+        dial holds (a dial releases nothing: round 6 of fork PR #897, the reviewer's round-5 ruling C). Both halves: B's request built by
         the real builder and recorded by the real handler, then the real handler's response folded by the real dialer's
         fold. The verdicts are pinned first, then the payloads' bits and the rows."""
         L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
@@ -5455,9 +5521,10 @@ print(json.dumps(out))
         folded into the cached row, and the hub, vouching for absence, let rule 5 presume the session closed for one
         exchange interval of B: a live session presumed closed while another host vouched). The same with the hub NOT
         heard: after a restart B is heard first, still over the cache, and a second hub vouches for absence; the carried
-        via row stands, so the session is cannot-determine by the hub's last word, never rule 5. B's exchange that
-        answers, naming the session, is the event: B speaks, the via row is dropped by the carry, and the hub's next
-        exchange folds. While B's row is reachable over the cache, a sid nothing names is cannot-determine by the
+        via row stands, so the session is cannot-determine by the hub's last word, never rule 5. B's answer to a dial
+        this bus built after its cached roster, naming the session, is the event (B's answered dial holds: a dial
+        releases nothing, round 6 of fork PR #897, the reviewer's round-5 ruling C): B speaks, the via row is dropped by
+        the carry, and the hub's next exchange folds. While B's row is reachable over the cache, a sid nothing names is cannot-determine by the
         listing-unanswered arm, naming B, in both halves (round 4 of fork PR #897, the twenty-ninth commit: until then
         these two asserts pinned rule 5, residual (3), a session started on B during the blink that no hub names
         presumed closed on another host's vouch). The verdicts are pinned first, then the payloads' bits and the rows."""
@@ -5805,11 +5872,14 @@ print(json.dumps(out))
         """RESIDUAL (3b) and cost (d), disclosed on the restricted side (the ruling; X_far_cached_then_gone, the second
         refuter's scenario): a far host F whose last exchange with the hub served a cache and that then stops exchanging
         with the hub, here held down by the hub's kernel. presence_payload gossips every PEER_STATE row whatever the hub's
-        link state, and a hub never forgets a far host's PEER_STATE (the only pop is _drop_peer_name_dupes), so it keeps
-        gossiping F's last word with viaAnswered False. Our via row stays reachable (the hub's link) and unanswered, and
-        the arm holds every sid nothing names at cannot-determine, across the hub's exchanges, until F answers the hub
-        again and the hub's next exchange reaches here, or this bus holds F directly and F's own answering exchange lands
-        here while F's bus is the one the hub's word names (while F's row speaks); the hub's restart is no release since
+        link state, and the hub keeps F's row (the only pop is _drop_peer_name_dupes), so the same hub process keeps
+        relaying F's last cached word, with viaAnswered False, while F does not answer it again (an empty answer replaces
+        the word, and a restarted hub relays nothing). Our via row stays reachable (the hub's link) and unanswered, and
+        the arm holds every sid nothing names at cannot-determine, across the hub's exchanges, until the hub's answer to a
+        dial this bus built after the hub's last roster carrying F's cached word, taken after F answered the hub again,
+        reaches here (a dial of the hub merges and releases nothing), or, this bus holding F directly, until F's answer to
+        a dial of this bus while F's bus is the one the hub's word names (not F's own dials; while F's row speaks); the
+        hub's restart is no release since
         the thirty-first commit (the hub-restart witnesses below), and this bus's restart none since round 6 (the
         reviewer's decision 4 on round 5: F's via row is carried unanswered and holds the arm). No false settle. Until the
         twenty-ninth commit, rule 5 here.
@@ -5817,8 +5887,14 @@ print(json.dumps(out))
         restarted since its cached exchange with the hub, F's row here carries the new bus id and a known different bus id
         beats the name (_direct_row_speaks), so F's row does not speak for the hub's word: through F's answer to our dial
         and the hub's next dial and answer, a sid nothing names stays cannot-determine by the via row, until F answers the
-        hub again and the hub's word, naming F's new bus, folds into F's row. The control, F's bus not restarted: F's
-        answer to our dial ends it."""
+        hub again and the hub's word, naming F's new bus, folds into F's row the entries it re-names (here F's new listing
+        re-names the sid the cached word named, so the hub's dial ends it). The control, F's bus not restarted: F's
+        answer to our dial ends it.
+        THE (3c) CLAUSE (round 7 of fork PR #897, the reviewer's round-6 ruling R4 on extra8-1): when F's new listing no
+        longer names a sid F's cached word named, the hub's word naming F's new bus re-names none of the old entries, so
+        the hub's dial merges and keeps the old bus's entry (a dial releases nothing), which holds a sid nothing names
+        through that dial and the hub's next, until the hub's answer to our dial built after that word ends it (rule 5
+        for the sid nothing names and for the sid F no longer lists)."""
         via = UNANSWERED(R_VIA_F + " (listing unanswered)")
         for shape, got in self.roads.items():
             with self.subTest(shape=shape):
@@ -5853,6 +5929,30 @@ print(json.dumps(out))
                                  (["px-3bctl"], via, [False, False, True], RULE_5),
                                  "the control: F's bus not restarted, F's answer to our dial releases F's row, which speaks "
                                  "for the hub's word, and the via row folds into it")
+        drops = "residual3cFarBusRestartedDropsASidItsWordNamedHeldUntilOurDial"
+        for shape, got in self.roads.items():
+            with self.subTest(shape=shape, far_bus_restarted=True, new_listing_drops_a_sid=True):
+                road = got["roads"][drops]
+                self.assertEqual((road["landingHere"]["acks"], road["busIds"],
+                                  self._road(got, drops, "farAnswersOurDial", "nobody"),
+                                  self._road(got, drops, "farAnswersOurDial", "other")),
+                                 (["px-3cdrop"], [True, True, True], via, RULE_4),
+                                 "F's bus restarted and its new listing no longer names the sid its cached word named: F's "
+                                 "row, released by its answer to our dial, does not speak for the word, which holds")
+                self.assertEqual((self._road(got, drops, "hubDialsAfterFarAnswersIt", "nobody"),
+                                  self._road(got, drops, "hubDialsAfterFarAnswersIt", "other"),
+                                  road["keptAfterHubDial"], self._road(got, drops, "hubDialsAgain", "nobody")),
+                                 (via, RULE_4, [[R_F, ROAD_SIDS["other"], True, False]], via),
+                                 "THE (3c) CLAUSE: F answers the hub again and the hub's word names F's new bus, re-naming none "
+                                 "of the old entries; the hub's dial merges and keeps the old bus's entry (the hub's gossip "
+                                 "rows about F here that name F's old bus), unanswered, which holds a sid nothing names through "
+                                 "the hub's next dial too (a dial releases nothing)")
+                self.assertEqual((road["keptAfterOurDial"], self._road(got, drops, "ourDialAfterFarAnswersIt", "nobody"),
+                                  self._road(got, drops, "ourDialAfterFarAnswersIt", "other"),
+                                  self._road(got, drops, "ourDialAfterFarAnswersIt", "newOnFar")),
+                                 ([], RULE_5, RULE_5, RULE_4),
+                                 "the hub's answer to our dial built after that word ends it: rule 5 for the sid nothing names "
+                                 "and for the sid F no longer lists, rule 4 for F's live session")
 
     def test_cost_a_a_peer_lacking_the_field_holds_every_sid_beside_a_vouching_host(self):
         """COST (a), on the restricted side (the ruling): a peer lacking the field (an older bus, the project's own
@@ -6364,8 +6464,9 @@ print(json.dumps(out))
         answering exchange with the hub and the hub's next exchange here, which the last step drives (rule 4 then). The
         release causes this face: at the thirty-first commit the word stayed held, cannot-determine. The reviewer ruled
         to keep the release (round 4; the writer's docstring states the ruling and its trade under residual (3d)). This
-        face is one of the release's three races, with residual (3d)'s face (1) and the third race, a second machine
-        answering the hub under F's name with an empty listing (test_the_releases_third_race_a_second_machine_answering_the_hub_under_a_far_hosts_name_with_an_empty_listing_answers_rule_5).
+        face is one of the release's two races since round 6 of fork PR #897, with the third race, a second machine
+        answering the hub under F's name with an empty listing (test_the_releases_third_race_a_second_machine_answering_the_hub_under_a_far_hosts_name_with_an_empty_listing_answers_rule_5);
+        residual (3d)'s face (1), a third race until then, is closed by the order (the writer's docstring, (3d)).
         The next word about F ends the window, but not a settle decided inside it: a completion, reply or resolve for
         the session in the window settles its card wrong for good
         (test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word). So the release's
@@ -6573,14 +6674,22 @@ print(json.dumps(out))
                                  "both heads")
 
     def test_residual_3d_face_1_over_an_empty_cache_from_a_far_process_never_heard_answering_here_holds_the_word(self):
-        """The reviewer's round-5 ruling B on face (1)'s empty-cache shape: F's bus restarts during its kernel's blink with
-        no twin, so its restarted process is a new bus id, and here the hub never relays that process's answered word
-        before its next blink (the witness road, test_residual_3d_face_1_in_one_hub_process_an_older_dial_over_the_far_hosts_empty_cache_answers_rule_5,
-        relays it). The older dial, built over F's empty cache, lands after the newer dial naming F's cached word, on the
-        road and from the hub process that named F; F's restarted bus is not among the ids heard answering, and since
-        round 6 of fork PR #897 the dial merges anyway (the reviewer's round-5 ruling C: a dial releases nothing), so the
-        omission releases nothing: the session live on F stays listing-unanswered and its card 'working' (at the
-        forty-ninth commit rule 5 and 'completed', the release), until the hub's next roster names F's cached word again."""
+        """Face (1)'s empty-cache shape with no relay of the restarted process's answered word (the reviewer's round-5
+        ruling B wrote this road as its pin): F's bus restarts during its kernel's blink with no twin, so its restarted
+        process is a new bus id, and here the hub never relays that process's answered word before its next blink
+        (test_residual_3d_face_1_in_one_hub_process_an_older_dial_over_the_far_hosts_empty_cache_holds_the_word is the
+        road that relays it, the closure's pin). The older dial, built over F's empty cache, lands after the newer dial
+        naming F's cached word, on the road and from the hub process that named F. The hold is ruling C's (round 6 of
+        fork PR #897): the recorder merges the older dial, a dial releasing nothing, so F's word stays in the hub's
+        roster here (heldAfter is [], nothing moved to the held words), and the session live on F stays
+        listing-unanswered and its card 'working' (at the forty-ninth commit rule 5 and 'completed', the release),
+        until the hub's next roster names F's cached word again. F's restarted bus is not among the ids heard answering
+        on this road (farBusAnswered False), a recorded fact and not the cause: under a writer without ruling B's
+        heard-answering condition this road holds the same. Ruling B's reds are THE ROAD,
+        test_an_older_far_hosts_blink_omitted_by_the_same_hub_process_holds_its_word_and_its_session_stays_cannot_determine,
+        and the two cost (a) witnesses,
+        test_cost_a_a_current_far_host_heard_here_only_over_caches_that_answers_its_hub_empty_holds_its_word_until_its_answer_is_relayed
+        and test_cost_a_a_far_host_on_a_release_before_this_pr_whose_sessions_end_holds_its_word_until_the_hub_names_it_again_answered."""
         S = ROAD_SIDS
         via = UNANSWERED(R_VIA_F + " (listing unanswered)")
         name = "hubDialsOutOfOrderOverEmptyCacheNeverHeardAnswering"
@@ -6598,13 +6707,14 @@ print(json.dumps(out))
                                  "same hub process's: the release's three conditions of the forty-ninth commit")
                 self.assertEqual((road["olderDialStatus"], self._road(got, name, "olderDialLanded", "newOnFar"), road["heldAfter"]),
                                  (200, via, []),
-                                 "HELD: the older dial's omission is not the answer of a far bus heard answering here, so the "
-                                 "session live on F stays cannot-determine (at the forty-ninth commit rule 5, the word released)")
+                                 "kept in the hub's roster (the dial merges, ruling C): the older dial's omission moves nothing "
+                                 "to the held words, and the session live on F stays cannot-determine (at the forty-ninth "
+                                 "commit rule 5, the word released)")
                 self.assertEqual(self._road(got, name, "hubDialsAgain", "newOnFar"), via)
                 self.assertEqual((road["farBusAnswered"], got["roads"]["hubDialsOutOfOrderOverEmptyCache"]["farBusAnswered"]),
                                  (False, True),
-                                 "the reason: F's restarted process was never heard answering on this road, and on the "
-                                 "witness road the hub relayed its answered word")
+                                 "recorded, not the cause: F's restarted process was never heard answering on this road, and "
+                                 "on the road that relays its answered word it was")
             with self.subTest(shape=shape, leg="the settle"):
                 self.assertEqual((tuple(road["settle"]["verdictAtCompletion"]), road["settle"]["pass1"]), (via, [1, "working"]),
                                  "a courier pass there leaves the card 'working' (at the forty-ninth commit rule 5 and "
@@ -6717,7 +6827,19 @@ print(json.dumps(out))
         the held word's name, and since a hub gossips a far host only through that host's session rows
         (presence_payload), nothing names F there; the word stays held, the sid nothing names cannot-determine, across
         the hub's next dial folding F back under the alias, a session of F that the hub then names under the alias
-        alone, and this bus's restart. The contrast, the word
+        alone, and this bus's restart. A naming on the row the fold forgets (round 7 of fork PR #897, the reviewer's
+        round-6 ruling R4 on tests-2, extra6-1 and extra9-1; found as the reviewer's verifier's road
+        vfy2DeclHubRestartsFoldsFFirst): the hub's dials land here under the hostname it declares throughout, and the
+        word is held under F's declared name on this bus's row for the hub; the hub restarts, F's own dial reaches it
+        first, and the restarted hub's dial, filed here on the row under the hub's declared name, names F under the held
+        word's name there; the hub's dial to the alias folds F, and our dial's answer names F under the alias alone and
+        forgets that row: the word stays held, the sid nothing names cannot-determine, after that answer, after two more
+        exchanges and after this bus's restart. That is the restricted-side hold of cost (a), not a guard against a false
+        rule 5 (released, the sid nothing names would read rule 5, right for it); its red is the writer mutant LATER
+        PROCESS ON A FOLDED ROW RELEASES, under which a word on a forgotten row naming the held word's name for another
+        process of the host releases the held word. The control, our dial's answer before the hub's fold: that answer
+        names F under the held word's name, the new process's word replaces the held one and holds, and the answers to
+        our next dials release it, rule 5. The contrast, the word
         held under the alias and F's new process's own dial reaching the hub first under the declared name: held while
         the hub names F only under the declared name, released by the answer to our dial after the hub's next dial to
         the alias folds F there. At the forty-ninth commit the first omission released the word, before F upgraded."""
@@ -6844,6 +6966,45 @@ print(json.dumps(out))
                 self.assertEqual(self._road(got, name, "ourBusRestarted", "nobody"),
                                  UNANSWERED(R_VIA_F_UNDER_DECL + " (not heard, listing unanswered)"),
                                  "this bus's restart ends nothing: the via row is carried unanswered and holds the arm")
+            declared_row = UNANSWERED(R_HUB_DECL + " (no link state, listing unanswered)",
+                                      "via:%s/%s (no link state, listing unanswered)" % (R_HUB_DECL, R_F_DECL),
+                                      R_VIA_F_UNDER_DECL + " (listing unanswered)")
+            with self.subTest(shape=shape, leg="when the hub renames the host as it upgrades",
+                              end="a restarted hub declaring a name of its own names the host on another row"):
+                name = "declHubRestartsFoldsFFirst"
+                words = got["roads"][name]["words"]
+                self.assertEqual((words["namedUnderTheHeldName"]["here"], self._road(got, name, "namedUnderTheHeldName", "nobody")),
+                                 ({R_HUB: {"held": [[R_F_DECL, S["other"], "f"]], "roster": [[R_F, S["goss"], "f2", True]]},
+                                   R_HUB_DECL: {"held": [], "roster": [[R_F_DECL, S["goss"], "f2", False]]}}, declared_row),
+                                 "the restarted hub's dial, filed here under the name it declares, names F under the held "
+                                 "word's name on that row, not on the row holding the word")
+                self.assertEqual((words["afterOurFold"]["here"], words["afterOurFold"]["hubRows"],
+                                  self._road(got, name, "afterOurFold", "nobody")),
+                                 ({R_HUB: {"held": [[R_F_DECL, S["other"], "f"]], "roster": [[R_F, S["goss"], "f2", True]]}},
+                                  [[R_F, "f2"]], decl),
+                                 "the hub folds F under the alias and our dial's answer names F there alone, forgetting the row "
+                                 "under the declared name: the word stays held, the sid nothing names cannot-determine")
+                self.assertEqual((words["twoMoreExchanges"]["here"], self._road(got, name, "twoMoreExchanges", "nobody"),
+                                  self._road(got, name, "ourBusRestarted", "nobody")),
+                                 ({R_HUB: {"held": [[R_F_DECL, S["other"], "f"]], "roster": [[R_F, S["goss"], "f2", True]]}},
+                                  decl, UNANSWERED(R_VIA_F_UNDER_DECL + " (not heard, listing unanswered)")),
+                                 "COST (a), the restricted-side hold this leg guards (the released state would be right for "
+                                 "the ended sid, so its loss would be no false rule 5): held through two more exchanges and "
+                                 "this bus's restart, the via row carried unanswered")
+            with self.subTest(shape=shape, leg="when the hub renames the host as it upgrades",
+                              control="our dial's answer before the hub's fold"):
+                name = "declHubRestartsOurDialFirst"
+                words = got["roads"][name]["words"]
+                self.assertEqual(self._road(got, name, "namedUnderTheHeldName", "nobody"), declared_row,
+                                 "the same world up to the restarted hub's dial under its declared name")
+                self.assertEqual((words["afterOurFold"]["here"], self._road(got, name, "afterOurFold", "nobody")),
+                                 ({R_HUB: {"held": [], "roster": [[R_F_DECL, S["goss"], "f2", False]]}}, decl),
+                                 "our dial's answer names F under the held word's name: that word replaces the held one, "
+                                 "the new process's, unanswered, and holds")
+                self.assertEqual((self._road(got, name, "twoMoreExchanges", "nobody"),
+                                  self._road(got, name, "ourBusRestarted", "nobody")), (RULE_5, RULE_5),
+                                 "the hub folds F under the alias and the answers to our next dials omit the new process's "
+                                 "word, its bus heard answering: released, rule 5, and so after this bus's restart")
             with self.subTest(shape=shape, leg="when the hub renames the host as it upgrades", contrast="held under the alias"):
                 name = "olderHonestFarUpgradesUnderItsDeclaredName"
                 road = got["roads"][name]
@@ -7303,10 +7464,14 @@ print(json.dumps(out))
         (_direct_row_speaks), so F's row does not speak for the carried word: through F's answers to our dial, and
         across our second restart, a sid nothing names stays cannot-determine by the carried row, the hub unheard. It
         ends when F answers the hub again and the hub's next word, naming F's current bus, reaches here: here the hub,
-        having heard F's new process, dials us, its word names F's new bus and folds into F's row, and the hub's answer
-        to our dial then releases its own first roster, rule 5 for a sid nothing names. Until then the hub keeps
-        relaying F's last cached word, which holds as residual (3b) states, for the file's life when F never answers the
-        hub again, whether or not the hub is heard (the reviewer's verifier at the sixty-first commit, its road rvS1).
+        having heard F's new process, dials us, its word names F's new bus and folds into F's row (F's new listing
+        re-names the sid the word named; an old entry it does not re-name holds until the hub's answer to a dial this
+        bus built after that word, the (3c) clause, witnessed in test_residual_3b_a_far_host_gone_after_a_cached_exchange_with_its_hub_holds_every_sid_while_the_hub_gossips_it),
+        and the hub's answer to our dial then releases its own first roster, rule 5 for a sid nothing names. While F does
+        not answer the hub again, the same hub process keeps relaying F's last cached word (an empty answer replaces the
+        word, and a restarted hub relays nothing), which holds as residual (3b) states, and the hold, not the relaying,
+        lasts for the file's life when F never answers the hub again, whether or not the hub is heard (the reviewer's
+        verifier at the sixty-first commit, its road rvS1).
         In the leg where the hub is heard after our restarts, the hub's dial, its answer to our dial, two more exchanges
         by both roads and the exchanges after our second restart each carry F's last cached word, naming F's old bus,
         unanswered, and a sid nothing names reads listing-unanswered by the heard via row; once F answers the hub, the
@@ -7537,8 +7702,10 @@ print(json.dumps(out))
         and merges), and the hub builds a dial to us then, which is delivered last; F's kernel answers the hub naming a session, and the hub's
         next dial relays that answered word here (the step the reviewer's round-5 ruling B added: the release by the same
         hub process's omission counts only for a far bus heard answering in this process, and F's restarted process is a
-        new bus id; without the step the word stays held, the B pin
-        test_residual_3d_face_1_over_an_empty_cache_from_a_far_process_never_heard_answering_here_holds_the_word); then F
+        new bus id; the road without the step is
+        test_residual_3d_face_1_over_an_empty_cache_from_a_far_process_never_heard_answering_here_holds_the_word, whose
+        word is kept by the dial's merge, ruling C, so it is not ruling B's red: those are THE ROAD and the two cost (a)
+        witnesses, as that test's docstring says); then F
         blinks, and a new session starts on F and mails ours on F's cached exchange; the hub's newer dial lands first, naming F's
         cached word and carrying the mail (the arm, cannot-determine); the older dial lands after it, omitting F, on the
         road and from the hub process that named F. At the forty-ninth commit that omission was the release, and the
@@ -7648,8 +7815,9 @@ print(json.dumps(out))
         does not open), and the session live on F answers
         rule 5 while the hub and C vouch, until the real F's next exchange with the hub, still cached, and the hub's next
         dial (cannot-determine): ONE window, the transient case. The release causes this race: at the thirty-first commit
-        the word stayed held. It is one of the release's three races, its cost under the reviewer's ruling to keep it,
-        with residual (3a)'s second face and residual (3d)'s face (1): the window ends at F's next word, but a
+        the word stayed held. It is one of the release's two races since round 6, its cost under the reviewer's ruling
+        to keep it, with residual (3a)'s second face (residual (3d)'s face (1), a third until then, is closed): the
+        window ends at F's next word, but a
         completion, reply or resolve for the session inside it settles its card wrong for good
         (test_a_settle_decided_in_a_window_of_the_releases_false_rule_5_stands_after_the_next_word), a rare permanent
         wrong settle. A second machine that keeps exchanging under F's name is the premise's violation, which reopens the
@@ -8405,8 +8573,9 @@ print(json.dumps(out))
     def test_a_previous_file_the_bus_cannot_read_whole_marks_the_mirror_until_every_linked_host_is_heard(self):
         """Round 3 of fork PR #897, the reviewer's ruling of 14:57Z, clauses 2 and 3 (the twenty-second commit), through this
         writer and this reader. A heard beside B; the writer's own document made not JSON (a stray brace); a seventeenth restart
-        whose seed reads the kernel's list with both links up (the real seed, its transport stubbed), whose own writes read the
-        file and mark the mirror; B heard first, A linked and not heard. The mark carries the cause and the write's second;
+        whose seed reads the kernel's list with both links up (the real seed, its transport stubbed), and whose one write after
+        the seed (serve()'s after its bind, since round 7 of fork PR #897: until then the seed's own writes) reads the file
+        and marks the mirror; B heard first, A linked and not heard. The mark carries the cause and the write's second;
         A's live session, whose row is lost, and a sid nothing names are both NOT ESTABLISHED (at the twenty-first commit both
         answered (True, 5, no-reachable-host-names-it), a false rule 5 under a loud log line, the shape the reviewer refused),
         and B's session is rule 4's. An eighteenth restart whose seed fails: B and A notified one at a time and heard, every
@@ -8482,7 +8651,8 @@ print(json.dumps(out))
         red. B, a linked hub beside A, names a session on the spoke, a far host never linked here (rule 4 by B's word). The
         file intact: a twentieth restart, seeded; A heard; B heard after its own restart, gossiping nothing about the spoke:
         the carried via row names the session, named-by-unreachable-host. B names it again (rule 4); the file made not JSON;
-        a twenty-first restart, seeded, whose own writes mark the mirror; A heard; B heard after another restart of its own,
+        a twenty-first restart, seeded, whose write after the seed (serve()'s after its bind, since round 7 of fork PR #897)
+        marks the mirror; A heard; B heard after another restart of its own,
         gossiping nothing about the spoke: every linked host heard since the mark, so it clears, and the session, outside
         every source, answers rule 5. A vouches here as well as B, so this rule 5 holds on A's vouch alone (the reviewer's
         verifier at the twenty-third commit): the ruled road, B the only link, is
@@ -8505,7 +8675,7 @@ print(json.dumps(out))
                                  ({"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True}, True),
                                  "the twenty-first restart is a fresh module object, and its seed read the kernel's list")
                 mark = got["boundLostMark"]
-                self.assertIsInstance(mark, dict, "the seed's own writes read the file made not JSON and marked the mirror")
+                self.assertIsInstance(mark, dict, "the write after the seed read the file made not JSON and marked the mirror")
                 lost = got["boundLost"]
                 self.assertEqual((lost["mark"], self._v(lost, "carried"), self._v(lost, "other")), (None, RULE_4, RULE_4),
                                  "A and B heard since the mark: cleared")
@@ -8526,8 +8696,8 @@ print(json.dumps(out))
         this writer and this reader (the twenty-fourth commit). A session on a host that no linked host hears now is outside
         every source after the clear, as on a first start. A twenty-third restart seeded with B alone, the ONLY link (the
         remembered unattached host is an origin-only row, no link); B, a hub, names a session on the spoke, a far host never
-        linked here (rule 4 by B's word); the file made not JSON; a twenty-fourth restart seeded with B alone, whose own writes
-        mark the mirror; B heard after its own restart, no longer hearing the spoke: B, the last linked host, heard since the
+        linked here (rule 4 by B's word); the file made not JSON; a twenty-fourth restart seeded with B alone, whose write
+        after the seed marks the mirror; B heard after its own restart, no longer hearing the spoke: B, the last linked host, heard since the
         mark, so it clears; B's row is the one row, heard, its link up, vouching for absence; and the spoke's session answers
         rule 5 on B's vouch, as a sid nothing names does. A twenty-fifth restart over NO file, a first start seeded with B
         alone, B heard the same way: the same rows and the same verdicts, so the mirror after the clear knows what a fresh bus
@@ -8544,7 +8714,7 @@ print(json.dumps(out))
                 self.assertEqual((got["restartMemory24"], got["oneLinkLostSeeded"]), (fresh, True),
                                  "the twenty-fourth restart is a fresh module object, and its seed read the kernel's list")
                 mark = got["oneLinkMark"]
-                self.assertIsInstance(mark, dict, "the seed's own writes read the file made not JSON and marked the mirror")
+                self.assertIsInstance(mark, dict, "the write after the seed read the file made not JSON and marked the mirror")
                 self.assertTrue(mark["cause"].startswith("previous mirror unreadable (JSONDecodeError"), "the cause: %r" % mark)
                 self.assertEqual(got["oneLinkLinks"], [HOST2], "B is the only link PEERS holds (the remembered host has no port)")
                 cleared = got["oneLinkCleared"]
@@ -8564,7 +8734,7 @@ print(json.dumps(out))
                               "it left out the answered gate and the carried host rows)")
                 self.assertEqual((got["restartMemory25"], got["firstStartSeeded"], got["firstStartLinks"]), (fresh, True, [HOST2]),
                                  "the twenty-fifth restart is a fresh module object over no file, seeded with B alone")
-                self.assertIsNone(got["firstStartMark"], "a first start's seed writes no mark: nothing was lost")
+                self.assertIsNone(got["firstStartMark"], "a first start's write after the seed writes no mark: nothing was lost")
                 first = got["firstStart"]
                 self.assertEqual((first["hosts"], first["mark"]), (b_alone, None), "a first start writes the same rows, no mark")
                 self.assertEqual([self._v(first, k) for k in ("farLost", "nobody", "other")],
@@ -8695,7 +8865,8 @@ print(json.dumps(out))
 
     def test_cost_r1_an_origin_the_restarted_hub_never_names_holds_every_sid_across_our_restart(self):
         """COST (r1) of the origin hold, on the restricted side (the writer's docstring, THE ORIGIN HOLD): while the
-        relaying hub's current process never names the origin, the hold stands and every sid nothing names on this bus
+        relaying hub never names the origin here after the relay, in the process that relayed it or a later one, the
+        hold stands and every sid nothing names on this bus
         is cannot-determine, for the file's life, this bus's restart included (the via row is carried with its bit
         False), unless decision 1's end in the writer's docstring ends it once this bus restarts, which on these roads,
         where this bus holds no row of F, it does not. R1's road (F's word heard from the hub's old process) and N1's
@@ -8725,7 +8896,7 @@ print(json.dumps(out))
     def test_cost_r2_a_hub_process_that_never_named_the_origin_here_holds_until_it_names_it_again(self):
         """COST (r2) of the origin hold, on the restricted side (the writer's docstring, THE ORIGIN HOLD): a hub process
         that heard the origin but never named it to this bus (its link here down for the whole life of the origin's only
-        session S, which then ended) relays S's mail, so the relay holds the origin until that hub process names it
+        session S, which then ended) relays S's mail, so the relay holds the origin until the hub names it
         again, or, once this bus restarts, until decision 1's end in the writer's docstring ends it (on these roads this
         bus holds no row of F). E3 (the hub's dial carries the relay) and E4 (its answer to our dial): cannot-determine
         for the ended S and a sid nothing names at the landing and after two more pairs, then rule 5 once a new session
