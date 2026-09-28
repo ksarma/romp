@@ -34,7 +34,8 @@ reached main (`finish` runs it, and it also runs on every push to main).
    label on 2026-09-08 and still accepts the old spelling), is accepted too. A `major-feature` PR is
    discussed before it joins a batch; a `hold` label keeps a PR out of the next batch.
 3. Sweep your head before its review round and again before its closing check:
-   `scripts/sweep.py run --tree <your worktree>`. It owes every leg at your head, as at a batch
+   `scripts/sweep.py run --tree <your worktree> --python <python>` (step 3 under "If you are the
+   batcher" says what that interpreter needs). It owes every leg at your head, as at a batch
    head, the webview legs and the served leg included, whatever you changed. The round and the check read that result
    (`scripts/sweep.py check --tree <your worktree>`, which reads it as `verify` and `plan` do)
    where they read CI before, and it must pass at the head they read; a push after the sweep
@@ -169,7 +170,12 @@ subject; `verify` refuses the branch otherwise.
    commit after the merge instead. A member whose head is already in the batch (reachable through
    an earlier member's head) gets no merge commit of its own; it is recorded as contained, lands
    with the batch, and the body lists it as such under "Read these first" and in its table row.
-3. Run the local sweep at the batch head: `scripts/sweep.py run --tree ../romp-batch-<name>`.
+3. Run the local sweep at the batch head: `scripts/sweep.py run --tree ../romp-batch-<name> --python
+   <python>`, where `<python>` is an interpreter that has pytest, pytest-xdist, pytest-timeout and
+   what CI's served step installs (cryptography today), does not have the Claude Agent SDK, and has
+   a `python3` in its directory that is the same file. A venv made for the sweep, named by its
+   `bin/python`, meets all of that; the system python usually lacks pytest, and the sweep refuses
+   an interpreter that fails any of it, naming what is missing.
    pytest runs in a venv holding what the batch head's `ci.yml` installs in CI's Python cells
    (pytest and its plugins, cryptography, and the Claude Agent SDK at the pin its SDK step reads),
    so the SDK-gated tests run as they do in CI. The runner builds the venv from `--python`
@@ -202,7 +208,9 @@ subject; `verify` refuses the branch otherwise.
    SDK. It also passes `-n`, where CI's served step runs one process. The pytest leg leaves the
    same files out, as CI's Python cells skip them for lack of a browser. The runner refuses the
    sweep when `--python` has the SDK, or lacks pytest, pytest-xdist, pytest-timeout or a package
-   the served step installs. It also refuses a served step it does not read in full: an
+   the served step installs, or when the `python3` in its directory is missing or another file: the
+   served tests start their kernels as `bin/romp-kernel`, which runs the first `python3` on the
+   leg's PATH. It also refuses a served step it does not read in full: an
    expression in its `env:`, an `env:` on its job or the workflow, or a line in its `run:` other
    than a pip install and the one pytest line. The served leg runs last, because CI runs the
    served step after its Build step. The pane bench
@@ -224,7 +232,7 @@ subject; `verify` refuses the branch otherwise.
    `<state dir>/sweeps/<full sha>.json`, which keeps every run at that sha. The state dir is
    `$ROMP_STATE_DIR`, else `$XDG_STATE_HOME/romp`, else `~/.local/state/romp`, so run `sweep.py` and
    `batch.py` with the same environment. When one leg fails on a known flake,
-   `scripts/sweep.py run --tree ../romp-batch-<name> --leg <leg> --flake '<the flake>'` re-runs that
+   `scripts/sweep.py run --tree ../romp-batch-<name> --python <python> --leg <leg> --flake '<the flake>'` re-runs that
    leg alone at the same head; `--flake` names the failing test and where it is recorded as a known
    flake. A full run at a head whose last run failed a leg also needs it, as
    `--flake <leg>=<the flake>` for each failed leg: a later green counts over a red run only then. A
@@ -301,7 +309,7 @@ subject; `verify` refuses the branch otherwise.
    recorded by verify), it exits 1 naming the merge commit, the parent and what verify read: the
    tree on main was never swept or tested. Sweep a worktree at the
    merge commit then, as the message spells out (`git worktree add --detach ../romp-merge-<name>
-   <merge>`, then `scripts/sweep.py run --tree ../romp-merge-<name>`; it owes every leg there, as at
+   <merge>`, then `scripts/sweep.py run --tree ../romp-merge-<name> --python <python>`; it owes every leg there, as at
    any head), and tell the maintainer what it finds. `finish` also names the batch head's CI run,
    read as land read it (the push run at the landed head, the merge commit's second parent, never a
    manual run at the same commit),
