@@ -3288,6 +3288,140 @@ class Mirror(unittest.TestCase):
         self.assertEqual(snap["namedBy"], {FAR: "hub-bus", FAR + "-two": "hub-bus-2"},
                          "viaNamedBy: the bus of the last roster that named each far host, FAR's moved with the fold")
 
+    # ── cost (i) for a row this bus never dials, and the ambiguity refusal's id hint (round 7 of fork PR #897) ──
+    SENDER = "d8d8d8d8-0003-4000-8000-000000000003"      # the local session that sends, named web
+    OLD = "b6b6b6b6-0001-4000-8000-000000000001"         # the far session that ended, named api
+    NEW = "c7c7c7c7-0002-4000-8000-000000000002"         # the new far session that took the name api
+
+    def _namesakes_on_an_undialed_host(self, host, old, new):
+        """The road of cost (i)'s no-dial clause (round 7 of fork PR #897, the reviewer's round-6 ruling R2), through the
+        real handler (peer_exchange_handle): `host`, which this bus never dials (no notify, so no PEERS row and no
+        dialer), dials in naming `old` as api, then naming `new` as api (a new session took the name of the ended one),
+        then three more times naming `new`, then once more from a restarted far bus (a new bus id) naming `new`. The
+        local listing answers with the sender alone, through the seam, under which _kernel_post, the park's redial
+        request, does nothing; the kernel route points at a loopback port nothing listens on besides."""
+        self._local_listing_answered([{"id": self.SENDER, "name": "web"}])
+        base = pm.KERNEL_BASE
+        pm.KERNEL_BASE = "http://127.0.0.1:9"
+        self.addCleanup(setattr, pm, "KERNEL_BASE", base)
+        self._far_dials_us(host, [{"id": old, "name": "api"}], host + "-bus")
+        for _ in range(4):
+            self._far_dials_us(host, [{"id": new, "name": "api"}], host + "-bus")
+        self._far_dials_us(host, [{"id": new, "name": "api"}], host + "-bus-restarted")
+
+    def _route(self, method, path, payload=None):
+        """One request through the real handler (pm.Handler), driven with a fake request as the relay-honesty module's
+        /send tests drive it; returns (the JSON answer, its status)."""
+        h = object.__new__(pm.Handler)
+        raw = json.dumps(payload or {}).encode()
+        h.path = path
+        h.headers = {"Content-Length": str(len(raw)), "X-Romp-Token": pm.SERVE_TOKEN}
+        h.rfile = io.BytesIO(raw)
+        out = []
+        h._send = lambda obj, code=200, close=False: out.append((obj, code))
+        (h.do_POST if method == "POST" else h.do_GET)()
+        return out[0]
+
+    def _send_as_web(self, to, host):
+        """A send from the local session web to `to` through the real /send route; returns (answer, status, the parked
+        record's toId or None). The parked record is removed after the test."""
+        obj, code = self._route("POST", "/send", {"to": to, "from": "web", "from_id": self.SENDER,
+                                                  "body": "which port does staging use?", "kind": "coordinate"})
+        mid = obj.get("id") or ""
+        if mid:
+            self.addCleanup((pm.OUTBOX / host / (mid + ".json")).unlink, missing_ok=True)
+        return obj, code, (pm.outbox_get(host, mid) or {}).get("toId") if mid else None
+
+    def test_cost_i_a_host_this_bus_never_dials_keeps_an_ended_sessions_name_so_its_namesake_is_refused_by_name_and_routed_by_id(self):
+        """Cost (i) of _remote_sids_document for a row this bus never dials (round 7 of fork PR #897, the reviewer's round-6
+        ruling R2, the union kept as a stated cost: no event fits). The stored presence is the union of the rosters this bus
+        cannot place (_order_row), and a dial never drops a name, so a host that only dials in keeps an ended session's name
+        beside the new session that took it, for this bus process's life, across the far bus's restart. Here: both names are
+        stored; peer_route answers api and <host>:api with both; resolve_recipient refuses both addresses 409 as ambiguous,
+        counting the ended session among two live sessions; the /agents route lists both rows; the gossip onward
+        (presence_payload) carries both; and a send by the new session's full id still relays to it. Red under a writer that replaces the stored presence on a dial (the base's
+        behaviour, which routed api to the new session): the stored names are the new session's alone."""
+        old, new = self.OLD, self.NEW
+        self._namesakes_on_an_undialed_host(FAR, old, new)
+        self.assertNotIn(FAR, pm.PEERS, "a host this bus never dials: no notify, so no PEERS row and no dialer")
+        self.assertEqual(sorted((pa.get("id"), pa.get("name")) for pa in pm.PEER_STATE[FAR]["presence"]),
+                         [(old, "api"), (new, "api")],
+                         "THE UNION: the ended session's name stays stored beside its namesake after five dials naming the "
+                         "new one, the last from a restarted far bus (a writer replacing the presence on a dial keeps the new "
+                         "one alone)")
+        for to in ("api", FAR + ":api"):
+            with self.subTest(address=to):
+                ph, hit = pm.peer_route(to)
+                self.assertEqual((ph, sorted(a.get("id") for _, a in hit)), (None, sorted([old, new])),
+                                 "peer_route answers both, so no route is picked")
+                res = pm.resolve_recipient(to, self.SENDER)
+                self.assertEqual((res["kind"], res.get("status")), ("error", 409), res)
+                self.assertTrue(res["error"].startswith("'api' is ambiguous: 2 live sessions answer to it ("), res["error"])
+                self.assertEqual(res["error"].count(FAR + ":api"), 2, "both candidates listed under one host:name")
+        agents, code = self._route("GET", "/agents?me=web")
+        self.assertEqual(code, 200, agents)
+        self.assertEqual(sorted((a["id"], a["name"]) for a in agents["agents"] if a.get("peer") == FAR),
+                         [(old, "api"), (new, "api")], "the /agents route lists both rows")
+        self.assertEqual(sorted((pa.get("id"), pa.get("name")) for pa in pm.presence_payload(HUB)[0] if pa.get("via") == FAR),
+                         [(old, "api"), (new, "api")], "this bus gossips both onward, to any other peer")
+        obj, code, to_id = self._send_as_web(new, FAR)
+        self.assertEqual((code, obj.get("ok"), obj.get("parked"), to_id), (200, True, FAR, new),
+                         "a send by the new session's full id relays to it (parked for the host, which this bus does not dial)")
+
+    def test_cost_i_the_refusal_lists_each_namesake_with_the_start_of_its_id_and_a_send_there_routes(self):
+        """The ambiguity refusal's id hint (round 7 of fork PR #897, the reviewer's decision 3 on round 6): on cost (i)'s road,
+        where two peer candidates share one host:name, the refusal lists each with the start of its session id and points
+        its hint at the id, and a send to each listed start routes to that session alone (resolve_recipient takes an id
+        prefix of 8 or more characters: the pool arm, then peer_route). Two pairs: ids whose first 8 characters differ, each
+        listed by those 8 (the list_agents row's short id); and ids whose first 8 characters are alike, each listed by the
+        start that tells it from the other (_routing_id_prefix). Red at the eightieth commit, whose refusal lists the two
+        as the same host:name with no id; red for the second pair under a refusal that lists 8 characters whatever the
+        ids, where that start is itself refused as ambiguous."""
+        for host, old, new, width in ((FAR, self.OLD, self.NEW, 8), (FAR + "-two", A, B, 13)):
+            with self.subTest(host=host):
+                pm.PEER_STATE.clear()
+                self._namesakes_on_an_undialed_host(host, old, new)
+                res = pm.resolve_recipient("api", self.SENDER)
+                self.assertEqual((res["kind"], res.get("status")), ("error", 409), res)
+                listed = re.findall(r"\[([0-9a-fA-F-]+)\]", res["error"])
+                self.assertEqual(len(listed), 2, "the refusal names both ids: %r" % res["error"])
+                routed = []
+                for start in listed:
+                    got = pm.resolve_recipient(start, self.SENDER)
+                    self.assertEqual((got["kind"], got.get("host")), ("relay", host),
+                                     "a send to the listed start %r routes: %r" % (start, got))
+                    self.assertTrue(got["agent"]["id"].startswith(start), (start, got["agent"]["id"]))
+                    routed.append(got["agent"]["id"])
+                self.assertEqual(sorted(routed), sorted([old, new]), "each listed start routes to its own session, one to each")
+                self.assertEqual(sorted(listed), sorted([old[:width], new[:width]]),
+                                 "each is listed by the shortest start, 8 characters or more, that routes to it alone")
+                self.assertIn("address the one you mean by that id", res["error"], "the hint points at the id")
+                self.assertNotIn("Address it as host:name", res["error"], "host:name separates neither of the two")
+                obj, code, to_id = self._send_as_web(new[:width], host)
+                self.assertEqual((code, obj.get("ok"), to_id), (200, True, new),
+                                 "the /send route relays a send by the new session's listed start to it")
+
+    def test_cost_i_control_our_placed_answer_naming_the_new_session_ends_the_union_and_the_name_relays(self):
+        """Cost (i)'s dialed control (round 7 of fork PR #897, the reviewer's round-6 ruling R2): the same host, but one this
+        bus dials (the kernel's up notify gives it a PEERS row), dials in naming the ended session as api and then the new
+        one; the answer to this bus's dial, built after the last roster that named the ended session, names the new one
+        alone. That answer is placed after it (_placed), so the ended session's name leaves the stored presence: the name
+        routes to the new session, and a send by name relays to it."""
+        old, new = self.OLD, self.NEW
+        self._local_listing_answered([{"id": self.SENDER, "name": "web"}])
+        self._notify(FAR, up=True)
+        self._far_dials_us(FAR, [{"id": old, "name": "api"}], "far-bus")
+        self._far_dials_us(FAR, [{"id": new, "name": "api"}], "far-bus")
+        self.assertEqual(sorted(pa.get("id") for pa in pm.PEER_STATE[FAR]["presence"]), sorted([old, new]),
+                         "before our dial's answer, the union holds both, as on the undialed host")
+        self._hub_answers_our_dial(FAR, [{"id": new, "name": "api"}], "far-bus")
+        self.assertEqual([pa.get("id") for pa in pm.PEER_STATE[FAR]["presence"]], [new],
+                         "the answer to our dial, placed after the ended session's last naming roster, drops its name")
+        ph, hit = pm.peer_route("api")
+        self.assertEqual((ph, (hit or {}).get("id")), (FAR, new), "the name routes to the new session")
+        obj, code, to_id = self._send_as_web("api", FAR)
+        self.assertEqual((code, obj.get("ok"), to_id), (200, True, new), "a send by name relays to the new session")
+
 
 
 # ── PEER_STATE's ONE LOCK (round 6 of fork PR #897, the reviewer's round-5 ruling A) ──

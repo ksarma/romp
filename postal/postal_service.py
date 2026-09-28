@@ -1816,6 +1816,22 @@ def _durable_session(bare, by_id):
     return False
 
 
+def _routing_id_prefix(sid, pool):
+    """The shortest start of peer session `sid`, 8 characters or more, that resolve_recipient routes to that session
+    alone, else `sid` whole (round 7 of fork PR #897, the reviewer's decision 3 on round 6): no row of `pool` (the
+    all_agents rows resolve_recipient read) answers to it by name or by its id's start, which the pool arm tests
+    first, and peer_route answers it with `sid` (_addr_matches takes an id prefix of 8 or more characters). Eight
+    characters are the list_agents row's short id; two sessions whose ids begin alike get a longer start each."""
+    for n in range(8, len(sid)):
+        p = sid[:n]
+        if any(a.get("name") == p or str(a.get("id") or "").rsplit(":", 1)[-1].startswith(p) for a in pool):
+            continue
+        ph, hit = peer_route(p)
+        if ph and str(hit.get("id") or "") == sid:
+            return p
+    return sid
+
+
 def resolve_recipient(to, frm_id=""):
     """Resolve a recipient reference to exactly ONE destination, or explain why it can't.
 
@@ -1831,7 +1847,9 @@ def resolve_recipient(to, frm_id=""):
     peer's message, so the loopback CONFIRMED that the peer was reachable and answering, and the
     reports never went anywhere (reported by a session 2026-07-29). Nothing legitimate sends to
     self, so identity is checked FIRST; after that, more than one candidate is a refusal that
-    names the alternatives rather than a pick. `host:name` is how the sender says which one.
+    names the alternatives rather than a pick. `host:name` is how the sender says which one; where
+    two peer candidates share one host:name, the refusal lists each with the start of its session id,
+    and that is the address that says which one (round 7 of fork PR #897).
     """
     if ":" in to:
         want_host, bare = to.split(":", 1)
@@ -1879,10 +1897,24 @@ def resolve_recipient(to, frm_id=""):
             # rather than print the same candidate twice and call it a choice.
             labels.append("%s:%s%s" % (here, a["name"],
                                        (" [%s]" % a["id"][:8]) if len(direct) > 1 else ""))
-        labels += ["%s:%s" % (h, a.get("name") or bare) for h, a in peer_cands]
+        # Peer candidates under one host:name (round 7 of fork PR #897, the reviewer's decision 3 on round 6; one road
+        # there: a new session on a far host took the name of an ended one that the host's stored presence still names,
+        # cost (i) of _remote_sids_document). The address host:name cannot separate them, so each is listed with the
+        # start of its session id that routes to it alone (_routing_id_prefix), and the hint points there.
+        peer_labels = ["%s:%s" % (h, a.get("name") or bare) for h, a in peer_cands]
+        shared = {label: peer_labels.count(label) for label in peer_labels}
+        for label, (h, a) in zip(peer_labels, peer_cands):
+            sid = str(a.get("id") or "")
+            labels.append(label + (" [%s]" % _routing_id_prefix(sid, pool) if shared[label] > 1 and sid else ""))
+        split = any(n > 1 for n in shared.values())
         hint = ("Address it as host:name to say which one you mean." if len(direct) <= 1 else
                 "Two sessions on this host answer to that name, so no address distinguishes them. "
                 "Ask the user which they meant, or have one renamed.")
+        if split and not direct and all(n > 1 for n in shared.values()):
+            hint = ""                                 # every candidate shares its host:name: that address separates none
+        if split:
+            hint = (hint + " " if hint else "") + ("Where sessions on another host share one host:name, each is listed "
+                                                   "with the start of its session id: address the one you mean by that id.")
         return {"kind": "error", "status": 409,
                 "error": "'%s' is ambiguous: %d live sessions answer to it (%s). Nothing was sent. %s"
                          % (bare, len(direct) + len(peer_cands), ", ".join(sorted(labels)), hint)}
@@ -2865,8 +2897,11 @@ class Handler(BaseHTTPRequestHandler):
                 a["branch"] = _git_branch(a.get("dir", ""))
             if peers_on():
                 # Peer-bus fleet view (DISPLAY only — all_agents() itself stays local so the delivery
-                # paths can never mistake a peer entry for a local maildir): each peer's last-gossiped
-                # presence, with honest staleness. Address cross-host with 'host:name' on collisions.
+                # paths can never mistake a peer entry for a local maildir): each peer's STORED presence,
+                # the union of the rosters this bus cannot place (_order_row), each name stamped with the
+                # row's latest seenAt, so a session that ended can stay listed (cost (i) of
+                # _remote_sids_document). Address cross-host with 'host:name' on collisions, or by the start
+                # of the session id where two share one host:name (resolve_recipient's refusal lists it).
                 # Gossip that duplicates a direct peer's row is folded (_via_duplicate), and a session
                 # already listed never lists again under a second path — the doubled '[remote]' rows
                 # (the user 2026-08-12).
@@ -5590,7 +5625,20 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
           named it (the merge: test_x1_an_older_answered_roster_recorded_after_a_newer_one_keeps_the_session_the_newer_named_in_both_orders
           and test_x2_a_hubs_older_answered_word_recorded_after_its_newer_one_keeps_the_session_the_newer_named there);
           the merged names reach routing (peer_route), the /agents listing and this bus's gossip onward
-          (presence_payload) the same while;
+          (presence_payload) the same while. A row this bus never dials (a host that dials in with no dialer here: the
+          attached side of a plain peer-mode attach, which receives no notify; cost (ii)'s population) gets no answer
+          to a dial of this bus, so its stored presence keeps every name for this bus process's life: an ended session
+          stays named (rule 4), listed by /agents, routed and gossiped onward, and the far bus's restart does not end
+          it. When a NEW session takes an ended session's name on that host (a /clear or a revive keeps the stable id
+          and does not do this), a send by the name or by host:name is refused 409 as ambiguous while both are named,
+          the refusal counting the ended session among "2 live sessions" and not saying which of the two ended; it lists
+          each with the start of its session id, and a send to that start, or to the full session id, routes to that
+          session (the reviewer's decision 3 on round 6). For a row this bus dials, the same until the answer to this
+          bus's first dial built after the ended session's last naming roster, which drops the name (round 7 of fork PR
+          #897, the reviewer's round-6 ruling R2: the cost stated, since no event fits; tests/test_postal_remote_sids_mirror.py
+          Mirror test_cost_i_a_host_this_bus_never_dials_keeps_an_ended_sessions_name_so_its_namesake_is_refused_by_name_and_routed_by_id,
+          test_cost_i_the_refusal_lists_each_namesake_with_the_start_of_its_id_and_a_send_there_routes and the dialed
+          control test_cost_i_control_our_placed_answer_naming_the_new_session_ends_the_union_and_the_name_relays);
       (ii) every heard row with no dialer on this bus (a dialer runs only for a PEERS row with a port that is up: a
           host the kernel never notified, an origin-only row, a host whose link the kernel holds down, a far bus under
           the name it declares before the fold, a host whose dial from this side is refused) stays held after its
@@ -7797,7 +7845,7 @@ Before editing a shared repo, run list_agents and read peers' branches + working
 
 Addressing is live-only: you can message only currently-live sessions (list_agents). Dead names error, with no parked mail or reviving. A session's stable id (the uuid in list_agents) also works as the recipient — rename-proof, unique by construction.
 
-A name is not guaranteed unique. When more than one live session answers to it the send is refused and the candidates are listed as `host:name`: pick one and resend rather than assuming the first. Your OWN name is refused outright, because a message there lands in your own inbox looking exactly like a reply from someone else. Your row in list_agents is the one marked `(you)`.
+A name is not guaranteed unique. When more than one live session answers to it the send is refused and the candidates are listed as `host:name`, each with the start of its session id where two share one `host:name`: pick one and resend to that address rather than assuming the first. Your OWN name is refused outright, because a message there lands in your own inbox looking exactly like a reply from someone else. Your row in list_agents is the one marked `(you)`.
 
 An isolation refusal is FINAL. A mailbox toggled off is a boundary the user drew: if send_message refuses for isolation, do NOT reroute the content through any other door (the kernel's /send route, shared files, another peer as relay). Report the refusal to the user and stop — only they lift the isolation.
 
