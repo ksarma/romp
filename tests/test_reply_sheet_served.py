@@ -280,13 +280,15 @@ class ReplySheetServed(unittest.TestCase):
         # holds this todo's room at 732 (the maintainer's ruling on the share): the detail is laid out at its cap, not at the
         # room, which in the pane, under two chip rows, is 4.4px over the cap there
         em12 = lambda m: 12 * m["detailFontPx"]
+        room_bound = ("up to 0.354 at 732, the ruled bound" if pane == "waiting"
+                      else "up to about 0.42 at 732; the ruled bound, 0.354, is the pane sheet's")
         for label, m in (("at rest at 900", r["restTall"]), ("at rest at 1080", r["restTaller"]), ("at rest at 732", r["restApp"])):
             with self.subTest(window=label):   # each window its own red or green
                 term = REST_SHARE * m["frameH"]
                 self.assertFalse(m["tight"], where + label + ": no fold: %r" % (m,))
                 self.assertGreater(term, em12(m) + 20, where + label + ": 34.8%% of the window (%.1fpx) is the larger term against 12em (%.1fpx): %r" % (term, em12(m), m))
                 self.assertAlmostEqual(m["detailMaxH"], term, delta=0.5, msg=where + label + ": the cap is 34.8%% of the window's height, %.1fpx (the head's cap was 12em at every height, %.1fpx): %r" % (term, em12(m), m))
-                self.assertGreaterEqual(m["detailRectH"], m["detailMaxH"] - 0.5, where + label + ": the detail is laid out at its cap (%.2fpx under a %.2fpx cap): the room is the smaller, so the share is past what this todo's room holds here (styles.css: up to 0.354 at 732): %r" % (m["detailRectH"], m["detailMaxH"], m))
+                self.assertGreaterEqual(m["detailRectH"], m["detailMaxH"] - 0.5, where + label + ": the detail is laid out at its cap (%.2fpx under a %.2fpx cap): the room is the smaller, so the share is past what this todo's room holds here (this sheet's room holds a share %s): %r" % (m["detailRectH"], m["detailMaxH"], room_bound, m))
                 self.assertAlmostEqual(m["detailH"], term, delta=1.5, msg=where + label + ": the long detail shows at the cap, %.1fpx: %r" % (term, m))
                 self.assertGreaterEqual(m["inputH"], m["floorH"] - 1, where + label + ": three rows: %r" % (m,))
                 self.assertLessEqual(m["boxScrollH"], m["boxClientH"] + 1, where + label + ": the sheet fits with the detail at its cap, nothing is a scroll away: %r" % (m,))

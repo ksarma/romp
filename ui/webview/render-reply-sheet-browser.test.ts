@@ -703,7 +703,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
             const m = (await measure())!;
             const what = `at rest at ${h}, the chip todo`;
             assert.ok(Math.abs(m.detailMaxH - term(m)) <= 0.5, `${what}: the cap is 34.8% of the window's height (${m.detailMaxH}px against ${term(m).toFixed(1)}px)`);
-            assert.ok(m.detailRectH >= m.detailMaxH - 0.5, `${what}: the detail is laid out at its cap (${m.detailRectH.toFixed(2)}px under a ${m.detailMaxH}px cap): the room is the smaller, so the share is past what this sheet's room holds at this pane (styles.css: up to 0.354 at the app's 732)`);
+            assert.ok(m.detailRectH >= m.detailMaxH - 0.5, `${what}: the detail is laid out at its cap (${m.detailRectH.toFixed(2)}px under a ${m.detailMaxH}px cap): the room is the smaller, so the share is past what this chat sheet's room holds at this pane (about 0.40 at the app's 732 in this leg's font; the ruled bound, 0.354, is the pane sheet's, pinned in the waiting leg)`);
             atRestTerm(m, `${what}: the cap under its room`);
           } finally { await cancelReply(); }
         });
