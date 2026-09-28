@@ -73559,9 +73559,11 @@ class Handler(BaseHTTPRequestHandler):
     # opener policy _send's comment describes. send_error writes its headers in end_headers, so the header is added
     # there, and only while send_error runs: _send writes its own copy, and a second copy leaves a browser with no
     # policy. A request line whose version is missing, malformed (a word after the version makes it so), HTTP/0.9
-    # itself, or HTTP/2.0 or later, none of which a browser sends, is answered in HTTP/0.9's shape, a body with no
-    # status line and no headers: http.server's 400 or 505, or, for a GET with no version or with HTTP/0.9, the page
-    # itself. No header can ride those replies. Any other version below HTTP/2.0 (HTTP/0.5, say) gets a full reply.
+    # itself, or HTTP/2.0 or later, none of which a browser sends, gets every reply in HTTP/0.9's shape, a body with no
+    # status line and no headers: http.server's refusals (its 400 and 505 for the line, and its 431s and 501 for a line
+    # that gets past those) and the kernel's own reply to the request alike, the page itself for a GET. No header can
+    # ride those replies, so the 431s and the 501 carry the policy only on a request line whose version is below
+    # HTTP/2.0 and not HTTP/0.9, which gets a full reply (HTTP/0.5, say).
     def send_error(self, code, message=None, explain=None):
         self._in_send_error = True
         try:

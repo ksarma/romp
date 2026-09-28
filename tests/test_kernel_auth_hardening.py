@@ -597,9 +597,10 @@ class OpenerIsolation(unittest.TestCase):
 
     def test_a_request_line_no_browser_sends_is_answered_with_no_headers_at_all(self):
         # The one reply without the policy (Handler.send_error's comment names it): a request line whose version is
-        # missing, malformed (a word after the version makes it so), HTTP/0.9 itself, or HTTP/2.0 or later is answered in
-        # HTTP/0.9's shape, the body alone, so no header can ride it. No browser sends one. A GET with no version or with
-        # HTTP/0.9 is answered with the page itself, here the sign-in page, as bare as http.server's refusals. Any other
+        # missing, malformed (a word after the version makes it so), HTTP/0.9 itself, or HTTP/2.0 or later gets every
+        # reply in HTTP/0.9's shape, the body alone, so no header can ride it. No browser sends one. A GET with no version
+        # or with HTTP/0.9 is answered with the page itself, here the sign-in page, as bare as http.server's refusals, and
+        # so are http.server's 431 and 501 and the kernel's own reply to any other request (the second loop). Any other
         # version below HTTP/2.0 gets a full reply with the policy once (the last case).
         for what, line in (("a word after the version", "GET /chat HTTP/1.1 extra"), ("a malformed version", "GET / HTTP/x.y"),
                            ("HTTP/2.0", "GET / HTTP/2.0"), ("two words, not a GET", "PUT /"), ("one word", "GET"),
@@ -611,6 +612,14 @@ class OpenerIsolation(unittest.TestCase):
                 self.assertTrue(body.lstrip().lower().startswith(b"<!doctype html"), what + ": the body alone: %r" % body[:60])
                 if what in ("a bare GET", "a GET with HTTP/0.9 itself"):
                     self.assertEqual(body.decode("utf-8"), km._TOKEN_LOGIN_HTML, what + ": the sign-in page, served with no headers")
+        for what, req in (("a 431 to a bare GET's header line over 65536 bytes", b"GET /\r\nX-Big: " + b"b" * 70000 + b"\r\n\r\n"),
+                          ("a 501 to a method no do_ handler takes, on HTTP/0.9 itself", b"FOO / HTTP/0.9\r\n\r\n"),
+                          ("the kernel's own reply to a POST on HTTP/0.9 itself", b"POST /nope HTTP/0.9\r\n\r\n")):
+            with self.subTest(what=what):
+                status, msg, body = _wire_raw(self.port, req)
+                self.assertIsNone(status, what + ": no status line")
+                self.assertIsNone(msg, what + ": no headers")
+                self.assertTrue(body, what + ": the body alone")
         with self.subTest(what="HTTP/0.5, another version below HTTP/2.0"):
             status, msg, body = _wire_raw(self.port, b"GET / HTTP/0.5\r\n\r\n")
             self.assertEqual(status, 200, "a full reply: %r" % body[:60])
