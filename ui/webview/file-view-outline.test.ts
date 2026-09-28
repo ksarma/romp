@@ -2211,10 +2211,10 @@ test("how a click finds its press, a tap on another document's element, a guard 
 // with no wait for the pen's compatibility mousedown), MU-OFF (a mouseup other than a primary one of detail above 0 empties
 // nothing), MU-DETAIL (that clear keyed on the detail alone), MU-FLAG (that mouseup clears the tap's flag and leaves the slot)
 // MU-SLOT (it empties the slot and leaves the flag, defensive, so no guard reds under it), OWNREF-OFF (a click reads the record
-// still standing under its own pointerId as its press; with LV-OFF too, the gate at 09f58bec6, whose compiled code the two together
-// equal), LV-OFF (no pointerout listener), LV-ANYRT (a pointerout marks the records whatever its relatedTarget), LV-NOBTN (a mouse's
-// or a pen's pointerout with no relatedTarget marks them whatever its buttons, the same gate as LV-LOSTANY now that the mouse's
-// pointerout with no button down marks them), LV-ANYTYPE (a touch's pointerout with a button down marks them too, and every record,
+// still standing under its own pointerId as its press; with LV-OFF and MO-OFF too, a gate that gives 09f58bec6's verdict on every
+// click the search of the closed direction compares), LV-OFF (no pointerout listener), LV-ANYRT (a pointerout marks the records
+// whatever its relatedTarget), LV-NOBTN (a mouse's or a pen's pointerout with no relatedTarget marks them whatever its buttons, the
+// same gate as LV-LOSTANY now that the mouse's pointerout with no button down marks them), LV-ANYTYPE (a touch's pointerout with a button down marks them too, and every record,
 // a touch's included), LV-MOUSE (a pen's pointerout and a pen's record left out of the arm with a button down, and a pen's record out
 // of both arms) and LV-DEL (the records deleted in place of marked); and of the file review's round 19: LV-NOLOST (the mouse's
 // pointerout with no button down marks nothing, the leave at ddb446fae), LV-LOSTMOUSE (it marks the mouse's records alone),
@@ -2223,8 +2223,7 @@ test("how a click finds its press, a tap on another document's element, a guard 
 // button down), MO-NOEND (it empties any slot a touch's pointerup filled, whether or not that tap's mousedown has come), MO-ANYRT (a
 // mouseout empties the slot while a tap's mousedown is due whatever its relatedTarget), MO-ANYSLOT (a mouseout to no element empties
 // the slot whether or not a tap's mousedown is due), MO-NOREMOVE (the mouseout listener added outside the gate's list and never
-// removed) and EXTRA-TYPE (a thirteenth listener, pointerleave, in the gate's list). With LV-OFF and MO-OFF together a click reads no
-// pointerout and no mouseout; OWNREF-OFF with both reds the refusal of a standing record's guards as it did alone.
+// removed) and EXTRA-TYPE (a thirteenth listener, pointerleave, in the gate's list).
 /** Firefox's mouse click under pointerId 0 on `target`: its pointerdown, mousedown, pointerup, mouseup and click (typed mouse). */
 const ffMouseClick = (target: El): void => {
   const m: GatePtr = { pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0 };
