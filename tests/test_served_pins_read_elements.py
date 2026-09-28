@@ -88,7 +88,10 @@ by MEMBERSHIP in a tuple of literals (`if p in ("/", ""):`) whose body returns a
 no arguments. The third is a ROUTE TABLE, the kernel's page dispatch since the merge of main's login cookie split (2026-09-28):
 a dict literal bound to a Name, its keys string literals and its values derived getters named bare (`_PAGE_RENDERERS = {"":
 _landing, "/": _landing, "/chat": _chat_page, ...}`), looked up as `<v> = <table>.get(<Name>)` in a function that returns a
-call carrying `<v>()` with no arguments (`_page = _PAGE_RENDERERS.get(p)`, `return self._send(200, _page(), ...)`). Before that
+call carrying `<v>()` with no arguments (`_page = _PAGE_RENDERERS.get(p)`, `return self._send(200, _page(), ...)`). In all
+three, "carrying" means as a POSITIONAL argument of the returned call, itself the getter's call: one inside a wrapper call, a
+splice or an f-string argument, or handed by keyword, binds nothing (the rulings on the census pass and on the census bounds,
+2026-09-28; pinned in the two route tests). Before that
 branch the walk found the service worker alone on the merged kernel, so every fetched row over a page left the population and
 the container census below read no page; with it the kernel's routes are the ten they were before the table (the landing twice,
 the seven pane pages, the service worker). The walk is shape-sensitive: it reads those three shapes and no other, so a fourth
@@ -280,8 +283,9 @@ def page_getters():
 
 
 def _returns_calling(fn, names):
-    """The Names of `names` that a Return inside `fn` calls with no arguments as an argument of the call it returns
-    (`return self._send(200, _page(), ...)` gives `_page`)."""
+    """The Names of `names` that a Return inside `fn` calls with no arguments as a POSITIONAL argument of the call it returns, the
+    argument itself the call (`return self._send(200, _page(), ...)` gives `_page`; `wrap(_page())`, `_page() + tail`,
+    `f"{_page()}"` and `body=_page()` give nothing)."""
     return {a.func.id for n in ast.walk(fn) if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)
             for a in n.value.args if isinstance(a, ast.Call) and not a.args and not a.keywords and isinstance(a.func, ast.Name) and a.func.id in names}
 
@@ -297,9 +301,11 @@ def route_getters(source=None):
     as `<v> = <table>.get(<Name>)`, that function returning a call carrying `<v>()` with no arguments (`_page =
     _PAGE_RENDERERS.get(p)`, then `return self._send(200, _page(), ...)`); each key whose value is a derived getter named bare
     (`"/chat": _chat_page`) is a route of that getter, and a value of any other form (a lambda, a getter called with arguments, a
-    name that is no derived getter) binds nothing. Shape-sensitive by design (the author's pass 8, 2026-09-20): a fourth shape needs
-    a fourth branch here and a case in the form-space test; an equality-only walk misses the landing, and a walk without the table
-    finds only the service worker on the kernel."""
+    name that is no derived getter) binds nothing. In each shape the getter's call is carried as a positional argument of the
+    returned call and is that argument itself: inside a wrapper call, a splice or an f-string argument, or handed by keyword, it
+    binds nothing (_returns_calling for the table; the same condition inline for the two `if` shapes). Shape-sensitive by design
+    (the author's pass 8, 2026-09-20): a fourth shape needs a fourth branch here and a case in the form-space test; an equality-only
+    walk misses the landing, and a walk without the table finds only the service worker on the kernel."""
     tree = ast.parse(_kernel_source() if source is None else source)
     getters = set(page_getters())
     routes = {}
@@ -2572,10 +2578,12 @@ def _outer(path):
         # the author's pass 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A
         # synthetic handler with both shapes pins the two: the landing's membership tuple and the equality routes; a route
         # returning json.dumps, a getter called with arguments, a getter called bare inside another call in the return (the
-        # rulings at the merge of main's login cookie split, 2026-09-28: the walk reads a getter only as a DIRECT argument of the
-        # returned call, and a walk over the whole return reds here on /wrapped) and a prefix test bind nothing. An equality-only
-        # walk misses the landing here. On the kernel the landing is served through the route table since the merge of main's
-        # login cookie split (the next test pins that shape), and the service worker by equality.
+        # rulings on the census pass, 2026-09-28: the walk reads a getter only as a DIRECT positional argument of the returned
+        # call, and a walk over the whole return reds here on /wrapped), the condition's other spellings (the rulings on the census
+        # bounds, 2026-09-28: a getter inside a splice or an f-string argument, or handed by keyword; a walk that descends through
+        # an argument that is no call reds here on /spliced or /formatted, and one that reads keywords on /byname) and a prefix test
+        # bind nothing. An equality-only walk misses the landing here. On the kernel the landing is served through the route table
+        # since the merge of main's login cookie split (the next test pins that shape), and the service worker by equality.
         handler = '''
 def do_GET(self):
     p = "/x"
@@ -2591,6 +2599,12 @@ def do_GET(self):
         return self._send(200, _shim_core_js("chat"), "text/javascript")
     if p == "/wrapped":
         return self._send(200, wrap(_timeline_page()), "text/html")
+    if p == "/spliced":
+        return self._send(200, _feed_page() + "<!-- tail -->", "text/html")
+    if p == "/formatted":
+        return self._send(200, f"<!doctype html>{_files_page()}", "text/html")
+    if p == "/byname":
+        return self._send(200, body=_waiting_page(), ctype="text/html")
     if p.startswith("/dist/"):
         return self._send_file(p)
 '''
@@ -2611,9 +2625,13 @@ def do_GET(self):
         # lookup in one function with the call in another bind nothing. A walk without the table branch reds here (the synthetic
         # table's three routes missing) and on the kernel (no landing, no pane page). The rulings at the merge (2026-09-28) add the
         # no-argument condition's case: a lookup whose result a return calls WITH an argument, positional or by keyword, renders
-        # another text and binds nothing (a walk that drops either half of the condition reds here on /settings or /waiting); and
-        # a lookup whose result a return calls bare INSIDE another call (`wrap(wrapped())`) binds nothing, since the looked-up name
-        # counts only as a direct argument of the returned call (a walk over the whole return reds here on /wrapped).
+        # another text and binds nothing (a walk that drops either half of the condition reds here on /settings or /waiting). The
+        # rulings on the census pass (2026-09-28) add a lookup whose result a return calls bare INSIDE another call
+        # (`wrap(wrapped())`), which binds nothing, since the looked-up name counts only as a direct positional argument of the
+        # returned call (a walk over the whole return reds here on /wrapped); and the rulings on the census bounds (2026-09-28) the
+        # condition's other spellings: the call inside a splice or an f-string argument, or handed by keyword, binds nothing (a walk
+        # that descends through an argument that is no call reds here on /spliced or /formatted, and one that reads keywords on
+        # /byname).
         handler = '''
 PAGES = {"": _landing, "/": _landing, "/chat": _chat_page, "/shim": lambda: _shim_core_js("chat"), "/nope": _not_a_getter}
 UNREAD = {"/feed": _feed_page}
@@ -2622,6 +2640,9 @@ APART = {"/files": _files_page}
 POSITIONAL = {"/settings": _settings_page}
 KEYWORD = {"/waiting": _waiting_page}
 WRAPPED = {"/wrapped": _feed_page}
+SPLICED = {"/spliced": _timeline_page}
+FORMATTED = {"/formatted": _files_page}
+BYNAME = {"/byname": _settings_page}
 def do_GET(self):
     p = "/x"
     page = PAGES.get(p)
@@ -2639,6 +2660,15 @@ def do_GET(self):
     wrapped = WRAPPED.get(p)
     if wrapped is not None:
         return self._send(200, wrap(wrapped()), "text/html")
+    spliced = SPLICED.get(p)
+    if spliced is not None:
+        return self._send(200, spliced() + "<!-- tail -->", "text/html")
+    formatted = FORMATTED.get(p)
+    if formatted is not None:
+        return self._send(200, f"<!doctype html>{formatted()}", "text/html")
+    byname = BYNAME.get(p)
+    if byname is not None:
+        return self._send(200, body=byname(), ctype="text/html")
     if p == "/sw.js":
         return self._send(200, _sw_js(), "text/javascript")
 def lookup_only(self, p):
