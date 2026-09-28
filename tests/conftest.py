@@ -1615,7 +1615,9 @@ def wait_for_census(before, timeout=5.0):
 # process waits for that task like any other thread still running. Either cause holds for a thread of either daemon
 # flag, since the exit hooks wake and join daemon ones too: the guard reads the hooks' tables (EXIT_JOIN_TABLES) and
 # waits for every thread in them, and a loaded concurrent.futures module without its table fails the guard, naming the
-# attribute, rather than leaving its daemon threads unread. The report's label names both causes; a ThreadPoolExecutor
+# attribute, rather than leaving its daemon threads unread. A table whose every read raises until the deadline (another
+# thread adding to it without pause) fails the guard by the table's name, and that failure names the non-daemon threads
+# still alive, which need no table; the daemon threads the table would list go unnamed. The report's label names both causes; a ThreadPoolExecutor
 # worker's stack shows which, and a manager thread's stack reads the same either way. A process that leaves one pays the
 # cap once. No non-daemon one was left at a session end on main (the census above, which read non-daemon threads only).
 # CI running this guard with the tables read, at an earlier head of the pull request that added them, named one: an
@@ -1633,6 +1635,12 @@ EXIT_JOIN_TABLES = (("concurrent.futures.thread", "_threads_queues"),      # Thr
                     ("concurrent.futures.process", "_threads_wakeups"))    # ProcessPoolExecutor manager threads
 
 
+class _ExitJoinTableKeptChanging(pytest.fail.Exception):
+    """_exit_joined_threads' failure for a table whose every read raised RuntimeError until the deadline passed. It is a
+    pytest.fail failure, so any caller fails the same way; threads_left_at_session_end catches it to add the non-daemon
+    threads still alive, which are guarded whatever the table lists."""
+
+
 def _exit_joined_threads(deadline):
     """The threads concurrent.futures' exit hooks will join, whatever their daemon flags: every thread in the table of
     each EXIT_JOIN_TABLES module that is loaded. This file imports concurrent.futures.thread, so its table is always
@@ -1640,8 +1648,9 @@ def _exit_joined_threads(deadline):
     table fails the guard, naming the attribute, rather than leaving unguarded the daemon threads that table would list.
     A read that raises RuntimeError (another thread added to the table while it was read) is retried at once, until a
     read succeeds or `deadline`, a time on the guard's clock (_monotonic), passes; a read that raises after that fails
-    the guard, naming the table, so no read runs past the guard's one deadline. A table keeps a thread that has ended
-    until the thread object is collected; the guard asks it only about listed threads, which are alive."""
+    the guard, naming the table (_ExitJoinTableKeptChanging), so no read is retried after the deadline. A read already
+    running at the deadline finishes, and a table read first after it is read once. A table keeps a thread that has
+    ended until the thread object is collected; the guard asks it only about listed threads, which are alive."""
     joined = set()
     for module, attr in EXIT_JOIN_TABLES:
         mod = sys.modules.get(module)
@@ -1660,13 +1669,13 @@ def _exit_joined_threads(deadline):
                 break
             except RuntimeError:        # another thread added to the table while it was read: read it again,
                 if _monotonic() >= deadline:    # up to the deadline
-                    pytest.fail("tests/conftest.py's session-end thread guard could not read %s.%s before its "
-                                "deadline: every read of it on the guard's last pass raised RuntimeError, as iterating "
-                                "the table does when another thread adds to it mid-read, until the deadline passed. "
-                                "Without the table the guard cannot tell which daemon threads hold the process at "
-                                "exit. Something in this process was still adding to the table, starting "
-                                "concurrent.futures threads, at the end of its session." % (module, attr),
-                                pytrace=False)
+                    raise _ExitJoinTableKeptChanging(
+                        "tests/conftest.py's session-end thread guard could not read %s.%s before its deadline: every "
+                        "read of it on the guard's last pass raised RuntimeError, as iterating the table does when "
+                        "another thread adds to it mid-read, until the deadline passed. Without the table the guard "
+                        "cannot tell which daemon threads hold the process at exit. Something in this process was "
+                        "still adding to the table, starting concurrent.futures threads, at the end of its session."
+                        % (module, attr), pytrace=False) from None
     return joined
 
 
@@ -1700,18 +1709,28 @@ def threads_left_at_session_end(cap_s):
     join whatever its daemon flag) still alive once each has had until one deadline, cap_s from the call, to end. Each
     is joined in turn for the time remaining, and the thread list and the exit-join tables are read again after every
     pass, so a thread that starts another as it exits is waited for too. Starts no thread. Every wait is a join, which
-    returns when its thread ends, except for two busy loops, each of which ends at the deadline at the latest. For a
-    thread caught mid-start, which join refuses, the list is read again at once until that start() returns; that loop
-    spins only while every listed guarded thread is mid-start, since a live one's join blocks the pass instead. For a
-    read of an exit-join table that raises RuntimeError (another thread added to the table mid-read), the table is read
-    again at once until a read succeeds; a read that raises at the deadline fails the guard, naming the table
-    (_exit_joined_threads). Returns [] when none is left. A loaded concurrent.futures module without its exit-join table
-    fails the guard (_exit_joined_threads)."""
+    returns when its thread ends, except for two busy loops, each of which stops at its first check after the deadline:
+    past the deadline the guard finishes a read or a join already running and reads the thread list and each exit-join
+    table once more at most, then returns or fails. For a thread caught mid-start, which join refuses, the list is read again
+    at once until that start() returns; that loop spins only while every listed guarded thread is mid-start, since a
+    live one's join blocks the pass instead. For a read of an exit-join table that raises RuntimeError (another thread
+    added to the table mid-read), the table is read again at once until a read succeeds; a read that raises after the
+    deadline fails the guard, naming the table (_exit_joined_threads) and each non-daemon thread of that pass's list
+    still alive, with its stack, since those are guarded whatever the table lists. Returns [] when none is left. A
+    loaded concurrent.futures module without its exit-join table fails the guard (_exit_joined_threads)."""
     deadline = _monotonic() + cap_s
     while True:
         listed = _enumerate()
         # after the list: a listed worker whose pool's submit returned is in the table
-        joined = _exit_joined_threads(deadline)
+        try:
+            joined = _exit_joined_threads(deadline)
+        except _ExitJoinTableKeptChanging as failure:
+            alive = [t for t in listed if t.is_alive() and _guarded_thread(t, frozenset())]    # the non-daemon ones
+            frames = sys._current_frames()
+            pytest.fail("%s\n\n%s" % (failure.msg, (
+                "The non-daemon threads still alive then, which hold the process at exit whatever the table lists:"
+                "\n\n" + "\n".join(_thread_report(t, frames) for t in alive)) if alive
+                else "No non-daemon thread was alive then."), pytrace=False)
         left = [t for t in listed if _guarded_thread(t, joined)]
         if not left or _monotonic() >= deadline:
             return left

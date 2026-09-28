@@ -72,8 +72,10 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   of a pool a daemon thread started, after the guard's first read is returned. A read that raises RuntimeError, as
   iterating a WeakKeyDictionary does on 3.10 to 3.13 when another thread inserts into it, is read again (a stand-in
   table raises on its first read), up to the guard's one deadline: a table that changes during every read ends the
-  guard at its deadline, failing it by the table's name (a stand-in that adds to itself during every read, the guard
-  run under a backstop whose firing is the defect of a retry with no bound).
+  guard at its deadline, failing it by the table's name and naming the non-daemon thread still alive beside it, but not
+  a plain daemon thread (a stand-in that adds to itself during every read, with the process-wide time.monotonic frozen,
+  the guard run under a backstop whose firing is the defect of a retry with no bound, or one bounded on that frozen
+  clock).
 - Threads that END WITHIN THE CAP (each test starts one that sleeps WITHIN_S and exits) and plain DAEMON threads that
   run past the session (one per test, released at unconfigure) leave the run green, serially and under -n 2, at the
   guard's own cap. The guard's wait is WITNESSED, not assumed: the scratch conftest records at pytest_sessionfinish,
@@ -119,9 +121,10 @@ missing EXIT_JOIN_TABLES (AttributeError); the pins of the daemon-started pool's
 fail with the guard returning an empty list; the re-read pin (test_the_tables_are_read_again_after_every_pass) fails
 with a KeyError on 'w2' at its unpack line, since that guard skips the daemon W1 and returns at once, before W1's task
 records W2; the retry pin (test_a_table_read_that_meets_a_concurrent_insert_is_read_again) fails at its assertion with
-an empty list; and the deadline pin fails because the guard returns an empty list at once instead of failing. The one
-that passes there is test_they_are_the_only_exit_hooks_the_standard_library_registers, a premise pin: it reads no
-guard, only the standard library's source against the class's own TABLES, so no change to the guard can turn it red.
+an empty list; and the deadline pin fails because the guard returns its non-daemon plant at the cap instead of
+failing. The one that passes there is test_they_are_the_only_exit_hooks_the_standard_library_registers, a premise pin:
+it reads no guard, only the standard library's source against the class's own TABLES, so no change to the guard can
+turn it red.
 Synthetic fixtures only; no kernel, no network.
 """
 import importlib.util
@@ -800,7 +803,7 @@ class ExitJoinTables(unittest.TestCase):
     registers with threading._register_atexit; a live daemon thread in either table is returned by the guard while a
     plain daemon thread beside it is not; the tables are read again after every pass; and a read that meets a concurrent
     insert is read again, up to the guard's one deadline, where a table that changed during every read fails the guard
-    by name."""
+    by name, naming too the non-daemon threads still alive."""
 
     TABLES = (("concurrent.futures.thread", "_threads_queues"), ("concurrent.futures.process", "_threads_wakeups"))
 
@@ -972,20 +975,30 @@ class ExitJoinTables(unittest.TestCase):
         self.assertEqual(left, [worker], "the guard returned the daemon thread its second read of the table found")
         self.assertGreaterEqual(len(reads), 2, "the guard read the table again after the read that raised")
 
-    def test_a_table_that_changes_during_every_read_ends_the_guard_at_its_deadline_naming_the_table(self):
+    def test_a_table_that_changes_during_every_read_ends_the_guard_at_its_deadline_naming_the_table_and_threads(self):
         """A table another thread adds to without pause changes during every read, so every read raises RuntimeError.
-        The guard reads it again only until its one deadline and then fails naming the table: it never reads on past
-        the deadline. Stood in for, on every Python, by a table whose every iteration walks a real dict and adds to it
-        mid-walk, as another thread inserting forever would, so each read raises the error a real concurrent insert
-        raises. The guard runs on a helper thread under a BACKSTOP: a guard whose retry has no bound never ends here,
-        so the pin fails when the helper is still running backstop_s (20 s) after the call, and that backstop firing IS
-        the defect, not a timing flake. Once the backstop has fired the stand-in holds still, so such a guard ends and
-        leaves no thread spinning. The stand-in passes any insert on to the real table, as the retry pin's does."""
+        The guard reads it again only until its one deadline and then fails naming the table: it does not retry a read
+        after the deadline. The failure also names each non-daemon thread still alive, which holds the process at exit
+        whatever the table lists (a plant listed beside a plain daemon thread, which is not named). Stood in for, on
+        every Python, by a table whose every iteration walks a real dict and adds to it mid-walk, as another thread
+        inserting forever would, so each read raises the error a real concurrent insert raises. The process-wide
+        time.monotonic is frozen for the call, as a test's leaked patch could leave it: the retry's bound is on the
+        guard's own clock, so the guard still ends. The guard runs on a helper thread under a BACKSTOP: a guard whose
+        retry has no bound, or is bounded on a clock that does not move, never ends here, so the pin fails when the
+        helper is still running backstop_s (20 s) after the call, and that backstop firing IS the defect, not a timing
+        flake. Once the backstop has fired the stand-in holds still, so such a guard ends and leaves no thread
+        spinning. The stand-in passes any insert on to the real table, as the retry pin's does."""
         import concurrent.futures.thread as cft
         cf = sys.modules["tests.conftest"]
         real_table = cft._threads_queues
         cap, backstop_s = 1.0, 20.0
         holds_still = threading.Event()     # set once the backstop has fired, and at cleanup
+        stop = threading.Event()
+        left_alive = threading.Thread(target=stop.wait, args=(60,), name="plant-inproc-left-at-table-failure")
+        plain = threading.Thread(target=stop.wait, args=(60,), name="plant-inproc-plain-daemon", daemon=True)
+        self.addCleanup(join_started, stop, (left_alive, plain), 60)
+        left_alive.start()
+        plain.start()
         reads = [0]
         got = {}
 
@@ -1014,7 +1027,8 @@ class ExitJoinTables(unittest.TestCase):
         helper = threading.Thread(target=run_guard, name="plant-inproc-changing-guard", daemon=True)
         self.addCleanup(join_started, holds_still, (helper,), 30)
         with mock.patch.object(cft, "_threads_queues", ChangesDuringEveryRead()), \
-                mock.patch.object(cf, "_enumerate", return_value=[threading.main_thread()]):
+                mock.patch.object(cf, "_enumerate", return_value=[threading.main_thread(), left_alive, plain]), \
+                mock.patch.object(time, "monotonic", return_value=0.0):
             helper.start()
             helper.join(backstop_s)
             ended = not helper.is_alive()
@@ -1031,6 +1045,9 @@ class ExitJoinTables(unittest.TestCase):
                       "the failure names the table")
         self.assertIn("every read of it on the guard's last pass raised RuntimeError", str(err),
                       "the failure says the table changed during every read")
+        self.assertIn("thread 'plant-inproc-left-at-table-failure'", str(err),
+                      "the failure names the non-daemon thread still alive, which needs no table to be guarded")
+        self.assertNotIn("plant-inproc-plain-daemon", str(err), "a plain daemon thread, in no table, is not named")
         self.assertGreaterEqual(got["elapsed"], cap * 0.9, "the guard failed %.2f s into a %g s cap: it gave up before "
                                 "its deadline" % (got["elapsed"], cap))
         self.assertLess(got["elapsed"], cap + 3.0, "the guard failed %.2f s into a %g s cap: it read on past its "
