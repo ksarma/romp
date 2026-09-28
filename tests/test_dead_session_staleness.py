@@ -4293,8 +4293,9 @@ step(road, "ourBusRestarted", us, nobody=S["nobody"], goss=S["goss"])
 # THE ORIGIN HOLD (round 7 of fork PR #897, the reviewer's round-6 ruling R1 on extra5-1, and its decisions 1 and 2): a
 # session S on F mails our session through the hub; the hub parks it, its bus restarts, and the restarted hub, which has
 # not heard F, relays it. The relay carries its origin and the exchange no word of F; a relay from an origin the hub's
-# current process has not named here holds that origin on the hub's row until a roster of that process names it
-# (_origin_holds). Every link tiered trusted; C vouches. The reviewer's ten roads (R1 to R4, N1 to N4, D1, D2), its
+# current process has not named here holds that origin on the hub's row (_origin_holds), and the writer's docstring
+# lists where the hold ends under THE ORIGIN HOLD. Every link tiered trusted; C vouches. The reviewer's ten roads (R1 to
+# R4, N1 to N4, D1, D2), its
 # controls (C1, C2, F1, E1 to E4), and the legs that witness the hold's costs and its end after our restart
 def origin_trust(bus, host, port):                 # the kernel's up notify for a link tiered trusted
     with As(bus):
@@ -4552,8 +4553,9 @@ step(road, "releasedUnderTheAlias", us, new=S["new"], nobody=S["nobody"])
 # F's bus restarts; its first dial declares F_DECL, and no row at the hub carries F's new bus id, so the hub files that dial
 # under F_DECL and parks the mail it carries with origin F_DECL; the hub's dial to the alias then folds F_DECL into F before
 # the hub's next exchange here, and the hub names F under the alias alone from that exchange until F's first dial after a
-# later restart is filed under F_DECL while the hub exchanges here. The hold on F_DECL stands until the hub gossips F_DECL
-# here again: here F's bus restarts once more, its first dial filed under F_DECL while the hub exchanges here
+# later restart is filed under F_DECL while the hub exchanges here. This bus holds no row of F on this road, so decision
+# 1's end cannot come after our restart, and the hold on F_DECL stands, across our restart too, until the hub gossips
+# F_DECL here again: here F's bus restarts once more, its first dial filed under F_DECL while the hub exchanges here
 road = "originHoldUnderTheDeclaredNameSameHubProcess"
 us, f, hub, c = origin_world(road)
 origin_exch(hub, HUB, f, F); origin_exch(f, F_DECL, hub, HUB)   # F filed under the alias; its own dial joins it by bus id
@@ -4623,7 +4625,8 @@ step(road, "afterSEnds", us, new=S["new"], nobody=S["nobody"])
 # V7ourRestartRelayEnded and V7ourRestartRelayEndedLong): the hub, never restarted, named F to our PREVIOUS process; while
 # our bus is down, S on F mails ours through the hub, which parks it; S and every other session on F end; our bus
 # restarts, and the hub's first exchange with our new process relays S's mail with no word of F. Naming counts per process
-# of ours too, so the relay holds F until the hub names it again
+# of ours too, so the relay holds F until the hub names it again (this bus holds no row of F here and does not restart
+# again on this road)
 road = "originHoldR2AcrossOurRestart"
 us, f, hub, c = origin_world(road)
 origin_exch(f, F, hub, HUB); origin_exch(hub, HUB, f, F)
@@ -5755,8 +5758,10 @@ print(json.dumps(out))
         session answers rule 5 at the landing and after our placed answer: a false rule 5 left open, until F's answering
         exchange with the hub and the hub's next exchange here. Where none has, the relay's origin hold keeps the
         session, and a sid nothing names, cannot-determine by the hub's via row about F, which carries the hold alone
-        (heard, its bit False, no sids), until a roster of that hub process names F; that leg is red at the eightieth
-        commit, where both answered rule 5. The follow-up is the carrier fix, each heard far host's answered bit carried
+        (heard, its bit False, no sids). On this road the hub runs one process, this bus holds no row of F and does not
+        restart, so of the ends the writer's docstring lists under THE ORIGIN HOLD only a roster of that hub process
+        naming F can end the hold; that leg is red at the eightieth commit, where both answered rule 5. The follow-up is
+        the carrier fix, each heard far host's answered bit carried
         independent of session rows (an exchange-field change outside this fix-tier PR); this witness asserts the rule-5
         answers, so it turns red when the carrier lands and the disclosure moves with it."""
         S = ROAD_SIDS
@@ -6309,8 +6314,9 @@ print(json.dumps(out))
         RESTARTED hub with an EMPTY listing. The restarted hub's roster omits a host it has not heard and a host that
         answered with no session in the same way, and no field of the exchange tells the two apart, so the word stays
         held (in the hub's merged roster across the restarted hub's dials, then in its held words once the restarted
-        process's answer to our dial omits it, stamped with the old process's bus id) and the arm holds every sid on this
-        machine until the hub names F again or F's own row speaks for it here (F's answer to our dial, _direct_row_speaks,
+        process's answer to our dial omits it, stamped with the old process's bus id), and the word holds every sid on
+        this machine at cannot-determine until the hub names F again or F's own row speaks for it here (F's answer to
+        our dial, _direct_row_speaks,
         while that row speaks and F's bus is the one the word names: a bus restarted since carries a new id and does not
         speak for it). This bus's restart releases nothing (round 6 of fork PR #897, the reviewer's
         decision 4 on round 5: the via row is carried with F's cached bit and holds the arm; until then the restart
@@ -6318,7 +6324,10 @@ print(json.dumps(out))
         session rows. Since round 7 of fork PR #897 (the reviewer's round-6 ruling R1) F's exchange with the restarted hub
         also re-sends the new session's mail, still parked on F (the old hub process's end-to-end ack never reached it),
         and the restarted hub relays it here again, a deduped resend from F, which that process has not named here: the
-        hub's row carries an origin hold for F beside the held word (_origin_holds), and every verdict is the same."""
+        hub's row carries an origin hold for F beside the held word (_origin_holds), which holds every sid while it
+        stands. In this bus process F's own row does not end the origin hold (cost (r4)), so on this road F's own row
+        would end the word's hold and not the arm; the writer's docstring lists where the origin hold ends under THE
+        ORIGIN HOLD (this road holds no row of F). Every verdict the road asserts is the same."""
         S = ROAD_SIDS
         via = UNANSWERED(R_VIA_F + " (listing unanswered)")
         for shape, got in self.roads.items():
@@ -8737,7 +8746,9 @@ print(json.dumps(out))
                     self.assertEqual(got["roads"][road]["landing"], [[S["new"], R_F, "ack"]], "the relay landed")
                     self.assertEqual([self._road(got, road, step, key) for step in
                                       ("atLanding", "afterTwoMorePairs", "afterHubNamesFAgain") for key in ("new", "nobody")],
-                                     [held] * 4 + [RULE_5] * 2, "COST (r2): held until the same hub process names F again")
+                                     [held] * 4 + [RULE_5] * 2,
+                                     "COST (r2): held until the same hub process names F again (E3 and E4 hold "
+                                     "no row of F here and do not restart this bus)")
             with self.subTest(shape=shape, road="originHoldR2AcrossOurRestart"):
                 r = got["roads"]["originHoldR2AcrossOurRestart"]
                 self.assertEqual((r["atHub"], r["landing"]), ([[S["new"], None, "hold"]], [[S["new"], R_F, "ack"]]),
@@ -8760,8 +8771,10 @@ print(json.dumps(out))
         origin hold keys on the record's name, so it holds through the hub's word under the declared name, released by
         our placed answer: a sid nothing names cannot-determine by the hub's word about F alone, twice, where the
         eightieth commit read rule 5. Once the hub's dial folds F under the alias and its word names F there, the hold
-        ends (F's word then held by its own order, a dial releasing nothing), and our placed answer releases it. The hub
-        runs a build before round 6 of fork PR #897, whose word under the declared name comes answered (a hub on this
+        ends (F's word then held by its own order, a dial releasing nothing), and our placed answer releases it. On
+        this road this bus holds no row of F and does not restart, so no other end the writer's docstring lists under
+        THE ORIGIN HOLD applies. The hub runs a build before round 6 of fork PR #897, whose word under the declared
+        name comes answered (a hub on this
         build holds that row, never dialed under that name, until the fold)."""
         S = ROAD_SIDS
         held = UNANSWERED(R_VIA_F + " (listing unanswered)")
@@ -8794,8 +8807,9 @@ print(json.dumps(out))
         cannot-determine by the hub's via row about F_DECL at the landing, after our placed answer and after three more
         rounds (S rule 4, by the hub's word under the alias); after S ends, S too; and across our restart, the via row
         carried with its bit False, after a pair with the hub and one with C and after three more rounds. At the
-        eightieth commit each of those read rule 5 for the sid nothing names, and for S after it ended. The hold ends
-        where the hub gossips F_DECL here again: F's bus restarts once more, its first dial filed under F_DECL, and the
+        eightieth commit each of those read rule 5 for the sid nothing names, and for S after it ended. This bus holds
+        no row of F on this road, so decision 1's end cannot come after our restart, and the hold ends where the hub
+        gossips F_DECL here again: F's bus restarts once more, its first dial filed under F_DECL, and the
         hub's dial here names F_DECL, whose word replaces the carried row (heard, naming F's session) and is held or
         released by its own order. The same across the hub's restart (the verifier's road V7renamedAtHubStart): S's mail
         parked in F's outbox while the hub is down, F's first dial to the restarted hub filed under F_DECL, and the
