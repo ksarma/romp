@@ -107,8 +107,12 @@ read none; a helper the module does not define binds every name (the rulings at 
 2026-09-28; _bind). A call to a helper the module defines is a fetch only where the helper's returns read a response
 (`_pathconf("/", "PC_PATH_MAX", 4096)` is none; _fetched). A fetched tuple bound to ONE name is no text itself: each position the
 helper reads a response at is, by a constant index (`resp = self._req("/")` gives `resp[1]` and `resp[-2]`), bound to a name or
-unpacked after, and the status and headers positions are none (the rulings on the census pass, 2026-09-28; _bind; a subscript by
-anything else, `resp[i]` or `resp[1:]`, and a `for` over the tuple read nothing). A Name in a helper's return is followed to its
+unpacked after by a tuple target holding no starred name, and the status and headers positions are none (the rulings on the census
+pass, 2026-09-28; _bind). Every other read of such a name is REFUSED, an unclassified row the reader census fails on (the rulings on
+the census bounds, 2026-09-28; readers_of): an alias (`r2 = resp`), a subscript by anything but a constant index (`resp[i]`,
+`resp[1:]`), a `for` over it, a starred unpack (which binds no name), the name handed whole to a helper or any other call, a
+membership over the tuple, and the reads of a name bound whole and later rebound to such a tuple (the walk is flow-insensitive, so
+the rebinding hides the whole binding). A Name in a helper's return is followed to its
 bindings inside the helper (`body = r.read(); return r.status, body, r.headers` reads at `body`'s position), and a returned Name
 the follow cannot place (bound only by an unpack of a call's answer, a for or with target) makes the call a fetch that binds every
 name, so no read behind it leaves both censuses in silence (the rulings on the census pass, 2026-09-28; _response_reads).
@@ -124,7 +128,11 @@ tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a c
 that returns an unread response for its caller to read (`return urlopen(path)`, read as `self._open("/").read()`) or reads the
 response through another call in its return (`return r.status, self._body(r)`), no fetch here (a literal pin over a name such a
 call is assigned to reds the floor through the textual census; any other read of that name, a regex or a split, is in neither
-census), a getter called WITH
+census), a helper whose returns differ in length (the union of their positions: `return r.status, r.read(), r.headers` and
+`return r.status, r.read()` give {1, -1, -2}, so `resp[-1]` binds as the page though it is the headers on the first road;
+over-bound, so its reads are rows over the page, never silent), a name bound to a fetched tuple and later rebound to a whole text
+(it reads as that text throughout, so `resp[0]`, the status before the rebinding, is a slice row over it: over-bound, never
+silent), a getter called WITH
 arguments (`_shim_core_js("chat")` renders another text), a text served under a name with none of the suffixes the rules
 read (the web app manifest; the `_reload_core` function), a name bound outside the function, a literal bound by assignment
 rather than a loop, and assertNotIn (a comment can red it, never green it) are outside this derivation.
@@ -609,6 +617,32 @@ def _position_key(node):
     return None
 
 
+def _tuple_names(names, attrs):
+    """{(store, name): text} for every fetched tuple bound to ONE name (_bind: `resp = self._req("/")` binds `resp[1]` and `resp[-2]`,
+    never `resp`), in a function's names (store "names") and in its class's self.<attr> bindings ("attrs"); a name also bound whole
+    (to a text) is none, since it reads as that text."""
+    out = {}
+    for kind, store in (("names", names), ("attrs", attrs)):
+        for key, text in store.items():
+            base = key.split("[", 1)[0]
+            if base != key and base not in store:
+                out.setdefault((kind, base), text)
+    return out
+
+
+def _placed_tuple_uses(fn):
+    """The ids of the nodes in a function where a name is read at a position _bind resolves for a fetched tuple: the value of a
+    subscript by a constant index (_position_key: `resp[1]`, `resp[0]`), and the value of an assignment whose every target is a tuple
+    holding no starred name (`status, body, headers = resp`)."""
+    out = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Subscript) and _position_key(node):
+            out.add(id(node.value))
+        elif isinstance(node, ast.Assign) and all(isinstance(t, ast.Tuple) and not any(isinstance(e, ast.Starred) for e in t.elts) for t in node.targets):
+            out.add(id(node.value))
+    return out
+
+
 def _resolve(node, names, attrs, getters, constants):
     """The served text a node stands for: a getter call or constant inline, a Name bound in the function, a self.<attr> bound in
     the class, a fetched tuple's body position by a constant index (`resp[1]`, _position_key); None otherwise."""
@@ -632,13 +666,19 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
     no text: each position the helper reads a response at binds under the name's constant-index key, from both ends (`resp =
     self._req("/")` binds `resp[1]` and `resp[-2]`, which _resolve reads through _position_key), so the status and headers
     positions bind nothing here either; `body = resp[1]` binds `body`, and `status, body, headers = resp` binds by the same
-    positions (every name where the target holds a starred name). A subscript by any other index (`resp[i]`, `resp[1:]`) and a
-    `for` over the tuple read nothing (the rulings on the census pass, 2026-09-28). Before the merge's ruling every unpacked name
+    positions, a target holding a starred name none (the rulings on the census pass, 2026-09-28). Any other read of the name (an
+    alias, a subscript by anything but a constant index, `resp[i]` or `resp[1:]`, a `for` over it, the starred unpack, the name
+    handed whole to a call, a membership over the tuple) binds nothing, and readers_of refuses it, an unclassified row (the rulings
+    on the census bounds, 2026-09-28). The binding is flow-insensitive: a name bound whole and then rebound to such a tuple loses
+    the whole binding (its reads are refused the same way), and a name bound to such a tuple and then rebound whole reads as the
+    whole text throughout (over-bound). A helper whose returns differ in length binds the union of their positions (`resp[-1]` is
+    the body on a 2-tuple road and the headers on a 3-tuple one: over-bound). Before the merge's ruling every unpacked name
     bound, the status and the response headers too, and main's helpers returning (status, body, headers) put 19 reads of the
     headers (`.get`, `.get_all`, a base-class helper handed them) and of the status into the reader census as reads of the page. A
     helper the module does not define, a helper with a returned Name _response_reads cannot place ("unknown"; the rulings on the
-    census pass, 2026-09-28), and a tuple target holding a starred name bind every name, the reading before the merge's ruling
-    (the census cannot see which position is the body). `sliced`, when given, tracks the Names bound through a slice, a fetched
+    census pass, 2026-09-28), and a tuple target holding a starred name over the call itself (`first, *rest = self._req("/")`)
+    bind every name, the reading before the merge's ruling (the census cannot see which position is the body). `sliced`, when
+    given, tracks the Names bound through a slice, a fetched
     tuple's position or an unpack of one (forms the textual census does not read; the author's pass 8)."""
     if isinstance(value, ast.Tuple) and len(targets) == 1 and isinstance(targets[0], ast.Tuple) \
             and len(targets[0].elts) == len(value.elts):
@@ -661,14 +701,13 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
         if not g and routes:
             g = _fetched(v, names, routes, reads)
             fetched = bool(g)
-        if not g and isinstance(t, ast.Tuple) and (isinstance(v, ast.Name) or isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == "self"):
-            # `status, body, headers = resp`, a fetched tuple bound to one name (below) and unpacked after: by the positions bound,
-            # every name where the target holds a starred name; the textual census reads neither
+        if not g and isinstance(t, ast.Tuple) and not any(isinstance(e, ast.Starred) for e in t.elts) \
+                and (isinstance(v, ast.Name) or isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == "self"):
+            # `status, body, headers = resp`, a fetched tuple bound to one name (below) and unpacked after: by the positions bound; a
+            # target holding a starred name binds none (readers_of refuses it); the textual census reads neither
             store, base, n = (names, v.id, len(t.elts)) if isinstance(v, ast.Name) else (attrs, v.attr, len(t.elts))
-            held = [store.get("%s[%d]" % (base, i)) or store.get("%s[%d]" % (base, i - n)) for i in range(n)]
-            starred = any(isinstance(e, ast.Starred) for e in t.elts)
             for i, e in enumerate(t.elts):
-                got = next((x for x in held if x), None) if starred else held[i]
+                got = store.get("%s[%d]" % (base, i)) or store.get("%s[%d]" % (base, i - n))
                 if got and isinstance(e, ast.Name):
                     names[e.id] = got
                     if sliced is not None:
@@ -1256,6 +1295,23 @@ def readers_of(path, getters, constants, routes=None):
                         rows.append((node.lineno, pin("assert", right) if literal(left) else "membership-unpinned", text(right), seg(node)))
                     elif text(left) or text(right):
                         rows.append((node.lineno, "compare", text(left) or text(right), seg(node)))
+        # the rulings on the census bounds (2026-09-28): a fetched tuple bound to one name is read by a constant index or an unpack by
+        # the positions (_bind), and ANY other read of the name is refused, an unclassified row over the text its body position holds:
+        # an alias, a subscript by a Name or a slice, a for over it, a starred unpack, the name handed whole to a helper or any call, a
+        # membership over the tuple, and the reads of a name bound whole and later rebound to such a tuple (the walk is
+        # flow-insensitive, so the rebinding hides the whole binding). Each had left both censuses in silence.
+        tuples = _tuple_names(names, attrs)
+        if tuples:
+            placed = _placed_tuple_uses(fn)
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                    key, spelled = ("names", node.id), node.id
+                elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Name) and node.value.id == "self":
+                    key, spelled = ("attrs", node.attr), "self." + node.attr
+                else:
+                    continue
+                if key in tuples and id(node) not in placed:
+                    rows.append((node.lineno, "unclassified", tuples[key], "fetched tuple %s: %s" % (spelled, lines[node.lineno - 1].strip()[:160])))
         return rows
 
     out = []
@@ -2053,6 +2109,30 @@ class T(unittest.TestCase):
         self.assertIn("c8", other)
         sp1, sp2 = _spread("/sw.js")
         self.assertIn("c9", sp1)
+        r2 = resp
+        re.search("c10", r2[1])
+        k = 1
+        re.search("c11", resp[k])
+        tail = resp[1:]
+        for part in resp:
+            part.split("<")
+        first, *rest = resp
+        self.assertIn("c12", rest[0])
+        self.assertEqual(first, 200)
+        self._check(resp)
+        self.assertIn("c13", self.resp)
+    def _check(self, got):
+        re.search("c14", got[1])
+    def test_b(self):
+        resp = _text("/sw.js")
+        re.search("c15", resp)
+        resp = self._req("/?token=x")
+        self.assertIn("c16", resp[1])
+    def test_c(self):
+        resp = self._req("/?token=x")
+        self.assertIn("c17", resp[1])
+        resp = _text("/sw.js")
+        re.search("c18", resp)
 def _spread(path):
     return (r.status, *extra, r.read())
 '''
@@ -2065,12 +2145,26 @@ def _spread(path):
             os.unlink(f.name)
         self.assertEqual([r[:5] for r in rows], [(13, "c1", "_landing", "in", False), (17, "c4", "_landing", "in", False), (19, "c5", "_landing", "in", False),
                                                  (21, "c6", "_chat_page", "in", False), (24, "c7", "_sw_js", "in", True), (26, "c8", "_landing", "in", True),
-                                                 (28, "c9", "_sw_js", "in", True)])
-        self.assertEqual([r[:3] for r in readers], [(13, "assert", "_landing"), (15, "regex", "_landing"), (17, "assert", "_landing"), (19, "assert", "_landing"),
-                                                    (21, "assert", "_chat_page"), (24, "assert", "_sw_js"), (26, "assert", "_landing"), (28, "assert", "_sw_js")],
-                         "a body position read as the text itself, and no read of a status or of the response headers a read of the page")
+                                                 (28, "c9", "_sw_js", "in", True), (47, "c16", "_landing", "in", False), (50, "c17", "_landing", "in", False)])
+        # the rulings on the census bounds (2026-09-28): every other read of the tuple's name is REFUSED, an unclassified row the
+        # reader census fails on, where it had left both censuses in silence: the membership over the tuple itself (14), an alias
+        # (29, whose subscript c10 then binds nothing), a subscript by a Name (32) and a slice (33), a for over the tuple (34), a
+        # starred unpack (36, which binds no name, so neither the status nor the starred list is read as the page), the name handed
+        # whole to a method (39, whose read c14 binds nothing), a setUp's tuple attribute read whole (40), and a name bound whole
+        # and then rebound to such a tuple (45: the walk is flow-insensitive, so the whole binding is gone and the read before the
+        # rebinding is refused rather than lost). The reverse order is the stated over-binding, not a refusal: a name bound to such
+        # a tuple and then rebound whole (test_c) reads as the whole text throughout, `resp[1]` a slice of it too (50, 52)
+        refused = [(14, "_landing"), (29, "_landing"), (32, "_landing"), (33, "_landing"), (34, "_landing"), (36, "_landing"), (39, "_landing"),
+                   (40, "_chat_page"), (45, "_landing")]
+        self.assertEqual([r[:3] for r in readers], sorted([(13, "assert", "_landing"), (15, "regex", "_landing"), (17, "assert", "_landing"), (19, "assert", "_landing"),
+                                                           (21, "assert", "_chat_page"), (24, "assert", "_sw_js"), (26, "assert", "_landing"), (28, "assert", "_sw_js"),
+                                                           (47, "assert", "_landing"), (50, "assert", "_landing"), (50, "slice", "_sw_js"), (52, "regex", "_sw_js")]
+                                                          + [(line, "unclassified", text) for line, text in refused]),
+                         "a body position read as the text itself, no read of a status or of the response headers a read of the page, and "
+                         "every other read of the tuple refused")
+        self.assertEqual({r[3].split(":")[0] for r in readers if r[1] == "unclassified"}, {"fetched tuple resp", "fetched tuple self.resp"})
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
-                         {"_text": ["whole"], "setUp": [], "_req": [-2, 1], "test_a": [], "_spread": ["unknown"]})
+                         {"_text": ["whole"], "setUp": [], "_req": [-2, 1], "test_a": [], "_check": [], "test_b": [], "test_c": [], "_spread": ["unknown"]})
 
     def test_a_returned_name_is_followed_to_its_binding_in_the_helper(self):
         # the rulings on the census pass (2026-09-28): a helper whose return holds a Name bound to the read (`body = r.read();
