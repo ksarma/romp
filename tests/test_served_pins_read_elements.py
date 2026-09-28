@@ -75,12 +75,18 @@ held to the kernel-derived getters and constants (a getter the tests call or a s
 derivation does not read fails there; the author's pass 7).
 
 The fetched route (the author's pass 8, 2026-09-20): a fetched body is read as the text of the route it fetched. The (route, getter)
-pairs are derived from the kernel's GET dispatch by an AST walk (route_getters), never restated: an `if` comparing one Name
-against a string literal by EQUALITY (`if p == "/chat": return self._send(200, _chat_page(), ...)`) or by MEMBERSHIP in a
-tuple of literals (`if p in ("/", ""):`, the landing's form) whose body returns a call carrying a call to a derived getter
-with no arguments. The walk is shape-sensitive: it reads those two shapes and no other, so a third shape (a table of routes,
-a `match`, a comparison through a helper) is outside it until a branch is added and pinned in the form-space test below (a
-naive equality walk misses the landing and reports eight routes believing nine). A fetch is a call to a Name or a
+pairs are derived from the kernel's GET dispatch by an AST walk (route_getters), never restated. It reads three shapes. Two are
+an `if` comparing one Name against a string literal by EQUALITY (`if p == "/sw.js": return self._send(200, _sw_js(), ...)`) or
+by MEMBERSHIP in a tuple of literals (`if p in ("/", ""):`) whose body returns a call carrying a call to a derived getter with
+no arguments. The third is a ROUTE TABLE, the kernel's page dispatch since the merge of main's login cookie split (2026-09-28):
+a dict literal bound to a Name, its keys string literals and its values derived getters named bare (`_PAGE_RENDERERS = {"":
+_landing, "/": _landing, "/chat": _chat_page, ...}`), looked up as `<v> = <table>.get(<Name>)` in a function that returns a
+call carrying `<v>()` with no arguments (`_page = _PAGE_RENDERERS.get(p)`, `return self._send(200, _page(), ...)`). Before that
+branch the walk found the service worker alone on the merged kernel, so every fetched row over a page left the population and
+the container census below read no page; with it the kernel's routes are the ten they were before the table (the landing twice,
+the seven pane pages, the service worker). The walk is shape-sensitive: it reads those three shapes and no other, so a fourth
+(a `match`, a comparison through a helper, a table whose value is a lambda or a getter called with arguments) is outside it
+until a branch is added and pinned in the form-space tests below (a naive equality walk misses the landing). A fetch is a call to a Name or a
 self.<method> (a test helper over the handler or an HTTP client) whose first argument is a string literal beginning with `/`
 that, without its ?query, is such a route, or a call to an attribute named `urlopen` whose first argument is a string literal,
 bare or `%`-formatted, of the form `http://127.0.0.1:%d/<route>?...token=...` (the `with ... as r` target is what it binds;
@@ -233,18 +239,41 @@ def page_getters():
     return sorted(set(names))
 
 
+def _returns_calling(fn, names):
+    """The Names of `names` that a Return inside `fn` calls with no arguments as an argument of the call it returns
+    (`return self._send(200, _page(), ...)` gives `_page`)."""
+    return {a.func.id for n in ast.walk(fn) if isinstance(n, ast.Return) and isinstance(n.value, ast.Call)
+            for a in n.value.args if isinstance(a, ast.Call) and not a.args and not a.keywords and isinstance(a.func, ast.Name) and a.func.id in names}
+
+
 @functools.lru_cache(maxsize=None)
 def route_getters(source=None):
     """{route: getter} for every path the kernel's GET dispatch serves from a served-text getter, by an AST walk over the kernel
-    source (or over `source`, a handler text, for the form-space pin) reading TWO shapes and no other: an `if` whose test compares
-    one Name against a string literal by equality (`if p == "/chat":`) or by membership in a tuple of string literals (`if p in
-    ("/", ""):`, the landing's form), and whose body returns a call carrying a call to a derived getter with no arguments
-    (`return self._send(200, _chat_page(), ...)`). Shape-sensitive by design (the author's pass 8, 2026-09-20): a third shape needs a third
-    branch here and a case in the form-space test; an equality-only walk misses the landing."""
+    source (or over `source`, a handler text, for the form-space pin) reading THREE shapes and no other. Two are an `if` whose test
+    compares one Name against a string literal by equality (`if p == "/sw.js":`) or by membership in a tuple of string literals
+    (`if p in ("/", ""):`, the landing's form before the route table), and whose body returns a call carrying a call to a derived
+    getter with no arguments (`return self._send(200, _sw_js(), ...)`). The third is a ROUTE TABLE (the merge of main's login cookie
+    split, 2026-09-28, which moved every page onto one): a dict literal bound to a Name, its keys string literals, read in a function
+    as `<v> = <table>.get(<Name>)`, that function returning a call carrying `<v>()` with no arguments (`_page =
+    _PAGE_RENDERERS.get(p)`, then `return self._send(200, _page(), ...)`); each key whose value is a derived getter named bare
+    (`"/chat": _chat_page`) is a route of that getter, and a value of any other form (a lambda, a getter called with arguments, a
+    name that is no derived getter) binds nothing. Shape-sensitive by design (the author's pass 8, 2026-09-20): a fourth shape needs
+    a fourth branch here and a case in the form-space test; an equality-only walk misses the landing, and a walk without the table
+    finds only the service worker on the kernel."""
     tree = ast.parse(_kernel_source() if source is None else source)
     getters = set(page_getters())
     routes = {}
+    tables, lookups, functions = {}, [], []
     for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.append(node)
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            v = node.value
+            if isinstance(v, ast.Dict) and v.keys and all(isinstance(k, ast.Constant) and isinstance(k.value, str) for k in v.keys):
+                tables[node.targets[0].id] = v
+            elif isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr == "get" and isinstance(v.func.value, ast.Name) \
+                    and v.args and isinstance(v.args[0], ast.Name):
+                lookups.append((node.lineno, node.targets[0].id, v.func.value.id))
         if not (isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and len(node.test.ops) == 1 and isinstance(node.test.left, ast.Name)):
             continue
         op, right = node.test.ops[0], node.test.comparators[0]
@@ -258,6 +287,19 @@ def route_getters(source=None):
                   for a in n.value.args if isinstance(a, ast.Call) and not a.args and not a.keywords and isinstance(a.func, ast.Name) and a.func.id in getters]
         for path in paths if served else ():
             routes[path] = served[0]
+    # the route table: each lookup is read in the innermost function holding its line, and counts only where that function returns
+    # a call carrying the looked-up Name called bare
+    for line, var, table in lookups:
+        holders = [f for f in functions if f.lineno <= line <= f.end_lineno]
+        if table not in tables or not holders:
+            continue
+        fn = min(holders, key=lambda f: f.end_lineno - f.lineno)
+        if var not in _returns_calling(fn, {var}):
+            continue
+        d = tables[table]
+        for k, v in zip(d.keys, d.values):
+            if isinstance(v, ast.Name) and v.id in getters:
+                routes.setdefault(k.value, v.id)
     return routes
 
 
@@ -1036,8 +1078,9 @@ class ServedPinsReadElements(unittest.TestCase):
     @unittest.skipUnless(sys.version_info[:2] == _CENSUS_CELL, _ONE_CELL_REASON)
     def test_no_assertion_over_a_served_text_is_satisfiable_by_a_comment(self):
         getters, constants, routes = page_getters(), served_constants(), route_getters()
-        # the fetched-route map, derived from the handler by the walk: the landing's membership form and an equality form both read
-        self.assertEqual((routes.get("/"), routes.get("")), ("_landing", "_landing"), "the landing's membership route: %r" % (routes,))
+        # the fetched-route map, derived from the handler by the walk: the landing (through the route table since the merge of main's
+        # login cookie split, through the membership form before it) and an equality route both read
+        self.assertEqual((routes.get("/"), routes.get("")), ("_landing", "_landing"), "the landing's routes: %r" % (routes,))
         self.assertTrue([r for r, g in routes.items() if r not in ("/", "")], "an equality route: %r" % (routes,))
         self.assertEqual(sorted(set(routes.values()) - set(getters)), [], "every route's getter is a derived getter")
         texts = dict(pages())
@@ -1551,7 +1594,8 @@ def _kw(self, lit, body):
         # the author's pass 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A
         # synthetic handler with both shapes pins the two: the landing's membership tuple and the equality routes; a route
         # returning json.dumps, a getter called with arguments and a prefix test bind nothing. An equality-only walk misses the
-        # landing here and on the kernel (eight routes believing nine).
+        # landing here. On the kernel the landing is served through the route table since the merge of main's login cookie split
+        # (the next test pins that shape), and the service worker by equality.
         handler = '''
 def do_GET(self):
     p = "/x"
@@ -1570,9 +1614,46 @@ def do_GET(self):
 '''
         self.assertEqual(route_getters(handler), {"/": "_landing", "": "_landing", "/chat": "_chat_page", "/sw.js": "_sw_js"})
         real = route_getters()
-        self.assertEqual((real.get("/"), real.get("")), ("_landing", "_landing"), "the landing's membership form on the kernel: %r" % (real,))
+        self.assertEqual((real.get("/"), real.get("")), ("_landing", "_landing"), "the landing on the kernel: %r" % (real,))
         self.assertIn("/sw.js", real, "an equality route on the kernel: %r" % (real,))
         self.assertEqual(sorted(set(real.values()) - set(page_getters())), [], real)
+
+    def test_the_route_walk_reads_the_route_table(self):
+        # the merge of main's login cookie split (2026-09-28): the kernel's pages moved from `if` branches onto one table,
+        # `_PAGE_RENDERERS = {"": _landing, "/": _landing, "/chat": _chat_page, ...}`, looked up by the dispatch as `_page =
+        # _PAGE_RENDERERS.get(p)` and served by `return self._send(200, _page(), ...)`, and the two-shape walk found the service
+        # worker alone on the kernel: the fetched rows over every page left the pins census's population, and the container census
+        # read no page. A synthetic handler pins the third shape: a table's keys whose values are derived getters named bare are
+        # routes when a function looks the table up and returns a call carrying the looked-up name called bare. A lambda value, a
+        # value that is no derived getter, a table nothing looks up, a lookup whose result is never called in a return, and a
+        # lookup in one function with the call in another bind nothing. A walk without the table branch reds here (the synthetic
+        # table's three routes missing) and on the kernel (no landing, no pane page).
+        handler = '''
+PAGES = {"": _landing, "/": _landing, "/chat": _chat_page, "/shim": lambda: _shim_core_js("chat"), "/nope": _not_a_getter}
+UNREAD = {"/feed": _feed_page}
+UNCALLED = {"/timeline": _timeline_page}
+APART = {"/files": _files_page}
+def do_GET(self):
+    p = "/x"
+    page = PAGES.get(p)
+    if page is not None:
+        return self._send(200, page(), "text/html")
+    other = UNCALLED.get(p)
+    if other is not None:
+        return self._send(200, json.dumps(str(other)), "application/json")
+    if p == "/sw.js":
+        return self._send(200, _sw_js(), "text/javascript")
+def lookup_only(self, p):
+    found = APART.get(p)
+    return found
+def call_only(self):
+    return self._send(200, found(), "text/html")
+'''
+        self.assertEqual(route_getters(handler), {"": "_landing", "/": "_landing", "/chat": "_chat_page", "/sw.js": "_sw_js"})
+        real = route_getters()
+        pages_ = {g for g in real.values() if getter_kind(g) == "markup"}
+        self.assertGreaterEqual(len(pages_), 8, "the landing and the pane pages on the kernel, through its route table: %r" % (real,))
+        self.assertEqual(sorted(pages_ - set(page_getters())), [], real)
 
 
 if __name__ == "__main__":
