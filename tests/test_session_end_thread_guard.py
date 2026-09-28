@@ -20,12 +20,12 @@ put a TestCase's second stored error in its place. The guard writes the same tex
 no report hook can change; a worker's stderr is the controller's.
 
 Pinned by running pytest in a child over synthetic files in a scratch directory outside tests/, with tests/conftest.py
-loaded as a plugin (`-p tests.conftest`), serially and under -n 2 (the shape tests/test_served_tests_require.py and
-tests/test_tempdir_hygiene.py use). The child's environment is built from a rule (PATH, a fresh HOME and TMPDIR, the
-checkout on PYTHONPATH with bytecode writing off (PYTHONDONTWRITEBYTECODE), the locale, PYTHON_GIL and LD_LIBRARY_PATH
-when this process has them, the plant's own output directory, and any variable a pin adds), never this process's
-environment filtered, since collecting the suite writes variables of its own at import (among them the floors in
-tests/__init__.py and tests/conftest.py).
+loaded as a plugin (`-p tests.conftest`; the innermost-wrapper runs below load it as the suite does), serially and under
+-n 2 (the shape tests/test_served_tests_require.py and tests/test_tempdir_hygiene.py use). The child's environment is
+built from a rule (PATH, a fresh HOME and TMPDIR, the checkout on PYTHONPATH with bytecode writing off
+(PYTHONDONTWRITEBYTECODE), the locale, PYTHON_GIL and LD_LIBRARY_PATH when this process has them, the plant's own output
+directory, and any variable a pin adds), never this process's environment filtered, since collecting the suite writes
+variables of its own at import (among them the floors in tests/__init__.py and tests/conftest.py).
 The children run with CI's pytest-timeout flags when pytest-timeout is installed (CI installs it on every cell), so the
 guard's exclusion of that plugin's own timer, alive through every test's teardown, is exercised by the green runs.
 
@@ -123,6 +123,19 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   green runs naming them. A last test whose own fixture fails at teardown is checked too, after the runner's error: the
   report names the leaked thread after the fixture's error, unmarked serially, and under an xfail mark serially and
   under -n 2, where pytest's skipping plugin would otherwise make that error an xfail and leave the run green.
+- The guard is the INNERMOST TEARDOWN WRAPPER (trylast), so its check runs inside the pytest_runtest_teardown wrappers
+  of pytest's capture and logging plugins, which are still capturing then. A leaked non-daemon thread writes a line to
+  stdout and one to stderr, and logs a warning, when the guard's join first waits for it (the join waits for those
+  writes, so they happen inside the check, and the thread's marker records them). The run fails, and each of the three
+  is in the report's Captured stdout, stderr or log teardown section and nowhere else in the output, serially and under
+  -n 2, where the report is how a worker's stdout reaches the controller. The child loads tests/conftest.py as the
+  suite does, through the scratch conftest's pytest_plugins, after pytest's capture plugin registers and before its
+  logging plugin does; `-p tests.conftest`, as the other child runs load it, registers it before both, where an
+  unordered wrapper is the innermost too. Red with trylast changed to tryfirst, which puts the guard outside both
+  plugins' wrappers: the report has no Captured teardown section, the stdout line is printed raw serially and lost
+  under -n 2, the stderr line is raw on the child's stderr, and the record is in no report. Red with the ordering
+  keyword dropped, which puts the guard inside the logging plugin's wrapper and outside the capture plugin's: the same
+  for the stdout and stderr lines, and the record is captured.
 
 - A thread listed while its start() is still running, which Thread.join refuses with a RuntimeError, is read again on
   the guard's next pass rather than raised (JoinRace, in this process under the conftest: a thread never started, which
@@ -142,13 +155,13 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   pytest-worker, Timers whose functions are in pytest_asyncio and pytest_testmon).
 
 Each child-run pin was run with the guard removed from tests/conftest.py and fails there: the leak, idle-worker,
-daemon-started-pool, missing-table, xfail (the fixture-teardown one under xfail among them), redaction, stderr-header
-and table-changing runs pass (exit 0, no error), the green runs' witness finds the within-cap threads alive at
-sessionfinish, the TestCase whose body and cleanup both skip passes (2 skipped), and the two-error runs (the redaction
-one among them), the TestCase whose cleanup fails through pytest.fail and the unmarked fixture-teardown run, red on the
-TestCase's or the fixture's own errors, find no thread named in the report. The fixture-teardown runs also fail with
-the guard as it was before it ran after a failing teardown of the runner, on the same outcomes. The two-error runs also fail with the guard
-as it was before it wrote to stderr, on the same missing name.
+daemon-started-pool, missing-table, xfail (the fixture-teardown one under xfail among them), redaction, stderr-header,
+table-changing and innermost-wrapper runs pass (exit 0, no error), the green runs' witness finds the within-cap threads
+alive at sessionfinish, the TestCase whose body and cleanup both skip passes (2 skipped), and the two-error runs (the
+redaction one among them), the TestCase whose cleanup fails through pytest.fail and the unmarked fixture-teardown run,
+red on the TestCase's or the fixture's own errors, find no thread named in the report. The fixture-teardown runs also
+fail with the guard as it was before it ran after a failing teardown of the runner, on the same outcomes. The two-error
+runs also fail with the guard as it was before it wrote to stderr, on the same missing name.
 The pins for the exit-join tables, as this file has them, were run serially on 3.12 against the guard as it was before
 it read the tables, when it waited for non-daemon threads only, and every one that reads the guard fails there. Of the
 child runs, the four daemon-started-pool runs (busy and idle, serially and under -n 2) and each missing-table run exit 0
@@ -587,24 +600,81 @@ def test_leak_fixture_teardown_fails_under_xfail(fails_at_teardown):
     raise AssertionError("plant: the body failed, as its xfail mark expects")
 '''
 
+# what the thread of WRITES_WHILE_JOINED_TEST writes to stdout and to stderr, and logs, while the guard waits for it
+WROTE_STDOUT = "plant: a line to stdout, written while the guard waits"
+WROTE_STDERR = "plant: a line to stderr, written while the guard waits"
+WROTE_LOG = "plant: a warning logged while the guard waits"
+# a leaked non-daemon thread that, when a join first waits for it (the guard's: nothing else joins it), writes a line to
+# stdout and one to stderr, logs a warning, and writes its `wrote` marker, then runs on until the release. Its join waits
+# for those writes before it waits for the thread, so they happen inside the guard's check. A plain daemon thread wakes
+# it at the release when no join came (a run without the guard), and it then ends without writing, so the process exits
+WRITES_WHILE_JOINED_TEST = '''
+import logging
+import sys
+
+
+class _WritesWhenJoined(threading.Thread):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.wake, self.joined, self.wrote = threading.Event(), threading.Event(), threading.Event()
+
+    def join(self, timeout=None):
+        self.joined.set()           # a join, the guard's, waits for this thread now
+        self.wake.set()
+        self.wrote.wait(60)         # and goes on to wait for the thread once it has written
+        return super().join(timeout)
+
+
+def _writes_when_joined():
+    me = threading.current_thread()
+    me.wake.wait(120)               # set by the guard's join, or at the release when no join came
+    if not me.joined.is_set():
+        return
+    print({out!r}, flush=True)
+    sys.stderr.write({err!r} + "\\n")
+    sys.stderr.flush()
+    logging.getLogger("plant").warning({log!r})
+    with open(os.path.join(os.environ["PLANT_OUT"], "wrote-%d.json" % os.getpid()), "w") as f:
+        json.dump(time.monotonic(), f)
+    me.wrote.set()
+    plant_shared.RELEASE.wait(120)  # runs on past the guard's cap, so the guard fails naming it
+
+
+def _wakes_at_release(writer):
+    plant_shared.RELEASE.wait(120)
+    writer.wake.set()
+
+
+def test_leak_that_writes_while_the_guard_waits():
+    writer = _WritesWhenJoined(target=_writes_when_joined, name="plant-leaked")
+    _start("writes", [writer, threading.Thread(target=_wakes_at_release, args=(writer,), name="plant-daemon-waker",
+                                               daemon=True)])
+'''.format(out=WROTE_STDOUT, err=WROTE_STDERR, log=WROTE_LOG)
+# prepended to the scratch conftest by _run(suite_order=True): tests/conftest.py registered as the suite registers it
+SUITE_ORDER = 'pytest_plugins = ["tests.conftest"]\n'
+
 
 class SessionEndThreadGuard(unittest.TestCase):
-    def _run(self, plant, *, cap=None, workers=None, drop=None, env_extra=None, conftest_extra=""):
+    def _run(self, plant, *, cap=None, workers=None, drop=None, env_extra=None, conftest_extra="", suite_order=False):
         """pytest in a child over the plant `plant` (PLANT's helpers plus test functions), tests/conftest.py loaded as a
         plugin. Returns (exit status, the child's output (its stdout, STDERR_LINE, then its stderr; _channels splits
         them), {pid: [[name, daemon]] started}, {pid: {within-cap thread name:
         its end time}}, {pid: {"alive": plant threads alive at pytest_sessionfinish, "t": that time, "cap": the guard's
         cap}}, {"release": {pid: time of the scratch conftest's stop at pytest_unconfigure}, "atexit": {pid: time of the
-        process's atexit handler}}), the times from each process's monotonic clock. `drop`, a (module, attribute) pair,
-        is deleted by the scratch conftest for the session. `env_extra` adds variables to the child's environment, and
-        `conftest_extra` is code appended to the scratch conftest."""
+        process's atexit handler}, "wrote": {pid: time of WRITES_WHILE_JOINED_TEST's writes}}), the times from each
+        process's monotonic clock. `drop`, a (module, attribute) pair, is deleted by the scratch conftest for the session.
+        `env_extra` adds variables to the child's environment, and `conftest_extra` is code appended to the scratch
+        conftest. tests/conftest.py is loaded with `-p tests.conftest`, which registers it before pytest's capture and
+        logging plugins; `suite_order` loads it as the suite does, registered during pytest's initial conftests (the
+        scratch conftest's pytest_plugins, SUITE_ORDER), after the capture plugin and before the logging plugin."""
         d = os.path.realpath(tempfile.mkdtemp(prefix="tg-"))       # resolved: macOS temp dirs sit under a symlink
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         case, out, home, tmp = (os.path.join(d, n) for n in ("case", "out", "home", "tmp"))
         for p in (case, out, home, tmp):
             os.makedirs(p)
+        conftest = (SUITE_ORDER if suite_order else "") + CONFTEST.format(cap=cap, drop=drop) + conftest_extra
         for name, body in (("plant_shared.py", SHARED),
-                           ("conftest.py", CONFTEST.format(cap=cap, drop=drop) + conftest_extra),
+                           ("conftest.py", conftest),
                            ("test_plant.py", PLANT.format(within=WITHIN_S, hold=EXIT_HOLD_S) + plant)):
             with open(os.path.join(case, name), "w") as f:
                 f.write(body)
@@ -615,10 +685,11 @@ class SessionEndThreadGuard(unittest.TestCase):
         env.update((k, os.environ[k]) for k in ("LANG", "LC_ALL", "LC_CTYPE", "PYTHON_GIL", "LD_LIBRARY_PATH")
                    if k in os.environ)
         env.update(env_extra or {})
-        argv = [sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider", "-q", "--rootdir", case]
+        argv = [sys.executable, "-m", "pytest"] + ([] if suite_order else ["-p", "tests.conftest"])
+        argv += ["-p", "no:cacheprovider", "-q", "--rootdir", case]
         argv += TIMEOUT_FLAGS + (["-n", str(workers)] if workers is not None else []) + ["test_plant.py"]
         r = subprocess.run(argv, cwd=case, env=env, capture_output=True, text=True, timeout=180)
-        started, ended, finish, marks = {}, {}, {}, {"release": {}, "atexit": {}}
+        started, ended, finish, marks = {}, {}, {}, {"release": {}, "atexit": {}, "wrote": {}}
         for name in sorted(os.listdir(out)):
             with open(os.path.join(out, name)) as f:
                 data = json.load(f)
@@ -851,6 +922,69 @@ class SessionEndThreadGuard(unittest.TestCase):
         rc, out, started, _ended, finish, marks = self._run(FIXTURE_TEARDOWN_FAILS_XFAIL_TEST, cap=LEAK_CAP_S, workers=2)
         self._assert_fixture_teardown_error_and_leak_reported(rc, out, started, finish, marks)
         self.assertRegex(out, r"\b1 xfailed\b", "the body's own outcome is still reported:\n" + out)
+        self.assertRegex(out, r"ERROR at teardown of test_\w+ _+\n\[gw\d+\] ", "the report came from a worker:\n" + out)
+
+    # -- the guard is the innermost teardown wrapper: what a thread writes while it waits is captured -------------------
+
+    @staticmethod
+    def _captured_sections(report):
+        """The report's captured-output sections as {title: text}, each from its `---- Captured <what> <phase> ----` line
+        to the next line of that shape or a headline (`____ ERROR at ... ____`, `==== ... ====`)."""
+        parts = re.split(r"^[-=_]{3,} (.+?) [-=_]{3,}$", report, flags=re.M)
+        return {title: text for title, text in zip(parts[1::2], parts[2::2]) if title.startswith("Captured ")}
+
+    def _assert_written_while_the_guard_waits_is_captured(self, rc, out, started, marks):
+        """What the serial and the two-worker runs share. The leaked thread fails the run, named once in the report and
+        once on stderr; the premise, its `wrote` marker, says it wrote while the guard's join waited for it; and what it
+        wrote to stdout and to stderr, and logged, is each in the report's Captured stdout, stderr or log teardown
+        section, and nowhere else in the child's output."""
+        report, err = self._channels(out)
+        self.assertIn("plant-leaked", {n for names in started.values() for n, _daemon in names}, "the plant ran:\n" + out)
+        self.assertEqual(rc, 1, "the leaked thread fails the run:\n" + out)
+        self.assertEqual(len(re.findall(r"ERROR at teardown of test_", out)), 1, "one error, at a teardown:\n" + out)
+        self.assertEqual(report.count("thread 'plant-leaked' (ident "), 1, "the report names the leaked thread once:\n"
+                         + out)
+        self.assertEqual(err.count("thread 'plant-leaked' (ident "), 1, "stderr names the leaked thread once:\n" + out)
+        self.assertNotIn("plant-daemon", out, "the plain daemon thread that would wake the leaked one at the release is "
+                         "not named:\n" + out)
+        self.assertEqual(len(marks["wrote"]), 1, "the premise: the thread wrote, once, while the guard's join waited for "
+                         "it (its `wrote` marker):\n" + out)
+        sections = self._captured_sections(report)
+        # each in its own subTest, so each one's outcome is reported whatever the others'
+        for what, text, did in (("stdout", WROTE_STDOUT, "wrote to stdout"), ("stderr", WROTE_STDERR, "wrote to stderr"),
+                                ("log", WROTE_LOG, "logged")):
+            with self.subTest(captured=what):
+                self.assertIn(text, sections.get("Captured %s teardown" % what, ""), "what the thread %s while the guard "
+                              "waited for it is in the report's Captured %s teardown section (the guard's check runs "
+                              "inside the teardown wrappers of pytest's capture and logging plugins):\n%s"
+                              % (did, what, out))
+                self.assertEqual(out.count(text), 1, "and nowhere else in the child's output:\n" + out)
+
+    def test_the_guard_is_the_innermost_teardown_wrapper_so_what_a_thread_writes_while_it_waits_is_captured(self):
+        """The guard's wrapper is trylast, the innermost pytest_runtest_teardown wrapper, so its check, which follows its
+        yield, runs inside the teardown wrappers of pytest's capture and logging plugins, while both are still capturing.
+        What a thread writes to stdout or stderr, or logs, while the guard waits for it is then captured into that
+        teardown's report and prints with the guard's error, under the report's Captured stdout, stderr and log teardown
+        sections, below the stack the guard names the thread with. That matters when reading the failure: what the
+        thread wrote as the guard waited for it to end is printed with the error that names it, and under pytest-xdist
+        the report is the only channel on which a worker's stdout reaches the controller, since a worker's own stdout
+        goes to /dev/null. Marked tryfirst, the guard runs outside both plugins' wrappers; unordered, outside the capture
+        plugin's and inside the logging plugin's (the suite's conftest registers after the capture plugin and before the
+        logging plugin, and of wrappers marked neither tryfirst nor trylast pluggy calls the later registered first,
+        outermost). Outside the capture plugin's wrapper, the plugin has stopped capturing and read that teardown's
+        output before the check starts, and the thread's lines go out raw: serially, to the terminal; under xdist, the
+        stdout line to the worker's /dev/null and the stderr line to the controller's stderr. Outside the logging
+        plugin's wrapper, the record is in no report. The child loads tests/conftest.py as the suite does (_run's
+        suite_order), since `-p tests.conftest` registers it before both plugins, where an unordered wrapper is the
+        innermost too."""
+        rc, out, started, _ended, _finish, marks = self._run(WRITES_WHILE_JOINED_TEST, cap=LEAK_CAP_S, suite_order=True)
+        self._assert_written_while_the_guard_waits_is_captured(rc, out, started, marks)
+
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
+    def test_under_two_workers_what_a_thread_writes_while_the_guard_waits_reaches_the_controller_in_the_report(self):
+        rc, out, started, _ended, _finish, marks = self._run(WRITES_WHILE_JOINED_TEST, cap=LEAK_CAP_S, workers=2,
+                                                             suite_order=True)
+        self._assert_written_while_the_guard_waits_is_captured(rc, out, started, marks)
         self.assertRegex(out, r"ERROR at teardown of test_\w+ _+\n\[gw\d+\] ", "the report came from a worker:\n" + out)
 
     # -- a value the report masks is masked on stderr too --------------------------------------------------------------

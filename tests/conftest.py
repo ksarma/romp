@@ -1782,17 +1782,21 @@ def _thread_report(t, frames):
 
 def _guard_failure_into_report(item, call, rep):
     """The guard's failure kept in its teardown report, for this file's one pytest_runtest_makereport hookwrapper. That
-    wrapper runs outside pytest's own report hooks and reads the report they built (pluggy calls the hookwrapper
-    registered last first, and this file registers after pytest's plugins), and two of those hooks change the report of
-    a teardown the guard failed: pytest's skipping plugin makes the error of an xfail-marked test an xfail, which leaves
-    the run green, and its unittest plugin puts a TestCase's second stored error (a body and a cleanup that both fail)
-    into the report in place of the guard's, which then names no thread. So a teardown report whose item's stash holds
-    the guard's failure (pytest_runtest_teardown records it there) is marked failed, and loses the skipping plugin's
-    wasxfail (pytest's session counts a failed report toward the run's exit status only without one), and when the error
-    it carries is not the guard's, the guard's text is added after that error. That is the unittest case, and also a
-    teardown whose runner raised first (a fixture's teardown failed): pytest_runtest_teardown runs the guard after that
-    error and raises that error again, so it is the one the report carries. The wrapper redacts the report after this
-    step, so the added text goes through the same redaction as the rest of the report and the guard's stderr copy."""
+    wrapper runs outside the report hooks of pytest's skipping and unittest plugins and reads the report as they leave
+    it (the unittest plugin's is not a wrapper, and every wrapper runs around the implementations that are not; the
+    skipping plugin's is a wrapper marked, as this one is, neither tryfirst nor trylast, pluggy calls the later
+    registered of two such wrappers first, and this file registers after that plugin). Pytest's tmpdir plugin's report
+    wrapper, marked tryfirst, runs outside this one; it reads the report, recording whether the phase passed, and
+    changes nothing in it. The skipping and unittest hooks change the report of a teardown the guard failed: pytest's
+    skipping plugin makes the error of an xfail-marked test an xfail, which leaves the run green, and its unittest
+    plugin puts a TestCase's second stored error (a body and a cleanup that both fail) into the report in place of the
+    guard's, which then names no thread. So a teardown report whose item's stash holds the guard's failure
+    (pytest_runtest_teardown records it there) is marked failed, and loses the skipping plugin's wasxfail (pytest's
+    session counts a failed report toward the run's exit status only without one), and when the error it carries is not
+    the guard's, the guard's text is added after that error. That is the unittest case, and also a teardown whose runner
+    raised first (a fixture's teardown failed): pytest_runtest_teardown runs the guard after that error and raises that
+    error again, so it is the one the report carries. The wrapper redacts the report after this step, so the added text
+    goes through the same redaction as the rest of the report and the guard's stderr copy."""
     if call.when != "teardown":
         return
     failure = item.stash.get(_GUARD_FAILURE, None)
