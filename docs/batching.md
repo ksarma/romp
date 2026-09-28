@@ -174,10 +174,16 @@ subject; `verify` refuses the branch otherwise.
    (pytest and its plugins, cryptography, and the Claude Agent SDK at the pin its SDK step reads),
    so the SDK-gated tests run as they do in CI. The runner builds the venv from `--python`
    (default: the interpreter running `sweep.py`) under `<state dir>/sweeps/sdk/`: the first sweep at
-   a new pin or interpreter builds it (a download of about 110 MB), and later sweeps reuse it. If
-   the build fails, the sweep is refused with nothing recorded, and the message names the failed
-   step and its log. A head whose `ci.yml` lacks one of those install steps is refused the same way;
-   merge main into it. `--wrap LEG=PREFIX` runs a leg
+   a new pin or interpreter builds it (a download of about 110 MB), and later sweeps reuse it. A
+   sweep reuses the venv only while its files match what its build wrote (new
+   bytecode aside), so a file a test left in it is not carried into later sweeps: the next sweep
+   builds it again, and a sweep that finds the venv changed after its pytest leg is invalid. A
+   rebuild waits for any other sweep still using the venv. If the build fails, the sweep is refused
+   with nothing recorded, and the message names the failed step and its log. A head whose `ci.yml`
+   lacks one of those install steps is refused the same way; merge main into it. So is a `ci.yml`
+   whose python job holds something else that could change what CI installs (an `env:`, `if:` or
+   `working-directory:` on an install step, an `env:` or `defaults:` on the job or the workflow, or
+   a step the runner does not read, named or not); change the runner with it. `--wrap LEG=PREFIX` runs a leg
    under this machine's slot or scope wrapper (the wrap keeps your environment; the leg does not
    see what it sets). The legs run in a private clone of the batch
    head's exact sha under the state dir, verified against the sha's tree first, never in the batch

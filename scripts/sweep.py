@@ -29,8 +29,10 @@ other file exists that no rule of a tracked .gitignore ignores (a .gitignore a l
 info/exclude or a commit made in the clone excuses nothing); after the deps leg, when an ignored file exists
 outside vscode-extension/node_modules (bytecode, or a test module the tracked .gitignore covers, which pytest
 would load); when the clone's .git was replaced or its HEAD, config or info/exclude changed; or when one of
-those names is now in an ancestor directory. That is the runner's one producer of invalid, and the legs after
-it do not run. The batcher's tree is read for its HEAD sha and branch only, so it need not
+those names is now in an ancestor directory. After the pytest leg it also reads the pytest leg's environment (the
+venv below) against the tree its build left, and records the run invalid, naming the paths, when a file there was
+added, changed or is gone. That re-read after each leg is the runner's one producer of invalid, and the legs after it
+do not run. The batcher's tree is read for its HEAD sha and branch only, so it need not
 be clean: the runner prints how many uncommitted edits it holds, which are not swept, and nothing done there
 during a run reaches a leg. Nor do its ignored files: a stale dist/ or out-tests/, bytecode, node_modules, or an
 untracked test the tracked .gitignore covers. The checkout's path is longer than a batch worktree's; TMPDIR, whose
@@ -55,14 +57,26 @@ The pytest leg runs in a venv the runner builds, not in --python itself (sdk_env
 (INSTALL_STEPS: pytest and its plugins, cryptography, and the Claude Agent SDK at the pin its SDK step reads from
 kernel/session_host.py), each run with the venv's python in place of `python`, as CI's Python cells run them. The
 runner reads those steps in a few line shapes (read_run) and restates nothing they install; a line it does not read,
-or a head whose ci.yml lacks one of the steps, is refused. The key covers the SDK's pin, --python's path and version
-and the install commands, so a pin change builds a new venv beside the old one (an old one stays until removed by
-hand), and a finished build is reused; unlike CI, which resolves the unpinned packages fresh on every run, a reused
-venv keeps the versions it resolved when it was built. The build runs under a lock per key, with a private HOME and
-pip's configuration files off, so no index, PYTHONPATH or SDK of the batcher's reaches it; an interpreter without
-ensurepip gets pip from PyPA's get-pip.py (ROMP_GET_PIP_URL overrides where from). A build that fails refuses the run
-(exit 2, nothing recorded, the venv removed), naming the step and its log, <key>.log beside the venv. The result
-records the key and the SDK's version as the venv's own metadata reports it (runner.sdk). The pytest leg's PATH leads
+or a head whose ci.yml lacks one of the steps, is refused. So is anything else in the file that could change what CI
+installs without changing a command the runner reads: a key on an install step other than name, run, shell (bash),
+timeout-minutes and continue-on-error (an env: such as PIP_CONSTRAINT, an if:, a working-directory:), a key of the
+python job other than the ones it has today (an env:, defaults: or container: among them), a workflow-level env: or
+defaults:, and a step of the job other than the install steps, Run pytest, and the unnamed checkout and setup-python
+steps (an unnamed run step, or a named one the runner does not read). The key covers the SDK's pin, --python's path
+and version and the install commands, so a pin change builds a new venv beside the old one (an old one stays until
+removed by hand), and a finished build is reused; unlike CI, which resolves the unpinned packages fresh on every run,
+a reused venv keeps the versions it resolved when it was built. The build runs with a private HOME and pip's
+configuration files off, so no index, PYTHONPATH or SDK of the batcher's reaches it; an interpreter without ensurepip
+gets pip from PyPA's get-pip.py (ROMP_GET_PIP_URL overrides where from). A build that fails refuses the run (exit 2,
+nothing recorded, the venv removed), naming the step and its log, <key>.log beside the venv. The build's marker
+records the venv's tree (every path's mode, and each file's size and sha256), and a run uses a finished venv only when
+its tree still matches that record (bytecode python adds under __pycache__ aside) and the venv's interpreter reports
+the version of the one it was built from: the pytest leg runs as the venv's python with the venv writable, so a file a
+test left there (a .pth file, which every later interpreter start executes) would otherwise reach every later sweep
+under the same key. A venv that does not match is built again, naming what differs. Each run holds a shared lock on
+the key until it ends, and a rebuild, which removes the venv first, takes the lock exclusively, so it waits for every
+run still using the venv. The result records the key, the SDK's version as the venv's own metadata reports it, the
+venv's interpreter version and a digest of its tree (runner.sdk). The pytest leg's PATH leads
 with the venv's bin, and the leg gets ROMP_SDK_REQUIRE=1 as CI's Run pytest step does, so the SDK-gated tests run and
 the pin test fails where the SDK does not import.
 
@@ -163,11 +177,26 @@ CI_PYTHON_JOB = "python"
 INSTALL_STEPS = ("Install pytest", "Install cryptography", "Install the Claude Agent SDK")
 # The step whose one pinned requirement is the SDK: its name and version are the pin the result records.
 SDK_STEP = INSTALL_STEPS[-1]
+# The python job as the runner reads it (read_install_plan), and nothing else: the job's own keys; its steps, which are
+# the INSTALL_STEPS, the pytest step, and unnamed setup steps that use one of SETUP_ACTIONS; and the keys an install
+# step may carry. Anything outside these could change what CI installs without changing a command the runner reads (an
+# env: such as PIP_CONSTRAINT, an if:, a working-directory: that moves the pin's sed read, a job's container: or
+# defaults:, a workflow-level env:), so it is refused by name rather than built without.
+PYTEST_STEP = "Run pytest"
+PYTHON_JOB_KEYS = ("name", "runs-on", "timeout-minutes", "strategy", "steps")
+SETUP_ACTIONS = ("actions/checkout", "actions/setup-python")
+INSTALL_STEP_KEYS = ("name", "run", "shell", "timeout-minutes", "continue-on-error")
+WORKFLOW_KEYS_REFUSED = ("env", "defaults")
 # Where pip comes from for an interpreter without ensurepip (Debian's and Ubuntu's system python split it into a
 # package of its own), as bin/romp-sdk-setup does; ROMP_GET_PIP_URL overrides it, as it does there.
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
-# The file a finished build writes last in the venv; a venv without it is a build that did not finish.
+# The file a finished build writes last in the venv; a venv without it is a build that did not finish. It records the
+# venv's tree as the build left it (venv_tree), which every later use compares with the venv's tree then.
 SDK_MARKER = "sweep-sdk.json"
+# How many times one run reads the venv under a shared lock before it refuses: each read that finds it stale is
+# followed by a build under the exclusive lock, so a venv that still does not match its build on the last read is
+# refused rather than built again.
+SDK_ATTEMPTS = 3
 # The most one command of the build may take (a pip install that downloads the SDK's wheel of about 100 MB included).
 SDK_STEP_TIMEOUT = 900
 # Test modules the pytest leg never collects, each with its reason (recorded in the result).
@@ -1435,13 +1464,21 @@ def probe(python, env, dists=(), what="the pytest interpreter"):
     return out
 
 
-def workflow_steps(text, job):
-    """{name: run text} of one job's named steps in a workflow file's text, read by line shape as CiParity reads it (the
-    runner imports nothing beyond the standard library, so no YAML parser): the job is the `  <job>:` line and the lines
-    under it indented four spaces or more; a step is a `      - name:` line and the lines under it; its run text is the
-    value on its `        run:` line or, for `run: |`, the block under it, less ten spaces of indent. A step with no run
-    line maps to None, one whose run is another block style (`|-`, `>`) to False, and a name given twice to False. None
-    when the file has no such job."""
+def workflow_keys(text):
+    """The top-level keys of a workflow file's text, each a `KEY:` line at column 0, in order."""
+    return re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_-]*):", text)
+
+
+def workflow_job(text, job):
+    """One job of a workflow file's text, read by line shape as CiParity reads it (the runner imports nothing beyond
+    the standard library, so no YAML parser): {"keys": [the job's own keys, each a `    KEY:` line, in order], "steps":
+    [step, ...]}, or None when the file has no `  <job>:` line. The job is that line and the lines under it indented
+    four spaces or more. A step is a `      - KEY:` line under the job's `steps:` key, whatever its first key, and the
+    lines under it indented eight spaces or more: {"keys": [its keys in order: the dash line's, then each key line
+    eight spaces in], "values": {key: the text after the colon, stripped}, "name": its name: value or None,
+    "run": its run text}. The run text is None with no run key, the value on the run line, or for `run: |` the block
+    under it less ten spaces of indent; False for another block style (`|-`, `>`) or a run key given twice. A comment
+    line is not a key."""
     lines = text.split("\n")
     if "  %s:" % job not in lines:
         return None
@@ -1450,31 +1487,45 @@ def workflow_steps(text, job):
         if line.strip() and not line.startswith("    "):
             break
         body.append(line)
-    steps, i = {}, 0
+    keys, steps, cur, in_steps, i = [], [], None, False, 0
+    key_re = r"([A-Za-z_][A-Za-z0-9_-]*):(.*)"
     while i < len(body):
-        m = re.fullmatch(r"      - name: (.*)", body[i])
+        line = body[i]
         i += 1
-        if not m:
+        m = re.fullmatch("    " + key_re, line)
+        if m:
+            keys.append(m.group(1))
+            in_steps, cur = m.group(1) == "steps", None
             continue
-        name, run = m.group(1).strip(), None
-        while i < len(body) and not body[i].startswith("      - ") and (body[i].startswith("        ") or not body[i].strip()):
-            k = re.fullmatch(r"        run:(.*)", body[i])
-            i += 1
-            if not k:
+        if not in_steps:
+            continue
+        m = re.fullmatch("      - " + key_re, line)
+        if m:
+            cur = {"keys": [], "values": {}, "name": None, "run": None}
+            steps.append(cur)
+        else:
+            m = re.fullmatch("        " + key_re, line) if cur is not None else None
+            if not m:
                 continue
-            value = k.group(1).strip()
-            if value == "|":
-                block = []
-                while i < len(body) and (body[i].startswith(" " * 10) or not body[i].strip()):
-                    block.append(body[i][10:])
-                    i += 1
-                run = "\n".join(block).strip("\n")
-            elif value[:1] in ("|", ">"):
-                run = False
-            else:
-                run = value
-        steps[name] = False if name in steps else run
-    return steps
+        key, value = m.group(1), m.group(2).strip()
+        cur["keys"].append(key)
+        cur["values"][key] = value
+        if key == "name":
+            cur["name"] = value
+        if key != "run":
+            continue
+        if value == "|":
+            block = []
+            while i < len(body) and (body[i].startswith(" " * 10) or not body[i].strip()):
+                block.append(body[i][10:])
+                i += 1
+            run = "\n".join(block).strip("\n")
+        elif value[:1] in ("|", ">"):
+            run = False
+        else:
+            run = value
+        cur["run"] = False if cur["keys"].count("run") > 1 else run
+    return {"keys": keys, "steps": steps}
 
 
 # The line shapes read_run reads in an install step's run text, and no others.
@@ -1627,7 +1678,12 @@ def read_install_plan(checkout, sha):
     "dist", "pin", "module"}. Each INSTALL_STEPS step of CI_PYTHON_JOB is read by read_run; the SDK is the one
     NAME==VERSION requirement SDK_STEP installs, and its import check names the module. Refused, naming the file and the
     step, when the file, the job, a step or its run text is missing or a line is one read_run does not read: a head whose
-    ci.yml predates one of the steps is not swept until it merges main."""
+    ci.yml predates one of the steps is not swept until it merges main. Refused as well, by name, for anything in the
+    file that could change what CI installs without changing a command read here: a workflow-level key of
+    WORKFLOW_KEYS_REFUSED, a job key outside PYTHON_JOB_KEYS, a step of the job other than the install steps, the pytest
+    step and an unnamed use of one of SETUP_ACTIONS (an unnamed run step, or a named one the runner does not read), a
+    step name given twice, and on an install step a key outside INSTALL_STEP_KEYS, a key given twice, or a shell other
+    than bash."""
     where = "%s at %s" % (CI_WORKFLOW, short(sha))
     try:
         with open(os.path.join(checkout, CI_WORKFLOW), encoding="utf-8") as f:
@@ -1635,21 +1691,60 @@ def read_install_plan(checkout, sha):
     except (OSError, UnicodeDecodeError) as e:
         raise Refused("%s cannot be read (%s); the pytest leg's environment is built from its %s job's install steps"
                       % (where, e, CI_PYTHON_JOB))
-    steps = workflow_steps(text, CI_PYTHON_JOB)
-    if steps is None:
+    for key in workflow_keys(text):
+        if key in WORKFLOW_KEYS_REFUSED:
+            raise Refused("%s has a workflow-level %s:, which reaches the install steps of its %s job; the runner builds the "
+                          "pytest leg's environment from those steps' commands alone, so it does not read a ci.yml with one"
+                          % (where, key, CI_PYTHON_JOB))
+    job = workflow_job(text, CI_PYTHON_JOB)
+    if job is None:
         raise Refused("%s has no %s job; the pytest leg's environment is built from its install steps" % (where, CI_PYTHON_JOB))
+    extra = [k for k in job["keys"] if k not in PYTHON_JOB_KEYS]
+    if extra:
+        raise Refused("%s: the %s job has %s, which the runner does not read (it reads a job whose keys are %s); a job key "
+                      "such as env:, defaults: or container: can change what the install steps install"
+                      % (where, CI_PYTHON_JOB, ", ".join(k + ":" for k in extra), ", ".join(PYTHON_JOB_KEYS)))
+    steps = {}
+    for n, st in enumerate(job["steps"], 1):
+        name = st["name"]
+        if name is None:
+            uses = st["values"].get("uses", "")
+            if set(st["keys"]) <= {"uses", "with"} and uses.partition("@")[0] in SETUP_ACTIONS and "@" in uses:
+                continue
+            raise Refused("%s: step %d of the %s job has no name (%s); the runner reads the job's steps by name, and an "
+                          "unnamed step other than a use of %s could install what the runner never sees"
+                          % (where, n, CI_PYTHON_JOB, ", ".join("%s: %s" % (k, st["values"][k]) for k in st["keys"][:2]),
+                             " or ".join(SETUP_ACTIONS)))
+        if name not in INSTALL_STEPS and name != PYTEST_STEP:
+            raise Refused("%s: the %s job has a step %r, which the runner does not read (it reads the install steps %s and "
+                          "%r); a step it does not read could install what the pytest leg's environment lacks"
+                          % (where, CI_PYTHON_JOB, name, ", ".join(repr(x) for x in INSTALL_STEPS), PYTEST_STEP))
+        if name in steps:
+            raise Refused("%s: the %s job names two steps %r" % (where, CI_PYTHON_JOB, name))
+        steps[name] = st
     plan = []
     for name in INSTALL_STEPS:
         if name not in steps:
             raise Refused("%s has no step %r in its %s job; the pytest leg's environment is built from the steps %s, so a head "
                           "whose ci.yml predates one of them is not swept: merge main into it"
                           % (where, name, CI_PYTHON_JOB, ", ".join(repr(n) for n in INSTALL_STEPS)))
-        run = steps[name]
+        st = steps[name]
+        step_where = "%s, step %r" % (where, name)
+        extra = [k for k in st["keys"] if k not in INSTALL_STEP_KEYS]
+        if extra:
+            raise Refused("%s has %s, which the runner does not read (an install step's keys are %s); a key such as env:, "
+                          "if: or working-directory: changes what the step installs without changing its commands"
+                          % (step_where, ", ".join(k + ":" for k in extra), ", ".join(INSTALL_STEP_KEYS)))
+        twice = sorted({k for k in st["keys"] if st["keys"].count(k) > 1})
+        if twice:
+            raise Refused("%s gives %s twice" % (step_where, ", ".join(k + ":" for k in twice)))
+        if "shell" in st["values"] and st["values"]["shell"] != "bash":
+            raise Refused("%s runs under shell: %s; the runner reads a step run by bash, CI's default" % (step_where, st["values"]["shell"]))
+        run = st["run"]
         if not run:
             raise Refused("%s: the step %r has %s" % (where, name, "no run line" if run is None else
-                                                      "a run the runner does not read (a block style other than |, or "
-                                                      "its name given twice)"))
-        plan.append({"step": name, "commands": read_run(run, checkout, "%s, step %r" % (where, name))})
+                                                      "a run the runner does not read (a block style other than |)"))
+        plan.append({"step": name, "commands": read_run(run, checkout, step_where)})
     sdk = plan[INSTALL_STEPS.index(SDK_STEP)]["commands"]
     pinned = [w for kind, cmd in sdk if kind == "pip" for w in cmd[4:] if "==" in w]
     if len(pinned) != 1:
@@ -1732,20 +1827,104 @@ def _build_sdk(venv, python, base, plan, env, log, tmpdir, where):
                 step(s["step"], [vpy] + cmd[1:])
 
 
-def sdk_environment(checkout, sha, python, tmpdir):
-    """The pytest leg's interpreter and its record for the result: a venv under <state dir>/sweeps/sdk/<key>, built from
-    --python with the install steps ci.yml holds at the swept sha (read_install_plan: pytest and its plugins,
-    cryptography, and the SDK at its pin), or the venv a finished build left under the same key (sdk_key: the pin,
-    --python's path and version, the commands). The record: key, path, python (the venv's), dist and pin (as ci.yml
-    reads them), version (the SDK's version as the venv's own metadata reports it), built (whether this run built it),
-    build_s, log (the build's log beside the venv), base_python and base_version.
+def venv_tree(venv):
+    """{relative path: entry} of every directory, file and symlink under the venv, links not followed, less SDK_MARKER:
+    ["dir", mode], ["link", target], ["file", mode, size, sha256 of its bytes], or ["other", its file type]. OSError when
+    a directory or file cannot be read."""
+    def fail(e):
+        raise e
+    out = {}
+    for d, dirs, files in os.walk(venv, onerror=fail):
+        rel = os.path.relpath(d, venv)
+        for x in dirs + files:
+            full = os.path.join(d, x)
+            key = os.path.normpath(os.path.join(rel, x))
+            if key == SDK_MARKER:
+                continue
+            st = os.lstat(full)
+            if stat.S_ISLNK(st.st_mode):
+                out[key] = ["link", os.readlink(full)]
+            elif stat.S_ISDIR(st.st_mode):
+                out[key] = ["dir", stat.S_IMODE(st.st_mode)]
+            elif stat.S_ISREG(st.st_mode):
+                h = hashlib.sha256()
+                with open(full, "rb") as f:
+                    for chunk in iter(lambda: f.read(1 << 20), b""):
+                        h.update(chunk)
+                out[key] = ["file", stat.S_IMODE(st.st_mode), st.st_size, h.hexdigest()]
+            else:
+                out[key] = ["other", stat.S_IFMT(st.st_mode)]
+    return out
 
-    A pin change is a new key, so a new venv beside the old one; an old one stays until it is removed by hand. The build
-    runs under a lock per key, so two runs never build one venv at once, and writes SDK_MARKER last: a venv without it (a
-    build that died) is removed and built again, and so is one whose probe no longer agrees with its marker. A build
-    that fails (a command exits nonzero or times out, the venv's SDK is not the pin, a module the pytest leg needs is
-    missing) removes the venv and is Refused, naming the step, the command and the log: exit 2, nothing recorded, as for
-    a failed --leg setup."""
+
+def venv_changes(built, now):
+    """The paths whose entry in `now` (venv_tree) differs from `built`, the tree the build left, each with how: added,
+    gone or changed. One kind of difference does not count: a __pycache__ directory, or a .pyc file under one, that was
+    added or is gone. python and pytest write bytecode there in normal use (pytest's rewritten plugin modules among it),
+    and pip compiles every module it installs, so an added .pyc can stand in only for a source the build left
+    uncompiled, and one that is gone is compiled again from its source; a .pyc the build wrote that changed counts, since
+    python would load it in place of its source."""
+    out = []
+    for path in sorted(set(built) | set(now)):
+        a, b = built.get(path), now.get(path)
+        if a == b:
+            continue
+        parts = path.split(os.sep)
+        if (a is None or b is None) and "__pycache__" in parts and (parts[-1] == "__pycache__" or path.endswith(".pyc")):
+            continue
+        out.append("%s (%s)" % (path, "added" if a is None else "gone" if b is None else "changed"))
+    return out
+
+
+class SdkHold:
+    """The pytest leg's environment as one run holds it from its check to the end of the run: a shared lock on the key's
+    lock file, so no other run rebuilds (which removes the venv) while this run's pytest leg may be running in it, and
+    the tree its build left, which changes() compares with the venv's tree now."""
+
+    def __init__(self, lock, venv, built):
+        self.lock, self.venv, self.built = lock, venv, built
+
+    def changes(self):
+        try:
+            return venv_changes(self.built, venv_tree(self.venv))
+        except OSError as e:
+            return ["%s cannot be read (%s)" % (self.venv, e)]
+
+    def release(self):
+        if self.lock is not None:
+            fcntl.flock(self.lock, fcntl.LOCK_UN)
+            self.lock.close()
+            self.lock = None
+
+
+def _flock(lock, how, sha, waiting):
+    try:
+        fcntl.flock(lock, how | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("sweep %s: %s" % (short(sha), waiting), flush=True)
+        fcntl.flock(lock, how)
+
+
+def sdk_environment(checkout, sha, python, tmpdir):
+    """The pytest leg's interpreter and its record for the result, and the SdkHold the run keeps until it ends: a venv
+    under <state dir>/sweeps/sdk/<key>, built from --python with the install steps ci.yml holds at the swept sha
+    (read_install_plan: pytest and its plugins, cryptography, and the SDK at its pin), or the venv a finished build left
+    under the same key (sdk_key: the pin, --python's path and version, the commands). The record: key, path, python (the
+    venv's), dist and pin (as ci.yml reads them), version (the SDK's version as the venv's own metadata reports it),
+    python_version (the venv's interpreter's whole sys.version), tree (sha256 of the tree its build left) and files (its
+    entries), built (whether this run built it), build_s, log (the build's log beside the venv), base_python and
+    base_version.
+
+    A pin change is a new key, so a new venv beside the old one; an old one stays until it is removed by hand. A build
+    writes SDK_MARKER last, recording the venv's tree as it left it (venv_tree). A run reads the venv under a shared lock
+    on the key, which it holds until it ends, so runs at other shas share a finished venv: the venv is used only when its
+    marker names its key, its tree matches the recorded one (venv_changes: so nothing a leg of an earlier run left in it,
+    such as a .pth file, reaches this run), and its probe reports the pin's SDK, the modules the pytest leg needs, and
+    the base interpreter's version. Anything else (no marker: a build that died) is rebuilt under the exclusive lock,
+    which waits for every other run holding it, so a rebuild never removes a venv another run's pytest leg is running
+    in. A build that fails (a command exits nonzero or times out, the venv's SDK is not the pin, a module the pytest leg
+    needs is missing) removes the venv and is Refused, naming the step, the command and the log: exit 2, nothing
+    recorded, as for a failed --leg setup."""
     # An absolute path: the build's commands run in a directory of their own under TMPDIR, removed when this returns,
     # so nothing the build leaves (pip's cache under its private HOME, get-pip.py) is in TMPDIR while the legs run.
     python = os.path.abspath(python) if os.sep in python else (shutil.which(python) or python)
@@ -1755,6 +1934,42 @@ def sdk_environment(checkout, sha, python, tmpdir):
         return _sdk_environment(checkout, sha, python, plan, work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def _sdk_check(venv, vpy, key, base, plan, env):
+    """(None, probe, tree) when the venv is a finished build of `key` that nothing has changed since, else (why, None,
+    None)."""
+    try:
+        with open(os.path.join(venv, SDK_MARKER)) as f:
+            marker = json.load(f)
+    except (OSError, ValueError):
+        return "no finished build", None, None
+    if not isinstance(marker, dict) or marker.get("key") != key:
+        return "its marker names another key", None, None
+    if not isinstance(marker.get("tree"), dict):
+        return "its marker records no tree", None, None
+    try:
+        tree = venv_tree(venv)
+    except OSError as e:
+        return "its tree cannot be read: %s" % e, None, None
+    moved = venv_changes(marker["tree"], tree)
+    if moved:
+        return ("it is not the tree its build wrote: %d path%s, %s%s" % (len(moved), "" if len(moved) == 1 else "s",
+                ", ".join(moved[:3]), ", ..." if len(moved) > 3 else "")), None, None
+    try:
+        got = probe(vpy, env, [plan["dist"]], what="the pytest leg's environment's interpreter")
+    except Refused as e:
+        return str(e), None, None
+    if got["dists"].get(plan["dist"]) != plan["pin"] or got["missing"]:
+        return ("it now has %s %s and lacks %s" % (plan["dist"], got["dists"].get(plan["dist"]),
+                                                   ", ".join(got["missing"]) or "nothing")), None, None
+    if got.get("full") != base.get("full"):
+        return "its interpreter is %r, not %r" % (got.get("full"), base.get("full")), None, None
+    return None, got, tree
+
+
+def _tree_digest(tree):
+    return hashlib.sha256(json.dumps(tree, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def _sdk_environment(checkout, sha, python, plan, tmpdir):
@@ -1767,61 +1982,67 @@ def _sdk_environment(checkout, sha, python, plan, tmpdir):
     vpy = os.path.join(venv, "bin", "python")
     log = venv + ".log"
     where = "the pytest leg's environment %s (%s==%s at %s, from %s)" % (key, plan["dist"], plan["pin"], short(sha), python)
-    rec = {"key": key, "path": venv, "python": vpy, "dist": plan["dist"], "pin": plan["pin"], "version": None, "built": False,
-           "build_s": 0.0, "log": log, "base_python": os.path.abspath(python), "base_version": base.get("version")}
+    rec = {"key": key, "path": venv, "python": vpy, "dist": plan["dist"], "pin": plan["pin"], "version": None,
+           "python_version": None, "tree": None, "files": None, "built": False, "build_s": 0.0, "log": log,
+           "base_python": os.path.abspath(python), "base_version": base.get("version")}
     lock = open(venv + ".lock", "a+")
+    stale = None
     try:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            print("sweep %s: waiting for another run's build of the pytest leg's environment %s" % (short(sha), key), flush=True)
-            fcntl.flock(lock, fcntl.LOCK_EX)
-        stale = None
-        try:
-            with open(os.path.join(venv, SDK_MARKER)) as f:
-                marker = json.load(f)
-            if not isinstance(marker, dict) or marker.get("key") != key:
-                stale = "its marker names another key"
-            else:
-                got = probe(vpy, env, [plan["dist"]], what="the pytest leg's environment's interpreter")
-                if got["dists"].get(plan["dist"]) != plan["pin"] or got["missing"]:
-                    stale = "it now has %s %s and lacks %s" % (plan["dist"], got["dists"].get(plan["dist"]),
-                                                               ", ".join(got["missing"]) or "nothing")
-        except (OSError, ValueError, Refused) as e:
-            stale = "no finished build" if isinstance(e, OSError) else str(e)
-        if stale is None:
-            rec["version"] = got["dists"][plan["dist"]]
-            print("sweep %s: the pytest leg's environment: %s %s (ci.yml's pin) in %s, built earlier"
-                  % (short(sha), plan["dist"], rec["version"], venv), flush=True)
-            return rec
-        if os.path.lexists(venv):
-            print("sweep %s: rebuilding the pytest leg's environment %s (%s)" % (short(sha), key, stale), flush=True)
-            shutil.rmtree(venv, ignore_errors=True)
-        print("sweep %s: building the pytest leg's environment %s: %s==%s from %s; log %s" % (
-            short(sha), key, plan["dist"], plan["pin"], python, log), flush=True)
-        t0 = time.monotonic()
-        try:
-            _build_sdk(venv, python, base, plan, env, log, tmpdir, where)
-            got = probe(vpy, env, [plan["dist"]], what="the pytest leg's environment's interpreter")
-            if got["dists"].get(plan["dist"]) != plan["pin"]:
-                raise Refused("%s: after the install steps the venv's %s is %s, not ci.yml's pin %s; log %s"
-                              % (where, plan["dist"], got["dists"].get(plan["dist"]), plan["pin"], log))
-            if got["missing"]:
-                raise Refused("%s: after the install steps the venv lacks %s, which the pytest leg needs; log %s"
-                              % (where, ", ".join(got["missing"]), log))
-            rec.update(version=got["dists"][plan["dist"]], built=True, build_s=round(time.monotonic() - t0, 2))
-            write_result(os.path.join(venv, SDK_MARKER), {"key": key, "dist": plan["dist"], "pin": plan["pin"],
-                                                          "version": rec["version"], "python": rec["base_python"],
-                                                          "python_version": base.get("full"), "built": now()})
-        except BaseException:
-            shutil.rmtree(venv, ignore_errors=True)
-            raise
-        print("sweep %s: the pytest leg's environment: %s %s (ci.yml's pin) in %s, built in %.0f s"
-              % (short(sha), plan["dist"], rec["version"], venv, rec["build_s"]), flush=True)
-        return rec
-    finally:
+        for _attempt in range(SDK_ATTEMPTS):
+            _flock(lock, fcntl.LOCK_SH, sha, "waiting for another run's build of the pytest leg's environment %s" % key)
+            stale, got, tree = _sdk_check(venv, vpy, key, base, plan, env)
+            if stale is None:
+                rec.update(version=got["dists"][plan["dist"]], python_version=got.get("full"), tree=_tree_digest(tree),
+                           files=len(tree))
+                print("sweep %s: the pytest leg's environment: %s %s (ci.yml's pin) in %s, %s"
+                      % (short(sha), plan["dist"], rec["version"], venv, "built in %.0f s" % rec["build_s"] if rec["built"]
+                         else "built earlier"), flush=True)
+                return rec, SdkHold(lock, venv, tree)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            _flock(lock, fcntl.LOCK_EX, sha, "waiting for the other runs using the pytest leg's environment %s to finish, "
+                   "to rebuild it (%s)" % (key, stale))
+            stale, got, tree = _sdk_check(venv, vpy, key, base, plan, env)
+            if stale is not None:
+                _sdk_build(venv, vpy, python, base, plan, env, log, tmpdir, where, sha, key, stale, rec)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        raise Refused("%s does not match its own build after %d builds (%s); log %s" % (where, SDK_ATTEMPTS, stale, log))
+    except BaseException:
         fcntl.flock(lock, fcntl.LOCK_UN)
         lock.close()
+        raise
+
+
+def _sdk_build(venv, vpy, python, base, plan, env, log, tmpdir, where, sha, key, stale, rec):
+    """Remove whatever is at the venv's path and build it, under the exclusive lock; the marker, written last, records
+    the tree the build left."""
+    if os.path.lexists(venv):
+        print("sweep %s: rebuilding the pytest leg's environment %s (%s)" % (short(sha), key, stale), flush=True)
+        shutil.rmtree(venv, ignore_errors=True)
+        if os.path.lexists(venv):
+            raise Refused("%s: the stale venv could not be removed (%s); remove it by hand" % (where, venv))
+    print("sweep %s: building the pytest leg's environment %s: %s==%s from %s; log %s" % (
+        short(sha), key, plan["dist"], plan["pin"], python, log), flush=True)
+    t0 = time.monotonic()
+    try:
+        _build_sdk(venv, python, base, plan, env, log, tmpdir, where)
+        got = probe(vpy, env, [plan["dist"]], what="the pytest leg's environment's interpreter")
+        if got["dists"].get(plan["dist"]) != plan["pin"]:
+            raise Refused("%s: after the install steps the venv's %s is %s, not ci.yml's pin %s; log %s"
+                          % (where, plan["dist"], got["dists"].get(plan["dist"]), plan["pin"], log))
+        if got["missing"]:
+            raise Refused("%s: after the install steps the venv lacks %s, which the pytest leg needs; log %s"
+                          % (where, ", ".join(got["missing"]), log))
+        if got.get("full") != base.get("full"):
+            raise Refused("%s: the venv's interpreter is %r, not %r, the interpreter it was built from; log %s"
+                          % (where, got.get("full"), base.get("full"), log))
+        tree = venv_tree(venv)
+        write_result(os.path.join(venv, SDK_MARKER), {"key": key, "dist": plan["dist"], "pin": plan["pin"],
+                                                      "version": got["dists"][plan["dist"]], "python": os.path.abspath(python),
+                                                      "python_version": base.get("full"), "built": now(), "tree": tree})
+    except BaseException:
+        shutil.rmtree(venv, ignore_errors=True)
+        raise
+    rec.update(built=True, build_s=round(time.monotonic() - t0, 2))
 
 
 def parse_wraps(values):
@@ -2153,7 +2374,7 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
     # The legs run in a private clone of the exact sha under the state dir (A1), verified against the sha's tree before
     # any leg (A2) and re-read after every leg (A4); it and TMPDIR are removed on every exit path (A5).
     sweep_stale_checkouts(sha)
-    checkout = marker = tmpdir = None
+    checkout = marker = tmpdir = hold = None
     try:
         checkout, marker, create_s = make_checkout(tree, sha)
         _plant_for_tests(checkout)
@@ -2202,7 +2423,7 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         if "pytest" in run["legs"] and is_owed("pytest", run["legs"]["pytest"]):
             # The pytest leg runs in a venv at the sha's ci.yml install steps, the SDK at its pin, built or reused before
             # anything is recorded: a build that fails is a refusal (sdk_environment).
-            sdk = sdk_environment(checkout, sha, python, tmpdir)
+            sdk, hold = sdk_environment(checkout, sha, python, tmpdir)
             run["runner"].update(sdk=sdk, python_version=sdk["base_version"])
             pytest_python = sdk["python"]
             run["legs"]["pytest"]["cmd"] = pytest_cmd(pytest_python, workers)
@@ -2234,11 +2455,23 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
             run_leg(checkout, name, rec, wraps, ctx, logdir)
             print("sweep %s: %s %s%s" % (short(sha), name, _rc_text(name, rec), (" (%s)" % rec["summary"]) if rec.get("summary") else ""), flush=True)
             changed = recheck_checkout(checkout, sha, entries, before, only_under=DEPS_PRODUCTS if name == "deps" else None)
-            if changed:
+            # A4 reads the pytest leg's environment too: a leg that changed the venv changed what this run's pytest leg,
+            # or another run's using the same venv, ran in, as a leg that changed the checkout changed the tree later
+            # legs run on. The next run that uses the venv finds it changed and builds it again (sdk_environment).
+            moved = hold.changes() if name == "pytest" and hold is not None else []
+            if changed or moved:
                 # A4, the runner's one producer of invalid: a leg changed the checkout, so later legs would not run on
-                # the sha's tree.
-                run["invalid"] = ("after the %s leg the checkout is not the sha's tree: %s; the legs after it did not run"
-                                  % (name, describe_faults(changed)))
+                # the sha's tree, or the pytest leg's environment, so the pytest leg may not have run in what its build
+                # installed.
+                parts = []
+                if changed:
+                    parts.append("after the %s leg the checkout is not the sha's tree: %s" % (name, describe_faults(changed)))
+                if moved:
+                    parts.append("after the pytest leg its environment %s is not the tree its build wrote (%d path%s: %s%s); "
+                                 "the next run that uses it builds it again" % (hold.venv, len(moved), "" if len(moved) == 1
+                                                                                 else "s", ", ".join(moved[:3]),
+                                                                                 ", ..." if len(moved) > 3 else ""))
+                run["invalid"] = "; ".join(parts) + "; the legs after it did not run"
                 write_result(path, data)
                 break
             write_result(path, data)
@@ -2246,6 +2479,10 @@ def _run_locked(args, tree, sha, branch, python, wraps, only, path, flakes=None)
         run["runner"].update(home_empty=not left, home_left=left[:20])
     finally:
         reap_descendants()
+        # The shared lock on the pytest leg's environment is held to here, after the reap, so no rebuild removes the
+        # venv while anything this run started may still be running from it.
+        if hold is not None:
+            hold.release()
         if tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
         remove_checkout(checkout, marker)
