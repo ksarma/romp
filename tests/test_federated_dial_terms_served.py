@@ -739,6 +739,14 @@ def _throw_forms(code):
     return forms
 
 
+def _try_statements(code):
+    """The number of try statements in a comment-stripped region: the keyword at a word boundary before an opening brace. An
+    identifier holding the letters (tryApplyFeedDelta) is not one, and neither is a comment word holding them (entry, retry),
+    since _ts_code has blanked the comments; string literals are left as _ts_code leaves them. The try censuses below count
+    these, never the substring."""
+    return len(re.findall(r"\btry\s*\{", code))
+
+
 class HeldPairRule(unittest.TestCase):
     """The drive-derived expectation's rule, pinned on synthetic frame records (no kernel): the labs above run against kernels
     whose frames carry no gen, so the stamped arms of held_pair, expected_relay_caps and assert_relay_dials are exercised
@@ -1035,7 +1043,9 @@ class HeldPairRule(unittest.TestCase):
         self.assertEqual(m2.group(1).count("if (!r.ok) { this.refuseRemoteApply(c, host, d, r.error); return; }"), 1, "a throw is the remote road's refusal, before any write")
         self.assertEqual(len(re.findall(r"[^A-Za-z]applyFeedDelta\(", fed)), 0, "federation.ts calls the bare apply nowhere (the local arm and the remote road both go through tryApplyFeedDelta)")
         self.assertEqual(fed.count("tryApplyFeedDelta("), 2, "the two roads, one call each: the local feedDelta arm and applyRemoteFeedDelta")
-        self.assertEqual(m2.group(1).count("try"), 1, "one try in applyRemoteFeedDelta, and it is the checked apply's name (the catch itself is feed-delta.ts's)")
+        # the try census by the keyword over comment-stripped code (_try_statements), never the substring, which the checked apply's
+        # name above and a comment word such as entry or retry also hold
+        self.assertEqual(_try_statements(_ts_code(m2.group(1))), 0, "no try statement in applyRemoteFeedDelta's code: the checked apply's throw is caught in feed-delta.ts's tryApplyFeedDelta, and a catch of the road's own reds here until classified")
         self.assertEqual(m2.group(1).count("throw "), 0, "and the gate itself throws nothing: its refusals are the asks and the rows above")
         # the roads' EXITS by the property (refusal-2): every `return` in the comment-stripped body of applyRemoteFeedDelta is one
         # of the three refusals (nobase, the gate, the checked apply), each pinned by its statement, so a refusal that neither
@@ -1066,7 +1076,7 @@ class HeldPairRule(unittest.TestCase):
         for name, mm in (("refuseRemoteApply", m4), ("refuseLocalApply", m5)):
             self.assertEqual(len(re.findall(r"\breturn\b", _ts_code(mm.group(1)))), 1, "%s's one early return: the latch's asked and stopped states, nothing further" % name)
         fd = open(os.path.join(ROOT, "ui", "webview", "feed-delta.ts"), encoding="utf-8").read()
-        self.assertEqual(fd.count("try"), 2, "feed-delta.ts: the checked apply's one try and its name (tryApplyFeedDelta); applyFeedDelta itself catches nothing")
+        self.assertEqual(_try_statements(_ts_code(fd)), 1, "feed-delta.ts's one try statement, the checked apply's in tryApplyFeedDelta (its shape pinned below); applyFeedDelta itself catches nothing")
         fd_throws = _throw_forms(_ts_code(fd))
         self.assertEqual(fd_throws, ['OTHER: new TypeError("feedDelta top is not an object")'], "feed-delta.ts's one explicit throw, the top guard (refusal-5), classified here by its statement; every other class-3 throw is upsertById's own (a read of null, a non-iterable): a second explicit throw reds until a row classifies it: %r" % (fd_throws,))
         self.assertRegex(fd, r"export function tryApplyFeedDelta\(base: any, d: FeedDelta\)[^\n]*\{\n  try \{\n    return \{ ok: true, next: applyFeedDelta\(base, d\) \};\n  \} catch \(e\) \{\n    return \{ ok: false, error: e \};", "the wrapper's shape: the throw caught and returned, the base untouched")
@@ -1074,7 +1084,7 @@ class HeldPairRule(unittest.TestCase):
         m3 = re.search(r"^    ws\.onmessage = \(ev: MessageEvent\) => \{\n(.*?)^    \};\n", fed, re.S | re.M)
         self.assertIsNotNone(m3, "federation.ts ws.onmessage was not found: re-aim this census")
         self.assertRegex(m3.group(1), r"try \{\n\s*msg = JSON\.parse\(ev\.data\);\n\s*\} catch", "onmessage's one try wraps the parse alone")
-        self.assertEqual(m3.group(1).count("try"), 1, "nothing else in onmessage catches: the apply's throw is caught below it, in feed-delta.ts, never folded into the parse's catch")
+        self.assertEqual(_try_statements(_ts_code(m3.group(1))), 1, "onmessage's one try statement, the parse's: nothing else in onmessage catches, and the apply's throw is caught below it, in feed-delta.ts, never folded into the parse's catch")
 
     def test_the_pair_writers_are_counted_so_a_new_one_reds_until_classified(self):
         # the census over the WRITERS of the pair (the maintainer's round 5, tests-4 and extra7-1: the census read the receivers'
