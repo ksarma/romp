@@ -10,7 +10,8 @@ not contain main (tests/test_batch_tool.py, VerifyBehind), so the merge commit's
 head's, which the batch push already tested. The gate is the workflow's `on:` block and not a job-level
 `if:`: `pull_request`'s branch filter selects the base branch, so singling out batch PRs there would
 need an `if:` on every job, and a skipped job reports success (a required check reads it as passing).
-CiTriggers reads the `on:` block; NoJobLevelGate refuses an `if:` or `continue-on-error:` on any of the
+CiTriggers reads the `on:` block and holds it to exactly those three triggers, so an added one (a merge queue, a
+review, another workflow's run) fails by name; NoJobLevelGate refuses an `if:` or `continue-on-error:` on any of the
 four jobs.
 
 Concurrency (2026-09-08, extended 2026-09-27): the group was `ci-<event>-<ref>` with cancel-in-progress
@@ -24,8 +25,13 @@ dispatch queues rather than cancels, and the event name stays in the key so a di
 is never cancelled by a push to the same ref (2026-07-27). CiConcurrency evaluates the stanza's two
 expressions for each kind of run instead of matching their spelling.
 
+Runners (2026-09-28): a batch push gets Linux alone. CiMatrixRunners evaluates both matrix jobs' `os:` expressions
+for each kind of run with the same evaluator, joins every `include:` entry's os, and reads the other two jobs'
+literal `runs-on:`, so macOS on a batch push by any of those roads fails by name.
+
 No YAML library is in the test deps, so the blocks are read by indentation, and anything the readers
 do not understand fails with "re-anchor" rather than passing."""
+import json
 import os
 import re
 import unittest
@@ -145,6 +151,12 @@ class CiTriggers(unittest.TestCase):
     def setUp(self):
         self.events = triggers()
         self.filters = push_filters()
+
+    def test_the_triggers_are_exactly_batch_pushes_the_dispatch_and_the_schedule(self):
+        # round 1, tests-3 and extra6-1: the docstring's "and on nothing else", held as a closed set
+        self.assertEqual(sorted(self.events), ["push", "schedule", "workflow_dispatch"],
+                         "ci.yml's triggers are %r; an added trigger changes which events run the full matrix (a PR event, "
+                         "a review, a merge queue, another workflow's run)" % sorted(self.events))
 
     def test_no_pull_request_trigger(self):
         # a PR event would run the full matrix on every member push again: the cost the local gate removes
@@ -318,6 +330,54 @@ def evaluate(expr, ctx):
     return v
 
 
+def job_lines(src, job):
+    """The lines of one job under `jobs:`."""
+    lines = _block(src, "jobs")
+    for key, _rest, i in _keys_at(lines, 2):
+        if key == job:
+            return _children(lines, i, 2)
+    raise LookupError("no job %r in ci.yml; re-anchor this pin" % job)
+
+
+def job_value(src, job, key):
+    """A job-level key's value (runs-on), or None when the job has no such key."""
+    for k, rest, _i in _keys_at(job_lines(src, job), 4):
+        if k == key:
+            return _strip_comment(rest)
+    return None
+
+
+def matrix_os(src, job):
+    """(the job's strategy.matrix os: expression, [each include: entry's os]) as written."""
+    jl = job_lines(src, job)
+    strat = next((_children(jl, i, 4) for k, _r, i in _keys_at(jl, 4) if k == "strategy"), None)
+    mat = next((_children(strat, i, 6) for k, _r, i in _keys_at(strat, 6) if k == "matrix"), None) if strat else None
+    if mat is None:
+        raise LookupError("the %s job has no strategy.matrix; re-anchor this pin" % job)
+    keys = {k: (rest, i) for k, rest, i in _keys_at(mat, 8)}
+    if "os" not in keys:
+        raise LookupError("the %s job's matrix has no os:; re-anchor this pin" % job)
+    includes = []
+    if "include" in keys:
+        for line in _children(mat, keys["include"][1], 8):
+            m = re.match(r"^\s*(?:-\s+)?os:\s*(.*)$", line)
+            if m:
+                includes.append(_unquote(_strip_comment(m.group(1))))
+    return _strip_comment(keys["os"][0]), includes
+
+
+def os_list(expr, ctx):
+    """The runner list an os: expression gives: `${{ fromJSON(<inner>) }}`, the inner expression evaluated and its
+    string read as JSON (fromJSON is modelled for this one shape); anything else raises LookupError."""
+    m = re.fullmatch(r"\$\{\{\s*fromJSON\((.*)\)\s*\}\}", expr.strip())
+    if m is None:
+        raise LookupError("the os: expression %r is not ${{ fromJSON(...) }}; re-anchor this pin" % expr)
+    value = json.loads(_text_of(evaluate(m.group(1), ctx)))
+    if not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
+        raise LookupError("the os: expression %r gives %r, not a list of runner labels; re-anchor this pin" % (expr, value))
+    return value
+
+
 def render(template, ctx):
     """A value with embedded ${{ }} expressions, each replaced by its value as text; a value that is one expression
     alone keeps the expression's value, and a bare true or false is that boolean."""
@@ -395,6 +455,52 @@ class CiConcurrency(unittest.TestCase):
             evaluate("contains(github.ref, 'main')", ctx)
         with self.assertRaises(LookupError):
             evaluate("github.head_ref", ctx)
+
+
+
+MATRIX_JOBS = ("python", "shell")          # runs-on: ${{ matrix.os }}
+FIXED_JOBS = ("secrets", "vscode-extension")   # runs-on: a literal label
+
+
+class CiMatrixRunners(unittest.TestCase):
+    """Round 1, tests-5: a batch push gets Linux alone. Every job's runners on a push to refs/heads/batch/x: the two
+    matrix jobs' evaluated os: lists joined with every include: entry's os, and the other two jobs' literal runs-on.
+    The weekly schedule and a manual dispatch add macOS to both matrix jobs."""
+
+    def setUp(self):
+        self.src = _source()
+
+    def runners(self, event, ref):
+        out = {}
+        for job in MATRIX_JOBS:
+            self.assertEqual(job_value(self.src, job, "runs-on"), "${{ matrix.os }}", "the %s job runs on its matrix's os" % job)
+            expr, includes = matrix_os(self.src, job)
+            out[job] = sorted(set(os_list(expr, run(event, ref, SHA_A))) | set(includes))
+        for job in FIXED_JOBS:
+            out[job] = [job_value(self.src, job, "runs-on")]
+        return out
+
+    def test_a_batch_push_runs_every_job_on_linux_alone(self):
+        got = self.runners("push", BATCH_X)
+        self.assertEqual(sorted(got), sorted(MATRIX_JOBS + FIXED_JOBS), "re-anchor: the jobs are %r" % sorted(got))
+        for job, labels in got.items():
+            self.assertEqual(labels, ["ubuntu-latest"], "a batch push runs the %s job on %r; it gets Linux alone (macOS runs "
+                                                        "only on the weekly schedule or a manual dispatch)" % (job, labels))
+
+    def test_the_schedule_and_a_dispatch_add_macos_to_both_matrix_jobs(self):
+        for event in ("schedule", "workflow_dispatch"):
+            got = self.runners(event, MAIN)
+            for job in MATRIX_JOBS:
+                with self.subTest(event=event, job=job):
+                    self.assertEqual(got[job], ["macos-latest", "ubuntu-latest"])
+
+    def test_the_readers_themselves(self):
+        ctx = run("push", BATCH_X, SHA_A)
+        self.assertEqual(os_list("${{ fromJSON(github.event_name == 'push' && '[\"a\"]' || '[\"b\"]') }}", ctx), ["a"])
+        with self.assertRaises(LookupError):
+            os_list("ubuntu-latest", ctx)
+        with self.assertRaises(LookupError):
+            job_lines(self.src, "no-such-job")
 
 
 if __name__ == "__main__":
