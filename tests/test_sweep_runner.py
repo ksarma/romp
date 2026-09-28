@@ -480,12 +480,12 @@ class Runner(_Base):
                 self.addCleanup(w.close)
                 w.ctl({"action": {"manager": act}})
                 p = w.run(check=3)
+                self.assertEqual(w.legs_called(), ["deps", PYTEST_LEG, "bats", "manager"], "the legs after it did not run")
+                self.assertIn("sweep invalid at %s: after the manager leg" % w.head()[:10], p.stdout)
                 r = w.result()
                 self.assertEqual(r["verdict"], "invalid")
                 self.assertIn("after the manager leg the checkout is not the sha's tree: %s" % named, r["invalid"])
                 self.assertIn("the legs after it did not run", r["invalid"])
-                self.assertEqual(w.legs_called(), ["deps", PYTEST_LEG, "bats", "manager"])
-                self.assertIn("sweep invalid at %s: after the manager leg" % w.head()[:10], p.stdout)
         w = World()
         self.addCleanup(w.close)
         w.ctl({"action": {"manager": "ignored"}})
@@ -788,6 +788,7 @@ class Runner(_Base):
             f.write("shared\n")
         os.symlink(shared, os.path.join(w.tree, "vscode-extension", "node_modules"))
         w.run(check=0)
+        self.assertIn("deps", w.legs_called(), "deps ran")
         deps = w.result()["legs"]["deps"]
         self.assertEqual((deps["owed"], deps["cmd"], deps["why"]), (True, list(sweep.DEPS_CMD), "a fresh checkout has no vscode-extension/node_modules"))
         call = [c for c in w.calls() if c["leg"] == "deps"][0]
