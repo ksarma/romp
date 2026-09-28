@@ -1672,10 +1672,10 @@ def wait_for_census(before, timeout=5.0):
 # census above, which read non-daemon threads only). CI, running this guard at an earlier head of the pull request that
 # made it read those tables, named one thread: an idle default-executor worker, a daemon thread, left by
 # tests/test_session_move.py's fixture loops, which the same pull request fixes (that module's loop cleanup, _end_loop,
-# now ends it). A run of the full suite on 2026-09-28 at that pull request's head before its merge of the fork's main
-# that day (3.12, two workers, the Run pytest step's flags at that head; the served-page tests skipped, the
-# extension's node deps absent) left none of either flag: the guard named no thread there. The run predates that
-# merge, which brought CI's install of the Claude Agent SDK and the Run pytest step's -p no:anyio.
+# now ends it). A run of the full suite on 2026-09-28 at that pull request's head after its merge of the fork's main
+# that day (3.12, two workers, the Run pytest step's flags, -p no:anyio among them; the served-page tests skipped, the
+# extension's node deps absent; the Claude Agent SDK, which CI's Python cells install since that merge, not installed)
+# left none of either flag: the guard named no thread there.
 THREAD_GUARD_CAP_S = 10.0
 _monotonic = time.monotonic   # bound at import: a test's leaked patch of time.monotonic cannot move the guard's deadline
 _enumerate = threading.enumerate    # bound at import too: a test's leaked patch of threading.enumerate cannot empty the
