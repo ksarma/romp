@@ -1154,7 +1154,7 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
       const w = window as any; w.__tch = [];
       for (const type of ["pointerdown", "pointerup", "pointercancel", "mousedown", "mouseup", "click", "touchstart", "touchend", "touchcancel"]) window.addEventListener(type, (e: any) => { w.__tch.push({ type: e.type, pid: e.pointerId, ptype: e.pointerType, button: e.button, detail: e.detail, trusted: e.isTrusted }); }, true);
       w.__tblur = 0; w.__tblurAtClick = -1;
-      window.addEventListener("blur", (e: Event) => { if (e.target === window) w.__tblur++; }, true);   // the blurs of the viewer's window, read by the cells of round 19's two rules
+      window.addEventListener("blur", (e: Event) => { if (e.target === window) w.__tblur++; }, true);   // the blurs of the viewer's window, read by the cells of the leave's arm for no button, the mouseout's rule and the refusals whose element cancels its mousedown
       window.addEventListener("click", () => { w.__tblurAtClick = w.__tblur; }, true);   // and their count at the last click here, before any tab an open brings to the front blurs it
     });
     await s.page.evaluate(() => {
