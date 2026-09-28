@@ -3145,14 +3145,23 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // pointerId, WebKit's touch whose pointerup this window never heard and, in Firefox and WebKit, another document's tap after
   // the viewer's tap whose mouseup of detail 0 ended its chain and another document's tap after a mouse's press whose pointerup
   // this window never heard, each red at 142ade155, the last at 1a6470e72 and at 09f58bec6 too, and on the chat and the Files
-  // pane under a gate without the rules that close it (Firefox's lone click after a mouseup of another button or of detail 0 is
-  // closed by the tail and by the mouseup's clear alike, the one after the mouse released on the top page's bar by the refusal of
-  // a record whose pointer left this window with a button down as well, after the mouse held on the control by the tail and by
-  // the refusal of a record standing at a click alike, after the mouse released in the other pane by the tail and by both
-  // refusals alike, and its four cells a surface after the viewer's tap whose compatibility events or click went elsewhere by the
-  // tail alone; another document's tap after that release in the other pane is closed in Firefox by both refusals alike, so its
-  // cell there is red only under a gate without both, and WebKit's cells of the mouse held pin the refusal of a standing record
-  // alone), and node guards in the outline suite over the same orders, whose Firefox rows of a press that leaves the frame send
+  // pane under a gate without the rules that close it, as this head measures them (Firefox's lone click after a mouseup of
+  // another button or of detail 0 is closed by the tail and by the mouseup's clear alike, the one after the mouse released on the
+  // top page's bar by the refusal of a record whose pointer left this window with a button down as well, after the mouse held on
+  // the control by the tail and by the refusal of a record standing at a click alike, after the mouse released in the other pane
+  // by the tail and by both refusals alike, its two cells a surface after the viewer's tap whose mouseup or click went elsewhere
+  // by the tail alone, and its three after the viewer's tap whose compatibility events went elsewhere, one of them after such a
+  // mouseup of detail 0, by the mouseout's rule and the blur's rule as well; Chromium's cells after the viewer's tap with a second finger resting pin the slot's pointerId test
+  // alone, and its cells after an element of the top page appeared over the picture are closed by that test, the mouseout's rule
+  // and the blur's rule alike; the cells of the mouseup that ended the chain are closed by the mouseup's clear and the blur's rule
+  // alike in WebKit, and by those and the mouseout's rule alike in Firefox; another document's tap after that release in the other
+  // pane is closed in Firefox by both refusals and the blur's rule alike, so its cell there is red only under a gate without all
+  // three; WebKit's cells of the mouse held are closed by the refusal of a standing record and the blur's rule alike, the blur's
+  // rule refusing every cell of these whose element takes the focus where the viewer's window held it, and their runs with an
+  // element that cancels its mousedown, where no blur comes, pin that refusal alone; and Firefox's cells of another document's
+  // mouse click after that release are closed by the refusal of a record whose pointer left and the blur's rule alike, their runs
+  // with an element that cancels its mousedown pinning that refusal alone), and node guards in the outline suite over the same
+  // orders, whose Firefox rows of a press that leaves the frame send
   // no pointerout, so they guard the other rules without the refusal of a record whose pointer left; the leave's arm for no
   // button has Chromium's frame-hide cells, a mouse's moved click with the frame shown again at once and 300 ms later and a
   // pen's still click with it shown 300 ms later, and the node guards' rows of that pointerout in Chromium's order, in

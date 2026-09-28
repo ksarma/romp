@@ -8753,7 +8753,9 @@ that mousedown, red at 1a6470e72 too, whose gate had no mouseup's clear; and the
 pinned by browser cells in Firefox and WebKit and a node guard, red at 142ade155, at 1a6470e72 and at 09f58bec6: in WebKit the mouse
 held on the control or on the picture, and in Firefox the mouse pressed on the control and released in the other pane, then another
 document's tap on an element over the control that hides at that tap's compatibility mousedown sent the viewer's window a mouseup of
-detail 1 and a click alone, which read the mouse's record; each opened the tab with the sign covered at the tap's start; and the
+detail 1 and a click alone, which read the mouse's record; each opened the tab with the sign covered at the tap's start; the blur's
+rule refuses those cells too where the viewer's window held the focus, as it does in them, so WebKit's run again with an element
+that cancels that mousedown, where no blur comes, red under a gate whose click reads its own standing record alone; and the
 mouseout's rule is pinned as a whole by a node guard, red at ddb446fae and under a gate without that rule, and by browser cells
 in Firefox, red at ddb446fae and under a gate without that rule and without the blur's rule, which refuses them too where the
 viewer's window held the focus, as it does in them, and by the same cells with an element that cancels its mousedown, where no
@@ -8809,7 +8811,8 @@ Firefox, after that release, a mouse click on such an element, whose pointerup h
 10 of 10 and 10 of 10 again at 343ee2eb5, closed by the refusal of a mouse's or a pen's record whose pointer left the viewer's
 window with a button down, Firefox sending the viewer's window a pointerout with no relatedTarget as the press left its frame
 (under this gate 0 of 10, the next click opening; its browser cells in Firefox and a node guard, red at 343ee2eb5 and at
-09f58bec6), Chromium opening neither, and a later check finding a third, open in WebKit and in one shape in Chromium in the
+09f58bec6, the cells run again with an element that cancels that click's mousedown, where no blur comes, red under a gate without
+that refusal alone), Chromium opening neither, and a later check finding a third, open in WebKit and in one shape in Chromium in the
 timings measured under this gate's rules but the blur's and, in WebKit, at 142ade155, at 09f58bec6 and at 343ee2eb5, which the
 blur's rule closes where the viewer's window held the focus and the element takes that click's mousedown without cancelling it,
 what is left for the owner: the mouse pressed on the control, any button, and held while
