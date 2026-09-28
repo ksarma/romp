@@ -53,7 +53,8 @@ test("the strip renders the emoji BEFORE the name on real and placeholder tabs, 
 
 test("the session and the tab meta carry the field; a frame without it (an older kernel) keeps the last value", () => {
   assert.match(SRC, /interface Session \{ id: string; name: string; color: Color \| null; emoji\?: string;/);
-  assert.match(SRC, /const tabMeta = new Map<string, \{ name: string; color: Color \| null; emoji\?: string \}>\(\);/);
+  assert.match(SRC, /const tabMeta = new Map<string, \{ name: string; color: Color \| null; emoji\?: string; userTodos\?: number \}>\(\);/,
+    "the tab meta carries the emoji beside the name, the colour and the count of open user todos (2026-09-22)");
   assert.match(SRC, /emoji: \("emoji" in msg\) \? String\(msg\.emoji \|\| ""\) : \(prev \? prev\.emoji : undefined\)/);
   assert.match(SRC, /emoji: typeof t\.emoji === "string" \? t\.emoji : undefined/);
 });

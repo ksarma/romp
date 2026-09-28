@@ -109,6 +109,7 @@ let renameActive = false, renderPendingAfterRename = false;   // the strip's ren
 let draggedGroup: string | null = null;
 let sessionViews: any = null;
 const skeletonTabs = { ids: new Set<string>() };   // no skeleton in these worlds: rowHasTabMenu reads it
+function liveSession(id: string | null | undefined): any { return id && !skeletonTabs.ids.has(id) ? sessions.get(id) : undefined; }   // render.ts's own body: makeGroupHead's flag reads it (2026-09-22)
 let rowRenameEnd: any = null;   // the open row editor's end (startTabRename's row path, executed in tab-snapshot-menu.test.ts): hideSnapshot runs it
 function cssEscape(s: string): string { return CSS.escape(s); }   // rowSeatFor's selector (render.ts has its own)
 ${menu ? "" : 'let tabMenuSeat: "tab" | "row" = "tab";   // the menu\'s seat, which the view\'s listener names (the menu stand-ins declare it in menu mode)'}

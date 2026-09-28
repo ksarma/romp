@@ -308,7 +308,7 @@ function rows(code: El, src: string): void {
 }
 function world(): World {
   const main = new El("div"); main.className = "fileview-main";
-  const body = new El("div"); body.className = "fileview-body";
+  const body = new El("div"); body.className = "fileview-body"; body.rect = { left: 0, top: 100, right: 1000, bottom: 600, width: 1000, height: 500 };   // the pane's clip: the offer refuses a selection whose box lies outside it (onSelection, inBodyBox); every selection rect below sits inside
   const wrap = new El("div"); wrap.className = "fileview-code";
   const pre = new El("pre"); pre.className = "fileview-pre fileview-wrap";
   const code = new El("code"); code.className = "hljs";

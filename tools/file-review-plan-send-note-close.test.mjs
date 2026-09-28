@@ -61,7 +61,7 @@ test('decision 40 says the note is cleared only by a send or by Cancel, records 
 test('the panel\'s close asks are as the sentence says: one reads the composer\'s typed comment, one the Send confirm\'s note as the kernel reads it, each naming its own thing', () => {
   assert.deepEqual(askNames, ['draftAsk', 'noteAsk'], 'two asks, the composer\'s then the note\'s');
   const draft = bodyOf('draftAsk'), note = bodyOf('noteAsk');
-  assert.ok(draft.includes('this.composer') && draft.includes('this.input.value'), 'the composer\'s ask reads the composer and its box');
+  assert.ok(draft.includes('this.composer') && draft.includes('this.boxHoldsTyped()'), 'the composer\'s ask reads the composer and its box, the box through the one predicate for the person\'s words (boxHoldsTyped; a pin on where the code lives, executed by file-comments-send-note.test.ts "the viewer\'s close guard asks about the note…" and file-comments-behavior.test.ts "the panel\'s draft ask (guardClose) names the unsaved comment…", each red when the ask ignores the typed words)');
   assert.ok(!/sendNote|noteBox/.test(draft), 'and not the note: each ask names one thing');
   assert.ok(note.includes('if (!trimNote(this.sendNote)) return null;'), 'the note\'s ask reads the note as the kernel does: words its strip would take to nothing are not asked about');
   assert.ok(!/this\.composer|this\.input/.test(note), 'and not the composer');

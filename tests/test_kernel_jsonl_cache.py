@@ -178,6 +178,7 @@ class RecordCacheByteBudget(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="jsonl-budget-")
         em._JSONL_CACHE.clear(); em._JSONL_CACHE_BYTES[0] = 0
+        getattr(em, "_JSONL_CACHE_BYTES_MAX", [0])[0] = 0            # the life maximum too (getattr: the module imports at a head without it)
         for k in em._RECORD_CACHE_STATS: em._RECORD_CACHE_STATS[k] = 0
         self._budget = em._JSONL_CACHE_BUDGET_BYTES
         self._real_scan = em._scan_jsonl_stream
@@ -190,6 +191,7 @@ class RecordCacheByteBudget(unittest.TestCase):
         em._JSONL_CACHE_BUDGET_BYTES = self._budget
         em._scan_jsonl_stream = self._real_scan
         em._JSONL_CACHE.clear(); em._JSONL_CACHE_BYTES[0] = 0
+        getattr(em, "_JSONL_CACHE_BYTES_MAX", [0])[0] = 0            # so no sibling test inherits this test's peak
 
     def _file(self, name, n):
         path = os.path.join(self.dir, name); _write_jsonl(path, n); return path
@@ -227,6 +229,32 @@ class RecordCacheByteBudget(unittest.TestCase):
         em._read_jsonl_incremental(big)
         self.assertIn(big, em._JSONL_CACHE, "a leaf is never refused")
         self.assertNotIn(small, em._JSONL_CACHE, "the budget then holds that one entry")
+        self.assertTrue(self._ledger_ok())
+
+    def test_the_life_maximum_of_held_bytes_survives_the_eviction(self):
+        # the growth analysis (2026-09-20): the kernel's RSS stepped in the hours the cache's held bytes set a new maximum
+        # and never came back once the entries went. bytesMax is the most the cache has held at once this life, never
+        # lowered, so a new-maximum hour reads from two /perf reads, not from watching bytes.
+        small = self._file("small.jsonl", 5); big = self._file("big.jsonl", 200)
+        em._read_jsonl_incremental(small); em._read_jsonl_incremental(big)
+        peak = os.path.getsize(small) + os.path.getsize(big)
+        st = em.record_cache_stats()
+        self.assertEqual((st["bytesMax"], st["bytes"]), (peak, peak))   # KeyError before the gauge: the stats carried bytes only
+        self.assertTrue(self._ledger_ok())
+        em._JSONL_CACHE_BUDGET_BYTES = os.path.getsize(big) // 2         # the next insert evicts small and big (oldest-used first)
+        third = self._file("third.jsonl", 5)
+        em._read_jsonl_incremental(third)
+        self.assertNotIn(big, em._JSONL_CACHE); self.assertIn(third, em._JSONL_CACHE)
+        st = em.record_cache_stats()
+        self.assertLess(st["bytes"], peak, "the held bytes fell with the eviction")
+        self.assertEqual(st["bytesMax"], peak, "the maximum held")
+        self.assertTrue(self._ledger_ok())
+        em._JSONL_CACHE_BUDGET_BYTES = self._budget                      # room again: a read past the old peak raises the maximum
+        bigger = self._file("bigger.jsonl", 300)
+        em._read_jsonl_incremental(bigger)
+        st = em.record_cache_stats()
+        self.assertGreater(st["bytes"], peak)
+        self.assertEqual(st["bytesMax"], st["bytes"], "a new peak is the new maximum")
         self.assertTrue(self._ledger_ok())
 
     def test_the_ledger_follows_appends_and_failures(self):
@@ -281,6 +309,53 @@ class DropAfterQuiescentFold(unittest.TestCase):
         n = len(self.scans)
         self.assertEqual(self._fold(cache, old, drop_after="quiescent")["n"], 30)
         self.assertEqual(len(self.scans), n + 1, "one read for the second fold of a dropped file")
+
+    def test_a_read_in_flight_when_the_drop_pops_keeps_its_entry_and_counts_no_drop(self):
+        # 2026-09-24: a read already pulling the file's bytes when the drop pops puts its entry back after the pop, so a pop
+        # there frees nothing and counts a drop. The pop takes the path's stripe lock first, as the reader does: the read
+        # finishes its insert, and the pop leaves the newer entry alone, as it does for a read that replaced the entry first
+        old = os.path.join(self.dir, "returned-agent.jsonl"); _write_jsonl(old, 30)
+        t = time.time() - em._DROP_AFTER_QUIESCENT_S - 60
+        os.utime(old, (t, t))
+        parked, go, box = threading.Event(), threading.Event(), {}
+        scan, real_writes_on, real_stripe = em._scan_jsonl_stream, em.checkpoint_drop_writes_on, em._read_stripe
+
+        def parking_scan(*a, **k):                                    # the reader waits inside its byte pull, holding the stripe
+            if threading.current_thread() is box.get("reader"):
+                parked.set(); go.wait(10)
+            return scan(*a, **k)
+
+        def drop_writes_on(*a, **k):                                  # between the fold's read and the drop's pop (the drop's
+            #                                                           first step asks whether its write is on), the file grows
+            #                                                           and a reader starts pulling it. Keyed on the caller, so
+            #                                                           the hook is the same wherever the drop's check lives
+            if sys._getframe(1).f_code.co_name in ("_drop_quiescent_entry", "_drop_write") and "reader" not in box:
+                with open(old, "a") as f:
+                    f.write(json.dumps({"uuid": "u30", "type": "user"}) + "\n")
+                box["reader"] = threading.Thread(target=em._read_jsonl_incremental, args=(old,))
+                self.addCleanup(lambda: (go.set(), box["reader"].join(10)))
+                box["reader"].start()
+                parked.wait(10)
+                box["armed"] = True                                   # the fold's own read took the stripe before this
+            return real_writes_on(*a, **k)
+
+        def stripe(path):                                             # the drop reaching for that stripe lets the reader go on
+            if box.get("armed") and threading.current_thread() is not box.get("reader") and str(path) == old:
+                go.set()
+            return real_stripe(path)
+        em._scan_jsonl_stream, em.checkpoint_drop_writes_on, em._read_stripe = parking_scan, drop_writes_on, stripe
+        try:
+            self._fold({}, old, drop_after="quiescent")
+            go.set()
+            box["reader"].join(10)
+        finally:
+            em._scan_jsonl_stream, em.checkpoint_drop_writes_on, em._read_stripe = scan, real_writes_on, real_stripe
+        self.assertTrue(parked.is_set() and not box["reader"].is_alive(), "precondition: the reader parked, then finished")
+        st = em.record_cache_stats()
+        self.assertEqual((st["dropped"], st["droppedBytes"]), (0, 0), "the drop popped nothing")
+        with em._JSONL_CACHE_LOCK:
+            ent = em._JSONL_CACHE.get(old)
+        self.assertTrue(ent is not None and ent[1] == os.path.getsize(old), "the read's entry stands, at the grown size")
 
     def test_the_kernel_drops_only_its_subagent_folds_and_reports_the_cache(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
@@ -355,16 +430,117 @@ class WholeReadsByCaller(unittest.TestCase):
         self.assertTrue(any(k.startswith("zero<-") and k.endswith("test_a_from_zero_read_is_named_for_its_caller_and_an_append_is_not") for k in keys), "%s" % keys)
 
 
+_WORDS = ("notes", "api", "schema", "field", "route", "handler", "migration", "index", "column", "request", "status",
+          "token", "fixture", "payload", "response", "validate", "the", "and", "for", "with", "from", "into")
+_WIDE = ("\u2192", "\u2713", "\u2014", "\u6570", "\u636e", "\U0001f600")   # outside Latin-1: the string holding one is stored wide
+
+
+def _claude_shaped(path, profile, target, seed):
+    """A synthetic transcript shaped like Claude Code's: user and assistant records of 22 and 33 keys (nested keys
+    counted), nested message and content blocks, tool calls and results, invented notes-api text, placeholder uuids. Of
+    the free-text strings, 26 percent (main transcript) or 40 percent (agent) end in a character outside Latin-1, the
+    rates the 2026-09-24 lab generator used (real transcripts hold 30 and 41 percent of their string memory in such
+    strings), because such a string is stored at 2 or 4 bytes per character."""
+    import random
+    rnd = random.Random(seed)
+    wide = 0.26 if profile == "leaf" else 0.40
+
+    def text(n):
+        t = " ".join(rnd.choice(_WORDS) for _ in range(n))
+        return t + rnd.choice(_WIDE) if rnd.random() < wide else t
+
+    i = 0
+    with open(path, "w", encoding="utf-8") as f:
+        while f.tell() < target:
+            use = "toolu_%012d" % i
+            head = {"parentUuid": "11111111-2222-3333-4444-%012d" % i, "isSidechain": profile != "leaf", "userType": "external",
+                    "cwd": "/home/TESTHOST/notes-api", "sessionId": "11111111-2222-3333-4444-555555555555", "version": "2.1.261",
+                    "gitBranch": "main", "uuid": "11111111-2222-3333-4444-%012d" % (i + 1),
+                    "timestamp": "2026-09-24T10:%02d:%02d.%03dZ" % (i // 3600 % 60, i // 60 % 60, i % 1000)}
+            if i % 2 == 0:
+                rec = dict(head, type="assistant", requestId="req_%016d" % i, message={
+                    "id": "msg_%016d" % i, "type": "message", "role": "assistant", "model": "claude-test",
+                    "content": [{"type": "text", "text": text(rnd.randint(20, 400))},
+                                {"type": "tool_use", "id": use, "name": "Bash",
+                                 "input": {"command": "pytest -q tests/", "description": text(8)}}],
+                    "stop_reason": "tool_use", "stop_sequence": None,
+                    "usage": {"input_tokens": rnd.randint(1, 9999), "output_tokens": rnd.randint(1, 999),
+                              "cache_read_input_tokens": rnd.randint(0, 99999), "cache_creation_input_tokens": 0,
+                              "service_tier": "standard"}})
+            else:
+                rec = dict(head, type="user", toolUseResult={"stdout": text(rnd.randint(10, 600)), "stderr": "",
+                                                             "interrupted": False, "isImage": False},
+                           message={"role": "user", "content": [
+                               {"type": "tool_result", "tool_use_id": "toolu_%012d" % (i - 1), "is_error": False,
+                                "content": text(rnd.randint(10, 2500))}]})
+            f.write(json.dumps(rec) + "\n")
+            i += 1
+    return path
+
+
+def _deep_size(objs):
+    """sys.getsizeof summed over every object reachable from `objs` (dicts, lists, strings, numbers), each counted once: a
+    lower bound on the resident bytes the records take (no allocator overhead, no list slots beyond the object's own)."""
+    seen, stack, total = set(), list(objs), 0
+    while stack:
+        o = stack.pop()
+        if id(o) in seen:
+            continue
+        seen.add(id(o))
+        total += sys.getsizeof(o)
+        if isinstance(o, dict):
+            stack.extend(o.keys()); stack.extend(o.values())
+        elif isinstance(o, (list, tuple)):
+            stack.extend(o)
+    return total
+
+
 class RecordCacheDefaultBudget(unittest.TestCase):
     """The budget shipped at 1 GiB (2026-09-11) and sat below a 50-session working set: every build re-read whole transcripts
-    (14.9 GB in 3.5 min, 132 s pusher cycles). The default is a quarter of the machine's memory, never under 4 GiB."""
+    (14.9 GB in 3.5 min, 132 s pusher cycles). The default is half of the machine's memory in resident bytes, converted to
+    the file bytes entries weigh, never under 4 GiB of file bytes."""
 
-    def test_half_of_the_machine(self):
-        text = "MemTotal:       123634396 kB\nMemFree:        1 kB\n"
-        self.assertEqual(em._record_cache_default_budget_bytes(text), int(123634396 * 1024 * 0.5))
+    def test_half_of_the_machine_in_resident_bytes(self):
+        # the user's direction (2026-09-11) is half of MemTotal; since 2026-09-24 that half is resident bytes, divided by 3.2
+        # resident bytes per file byte to give the budget in the unit entries weigh. The expected value is a literal: read from
+        # the module's constants it would move with them, and a budget ten times too small, the thrash the 4 GiB floor was added
+        # against, would pass every other test here
+        mem_kb = 268435456                                            # a synthetic 256 GiB machine: its budget is above the floor
+        self.assertEqual(em._record_cache_default_budget_bytes("MemTotal: %d kB\n" % mem_kb), int(268435456 * 1024 * 0.5 / 3.2),
+                         "half of MemTotal in resident bytes, at 3.2 resident bytes per file byte")
+
+    def test_a_full_budget_of_records_fits_in_the_memory_it_names(self):
+        """The budget names half of MemTotal, and an entry weighs FILE bytes, so a full budget of entries must fit in that half
+        once parsed. This test checks the UNIT: synthetic Claude-shaped records
+        measured by a deep size walk, a lower bound on what they take, per file byte, times the default budget, against the
+        memory the fraction names. It does not check the factor's value: the synthetic records measure 1.73 to 2.25 per file
+        byte across 3.10 to 3.14t (2026-09-24), so a factor cut to about 2.3 still passes, below the real 2.61 to 3.18. That
+        figure, RECORD_CACHE_RESIDENT_PER_FILE_BYTE's 3.2, comes from a kernel's 73-hour life (3.18, from RSS fitted against
+        the running maximum of held bytes and the LRU's slot count, the two regressors collinear, R^2 0.995 over 73 hourly
+        rows) and the highest of nine main transcripts of 10 MB or more measured one by one (3.13 RssAnon per file byte),
+        2026-09-24. Red before by the assertion: the budget was half of MemTotal in FILE bytes, so a
+        full one held 1.7 to 2.3 times the memory it named."""
+        mem_kb = 268435456                                            # a synthetic 256 GiB machine
+        budget = em._record_cache_default_budget_bytes("MemTotal: %d kB\n" % mem_kb)
+        named = mem_kb * 1024 * 0.5                                   # the memory the budget is named for, half of MemTotal: a
+        #                                                               literal, so a changed fraction cannot move both sides
+        d = tempfile.mkdtemp(prefix="jsonl-unit-")
+        try:
+            for profile, seed in (("leaf", 7), ("agent", 8)):
+                path = _claude_shaped(os.path.join(d, profile + ".jsonl"), profile, 512 * 1024, seed)
+                recs = em._read_jsonl_incremental(path)
+                self.assertGreater(len(recs), 20, "the fixture parsed")
+                ratio = _deep_size(recs) / os.path.getsize(path)
+                self.assertGreater(ratio, 1.0, "the walk measured the records")
+                self.assertLessEqual(budget * ratio, named, "%s: a full budget holds %.0f GiB of records (%.2f per file byte), more "
+                                     "than the %.0f GiB it is named for" % (profile, budget * ratio / 2 ** 30, ratio, named / 2 ** 30))
+        finally:
+            em._JSONL_CACHE.clear(); em._JSONL_CACHE_BYTES[0] = 0
+            shutil.rmtree(d, ignore_errors=True)
 
     def test_never_under_four_gib(self):
-        self.assertEqual(em._record_cache_default_budget_bytes("MemTotal:  8000000 kB\n"), 4 * 1024 ** 3, "half of 8 GB is the floor")
+        self.assertEqual(em._record_cache_default_budget_bytes("MemTotal:  8000000 kB\n"), 4 * 1024 ** 3,
+                         "half of 8 GB, in file bytes, is under the floor")
         self.assertEqual(em._record_cache_default_budget_bytes("garbage"), 4 * 1024 ** 3, "no MemTotal: the floor")
 
     def test_the_environment_sets_it_outright(self):

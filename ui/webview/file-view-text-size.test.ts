@@ -642,7 +642,7 @@ test("a size step fires onRendered once, as a reflow (the panel re-places its ca
   // since the nodes are the same (2026-09-09: the whole paint pass ran here once per frame of a pane drag, unwrapping and
   // re-wrapping every mark, and stalled the dashboard on a big reviewed file; file-view-reflow-browser.test.ts); a paint
   // proper still runs the pass
-  assert.match(PANEL, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); [^\n]*if \(why === "reflow"\) \{ this\.trimBlanks\(\); this\.scheduleLayout\(\); \} else \{ this\.reloadOut = false; this\.paintAll\(\); \} \}\);/, "file-comments.ts answers a reflow with trimBlanks (the marks' collapsed blanks re-measured at the new size) and scheduleLayout, and a paint with paintAll (after ending the record of a re-fetch the panel asked, reloadOut; the Slice 7 review's round 4)");
+  assert.match(PANEL, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); [^\n]*if \(why === "reflow"\) \{ this\.trimBlanks\(\); this\.scheduleLayout\(\); \} else \{ this\.reloadOut = false; this\.paintedAt = ctx\.mtimeNs\(\); this\.landedAhead = false; this\.paintAll\(\); \} \}\);/, "file-comments.ts answers a reflow with trimBlanks (the marks' collapsed blanks re-measured at the new size) and scheduleLayout, and a paint with paintAll (after ending the record of a re-fetch the panel asked, reloadOut, the Slice 7 review's round 4, and recording the painted mtime, paintedAt and landedAhead, whose executed witness is file-comments-changes-review2.test.ts's case on the change cards between an svg picture's landing and its paint); a reflow records no paint");
   assert.match(VIEW, /onRendered\(cb: \(why\?: FileViewRenderWhy\) => void\): void;/);
   assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged \(`why` "reflow"\): a text-size step/, "the seam's doc names the reflow triggers");
   // both reflow triggers fire through the wrapper that keeps a standing selection across the panel's re-wrap (round 2:
@@ -1157,7 +1157,8 @@ test("in a browser: the file browser's bar stays one line at 320, 360, 480 and 1
 
 test("in a browser: mdBlock's task stamp over marked's own output, sanitized as mdBlock sanitizes it, in both sheets: a disabled checkbox that opens its item (a tight list, a numbered one, a loose one's first paragraph, an author's raw box) makes a task item with no bullet and the box pulled into the gutter; an author's enabled box is made inert by the sanitizer and opens its item too; a box after the item's text leaves the item and its bullet as the file wrote them; an author's own class is kept", { skip }, () => {
   assert.ok(STAMP_CODE, "the stamp statement is lifted from the source");
-  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);/, "mdBlock adopts the shared sanitizer's body, as the page here does (the heading ids minted inside the call, before the math fill)");
+  assert.match(VIEW, /const clean = sanitizeMd\(dirty, mintHeadingIds\);/, "mdBlock sanitizes through the shared sanitizer, as the page here does (the heading ids minted inside the call, before the math fill)");
+  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);/, "and adopts that body's children as they are (a presence pin: where the figure chain sits relative to this line is file-view-seam.test.ts's to check; the stamp here runs after the adoption, as the page's does)");
   type Row = { text: string; stamped: boolean; bullet: string; input: { disabled: boolean; checked: boolean; marginLeft: number; left: number; scheme: string } | null };
   for (const [name] of SHEETS) {
     const c = m!["stamp/" + name];

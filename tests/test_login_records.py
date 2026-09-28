@@ -11,8 +11,9 @@ The mechanics under test:
   * The machine's own login record grows the organisation (name + a digest of its uuid) and the kind word read
     from Claude Code's credentials file (subscriptionType folded: pro/max personal, team/enterprise enterprise,
     never guessed); nothing else of that file leaves the kernel.
-  * The availability reply lists every login (the machine's own first) plus their reasons; a remembered pick of
-    a stored login stands as the default while that login is usable.
+  * The availability reply lists every login (the machine's own first) plus their reasons; an EXPLICIT default of
+    a stored login stands as the default while that login is usable (a per-session pick's flag-less write
+    preselects nothing since 2026-09-18).
   * set_auth takes "login:<id>", persists auth=login + authLogin, refuses a refused, expired, reference-less or
     unknown stored login; the machine signing out leaves a stored-login session untouched; the launch writes
     that login's helper into the per-session settings layer and restores no machine token beside it.
@@ -387,7 +388,7 @@ class MachineLoginRecord(unittest.TestCase):
 
 
 class AvailabilityLists(unittest.TestCase):
-    """_auth_avail lists every login (the machine's own first) with reasons; a remembered stored pick stands."""
+    """_auth_avail lists every login (the machine's own first) with reasons; an explicit stored-login default stands."""
 
     def setUp(self):
         self.saved = (km._sdk, km._claude_account, km._claude_account_label, km._claude_account_state,
@@ -447,19 +448,66 @@ class AvailabilityLists(unittest.TestCase):
         a = km._auth_avail()
         self.assertEqual(a["logins"][1]["why"], km.jd._cred.WHY_MANAGED_HELPER)
 
-    def test_a_remembered_stored_login_is_the_default_while_usable(self):
+    def test_an_explicit_stored_login_default_is_the_default_while_usable_and_a_flag_less_one_preselects_nothing(self):
+        # the picker's preselection follows the launch's rule (round 1 of the review, 2026-09-18): a stored login
+        # written by a per-session pick (no authExplicit) preselects nothing; the EXPLICIT default of one does
         self._world(FAKE_KEY, "aaaaaaaaaaaa")
         ok = _rec(self.state, "Work")
         (self.state / "sdk-defaults.json").write_text(json.dumps({"auth": "login", "authLogin": ok["id"]}))
+        self.assertEqual(km._auth_avail()["default"], "key", "a per-session pick's stored login preselects nothing: the helper rule")
+        # the dlid gate, the preselect half that keeps a flag-less STORED-login pick from preselecting "login:<id>" (round 1
+        # of the review of fork PR #819, tests-2: no test reached it): on a helper-less box the flag-less write falls to the
+        # machine's own login, and only the explicit default names the record
+        self._world("", "aaaaaaaaaaaa")
+        self.assertEqual(km._auth_avail()["default"], "login", "no helper: the machine's own login, not the pick's record")
+        (self.state / "sdk-defaults.json").write_text(json.dumps({"auth": "login", "authLogin": ok["id"], "authExplicit": True}))
+        self.assertEqual(km._auth_avail()["default"], "login:" + ok["id"], "the explicit default names the record")
+        self._world(FAKE_KEY, "aaaaaaaaaaaa")
         self.assertEqual(km._auth_avail()["default"], "login:" + ok["id"])
         lg.mark_refused(self.state, ok["id"], "refused by the API")
         self.assertEqual(km._auth_avail()["default"], "login", "a refused stored login falls through the machine rules")
         lg.remove(self.state, ok["id"])
         self.assertEqual(km._auth_avail()["default"], "login")
 
+    def test_the_picker_default_in_the_five_cells_where_a_flag_less_pick_used_to_preselect(self):
+        """The reviewer's own cells (2026-09-19, fork PR #819): _auth_avail's default moved in FIVE cells when the seed and the
+        picker began reading the explicit default alone, and a picker-created session carries the preselection as a pick
+        of its own (render.ts sends the Billing row's selection as the create's auth), so each cell is pinned by
+        execution here. Before the change the flag-less value preselected: login, login:<id>, login:<id>, login:<id>,
+        login:<id>; after it, the helper rule. The explicit default is the control that still preselects."""
+        ok = _rec(self.state, "Work")
+        p = self.state / "sdk-defaults.json"
+        cells = [
+            # (helper, machine login, the flag-less file, the default now)
+            (FAKE_KEY, "aaaaaaaaaaaa", {"auth": "login", "authLogin": ""}, "key"),          # plain login + helper: login -> key
+            (FAKE_KEY, "aaaaaaaaaaaa", {"auth": "login", "authLogin": ok["id"]}, "key"),    # stored login + helper + login
+            (FAKE_KEY, "", {"auth": "login", "authLogin": ok["id"]}, "key"),                # stored login + helper, no login
+            ("", "aaaaaaaaaaaa", {"auth": "login", "authLogin": ok["id"]}, "login"),        # stored login, no helper + login
+            ("", "", {"auth": "login", "authLogin": ok["id"]}, "login"),                    # stored login, no helper, no login
+        ]
+        for key, acct, file, want in cells:
+            self._world(key, acct)
+            p.write_text(json.dumps(file))
+            a = km._auth_avail()
+            self.assertEqual((a["default"], a["defaultExplicit"]), (want, False), (key, acct, file))
+            self.assertTrue(any(r["value"] == "login:" + ok["id"] and r["available"] for r in a["logins"]),
+                            "the stored login is still offered, usable; only the preselection moved")
+        # the non-moving cells: a flag-less key pick on a helper box, and no pick at all, preselect the key either way
+        self._world(FAKE_KEY, "aaaaaaaaaaaa")
+        p.write_text(json.dumps({"auth": "key", "authLogin": ""}))
+        self.assertEqual(km._auth_avail()["default"], "key")
+        p.write_text(json.dumps({"effort": "high"}))
+        self.assertEqual(km._auth_avail()["default"], "key")
+        # the control: the explicit stored-login default preselects the record in every world where the record is usable
+        for key, acct in ((FAKE_KEY, "aaaaaaaaaaaa"), (FAKE_KEY, ""), ("", "aaaaaaaaaaaa"), ("", "")):
+            self._world(key, acct)
+            p.write_text(json.dumps({"auth": "login", "authLogin": ok["id"], "authExplicit": True}))
+            a = km._auth_avail()
+            self.assertEqual((a["default"], a["defaultExplicit"]), ("login:" + ok["id"], True), (key, acct))
+
     def test_an_explicit_stored_login_default_is_reported_as_the_explicit_default(self):
         """The user 2026-09-14: a stored login set under Set default billing reads "login:<id>" with defaultExplicit true
-        while usable, and falls through the machine rules like any remembered login pick when it is not."""
+        while usable, and falls through the machine rules like any explicit login default when it is not."""
         self._world(FAKE_KEY, "aaaaaaaaaaaa")
         ok = _rec(self.state, "Work")
         (self.state / "sdk-defaults.json").write_text(json.dumps({"auth": "login", "authLogin": ok["id"], "authExplicit": True}))
@@ -549,7 +597,7 @@ class StoredLoginPick(_Backend):
         self.be._stamp_launch_login(s)
         return kw
 
-    def test_set_auth_persists_the_login_and_seeds_the_next_session(self):
+    def test_set_auth_persists_the_login_and_remembers_it_without_seeding_the_next_spawn(self):
         rec = _rec(self.be.state_dir, "Work", org="Acme", kind="enterprise")
         sid = self.be.spawn("n", "/tmp")
         self.assertTrue(self.be.set_auth(sid, "login:" + rec["id"]))
@@ -557,10 +605,17 @@ class StoredLoginPick(_Backend):
         self.assertEqual((reg["auth"], reg["authLogin"], reg["authPending"]), ("login", rec["id"], True))
         d = sb.read_sdk_defaults(self.be.state_dir)
         self.assertEqual((d.get("auth"), d.get("authLogin")), ("login", rec["id"]))
+        # the file's flag-less auth is the record of the last pick and nothing reads it (2026-09-18; hand-editing the file stays
+        # the escape hatch): a spawn with no pick of its own reads the file's auth only beside authExplicit, as the launch and
+        # the init check do, and follows the machine default
         sid2 = self.be.spawn("m", "/tmp")
         reg2 = sb.read_reg(self.be.state_dir, sid2)
-        self.assertEqual((reg2.get("auth"), reg2.get("authLogin")), ("login", rec["id"]), "the next spawn seeds the stored login")
-        # a plain login pick clears the stored one, in the reg and in the remembered default
+        self.assertEqual((reg2.get("auth"), reg2.get("authLogin")), (None, None), "the next spawn follows the default, not the pick")
+        self.assertTrue(self.be.set_auth_default("login:" + rec["id"]))
+        reg3 = sb.read_reg(self.be.state_dir, self.be.spawn("o", "/tmp"))
+        self.assertEqual((reg3.get("auth"), reg3.get("authLogin")), ("login", rec["id"]), "the EXPLICIT stored-login default seeds")
+        self.assertTrue(self.be.set_auth_default("auto"))
+        # a plain login pick clears the stored one, in the reg and in the file's record of the last pick
         self.assertTrue(self.be.set_auth(sid, "login"))
         self.assertEqual(sb.read_reg(self.be.state_dir, sid).get("authLogin"), "")
         self.assertEqual(sb.read_sdk_defaults(self.be.state_dir).get("authLogin"), "")
@@ -1013,15 +1068,140 @@ class StoredLoginPick(_Backend):
         self.be._note_auth_source(s, "none")
         self.assertFalse(s._wrong_landing_reconnected)
 
-    def test_the_seed_skip_names_a_dead_remembered_stored_login(self):
+    def test_the_seed_skip_names_a_dead_explicit_stored_login_default(self):
         rec = _rec(self.be.state_dir, "Work")
         lg.mark_refused(self.be.state_dir, rec["id"], "refused")
-        sb.write_sdk_default(self.be.state_dir, auth="login", authLogin=rec["id"])
+        sb.write_sdk_default(self.be.state_dir, auth="login", authLogin=rec["id"], authExplicit=True)   # the EXPLICIT default is what a spawn reads (2026-09-18)
         logs = []
         self.be._log = lambda m, problem=False: logs.append(m)
         sid = self.be.spawn("n", "/tmp")
-        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid), "a dead remembered pick seeds nothing")
-        self.assertTrue(any("Work" in m and "start unpicked" in m for m in logs), logs)
+        self.assertNotIn("auth", sb.read_reg(self.be.state_dir, sid), "a dead explicit stored-login default seeds nothing")
+        # the row's wording, pinned on the selected row (round 1 of the review of fork PR #819, tests-3 and kernel-5: the
+        # stored-login branch of _note_seed_skipped was rewritten with no test that failed before it): it names the
+        # machine's default billing and the Set default billing submenu, and no longer a remembered pick or a pick on a session
+        rows = [m for m in logs if "Work" in m and "start unpicked" in m]
+        self.assertEqual(len(rows), 1, logs)
+        self.assertIn("the machine's default billing is the Work login but", rows[0])
+        self.assertIn("set the default billing again (the Set default billing submenu) to apply one", rows[0])
+        self.assertNotIn("remembered Billing pick", rows[0]); self.assertNotIn("pick a login again", rows[0])
+        self.be.spawn("m", "/tmp")
+        self.assertEqual(len([m for m in logs if "Work" in m and "start unpicked" in m]), 1, "once per process")
+
+    def _events(self):
+        p = Path(self.be.state_dir) / sb.SESSION_EVENTS_FILE
+        return [json.loads(ln) for ln in p.read_text().splitlines()] if p.exists() else []
+
+    def _unseeded_rows(self):
+        return [p for p in self.be.problems(50) if "the last per-session Billing pick" in p["text"]]
+
+    def _pick_stored(self, rec):
+        sid0 = self.be.spawn("picked", "/tmp")
+        self.assertTrue(self.be.set_auth(sid0, "login:" + rec["id"]))
+        d = sb.read_sdk_defaults(self.be.state_dir)
+        self.assertEqual((d.get("auth"), d.get("authLogin"), bool(d.get("authExplicit"))), ("login", rec["id"], False))
+        return sid0
+
+    def _spawn_unpicked(self, name):
+        lines = []
+        cb, self.be._log_cb = self.be._log_cb, lines.append
+        try:
+            sid = self.be.spawn(name, "/tmp")
+        finally:
+            self.be._log_cb = cb
+        reg = sb.read_reg(self.be.state_dir, sid)
+        self.assertEqual((reg.get("auth"), reg.get("authLogin")), (None, None), "a follower: the flag-less stored-login pick seeded nothing")
+        return sid, reg, lines
+
+    def test_a_stored_login_pick_with_a_helper_moves_the_bill_to_the_key_and_the_spawn_says_so(self):
+        """Round 1 of the review of fork PR #819 (correctness-3, regression-3, tests-4; the reviewer's cells of 2026-09-19): the
+        cell the fork's own executors measured at 934aa3cbf and 04b7b0590. Before: the seeded stored-login pick launched
+        with the overlay {"apiKeyHelper": ""} and CLAUDE_CODE_OAUTH_TOKEN in the CLI's environment, so the stored account
+        billed; after: no overlay, no token, the box's helper runs and the key bills, and the spawn wrote nothing. The bill
+        is read from the launch payload here, and the spawn now says so as a problem row on the session."""
+        rec = _rec(self.be.state_dir, "Work")
+        self._pick_stored(rec)
+        sid, reg, lines = self._spawn_unpicked("n")
+        kw = self._launch_options(sb.SdkSession(self.be, reg))
+        self.assertNotIn("apiKeyHelper", self._settings_of(kw), "the helper is not suppressed: the key bills")
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"], "no stored-login token rides")
+        rows = self._unseeded_rows()
+        self.assertEqual(len(rows), 1, self.be.problems(50))
+        text = rows[0]["text"]
+        self.assertIn("auth (n): the last per-session Billing pick, the Work login, no longer seeds a new session", text)
+        self.assertIn("bills the API key (the helper rule)", text)
+        self.assertIn("to make the Work login the default for every new session, set it under Set default billing", text)
+        row = sb.parse_problem_row([m for m in lines if sb.PROBLEM_ROW_MARK in m and "Work" in m][0])
+        self.assertEqual((row["kind"], row["sid"], row["name"], row["pick"], row["bills"]),
+                         ("auth.pick-not-seeded", sid, "n", "login:" + rec["id"], "key"))
+        self.assertEqual([r["sid"] for r in self._events() if r["kind"] == "auth.pick-not-seeded"], [sid])
+        self.assertNotIn(self.tok, text); self.assertNotIn(self.tok, json.dumps(row))
+
+    def test_a_stored_login_pick_on_a_helper_less_box_moves_the_bill_to_the_machine_login_and_says_so(self):
+        """The cell the round-1 blast-radius sentence carved out as bill-neutral (tests-1, correctness-1, kernel-2): the side
+        word is "login" on both trees and only the ACCOUNT differs, the stored login's token before, the machine's own
+        credentials after; the comparison is by account, so the spawn says so here too."""
+        os.unlink(os.path.join(self.cfg, "settings.json")); sb._cred.forget_helper_key()
+        rec = _rec(self.be.state_dir, "Work")
+        self._pick_stored(rec)
+        sid, reg, lines = self._spawn_unpicked("n")
+        kw = self._launch_options(sb.SdkSession(self.be, reg))
+        self.assertFalse(kw.get("settings"), "a plain launch: no overlay")
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"], "no stored-login token: the machine's own login rides")
+        self.assertEqual(self.be.default_auth(reg), "login", "the side word is login, as the pick's was")
+        rows = self._unseeded_rows()
+        self.assertEqual(len(rows), 1, self.be.problems(50))
+        self.assertIn("the Work login, no longer seeds a new session", rows[0]["text"])
+        self.assertIn("bills the machine's own login", rows[0]["text"])
+        row = sb.parse_problem_row([m for m in lines if sb.PROBLEM_ROW_MARK in m and "Work" in m][0])
+        self.assertEqual((row["kind"], row["sid"], row["name"], row["pick"], row["bills"]),
+                         ("auth.pick-not-seeded", sid, "n", "login:" + rec["id"], "login"))
+        self.assertNotIn("why", row, "a usable stored login is billable: the account moves, the pick is not unbillable")
+        self.assertEqual([r for r in self._events() if r["kind"] == "auth.pick-not-seeded"], [row], "the ledger row is on the session")
+        self.assertNotIn(self.tok, rows[0]["text"]); self.assertNotIn(self.tok, json.dumps(row))
+
+    def test_a_stored_login_pick_with_no_helper_and_no_login_moves_to_no_credential_and_says_so(self):
+        """The worst cell (the reviewer's second correction, 2026-09-19): a working stored account before, no credential of
+        romp's at all after; the row says so in those words."""
+        os.unlink(os.path.join(self.cfg, "settings.json")); sb._cred.forget_helper_key()
+        rec = _rec(self.be.state_dir, "Work")
+        self._pick_stored(rec)
+        self.be.login_ok = lambda: False
+        sid, reg, lines = self._spawn_unpicked("n")
+        kw = self._launch_options(sb.SdkSession(self.be, reg))
+        self.assertFalse(kw.get("settings")); self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", kw["env"])
+        rows = self._unseeded_rows()
+        self.assertEqual(len(rows), 1, self.be.problems(50))
+        text = rows[0]["text"]
+        self.assertIn("the Work login, no longer seeds a new session", text)
+        self.assertIn("bills whatever the CLI resolves on its own (%s, and no apiKeyHelper is configured), which may be no "
+                      "credential at all" % sb._cred.WHY_NO_LOGIN, text)
+        # all three surfaces (round 1 addendum): the kernel-log line with its parseable tail, and the ledger row on the session
+        marked = [m for m in lines if sb.PROBLEM_ROW_MARK in m and "Work" in m]
+        self.assertEqual(len(marked), 1, lines)
+        row = sb.parse_problem_row(marked[0])
+        self.assertEqual((row["kind"], row["sid"], row["name"], row["pick"], row["bills"]),
+                         ("auth.pick-not-seeded", sid, "n", "login:" + rec["id"], "login"))
+        self.assertNotIn("why", row, "the stored login itself is usable: the account moves, the pick is not unbillable")
+        self.assertEqual([r for r in self._events() if r["kind"] == "auth.pick-not-seeded"], [row], "the ledger row is on the session")
+        self.assertNotIn(self.tok, text); self.assertNotIn(self.tok, json.dumps(row))
+
+    def test_a_refused_stored_login_pick_is_said_as_unbillable(self):
+        rec = _rec(self.be.state_dir, "Work")
+        self._pick_stored(rec)
+        lg.mark_refused(self.be.state_dir, rec["id"], "refused by the API")
+        sid, reg, lines = self._spawn_unpicked("n")
+        rows = self._unseeded_rows()
+        self.assertEqual(len(rows), 1, self.be.problems(50))
+        text = rows[0]["text"]
+        self.assertIn("the Work login, cannot be billed on this box (", text)
+        self.assertIn("refused", text)
+        self.assertIn("once that login is usable again", text)
+        row = sb.parse_problem_row([m for m in lines if sb.PROBLEM_ROW_MARK in m and "Work" in m][0])
+        self.assertTrue(row["why"])
+        self.assertEqual((row["kind"], row["sid"], row["name"], row["pick"], row["bills"]),
+                         ("auth.pick-not-seeded", sid, "n", "login:" + rec["id"], "key"))
+        self.assertEqual([r for r in self._events() if r["kind"] == "auth.pick-not-seeded"], [row], "the ledger row is on the session")
+        self.assertNotIn(self.tok, text); self.assertNotIn(self.tok, json.dumps(row))
 
     def test_spend_folds_by_login(self):
         rec = _rec(self.be.state_dir, "Work")
