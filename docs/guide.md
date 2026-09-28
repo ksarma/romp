@@ -532,8 +532,9 @@ rather than opens. The viewer keeps a trail of the files you reach through the l
 inside a file and of the pictures you open from its figures. Two arrow buttons appear at
 the left of its title bar once there is a file to step back or forward to (after you follow
 a link or open a picture; there are none before that): **Back** returns you to the file you
-came from, and **Forward** to the file you came back from, each at the place and in the view you
-left it (while you are not editing the file and no text box
+came from, and **Forward** to the file you came back from, a text file at the place and in the
+view you left it, a picture as the picture even if you left an SVG in its Source view, and a PDF
+at its first page (while you are not editing the file and no text box
 holds the keyboard, Cmd+[ and Cmd+] on a Mac do the same, and so do Alt+Left and Alt+Right
 on a Files or chat page open in a browser tab of its own; in the dashboard those two keys
 move the keyboard between the panes); a file opened from the chat, from a listing or from

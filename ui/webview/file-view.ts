@@ -689,15 +689,20 @@ let keyStepNext = false;
  *  from a file the reader had read: eight figures opened in one report evicted every other file's row and the reading place
  *  stored on it (the file review; the list holds eight). A picture reached from its report is a step inside that
  *  report's reading and no file the reader chose from the pane, so it takes no row; the report's own row stands, and Back
- *  reaches the report through the trail. The default the record names as the one taken. No place rides: a picture has none
- *  (its leave writes nothing), and a picture with a row of its own is opened from that row, through the host. */
+ *  reaches the report through the trail. The default the record names as the one taken. No place rides: a picture opened so
+ *  has none, and its leave writes none unless it is an SVG whose Source view has been shown, whose leave then writes a place
+ *  and whose trail entry records raw from then on, even when it is later left as the picture, while a Back or Forward still
+ *  opens the picture (the file review's round 19, fresh-1); and a picture with a row of its own is opened from that row,
+ *  through the host. */
 function openFigureInViewer(path: string, sid: string | null): void {
   trailNext = "push";
   try { openFileView(path, sid, { at: null }); } finally { trailNext = null; }
 }
 /** The trail's move for the open of `path` under `how`, run after runLeave wrote the leaving file's place: the shown
- *  file's entry first records the view it was left in (that place's `view`, read back by the file's key; none for a
- *  picture or a PDF, whose leave writes no place), then the tag decides. `push`: the shown file goes behind and the
+ *  file's entry first records the view it was left in (that place's `view`, read back by the file's key; none for a PDF or
+ *  a picture, whose leave writes no place, but for an SVG whose Source view has been shown, whose leave writes a place and
+ *  whose entry records raw from then on, even when it is later left as the picture, while a Back or Forward still opens the
+ *  picture), then the tag decides. `push`: the shown file goes behind and the
  *  steps ahead are dropped, unless the target IS the shown file (a `report.md:40` link inside report.md, a same-file
  *  heading target), which is a jump inside the file and no step between files, so the trail stands. `back` and
  *  `forward`: the step, when the trail's target is the file being opened (the buttons and the chords pass the entry's own

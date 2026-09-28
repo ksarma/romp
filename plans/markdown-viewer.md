@@ -8301,7 +8301,10 @@ no step between files (the contract's pushes were to another file; a duplicate e
 same file at the same place). A section link of the same document scrolls and pushes nothing (the delegate's fragment
 arm opens no file). A web address opens a tab and pushes nothing (its anchor arm). The entry's `view` is the view the
 reader left the file in, read at the move off the RememberedPlace `runLeave` has just written, by the file's key
-(`placeKey`), at every move, a reload included; a picture or a PDF writes no place and records none. Closing the viewer
+(`placeKey`), at every move, a reload included; a PDF or a picture writes no place and records none, but for an SVG whose
+Source view has been shown, whose leave writes a place and whose entry records raw from then on, even when it is later left as
+the picture, while a Back or Forward still opens the picture, and a PDF reopens at its first page (the file review's round 19,
+fresh-1). Closing the viewer
 ENDS the trail (closeFileView, once its guard has passed): the person left the review, and a reopen of the same file
 from Recent starts a new one. The alternative, keeping the trail for the page's life so that such a reopen finds its
 Back again, was not taken: a Back reaching into a review the reader had closed would move the card on nothing they did

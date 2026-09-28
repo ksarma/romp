@@ -86,7 +86,8 @@ def _body(source, head, close):
     return source[start:end]
 
 
-TRAIL = ("each at the place and in the view you left it (while you are not editing the file and no text box holds "
+TRAIL = ("a text file at the place and in the view you left it, a picture as the picture even if you left an SVG "
+         "in its Source view, and a PDF at its first page (while you are not editing the file and no text box holds "
          "the keyboard, Cmd+[ and Cmd+] on a Mac do the same, and so do Alt+Left and Alt+Right on a Files or chat "
          "page open in a browser tab of its own; in the dashboard those two keys move the keyboard between the "
          "panes); a file opened from the chat, from a listing or from the Files pane's **Recent** list starts the "
