@@ -3422,11 +3422,15 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // pointerdown or pointerup, or taking its compatibility mousedown, another document's tap sends the viewer its compatibility
 // mousedown, mouseup and click under its own touch's pointerId: it opens nothing and the next click opens once, red at 142ade155
 // and, on the chat and the Files pane, under a gate without the slot's pointerId test (a click typed as the slot's pointerup was
-// must carry that pointerup's pointerId), the reads a private witness kept out of the tree. In Firefox and WebKit, whose clicks
-// carry the fields of the viewer's own tap's, the element's shapes are the residual, measured by the closing check at 142ade155
-// opening in Firefox 16 of 16 times and in WebKit 7 of 7, and the second finger's by reading, while in Chromium it opened 0 of 36
-// times in that check's measurements under a candidate of this gate with the slot's pointerId test, and 0 of 51 under this gate in
-// the same probe; whether to accept the residual is the owner's decision. Two more orders of the class outside the residual, found
+// must carry that pointerup's pointerId), the reads a private witness kept out of the tree. In WebKit, and in Firefox where the
+// element is laid out before the tap's compatibility mousemove and no mouse rests in the viewer, whose clicks carry the fields of
+// the viewer's own tap's and whose input events here are that tap's, the element's shapes are the residual, measured by the closing
+// check at 142ade155 opening in Firefox 16 of 16 times and in WebKit 7 of 7, and the second finger's by reading, while in Chromium
+// it opened 0 of 36 times in that check's measurements under a candidate of this gate with the slot's pointerId test, and 0 of 51
+// under the gate at ddb446fae in the same probe; where the tap's compatibility events start in the viewer, Firefox sends the viewer
+// a mouseout to no element and the gate empties the slot (the file review's round 19, extra8-2; the engines leg's cells of it), and
+// a probe of that round under this gate's rules read Firefox's laid-out shape with no mouse in the viewer 12 of 12 and its other
+// shapes 0 of 48, WebKit 24 of 24 and Chromium 0 of 16; whether to accept the residual is the owner's decision. Two more orders of the class outside the residual, found
 // by a check of these fixes, opened in Firefox and WebKit and not in Chromium, at 142ade155, at 1a6470e72 and at 09f58bec6: the
 // first, a mouse's press whose pointerup the viewer never heard and then another document's tap, is closed by the gate's refusal of
 // a record still standing at a click (the engines leg's cells of it), and the second, in Firefox alone, by the gate's refusal of a
@@ -3439,20 +3443,24 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // frame's next redraw came while it was hidden, which alone brings that pointerout with the button down, and opened otherwise,
 // 168 of 168 such presses refused and none of the 232 others in a later probe of these fixes that stamped that redraw, and all 11
 // of that check's own probe refused, where 343ee2eb5's gate opened all 11. The later check
-// found a third order of the class outside the residual, in WebKit and in Chromium: the mouse held on the control while the top
-// page hides the viewer's frame and shows it again, then another document's mouse click on an element over the control that
-// hides at that click's press, open at this head, for the owner (the gate comment states it), WebKit opening it at every timing,
-// 3,700 of 3,700 in a later probe of these fixes, Chromium whenever the release comes before the first redraw to start after the
-// hide, 1,526 of 3,700 in that probe, and Firefox never, 0 of 2,600 on the Files pane and the chat. The
+// found a third order of the class outside the residual: the mouse held on the control while the top page hides the viewer's
+// frame and shows it again, then another document's mouse click on an element over the control that hides at that click's press,
+// open at this head in WebKit and in one shape in Chromium, for the owner (the gate comment states it), WebKit opening it at every
+// timing, 3,700 of 3,700 in a later probe of these fixes, Chromium 1,526 of 3,700 in that probe under the gate at ddb446fae and 0 of
+// 3,700 under this gate's rules, its moved-click and redraw shapes refused by the leave's arm for no button (the frame-hide cells
+// below), and opening it only in its still shape, 85 of 225 still clicks of a mouse and 64 of 180 of a pen with the frame shown at
+// the release, with no cell, and Firefox never, 0 of 2,600 on the Files pane and the chat. The
 // shape whose compatibility mousedown alone the
 // element takes is not in the residual: there Firefox and WebKit send the viewer that tap's mouseup of detail 0, and a mouseup other
 // than a
 // primary one of detail above 0 empties the slot and clears the tap's flag (the engines leg's cells of it), while Chromium sends
 // the viewer no mouseup and its cell above is the slot's pointerId test's. The gate's cost measured in WebKit, the same at
 // 142ade155: WebKit's tap whose pointerup another document's element takes, refused and revealing the control with the next tap
-// opening (the engines leg's cost cell). The chain rule's costs, none measured, each a refusal that reveals the control: a
+// opening (the engines leg's cost cell). The chain rule's other costs, stated by reading, none measured, each a refusal that
+// reveals the control: a
 // Firefox touchscreen whose tap's click carried another pointerId than its pointerup's, every tap refused there and the tab
-// opening only from the mouse or the keyboard; a pen in the touch order whose click comes typed mouse (WebKitGTK, by analogy),
+// opening only from the mouse or the keyboard; a pen in the touch order whose click comes typed mouse (as WebKit types a touch's
+// click, WPE as measured, and WebKitGTK by analogy),
 // every tap of it refused and the tab still opening from a finger, the mouse or the keyboard; a tap during which another finger
 // that touched the viewer lifts, in an engine that clicks after such a tap (Chromium sends none), refused, the next tap opening;
 // an engine whose touchend came before its pointerup, every tap refused (none of the three measured); and a pointer's click with
@@ -3460,8 +3468,12 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // eraser's tap whose mouseup does not carry the primary button, refused while Enter or Space on the control still opens, and so
 // is a pointer's click after whose pointerup a mouseup other than a primary one of detail above 0 came, an order none of the
 // three engines measured sends before a click, and a pointer's click that finds a record still standing under its own pointerId,
-// which no gesture of the viewer's own that the legs drive leaves; in WebKit alone a left click chorded into a held right press
-// leaves one, and is refused (file-view.ts's gate comment states that cost).
+// which no gesture of the viewer's own that the legs drive leaves. The measured costs, each a refusal once that reveals the control,
+// the next click opening: the refusal of a press whose pointer left, its two above; the refusal of a standing record's, in WebKit
+// alone, a left click chorded into a held right press; the mousedown's clear's, in the three engines, a left click with another
+// mouse button held, the other pressed before it or during it (Chromium 16 of 16, Firefox 28 of 28, WebKit 12 of 12 and its chord
+// of a left click into a held right press 4 of 4; the file review's round 19, extra7-1); and the two rules of the file review's
+// round 19, none measured, no cell of this leg changing under them (file-view.ts's gate comment states each).
 // The frame-hide cells (the file review's round 19, extra5-1 and extra8-1), on the hybrid page's Files pane in the same shape: a press
 // on the control held while the top page hides the viewer's frame, released at once on the top page, the frame shown again at once or
 // 300 ms later, then another document's click on an element over the control that hides at that click's mousedown, the mouse's click
