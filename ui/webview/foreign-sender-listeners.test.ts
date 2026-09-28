@@ -520,25 +520,27 @@ function uiPartition(root: string = UI): Record<string, string[]> {
 function uiSources(): string[] {
   return uiPartition()["modules"];
 }
-/** Where the listener's `if (windowSender(<its event>) === "foreign") return;` is among its body's statements, or why it
- *  does not count: the listener takes one parameter, the event, a plain name with no default (a parameter's default runs
- *  before the body, so a default on it or on a second parameter would run ahead of the check), and every statement before
- *  the check must be a read of the message (a declaration initialised to <event>.data) or an early return whose condition
- *  inert accepts: no call, construct, tagged or substituted template, delete, await, yield, ++/--, assignment, or binary
- *  operator but &&, ||, ??, ===, !== and the comma (every other one can convert an operand: ==, !=, <, >, <=, >=, +, in,
- *  instanceof and the rest), and every property or element access reads off the event or a message read: off the event,
- *  its data at any depth (a structured clone, whose own members are plain data) or, one level and no deeper, its own
- *  origin, source, ports or lastEventId; off a name a message read bound to <event>.data, any depth. A read any further
- *  through the event can run a getter the page defined: its target, currentTarget and srcElement are the receiving window,
- *  its view is a window where the event has one, and a member of its source is a member of the sending window, so
- *  e.target.x, e.view and e.source.parent are refused, as is a member read off any other name. The rule is judged by form,
- *  not by what runs, and some forms it accepts can still run page code ahead of the check: a read of a member the
- *  message's data does not hold itself, which comes from its prototype, where the page can define a getter; in a message
- *  read, a destructuring default or computed key (any expression, a call included) and an array pattern, which runs the
- *  array iterator; and in an early return's condition, a read of a global name the page defines as a getter, a unary +, -
- *  or ~ and a computed or element key, each of which converts an object, a spread (an iterator, or an object's getters), a
- *  class expression (its heritage reads the superclass's prototype, and a decorator is a call) and a JSX element, a call
- *  once compiled. */
+/** Where the listener's `if (windowSender(<its event>) === "foreign") return;` is among its body's statements, or why
+ *  it does not count: the listener takes one parameter, the event, a plain name with no default (a parameter's default
+ *  runs before the body, so a default on it or on a second parameter would run ahead of the check), and every statement
+ *  before the check must be a read of the message (a declaration initialised to <event>.data) or an early return whose
+ *  condition inert accepts: no call, construct, tagged or substituted template, delete, await, yield, ++/--,
+ *  assignment, or binary operator but &&, ||, ??, ===, !== and the comma (every other one can convert an operand: ==,
+ *  !=, <, >, <=, >=, +, in, instanceof and the rest), and every property or element access reads off the event or a
+ *  message read: off the event, its data at any depth (a structured clone, whose own members are plain data) or, one
+ *  level and no deeper, its own origin, source, ports or lastEventId; off a name a message read bound to <event>.data,
+ *  any depth. A read any further through the event can run a getter the page defined: its target, currentTarget and
+ *  srcElement are the receiving window, its view is a window where the event has one, and a member of its source is a
+ *  member of the sending window, so e.target.x, e.view and e.source.parent are refused, as is a member read off any
+ *  other name. The rule is judged by form, not by what runs, and some forms it accepts can still run page code ahead of
+ *  the check: a read of the event's own data, origin, source, ports or lastEventId, whose getters on
+ *  MessageEvent.prototype the page can replace (the check reads source and origin the same way); a read of a member the
+ *  message's data does not hold itself, which comes from its prototype, where the page can define a getter; in a
+ *  message read, a destructuring default or computed key (any expression, a call included) and an array pattern, which
+ *  runs the array iterator; and in an early return's condition, a read of a global name the page defines as a getter, a
+ *  unary +, - or ~ and a computed or element key, each of which converts an object, a spread (an iterator, or an
+ *  object's getters), a class expression (its heritage reads the superclass's prototype, and a decorator is a call) and
+ *  a JSX element, a call once compiled. */
 function headCheck(site: Site): string | null {
   const fn = site.fn;
   if (ts.isIdentifier(fn)) return "the listener is a name no const holding a function written in place binds (sitesIn): " + fn.text;
