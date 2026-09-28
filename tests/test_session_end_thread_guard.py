@@ -66,14 +66,14 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   concurrent.futures.process's _threads_wakeups (the module loaded by the scratch conftest). In this process
   (ExitJoinTables): each EXIT_JOIN_TABLES attribute exists on this Python and is a global its module's exit hook reads;
   the two hooks are the only ones the standard library registers with threading._register_atexit, derived from its
-  source; and a live daemon thread in either table (the busy worker of a pool a daemon thread started, and a stand-in
-  for a ProcessPoolExecutor's manager thread) is returned by the guard while a plain daemon thread beside it is not.
-  The tables are read again after every pass: a busy worker started, by a worker of a pool a daemon thread started,
-  after the guard's first read is returned. A read that raises RuntimeError, as iterating a WeakKeyDictionary does on
-  3.10 to 3.13 when another thread inserts into it, is read again (a stand-in table raises on its first read), up to
-  the guard's one deadline: a table that changes during every read ends the guard at its deadline, failing it by the
-  table's name (a stand-in that adds to itself during every read, the guard run under a backstop whose firing is the
-  defect of a retry with no bound).
+  source (a premise pin, which reads no guard); and a live daemon thread in either table (the busy worker of a pool a
+  daemon thread started, and a stand-in for a ProcessPoolExecutor's manager thread) is returned by the guard while a
+  plain daemon thread beside it is not. The tables are read again after every pass: a busy worker started, by a worker
+  of a pool a daemon thread started, after the guard's first read is returned. A read that raises RuntimeError, as
+  iterating a WeakKeyDictionary does on 3.10 to 3.13 when another thread inserts into it, is read again (a stand-in
+  table raises on its first read), up to the guard's one deadline: a table that changes during every read ends the
+  guard at its deadline, failing it by the table's name (a stand-in that adds to itself during every read, the guard
+  run under a backstop whose firing is the defect of a retry with no bound).
 - Threads that END WITHIN THE CAP (each test starts one that sleeps WITHIN_S and exits) and plain DAEMON threads that
   run past the session (one per test, released at unconfigure) leave the run green, serially and under -n 2, at the
   guard's own cap. The guard's wait is WITNESSED, not assumed: the scratch conftest records at pytest_sessionfinish,
@@ -111,9 +111,18 @@ Each child-run pin was run with the guard removed from tests/conftest.py and fai
 daemon-started-pool and missing-table runs pass (exit 0, no error), the green runs' witness finds the within-cap
 threads alive at sessionfinish, and the two-error runs, red on the TestCase's own errors, find no thread named on
 stderr. The two-error runs also fail with the guard as it was before it wrote to stderr, on the same missing name.
-The pins for the exit-join tables were also run with the guard as it was before it read them, when it waited for
-non-daemon threads only, and fail there: the daemon-started-pool and missing-table runs pass, and in this process the
-guard returns neither daemon thread and has no EXIT_JOIN_TABLES. Synthetic fixtures only; no kernel, no network.
+The pins for the exit-join tables, as this file has them, were run serially on 3.12 against the guard as it was before
+it read the tables, when it waited for non-daemon threads only, and every one that reads the guard fails there. Of the
+child runs, the four daemon-started-pool runs (busy and idle, serially and under -n 2) and each missing-table run exit 0
+with no error. In this process (ExitJoinTables): test_the_guard_reads_the_tables_the_exit_hooks_join fails on the
+missing EXIT_JOIN_TABLES (AttributeError); the pins of the daemon-started pool's worker and of the process pool's table
+fail with the guard returning an empty list; the re-read pin (test_the_tables_are_read_again_after_every_pass) fails
+with a KeyError on 'w2' at its unpack line, since that guard skips the daemon W1 and returns at once, before W1's task
+records W2; the retry pin (test_a_table_read_that_meets_a_concurrent_insert_is_read_again) fails at its assertion with
+an empty list; and the deadline pin fails because the guard returns an empty list at once instead of failing. The one
+that passes there is test_they_are_the_only_exit_hooks_the_standard_library_registers, a premise pin: it reads no
+guard, only the standard library's source against the class's own TABLES, so no change to the guard can turn it red.
+Synthetic fixtures only; no kernel, no network.
 """
 import importlib.util
 import itertools
@@ -809,7 +818,8 @@ class ExitJoinTables(unittest.TestCase):
 
     def test_they_are_the_only_exit_hooks_the_standard_library_registers(self):
         """Derived from the standard library's source on this Python: every module outside its test packages, idlelib and
-        site-packages whose code calls _register_atexit (threading's own definition of it excluded)."""
+        site-packages whose code calls _register_atexit (threading's own definition of it excluded). A premise pin: it
+        reads no guard, only the source against TABLES, so no change to the guard can turn it red."""
         root = sysconfig.get_paths()["stdlib"]
         skip = {"test", "tests", "idlelib", "site-packages", "dist-packages", "__pycache__"}
         call = re.compile(r"^(?![ \t]*def\b)[^#\n]*\b_register_atexit\(", re.M)
