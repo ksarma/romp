@@ -22,9 +22,12 @@
 // THE DETAIL'S CAP AT REST (the maintainer's ruling at the merge with main): with the keyboard down the cap is the larger
 // of 12em and 37% of the window's height, so a tall window shows more of a long detail; with the keyboard up it
 // is 12em, as at the head, and the flex shrink governs. Its own test per engine measures the viewport term at rest at
-// 844, 900 and 1080, 12em at rest at 300 (the computed max-height: the room sets the rendered height there), 12em under
-// the keyboard at 508 with the sheet opened at rest and the keyboard then raised and lowered under it, the recorded
-// 8-line detail in full at 844 and 900, and the chip todo at its cap under its room at both.
+// the pane heights a phone gives (the maintainer's ruling on the cap pass: Safari's 600, 664 with both toolbars shown,
+// and 740; the installed app's 844) and at 900 and 1080, 12em at rest at 300 (the computed max-height: the room sets the
+// rendered height there), 12em under the keyboard at 508 with the sheet opened at rest and the keyboard then raised and
+// lowered under it, the recorded 8-line detail on both sides of the stated boundary (in full at 680, 740, 844 and 900;
+// at 600 and 664 it shows the cap and scrolls the rest), the chip todo fitting in Safari's range with its detail under
+// the cap, and the chip todo at its cap under its room at 844 and 900.
 //
 // The browser legs (Chromium, Firefox, and WebKit when the box has them) open the page at the phone's width and drive
 // the viewport's HEIGHT as the keyboard would (inside the shell the chat iframe is sized to the visible height, so its
@@ -106,8 +109,9 @@ const DETAIL = Array.from({ length: 40 }, (_, i) => `Option ${i + 1}: the summar
 const LONG_TEXT = "Which layout should the quarterly report use for the regional tables, the summary section and the appendix, given that the notes under each table now run to several lines and the reviewers asked for the totals to lead every page rather than close it?";
 const FILE = "/srv/notes-api/docs/quarterly-report-layout.md";
 const LINK = "https://github.com/example-org/notes-api/pull/398";
-// the recorded 8-line detail (the review record's extra10-4, 251px at this width): the share of the detail's cap at rest is
-// measured so that it shows in full at 844 and 900 (styles.css #ut-reply-prompt .ut-detail.open)
+// the recorded 8-line detail (the review record's extra10-4, 251px at this width): at the share of the detail's cap at rest
+// it shows in full in a pane from 678px (the stated boundary, styles.css #ut-reply-prompt .ut-detail.open), so at 844 and
+// 900 and not in Safari with both toolbars shown (664)
 const DETAIL8 = Array.from({ length: 8 }, (_, i) => `Option ${i + 1}: the summary section leads and the tables follow, with the notes folded under each table.`).join("\n");
 const LINKED_DETAIL = "The earlier draft is at https://github.com/example-org/notes-api/pull/398 and the reviewers' notes follow.\n" + DETAIL;
 type Todo = { id: string; text: string; detail?: string; file?: string; link?: string };
@@ -123,7 +127,11 @@ const KEYBOARD_UP = 508;   // above the fold's threshold: the squeeze fix alone
 const KEYBOARD_TIGHT = 420;   // under it: the fold too
 const ONSET = 490;   // the shared box rule's clip band began here (extra9-2's refuter): above the fold, under the old clip
 const TALL = 900;
-const PHONE_REST = 844;   // a phone's visible height at rest (the labs' phone window)
+const PHONE_REST = 844;   // a phone's visible height at rest (the labs' phone window): the installed app's pane
+const SAFARI_BARS = 664;   // mobile Safari's visible height at 390px wide with both toolbars shown (a 390x844 iPhone 12, 13 or 14 in Playwright's device registry)
+const SAFARI_LOW = 600;   // the low end of Safari's pane heights at this width (the maintainer's ruling on the cap pass: about 600 to 740)
+const SAFARI_TOP = 740;   // the high end, its toolbars collapsed
+const BOUNDARY_UP = 680;   // just above the stated boundary: the 8-line detail shows in full in a pane from 678px (Chromium; 675 in WebKit, 676 in Firefox)
 const REST_TALL = 1080;   // a tall window at rest (the review record's extra10-4 measured the regression at this height)
 const REST_SHORT = 300;   // a window at rest short enough that 12em is the larger term (37% of 300 is 111px)
 const REST_SHARE = 0.37;   // the detail's cap at rest: max(12em, 37% of the window's height) (styles.css, where the share is derived)
@@ -584,14 +592,17 @@ for (const name of ["chromium", "firefox", "webkit"]) {
   // THE DETAIL'S CAP AT REST AND UNDER THE KEYBOARD (the maintainer's ruling at the merge with main), its own test so each
   // regime has its own red: with the keyboard down the cap is the larger of 12em and 37% of the window's height;
   // with the keyboard up it is 12em, as at the head. Which term binds: 37% of the window passes 12em (134.16px at the
-  // detail's 11.18px font) above about 363px, so at rest the viewport term binds at 844 (312.3px), 900 (333px) and 1080
-  // (399.6px), and 12em at 300 (37% is 111px), where the room, not the cap, sets the rendered height, so the computed
-  // max-height is what shows which arm won; under the keyboard the term is withdrawn and 12em binds (at 508 the room would
-  // hold 174px, so a cap that let the term in there shows as a taller detail). The recorded lengths the share was measured
-  // against (styles.css): the 8-line detail (t4) shows in full at 844 and 900 with the answer box at three rows and Send
-  // inside the box; the chip todo (t2: the wrapped ask with both chips, the forty-one-line detail) keeps the cap under its
-  // room at both, so the cap sets its detail's height and the box does not scroll
-  test(`in ${name}: the detail's cap at rest is the larger of 12em and 37% of the window's height (the viewport term at 844, 900 and 1080, 12em at 300), and 12em under the keyboard, as at the head`, async (t) => {
+  // detail's 11.18px font) above about 363px, so at rest the viewport term binds from Safari's 600 (222px) through 844
+  // (312.3px), 900 (333px) and 1080 (399.6px), and 12em at 300 (37% is 111px), where the room, not the cap, sets the
+  // rendered height, so the computed max-height is what shows which arm won; under the keyboard the term is withdrawn and
+  // 12em binds (at 508 the room would hold 174px, so a cap that let the term in there shows as a taller detail). The share
+  // is derived at the pane heights a phone gives (the maintainer's ruling on the cap pass; styles.css has the table): the
+  // recorded 8-line detail (t4) shows in full in a pane from 678px, the stated boundary, so it is pinned on both sides of
+  // it (the cap and a scroll at 600 and 664; in full at 680, 740, 844 and 900, the answer box at three rows and Send inside
+  // the box); the chip todo (t2: the wrapped ask with both chips, the forty-one-line detail) keeps the cap under its room
+  // at the app's 844 and at 900, so the cap sets its detail's height and the box does not scroll, and in Safari's range,
+  // where its room can be the smaller, it fits with its detail under the cap
+  test(`in ${name}: the detail's cap at rest is the larger of 12em and 37% of the window's height (the viewport term from Safari's 600 to 1080, 12em at 300), and 12em under the keyboard, as at the head`, async (t) => {
     if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; none of CI's browser-backed steps runs this leg, and the served leg tests/test_reply_sheet_served.py measures the cap at rest and under the keyboard in CI's Browser-backed served-page tests (pytest) step"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
@@ -643,20 +654,65 @@ for (const name of ["chromium", "firefox", "webkit"]) {
           assert.ok(m.detailClientH <= m.detailMaxH + 0.5 && m.detailClientH >= floorOf(m.detailLineH), `at rest at 300: the room, under the cap, sets the detail's height, never under its floor (${m.detailClientH}px)`);
         } finally { await cancelReply(); }
       });
-      // the recorded lengths, at a phone's visible height at rest and at the tallest phone window the labs drive
-      for (const h of [PHONE_REST, TALL]) {
+      // Safari's pane heights at rest (about 600 to 740 at this width; 664 with both toolbars shown): the forty-line detail at
+      // the viewport term (the room holds more than the cap), and the chip todo fitting with its detail under the cap. Its
+      // room can be the smaller here (224px at 664; the pane's two chip rows leave it 192), and there the shrink sets its
+      // detail's height: no share both shows the 8-line detail in full at 664 and keeps the cap within that room
+      for (const h of [SAFARI_LOW, SAFARI_BARS, SAFARI_TOP]) {
+        await t.test(`at rest at ${h}, a Safari pane: the viewport term (the forty-line detail)`, async () => {
+          await setHeight(h, false);   // no sheet is up: the next one opens at this height
+          await openReply(TODOS[0]);
+          try { atRestTerm((await measure())!, `at rest at ${h}, the forty-line detail`); }
+          finally { await cancelReply(); }
+        });
+        await t.test(`at rest at ${h}, a Safari pane: the chip todo fits, its detail under the cap`, async () => {
+          await openReply(TODOS[1]);
+          try {
+            const m = (await measure())!;
+            const what = `at rest at ${h}, the chip todo`;
+            assert.equal(m.tight, false, `${what}: no fold`);
+            assert.ok(Math.abs(m.detailMaxH - term(m)) <= 0.5, `${what}: the cap is 37% of the window's height (${m.detailMaxH}px against ${term(m).toFixed(1)}px)`);
+            assert.ok(m.detailClientH <= m.detailMaxH + 1.5 && m.detailClientH >= floorOf(m.detailLineH), `${what}: the detail is under its cap and over its floor of two lines (${m.detailClientH}px under a ${m.detailMaxH}px cap, a ${m.detailLineH}px line); where the room is the smaller the shrink sets it`);
+            assert.ok(m.inputH >= m.floorH - 1, `${what}: three rows (${m.inputH} against ${m.floorH}px)`);
+            assertFits(m, what);
+          } finally { await cancelReply(); }
+        });
+      }
+      // the recorded 8-line detail on both sides of the stated boundary (styles.css): in full in a pane from 678px (Chromium;
+      // 675 in WebKit, 676 in Firefox). Under it, at Safari's 600 and 664, it shows the cap and scrolls the rest; a share that
+      // shows it in full at 664 moved the boundary under it, and one that loses it at 680 moved the boundary over it
+      for (const h of [SAFARI_LOW, SAFARI_BARS]) {
+        await t.test(`at rest at ${h}, under the stated boundary: the recorded 8-line detail shows the cap and scrolls the rest`, async () => {
+          await setHeight(h, false);
+          await openReply(TODOS[3]);
+          try {
+            const m = (await measure())!;
+            const what = `at rest at ${h}, the 8-line detail`;
+            assert.ok(m.detailScrollH > em12(m) + 60, `the 8-line detail is longer than 12em (${m.detailScrollH}px against ${em12(m).toFixed(1)}px)`);
+            assert.ok(Math.abs(m.detailClientH - term(m)) <= 1.5, `${what}: it shows at the cap, ${m.detailClientH}px against ${term(m).toFixed(1)}px`);
+            assert.ok(m.detailScrollH > m.detailClientH + 1, `${what}: not in full, ${m.detailClientH} of ${m.detailScrollH}px: the pane is under the stated boundary (in full from 678px); in full here, the share moved the boundary that styles.css and the ledger entry state`);
+            assert.ok(m.inputH >= m.floorH - 1, `${what}: three rows (${m.inputH} against ${m.floorH}px)`);
+            assertFits(m, what);
+          } finally { await cancelReply(); }
+        });
+      }
+      for (const h of [BOUNDARY_UP, SAFARI_TOP, PHONE_REST, TALL]) {
         await t.test(`at rest at ${h}: the recorded 8-line detail shows in full, the answer box at three rows, Send inside the box`, async () => {
           await setHeight(h, false);   // no sheet is up: the next one opens at this height
           await openReply(TODOS[3]);
           try {
             const m = (await measure())!;
             assert.ok(m.detailScrollH > em12(m) + 60, `the 8-line detail is longer than 12em (${m.detailScrollH}px against ${em12(m).toFixed(1)}px), so the head showed only part of it`);
-            assert.ok(m.detailScrollH <= m.detailClientH + 1, `at rest at ${h} the recorded 8-line detail shows in full: ${m.detailClientH} of ${m.detailScrollH}px under a ${m.detailMaxH}px cap (the head's 12em showed ${em12(m).toFixed(1)}px of it)`);
+            assert.ok(m.detailScrollH <= m.detailClientH + 1, `at rest at ${h} the recorded 8-line detail shows in full: ${m.detailClientH} of ${m.detailScrollH}px under a ${m.detailMaxH}px cap (the head's 12em showed ${em12(m).toFixed(1)}px of it; the stated boundary is 678px)`);
             assert.ok(m.inputH >= m.floorH - 1, `at rest at ${h}, the 8-line detail: three rows (${m.inputH} against ${m.floorH}px)`);
             assertFits(m, `at rest at ${h}, the 8-line detail in full`);
           } finally { await cancelReply(); }
         });
+      }
+      // the chip todo at its cap, under its room, where the share holds that room: the installed app's 844, and 900
+      for (const h of [PHONE_REST, TALL]) {
         await t.test(`at rest at ${h}: the chip todo at its cap, under its room`, async () => {
+          await setHeight(h, false);
           await openReply(TODOS[1]);
           try { atRestTerm((await measure())!, `at rest at ${h}, the chip todo: the cap under its room`); }
           finally { await cancelReply(); }

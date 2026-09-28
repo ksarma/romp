@@ -33,7 +33,8 @@
 // fresh click on the button, and records a button that vanished under it or did not open the sheet as its own failure
 // line naming the element, never a bare exception.
 // The detail's cap at rest (the maintainer's ruling at the merge with main): with the keyboard down it is the larger of
-// 12em and 37% of the window's height, with the keyboard up 12em, as before. Read at rest at 900 and 1080 on the
+// 12em and 37% of the window's height, with the keyboard up 12em, as before. Read at rest at 900 and 1080 and at two of the
+// pane heights a phone gives (the installed app's 844, and 664, mobile Safari's with both toolbars shown) on the
 // composition's todo with its answer box cleared (the viewport term), and under the keyboard at 508 on the other todo's
 // sheet at open (12em). The detail's cap reads the keyboard where the shell does (restCap; kernel.py kbOpen): the visual
 // viewport of the window that owns the screen shorter than its layout viewport. These pages are top-level, so that
@@ -51,7 +52,7 @@ const playwright = require("playwright");
 const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
 const engine = cfg.engine || "chromium";
 const out = { engine, pane: cfg.pane, errors: [] };
-const W = 390, KEYBOARD_UP = 508, TIGHT = 420, SHORT = 300, TALL = 900, REST_TALL = 1080, KEYBOARD_H = 336;
+const W = 390, KEYBOARD_UP = 508, TIGHT = 420, SHORT = 300, TALL = 900, REST_TALL = 1080, PHONE_REST = 844, SAFARI_BARS = 664, KEYBOARD_H = 336;
 const ANSWER = Array.from({ length: 14 }, (_, i) => `line ${i + 1}`).join("\n");
 
 const healthz = await new Promise((resolve) => {
@@ -284,11 +285,17 @@ try {
   await setHeight(TALL);
   await waitTight(false);
   // the keyboard down: the detail's cap at rest with the answer box empty (the answer typed at 420 is cleared, so the room
-  // holds more than the cap), the viewport term at 900 and at 1080; the answer is typed again at 900 below
+  // holds more than the cap), the viewport term at 900 and at 1080, then at the installed app's 844 and at mobile Safari's
+  // 664 with both toolbars shown (a 390x844 iPhone in Playwright's device registry), where this todo's room is under the
+  // cap and the shrink sets its detail; the answer is typed again at 900 below
   await fill("");
   out.restTall = await measure();
   await setHeight(REST_TALL);
   out.restTaller = await measure();
+  await setHeight(PHONE_REST, false);
+  out.restPhone = await measure();
+  await setHeight(SAFARI_BARS, false);
+  out.restSafari = await measure();
   await setHeight(TALL);
   await fill(ANSWER);
   out.tall = await measure();

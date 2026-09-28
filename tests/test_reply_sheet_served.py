@@ -44,12 +44,14 @@ flex children of the box, the chat's sit inside the quoted line, and the element
 their selectors in both.
 
 The detail's cap at rest (the maintainer's ruling at the merge with main): with the keyboard down it is the larger of
-12em and 37% of the window's height, with the keyboard up 12em, as before. Asserted at rest at 900 and 1080 on
-the composition's todo with its answer box cleared (the viewport term: the cap is 37% of the window's height and the long
-detail shows at it, the sheet fitting with Send under a finger), and under the keyboard at 508 on the other todo's sheet
-at open (12em). The detail's cap reads the keyboard where the shell does (restCap; kernel.py kbOpen): these pages are
-top-level, so the driver stubs the page's visualViewport.height a keyboard's height under its innerHeight while the
-keyboard is up and removes the stub at rest.
+12em and 37% of the window's height, with the keyboard up 12em, as before. Asserted at rest at 900, 1080 and the
+installed app's 844 on the composition's todo with its answer box cleared (the viewport term: the cap is 37% of the
+window's height and the long detail shows at it, the sheet fitting with Send under a finger); at 664, mobile Safari's
+height with both toolbars shown (a 390x844 iPhone in Playwright's device registry), where that todo's room is under the
+cap, the cap is the viewport term, the shrink sets the detail's height under it and the sheet fits the same way; and
+under the keyboard at 508 on the other todo's sheet at open (12em). The detail's cap reads the keyboard where the shell
+does (restCap; kernel.py kbOpen): these pages are top-level, so the driver stubs the page's visualViewport.height a
+keyboard's height under its innerHeight while the keyboard is up and removes the stub at rest.
 
 After the composition's send the chat page's card is rebuilt by the kernel's pushes that follow it (the other todo's
 Reply button becomes a new node), so the driver waits for that rebuild before it opens the other todo's sheet and records
@@ -257,10 +259,11 @@ class ReplySheetServed(unittest.TestCase):
         self.assertGreater(tall["inputH"], tall["floorH"] + 60, where + "900px, fourteen lines: the answer box grew well past the floor: %r" % (tall,))
         self.assertLess(t["inputH"], tall["inputH"], where + "900 then 508: the window's shrink re-fitted the answer box (grow ran on the resize): %d at 900, %d at 508: %s" % (tall["inputH"], t["inputH"], rec))
         # the detail's cap at rest (the maintainer's ruling at the merge with main): with the keyboard down it is the larger of
-        # 12em and 37% of the window's height, here the viewport term (333px at 900 and 399.6px at 1080, against 12em's
-        # 134px), read on the composition's todo with its answer box cleared, where the room holds more than the cap
+        # 12em and 37% of the window's height, here the viewport term (333px at 900, 399.6px at 1080 and 312.3px at the
+        # installed app's 844, against 12em's 134px), read on the composition's todo with its answer box cleared, where the
+        # room holds more than the cap (the share holds that room at 844, the maintainer's ruling on the cap pass)
         em12 = lambda m: 12 * m["detailFontPx"]
-        for label, m in (("at rest at 900", r["restTall"]), ("at rest at 1080", r["restTaller"])):
+        for label, m in (("at rest at 900", r["restTall"]), ("at rest at 1080", r["restTaller"]), ("at rest at 844", r["restPhone"])):
             with self.subTest(window=label):   # each window its own red or green
                 term = 0.37 * m["frameH"]
                 self.assertFalse(m["tight"], where + label + ": no fold: %r" % (m,))
@@ -272,6 +275,25 @@ class ReplySheetServed(unittest.TestCase):
                 for b in ("send", "cancel"):
                     self.assertTrue(self._inside_clip(m, b), where + label + ": %s is inside the box's clip: %r" % (b, m))
                 self.assertEqual(m["hitAtSend"], "target", where + label + ": a finger at Send's painted centre reaches Send: %r" % (m,))
+        # at 664, mobile Safari's height with both toolbars shown: the cap is still the viewport term (245.7px), but this todo's
+        # room is under it (the chips and the wrapped ask leave about 190 to 225px), so the shrink sets the detail's height
+        # under the cap and over its floor; the sheet fits all the same (no share both shows the recorded 8-line detail in
+        # full here and keeps the cap within this room: styles.css)
+        m = r["restSafari"]
+        with self.subTest(window="at rest at 664"):
+            term = 0.37 * m["frameH"]
+            label = "at rest at 664"
+            self.assertEqual(m["frameH"], 664, where + label + ": %r" % (m,))
+            self.assertFalse(m["tight"], where + label + ": no fold: %r" % (m,))
+            self.assertGreater(term, em12(m) + 20, where + label + ": 37%% of the window (%.1fpx) is the larger term against 12em (%.1fpx): %r" % (term, em12(m), m))
+            self.assertAlmostEqual(m["detailMaxH"], term, delta=0.5, msg=where + label + ": the cap is 37%% of the window's height, %.1fpx: %r" % (term, m))
+            self.assertLessEqual(m["detailH"], m["detailMaxH"] + 1.5, where + label + ": the detail is under its cap: %r" % (m,))
+            self.assertGreaterEqual(m["detailH"], floor(m), where + label + ": and over its floor of two lines: %r" % (m,))
+            self.assertGreaterEqual(m["inputH"], m["floorH"] - 1, where + label + ": three rows: %r" % (m,))
+            self.assertLessEqual(m["boxScrollH"], m["boxClientH"] + 1, where + label + ": the sheet fits, nothing is a scroll away: %r" % (m,))
+            for b in ("send", "cancel"):
+                self.assertTrue(self._inside_clip(m, b), where + label + ": %s is inside the box's clip: %r" % (b, m))
+            self.assertEqual(m["hitAtSend"], "target", where + label + ": a finger at Send's painted centre reaches Send: %r" % (m,))
         # the tree each builder emits, and the elements the fix's rules key on: the pane's chips are flex children of the
         # box (waiting.ts showReply), the chat's sit inside the quoted line (render.ts showUserTodoReply); the shared
         # skeleton is the title, the quoted line, the detail, the answer box and the buttons, in that order

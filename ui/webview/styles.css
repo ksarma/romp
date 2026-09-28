@@ -2975,18 +2975,24 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    eight and a half of its lines (line-height 1.4), and the flex shrink takes the detail down toward its floor from there;
    no viewport term enters (a 35dvh arm once stood beside it as the keyboard-up cap and never bound: at 508px it resolved
    to 177.8px against 12em's 134px at the default font; the maintainer's round 1 ruling). At rest, the keyboard down, it
-   is the larger of 12em and 37% of the window's height (its innerHeight, the visual viewport's height but under a pinch
-   zoom), which both builders publish as --ut-rest-h only while the keyboard is down (restCap; with the property absent
-   the term is 0px and the cap is 12em), so a tall window shows more of a long detail; the term is the larger above about
-   363px. The share is measured at 390x844 and at 390x900, the tallest phone window the labs drive, in Chromium, WebKit
-   and Firefox and in both panes. Of the recorded
-   detail lengths, 8, 20 and 40 lines of the labs' fixture line (251px, 626px and about 1300px at 390px wide), the
-   8-line one shows in full at 844 for any share of at least 0.297 (251 of 844), and the 20- and 40-line ones are longer
-   than the room the sheet has for a detail at either window (566px at most) whatever the share, so they scroll within
-   the cap. The share stays under the room of the tightest sheet, the pane's todo with both chip rows (371px at 844, a
-   share of 0.440; 427px at 900, 0.474), so there the cap and not the shrink sets a long detail's height, the answer box
-   at its three rows and Send inside the box. 0.37 sits near the middle of 0.297 to 0.440: at 844 the cap is 312px,
-   61px above the 8-line detail and 59px under the tightest room. A scroll container's overflow-x
+   is the larger of 12em and 37% of the pane's height (its innerHeight, which is the visual viewport's height except
+   under a pinch zoom), which both builders publish as --ut-rest-h only while the keyboard is down (restCap; with the
+   property absent the term is 0px and the cap is 12em), so a taller pane shows more of a long detail; the term is the
+   larger above about 363px. The share is derived at the pane heights a phone gives (the maintainer's ruling on the cap
+   pass), measured with the cap lifted in Chromium, WebKit and Firefox and in both panes: mobile Safari at 390px wide,
+   about 600 to 740px (664 with both toolbars shown: a 390x844 iPhone 12, 13 or 14 in Playwright's device registry; the
+   phone shell's tab bar takes its own height off that before the pane gets it), and the installed app at 844. The
+   recorded 8-line detail (251px in Chromium, 250 in WebKit and Firefox) would show in full at 664 from a share of
+   0.378, but at 664 the room of the tightest sheet, the todo with both chips (192px in the pane, 224 in the chat), is
+   less than the detail itself, so no share both shows it in full there and keeps the cap within the chip sheet's room.
+   The share is the one that holds that room where the app has it, at 844: at most 0.440 (371px in Firefox's pane), so
+   the cap and not the shrink sets a long detail's height there, and at least 0.297, so the 8-line detail shows in full
+   at 844. 0.37 sits near the middle: at 844 the cap is 312px, 61px above the 8-line detail and 59px under the tightest
+   room. The boundary: the 8-line detail shows in full in a pane from 678px tall (Chromium; 675 in WebKit, 676 in
+   Firefox), so in Safari with both toolbars shown (664) it shows 246px and scrolls the rest. The 20- and 40-line
+   details (626px and about 1300px) are longer than the room at every phone height (510px at 844), so they scroll within
+   the cap whatever the share. At no height and no share does the answer box lose a row or Send leave the box: the flex
+   shrink holds that. A scroll container's overflow-x
    computes to auto once overflow-y is set, so an unbreakable token (a long identifier, a bare path with no link) made
    the detail a sideways scroller; overflow-wrap: anywhere breaks the token as .pn-detail and .ut-reply-quote already
    do, and overflow-x: hidden is #pinned-notes's companion declaration, kept so a token the wrap cannot break is
