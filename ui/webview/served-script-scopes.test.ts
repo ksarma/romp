@@ -140,17 +140,19 @@ test("executed: a direct eval or a with statement puts a laxer check around a li
   assert.equal(checkSeenAfter("eval?.(s); seen = check();"), "strict");
 });
 
-/** The kernel's served scripts (tests/test_shell_source_check.py _served_scripts), the pages it lists, and the pieces of
- *  `plant`, a page of our own, as that module's reader finds them; python3 loads the kernel under a throwaway state root
- *  with the floors tests/conftest.py puts under a kernel load (the way file-comments.test.ts loads it). */
-function servedScripts(plant: string): { pages: string[]; scripts: Piece[]; plant: Array<[string, Piece["kind"], string]> } {
+/** The kernel's served scripts (tests/test_shell_source_check.py _served_scripts), the pages SERVED_BUILDERS lists, the
+ *  documents the scripts were read from, and the pieces of `plant`, a page of our own, as that module's reader finds them;
+ *  python3 loads the kernel under a throwaway state root with the floors tests/conftest.py puts under a kernel load (the
+ *  way file-comments.test.ts loads it). */
+function servedScripts(plant: string): { pages: string[]; documents: string[]; scripts: Piece[]; plant: Array<[string, Piece["kind"], string]> } {
   const script = [
     "import json, os, sys",
     "sys.path.insert(0, os.path.join(sys.argv[1], 'tests'))",
     "os.chdir(sys.argv[1])",
     "import test_shell_source_check as t",
     "plant = sys.stdin.read()",
-    "json.dump({'pages': list(t.SERVED_BUILDERS), 'scripts': t._served_scripts(), 'plant': t._page_scripts(plant)}, sys.stdout)",
+    "json.dump({'pages': list(t.SERVED_BUILDERS), 'documents': list(t._served_documents()), 'scripts': t._served_scripts(),",
+    "           'plant': t._page_scripts(plant)}, sys.stdout)",
   ].join("\n");
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "romp-scopes-"));
   try {
@@ -173,8 +175,12 @@ test("every script the kernel serves parses, and none holds a direct eval or a w
   const got = servedScripts(PLANT);
   const refusals = got.scripts.flatMap((p) => scopeRefusals(p.code, p.kind).map((why) => p.page + ", " + p.where + ": " + why));
   assert.deepEqual(refusals, [], "a direct eval, a with statement or an unreadable script on a page the kernel serves");
-  // the census read the pages: every page but the too-large one carries a script, and the ones this census exists for
-  // are among them (the shim's check on every pane page, the shell's adopted check, the sign-in form's handler)
+  // the census read every page SERVED_BUILDERS lists and every SVG under /media, every page but the too-large one carries
+  // a script, and the ones this census exists for are among them (the shim's check on every pane page, the shell's
+  // adopted check, the sign-in form's handler)
+  const svgs = fs.readdirSync(path.join(EXT, "media")).filter((f) => f.endsWith(".svg")).map((f) => "/media/" + f);
+  assert.ok(svgs.length > 0, "the media SVGs are listed");
+  assert.deepEqual([...got.documents].sort(), [...got.pages, ...svgs].sort(), "the documents read: every listed page and media SVG");
   const byPage = new Map<string, Piece[]>();
   for (const p of got.scripts) byPage.set(p.page, [...(byPage.get(p.page) || []), p]);
   for (const page of got.pages) if (page !== "the too-large page") assert.ok((byPage.get(page) || []).length > 0, page + " carries a script the census read");

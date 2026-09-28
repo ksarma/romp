@@ -222,18 +222,24 @@ def _page_scripts(html):
     return p.found
 
 
-def _served_scripts():
-    """Every script the kernel serves on its origin that it writes itself, as {page, where, kind, code}: the scripts of
-    each page SERVED_BUILDERS builds, /sw.js whole, and the scripts of each SVG under /media (a document a browser runs
-    script in when it is opened). ui/webview/served-script-scopes.test.ts parses each one."""
-    out = []
-    for name, page in _served_pages().items():
-        pieces = [("the script", "script", page)] if name == "/sw.js" else _page_scripts(page)
-        out.extend({"page": name, "where": w, "kind": k, "code": c} for w, k, c in pieces)
+def _served_documents():
+    """{name: text} for every document and script the kernel serves on its origin that it writes or ships itself: each page
+    SERVED_BUILDERS builds, /sw.js, and each SVG under /media (a document a browser runs script in when it is opened)."""
+    out = _served_pages()
     for f in sorted(os.listdir(km.MEDIA)):
         if f.endswith(".svg"):
             with open(os.path.join(km.MEDIA, f), encoding="utf-8") as fh:
-                out.extend({"page": "/media/" + f, "where": w, "kind": k, "code": c} for w, k, c in _page_scripts(fh.read()))
+                out["/media/" + f] = fh.read()
+    return out
+
+
+def _served_scripts():
+    """Every script in _served_documents, as {page, where, kind, code}: /sw.js whole, and each other document's scripts as
+    _page_scripts finds them. ui/webview/served-script-scopes.test.ts parses each one."""
+    out = []
+    for name, text in _served_documents().items():
+        pieces = [("the script", "script", text)] if name == "/sw.js" else _page_scripts(text)
+        out.extend({"page": name, "where": w, "kind": k, "code": c} for w, k, c in pieces)
     return out
 
 
