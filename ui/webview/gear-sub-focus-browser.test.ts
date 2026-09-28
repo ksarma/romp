@@ -22,12 +22,14 @@
 // browser). WHAT THE GATE CHECKS, and where (the maintainer's round 5, tests-1): CI's vscode-extension job runs `npm test` BEFORE
 // it installs Chromium, so at that step every browser leg in this file skips and the gate's read of this file is the source
 // pins alone (the parsed-sheet pins on the rules and the gear.js wiring pins); the shared browser-legs step, which the job runs
-// after the Chromium install over the roster vscode-extension/ci-browser-legs.txt under ROMP_BROWSER_LEGS_REQUIRE=1, runs this
-// file's bundle again, where the browser legs run in that Chromium and a skip is a failure naming its reason (the pane bench's
-// stance). The launch is the shared helper's (real-viewer-leg.ts inBrowser, which reads the switch for every leg that launches
-// through it), so this file carries no switch read of its own; the step and this file's roster line land in their own change
-// (the reviewer's ruling of 2026-09-21), and tests/test_served_labs_under_ci.py pins the roster line once the step is in the
-// tree and the ledger entry's disclosure of the gap until then.
+// after the Chromium install over the roster vscode-extension/ci-browser-legs.txt with the step's switch set, runs this file's
+// bundle again from its roster line, where the browser legs run in that Chromium and a skip is a failure naming its reason (the
+// pane bench's stance). The launch is the shared helper's (real-viewer-leg.ts inBrowser, which reads the switch for every leg
+// that launches through it), so this file carries no switch read and no launch of its own: every browser test here reaches
+// inBrowser through withGear, in Chromium alone, with nothing but reads of the tree's own sources before it (the roster rule
+// the roster's header states). Rostering is opt-in and nothing checks that every browser leg is rostered, so
+// tests/test_served_labs_under_ci.py pins this file's roster line. Each test's own timeout sits under the step's per-file bound
+// (the script's --test-timeout), which tools/ci-browser-legs.test.mjs holds over every rostered source.
 // A developer's machine with playwright's Chromium runs both in one `npm test`. The surface the browser legs exclude: Firefox
 // and WebKit (the three-engine readings in the review record came from a scratch matrix, not this file), and every engine
 // generation that lacks :has(), which the degradation leg below MODELS rather than installs. And the STATES the legs do not
@@ -269,9 +271,9 @@ const VERSION = { judgeModel: "opus", judgeEffort: "", indexModel: "opus", index
   judgeFast: "on", distillFast: "on", indexFast: "on", fastRefused: {}, autoNudge: true, settingsGt: {}, updateMode: "off" };
 
 async function withGear(t: any, tab: string, body: (page: any, errors: string[]) => Promise<void>, height = 320, ctxOpts: Record<string, unknown> = {}, css = GEAR_CSS): Promise<void> {
-  // the launch is the shared helper's (real-viewer-leg.ts inBrowser): without a browser a skip naming the reason, and under
-  // ROMP_BROWSER_LEGS_REQUIRE, which CI's browser-legs step sets after the Chromium install, a failure naming the switch and the
-  // reason, so the one CI run of these legs cannot read green on a runner that lost its browser; the helper closes the browser
+  // the launch is the shared helper's (real-viewer-leg.ts inBrowser): without a browser a skip naming the reason, and under the
+  // switch CI's browser-legs step sets after the Chromium install, a failure naming the switch and the reason, so the one CI run
+  // of these legs cannot read green on a runner that lost its browser; the helper closes the browser
   await inBrowser(t, async (browser) => {
     const errors: string[] = [];
     const js = bundle();
@@ -776,7 +778,7 @@ async function panelMatrix(t: any, page: any, errors: string[], tab: string, pan
 }
 
 for (const [tab, pane, floor] of PANES) {
-  test(`one tooltip across the ${pane} pane, the census form: a keyboard focus in each host shows its description alone; the pointer on every OTHER host shows that host's alone (the pointer wins); the pointer on nothing shows the focused one; a hovered mark on another row shows none`, { timeout: 240000 }, async (t) => {
+  test(`one tooltip across the ${pane} pane, the census form: a keyboard focus in each host shows its description alone; the pointer on every OTHER host shows that host's alone (the pointer wins); the pointer on nothing shows the focused one; a hovered mark on another row shows none`, { timeout: 180000 }, async (t) => {
     await withGear(t, tab, async (page, errors) => {
       await settled(page, tab);
       const hosts = await census(page);
@@ -789,7 +791,7 @@ for (const [tab, pane, floor] of PANES) {
     });
   });
 
-  test(`a mouse click on every control in the ${pane} pane, then the pointer leaving, by control kind: a checkbox or a button shows nothing with the control still focused (a click is not :focus-visible); a TEXT field shows its row's description until it blurs (a focus in a text field is always :focus-visible)`, { timeout: 240000 }, async (t) => {
+  test(`a mouse click on every control in the ${pane} pane, then the pointer leaving, by control kind: a checkbox or a button shows nothing with the control still focused (a click is not :focus-visible); a TEXT field shows its row's description until it blurs (a focus in a text field is always :focus-visible)`, { timeout: 180000 }, async (t) => {
     await withGear(t, tab, async (page, errors) => {
       await settled(page, tab);
       const hosts = await census(page);
@@ -829,7 +831,7 @@ for (const [tab, pane, floor] of PANES) {
   });
 }
 
-test("a synthetic SECOND doubled row (two descriptions under one checkbox row, the Account row's shape) on the Debug pane: the invariant holds over the whole census with it, one host shown whatever it owns, where the count pin this replaced named the Account row as the one doubled host and red on any other", { timeout: 240000 }, async (t) => {
+test("a synthetic SECOND doubled row (two descriptions under one checkbox row, the Account row's shape) on the Debug pane: the invariant holds over the whole census with it, one host shown whatever it owns, where the count pin this replaced named the Account row as the one doubled host and red on any other", { timeout: 180000 }, async (t) => {
   await withGear(t, "debug", async (page, errors) => {
     await injectDoubledRow(page);
     const hosts = await census(page);

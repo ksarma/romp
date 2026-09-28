@@ -49,3 +49,4 @@
 # children under the switch fail and the one without it skips: that is its test of the switch, not a browser driven
 # from a child process, and its own first test opens a page through inBrowser.
 out-tests/ui/webview/real-viewer-leg-switch.test.js
+out-tests/ui/webview/gear-sub-focus-browser.test.js
