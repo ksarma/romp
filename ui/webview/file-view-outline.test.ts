@@ -1803,7 +1803,10 @@ test("the one gate's later events of one gesture, a guard CI runs (the file revi
 // tap's flag; a touchend or a touchcancel marks every touch record refused, and the record stands; a click of the slot's pointer
 // type must carry the slot's pointerId; and a pen whose pointerup comes before its own mousedown (the touch order) gets the
 // one-finger tap's exception, its slot taken only after that mousedown and by a click that names that pen or carries no pointerId
-// (the closing check at 142ade155 after the fixes for the file review's round 18). The stand-in's dispatch never reaches the
+// (the closing check at 142ade155 after the fixes for the file review's round 18); a mouse's or a pen's pointerout with no
+// relatedTarget and a button down, or the mouse's with none, marks every mouse and pen record refused, and a mouseout to no element
+// while a tap's compatibility mousedown is due empties the slot and clears the tap's flag (the file review's round 19, extra5-1,
+// extra8-1 and extra8-2, with the coordinator's decisions on them). The stand-in's dispatch never reaches the
 // window, so each pointer event is dispatched on the window here, its target the element a press there would land on, as a
 // browser delivers it to the capture listener before the page's own; a pointer's trusted click comes right after its primary
 // mouseup, whose detail is the click count (at least 1), as every engine measured sends it (gateClick and plainClick), and is
@@ -2193,7 +2196,9 @@ test("how a click finds its press, a tap on another document's element, a guard 
 // cells, file-figure-open-taps.ts chainCells, skip in CI) ── A verdict moves from a press to a click only along that gesture's
 // own chain of events as this window hears them, and a record still standing at a pointer's click under its pointerId, a press
 // whose pointerup this window never heard, refuses that click; a mouse's or a pen's pointer leaving this window with a button down
-// (a pointerout with no relatedTarget) marks every mouse and pen record refused. Each guard replays an engine's order as the browser cells recorded
+// (a pointerout with no relatedTarget), or the mouse's pointerout with no relatedTarget and no button down, a release this window did
+// not hear (the file review's round 19, extra5-1 and extra8-1), marks every mouse and pen record refused; and a mouseout to no element
+// while a tap's compatibility mousedown is due empties the slot (its extra8-2). Each guard replays an engine's order as the browser cells recorded
 // it, the events this window heard, with the element the gesture lands on, but for the pointerout with no relatedTarget and buttons
 // 1 that Firefox sends as a held press leaves the viewer's frame, which the rows of such a press in the guards of Firefox's lone
 // click and of another document's tap after a mouse's press whose pointerup this window never heard leave out, so they guard the
@@ -2207,10 +2212,19 @@ test("how a click finds its press, a tap on another document's element, a guard 
 // nothing), MU-DETAIL (that clear keyed on the detail alone), MU-FLAG (that mouseup clears the tap's flag and leaves the slot)
 // MU-SLOT (it empties the slot and leaves the flag, defensive, so no guard reds under it), OWNREF-OFF (a click reads the record
 // still standing under its own pointerId as its press; with LV-OFF too, the gate at 09f58bec6, whose compiled code the two together
-// equal), LV-OFF (no pointerout listener, the gate at 343ee2eb5, whose compiled code it equals), LV-ANYRT (any pointerout
-// by a mouse or a pen with a button down marks the records, whatever its relatedTarget), LV-NOBTN (a pointerout with no
-// relatedTarget marks them with no button down), LV-ANYTYPE (a touch's pointerout marks them too, and every record, a touch's
-// included), LV-MOUSE (a pen's pointerout and a pen's record left out) and LV-DEL (the records deleted in place of marked).
+// equal), LV-OFF (no pointerout listener), LV-ANYRT (a pointerout marks the records whatever its relatedTarget), LV-NOBTN (a mouse's
+// or a pen's pointerout with no relatedTarget marks them whatever its buttons, the same gate as LV-LOSTANY now that the mouse's
+// pointerout with no button down marks them), LV-ANYTYPE (a touch's pointerout with a button down marks them too, and every record,
+// a touch's included), LV-MOUSE (a pen's pointerout and a pen's record left out of the arm with a button down, and a pen's record out
+// of both arms) and LV-DEL (the records deleted in place of marked); and of the file review's round 19: LV-NOLOST (the mouse's
+// pointerout with no button down marks nothing, the leave at ddb446fae), LV-LOSTMOUSE (it marks the mouse's records alone),
+// LV-LOSTANY (a mouse's or a pen's pointerout with no relatedTarget marks them whatever its buttons), LV-NOHELD (a pointerout with a
+// button down marks nothing, the arm for none kept), MO-OFF (no mouseout listener), MO-B1 (the mouseout empties the slot only with a
+// button down), MO-NOEND (it empties any slot a touch's pointerup filled, whether or not that tap's mousedown has come), MO-ANYRT (a
+// mouseout empties the slot while a tap's mousedown is due whatever its relatedTarget), MO-ANYSLOT (a mouseout to no element empties
+// the slot whether or not a tap's mousedown is due), MO-NOREMOVE (the mouseout listener added outside the gate's list and never
+// removed) and EXTRA-TYPE (a thirteenth listener, pointerleave, in the gate's list). With LV-OFF and MO-OFF together a click reads no
+// pointerout and no mouseout; OWNREF-OFF with both reds the refusal of a standing record's guards as it did alone.
 /** Firefox's mouse click under pointerId 0 on `target`: its pointerdown, mousedown, pointerup, mouseup and click (typed mouse). */
 const ffMouseClick = (target: El): void => {
   const m: GatePtr = { pointerId: 0, pointerType: "mouse", isPrimary: true, button: 0 };
@@ -2753,7 +2767,7 @@ test("how a click finds its press, a release this window did not hear, a guard C
   assert.deepEqual(got, { firefox: refused, pen: refused, still: opened, penOut: opened },
     "each row's click and the next click's opens and reveals, [that click, the next]: the click after the mouse's pointerout with no button down during a mouse's or a pen's press refused and revealing, the next opening; the press with no pointerout and the pen's pointerout opening (a property pin over window.open's calls and the scrollIntoView record)");
 });
-test("how a click finds its press, a tap whose compatibility events went to another document, a guard CI runs (the file review's round 19, extra8-2, with the coordinator's decisions on it): the viewer's own tap on the picture with the control shown fills the slot at its pointerup, and where its compatibility mousedown hit-tests another document's element Firefox sends this window a mouseout to no element before that mousedown is due to come, with a button down where the element was first hit at that mousedown and with none where a mouse rests in the viewer; the gate empties the slot there, so another document's tap on that element over the control, which hides at its own pointerup and reaches this window as a mousedown, a mouseup of detail 1 and a click under pointerId 0 typed touch, opens nothing and reveals the control, and the next tap opens once; while with no mouseout, the element laid out before the tap's compatibility mousemove and no mouse in the viewer, that click takes the slot and opens, the stated residual, and so it does after a mouseout to an element of this document; the rule ends at the tap's own mousedown, so the viewer's own tap whose mouseout comes between its mousedown and its click opens, and it reads only a slot a tap's pointerup filled, so a mouse's click with a mouseout to no element between its pointerup and its click, an order no engine measured sends, opens (a property pin over window.open's calls and the scrollIntoView record; the rows of a mouseout to no element red at ddb446fae, whose gate heard no mouseout, and under a gate without the mouseout listener, the row with no button down red under one whose mouseout needs a button down, the row of the viewer's own tap red under one that empties any slot a touch's pointerup filled, the row of a mouseout to an element red under one that reads a mouseout whatever its relatedTarget, and the mouse's row red under one that empties the slot at any mouseout to no element; the row with no mouseout is the stated residual, read the same by every gate, so a change to it is seen)", async (t) => {
+test("how a click finds its press, a tap whose compatibility events went to another document, a guard CI runs (the file review's round 19, extra8-2, with the coordinator's decisions on it): the viewer's own tap on the picture with the control shown fills the slot at its pointerup, and where its compatibility mousedown hit-tests another document's element Firefox sends this window a mouseout to no element before that mousedown is due to come, with a button down where the element was first hit at that mousedown and with none where a mouse rests in the viewer; the gate empties the slot there, so another document's tap on that element over the control, which hides at its own pointerup and reaches this window as a mousedown, a mouseup of detail 1 and a click under pointerId 0 typed touch, opens nothing and reveals the control, and the next tap opens once; while with no mouseout, the element laid out before the tap's compatibility mousemove and no mouse in the viewer, that click takes the slot and opens, the stated residual, and so it does after a mouseout to an element of this document; the rule ends at the tap's own mousedown, so the viewer's own tap whose mouseout comes between its mousedown and its click opens, and it reads only a slot a tap's pointerup filled, so a mouse's click with a mouseout to no element between its pointerup and its click, an order no engine measured sends, opens (a property pin over window.open's calls and the scrollIntoView record; the rows of a mouseout to no element red at ddb446fae, whose gate heard no mouseout, and under a gate without the mouseout listener, the row with no button down red under one whose mouseout needs a button down, the row of the viewer's own tap red under one that empties any slot a touch's pointerup filled, the row of a mouseout to an element red under one that reads a mouseout whatever its relatedTarget, and the mouse's row and the row of the viewer's own tap red under one that empties the slot at any mouseout to no element; the row with no mouseout is the stated residual, read the same by every gate, so a change to it is seen)", async (t) => {
   const got: Record<string, unknown> = {};
   const f0: GatePtr = { pointerId: 0, pointerType: "touch", isPrimary: true, button: 0 };
   /** The viewer's own tap on the picture as Firefox sends it up to its touchend, then `between`, then another document's tap on the element

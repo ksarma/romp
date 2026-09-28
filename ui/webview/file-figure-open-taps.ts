@@ -4,8 +4,8 @@
 // link-navigation follow-on of plans/markdown-viewer.md: file-figure-open-browser.test.ts runs them in Chromium, and
 // file-figure-open-engines-browser.test.ts in WebKit and Firefox, a leg of its own that stays off the shared roster of browser
 // legs, since the job that runs the roster installs Chromium alone. The gate (file-view.ts webGestureShown and the recorder above
-// it, keyed on eleven events of the window's capture phase: pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown,
-// dragstart, touchend, touchcancel, pointerout and click) records a press's verdict at the window's pointerdown and fills a
+// it, keyed on twelve events of the window's capture phase: pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown,
+// dragstart, touchend, touchcancel, pointerout, mouseout and click) records a press's verdict at the window's pointerdown and fills a
 // one-click slot at the pointerup, and a click by a pointer refuses where a record still stands under its own pointerId, a press
 // whose pointerup the viewer never heard, and with none reads the press the slot handed it, only right after a primary mouseup
 // whose detail is above 0 and only under the slot's own pointerId when the click is typed as the slot's pointerup was; a record
@@ -129,6 +129,16 @@
 //   pointerId, which no gesture of the viewer's own that the legs drive leaves; and, measured in WebKit alone, a left click
 //   chorded into a held right press, whose pointerup WebKit holds until the last button's release, refused whatever covers or
 //   shows the control, 12 of 12 in the road probe, where 09f58bec6's gate opened all 12;
+// - the cells of a release the viewer did not hear and of a tap whose compatibility events went to another document (the file
+//   review's round 19, extra5-1, extra8-1 and extra8-2), in chainCells's shape, each covered click wanted opening nothing and the
+//   next click opening once: in Chromium, on the hybrid page's Files pane, a press on the control held while the top page hides the
+//   viewer's frame, released at once on the top page, the frame shown again at once or 300 ms later, then another document's click on
+//   an element over the control that hides at that click's mousedown, the mouse's click moved onto the control or a pen's still click
+//   (CDP), each cell asserting that the viewer heard the mouse's pointerout with no relatedTarget and no button down before that
+//   click; and in Firefox, on the hybrid page, the viewer's own tap on the picture with an element of the top page appearing over it
+//   at the tap's pointerup, with no layout read and the mouse off the viewer, or laid out with a mouse resting in the viewer, then a
+//   tap on that element over the control, each cell asserting the mouseout to no element Firefox sent the viewer after the tap's
+//   pointerup, with a button down or with none;
 // - the clicks by no pointer: Enter on the control in view opens once, and so does Enter after a refused tap; a press with no click
 //   after it begun with the control out of view, the control then scrolled into view with no pointer or key event, then Enter on it
 //   opens once; the same press begun with the control shown, the flyout then shown over the control with no event, then a script's
@@ -158,8 +168,11 @@
 // both refusals, the gates at 1a6470e72 and at 09f58bec6 having neither; and for Firefox's cells of another document's mouse click
 // after a press that left the viewer's frame, the refusal of a record whose pointer left, the gates at 343ee2eb5 and at 09f58bec6
 // having none), while WebKit's cost cell reads the same there, by design, and Firefox's reads the press dragged out and back opening
-// there, as at 343ee2eb5, recording its cost; the reads of each of these reds
-// are a private witness kept out of the tree. file-view-outline.test.ts drives the same orders over the stand-in in CI, where
+// there, as at 343ee2eb5, recording its cost; Chromium's frame-hide cells are red at ddb446fae, whose gate read no pointerout with no
+// button down, and under a gate without that arm, the pen's cell also under one whose arm marks the mouse's records alone, and
+// Firefox's cells of a tap whose compatibility events went to another document are red at ddb446fae, whose gate heard no mouseout,
+// and under a gate without the mouseout listener, the cell with no button down also under one whose mouseout needs a button down;
+// the reads of each of these reds are a private witness kept out of the tree. file-view-outline.test.ts drives the same orders over the stand-in in CI, where
 // these legs launch no browser.
 import * as assert from "node:assert/strict";
 import { openViewer, frames, pageHtml, PARA, REPORT, ORIGIN, SID } from "./real-viewer-leg";
@@ -1137,8 +1150,9 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
       document.body.appendChild(d);
       return ps.map((p) => document.elementFromPoint(p.x, p.y) === d);
     }, [box, pts, how]);
-    /** The same element, `id` #tcover or #tstep, put up by a one-time capture listener on the viewer's window at the viewer's `on`. */
-    const appear = (on: string, box: { x: number; y: number; w: number; h: number }, how: string, id = "tcover"): Promise<void> => s.page.evaluate(([b, o, h, i]: [{ x: number; y: number; w: number; h: number }, string, string, string]) => {
+    /** The same element, `id` #tcover or #tstep, put up by a one-time capture listener on the viewer's window at the viewer's `on`, and
+     *  laid out there where `flush` (a read of its offsetHeight and of the body's box). */
+    const appear = (on: string, box: { x: number; y: number; w: number; h: number }, how: string, id = "tcover", flush = false): Promise<void> => s.page.evaluate(([b, o, h, i, fl]: [{ x: number; y: number; w: number; h: number }, string, string, string, boolean]) => {
       const vw = (document.getElementById("tview") as HTMLIFrameElement).contentWindow as Window;
       const f = (): void => {
         vw.removeEventListener(o, f, true);
@@ -1152,9 +1166,10 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
           d.addEventListener(ev, (e: Event) => { if (act.includes("prevent")) e.preventDefault(); if (act.includes("hide")) d.style.display = "none"; }, { passive: false });
         }
         document.body.appendChild(d);
+        if (fl) { void d.offsetHeight; void document.body.getBoundingClientRect(); }
       };
       vw.addEventListener(o, f, true);
-    }, [box, on, how, id]);
+    }, [box, on, how, id, flush]);
     const upOver = (pts: Array<{ x: number; y: number }>): Promise<boolean[]> => s.page.evaluate((ps: Array<{ x: number; y: number }>) => { const d = document.getElementById("tcover"); return ps.map((p) => !!d && document.elementFromPoint(p.x, p.y) === d); }, pts);
     /** The next click of the mouse on the picture (a tap on a phone's pages, or where `byTap`), the element gone: its opens. */
     const next = async (what: string, byTap = device === "phone"): Promise<[number, number]> => {
@@ -1367,6 +1382,44 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
         const stepOpens = await s.opens();
         cell("in Firefox, " + what + ": [that click's opens, the next click's]", [[0, 0], [1, 1]], [stepOpens, await next(what)]);
       }
+      /* A tap whose compatibility events went to another document (the file review's round 19, extra8-2): the viewer's own tap on the
+       * picture, an element of the top page appearing over the picture and the control at that tap's pointerup, which takes the tap's
+       * compatibility mousedown, mouseup and click and hides at its own pointerup, then a tap on that element over the control, whose
+       * compatibility mousedown, mouseup and click land in the viewer. Firefox sends the viewer a mouseout to no element after the first
+       * tap's pointerup, before that click: with a button down where the element is first hit at the compatibility mousedown (appended
+       * with no layout read, the mouse off the viewer), and with none where a mouse rests in the viewer and the element is laid out at
+       * its append, each cell's precondition. The gate empties the slot there, so the click opens nothing and reveals the control. */
+      await s.fr.evaluate(() => {
+        const w = window as any; w.__tmo = [];
+        window.addEventListener("mouseout", (e: any) => { if (e.relatedTarget === null) w.__tmo.push(e.buttons); }, true);
+      });
+      const mouseouts = (): Promise<number[]> => s.fr.evaluate(() => (window as any).__tmo.splice(0));
+      for (const [flush, buttons] of [[false, 1], [true, 0]] as Array<[boolean, number]>) {
+        const what = "the viewer's own tap on the picture, an element appearing at its pointerup " + (flush ? "and laid out there, a mouse resting in the viewer" : "with no layout read, the mouse off the viewer") + ", then a tap on that element over the control, which hides at its own pointerup";
+        await settle();
+        if (!flush) { await s.page.mouse.move(1100, 650); await frames(s.fr, 2); }
+        const g = await shown(what);
+        await appear("pointerup", g.box, "pointerup:hide", "tcover", flush);
+        await mouseouts();
+        await tap(g.tapAt);
+        await new Promise((r) => setTimeout(r, 100));
+        const st = await heard();
+        const mo = await mouseouts();
+        assert.ok(n(st, "pointerdown") === 1 && n(st, "pointerup") === 1 && n(st, "touchend") === 1 && n(st, "mousedown") === 0 && n(st, "click") === 0 && mo.includes(buttons), at + what + ": the viewer hears its tap's pointerdown, pointerup and touchend, no mousedown and no click, and a mouseout to no element with " + (buttons ? "a button" : "no button") + " down (a precondition): " + word(st) + ", mouseouts to no element with buttons " + JSON.stringify(mo));
+        const stepOpens = await s.opens();
+        const over = await upOver([g.ctl, g.tapAt]);
+        assert.ok(over[0] && over[1], at + what + ": the element over the control and the tap's point (a precondition): " + JSON.stringify(over));
+        await topHeard();
+        await tap(g.tapAt);
+        await new Promise((r) => setTimeout(r, 100));
+        const evs = await heard();
+        rec[what] = { step: word(st), mouseouts: mo, tap: word(evs), top: await topHeard(), el: await drop() };
+        foreign(evs, what, 0, false);
+        const c = evs.find((e) => e.type === "click");
+        assert.ok(c!.pid === 0 && c!.ptype === "touch" && evs.some((e) => e.type === "mouseup" && e.button === 0 && (e.detail ?? 0) > 0), at + what + ": that tap's mouseup is the primary button's of detail above 0 and its click carries pointerId 0, typed touch (a precondition): " + word(evs));
+        const tapOpens = await s.opens();
+        cell("in Firefox, " + what + ": [the viewer's tap's opens, the other document's click's, the next click's]", want3, [stepOpens, tapOpens, await next(what)]);
+      }
     }
     if (engine === "chromium" && device === "hybrid") {
       const touches = async (pts: Array<[number, number, number]>): Promise<void> => { await cdp!.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: pts.map(([x, y, id]) => ({ x, y, id })) }); };
@@ -1401,6 +1454,54 @@ async function chainCells(browser: any, engine: TapEngine, device: TapDevice, su
         foreign(evs, what, down!.pid, false);
         const tapOpens = await s.opens();
         cell("in Chromium, " + what + ": [the viewer's tap's opens, the other document's click's, the next click's]", want3, [stepOpens, tapOpens, await next(what)]);
+      }
+      if (surface === "pane") {
+        /* The frame-hide road (the file review's round 19, extra5-1 and extra8-1), on the Files pane: a press on the control with the
+         * control shown, held while the top page hides the viewer's frame (display none, inside the top page's next requestAnimationFrame
+         * callback, which asks for one more), released at once on the top page, the frame shown again at once or 300 ms later, then
+         * another document's click on an element over the control that hides at that click's mousedown: the mouse's click moved onto
+         * the control (Playwright's click moves the pointer first), or a pen's still click where its press was (CDP). This window hears
+         * the press's pointerdown and mousedown and then that click's pointerup, mouseup and click, and before that click Chromium sends
+         * it the mouse's pointerout with no relatedTarget and no button down, each cell's precondition, which the gate reads as a
+         * release it did not hear. */
+        await s.fr.evaluate(() => {
+          const w = window as any; w.__tlo = [];
+          window.addEventListener("pointerout", (e: any) => { if (e.relatedTarget === null) w.__tlo.push(e.pointerType + " " + e.pointerId + " buttons " + e.buttons); }, true);
+        });
+        const outs = (): Promise<string[]> => s.fr.evaluate(() => (window as any).__tlo.splice(0));
+        const pen = (type: string, x: number, y: number, buttons: number): Promise<unknown> => cdp!.send("Input.dispatchMouseEvent", { type, x, y, button: type === "mouseMoved" && !buttons ? "none" : "left", buttons, clickCount: 1, pointerType: "pen" });
+        for (const [by, showMs] of [["mouse", 0], ["mouse", 300], ["pen", 300]] as Array<["mouse" | "pen", number]>) {
+          const what = (by === "mouse" ? "the mouse" : "a pen") + " pressed on the control and held while the top page hides the viewer's frame, released at once on the top page, the frame shown again " + (showMs ? showMs + " ms later" : "at once") + ", then another document's " + (by === "mouse" ? "mouse click moved onto" : "still pen click on") + " an element over the control that hides at that click's mousedown";
+          await settle();
+          const g = await shown(what);
+          const at0 = { x: Math.round(g.ctl.x), y: Math.round(g.ctl.y) };
+          await heard(); await topHeard(); await outs(); await s.opens();
+          if (by === "mouse") { await s.page.mouse.move(at0.x, at0.y); await s.page.mouse.down(); }
+          else { await pen("mouseMoved", at0.x, at0.y, 0); await pen("mousePressed", at0.x, at0.y, 1); }
+          await frames(s.fr, 2);
+          await s.page.evaluate(() => new Promise<void>((res) => { requestAnimationFrame(() => { (document.getElementById("tview") as HTMLElement).style.display = "none"; requestAnimationFrame(() => { /* one more rendering update asked for, as the measurement did */ }); res(); }); }));
+          if (by === "mouse") await s.page.mouse.up(); else await pen("mouseReleased", at0.x, at0.y, 0);
+          if (showMs) await new Promise((r) => setTimeout(r, showMs));
+          await s.page.evaluate(() => { (document.getElementById("tview") as HTMLElement).style.display = "block"; });
+          const c2 = await s.ctlBox();
+          const at2 = { x: Math.round(c2.l + c2.w / 2), y: Math.round(c2.t + c2.h / 2) };
+          const over = await element({ x: Math.round(c2.l - 120), y: Math.round(c2.t - 10), w: Math.round(c2.w + 140), h: Math.round(c2.h + 90) }, [at2], "mousedown:hide");
+          assert.ok(over[0] && (by === "mouse" || (at2.x === at0.x && at2.y === at0.y)), at + what + ": the element over the control" + (by === "pen" ? ", the control where the press was" : "") + " (a precondition): " + JSON.stringify({ over, at0, at2 }));
+          if (by === "mouse") await s.page.mouse.click(at2.x, at2.y); else { await pen("mousePressed", at2.x, at2.y, 1); await pen("mouseReleased", at2.x, at2.y, 0); }
+          await new Promise((r) => setTimeout(r, 150));
+          await frames(s.fr, 4);
+          const evs = await heard();
+          const lo = await outs();
+          const top = await topHeard();
+          const el = await drop();
+          rec[what] = { heard: word(evs), outs: lo, top, el };
+          const c = evs.find((e) => e.type === "click");
+          assert.ok(n(evs, "pointerdown") === 1 && evs[0].type === "pointerdown" && evs[0].ptype === by && n(evs, "mousedown") === 1 && n(evs, "pointerup") === 1 && evs.some((e) => e.type === "pointerup" && e.ptype === by) && n(evs, "mouseup") === 1 && evs.some((e) => e.type === "mouseup" && e.button === 0 && (e.detail ?? 0) > 0) && n(evs, "click") === 1 && !!c && c.trusted && c.ptype === by, at + what + ": the viewer hears the press's pointerdown and mousedown, no pointerup of its release, and that click's pointerup, a mouseup of detail above 0 and a trusted click, typed " + by + " (a precondition): " + word(evs));
+          assert.ok(top.includes("pointerup") && top.includes("mousedown") && el === "tcover:none", at + what + ": the release's pointerup and that click's mousedown went to the top page, the element hidden at it (a precondition): " + JSON.stringify({ top, el }));
+          assert.ok(lo.includes("mouse 1 buttons 0"), at + what + ": Chromium sent the viewer the mouse's pointerout with no relatedTarget and no button down before that click (a precondition): " + JSON.stringify(lo));
+          const clickOpens = await s.opens();
+          cell("in Chromium, " + what + ": [that click's opens, the next click's]", [[0, 0], [1, 1]], [clickOpens, await next(what)]);
+        }
       }
     }
     if (engine === "webkit") {
