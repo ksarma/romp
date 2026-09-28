@@ -1501,7 +1501,10 @@ def test_module_level():
         self.assertEqual(by.get("unclassified", []), [], "a read of a served text the walk cannot classify (a callee outside the stated allowlist):\n"
                          + "\n".join("%s:%d %s %s: %s" % r for r in by.get("unclassified", [])))
         self.assertTrue(by.get("view-pin"), "literal pins over the parser's comment-blanked view (the author's pass 6 re-point form) are rows")
-        self.assertTrue(sum(road.values()) >= 15 and all(road[f] for f in ("test_kernel_mobile.py", "test_shell_viewport_fit.py", "test_spend_detail.py")), road)
+        # test_token_login_page.py joined the road at the merge of main's login cookie split (the rulings, 2026-09-28): its own
+        # HTMLParser over the login page was the parser beside served_css this census exists to refuse
+        self.assertTrue(sum(road.values()) >= 15 and all(road[f] for f in ("test_kernel_mobile.py", "test_shell_viewport_fit.py", "test_spend_detail.py",
+                                                                            "test_token_login_page.py")), road)
         raw_on_road = [r for r in by.get("raw", []) if road[r[0]]]
         self.assertEqual(raw_on_road, [], "a module on the parser road reads the page by another road; route it through served_css or state it:\n"
                          + "\n".join("%s:%d %s %s: %s" % (f, l, form, t, src) for f, l, form, t, src in raw_on_road))
@@ -1788,6 +1791,45 @@ def _fits(case, ceiling):
         self.assertEqual([r[:4] for r in rows], [(14, "q1", "_landing", "in"), (16, "q2", "_chat_page", "in"), (18, "q3", "_sw_js", "in")])
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
                          {"_pathconf": [], "_get": ["whole"], "test_a": [], "_fits": []})
+
+    def test_the_fold_reader_splits_the_text_by_fold_and_refuses_what_it_cannot_place(self):
+        # the rulings at the merge of main's login cookie split (2026-09-28): tests/test_token_login_page.py read the token login
+        # page's <details> folds with an HTMLParser of its own, the parser beside served_css this census refuses (its reader row was
+        # unclassified), and the ruling put the reader in served_css (fold_text) with its refusals and routed the test through it.
+        # The reader's split, its records and each refusal are pinned here on synthetic pages: text outside every fold and inside a
+        # fold's summary is shown, a nested fold is hidden whole, a fold inside a summary shows its own summary alone; references
+        # decode as HTML decodes text; the title, script and style content and comments are text of neither part; and each shape
+        # where the split would part from what HTML shows refuses, the element layer's refusals included.
+        split = lambda page: (served_css.fold_text(page).shown, served_css.fold_text(page).folded)
+        self.assertEqual(split("<p>a</p><details><summary>b <code>c</code></summary>d<p>e</p></details>f"), ("ab cf", "de"))
+        self.assertEqual(split("<details><summary>s1</summary>h1<details><summary>s2</summary>h2</details></details>t"), ("s1t", "h1s2h2"))
+        self.assertEqual(split("<details><summary>s<details><summary>u</summary>v</details></summary>w</details>"), ("su", "vw"))
+        self.assertEqual(split("<details>x<summary>s</summary></details><summary>free</summary>"), ("sfree", "x"), "a summary outside a fold is page text")
+        self.assertEqual(split("<p>a&amp;b &lt;c&gt; &notit; &#65;&#x42 ro<b>mp</b></p>&amp"), ("a&b <c> \xacit; AB romp&", ""))
+        self.assertEqual(split("<title>T</title><script>var s='<details>x';</script><style>p{}</style><!-- c --><p>y\r\nz\rw</p>"), ("y\nz\nw", ""))
+        page = "<!DOCTYPE html>\n<details id=a><summary onclick=x>s</summary><i class=b>h</i></details><details><p>n</p></details><form method=get>"
+        text = served_css.fold_text(page)
+        self.assertEqual(text.folds, (served_css.Fold(page.index("<details id=a>"), page.index("<summary")), served_css.Fold(page.index("<details><p>"), None)))
+        self.assertEqual(text.attrs, (("details", "id", True), ("summary", "onclick", True), ("i", "class", True), ("form", "method", False)))
+        self.assertEqual(text.doctype, "DOCTYPE html")
+        self.assertEqual([served_css.fold_text(p).doctype for p in (" \n<!doctype html><p>x", "<!-- c --><!doctype html>", "<p>x</p>")], ["doctype html", None, None])
+        self.assertEqual(split("<svg>\n</svg><p>x</p>"), ("\nx", ""), "whitespace inside a refused container is no text to refuse")
+        refusals = (("<details open><summary>s</summary>x</details>", "reads every fold closed"),
+                    ("<details><summary>a</summary><summary>b</summary></details>", "not its first summary child"),
+                    ("<details><div><summary>a</summary></div></details>", "not its first summary child"),
+                    ("<details/><p>x</p>", "self-closing <details/>"),
+                    ("<details><summary/>x</details>", "self-closing <summary/>"),
+                    ("<p hidden>x</p>", "default style sheet hides it"),
+                    ("<template>x</template>", "inside <template>"),
+                    ("<noscript>x</noscript>", "inside <noscript>"),
+                    ("<svg><text>x</text></svg>", "inside <svg>"),
+                    ("<p>&#x0b;</p>", "control or noncharacter"),
+                    ("<p>a\x00b</p>", "a NUL in text"),
+                    ("<![CDATA[x]]><p>y</p>", "CDATA"))
+        for page, message in refusals:
+            with self.assertRaises(AssertionError, msg=page) as cm:
+                served_css.fold_text(page)
+            self.assertIn(message, str(cm.exception), page)
 
     def test_the_route_walk_reads_equality_and_membership(self):
         # the author's pass 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A

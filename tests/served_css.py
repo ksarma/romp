@@ -138,6 +138,16 @@ reading one predicate; `attr(element, name)` an element's attribute as the token
 attribute is read and not judged: a data block (`<script type=application/json>`) is still script text to `scripts()` and
 `element_spans()`, and no served page carries one today (disclosed, not closed).
 
+Text by fold (the rulings at the merge of main's login cookie split, 2026-09-28): `fold_text(html)` is the page's text split
+by its <details> folds, the text the page shows with every fold closed (each fold's summary included) and the text a closed fold
+hides, with each fold's summary, every attribute name with whether its element is a details or sits in one, and the leading
+DOCTYPE (FoldText). It runs on the element layer, so it makes every refusal that layer makes, and adds its own where the split
+would part from what HTML shows by the fold structure (an open fold, a summary that is not its fold's first summary child, a
+self-closing details or summary, a hidden element, text inside a refused container, a numeric reference or a NUL HTML reads
+otherwise); _FoldText names each and what the reader does not read (CSS, rendering). It exists because a test of the token
+login page read the page's folds with an HTMLParser of its own, the parser beside this one that the served-pins census refuses;
+its cases are in tests/test_served_pins_read_elements.py.
+
 Loads no romp code, so it needs no state preamble.
 """
 import functools
@@ -264,10 +274,13 @@ TOKENIZER_SURFACE = {
     "handle_comment": ("comment", "a `<!-- -->` outside a script or style element, and every bogus comment html.parser reports here (`<!foo>`, `</ >` shapes); an abruptly closed"
                                   " comment (`<!-->`, `<!--->`) REFUSES: html.parser closes it at the next `-->` where HTML closes it at its own `>`, so an element between the"
                                   " two was invisible here. HTML: comment tokens, text a pin can be satisfied by"),
-    "handle_data": ("event", "text; HTML: character tokens. Inside a script or style element the content is the element's span, read by offsets, not through this handler"),
-    "handle_entityref": ("event", "a named character reference in text (convert_charrefs is False, so it is reported, not decoded); HTML: a character token"),
-    "handle_charref": ("event", "a numeric character reference in text; HTML: a character token"),
-    "handle_decl": ("event", "the DOCTYPE, to the first `>`; HTML: a DOCTYPE token, the same extent"),
+    "handle_data": ("event", "text; HTML: character tokens. Inside a script or style element the content is the element's span, read by offsets, not through this handler."
+                             " The fold reader (fold_text) takes a run outside script and style content as page text"),
+    "handle_entityref": ("event", "a named character reference in text (convert_charrefs is False, so it is reported, not decoded); HTML: a character token."
+                                  " The fold reader decodes it as written, by html.unescape"),
+    "handle_charref": ("event", "a numeric character reference in text; HTML: a character token. The fold reader decodes it as written and refuses one html.unescape"
+                                " drops and HTML keeps"),
+    "handle_decl": ("event", "the DOCTYPE, to the first `>`; HTML: a DOCTYPE token, the same extent. The fold reader reports it when it is the page's first construct"),
     "handle_pi": ("comment", "a `<?...>` to the first `>`; HTML has no processing instructions and reads `<?` as a bogus comment to the first `>`, the same extent"),
     "unknown_decl": ("refused", "a `<![CDATA[` marked section refuses: html.parser consumes it to `]]>` where HTML reads a bogus comment to the FIRST `>` (in foreign content,"
                                 " svg or math, HTML does read a CDATA section, but this reader refuses those containers). Any other `<![...]>` form html.parser reports here"
@@ -486,6 +499,139 @@ def tag_counts(html):
     """{tag: count} of every start tag the tokenizer read as live markup (outside script and style content and comments), for the
     container census (the author's pass 9, 2026-09-20)."""
     return dict(_Elements(html).tags)
+
+
+# the page's text split by its <details> folds (fold_text): `shown` and `folded` the two texts, `folds` a Fold per details element in
+# document order, `attrs` a (tag, attribute name, in_fold) triple per attribute of every start tag, and `doctype` the DOCTYPE
+# declaration's text as written when it is the page's first construct after whitespace (None otherwise)
+FoldText = namedtuple("FoldText", "shown folded folds attrs doctype")
+# one details element: the offset of its start tag and of its summary's (None for a fold with no summary child)
+Fold = namedtuple("Fold", "start summary")
+
+
+def _text_reference_divergence(raw):
+    """The first numeric character reference in raw TEXT that html.unescape (the decode this reader applies) drops and HTML keeps, a
+    control or noncharacter code point (`&#x0b;`), or None: the numeric half of _attr_reference_divergence, the half that applies to
+    text (a legacy named reference without its `;` decodes in text by the same longest-prefix rule in both; the attribute rule's
+    exception for `=` or an alphanumeric after the name does not apply to text)."""
+    for m in _CHARREF.finditer(raw):
+        if m.group(1)[0] == "#" and unescape(m.group(0)) == "":
+            return m.group(0)
+    return None
+
+
+class _FoldText(_Elements):
+    """The text reader by <details> fold (the rulings at the merge of main's login cookie split, 2026-09-28), on the element layer's
+    tokenizer and with every refusal the element layer makes (_Elements). A text run is what the tokenizer reports as data or as a
+    character reference outside script and style content (a reference as written, its `;` included where the page has one),
+    decoded by html.unescape, HTML's text rule but for the refusals below, its newlines normalized as HTML normalizes its input (CR
+    LF and CR to LF); the runs of each part are concatenated as they stand, the DOM's textContent, with nothing added at an element
+    boundary. A run is SHOWN when it sits
+    outside every details element, or inside the summary of every details it sits in (a fold's summary shows while the fold is
+    closed; a details nested in a closed fold is hidden whole, its summary included); every other run is FOLDED. A summary is its
+    fold's only where it is the first summary child of the details, read on this reader's container stack, which pushes a start tag,
+    pops an end tag to its nearest open match and takes no implied end tag, so it can over-report an ancestor and never loses one.
+    Refuses, where the split would part from what HTML shows by the fold structure: a details carrying `open` (its content shows on
+    load; the reader reads every fold closed); a summary inside a details that is not the details' first summary child by that stack
+    (HTML hides it with the fold's content; an over-reported ancestor makes this a loud over-refusal, never a silent over-read); a
+    self-closing `<details/>` or `<summary/>` (HTML ignores the flag on an HTML element and opens it, where the tokenizer's event opens
+    nothing); an element carrying the `hidden` attribute (every engine's default style sheet hides it, and this reader reads no CSS);
+    text other than whitespace inside a refused container (REFUSED_CONTAINERS: its text is inert, foreign content or text to HTML
+    whose rendering this reader does not model) but for `title`, whose text is the document's name and in neither part (the default
+    style sheet hides it); a numeric character reference in text that html.unescape drops and HTML keeps (_text_reference_divergence);
+    and a NUL in text, which HTML's tree construction drops in body content and the tokenizer keeps. Not read: CSS (a rule or an
+    inline style that hides or reveals text, a `display` on a summary), rendering (a `<br>` or a block boundary adds nothing to the
+    text), and the script-driven opening of a fold."""
+
+    def __init__(self, html):
+        self.marks, self.parts, self.fold_list, self.attr_list, self.decls = [], {"shown": [], "folded": []}, [], [], []
+        super().__init__(html)
+        first = len(html) - len(html.lstrip(_ASCII_WS))
+        self.result = FoldText("".join(self.parts["shown"]), "".join(self.parts["folded"]), tuple(self.fold_list), tuple(self.attr_list),
+                               next((d for p, d in self.decls if p == first), None))
+
+    def _sync(self, mark):
+        # the marks run beside the element layer's stack: a push appends this tag's mark, a pop drops the popped elements' marks
+        if len(self.stack) > len(self.marks):
+            self.marks.append(mark)
+        del self.marks[len(self.stack):]
+
+    def _mark(self, tag, attrs, pos):
+        """The mark of a start tag on the stack: the fold's index for a details, "summary" for its fold's summary, else None; with the
+        attribute and summary refusals."""
+        names = [name for name, _ in attrs]
+        assert "hidden" not in names, "a <%s hidden> at offset %d: every engine's default style sheet hides it and this reader reads no CSS; it refuses it" % (tag, pos)
+        if tag == "details":
+            assert "open" not in names, "a <details open> at offset %d shows its content on load; this reader reads every fold closed and refuses it" % pos
+            self.fold_list.append(Fold(pos, None))
+            return len(self.fold_list) - 1
+        if tag == "summary":
+            parent = self.marks[-1] if self.marks else None
+            if isinstance(parent, int) and self.fold_list[parent].summary is None:
+                self.fold_list[parent] = self.fold_list[parent]._replace(summary=pos)
+                return "summary"
+            assert not any(isinstance(m, int) for m in self.marks), (
+                "a <summary> at offset %d inside a <details> is not its first summary child (on this reader's stack, which can over-report an ancestor): HTML hides it with the fold's content; this reader refuses it" % pos)
+        return None
+
+    def handle_starttag(self, tag, attrs):
+        pos = self._pos()
+        mark = self._mark(tag, attrs, pos)
+        in_fold = tag == "details" or any(isinstance(m, int) for m in self.marks)
+        super().handle_starttag(tag, attrs)
+        self.attr_list += [(tag, name, in_fold) for name, _ in attrs]
+        self._sync(mark)
+
+    def handle_startendtag(self, tag, attrs):
+        pos = self._pos()
+        assert tag not in ("details", "summary"), "a self-closing <%s/> at offset %d opens the element to HTML, which ignores the flag on an HTML element; this reader refuses it" % (tag, pos)
+        mark = self._mark(tag, attrs, pos)
+        in_fold = any(isinstance(m, int) for m in self.marks)
+        super().handle_startendtag(tag, attrs)
+        self.attr_list += [(tag, name, in_fold) for name, _ in attrs]
+        self._sync(mark)
+
+    def handle_endtag(self, tag):
+        super().handle_endtag(tag)
+        self._sync(None)
+
+    def _run(self, pos, raw):
+        """One text run, `raw` as the page writes it: the part it belongs to, decoded, or no part (script or style content, the title)."""
+        if self.open is not None or "title" in self.stack:   # a script's or style's content, or the document's name: in neither part
+            return
+        held = [c for c in self.stack if c in REFUSED_CONTAINERS]
+        assert not held or not raw.strip(_ASCII_WS), "text at offset %d inside <%s>, whose content HTML reads as inert, foreign or text this reader does not model; it refuses it" % (pos, held[-1])
+        bad = _text_reference_divergence(raw)
+        assert bad is None, "the character reference %r at offset %d in text names a control or noncharacter code point, which html.unescape drops and HTML keeps; this reader refuses it" % (bad, pos)
+        assert "\x00" not in raw, "a NUL in text at offset %d, which HTML drops in body content and the tokenizer keeps; this reader refuses it" % pos
+        shown = all(i + 1 < len(self.marks) and self.marks[i + 1] == "summary" for i, m in enumerate(self.marks) if isinstance(m, int))
+        self.parts["shown" if shown else "folded"].append(unescape(raw).replace("\r\n", "\n").replace("\r", "\n"))
+
+    def handle_data(self, data):
+        super().handle_data(data)
+        self._run(self._pos(), data)
+
+    def handle_entityref(self, name):
+        super().handle_entityref(name)
+        pos = self._pos()
+        self._run(pos, "&" + name + (";" if self.html.startswith(";", pos + 1 + len(name)) else ""))
+
+    def handle_charref(self, name):
+        super().handle_charref(name)
+        pos = self._pos()
+        self._run(pos, "&#" + name + (";" if self.html.startswith(";", pos + 2 + len(name)) else ""))
+
+    def handle_decl(self, decl):
+        super().handle_decl(decl)
+        self.decls.append((self._pos(), decl))
+
+
+@functools.lru_cache(maxsize=16)
+def fold_text(html):
+    """The page's text split by its <details> folds, a FoldText (_FoldText: what each part holds and what the reader refuses): the
+    text a closed fold hides, and the text the page shows with every fold closed, each fold's summary included; with each fold's
+    summary offset, every attribute name with whether its element is a details or sits in one, and the leading DOCTYPE."""
+    return _FoldText(html).result
 
 
 def meta_content(html, name):
