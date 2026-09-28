@@ -333,7 +333,10 @@ class LinkProxy:
         while s is self._lsock and not self._down:
             try:
                 r, _, _ = select.select([s], [], [], 0.2)
-            except OSError:
+            except (OSError, ValueError):
+                # the listener closed between the loop's check and this select (drop() runs on another thread): a closed
+                # socket's descriptor reads -1, which select refuses with a ValueError, or the descriptor went away inside
+                # the call (OSError, EBADF); either is this loop's end, not a failure of its thread
                 return
             if not r:
                 continue
@@ -418,14 +421,17 @@ class LinkProxy:
         return self.listen()
 
     def stop(self):
-        """End the splice for good, and fail if it did not end. drop() is the release: it sets _down and closes the
-        listener, so the accept loop returns at its next select, and it shuts every spliced pair, so both pumps of each
-        read EOF and return. Every thread the splice started is then joined, all of them within one bound
-        (STOP_BOUND_S), the list re-read after each round of joins so that a thread recorded while this was joining (a
-        pump of a pair the drop had just swept, which ends at once, or the accept thread of a listen() that raced the
-        teardown, which does not) is joined too or named. A thread still alive at the bound fails the teardown with an
-        AssertionError naming it, where a timed join that returned in silence would let a splice that never ended pass
-        (tearDownClass still kills the kernels and removes the lab when this raises)."""
+        """End the splice for good, and fail if it did not end. drop() is the release. It sets _down and closes the
+        listener, so the accept loop returns by its next select: the loop's check sees the drop, or the select on the
+        closed listener raises and the loop takes that as its end, or a select already waiting returns within its 0.2 s
+        and the check follows (a connection accepted just before the drop is closed at the check after the accept, or
+        where its pair would have been registered). And it shuts every spliced pair, so both pumps of each read EOF and
+        return. Every thread the splice started is then joined, all of them within one bound (STOP_BOUND_S), the list
+        re-read after each round of joins so that a thread recorded while this was joining (a pump of a pair the drop
+        had just swept, which ends at once, or the accept thread of a listen() that raced the teardown, which does not)
+        is joined too or named. A thread still alive at the bound fails the teardown with an AssertionError naming it,
+        where a timed join that returned in silence would let a splice that never ended pass (tearDownClass still kills
+        the kernels and removes the lab when this raises)."""
         self.drop()
         deadline = time.monotonic() + self.STOP_BOUND_S
         while True:
@@ -2014,6 +2020,18 @@ class LinkProxyEnds(unittest.TestCase):
         go.set()
         c.settimeout(2)
         self.assertEqual(c.recv(1), b"", "the client's end of the pair accepted before the drop reads EOF")
+
+    def test_the_accept_loop_ends_when_its_listener_closes_before_the_select(self):
+        """A drop that closes the listener after the loop's check and before its select: the select on the closed socket
+        raises, and the loop returns rather than dying of the exception in its thread. The state the loop sees across
+        that interleaving is set directly: its socket still the live listener, no drop set, and the socket closed, whose
+        descriptor then reads -1."""
+        srv = self._target()
+        p = LinkProxy(srv.getsockname()[1])
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.close()
+        p._lsock, p._down = s, False
+        self.assertIsNone(p._accept(s))
 
 
 class _GatedLock:
