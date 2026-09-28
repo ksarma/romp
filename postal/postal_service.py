@@ -5126,17 +5126,22 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
            it only with no session, since a hub gossips a far host only through its session rows, residual (3a)'s
            first face among them; or that process names it only under another name than the record's, (r3)) keeps the
            hold whatever _relay_in ruled on the relay, and every sid nothing names here is cannot-determine for the
-           file's life, this bus's restart included, where an origin's own row here under another name than the
-           hold's ends it only by a bus id the carried via row carries (decision 1's end above)
+           file's life, this bus's restart included, save that once this bus restarts the origin's own row here that
+           answers a dial of the new process ends the hold where decision 1's end above finds that row: under the
+           record's name when the row names no other bus of the origin, or under another name only by a bus id the
+           carried via row carries
            (test_cost_r1_an_origin_the_restarted_hub_never_names_holds_every_sid_across_our_restart; the first face,
            test_residual_3a_a_far_host_whose_cached_roster_is_empty_behind_a_heard_hub_still_answers_rule_5; the
            other name,
-           test_decision_1_under_nickname_drift_the_origins_row_under_another_name_ends_the_carried_hold_only_by_a_bus_id_the_via_row_carries);
+           test_decision_1_under_nickname_drift_the_origins_row_under_another_name_ends_the_carried_hold_only_by_a_bus_id_the_via_row_carries;
+           a row that names another bus, D1's leg of
+           test_decision_1_after_our_restart_the_carry_drops_the_origin_hold_once_the_origins_own_row_answers_our_dial);
       (r2) a hub process that heard the origin but never named it here (its link here down for the whole life of the
            origin's only session, which then ended) relays that session's mail: held until the hub names the origin
-           again. Naming counts per process of this bus too (the record of it, viaNamedBy, starts empty at each start
-           of this bus), so after this bus restarts, a relay from a host whose sessions all ended while this bus was
-           down holds until the hub names that host again, which on an idle host can take long
+           again, or, once this bus restarts, until decision 1's end above ends it. Naming counts per process of this
+           bus too (the record of it, viaNamedBy, starts empty at each start of this bus), so after this bus restarts,
+           a relay from a host whose sessions all ended while this bus was down holds, in that process of this bus,
+           until the hub names that host again, which on an idle host can take long
            (test_cost_r2_a_hub_process_that_never_named_the_origin_here_holds_until_it_names_it_again, which drives
            both);
       (r3) the hub's current process names the origin under another name than the parked record carries, in either
@@ -5154,11 +5159,14 @@ def _remote_sids_document(now, previous, owned=frozenset(), lost=None):
            too once it ends
            (test_cost_r3_the_other_direction_a_record_under_the_declared_name_holds_until_the_hub_gossips_that_name_again).
            In either direction, once this bus restarts, the host's own row here that answers a dial of the new
-           process also ends the carried hold, found as decision 1's end above states: under the record's name, or
-           under another name by a bus id the carried via row carries (the reviewer's re-verifier's roads
-           rv83RenamedFirstDirectionDirectPeer and rv83DeclaredNameDirectPeer, where this bus dials the host under
-           the record's name and that row's answer after this bus's restart ends the hold while the hub still files
-           the host under the other name);
+           process also ends the carried hold where decision 1's end above finds that row: under the record's name
+           when the row names no other bus of the host, or under another name by a bus id the carried via row carries
+           (the reviewer's re-verifier's roads rv83RenamedFirstDirectionDirectPeer and rv83DeclaredNameDirectPeer,
+           where this bus dials the host under the record's name, the carried via row carries no bus id of the host,
+           and that row's answer after this bus's restart ends the hold while the hub still files the host under the
+           other name; a row under the record's name that names another bus does not end it, as the verifier's road
+           vc85FirstDirectionViaRowNamesPreviousBus found in the first direction, witness D1's leg of
+           test_decision_1_after_our_restart_the_carry_drops_the_origin_hold_once_the_origins_own_row_answers_our_dial);
       (r4) an origin this bus also hears directly stays held through its own answered row in this bus process, so a
            sid nothing names stays cannot-determine after this bus's dial reaches the host and its row answers
            (test_cost_r4_an_origin_this_bus_also_hears_directly_stays_held_through_its_own_answered_row_in_this_process).
