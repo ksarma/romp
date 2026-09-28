@@ -1768,12 +1768,17 @@ def _guard_failure_to_stderr(item, failure):
     report then names no thread; stderr is out of the plugin's reach. The capture plugin captures stderr during a
     teardown, so it is suspended for the write, which then reaches this process's own stderr. Under pytest-xdist that is
     the controller's stderr: execnet, xdist's transport, points a worker's stdout at /dev/null but, outside Windows,
-    does not redirect its stderr (on Windows it moves sys.stderr to a copy of the controller's)."""
+    does not redirect its stderr (on Windows it moves sys.stderr to a copy of the controller's). Everything written
+    goes through the teardown report's redaction first, in the order _redact_report applies it (_note_env_values, then
+    redact_report_text), the header with its node id and worker name included: CI's logs are public, and a value the
+    report masks (a thread named with an environment value, say) must not reach them raw here."""
     worker = os.environ.get("PYTEST_XDIST_WORKER")
     text = ("\n[tests/conftest.py, the session-end thread guard] the teardown of %s, this process's last test%s, fails "
             "with the error below. It is written to stderr as well as to that teardown's report, because pytest's "
             "unittest plugin can put a TestCase's own second error in that report in its place.\n%s\n"
             % (item.nodeid, " (pytest-xdist worker %s)" % worker if worker else "", failure))
+    _note_env_values()
+    text = redact_report_text(text)             # the whole write: nothing below writes any other text
     capman = item.config.pluginmanager.getplugin("capturemanager")
     if capman is None:                          # -p no:capture: nothing captures stderr
         sys.stderr.write(text)

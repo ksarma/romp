@@ -22,9 +22,9 @@ Pinned by running pytest in a child over synthetic files in a scratch directory 
 loaded as a plugin (`-p tests.conftest`), serially and under -n 2 (the shape tests/test_served_tests_require.py and
 tests/test_tempdir_hygiene.py use). The child's environment is built from a rule (PATH, a fresh HOME and TMPDIR, the
 checkout on PYTHONPATH with bytecode writing off (PYTHONDONTWRITEBYTECODE), the locale, PYTHON_GIL and LD_LIBRARY_PATH
-when this process has them, and the plant's own output directory), never this process's environment filtered, since
-collecting the suite writes variables of its own at import (among them the floors in tests/__init__.py and
-tests/conftest.py).
+when this process has them, the plant's own output directory, and any variable a pin adds), never this process's
+environment filtered, since collecting the suite writes variables of its own at import (among them the floors in
+tests/__init__.py and tests/conftest.py).
 The children run with CI's pytest-timeout flags when pytest-timeout is installed (CI installs it on every cell), so the
 guard's exclusion of that plugin's own timer, alive through every test's teardown, is exercised by the green runs.
 
@@ -47,6 +47,10 @@ guard's exclusion of that plugin's own timer, alive through every test's teardow
   whose cleanup fails, with a leaked non-daemon thread. pytest's unittest plugin reports the cleanup's error at teardown
   in place of the guard's, so the report names no thread (the premise, checked), and stderr names the thread with its
   target and stack, serially and under -n 2, where the worker's text reaches the controller's stderr naming the worker.
+- A VALUE THE REPORT MASKS IS MASKED ON STDERR TOO. The leaked thread's name carries a synthetic value that only the
+  child's environment holds, under a credential-shaped variable name, so the report's redaction masks it. Neither
+  channel carries the raw value, and stderr names the thread by the masked name the report prints, serially and under
+  -n 2: CI's logs are public, so the stderr copy goes through the report's redaction.
 - IDLE EXECUTOR WORKERS ALONE (the pool left open and the loop never closed, no other guarded thread) fail the run,
   serially and under -n 2, and the process exits: every process that ran tests writes its atexit marker. The message's
   wording, that such a worker lets the process exit, is pinned by its text; the markers are the executed evidence.
@@ -384,16 +388,24 @@ class TwoErrors(unittest.TestCase):
         raise RuntimeError("plant: the cleanup failed")
 '''
 
+# a leaked thread named with the value of ENV_NAMED_VAR, a variable only the child's environment holds (_run's env_extra):
+# its name is credential-shaped, so the report's redaction masks that value wherever the report prints it
+ENV_NAMED_VAR = "PLANT_API_KEY"
+ENV_NAMED_TEST = '''
+def test_leak_named_by_an_env_value():
+    _start("env-named", [threading.Thread(target=_leaked, name="plant-leaked-" + os.environ[%r])])
+''' % ENV_NAMED_VAR
+
 
 class SessionEndThreadGuard(unittest.TestCase):
-    def _run(self, plant, *, cap=None, workers=None, drop=None):
+    def _run(self, plant, *, cap=None, workers=None, drop=None, env_extra=None):
         """pytest in a child over the plant `plant` (PLANT's helpers plus test functions), tests/conftest.py loaded as a
         plugin. Returns (exit status, the child's output (its stdout, STDERR_LINE, then its stderr; _channels splits
         them), {pid: [[name, daemon]] started}, {pid: {within-cap thread name:
         its end time}}, {pid: {"alive": plant threads alive at pytest_sessionfinish, "t": that time, "cap": the guard's
         cap}}, {"release": {pid: time of the scratch conftest's stop at pytest_unconfigure}, "atexit": {pid: time of the
         process's atexit handler}}), the times from each process's monotonic clock. `drop`, a (module, attribute) pair,
-        is deleted by the scratch conftest for the session."""
+        is deleted by the scratch conftest for the session. `env_extra` adds variables to the child's environment."""
         d = os.path.realpath(tempfile.mkdtemp(prefix="tg-"))       # resolved: macOS temp dirs sit under a symlink
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         case, out, home, tmp = (os.path.join(d, n) for n in ("case", "out", "home", "tmp"))
@@ -409,6 +421,7 @@ class SessionEndThreadGuard(unittest.TestCase):
         # interpreter's shared library
         env.update((k, os.environ[k]) for k in ("LANG", "LC_ALL", "LC_CTYPE", "PYTHON_GIL", "LD_LIBRARY_PATH")
                    if k in os.environ)
+        env.update(env_extra or {})
         argv = [sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider", "-q", "--rootdir", case]
         argv += TIMEOUT_FLAGS + (["-n", str(workers)] if workers is not None else []) + ["test_plant.py"]
         r = subprocess.run(argv, cwd=case, env=env, capture_output=True, text=True, timeout=180)
@@ -561,6 +574,46 @@ class SessionEndThreadGuard(unittest.TestCase):
         err = self._assert_two_errors_named_on_stderr(rc, out, started, marks)
         self.assertRegex(err, r"this process's last test \(pytest-xdist worker gw\d+\)", "the worker's text reached "
                          "the controller's stderr, naming the worker:\n" + out)
+
+    # -- a value the report masks is masked on stderr too -----------------------------------------------------------
+
+    @staticmethod
+    def _env_value():
+        """The synthetic value the child holds as ENV_NAMED_VAR, built at run time so no credential-shaped literal sits in
+        this file (the secret scan reads it too)."""
+        return "plantval" + "-" + "q" * 14
+
+    def _assert_env_value_masked_on_both_channels(self, rc, out):
+        """The leaked thread's name carries the synthetic env value, which the report's redaction masks: the raw value is
+        on neither channel, and the thread's masked name is on stderr once, as it is in the report. Returns stderr."""
+        value = self._env_value()
+        report, err = self._channels(out)
+        self.assertEqual(rc, 1, "the leaked thread fails the run:\n" + out)
+        self.assertNotIn(value, report, "the report carries the raw value:\n" + out)
+        self.assertNotIn(value, err, "stderr carries the raw value the report masks:\n" + out)
+        names = re.findall(r"thread '(plant-leaked-[^'\n]*)' \(ident ", report)
+        self.assertEqual(len(names), 1, "the report names the leaked thread once:\n" + out)
+        masked = names[0]
+        self.assertIn(sys.modules["tests.conftest"].ENV_VALUE_REDACTED, masked, "the report masks the value in the "
+                      "thread's name:\n" + out)
+        self.assertEqual(err.count("thread '%s' (ident " % masked), 1, "stderr names the thread with the masked name the "
+                         "report prints:\n" + out)
+        return err
+
+    @unittest.skipUnless("tests.conftest" in sys.modules, "reads the redaction's marker from tests/conftest.py")
+    def test_a_value_the_report_masks_is_masked_on_stderr_in_a_serial_run(self):
+        rc, out, _started, _ended, _finish, _marks = self._run(ENV_NAMED_TEST, cap=LEAK_CAP_S,
+                                                               env_extra={ENV_NAMED_VAR: self._env_value()})
+        self._assert_env_value_masked_on_both_channels(rc, out)
+
+    @unittest.skipUnless(HAS_XDIST, "pytest-xdist not installed")
+    @unittest.skipUnless("tests.conftest" in sys.modules, "reads the redaction's marker from tests/conftest.py")
+    def test_under_two_workers_a_value_the_report_masks_is_masked_on_the_controllers_stderr(self):
+        rc, out, _started, _ended, _finish, _marks = self._run(ENV_NAMED_TEST, cap=LEAK_CAP_S, workers=2,
+                                                               env_extra={ENV_NAMED_VAR: self._env_value()})
+        err = self._assert_env_value_masked_on_both_channels(rc, out)
+        self.assertRegex(err, r"this process's last test \(pytest-xdist worker gw\d+\)", "the worker's text reached "
+                         "the controller's stderr:\n" + out)
 
     # -- idle executor workers alone fail the run, and the process exits ----------------------------------------------
 
