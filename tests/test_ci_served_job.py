@@ -27,11 +27,19 @@ equal their literals. The checks here:
 2. The vscode-extension job's block, read the same way, EQUALS EXPECTED_EXTENSION_JOB: the steps it kept (Install deps
    through the Dashboard pane bench) and its cap (40), so the served step put back, or any field of any of its steps
    changed, is red.
-3. The served-pages job's name up to its runner label, `Served pages (pytest, `, is held by exactly one content line, in any case,
-   across every *.yml and *.yaml file under .github/workflows, read from its bytes (check 6 of the other module, its
-   docstring states the read and its limit): a second job of that name would put a second check of that name beside the
-   real one: a second job of that name, written bare, quoted, in another case or with its runner slot as an expression,
-   would put a second check of that name beside the real one.
+3. The served-pages job's name up to its runner label, `Served pages (pytest, `, is held by exactly one content line, in
+   any case, across every *.yml and *.yaml file under .github/workflows, read from its bytes (check 6 of the other module,
+   whose docstring states the read and its limits): a second job of that name, written bare, quoted, in another case or
+   with its runner slot as an expression, would put a second check of that name beside the real one. The count reads one
+   line's text, and the other module's name-line check (check_name_lines, in its check 6) covers this name too: it
+   refuses, in every workflow file, a name: line whose name YAML would assemble from later lines or from an anchor, or
+   decode from an escape (an empty value, a block indicator, a backslash, an alias, a quoted value left open, a value
+   continued on the next line), so a twin whose name is folded over lines (`name: >-`, one of the three twins the fork
+   PR's re-check planted) or spelled through an escape is red there. check_name_lines reads no name key inside a flow
+   mapping, written as an explicit key, through an escape in a quoted key, after a tag or an anchor, or as an alias (the
+   other module lists the five forms). The count still reds a twin under such a key whose name is whole on one line, but a
+   twin whose name is split over lines or spelled through an escape is read by neither check. tests/test_ci_sdk_pin.py
+   refuses those forms in ci.yml, and in the other workflow files no tests/test_ci_*.py module refuses them.
 A job's key written twice is refused by job_block with the reason (the other module's check 2 states which spellings it
 reads).
 
@@ -44,8 +52,8 @@ the three PRs above together (about 385 s more, a job of about 38 min 50 s). The
 job without the served step is about 4 min 12 s (the steps before it took 250 s at 1d591384e and its post steps about 2 s;
 4 min 18 s on run 36425690821), but the Browser legs step's
 comment records the job at a head where it still ran the served step, and tools/ci-browser-legs.test.mjs derives that
-step's margin from that record and this cap, so the cap is re-read once a run of the job without the served step measures
-it, and the literal changes with it.
+step's margin from that record and this cap, so the cap is re-read once a run on main of the job without the served step
+measures it, and the literal changes with it.
 
 Not held here: the served step's pytest invocation is also read by tests/test_ci_sdk_pin.py (the flag, the switch's
 listing and its premises, keyed on this job and the step's name) and its globs by tests/test_served_labs_under_ci.py; the

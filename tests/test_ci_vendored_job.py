@@ -56,7 +56,14 @@ literal, and any change to it is red until the literal changes with it, on purpo
    block's heredoc counts. And the Shell job's last two steps, its node setup and the manager handshake step, EQUAL
    SHELL_TAIL, from the job's one setup-node line to its end: with working-directory: tools on the handshake step, node
    --test matches no file, runs no test and exits 0, and a step's shell:, env: (NODE_OPTIONS), with:, if: or
-   continue-on-error: hides a red the same way, so the two steps are held whole.
+   continue-on-error: hides a red the same way, so the two steps are held whole (what a step before them does is not:
+   see "Not held here" below). The node lines are read one line at a time, so among the forms they do not read are a run
+   value in a quoted scalar continued over a line that starts with `#` (content() drops that line as a comment, where
+   YAML reads it as the scalar's text) and a double-quoted run value that spells node or --test through a backslash
+   escape (`\\x6eode -\\x2dtest`, or a word split over an escaped line break); tests/test_ci_sdk_pin.py refuses both
+   forms in ci.yml (a quoted scalar continued past its line; a backslash escape in a double-quoted scalar). Nor is
+   anything bash assembles from the run text read (a backslash-newline, quotes inside a word, a variable): the lines are
+   read as text, and no module reads the shell's result.
 5. The macOS cap, 90, is inside the literal (check 2), so it is pinned by equality with everything else.
 6. Each moved job's name, the text of its name line before the first expression (`Vendored tooling (node --test, ` here;
    tests/test_ci_served_job.py reads the served-pages job's name up to its runner label, `Served pages (pytest, `, since that
@@ -65,25 +72,47 @@ literal, and any change to it is red until the literal changes with it, on purpo
    refused on a line break other than LF, as check 1 refuses one in ci.yml. A second job with the same check name, in
    ci.yml or in another workflow file, is red, whether its name is written bare, quoted, or with the runner's label in
    place of the expression (`Vendored tooling (node --test, ubuntu-latest)`, the name GitHub shows): a twin that runs true
-   under the name would put a second check of that name beside the real one. A name assembled from pieces by an expression
-   (`Vendored ${{ 'tooling' }} ...`) is not read here.
+   under the name would put a second check of that name beside the real one. That count reads one line's text, so a
+   second check over the same files, read the same way, holds every name: line to its whole name (check_name_lines). A
+   name: line is one whose `name` key, bare or quoted and in any case, opens the line after its indentation and any list
+   dashes. It is red when its value is empty, is a block indicator (`|` or `>`, with any chomping or indentation
+   indicator), holds a backslash, is an alias (`*`) or is a quoted scalar left open, or when the next line that is not
+   blank is indented past the key (a comment line too, on the safe side): each is a name YAML assembles from later lines
+   or from an anchor, or decodes from an escape. A line inside a block scalar that looks like a name: line is read too,
+   which only refuses more. Every name: line of the workflow files passes the check today, and EachCheckRedsOnItsDefect
+   plants in a second workflow file the three twins the fork PR's re-check found green: a name continued over two lines
+   as a plain scalar, a name folded through `>-`, and a name spelled through `\\x20`. Not read here: a name key inside a
+   flow mapping (`{name: ...}`), written as an explicit key (`? name`), through an escape in a quoted key, after a tag or
+   an anchor (`!!str name:`, `&k name:`), or as an alias of an anchored `name` (`*k :`).
+   tests/test_ci_sdk_pin.py's YAML allowlist refuses all five forms in ci.yml; in the other workflow files no
+   tests/test_ci_*.py module refuses them. Nor is a name assembled from pieces by an expression
+   (`Vendored ${{ 'tooling' }} ...`).
 
 The equality does not cover these, and they are kept:
   - the job's matrix lines equal the Shell job's: the literal holds this job's lines, and this check ties them to the Shell
     job's, so the job runs on exactly the Shell job's cells and the move lost none;
   - the Shell job's node-version line equals the literal's: the two jobs run the same node, as the job's comment says;
   - the command is on one line of the workflow, this job's: check 4 refuses a copy in the Shell job, and this refuses one in
-    any other job, which would run the whole suite a second time under that job's cap;
+    any other job, which would run the whole suite a second time under that job's cap. It reads one line at a time, so
+    among the copies it does not read are the two forms check 4 names: a run value in a quoted scalar continued over a
+    line that starts with `#`, and one that spells the command through a backslash escape in a double-quoted scalar (an
+    escaped character, or the command split over an escaped line break); tests/test_ci_sdk_pin.py refuses both forms;
   - the Shell job's working-directory check, dropped when the equality came in, is back in a wider form, SHELL_TAIL (check
     4): the old check caught a working-directory on the handshake step, and SHELL_TAIL holds that step and its node setup
     whole.
 Retired, since the equality covers them: the closed line reader and its shape tests, the job-key and step-field checks, the
 checkout, setup-node and command checks, the node command rule over the Shell job's run text, the Shell job's job-level
-defaults: check (a workflow-level defaults: is check 3's red), and the cap ranges. Not held here: the Shell job's own
-job-level keys other than its cap. A job-level env: or defaults: there reaches the handshake step too: a defaults: run:
-working-directory also moves Run bats, and outside the root no directory of the tree holds tests/*.bats, so bats fails the
-job; a job-level env: is red today only in tests/test_ci_sdk_pin.py, through its synthetic splices, not by a check made
-for it.
+defaults: check (a workflow-level defaults: is check 3's red), and the cap ranges. Not held here:
+  - every job-level key of the Shell job but its cap and its matrix, whose lines are tied to this job's above (env,
+    defaults, if, continue-on-error, needs and the rest). A
+    job-level env: or defaults: there reaches the handshake step too; a defaults: run: working-directory also moves Run
+    bats, and outside the root no directory of the tree holds tests/*.bats, so bats fails the job; a job-level env: is red
+    today only in tests/test_ci_sdk_pin.py, through its synthetic splices, not by a check made for it;
+  - what an earlier Shell step does to the handshake. SHELL_TAIL holds the handshake step and its node setup, and a step
+    before them can still change what the handshake runs: one that writes NODE_OPTIONS to GITHUB_ENV (under
+    --test-skip-pattern=. node runs none of the tests and exits 0), or one that deletes tests/manager-*.test.js, so node
+    --test, handed the unmatched pattern by bash, reports tests 0 and exits 0. Holding the whole Shell block by equality
+    was declined: every edit to a bats step would then be red, to catch a change no honest author makes.
 
 EachCheckRedsOnItsDefect runs every check against a synthetic workflow built from the same constants: green as built, and red
 on each change it plants, the hiding roads named above among them, so a check that stopped reading would be red there.
@@ -178,6 +207,9 @@ JOB_KEY_LINE = re.compile(r"  (?P<key>[^ \t#:][^:]*?)[ \t]*:(?:[ \t].*)?")
 # A line whose value is a block scalar's indicator (`|` or `>`, with its chomping and indentation indicators), or a line that
 # is that indicator alone. Read on the safe side: a plain value ending in ` |` counts too, which only keeps more lines.
 BLOCK_SCALAR = re.compile(r"(?:^|[ \t])[|>][1-9+-]{0,2}[ \t]*(?:#.*)?$")
+# A name: line: a `name` key, bare or quoted, in any case, at the line's start after its indentation and any list dashes;
+# `lead` runs to the key's column, `value` is the text after the colon.
+NAME_KEY_LINE = re.compile(r"(?P<lead>[ \t]*(?:-[ \t]+)*)(?P<q>[\"']?)name(?P=q)[ \t]*:(?P<value>(?:[ \t].*)?)", re.I)
 # node named as a word (not setup-node, node-version or node_modules), and a --test flag.
 NODE_WORD = re.compile(r"(?<![\w.-])node(?:js)?(?![\w.-])")
 TEST_FLAG = re.compile(r"(?<![\w-])--test(?![\w-])")
@@ -339,7 +371,9 @@ def check_shell_cap(src):
 
 
 def check_shell_node(src):
-    """Check 4, node: the Shell job's lines that name node or hold --test, against SHELL_NODE_LINES."""
+    """Check 4, node: the Shell job's lines that name node or hold --test, against SHELL_NODE_LINES. One line at a time: a
+    run value in a quoted scalar continued over a line that starts with `#`, or one spelling node or --test through a
+    backslash escape in a double-quoted scalar, is not read here (tests/test_ci_sdk_pin.py refuses both forms)."""
     block, fault = _block_or_fault("shell", src)
     if fault:
         return fault
@@ -400,7 +434,9 @@ def check_node_version_tie(src):
 
 
 def check_command_once(src):
-    """Kept: the command is on one line of the workflow, comment-only lines aside."""
+    """Kept: the command is on one line of the workflow, comment-only lines aside. One line at a time: a copy in a quoted
+    scalar continued over a line that starts with `#`, or spelled through a backslash escape in a double-quoted scalar, is
+    not read here (tests/test_ci_sdk_pin.py refuses both forms)."""
     ls, fault = _lines_or_fault(src)
     if fault:
         return fault
@@ -436,6 +472,51 @@ def check_name_once(name_text, texts):
         return faults
     return [] if len(hits) == 1 else ["the name %r is held by %d content lines of the workflow files, where it is one job's "
                                       "name line alone: %r" % (name_text, len(hits), hits)]
+
+
+def name_line_fault(ls, i, m):
+    """Why the name: line ls[i] (m, its NAME_KEY_LINE match) does not hold its whole name on that line, or None when it
+    does."""
+    value, col = m.group("value").strip(" \t"), len(m.group("lead"))
+    if not value or value.startswith("#"):
+        return "its value is empty, so YAML reads the name from the lines below"
+    if "\\" in value:
+        return "its value holds a backslash, which a double-quoted scalar decodes as an escape"
+    if BLOCK_SCALAR.search(value):
+        return "its value is a block scalar's indicator, so YAML reads the name from the lines below"
+    if value.startswith("*"):
+        return "its value is an alias, so the name is written where the anchor is"
+    rest = value[1:].replace("''", "") if value[0] == "'" else value[1:]
+    if value[0] in "\"'" and value[0] not in rest:
+        return "its quoted value is left open, so YAML reads the name on into the lines below"
+    nxt = next((j for j in range(i + 1, len(ls)) if ls[j].strip(" \t")), None)
+    if nxt is not None and len(ls[nxt]) - len(ls[nxt].lstrip(" \t")) > col:
+        return "line %d, the next line that is not blank, is indented past the key, so YAML continues the value there" % (
+            nxt + 1)
+    return None
+
+
+def check_name_lines(texts):
+    """Check 6, the name lines: every name: line of texts ([(file, text)]) holds its whole name on that line, so the count
+    check_name_once makes reads the name whole. A fault for each line that does not, for a file holding a line break
+    other than LF, as check 1 is for ci.yml, and for texts that hold no name: line at all, since a check that read none
+    would pass on nothing."""
+    out, read = [], 0
+    for f, text in texts:
+        try:
+            ls = lines(text, f)
+        except WorkflowShape as e:
+            out.append(str(e))
+            continue
+        for i, l in enumerate(ls):
+            m = NAME_KEY_LINE.fullmatch(l)
+            read += bool(m)
+            why = m and name_line_fault(ls, i, m)
+            if why:
+                out.append("%s line %d, %r: %s" % (f, i + 1, l.strip(" \t"), why))
+    if not read and not out:
+        out.append("no name: line in the %d workflow texts read, so this check read nothing" % len(texts))
+    return out
 
 
 class VendoredToolingJob(unittest.TestCase):
@@ -505,6 +586,14 @@ class VendoredToolingJob(unittest.TestCase):
             "and one that runs true under it reads green. Rename the other job; if the name itself changed on purpose, update "
             "NAME_TEXT and EXPECTED_JOB together."))
 
+    def test_6_every_name_line_of_the_workflow_files_holds_its_whole_name(self):
+        self.assertNoFaults(check_name_lines(workflow_texts()), (
+            "A name: line of the workflow files does not hold its whole name on that line (above). YAML assembles such a "
+            "name from later lines or from an anchor, or decodes it from an escape, and the name checks here and in "
+            "tests/test_ci_served_job.py count one line's text, so a second job named that way could put a second check "
+            "of a moved job's name beside the real one unseen. Write the name whole on its line, as a plain scalar or a "
+            "quoted one with no escape."))
+
     def test_the_job_runs_on_the_shell_jobs_matrix(self):
         self.assertNoFaults(check_matrix_tie(raw()), (
             "The vendored-tooling job's matrix and the Shell job's differ (above). The job runs on the Shell job's cells "
@@ -528,13 +617,20 @@ def check_name_once_in(src):
     return check_name_once(NAME_TEXT, [("ci.yml", src)])
 
 
+def check_name_lines_in(src):
+    """Check 6's name lines over one workflow text, the synthetic workflow's form of it."""
+    return check_name_lines([("ci.yml", src)])
+
+
 class EachCheckRedsOnItsDefect(unittest.TestCase):
     """Every check against a synthetic workflow built from the module's constants: green as built, red on each change planted
     into it. The plants include each way round 1 of the fork PR's review found to hide the job's red, a CR, the three Unicode
     line breaks and a legitimate one-field edit, and the roads the round-1 audit found outside the job (the handshake step's
-    fields, a trigger filter, a second job of the same name)."""
+    fields, a trigger filter, a second job of the same name), and a name: line whose name YAML assembles from later lines or
+    decodes from an escape."""
     CHECKS = (check_line_breaks, check_job, check_top_keys, check_on_block, check_shell_cap, check_shell_node,
-              check_shell_tail, check_matrix_tie, check_node_version_tie, check_command_once, check_name_once_in)
+              check_shell_tail, check_matrix_tie, check_node_version_tie, check_command_once, check_name_once_in,
+              check_name_lines_in)
 
     @staticmethod
     def synthetic():
@@ -699,6 +795,57 @@ class EachCheckRedsOnItsDefect(unittest.TestCase):
             self.assertEqual([f for f, _ in workflow_texts(d)], ["ci.yml", os.path.join("sub", "twin.yaml")],
                              "workflow_texts reads every .yml and .yaml file at any depth and nothing else")
             self.assertNotEqual(check_name_once(NAME_TEXT, workflow_texts(d)), [], "the twin in a subdirectory is read")
+
+    def test_a_name_yaml_assembles_or_decodes_reds_check_6s_name_lines(self):
+        src = self.synthetic()
+        docs = ["name: Docs", "on: [push]", "jobs:", "  build:", "    runs-on: ubuntu-latest", "    steps:",
+                "      - name: Build", "        run: mkdocs build --strict", ""]
+
+        def with_twin(name_lines):
+            return "\n".join(docs + ["  twin:"] + name_lines + ["    runs-on: ubuntu-latest", "    steps:",
+                                                                 '      - run: "true"', ""])
+
+        self.assertEqual(check_name_lines([("ci.yml", src), ("docs.yml", "\n".join(docs))]), [],
+                         "green on the synthetic workflow and a second file whose name lines are whole")
+        self.assertNotEqual(check_name_lines([]), [], "red when no workflow text is read")
+        self.assertNotEqual(check_name_lines([("docs.yml", "on: [push]\njobs: {}\n")]), [], "red when no name: line is read")
+        for label, name_lines in (
+                ("a pipe inside a plain value", ["    name: a | b"]),
+                ("a single-quoted value holding an escaped quote", ["    name: 'it''s whole'"]),
+                ("a double-quoted value holding a colon", ['    name: "Twin: whole"']),
+                ("a comment line at the key's column after the name", ["    name: whole", "    # a comment"]),
+                ("a blank line after the name", ["    name: whole", ""])):
+            with self.subTest("green: " + label):
+                self.assertEqual(check_name_lines([("docs.yml", with_twin(name_lines))]), [], label)
+        # The three twins the fork PR's re-check planted in a second workflow file, each left green by check 6's count,
+        # then one plant per refusal that no other refusal reds, each red for its own reason.
+        for label, name_lines, reason in (
+                ("the re-check's plain scalar continued over two lines",
+                 ["    name: Vendored tooling", "      (node --test, ubuntu-latest)"], "is indented past the key"),
+                ("the re-check's name folded through >-",
+                 ["    name: >-", "      Served pages", "      (pytest, ubuntu-latest)"], "block scalar's indicator"),
+                ("the re-check's name spelled through an escape",
+                 ['    name: "Vendored\\x20tooling (node --test, ubuntu-latest)"'], "holds a backslash"),
+                ("an empty value, the name on the lines below",
+                 ["    name:", "      Vendored tooling", "      (node --test, ubuntu-latest)"], "is empty"),
+                ("an empty value with a comment and nothing below it", ["    name:   # a comment"], "is empty"),
+                ("a block indicator with its indentation and chomping indicators, nothing below it", ["    name: |2-"],
+                 "block scalar's indicator"),
+                ("an alias", ["    name: *n"], "is an alias"),
+                ("a double-quoted value left open, continued at the key's column",
+                 ['    name: "Vendored tooling', '    (node --test, ubuntu-latest)"'], "left open"),
+                ("a single-quoted value left open after an escaped quote", ["    name: 'it''s", "    open'"], "left open"),
+                ("a quoted key", ['    "name": >-', "      Vendored tooling (node --test,", "      ubuntu-latest)"],
+                 "block scalar's indicator"),
+                ("a key in another case", ["    Name: *n"], "is an alias"),
+                ("a step's name continued past its dash's key", ["    steps:", "      - name: Vendored tooling",
+                                                                 "          (node --test, ubuntu-latest)"],
+                 "is indented past the key")):
+            with self.subTest(label):
+                faults = check_name_lines([("ci.yml", src), ("docs.yml", with_twin(name_lines))])
+                self.assertEqual(len(faults), 1, "%s: one fault, %r" % (label, faults))
+                self.assertIn("docs.yml line ", faults[0])
+                self.assertIn(reason, faults[0], label)
 
     def test_each_foreign_line_break_reds_every_check(self):
         src = self.synthetic()

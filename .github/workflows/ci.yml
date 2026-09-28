@@ -578,12 +578,12 @@ jobs:
     # slow runner, 2026-09-16). At the fork's main 1d591384e (run 36388144219) the job took 36 min 22 s
     # of its 40: that step 1930 s, the steps before it 250 s. The step now has a job of its own
     # (served-pages, below; its comment gives the figures and the reason). The cap stays at 40 until
-    # a run of this job without that step measures the job: the Browser legs step's comment records the
-    # job at a head where it still ran the served step, and tools/ci-browser-legs.test.mjs derives that
-    # step's margin from that record and this cap, so a lower cap here waits for the record to be
-    # re-measured. tests/test_ci_served_job.py holds this job, its comments aside, equal to a literal
-    # (every key, step and field, the cap included), so a change here changes that literal too, on
-    # purpose. The Browser legs step below carries a bound of
+    # a run on main of this job without that step measures the job: the Browser legs step's comment
+    # records the job at a head where it still ran the served step, and tools/ci-browser-legs.test.mjs
+    # derives that step's margin from that record and this cap, so a lower cap here waits for the
+    # record to be re-measured. tests/test_ci_served_job.py holds this job, its comments aside, equal
+    # to a literal (every key, step and field, the cap included), so a change here changes that literal
+    # too, on purpose. The Browser legs step below carries a bound of
     # its own, 5 minutes (its timeout-minutes), the roster's budget, which fits within the job's margin
     # under this cap at the head the step's own comment names (tools/ci-browser-legs.test.mjs derives
     # the margin from that comment and this cap, so the figures have one home), so a step that runs to
