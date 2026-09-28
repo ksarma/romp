@@ -8779,8 +8779,10 @@ click finds the flag clear (the file review's round 19, extra8-2); the blur's ru
 of the legs where the focus leaves the viewer's window during a press or while a tap's compatibility mousedown is due being
 refused by another rule too, its rows of a mouse's and a pen's held press, of Firefox's and WebKit's tap and of the
 two costs red at d61eb027d and under a gate without the blur listener, the row of a press begun with the control covered red
-under a gate whose blur marks the records accepted, and its test of the target, its test of the pointer type, its condition on
-the flag, its clear of the slot and its marking in place of deleting each pinned by a row red under a gate without that part;
+under a gate whose blur marks the records accepted, its test of the target, its test of the pointer type, its condition on
+the flag and its marking in place of deleting each pinned by a row red under a gate without that part, and its two clears
+together by the three tap rows, red under a gate whose blur leaves the slot and the flag alone, each clear defensive given the
+other;
 the residual, which no input or focus event the viewer hears tells from
 the viewer's own tap: an element of another same-origin document shown over the picture during the viewer's tap takes that tap's
 compatibility events and click, and a tap on that element, which goes away during the press, then reaches the viewer as a
@@ -8808,7 +8810,7 @@ it, WebKit's shapes shown at the pointerup 0 of 56 with an element that listens 
 without it, and 24 of 24 at both with one that listens for no mouse event and with one that cancels its mousedown, Chromium 0 of
 36 at both, and nothing changing with the viewer's window unfocused (Firefox 12 of 12, WebKit 52 of 52), the laid-out shape by
 reading the one a finger's tap on a touch-only device produces for an element added at the tap's pointerdown,
-since a finger's press lasts longer than a frame, the input events the viewer hears in that shape its own tap's, in the same
+since a finger's press lasts longer than a frame, the input events the viewer hears in what is left of that shape its own tap's, in the same
 order, with no blur of its window between them, only coordinates and time differing,
 a check of these fixes finding two more orders of the class outside the residual, open at 142ade155, at
 1a6470e72 and at 09f58bec6: in WebKit the mouse held on the control or on the picture, or in Firefox the mouse pressed on the
@@ -8842,7 +8844,8 @@ the gate without the blur's rule, 85 of 225 still clicks of a mouse, each with t
 180 of a pen, and none with the frame shown 300 ms later, with a redraw between the element's appearing and the click, or with a
 moved click, the blur's rule closing that shape where the viewer's window held the focus and the element does not cancel that
 click's mousedown (0 of 225 where 72 of 225 opened without it, a pen's 0 of 30 where 18 of 30 opened, and 78 of 225 at both with
-an element that cancels it and 15 of 72 at both with the viewer's window unfocused), and Firefox never, 0 of 2,600 on the Files
+an element that cancels it, 9 of 36 at both with one that cancels its pointerdown and 15 of 72 at both with the viewer's window
+unfocused), and Firefox never, 0 of 2,600 on the Files
 pane and the chat, no input or focus event the gate listens to coming between that press and that click where the element
 cancels that click's mousedown and the pointer stays still, or where the viewer's window did not hold the focus or the focus sat
 inside a nested frame of the viewer's own document (WebKit 3 of 3 in a check of that measurement), so no input or focus event
@@ -8851,9 +8854,13 @@ the control leaving the viewport and coming back (in Chromium's still shape befo
 not read by the gate; and in the residual by reading a second finger resting on another
 document
 during the viewer's tap and a tap whose click the engine withholds, in Firefox and WebKit, and a foreign tap by the same pen under
-the same pointerId; reaching it needs an element that appears over the picture during a tap, while the fact that today the only
-element of the dashboard's top page that cancels a pointerdown is the update banner's drag handle, which stays put during a press,
-bears on Firefox's lone click, which the tail closes; whether to accept the residual is the owner's decision; the gate's cost measured in WebKit,
+the same pointerId; reaching it needs an element that appears over the picture during a tap, and where the viewer's window held
+the focus a cover that cancels its mousedown and appears over the picture during a tap, while the elements of the dashboard's top
+page that cancel a press are the pane gutters, which cancel their mousedown and stay put during a press, and the update banner's
+drag handle, which cancels its pointerdown, a cover that opened nothing in WebKit when the blur's rule was measured (0 of 36),
+and which, by reading, captures the pointer at its press, so its release and its click stay on it (a census of every pointerdown
+and mousedown handler of the top page's scripts), so no element of the dashboard is a road today; whether to accept the residual
+is the owner's decision; the gate's cost measured in WebKit,
 the same at 142ade155: a tap whose pointerup another document's element takes opens nothing and reveals the control and the next
 tap opens, its click carrying pointerId 1 and finding its press only in the slot, which no pointerup of that tap filled; the chain
 rule's other costs, stated by reading, none measured, each a refusal that reveals the control: on a Firefox touchscreen whose tap's click came typed touch
