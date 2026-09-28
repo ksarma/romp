@@ -104,7 +104,10 @@ A fetched value unpacked into a tuple binds only the position the helper's own r
 body, headers = self._req("/")` binds `body` where `_req` returns `r.status, r.read(), r.headers`), and no name where its
 returns read none; a helper the module does not define binds every name (the rulings at the merge of main's login cookie
 split, 2026-09-28; _bind). A call to a helper the module defines is a fetch only where the helper's returns read a response
-(`_pathconf("/", "PC_PATH_MAX", 4096)` is none; _fetched).
+(`_pathconf("/", "PC_PATH_MAX", 4096)` is none; _fetched). A Name in a helper's return is followed to its bindings inside the
+helper (`body = r.read(); return r.status, body, r.headers` reads at `body`'s position), and a returned Name the follow cannot
+place (bound only by an unpack of a call's answer, a for or with target) makes the call a fetch that binds every name, so no
+read behind it leaves both censuses in silence (the rulings on the census pass, 2026-09-28; _response_reads).
 
 Bound: a url built otherwise than as a bare or `%`-formatted literal or a concatenation led by the whole path (a `Request`
 object, an f-string, `.format`, `"/chat" + rest`), a formatted
@@ -113,7 +116,11 @@ membership asserted through a helper (`_has(self, lit, body)` in tests/test_file
 formatted fetches bind a name no form here reads), a fetch of a path the dispatch does not map to a getter
 call (a JSON or text/plain API body, a `/dist/` bundle, a `/media/` file: outside the derivation, and not comment-satisfiable
 only where the body carries no comment syntax), a page from a dynamically resolved getter (`getattr(km, "_%s_page" % name)()`,
-tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a comment spells), a getter called WITH
+tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a comment spells), a helper the module defines
+that returns an unread response for its caller to read (`return urlopen(path)`, read as `self._open("/").read()`) or reads the
+response through another call in its return (`return r.status, self._body(r)`), no fetch here (a literal pin over a name such a
+call is assigned to reds the floor through the textual census; any other read of that name, a regex or a split, is in neither
+census), a getter called WITH
 arguments (`_shim_core_js("chat")` renders another text), a text served under a name with none of the suffixes the rules
 read (the web app manifest; the `_reload_core` function), a name bound outside the function, a literal bound by assignment
 rather than a loop, and assertNotIn (a comment can red it, never green it) are outside this derivation.
@@ -402,12 +409,48 @@ def _text(node, getters, constants):
     return None
 
 
-def _reads_response(node):
-    """Whether an expression reads a response: `<x>.read(...)` or `<x>.getvalue(...)`, alone or under any chain of `.decode(...)`
-    (`r.read()`, `h.wfile.getvalue().decode("utf-8", "replace")`)."""
+def _reads_response(node, read=frozenset()):
+    """Whether an expression reads a response: `<x>.read(...)` or `<x>.getvalue(...)`, or a Name of `read` (the Names a function
+    binds to such a read, _response_reads), alone or under any chain of `.decode(...)` (`r.read()`, `h.wfile.getvalue().decode(
+    "utf-8", "replace")`, `body.decode()`)."""
     while isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "decode":
         node = node.func.value
+    if isinstance(node, ast.Name):
+        return node.id in read
     return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("read", "getvalue")
+
+
+_BINDERS = (ast.Assign, ast.AnnAssign, ast.NamedExpr, ast.AugAssign, ast.For, ast.AsyncFor, ast.withitem, ast.ExceptHandler)
+
+
+def _name_bindings(node):
+    """[(Name, value)] for the Names one node binds in the function holding it, the value None where the node binds a Name to no
+    expression of its own: an assignment's Name target, and a Name inside a tuple or list target over a tuple or list of the same
+    length, by position, bind to their value, as do an annotated assignment with a value, a walrus and an augmented assignment
+    (`body += r.read()`); a Name of a tuple target over any other value (`status, body = self._raw(r)`), a for or with target and
+    an except name bind to None."""
+    out = []
+    def pair(t, v):
+        if isinstance(t, ast.Name):
+            out.append((t.id, v))
+        elif isinstance(t, ast.Starred):
+            pair(t.value, None)
+        elif isinstance(t, (ast.Tuple, ast.List)):
+            same = isinstance(v, (ast.Tuple, ast.List)) and len(v.elts) == len(t.elts) and not any(isinstance(e, ast.Starred) for e in t.elts + v.elts)
+            for i, e in enumerate(t.elts):
+                pair(e, v.elts[i] if same else None)
+    if isinstance(node, ast.Assign):
+        for t in node.targets:
+            pair(t, node.value)
+    elif isinstance(node, (ast.AnnAssign, ast.NamedExpr, ast.AugAssign)) and node.value is not None:
+        pair(node.target, node.value)
+    elif isinstance(node, (ast.For, ast.AsyncFor)):
+        pair(node.target, None)
+    elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+        pair(node.optional_vars, None)
+    elif isinstance(node, ast.ExceptHandler) and node.name:
+        out.append((node.name, None))
+    return out
 
 
 def _own_returns(fn):
@@ -428,25 +471,52 @@ def _response_reads(tree):
     """{name: frozenset of positions} for every function and method a module defines, read from its own return statements (the
     rulings at the merge of main's login cookie split, 2026-09-28): the index of each element of a returned tuple that reads a
     response (_reads_response), and "whole" where a returned value that is no tuple reads one. `return r.status, r.read(),
-    r.headers` gives {1}; `return r.status, r.headers` gives the empty set. Two definitions of one name (a helper per class) give
-    the union of their positions. One walk of the module, each Return credited to the innermost function holding it, kept per tree
-    (the parsed tree is _parse's, shared by rows_of, readers_of and _module_bindings for one module) and asked only when a call has
-    a fetch's shape (_bind and _fetched take it as a callable): read four times for every module, it had added about 35 s to the
-    population's derivation."""
-    out, todo = {}, [(tree, None)]
+    r.headers` gives {1}; `return r.status, r.headers` gives the empty set. A returned Name is followed to its bindings inside the
+    function (_name_bindings; the rulings on the census pass, 2026-09-28): `body = r.read(); return r.status, body, r.headers`
+    gives {1}, through an alias or a `.decode(...)` too (`raw = r.read(); body = raw.decode()`). A returned Name the follow cannot
+    place, one the function binds to no expression of its own (an unpack of a call's answer, a for or with target) and never to a
+    read, gives "unknown", so a read behind it does not leave both censuses in silence: the call is a fetch (_fetched) and binds as
+    a helper the module does not define does, every name (_bind). A Name the function does not bind (a parameter, a global) is no
+    read of the function's. Two definitions of one name (a helper per class) give the union of their positions. One walk of the
+    module, each Return and each binding credited to the innermost function holding it, kept per tree (the parsed tree is
+    _parse's, shared by rows_of, readers_of and _module_bindings for one module) and asked only when a call has a fetch's shape
+    (_bind and _fetched take it as a callable): read four times for every module, it had added about 35 s to the population's
+    derivation."""
+    rets, binds, todo = {}, {}, [(tree, None)]
     while todo:
         node, fn = todo.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            fn = node.name
-            out.setdefault(fn, set())
+            fn = node
+            rets[fn], binds[fn] = [], []
         elif isinstance(node, ast.ClassDef):
             fn = None   # a class body's statements are no function's; its methods are their own
-        elif isinstance(node, ast.Return) and fn is not None and node.value is not None:
-            if isinstance(node.value, ast.Tuple):
-                out[fn] |= {i for i, e in enumerate(node.value.elts) if _reads_response(e)}
-            elif _reads_response(node.value):
-                out[fn].add("whole")
+        elif fn is not None and isinstance(node, ast.Return) and node.value is not None:
+            rets[fn].append(node.value)
+        elif fn is not None and isinstance(node, _BINDERS):
+            binds[fn] += _name_bindings(node)
         todo.extend((child, fn) for child in ast.iter_child_nodes(node))
+    out = {}
+    for fn, values in rets.items():
+        read, unknown, changed = set(), set(), True
+        while changed:   # a Name bound to a read, or to a Name so bound; one bound to no expression of its own, or to a Name so bound, and never to a read, is unknown
+            changed = False
+            for name, v in binds[fn]:
+                if name not in read and v is not None and _reads_response(v, read):
+                    read.add(name)
+                    unknown.discard(name)
+                    changed = True
+                elif name not in read and name not in unknown and (v is None or _reads_response(v, unknown)):
+                    unknown.add(name)
+                    changed = True
+        at = out.setdefault(fn.name, set())
+        placed = lambda e: "unknown" if isinstance(e, ast.Name) and e.id in unknown else None
+        for v in values:
+            if isinstance(v, ast.Tuple):
+                at |= {i if _reads_response(e, read) else placed(e) for i, e in enumerate(v.elts)} - {None}
+            elif _reads_response(v, read):
+                at.add("whole")
+            elif placed(v):
+                at.add("unknown")
     return {name: frozenset(at) for name, at in out.items()}
 
 
@@ -471,10 +541,12 @@ def _fetched(node, names, routes, reads=None):
     fetch only where that callee returns a response it reads (`reads`, a callable giving the module's _response_reads, holds a position for it; the
     rulings at the merge of main's login cookie split, 2026-09-28): `_pathconf("/", "PC_PATH_MAX", 4096)`, a helper returning
     os.pathconf's answer, had read as a fetch of the landing and its caller's helper as an unclassified reader of the page. A callee
-    the module does not define keeps the reading before the ruling (a fetch). Bound: a helper the module defines that returns an
-    unread response for its caller to read is not a fetch here; none is in the suite, and where such a call is assigned to names
-    (`body = self._open("/").read()`) the textual census binds them (_FETCH_DEF), so a literal pin over one reds the floor rather
-    than leave the population unseen."""
+    the module does not define keeps the reading before the ruling (a fetch). A helper whose returned Name _response_reads cannot
+    place ("unknown") is a fetch (the rulings on the census pass, 2026-09-28). Bound: a helper the module defines that returns an
+    unread response for its caller to read (`return urlopen(path)`) or reads it through another call in its return (`return
+    r.status, self._body(r)`) is not a fetch here; none is in the suite. Where such a call is assigned to names (`body =
+    self._open("/").read()`) the textual census binds them (_FETCH_DEF), so a literal pin over one reds the floor; any other read
+    of such a name (a regex, a split, a slice) is in neither census, in silence."""
     if not isinstance(node, ast.Call):
         return None
     f = node.func
@@ -526,10 +598,11 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
     FETCHED value (_fetched, with `routes`) unpacked into a tuple binds the positions its helper's own return statements read a
     response at (`reads`, a callable giving the module's _response_reads; the rulings at the merge of main's login cookie split, 2026-09-28):
     `status, body, headers = self._req("/")` binds `body` alone where `_req` returns `r.status, r.read(), r.headers`, and a
-    helper whose returns read no response binds no name. Before that ruling every unpacked name bound, the status and the
+    helper whose returns read no response binds no name. Before the merge's ruling every unpacked name bound, the status and the
     response headers too, and main's helpers returning (status, body, headers) put 19 reads of the headers (`.get`,
     `.get_all`, a base-class helper handed them) and of the status into the reader census as reads of the page. A helper the
-    module does not define, and a tuple target holding a starred name, bind every name, the reading before the ruling (the
+    module does not define, a helper with a returned Name _response_reads cannot place ("unknown"; the rulings on the census
+    pass, 2026-09-28), and a tuple target holding a starred name bind every name, the reading before the merge's ruling (the
     census cannot see which position is the body). `sliced`, when given, tracks the Names bound through a slice (a form the
     textual census does not read; the author's pass 8)."""
     if isinstance(value, ast.Tuple) and len(targets) == 1 and isinstance(targets[0], ast.Tuple) \
@@ -560,6 +633,8 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
         elif isinstance(t, ast.Tuple) and fetched:   # `status, body = fetch("/x")`: the positions the helper reads a response at
             callee = _callee(v)
             at = reads().get(callee) if reads is not None and callee is not None and not any(isinstance(e, ast.Starred) for e in t.elts) else None
+            if at is not None and "unknown" in at:
+                at = None   # a returned Name the follow cannot place (_response_reads): every name, as for a helper the module does not define
             for i, e in enumerate(t.elts):
                 if isinstance(e, ast.Name) and (at is None or i in at):
                     names[e.id] = g
@@ -1875,6 +1950,60 @@ class T(unittest.TestCase):
                          "no read of a status or of the response headers is a read of the page")
         self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
                          {"_serve": [1], "_heads": [], "_req": [1], "test_a": []})
+
+    def test_a_returned_name_is_followed_to_its_binding_in_the_helper(self):
+        # the rulings on the census pass (2026-09-28): a helper whose return holds a Name bound to the read (`body = r.read();
+        # return r.status, body, r.headers`) gave no position, so by P2 its call was no fetch and every read of the body left both
+        # censuses, a literal pin to the floor's red and a regex or a split in silence. _response_reads follows a returned Name to
+        # its bindings inside the helper, through a `.decode(...)` and an alias (_named, _aliased): the body position binds, the
+        # status and headers do not. A returned Name the follow cannot place, bound only to no expression of its own (an unpack of
+        # a call's answer, _opaque), makes the call a fetch that binds every name, as a helper the module does not define does, so
+        # the read behind it stays in both censuses. A parameter returned is no read of the helper's (_echo), and its call stays no
+        # fetch. The rows of both derivations are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import re, unittest
+def _named(path):
+    with urlopen(path) as r:
+        body = r.read().decode()
+        return r.status, body, r.headers
+def _aliased(path):
+    raw = r.read()
+    text = raw.decode()
+    return r.status, text
+def _opaque(path):
+    status, body = _raw(path)
+    return status, body, {}
+def _echo(path, default):
+    return default
+class T(unittest.TestCase):
+    def test_a(self):
+        n1, n2, n3 = _named("/")
+        self.assertIn("n1", n2)
+        re.search("n2", n2)
+        n3.get("Set-Cookie")
+        self.assertEqual(n1, 200)
+        a1, a2 = _aliased("/chat?token=x")
+        self.assertIn("n3", a2)
+        o1, o2, o3 = _opaque("/")
+        self.assertIn("n4", o2)
+        self.assertIn("n5", o3)
+        e = _echo("/", "x")
+        self.assertIn("n6", e)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = rows_of(f.name, getters, constants, routes)
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual([r[:4] for r in rows], [(18, "n1", "_landing", "in"), (23, "n3", "_chat_page", "in"), (25, "n4", "_landing", "in"),
+                                                 (26, "n5", "_landing", "in")])
+        self.assertEqual([r[:3] for r in readers], [(18, "assert", "_landing"), (19, "regex", "_landing"), (23, "assert", "_chat_page"),
+                                                    (25, "assert", "_landing"), (26, "assert", "_landing")],
+                         "the body a helper returns by name is read in both censuses, and no status or headers read is a read of the page")
+        self.assertEqual({k: sorted(v, key=str) for k, v in _response_reads(ast.parse(src)).items()},
+                         {"_named": [1], "_aliased": [1], "_opaque": ["unknown"], "_echo": [], "test_a": []})
 
     def test_a_call_is_a_fetch_only_where_its_callee_reads_a_response(self):
         # the rulings at the merge of main's login cookie split (2026-09-28), P2: a call to a Name or a self.<method> whose first
