@@ -40,7 +40,7 @@ the REAL chat page of a hermetic kernel in playwright's Chromium and checks ever
 Nothing here prints a token, a session id, a key or a cap: the driver compares them in memory and reports booleans,
 statuses and lengths. The lab token is minted at run time. Chromium by default; FILE_CAPS_ENGINE=firefox or webkit runs
 the same scenes on another engine, and fails rather than skips when that engine is missing (a record for a person, not a
-CI leg). Skips LOUDLY without the extension deps or a playwright browser; the CI extension job installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any
+CI leg). Skips LOUDLY without the extension deps or a playwright browser; the CI served-pages job installs Chromium and runs served files with ROMP_SERVED_TESTS_REQUIRE=1, which turns any
 skip into a failure there. SYNTHETIC fixtures only (session web, the notes-api demo world, placeholder uuids)."""
 import ast
 import json
@@ -556,13 +556,13 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             if explicit:
                 raise AssertionError("FILE_CAPS_ENGINE is set but the extension deps are absent")
-            raise unittest.SkipTest("extension deps absent (npm ci not run here): the served lab needs them; CI's extension job has them and requires this file to run")
+            raise unittest.SkipTest("extension deps absent (npm ci not run here): the served lab needs them; CI's served-pages job has them and requires this file to run")
         probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p[process.argv[2]].executablePath())",
                                 os.path.join(EXT, "node_modules", "playwright"), ENGINE], capture_output=True, text=True)
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             if explicit:
                 raise AssertionError("FILE_CAPS_ENGINE=%s is not installed on this box" % ENGINE)
-            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's served-pages job installs Chromium and requires this file to run")
         cls.lab = tempfile.mkdtemp(prefix="file-caps-")
         cls.port, cls.token = _free_port(), secrets.token_urlsafe(24)   # minted at run time, never printed
         origin = "http://127.0.0.1:%d" % cls.port
@@ -647,7 +647,7 @@ class ServedFileCapsAndPageKey(unittest.TestCase):
         if p.returncode == 3:
             if "FILE_CAPS_ENGINE" in os.environ:
                 self.fail("the %s engine did not launch" % ENGINE)
-            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's extension job installs Chromium and requires this file to run")
+            raise unittest.SkipTest("no playwright browser on this box: the served lab needs one; CI's served-pages job installs Chromium and requires this file to run")
         mask = lambda s: s.replace(self.token, "<token>")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + mask(p.stdout[-3000:] + p.stderr[-3000:]) + "\nkernel:\n" + self._klog_tail())
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
