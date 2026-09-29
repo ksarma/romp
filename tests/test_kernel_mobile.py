@@ -1047,8 +1047,9 @@ for (const [s, deep, pan] of [[2, 590, 422], [1.5, 495.2, 281.33], [1.1, 250, 15
   for (const t of ['swap508', 'refit', 'refit2']) r6step(f, t, 336 / 2, 40, 2); }
 { const f = 'swapRefit1.5'; r6rest(f); r6step(f, 'kb508up', 336 / 1.5, 555.74, 1.5);
   for (const t of ['swap471', 'refit']) r6step(f, t, 373 / 1.5, 83, 1.5); }
-// the corner where a refit had moved --app-top, closed by the maintainer's round 6 ruling (2026-09-29: any change of scale clears kz,
-// the zoom of the raise that wrote the value in force). While only a zoom alone cleared it, kz stood through a report that changed
+// the corner where a refit had moved --app-top, closed by the maintainer's round 6 ruling (2026-09-29: any change of scale between
+// runs on the measured or hold road clears kz, the zoom of the raise that wrote the value in force; a fine pointer's runs record no
+// scale, so a change only they saw does not). While only a zoom alone cleared it, kz stood through a report that changed
 // the scale and h together, and a later such report back at kz's zoom was no pan on its own run (the scale changed since the
 // previous run) and took the stance, while its refit, the same report again, was a pan at kz's zoom and took the pan rule. Each
 // family raises the 508 px keyboard under a zoom of s0 with no hold (the measured road writes the reading less the share, and kz is
@@ -1069,11 +1070,18 @@ for (const [s0, s1, o0, o2, od] of [[2, 1.5, 500, 40, 300], [1.5, 1.2, 400, 100,
 // kbPx unclamped and written the hold, and the refit took the hold road, which clamps at L - h. Rounding can put kbPx a pixel above
 // L - h where the visual viewport sits within half a pixel of the layout viewport's bottom and the zoom's share of the band's
 // shortfall is under a pixel. From rest, one such report, then the refit: h 843 (L - h 1) under a zoom of 1.00155 and h 694
-// (L - h 150) under 1.00169; and the same rounding at scale 1, under the cut, where the clamp does not apply: the visual viewport 760.6
-// tall at 83.6, h 761 (L - h 83), the reading 84
+// (L - h 150) under 1.00169; the two cells the fit() comment cites for the case's reach, h 309 (L - h 535, a share of 0.95 px) under
+// 1.00178 and h 843 (L - h 1) under 1.9976; and the same rounding at scale 1, under the cut, where the clamp does not apply: the visual
+// viewport 760.6 tall at 83.6, h 761 (L - h 83), the reading 84. Then what the measured road writes under that clamp: from rest, a
+// report under 1.005 with no keyboard (h 844, L - h 0) and the visual viewport 839.5 tall at 4.6, at the layout viewport's bottom (the
+// reading 5 less the share's 4, kbPx 1, published as the clamp's 0), then the 471 px band at the same zoom with the visual viewport at
+// 4, a reading the share explains (kbPx 0), so the hold road publishes from the value the measured road wrote
 { let f = 'clampFace1'; r6rest(f); r6step(f, 'lightPinch', 841.3459, 2.6541, 1.00155); r6step(f, 'refit', 841.3459, 2.6541, 1.00155);
   f = 'clampFace150'; r6rest(f); r6step(f, 'lightPinch', 692.4298, 151.5702, 1.00169); r6step(f, 'refit', 692.4298, 151.5702, 1.00169);
-  f = 'clampFaceS1'; r6rest(f); r6step(f, 'lightPinch', 760.6, 83.6, 1); r6step(f, 'refit', 760.6, 83.6, 1); }
+  f = 'clampFace535'; r6rest(f); r6step(f, 'lightPinch', 307.976, 536.5, 1.00178); r6step(f, 'refit', 307.976, 536.5, 1.00178);
+  f = 'clampFaceDeep'; r6rest(f); r6step(f, 'deepPinch', 421.76, 422.73, 1.9976); r6step(f, 'refit', 421.76, 422.73, 1.9976);
+  f = 'clampFaceS1'; r6rest(f); r6step(f, 'lightPinch', 760.6, 83.6, 1); r6step(f, 'refit', 760.6, 83.6, 1);
+  f = 'clampThenKbUp'; r6rest(f); r6step(f, 'pinchAtBottom', 839.5, 4.6, 1.005); r6step(f, 'kbUpSameZoom', 471 / 1.005, 4, 1.005); }
 // the stance's third cost (disclosed in the fit() comment): a keyboard re-raised with no pan under a light zoom s0 (the value in
 // force its re-raise bound, 0), a zoom alone to s1 about the band's top, then that keyboard panned down to s1's share. With no
 // hold (the keyboard's first raise at s0 stores the reading less the share) and with a hold of 83 from scale 1
@@ -1729,10 +1737,11 @@ class MobileFitExecutes(unittest.TestCase):
             self.fail("a keyboard raised again under a zoom: inside the reading's interval, and the first field finds its hold; %d cells:\n%s" % (len(bad), "\n".join(bad)))
 
     def test_a_pan_of_a_keyboard_raised_at_this_zoom_follows_the_reading(self):
-        # the maintainer's round 6 ruling (2026-09-29): the reading governs a pan of a keyboard raised at this zoom. A report with the
-        # scale unchanged since the previous run and a keyboard up is a pan (a keyboard swapped in at the same zoom included); where a
-        # raise or a re-raise wrote the value in force under the current zoom, with no change of scale since, the hold road re-bounds the
-        # larger of the hold and the value in force into the reading's interval. Keeping the value there had left the composer 44 px
+        # the maintainer's round 6 ruling (2026-09-29): the reading governs a pan of a keyboard raised at this zoom. A report with a
+        # keyboard up and the scale unchanged since the previous run on the measured or hold road is a pan (a keyboard swapped in at the
+        # same zoom included); where a raise or a re-raise wrote the value in force under the current zoom, with no change of scale
+        # between runs on those roads since (a fine pointer's runs record no scale, so a change only they saw does not count), the hold
+        # road re-bounds the larger of the hold and the value in force into the reading's interval. Keeping the value there had left the composer 44 px
         # below the visible band's bottom for a light-zoom hold of 20 dragged to the top (lzhold20), and a pan to the share after a
         # no-pan re-raise under a light zoom had opened a band under the composer (the A4 cells: 2.67 px at 1.008, 3.33 px at 1.01, 16
         # px at 1.05). The rule's value is derived here from the geometry each step drove: the hold (in these cells the larger of the
@@ -1778,11 +1787,12 @@ class MobileFitExecutes(unittest.TestCase):
         # Bounding every pan under a pinch by the reading re-lays the shell under a real pinch dragged above the value (40 and 0 here,
         # where the stance keeps 83; 10 where no hold was held and the drag's excess, 78, became the value), and every ungated form of
         # the pan rule did. Where the zoom's share reaches the value the hold road keeps it through a pan unless a raise or a re-raise
-        # wrote it under the current zoom with no change of scale since. Each gate has its cell, the rule's value (derived from the
+        # wrote it under the current zoom with no change of scale between runs on the measured or hold road since (a fine pointer's runs
+        # record no scale). Each gate has its cell, the rule's value (derived from the
         # geometry) differing from the stance's in each: stance (a hold raised at scale 1 and pinched to 2, a zoom alone since); nohold
         # (the value a drag wrote, no keyboard event: a drag's write counted as one publishes 10 at Z4); zoomBack (a zoom alone away and
         # back to the scale the raise wrote at: without the clearing at a change of scale the drag publishes 0); swapZoom (the scale
-        # changed in the same report as the band's height, so no zoom alone: the clearing at any change of scale refuses it, since the
+        # changed in the same report as the band's height, so no zoom alone: the clearing at a change of scale between those runs refuses it, since the
         # maintainer's round 6 ruling, 2026-09-29, and so does the current-zoom check, redundant with that clearing; with both dropped
         # the pan publishes 40). The stance's cost, stated in the fit() comment: the composer below the band's
         # bottom by the drag, 83 px where the reading allows 0.
@@ -1867,8 +1877,9 @@ class MobileFitExecutes(unittest.TestCase):
         # own run, so the swap publishes the pan rule's value and the refits the same (the swap's run had taken the stance, 236 at
         # scale 2 and 275 at 1.5, and the refit the rule, 40 and 83). The designed families, driven again with every report fired
         # twice (out.r6refit), publish on each second run what the first did, every family read: the corner's swapZoomBack, roundFlip and
-        # downOutside cells and the clamp's clampFace cells among them, closed by the same ruling (any change of scale clears kz, and
-        # under a pinch the measured road clamps what it publishes at use), each with its own test below. And the seeded doubled-step
+        # downOutside cells and the clamp's clampFace cells among them, closed by the same ruling (any change of scale between runs on
+        # the measured or hold road clears kz, and under a pinch the measured road clamps what it publishes at use), each with its own
+        # test below. And the seeded doubled-step
         # fuzz (4000 report sequences of 12 steps, each step fired twice) moves it at no step; while the pan test asked for the band's
         # height to be unchanged too, it moved at 29 steps of these 48000, all keyboard swaps. That generator reaches neither the
         # corner's reports nor the clamp's; the designed cells above do.
@@ -1896,7 +1907,8 @@ class MobileFitExecutes(unittest.TestCase):
                          {fam: [st["tag"] for st in steps] for fam, steps in self.out["r6"].items()}, "the second pass drove every designed step again")
         cells = [(fam, st) for fam, steps in self.out["r6refit"].items() for st in steps]
         self.assertGreater(len(cells), 800, "the designed cells were driven")
-        closed = {road + s0 for road in ("swapZoomBack", "roundFlip", "downOutside") for s0 in ("2", "1.5")} | {"clampFace1", "clampFace150", "clampFaceS1"}
+        closed = ({road + s0 for road in ("swapZoomBack", "roundFlip", "downOutside") for s0 in ("2", "1.5")}
+                  | {"clampFace1", "clampFace150", "clampFace535", "clampFaceDeep", "clampFaceS1"})
         self.assertLessEqual(closed, {fam for fam, _ in cells}, "the corner's and the clamp's families are read here too")
         bad += ["%s %s: %s, then %s on its refit" % (fam, st["tag"], st["appTop"], st["refit"]) for fam, st in cells if st["refit"] != st["appTop"]]
         self.assertEqual(idem["steps"], 48000, "the fuzz drove every step: %r" % ({k: v for k, v in idem.items() if k != "moved"},))
@@ -1910,8 +1922,9 @@ class MobileFitExecutes(unittest.TestCase):
             self.fail("a refit at an unchanged report moved --app-top; %d findings:\n%s" % (len(bad), "\n".join(bad)))
 
     def test_a_refit_after_reports_that_changed_the_zoom_and_the_bands_height_together_publishes_what_the_report_did(self):
-        # the maintainer's round 6 ruling (2026-09-29): any change of scale clears kz, the zoom of the raise that wrote the value in
-        # force (any zoom disarms the rule), so fit() stays idempotent at the report back. While only a zoom alone (the scale changed
+        # the maintainer's round 6 ruling (2026-09-29): any change of scale between runs on the measured or hold road clears kz, the zoom
+        # of the raise that wrote the value in force (any zoom disarms the rule; a fine pointer's runs record no scale, so a change only
+        # they saw does not), so fit() stays idempotent at the report back. While only a zoom alone (the scale changed
         # with h unchanged) cleared it, kz stood through a report that changed the scale and h together, and a later such report back
         # at kz's zoom was no pan on its own run (the scale changed since the previous run) and took the stance, while its refit, the
         # same report again, was a pan at kz's zoom and took the pan rule, so a refit with nothing new moved --app-top. Three of the
@@ -1951,20 +1964,26 @@ class MobileFitExecutes(unittest.TestCase):
         # published kbPx unclamped, and the refit at the same report, on the hold road once the hold was written, clamps at L - h, so
         # where rounding put kbPx a pixel above L - h (the visual viewport within half a pixel of the layout viewport's bottom, and the
         # zoom's share of the band's shortfall, (L - h)(1 - 1/s), under a pixel) the refit published a pixel less: h 843
-        # under a zoom of 1.00155, 2 px and then 1; h 694 under 1.00169, 151 and then 150. Both runs now publish L - h. The clamp is the
+        # under a zoom of 1.00155, 2 px and then 1; h 694 under 1.00169, 151 and then 150; and the two cells the fit() comment cites for
+        # the case's reach, a light zoom with a long shortfall and a deep zoom with a short one: h 309 under 1.00178 (a shortfall of 535
+        # px, a share of 0.95 px), 536 and then 535 (clampFace535), and h 843 under 1.9976 (a share of 0.50 px), 2 and then 1
+        # (clampFaceDeep). Both runs now publish L - h. The clamp is the
         # pinch's only, as ruled: under the cut the measured road publishes its reading unclamped, as before, and its refit takes the
         # same road, so it publishes the same (clampFaceS1, the same rounding at scale 1: the reading 84 over a shortfall of 83 on both
         # runs; a clamp there too publishes 83). The values are derived from the geometry each step drove.
         px = self._r6_px
-        for fam, shortfall, pinch in (("clampFace1", 1, True), ("clampFace150", 150, True), ("clampFaceS1", 83, False)):
+        for fam, tag, shortfall, pinch in (("clampFace1", "lightPinch", 1, True), ("clampFace150", "lightPinch", 150, True),
+                                           ("clampFace535", "lightPinch", 535, True), ("clampFaceDeep", "deepPinch", 1, True),
+                                           ("clampFaceS1", "lightPinch", 83, False)):
             with self.subTest(fam=fam):
                 t = self._r6(fam)
-                st, rf = t["lightPinch"], t["refit"]
+                st, rf = t[tag], t["refit"]
                 h = round(st["height"] * st["scale"])
                 self.assertEqual(px(t["rest"]["appTop"]), 0, "the cell's premise: from rest, where no hold is held: %r" % (t,))
                 if pinch:
                     self.assertGreaterEqual(st["scale"], 844 / (844 - 0.5), "the cell's premise: a pinch, at or above the cut")
-                    self.assertLess(st["scale"], 1.002, "the cell's premise: one of the lightest zooms")
+                    self.assertLess((844 - h) * (1 - 1 / st["scale"]), 1,
+                                    "the cell's premise: the zoom's share of the band's shortfall, (L - h)(1 - 1/s), under a pixel: %r" % (st,))
                 else:
                     self.assertEqual(st["scale"], 1, "the cell's premise: scale 1, under the cut")
                 self.assertEqual(844 - h, shortfall, "the cell's premise: the band's shortfall, L - h")
@@ -1978,6 +1997,38 @@ class MobileFitExecutes(unittest.TestCase):
                 self.assertEqual([px(st["appTop"]), px(rf["appTop"])], [want, want],
                                  ("under a pinch the measured road publishes kbPx clamped at L - h, and its refit the same: %r" if pinch else
                                   "under the cut the measured road publishes its reading unclamped, and its refit the same: %r") % (t,))
+
+    def test_the_clamp_at_use_leaves_the_written_value_whole_for_a_later_report(self):
+        # the maintainer's round 6 ruling (2026-09-29): under a pinch the measured road clamps what it publishes at use and still writes
+        # kbPx, never its clamp, so nothing adjusts the hold in place (the author's pass 4). The clamp belongs to the run's own band: a
+        # report whose band is not short of the layout viewport clamps at 0 (L - h 0), and rounding can leave kbPx a pixel above that.
+        # Under 1.005 with no keyboard, the visual viewport 839.5 tall at 4.6, its bottom within half a pixel of the layout viewport's:
+        # the reading 5 less the share's 4, kbPx 1, published as 0. The 471 px band then comes up at the same zoom with the visual
+        # viewport at 4, a reading the share explains (kbPx 0), so the hold road runs and publishes from the value in force: the 1 the
+        # measured road wrote, the composer 0.66 px above the visible band's bottom. Written as its clamp, the value in force is 0 and
+        # the report publishes 0, a band of 1.66 px under the composer (stored as well as published, the clamp opened bands over 1 px,
+        # up to 1.98, in a fuzz out of the tree, at steps where the built form leaves none; at each recorded one the built form
+        # publishes 1 and the stored clamp 0). The values are derived from the geometry each step drove.
+        px, t = self._r6_px, self._r6("clampThenKbUp")
+        st, up = t["pinchAtBottom"], t["kbUpSameZoom"]
+        h = round(st["height"] * st["scale"])
+
+        def band(s):   # how far the composer's bottom sits above the visible band's bottom: the band under the composer
+            return round((s["offsetTop"] + s["height"]) - (px(s["appTop"]) + px(s["appH"])), 2)
+
+        self.assertEqual(px(t["rest"]["appTop"]), 0, "the cell's premise: from rest, where no hold is held: %r" % (t,))
+        self.assertGreaterEqual(st["scale"], 844 / (844 - 0.5), "the cell's premise: a pinch, at or above the cut")
+        self.assertEqual(844 - h, 0, "the cell's premise: no keyboard, the band not short of the layout viewport (L - h 0): %r" % (st,))
+        self.assertLessEqual(abs(844 - (st["offsetTop"] + st["height"])), 0.5, "the cell's premise: the visual viewport at the layout viewport's bottom")
+        kb = self._r6_interval(st)[0] + 1   # the reading less the zoom's share, in pixels
+        self.assertEqual(kb, 1, "the cell's premise: rounding puts kbPx a pixel above L - h: %r" % (st,))
+        self.assertEqual(px(st["appTop"]), 844 - h, "the cell's premise: the measured road publishes kbPx clamped at use, at L - h: %r" % (st,))
+        self.assertEqual(up["scale"], st["scale"], "the cell's premise: the keyboard comes up at the same zoom")
+        self.assertEqual(round(up["height"] * up["scale"]), 471, "the cell's premise: the 471 px band: %r" % (up,))
+        self.assertEqual(self._r6_interval(up)[0] + 1, 0, "the cell's premise: a reading the zoom's share explains, kbPx 0, so the hold road runs: %r" % (up,))
+        self.assertEqual(px(up["appTop"]), kb,
+                         "the report after publishes the value the measured road wrote, kbPx %d, not the clamp it published, %d: %r" % (kb, 844 - h, t))
+        self.assertLessEqual(band(up), 1, "no band under the composer once the keyboard is up: %r" % (up,))
 
     def test_a_pan_down_after_a_zoom_alone_keeps_the_value_and_opens_a_band(self):
         # DISCLOSED, the stance's third cost, and these cells are its witness (the fit() comment names them): the pan rule governs a

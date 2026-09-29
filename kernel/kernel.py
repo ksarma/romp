@@ -70663,10 +70663,10 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // (kbPx; the author's pass 9, 2026-09-20: it had stood down at the cut, which with no hold standing published 0 and reopened the band under
 // a light zoom), under a pinch only where no hold is held (held, beside lastPan; the maintainer's round 6 ruling, 2026-09-29), and
 // otherwise the hold road publishes from the hold, or from the re-raise bound rp where one stands (beside lastPan). A PAN of a
-// keyboard raised at this zoom, inside the layout viewport (the scale unchanged since the previous run with a keyboard up, a
-// keyboard swapped in at that zoom included, and the value in force written at a raise or a re-raise under the current zoom with no
-// change of scale since: ps, ph and kz, beside lastPan), re-bounds the larger of the hold and the value in force into the reading's
-// interval [kbPx, panPx] (the maintainer's round 6 ruling, 2026-09-29: keeping the value there left the composer 44 px below the
+// keyboard raised at this zoom, inside the layout viewport (a keyboard up and the scale unchanged since the previous run on the measured
+// or hold road, a keyboard swapped in at that zoom included, and the value in force written at a raise or a re-raise under the current zoom
+// with no change of scale between runs on those roads since: ps, ph and kz, beside lastPan), re-bounds the larger of the hold and the value
+// in force into the reading's interval [kbPx, panPx] (the maintainer's round 6 ruling, 2026-09-29: keeping the value there left the composer 44 px below the
 // visible band's bottom for a light-zoom hold of 20 at 1.05 dragged to 0, where 0 px leaves 24, and a pan to the share after a
 // no-pan re-raise under a light zoom opened a band under the composer, 2.67 px at 1.008, 3.33 px at 1.01 and 16 px at 1.05; node
 // cells). The larger of the two, because a keyboard raised again with the visual viewport deep under the zoom leaves a re-raise
@@ -70753,8 +70753,8 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // unclamped while the refit, on the hold road, clamps at L - h, so where rounding put kbPx a pixel above L - h the refit published
 // a pixel less. That needs the visual viewport within half a pixel of the layout viewport's bottom and the zoom's share of the
 // band's shortfall, (L - h)(1 - 1/s), under a pixel, so a long shortfall needs a light zoom: the refit had moved at a shortfall
-// of 535 px under a zoom of 1.00178, a share of 0.95 px, and at one of 1 px under 1.9976 (node cells). A visual viewport
-// 841.3459 tall at offsetTop 2.6541 under a zoom of
+// of 535 px under a zoom of 1.00178, a share of 0.95 px, and at one of 1 px under 1.9976 (node cells; test_kernel_mobile's
+// clampFace535 and clampFaceDeep cells pin both). A visual viewport 841.3459 tall at offsetTop 2.6541 under a zoom of
 // 1.00155, h 843, had published 2 px and then 1 px on its refit, and one 692.4298 tall at 151.5702 under 1.00169, h 694, 151 and
 // then 150; the measured road now clamps what it publishes under a pinch at use, as the hold road does, and still writes kbPx, so
 // they publish 1 and 150 on both runs (test_kernel_mobile's clampFace cells). Below the cut it publishes its reading unclamped as
