@@ -1459,6 +1459,31 @@ class Runner(_Base):
         self.assertIn("FAIL sweep invalid at %s: the result marks deps, typecheck, npm-test, build, served not owed for having no "
                       "vscode-extension/package.json, but HEAD's tree holds vscode-extension/package.json" % w.head()[:10], p.stdout)
 
+    def test_check_refuses_the_runners_ledger_reason_at_a_sha_that_holds_the_ledger_script(self):
+        """Round 2, correctness-4: the ledger is marked not owed only when the sha has no ledger script, so the runner's
+        own reason for it reads invalid in check (and verify, plan and --repin, which apply the same rule) when the sha's
+        tree holds scripts/upstream-ledger.py, as the seed's does; a hand-given reason reads invalid through the reader.
+        At c60fb907e both read pass."""
+        w = self.w
+        w.run(check=0)
+        data = w.data()
+        run = data["runs"][-1]
+        run["legs"]["ledger"] = {"owed": False, "rc": None, "why": "no scripts/upstream-ledger.py in the tree"}
+        run["verdict"] = sweep.run_verdict(run)
+        sweep.write_result(w.result_path(), data)
+        self.assertEqual(sweep.assess(w.head(), env=w.env)["case"], "pass", "the reader alone reads no tree")
+        p = self.check()
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL sweep invalid at %s: the result marks ledger not owed for having no scripts/upstream-ledger.py in "
+                      "the tree, but HEAD's tree holds scripts/upstream-ledger.py" % w.head()[:10], p.stdout)
+        run["legs"]["ledger"]["why"] = "skipped by hand"
+        run["verdict"] = sweep.run_verdict(run)
+        sweep.write_result(w.result_path(), data)
+        p = self.check()
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL sweep invalid at %s: ledger marked not owed for a reason other than 'no scripts/upstream-ledger.py "
+                      "in the tree' ('skipped by hand')" % w.head()[:10], p.stdout)
+
 
 def _kill_quietly(pid):
     """Cleanup for a writer pid a test recorded itself, in case the runner under test did not stop it."""
@@ -5390,7 +5415,8 @@ class Reader(unittest.TestCase):
     def test_a_not_owed_mark_the_runner_never_writes_is_invalid(self):
         """The runner always owes pytest, bats, manager and tools, marks deps, the webview legs and served not owed only
         when the sha has no vscode-extension/package.json (round 1, decision 11: every head owes the webview legs, whatever
-        it changed, and the served ruling: the served leg on the same terms), and the ledger only with a reason. A record that says otherwise did not come from the runner (or
+        it changed, and the served ruling: the served leg on the same terms), and the ledger only when the sha has no
+        scripts/upstream-ledger.py (round 2, correctness-4: at c60fb907e any reason passed). A record that says otherwise did not come from the runner (or
         came from a runner with another roster), and a leg it marks not owed ran nothing, so the reader refuses it by
         name: verify, plan, --repin and check read through it."""
         cases = []
@@ -5428,6 +5454,22 @@ class Reader(unittest.TestCase):
         legs["served"] = {"owed": False, "rc": None, "why": untouched}
         cases.append(("the served leg by the changed-path rule", legs,
                       "served marked not owed for a reason other than 'no vscode-extension/package.json' ('%s')" % untouched))
+        # round 2, correctness-4: the ledger's one reason is the runner's (a sha with no ledger script), and each clause
+        # names the reason the runner gives for its own legs, so one reason given to a webview leg and the ledger reads
+        # as two clauses
+        legs = self.legs()
+        legs["ledger"] = {"owed": False, "rc": None, "why": "skipped by hand"}
+        cases.append(("the ledger by hand", legs, "ledger marked not owed for a reason other than "
+                                                  "'no scripts/upstream-ledger.py in the tree' ('skipped by hand')"))
+        legs = self.legs()
+        legs["ledger"] = {"owed": False, "rc": None, "why": "skipped by hand"}
+        legs["npm-test"] = {"owed": False, "rc": None, "why": "skipped by hand"}
+        cases.append(("one reason given to a webview leg and the ledger", legs,
+                      "ledger marked not owed for a reason other than 'no scripts/upstream-ledger.py in the tree' "
+                      "('skipped by hand'); npm-test marked not owed for a reason other than 'no vscode-extension/package.json' "
+                      "('skipped by hand'), which the runner never records (pytest, bats, manager, tools always run; deps, the "
+                      "webview legs and served are owed at every head that has vscode-extension/package.json, whatever its "
+                      "diff, and the ledger at every head that has scripts/upstream-ledger.py)"))
         for label, legs, named in cases:
             with self.subTest(label):
                 self.write(self.result(legs=legs))
@@ -5435,6 +5477,18 @@ class Reader(unittest.TestCase):
                 self.assertEqual(case, "invalid", line)
                 self.assertIn(named, line)
                 self.assertEqual(sweep.verdict_of(self.run_rec(legs=legs)), "red", "the verdict rule owes such a leg too")
+
+    def test_the_runners_own_reason_for_the_ledger_reads_pass(self):
+        """Round 2, correctness-4: the reason the runner gives for the ledger not owed (the sha has no ledger script) is
+        the one the reader accepts; whether the sha's tree holds the script is read by check, verify, plan and --repin
+        (excuse_contradiction), not by the reader, which reads no tree."""
+        legs = self.legs()
+        legs["ledger"] = {"owed": False, "rc": None, "why": "no scripts/upstream-ledger.py in the tree"}
+        self.write(self.result(legs=legs))
+        case, line = self.case()
+        self.assertEqual(case, "pass", line)
+        self.assertIn("not owed: deps, ledger, typecheck, npm-test, build, served", line)
+        self.assertEqual(sweep.NO_LEDGER_SCRIPT, "no scripts/upstream-ledger.py in the tree", "the runner's one reason")
 
     FLAKE = "tests/test_notes.py::test_order (known)"
 

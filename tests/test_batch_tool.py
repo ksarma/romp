@@ -1851,6 +1851,27 @@ class VerifyReadsTheSweep(_Base):
         fx.sweep("b1", legs=legs)
         fx.ok("verify", "b1")
 
+    def test_a_result_that_excuses_the_ledger_at_a_head_that_holds_its_script_fails(self):
+        """Round 2, correctness-4: the ledger is marked not owed only when the head has no ledger script. A result that
+        gives the runner's own reason for it fails verify at a batch head whose tree holds scripts/upstream-ledger.py,
+        naming the file; one that gives any other reason reads invalid through the reader; once the ledger ran, verify
+        passes. At c60fb907e both marks passed."""
+        fx = self.fx
+        prose_only = "# Upstream\n\nProse.\n\nEntries live in upstream/.\n\nWhen offering: tail.\n"
+        fx.commit_main({"UPSTREAM.md": prose_only, "scripts/upstream-ledger.py": FAKE_LEDGER}, "ledger migration")
+        head = self.assembled()
+        legs = self.legs()
+        legs["ledger"] = {"owed": False, "rc": None, "why": "no scripts/upstream-ledger.py in the tree"}
+        fx.sweep("b1", legs=legs)
+        self.refused("FAIL sweep invalid at %s: the result marks ledger not owed for having no scripts/upstream-ledger.py in "
+                     "the tree, but the batch head's tree holds scripts/upstream-ledger.py" % head[:10])
+        legs["ledger"]["why"] = "skipped by hand"
+        fx.sweep("b1", legs=legs)
+        self.refused("FAIL sweep invalid at %s: ledger marked not owed for a reason other than 'no scripts/upstream-ledger.py "
+                     "in the tree' ('skipped by hand')" % head[:10])
+        fx.sweep("b1", legs=self.legs())
+        fx.ok("verify", "b1")
+
     def test_a_result_recorded_under_another_leg_environment_fails(self):
         """The allowlist hash is verified (round 1, decision 10): a result recorded under another leg environment policy
         is not the same gate, so verify fails it by name, as it fails one with no hash at all."""

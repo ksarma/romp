@@ -76,7 +76,8 @@ head included, whatever its diff: the webview legs read files outside kernel/ker
 modules, docs), and the served tests boot the kernel and serve the webview bundle, so no set of changed paths shows
 either may be skipped. deps, the webview legs and served are marked not owed only when the sha has no
 vscode-extension/package.json, and the ledger only when it has no ledger script; a reader refuses any other not-owed
-mark. Every leg runs even after an earlier one is red, so the result carries every leg's status.
+mark, and batch.py's verify, plan and --repin and `check` refuse either reason when the sha's tree holds the file it
+names (round 2, correctness-4, for the ledger). Every leg runs even after an earlier one is red, so the result carries every leg's status.
 
 The pytest leg runs over all of tests/ (PYTEST_IGNORED aside), in a venv the runner builds, not in --python itself
 (sdk_environment): `python -m venv` from
@@ -299,6 +300,14 @@ VERDICTS = ("pass", "red", "running", "invalid")
 # so it never holds node_modules, and no diff excuses a webview leg or the served leg), and batch.py and `check` accept
 # this one only when the sha's tree really has no such file (excuse_contradiction).
 NO_PACKAGE_JSON = "no vscode-extension/package.json"
+# The one reason the runner gives for the ledger not owed: the sha's tree has no ledger script (round 2, correctness-4).
+# The reader refuses any other reason for it, and batch.py and `check` accept this one only when the sha's tree really
+# has no such file (excuse_contradiction), as for NO_PACKAGE_JSON.
+LEDGER_SCRIPT = "scripts/upstream-ledger.py"
+NO_LEDGER_SCRIPT = "no %s in the tree" % LEDGER_SCRIPT
+# Each leg the runner may mark not owed, with the one reason it gives, and the file whose absence each reason names.
+NOT_OWED_WHY = dict([(n, NO_PACKAGE_JSON) for n in EXTENSION_LEGS] + [("ledger", NO_LEDGER_SCRIPT)])
+NOT_OWED_FILE = {NO_PACKAGE_JSON: "vscode-extension/package.json", NO_LEDGER_SCRIPT: LEDGER_SCRIPT}
 EXIT_PASS, EXIT_RED, EXIT_REFUSED, EXIT_INVALID = 0, 1, 2, 3
 
 # The pytest command the runner builds (pytest_cmd): `<python> -m pytest tests -n <workers>`, then these flags, then
@@ -554,9 +563,10 @@ def write_result(path, data):
 
 def excuse_fault(name, leg):
     """Why a leg's not-owed mark is one the runner never writes, or None: a leg of ALWAYS_OWED marked not
-    owed, another leg marked not owed with no reason, or deps, a webview leg or served (EXTENSION_LEGS) marked not owed
-    for any reason but NO_PACKAGE_JSON (every checkout is fresh, so deps is owed wherever the sha has
-    vscode-extension/package.json, and every head owes the webview legs and served whatever its diff)."""
+    owed, another leg marked not owed with no reason, or marked not owed for any reason but the one the runner gives for
+    it (NOT_OWED_WHY): deps, a webview leg or served (EXTENSION_LEGS) for any reason but NO_PACKAGE_JSON (every checkout
+    is fresh, so deps is owed wherever the sha has vscode-extension/package.json, and every head owes the webview legs
+    and served whatever its diff), and the ledger for any reason but NO_LEDGER_SCRIPT (round 2, correctness-4)."""
     if not (isinstance(leg, dict) and leg.get("owed") is False):
         return None
     if name in ALWAYS_OWED:
@@ -564,8 +574,9 @@ def excuse_fault(name, leg):
     why = leg.get("why")
     if not (isinstance(why, str) and why.strip()):
         return "%s marked not owed with no reason" % name
-    if name in EXTENSION_LEGS and why != NO_PACKAGE_JSON:
-        return "%s marked not owed for a reason other than %r (%r)" % (name, NO_PACKAGE_JSON, why)
+    own = NOT_OWED_WHY.get(name)
+    if own is not None and why != own:
+        return "%s marked not owed for a reason other than %r (%r)" % (name, own, why)
     return None
 
 
@@ -879,7 +890,8 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
     faulty = [name for name in LEGS if excuse_fault(name, legs[name])]
     if faulty:
         # One clause for the legs of ALWAYS_OWED, one per reason for the others (the three webview legs marked not owed
-        # for one reason read as one clause naming the three), and each leg with no reason on its own.
+        # for one reason read as one clause naming the three), each naming the one reason the runner gives for those
+        # legs (NOT_OWED_WHY; round 2, correctness-4), and each leg with no reason on its own.
         always = [n for n in faulty if n in ALWAYS_OWED]
         text = ["%s marked not owed" % ", ".join(always)] if always else []
         by_why = {}
@@ -888,15 +900,15 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
             if n in ALWAYS_OWED:
                 continue
             if isinstance(why, str) and why.strip():
-                by_why.setdefault(why, []).append(n)
+                by_why.setdefault((NOT_OWED_WHY[n], why), []).append(n)
             else:
                 text.append(excuse_fault(n, legs[n]))
-        text += ["%s marked not owed for a reason other than %r (%r)" % (", ".join(names), NO_PACKAGE_JSON, why)
-                 for why, names in by_why.items()]
+        text += ["%s marked not owed for a reason other than %r (%r)" % (", ".join(names), own, why)
+                 for (own, why), names in by_why.items()]
         return done("invalid", "sweep invalid at %s: %s, which the runner never records (%s always run; deps, the webview "
                                "legs and served are owed at every head that has vscode-extension/package.json, whatever its "
-                               "diff, and the ledger is marked not owed only with a reason); sweep again with this "
-                               "checkout's scripts/sweep.py" % (short(sha), "; ".join(text), ", ".join(ALWAYS_OWED)), rec)
+                               "diff, and the ledger at every head that has %s); sweep again with this checkout's "
+                               "scripts/sweep.py" % (short(sha), "; ".join(text), ", ".join(ALWAYS_OWED), LEDGER_SCRIPT), rec)
     history = read_history(runs)
     rec.update(flake_notes=flake_notes(history), invalid_notes=invalid_notes(history))
     if history["never"]:
@@ -955,21 +967,26 @@ def assess(sha, subject="the batch head", branch=None, tree_hint=None, env=None)
 
 
 def excuse_contradiction(tree, result, sha, subject="HEAD"):
-    """The legs a result marks not owed for having no vscode-extension/package.json (the one reason the runner gives
-    for deps, the webview legs and served, round 1's excuse rule) while the sha's tree does hold that file, as a line naming
-    them; None when none is so marked or the tree really has no such file. Read with the runner's own git hygiene (no
-    inherited GIT_*, no global or system config, refs/replace ignored). batch.py's verify, plan and --repin and this
-    script's check apply it after a pass."""
+    """The legs a result marks not owed for the one reason the runner gives for them (NOT_OWED_WHY: deps, the webview
+    legs and served for having no vscode-extension/package.json, round 1's excuse rule, and the ledger for having no
+    scripts/upstream-ledger.py, round 2's correctness-4) while the sha's tree does hold the file that reason names, as a
+    line naming them and the file; None when none is so marked or the tree really has no such file. Read with the
+    runner's own git hygiene (no inherited GIT_*, no global or system config, refs/replace ignored). batch.py's verify,
+    plan and --repin and this script's check apply it after a pass."""
     legs = (result or {}).get("legs") or {}
-    excused = [n for n in LEGS if not is_owed(n, legs.get(n)) and (legs.get(n) or {}).get("why") == NO_PACKAGE_JSON]
-    if not excused:
+    clauses = []
+    for why, rel in NOT_OWED_FILE.items():
+        excused = [n for n in LEGS if not is_owed(n, legs.get(n)) and (legs.get(n) or {}).get("why") == why]
+        if not excused:
+            continue
+        p = subprocess.run(["git", "-C", tree, "cat-file", "-e", "%s:%s" % (sha, rel)], env=_git_env(),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if p.returncode == 0:
+            clauses.append("marks %s not owed for having %s, but %s's tree holds %s" % (", ".join(excused), why, subject, rel))
+    if not clauses:
         return None
-    p = subprocess.run(["git", "-C", tree, "cat-file", "-e", "%s:vscode-extension/package.json" % sha], env=_git_env(),
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if p.returncode != 0:
-        return None
-    return ("sweep invalid at %s: the result marks %s not owed for having %s, but %s's tree holds vscode-extension/package.json; "
-            "sweep again with this checkout's scripts/sweep.py" % (short(sha), ", ".join(excused), NO_PACKAGE_JSON, subject))
+    return ("sweep invalid at %s: the result %s; sweep again with this checkout's scripts/sweep.py"
+            % (short(sha), "; and it ".join(clauses)))
 
 
 # ── the runner ────────────────────────────────────────────────────────────────
@@ -3074,10 +3091,10 @@ def plan_legs(tree, python, workers, served=None):
             if empty:
                 rec.update(empty_glob=empty)
         elif name == "ledger":
-            if os.path.exists(os.path.join(tree, "scripts", "upstream-ledger.py")):
-                rec.update(cmd=[sys.executable, "scripts/upstream-ledger.py", "check"], cwd=".")
+            if os.path.exists(os.path.join(tree, LEDGER_SCRIPT)):
+                rec.update(cmd=[sys.executable, LEDGER_SCRIPT, "check"], cwd=".")
             else:
-                rec.update(owed=False, why="no scripts/upstream-ledger.py in the tree")
+                rec.update(owed=False, why=NO_LEDGER_SCRIPT)
         else:
             npm = list(NPM_CMDS[name])
             if not package:

@@ -54,11 +54,13 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
   - verify fails when a pinned head moved, and when an assembly did not finish; so does finish;
   - verify refuses a missing, stale, unfinished, red, invalid, incomplete or unreadable sweep result
     for the batch head's full sha, one that marks a leg not owed for having no vscode-extension/package.json
-    while the head's tree holds one (plan and --repin refuse the same at a member's head), and a batch head
+    while the head's tree holds one, or the ledger not owed for having no scripts/upstream-ledger.py while the
+    head's tree holds that script (plan and --repin refuse the same at a member's head), and a batch head
     that does not contain main as origin has it now (CI does not run on the merge to main, so the tree that
     lands must be the tree the sweep and the batch branch's CI ran on); a result that marks deps, a webview
     leg or the served leg not owed for any other reason reads invalid, whatever the diff (every head owes the
-    webview legs and the served leg);
+    webview legs and the served leg), and so does one that marks the ledger not owed for any reason but a
+    missing ledger script;
     land re-runs verify and refuses the same. The reader reads the result's whole history (append-only
     runs): a failed run that no later run excused with --flake naming the leg reads red, naming the run and
     its logs, and a result recorded under another leg environment (the allowlist hash) reads invalid; verify
@@ -1585,8 +1587,8 @@ def member_sweep(root, sweep, m):
     (docs/batching.md), so the steps that take a member in (plan, assemble --repin) read it. Returns (fault, record):
     (None, the pass as sweep_record has it) when the result at the member's pinned head is a pass (every leg owed, the
     webview legs and the served leg included, as at a batch head: the reader refuses one of them marked not owed for
-    any reason but a missing extension) and any leg it marks not owed for a missing vscode-extension/package.json is one the head's
-    tree lacks, else (the reader's line naming the case, None). The caller records the pass on the member, and the
+    any reason but a missing extension, and the ledger for any reason but a missing ledger script) and any leg it marks
+    not owed for a missing vscode-extension/package.json or ledger script is one the head's tree lacks, else (the reader's line naming the case, None). The caller records the pass on the member, and the
     body's members table shows that record (round 1, fresh-3). The result is read from this machine's state dir; one
     recorded on another machine is missing here."""
     subject = "#%d's head" % m["n"]
