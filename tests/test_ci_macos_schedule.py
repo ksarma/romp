@@ -1,7 +1,8 @@
 """The macOS CI cells run on a weekly schedule as well as on a manual dispatch (.github/workflows/ci.yml, 2026-09-16): with the
 manual switch alone the release gate was the first macOS run in two weeks and found twenty-nine accumulated failures. Pins:
 the schedule exists, fires once a week at a quiet hour Pacific, and selects the macOS matrix the way workflow_dispatch does
-in BOTH matrix jobs (Python and bats); the manual dispatch is kept."""
+in EVERY matrix job (Python, bats, and since 2026-09-28 the vendored tooling job, which runs the step that left the bats job);
+the manual dispatch is kept."""
 import os
 import re
 import unittest
@@ -30,9 +31,9 @@ class MacosSchedule(unittest.TestCase):
         self.assertTrue(minute.isdigit() and hour.isdigit(), "a fixed minute and hour")
         self.assertIn(int(hour), range(8, 14), "a quiet hour Pacific: 08:00 to 13:00 UTC is midnight to 06:00 Pacific")
 
-    def test_the_schedule_selects_the_macos_matrix_in_both_jobs(self):
+    def test_the_schedule_selects_the_macos_matrix_in_every_matrix_job(self):
         exprs = re.findall(r"os: \$\{\{ fromJSON\((.*?)\) \}\}", self.wf)
-        self.assertEqual(len(exprs), 2, "the Python matrix and the bats matrix: %r" % exprs)
+        self.assertEqual(len(exprs), 3, "the Python matrix, the bats matrix and the vendored tooling matrix: %r" % exprs)
         for e in exprs:
             self.assertIn("github.event_name == 'workflow_dispatch'", e)
             self.assertIn("github.event_name == 'schedule'", e, "the scheduled run selects macOS the way a dispatch does: %s" % e)

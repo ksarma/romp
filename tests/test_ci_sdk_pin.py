@@ -35,7 +35,7 @@ This module holds five things, and it never skips: a pin that skips reports gree
    own layout, in a one-line plain or quoted scalar or a `run: |` literal block, with backslash continuations joined as
    the shell joins them; comment lines and pip installs give no row, the expression rule below aside), and the two
    invocations the file is known to
-   hold, the Python matrix step's Run pytest (the switch and the flag) and the vscode-extension job's served-page
+   hold, the Python matrix step's Run pytest (the switch and the flag) and the served-pages job's served-page
    step (the flag; listed for the switch, since its job installs no SDK), are asserted present, so an empty read is
    red. The flag has no list: the constant pins the SDK alone, its dependency closure resolves fresh on every run (26
    packages on 2026-09-20, the 3.12 cell of run 35518107329), and one of them, anyio, registers a pytest plugin that
@@ -969,11 +969,12 @@ class RequireSwitch(unittest.TestCase):
 
 # ---------------------------------------------------------------------------------------------------------------------
 # The population check (round 3's ruling, 2026-09-20): every pytest invocation in the workflow, not one step's text.
-# Until this round two pins read the Run pytest step alone, and ci.yml's OTHER pytest invocation, the vscode-extension
-# job's served-page step, set neither the switch nor the flag without a word; a third step added anywhere would have
-# opted out the same way, and so would a step without a name or a run block spelled `|-` or `>`, which the first cut
-# of this parser did not read at all (probed by execution before this landed: no invocation read, module green). The
-# rule now: every command that runs pytest in ci.yml passes -p no:anyio (no list: pytest accepts the flag where anyio
+# Until this round two pins read the Run pytest step alone, and ci.yml's OTHER pytest invocation, the served-page step
+# (then in the vscode-extension job, since 2026-09-28 in the served-pages job), set neither the switch nor the flag
+# without a word; a third step added anywhere would have opted out the same way, and so would a step without a name or
+# a run block spelled `|-` or `>`, which the first cut of this parser did not read at all (probed by execution before
+# this landed: no invocation read, module green).
+# The rule now: every command that runs pytest in ci.yml passes -p no:anyio (no list: pytest accepts the flag where anyio
 # is absent, so there is no interpreter on which a pytest line has a reason to lack it), and either sets
 # ROMP_SDK_REQUIRE=1 or is in SWITCH_LISTED with a reason whose premises ListedInvocations checks.
 # What the parser reads, and its limits, are stated in pytest_invocations' docstring. A pytest mention it reads but not
@@ -1062,7 +1063,7 @@ def passes_flag(args):
 # until one is renamed (2026-09-21; GitHub Actions does not require unique step names, and a second step of a listed
 # name inherited the listing).
 SWITCH_LISTED = {
-    ("vscode-extension", "Browser-backed served-page tests (pytest)"): (
+    ("served-pages", "Browser-backed served-page tests (pytest)"): (
         "the switch declares that the interpreter running pytest has the SDK the Python job's install step put there, "
         "and this job installs none (its pip line names pip, pytest, pytest-timeout and cryptography; run 35535192879's "
         "served step installed nine packages, no SDK), so setting it would declare something untrue; and none of the "
@@ -2294,7 +2295,7 @@ def _positional_paths(inv):
 
 
 MATRIX_STEP = ("python", "Run pytest")
-SERVED_STEP = ("vscode-extension", "Browser-backed served-page tests (pytest)")
+SERVED_STEP = ("served-pages", "Browser-backed served-page tests (pytest)")
 
 # The Run pytest step's three allowlists (round 5's ruling C, 2026-09-24, and round 6's ruling A, 2026-09-25, the third;
 # run_pytest_status's docstring is the rule). Every argument word of its command is an entry of the first, keyed on its
@@ -2586,7 +2587,7 @@ class PytestPopulation(unittest.TestCase):
     """Every pytest invocation in .github/workflows/ci.yml passes -p no:anyio and either declares the SDK requirement or
     is listed for the switch with a reason whose premises hold (round 3's ruling, 2026-09-20). The population is
     DERIVED from the file by pytest_invocations (the rule is its docstring; `python -c` over it lists the members), and
-    the two invocations the file is known to hold, the Python matrix step and the vscode-extension job's served-page
+    the two invocations the file is known to hold, the Python matrix step and the served-pages job's served-page
     step, are asserted present, so an empty or partial derivation is red, not green. A pin on one step's text let the
     other set neither the switch nor the flag without a word, and a third step added tomorrow would have opted out the
     same way. The check reads the file's text, and proves it read all of it (round 4's ruling A, 2026-09-23): every line
@@ -2751,7 +2752,7 @@ class ListedInvocations(unittest.TestCase):
     def test_the_served_steps_job_installs_no_sdk(self):
         # keyed on the install's names in the job's run blocks; an install by a `uses:` action is outside this read
         for token in SDK_INSTALL_TOKENS:
-            self.assertNotIn(token, self.served[0]["job_run"], "a run block of the vscode-extension job names %r: the job's "
+            self.assertNotIn(token, self.served[0]["job_run"], "a run block of the served-pages job names %r: the job's "
                              "interpreter may now have the SDK, so the served step's listing for the switch is no longer "
                              "true; set %s=1 there and drop the entry" % (token, SWITCH))
 
@@ -3767,11 +3768,11 @@ class PopulationCheckReds(unittest.TestCase):
         # placeholder as a key; the live entry beside them stays unnamed by the check
         found = self.found_live()
         self.assertEqual(stale_listings(found), [], "the live table has no stale entry")
-        with mock.patch.dict(SWITCH_LISTED, {("vscode-extension", "Renamed (pytest)"): "synthetic stale entry",
+        with mock.patch.dict(SWITCH_LISTED, {("served-pages", "Renamed (pytest)"): "synthetic stale entry",
                                              ("shell", UNNAMED): "synthetic unnamed entry"}):
             stale = stale_listings(found)
         self.assertEqual(len(stale), 2, stale)
-        self.assertIn("('vscode-extension', 'Renamed (pytest)'): SWITCH_LISTED names a step that is not a pytest invocation", stale[0])
+        self.assertIn("('served-pages', 'Renamed (pytest)'): SWITCH_LISTED names a step that is not a pytest invocation", stale[0])
         self.assertIn("renamed or removed", stale[0])
         self.assertIn("('shell', '(unnamed step)'): SWITCH_LISTED lists an unnamed step", stale[1])
         # and with a scratch table alone, so the live entry is not what makes it green
@@ -3801,7 +3802,7 @@ class PopulationCheckReds(unittest.TestCase):
         self.assertEqual(verdict(found["Literal (pytest)"]), "unlisted", _describe(found["Literal (pytest)"]))
 
     def _with_step_in_last_job(self, step_text, src=None):
-        # appended at the end of the file: the vscode-extension job is the file's last, so the step joins it
+        # appended at the end of the file: the served-pages job, the served step's, is the file's last, so the step joins it
         src = self.src if src is None else src
         self.assertEqual(re.findall(JOB_RE, _top_sections(src)["jobs"][0][1])[-1], SERVED_STEP[0], "the last job moved: re-anchor this case")
         return src.rstrip("\n") + "\n" + step_text

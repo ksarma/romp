@@ -34,7 +34,7 @@
 //    outlasted a frame, 10 of 10), so in the first case the frame the hide's trim armed runs hidden, keeps every mark and re-arms
 //    nothing, and the reflow report does the show's work; round 13 recorded that frame as the first after the show, which holds in
 //    the second case alone. The leg pins the second case: the shell hides the pane, runs the panel's paint pass inside it (the
-//    inline toggle: toggleInline runs paintAll) and shows it again in ONE task, so no lifecycle update can run in the hidden frame
+//    inline toggle: toggleInline runs #latchCardState's pass) and shows it again in ONE task, so no lifecycle update can run in the hidden frame
 //    between; after the show no padding-only mark stands, the wrap points' blanks are unwrapped, and the seam reported no reflow.
 // 5. The first case, and the re-arm's price: the pane hidden until the seam reports the hide (a reflow at no width), frames run in
 //    the hidden pane, the panel's paint pass runs inside it, more frames run, the pane is shown and the seam reports the show. The
