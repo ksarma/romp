@@ -1144,9 +1144,12 @@ class MobileFitExecutes(unittest.TestCase):
         # the author's pass 6 (2026-09-20): the validity guard's pinch half. A height report of 0 under the zoom publishes no pan: the
         # values stand where the clamp put them (a pinch road without the guard published min(83, 844 - 0) = 83px here)
         self.assertEqual(self.out["refusedZoomed"], {"appTop": "0px", "appH": "844px", "barH": "44px"}, "a refused height report under the zoom publishes no pan")
-        # the author's pass 4 (2026-09-20): the clamp bounds what is published and leaves the hold standing, so the keyboard raised again
-        # under the same zoom finds the pan it was measured with. A clamp that wrote its result back (the author's pass 2 shape) had
-        # lowered the hold to 0 the first time it bound, and this run then published 0px under a keyboard-sized --app-h.
+        # the author's pass 4 (2026-09-20): the clamp bounds what is published and leaves the hold standing, so the same field raised
+        # again under the same zoom, at its own pan (83), finds its hold: since round 6 a keyboard raised again after going down
+        # under the zoom is bounded from the hold into the reading's interval, and 83 lies inside it here (one raised with no pan
+        # publishes what the reading allows, not the hold: test_a_keyboard_raised_again_under_a_zoom_publishes_what_the_reading_allows).
+        # A clamp that wrote its result back (the author's pass 2 shape) had lowered the hold to 0 the first time it bound, and this
+        # run then published 0px under a keyboard-sized --app-h.
         self.assertEqual(self.out["kbUpAgainZoomed"], {"appTop": "83px", "appH": "460px", "barH": "0px"}, "the hold survives the clamp")
         self.assertEqual(self.out["zoomBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
 
@@ -1334,10 +1337,12 @@ class MobileFitExecutes(unittest.TestCase):
     def test_a_report_between_the_two_cuts_is_a_pinch_at_the_layout_viewport_and_the_hold_survives_it(self):
         # extra6-1 (the maintainer's round 6 ruling, 2026-09-29): guards the ruled cut at the layout viewport L on the coarse road
         # (the author's pass 9: it had been taken at the road's own h, the band's height with the keyboard up) and the hold
-        # surviving a report between the two cuts. Before this cell only a source-spelling pin in test_shell_viewport_fit read
-        # the cut; a cut at h left every executed cell green. The first step publishes 0 under either cut (the reading, 0.4,
-        # rounds to no pan: extra10-1's reading, so it cannot tell a cut at h apart); the pinch after it is the pin: the hold,
-        # 83, where a cut at h has written the reading's 0 into it and publishes 0.
+        # surviving a report between the two cuts. Before round 6's fixes only a source-spelling pin in test_shell_viewport_fit read
+        # the cut, and a cut at h left every executed cell green. Since those fixes the continuous-pinch cells of
+        # test_a_pinch_reading_never_overwrites_a_standing_hold red a cut at h too (the reading less the share, 82, written into
+        # the hold at 1.0007, where the hold is 83), and this cell is the ruled pin beside them. The first step publishes 0 under
+        # either cut (the reading, 0.4, rounds to no pan: extra10-1's reading, so it cannot tell a cut at h apart); the pinch after
+        # it is the pin: the hold, 83, where a cut at h has written the reading's 0 into it and publishes 0.
         c = self.out["cutBetween"]
         L, h, s = 844, 460, 1.0008
         self.assertTrue(L / (L - 0.5) <= s < h / (h - 0.5), "the cell's premise: the scale sits at or over the cut at L and under the cut at h")
