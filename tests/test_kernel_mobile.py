@@ -1007,6 +1007,15 @@ for (const [p, s, tag] of [[30, 1.05, 'p30-s1.05'], [83, 1.2, 'p83-s1.2'], [83, 
 // reading 60 less the share's 40, 20) and the same keyboard's pan dragged to the top
 { const s = 1.05, f = 'lzhold20'; r6rest(f); r6step(f, 'zoom', 844 / s, r6share(s) / 2, s);
   r6step(f, 'kbUpLZ', 508 / s, Math.round(r6share(s)) + 20, s); r6step(f, 'dragTo0', 508 / s, 0, s); }
+// the 0px road clears the written-hold flag where it clears the hold (the maintainer's round 6 ruling, 2026-09-29, the flag's
+// clearing rule): a hold of 83 at scale 1 (the band 460, the flag set), the pointer fine with the visual viewport at rest (the 0px
+// road clears the hold and the flag), then coarse again under a real pinch with the same keyboard up, the nohold family's three
+// reports from there: dragged past the zoom's share and back. With the flag cleared no hold is held, so the drag's excess is
+// written as the nohold family's is and the drag back publishes it; a flag left standing over the cleared hold of 0 reads as a
+// hold held, so the excess is published unwritten and the drag back publishes 0
+{ const f = 'fineClear'; r6rest(f); r6step(f, 'kbUp', 460, 83, 1);
+  global.matchMedia = () => ({ matches: false }); r6step(f, 'fineRest', 844, 0, 1); global.matchMedia = savedMatchMedia;
+  r6step(f, 'Z1-kbUpZ', 230, 83, 2); r6step(f, 'Z2-drag500', 230, 500, 2); r6step(f, 'Z3-back83', 230, 83, 2); }
 out.r6 = r6;
 // extra6-1 (the maintainer's round 6 ruling, 2026-09-29): the coarse road takes the pinch cut at the layout viewport L, not at its
 // own h. A hold of 83 (the keyboard up at scale 1, h 460), then a report BETWEEN the two cuts (scale 1.0008: at or over L/(L - 0.5),
@@ -1579,6 +1588,29 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual(px(t["kbUpLZ"]["appTop"]), 20, "the keyboard raised at the light zoom with no hold stores the reading less the share: %r" % (t,))
         self.assertEqual(self._r6_interval(t["dragTo0"]), (-1, 1), "the cell's premise: the drag reaches the top, where the reading allows no pan")
         self.assertEqual(px(t["dragTo0"]["appTop"]), 20, "the drag face: the share (40) reaches the hold (20), so the pan keeps it: %r" % (t,))
+
+    def test_the_0px_road_clears_the_written_hold_flag_with_the_hold(self):
+        # the maintainer's round 6 ruling (2026-09-29), the flag's clearing rule: every measured-road write sets the flag held to
+        # L - h > 0, and the 0px road clears it where it clears the hold. A hold of 83, then the pointer fine with the visual
+        # viewport at rest, clears both, so coarse again under a real pinch with the keyboard up no hold is held: the reports from
+        # there are the nohold family's, and so are the values, the drag's excess written and published again on the drag back.
+        # The source pin in test_shell_viewport_fit reads the clearing's spelling only; this cell executes it: a 0px road that clears
+        # the hold and leaves the flag reads the cleared hold of 0 as a hold held, publishes the excess unwritten and 0 on the drag back.
+        px = self._r6_px
+        t, n = self._r6("fineClear"), self._r6("nohold")
+        after = ("Z1-kbUpZ", "Z2-drag500", "Z3-back83")
+        self.assertEqual([(t[k]["height"], t[k]["offsetTop"], t[k]["scale"]) for k in after],
+                         [(n[k]["height"], n[k]["offsetTop"], n[k]["scale"]) for k in after],
+                         "the cell's premise: after the flip the reports are the nohold family's")
+        self.assertEqual((px(t["kbUp"]["appTop"]), px(t["fineRest"]["appTop"]), px(t["Z1-kbUpZ"]["appTop"])), (83, 0, 0),
+                         "the hold (83), the fine pointer at rest (0px), and coarse again under the pinch the cleared hold (0, not 83): %r" % (t,))
+        excess = self._r6_interval(t["Z2-drag500"])[0] + 1   # the reading less the share, 500 - 422
+        self.assertGreater(excess, 0, "the cell's premise: the drag passes the share: %r" % (t["Z2-drag500"],))
+        self.assertEqual([px(t[k]["appTop"]) for k in after], [0, excess, excess],
+                         "the flag cleared with the hold: no hold is held, so the drag's excess is written and the drag back publishes it "
+                         "(a flag left standing publishes 0 there): %r" % (t,))
+        self.assertEqual([px(t[k]["appTop"]) for k in after], [px(n[k]["appTop"]) for k in after],
+                         "the flip at rest leaves the no-hold state: the nohold family's values: %r %r" % (t, n))
 
 
 # A node stand-in for the installed phone app with a REAL class list: the shell's mobile script and

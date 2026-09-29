@@ -850,7 +850,10 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
                       "the pan a pure zoom cannot explain, and the premise its bound rests on, the report's bottom edge to the pixel (the author's pass 9, 2026-09-20; the fixer pass), declared before fit()")
         self.assertNotIn("1.01", served_css.js_code(self.js), "the cut is derived, not a literal (the code, comments blanked: the derivation's comment names the old literal)")
         self.assertIn("if(!coarse||!vv){if(!vv||(!pinched(vv,L)&&!(panPx(vv)>0))){lastPan=0;held=false;gone=false;rp=null;}document.documentElement.style.setProperty('--app-top','0px');}", self.js,
-                      "the 0px road clears the hold with its flag, the down run and the re-raise bound, in a no-pan state only")
+                      "the 0px road clears the hold with its flag, the down run and the re-raise bound, in a no-pan state only. This pin reads the "
+                      "SPELLING only; the behaviour is executed in test_kernel_mobile.MobileFitExecutes: the flag cleared with the hold in "
+                      "test_the_0px_road_clears_the_written_hold_flag_with_the_hold, the no-pan condition in "
+                      "test_the_0px_road_clears_the_hold_only_where_no_pan_stands")
         self.assertNotIn("vv.offsetTop>0", self.js, "the 0px road reads the shared rounding, never the raw offsetTop")
         self.assertIn("else if(h&&(!pinched(vv,L)||(!held&&inside(vv,L)&&kbPx(vv,L)>0))){lastPan=kbPx(vv,L);held=L-h>0;gone=false;rp=null;document.documentElement.style.setProperty('--app-top',lastPan+'px');}\n"
                       "else if(h){if(inside(vv,L)){if(L-h<=0){if(held)gone=true;rp=null;}else if(gone){rp=Math.max(kbPx(vv,L),Math.min(lastPan,panPx(vv)));gone=false;}}var H=rp===null?lastPan:rp;"
