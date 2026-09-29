@@ -280,9 +280,7 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   (the load event over an error page, which commits no readable document, or
   no committed document by the 30 s backstop) is put back where a tap finds
   it and says so over the pane area with a control to retry; it files no
-  row (the `pane-load-failed` and `pane-load-unmarked` rows, and their `pane`
-  and `n` keys, were dropped in the reviewer's round 7 on this PR, since no
-  reader acted on them). A 200 the kernel served at the
+  row. A 200 the kernel served at the
   pane's url that carries no pane shim (its own "needs the ui/ modules" page;
   the kernel stamps every text/html 200 it writes whose body carries an
   `<html>` tag with `data-romp-served=200` on that tag, so every text/html 200
@@ -293,9 +291,9 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   failure (the paste-the-token page at `/` and `/login` is such a body today,
   and neither is a pane url); and the shell reads that stamp) is not a
   failure: the shell cannot classify it, so it is shown as served (the loader
-  clears, the src stays), the same page state as the pane's own document; the
-  row that used to say what was seen went with the rest, so a real engine no
-  longer tells the two apart. A document at the url with neither the shim nor the stamp
+  clears, the src stays), the same page state as the pane's own document, and
+  it files no row either, so nothing the page records tells the two apart. A
+  document at the url with neither the shim nor the stamp
   (the kernel's 403 line, which a pane url answers only to a browser holding
   no session cookie this kernel accepts, since a page opens on that cookie
   alone; its 500 page; a proxy's 502 body) is a failure like an error page:
