@@ -557,7 +557,9 @@ closed (with the panel open, a click offers a comment as before, and so does a C
 on the picture on a mouse or trackpad, and a drag draws a rectangle unless it starts on
 the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) on the picture
 while the panel is closed, or on the button at any time, opens the picture in a browser
-tab, and a picture from the web opens its address in a new tab, as a link to that site
+tab, a picture at one of the dashboard's own file addresses opens as a picture from a file
+does, in the session its address names, and never in a tab at the address as written, and
+a picture from the web opens its address in a new tab, as a link to that site
 does, but only while its button, or on a small picture its dashed border, is on the screen
 with nothing over it that would take a click: a click, a tap, Enter or Space while it is off
 the screen or covered
@@ -577,7 +579,7 @@ the fold and opens nothing, with or without Cmd, and a picture from the web ther
 no address in its tooltip, while its button, where it has one, still opens it; a figure
 waiting behind its host's box gets its button once it has loaded, as does
 one still on its way (a click on it before then opens nothing), and once the browser has
-answered for a picture, four kinds have none: a picture that failed to load, which opens
+answered for a picture, five kinds have none: a picture that failed to load, which opens
 nothing either; a `data:` picture, whose bytes are written into the file itself and which
 does not open; a picture smaller than 48 pixels on either side (a badge, an inline icon),
 which the button would cover, and which a plain click still opens when neither a link nor
@@ -586,7 +588,10 @@ only way to a picture, and a picture that shrinks below 48 pixels as the pane na
 loses its button and that way with it (a small picture from the web outside such a line has the
 dashed border itself, on a mouse or trackpad while the
 pointer is over it, and at all times on a phone or tablet and on a laptop with a
-touchscreen, since a finger gets no tooltip); and a picture inside a link that holds more
+touchscreen, since a finger gets no tooltip); a picture at one of the dashboard's own file
+addresses that the viewer cannot open as shown, which opens nothing either, such as a pinned
+copy, a download (an address naming `download=1`), a local address naming a session on
+another machine, or a relay address of another shape; and a picture inside a link that holds more
 than the picture (a caption beside
 it), where a click follows the link (a link with no address left, or an anchor that only
 marks a place, is not a link a click can follow, so a picture inside it keeps its button

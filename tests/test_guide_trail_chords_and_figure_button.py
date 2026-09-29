@@ -16,11 +16,13 @@ carries no shell script, the arrows step it too. The guide says so, in those ter
 sentence to the shell's lines, to `onNavKey`'s stand-downs (a prevented key, a typing target, the editor open) and to
 `navChord`'s two chord families (file-trail.ts).
 
-The picture sentence. The guide names four kinds of picture without the button once the browser has answered for it: a
+The picture sentence. The guide names five kinds of picture without the button once the browser has answered for it: a
 picture that failed to load (the file review's round 2: `figureState`, refused by `figureWantsControl` and by
 `figureTarget` alike, on one rule since before the file review's round 3, `figureHasPicture`, a target or a button only for a
 state with a picture to name, so the button and the plain click agree and nothing opens), a `data:` picture (`figureTarget`
-null), one under `FIGOPEN_MIN_PX` on either side (a badge, an inline icon; `figureTooSmall`, read by the one decision
+null), a picture at one of this origin's file routes the viewer cannot open as shown (`figureTarget` null again, on
+ownFileRoute's "none": a pin, a download of 1, a slice of 1, a host-prefixed sid at the /file route, a relay address of
+another shape; the file review's round 20, regression-1, with regression-2's ruling on which names count), one under `FIGOPEN_MIN_PX` on either side (a badge, an inline icon; `figureTooSmall`, read by the one decision
 `decideFigureControl` at the load and at each reflow of the figure's own box, `watchFigureBoxes`), and one inside a link
 that holds more than the picture (`linkAbove`: the climb of `figureAnchor` leaves such a link standing over the img,
 where `linkAround` climbs a link holding the picture alone so its button lands after the link); a picture still on its
@@ -109,35 +111,39 @@ PICTURE = ("A picture in a rendered file that comes from a file or a web address
                 " while the Comments panel is closed (with the panel open, a click offers a comment as before, and so"
                 " does a Cmd-click on the picture on a mouse or trackpad, and a drag draws a rectangle unless it star"
                 "ts on the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) on the picture whi"
-                "le the panel is closed, or on the button at any time, opens the picture in a browser tab, and a pict"
-                "ure from the web opens its address in a new tab, as a link to that site does, but only while its but"
-                "ton, or on a small picture its dashed border, is on the screen with nothing over it that would take "
-                "a click: a click, a tap, Enter or Space while it is off the screen or covered (by the list of headin"
-                "gs the **Outline** button opens, the menu of the text size buttons, or something the file itself lay"
-                "s over the picture, say) opens nothing and scrolls it into view, and the next one opens once it show"
-                "s (a button partly on the screen counts as shown), and the button and the picture both show that bef"
-                "ore the click: the button's tooltip says it opens a new tab at the address's host, its border is das"
-                "hed and its glyph is an arrow leaving a box, and the picture's own tooltip shows the address's origi"
-                "n (its scheme, host and port, never its path, query or fragment), on a line after the author's title"
-                " when there is one; when the address has an @ anywhere after its scheme, so that it may carry a sign"
-                "-in, both tooltips say the address is withheld and show none of it, even for a harmless name such as"
-                " a@2x.png; a click on a picture in a fold's title line (a `<details>` block's summary) opens or clos"
-                "es the fold and opens nothing, with or without Cmd, and a picture from the web there shows no addres"
-                "s in its tooltip, while its button, where it has one, still opens it; a figure waiting behind its ho"
-                "st's box gets its button once it has loaded, as does one still on its way (a click on it before then"
-                " opens nothing), and once the browser has answered for a picture, four kinds have none: a picture th"
-                "at failed to load, which opens nothing either; a `data:` picture, whose bytes are written into the f"
-                "ile itself and which does not open; a picture smaller than 48 pixels on either side (a badge, an inl"
-                "ine icon), which the button would cover, and which a plain click still opens when neither a link nor"
-                " a fold's title line holds it, though no key opens it, since the button is the keyboard's only way t"
-                "o a picture, and a picture that shrinks below 48 pixels as the pane narrows loses its button and tha"
-                "t way with it (a small picture from the web outside such a line has the dashed border itself, on a m"
-                "ouse or trackpad while the pointer is over it, and at all times on a phone or tablet and on a laptop"
-                " with a touchscreen, since a finger gets no tooltip); and a picture inside a link that holds more th"
-                "an the picture (a caption beside it), where a click follows the link (a link with no address left, o"
-                "r an anchor that only marks a place, is not a link a click can follow, so a picture inside it keeps "
-                "its button and its tooltip, and a plain click opens it), while a picture that is all its link holds "
-                "keeps its button beside the link.")
+                "le the panel is closed, or on the button at any time, opens the picture in a browser tab, a picture "
+                "at one of the dashboard's own file addresses opens as a picture from a file does, in the session its"
+                " address names, and never in a tab at the address as written, and a picture from the web opens its a"
+                "ddress in a new tab, as a link to that site does, but only while its button, or on a small picture i"
+                "ts dashed border, is on the screen with nothing over it that would take a click: a click, a tap, Ent"
+                "er or Space while it is off the screen or covered (by the list of headings the **Outline** button op"
+                "ens, the menu of the text size buttons, or something the file itself lays over the picture, say) ope"
+                "ns nothing and scrolls it into view, and the next one opens once it shows (a button partly on the sc"
+                "reen counts as shown), and the button and the picture both show that before the click: the button's "
+                "tooltip says it opens a new tab at the address's host, its border is dashed and its glyph is an arro"
+                "w leaving a box, and the picture's own tooltip shows the address's origin (its scheme, host and port"
+                ", never its path, query or fragment), on a line after the author's title when there is one; when the"
+                " address has an @ anywhere after its scheme, so that it may carry a sign-in, both tooltips say the a"
+                "ddress is withheld and show none of it, even for a harmless name such as a@2x.png; a click on a pict"
+                "ure in a fold's title line (a `<details>` block's summary) opens or closes the fold and opens nothin"
+                "g, with or without Cmd, and a picture from the web there shows no address in its tooltip, while its "
+                "button, where it has one, still opens it; a figure waiting behind its host's box gets its button onc"
+                "e it has loaded, as does one still on its way (a click on it before then opens nothing), and once th"
+                "e browser has answered for a picture, five kinds have none: a picture that failed to load, which ope"
+                "ns nothing either; a `data:` picture, whose bytes are written into the file itself and which does no"
+                "t open; a picture smaller than 48 pixels on either side (a badge, an inline icon), which the button "
+                "would cover, and which a plain click still opens when neither a link nor a fold's title line holds i"
+                "t, though no key opens it, since the button is the keyboard's only way to a picture, and a picture t"
+                "hat shrinks below 48 pixels as the pane narrows loses its button and that way with it (a small pictu"
+                "re from the web outside such a line has the dashed border itself, on a mouse or trackpad while the p"
+                "ointer is over it, and at all times on a phone or tablet and on a laptop with a touchscreen, since a"
+                " finger gets no tooltip); a picture at one of the dashboard's own file addresses that the viewer can"
+                "not open as shown, which opens nothing either, such as a pinned copy, a download (an address naming "
+                "`download=1`), a local address naming a session on another machine, or a relay address of another sh"
+                "ape; and a picture inside a link that holds more than the picture (a caption beside it), where a cli"
+                "ck follows the link (a link with no address left, or an anchor that only marks a place, is not a lin"
+                "k a click can follow, so a picture inside it keeps its button and its tooltip, and a plain click ope"
+                "ns it), while a picture that is all its link holds keeps its button beside the link.")
 PICTURE_HEAD = PICTURE[:PICTURE.index("; a plain click")]
 PICTURE_NONE = PICTURE[PICTURE.index("a figure waiting behind"):]
 # the guide's condition clause for the Back and Forward pair, the browser plan's matching clause, and the one line of openFileView both claim
@@ -164,13 +170,25 @@ class GuideSentences(unittest.TestCase):
         self.assertNotIn(OLD_TRAIL, _flat(self.guide))
         self.assertEqual(self.links.count("Alt+Left"), 1, "the arrow chords are described once")
 
-    def test_the_picture_sentence_names_the_four_pictures_without_the_button_and_the_old_wording_is_gone(self):
+    def test_the_picture_sentence_names_the_five_pictures_without_the_button_and_the_old_wording_is_gone(self):
         self.assertIn(PICTURE_HEAD, self.links)
         self.assertIn(PICTURE_NONE, self.links)
         self.assertLess(self.links.index(TRAIL), self.links.index(PICTURE_HEAD), "the trail sentence first, then the picture's")
         self.assertLess(self.links.index(PICTURE_HEAD), self.links.index(PICTURE_NONE))
         self.assertTrue(self.links.endswith(PICTURE_NONE), "the picture sentence closes the paragraph")
         self.assertIn(PICTURE, self.links, "the whole sentence, as the tools pin quotes it")
+
+    def test_the_ledger_entry_names_the_same_origin_figure_in_the_guides_words(self):
+        """The ledger entry's body (upstream/2026-09-19-linknav-trail-back-forward.md, its prose after the front matter)
+        states the two clauses on a picture at one of the dashboard's own file addresses in the guide's own words, read off
+        PICTURE here: what it opens, and the fifth kind with no button (the file review's round 20, regression-1 with
+        fresh-3, ruled in one commit and the same words)."""
+        road = PICTURE[PICTURE.index("a picture at one of the dashboard's own file addresses opens"):PICTURE.index(", and a picture from the web opens")]
+        fifth = PICTURE[PICTURE.index("a picture at one of the dashboard's own file addresses that"):PICTURE.index("; and a picture inside a link")]
+        entry = _read("upstream", "2026-09-19-linknav-trail-back-forward.md")
+        body = entry[entry.index("\n---\n", 4) + 5:]
+        self.assertIn(road, body, "what such a picture opens, in the guide's words")
+        self.assertIn(fifth, body, "the fifth kind with no button, in the guide's words")
 
     def test_the_picture_sentence_here_is_byte_for_byte_the_tools_pins_copy(self):
         """Two pins quote the guide's figure sentence whole: SECOND in tools/markdown-viewer-plan-linknav.test.mjs and PICTURE
@@ -300,7 +318,8 @@ class PicturesWithoutTheButton(GuideSentences):
     def test_the_refusals_of_figure_wants_control_are_these_and_no_more(self):
         """Every `return false` arm of figureWantsControl, named and in order: the gate's placeholder (its figure loads on the
         click), the state (one rule, figureHasPicture: no picture to name, which today is fetching or failed), the floor, the
-        target (a `data:` picture, no source), and the last word, any link above. A fifth arm, or one gone, fails here and asks for the guide's sentence to be read again."""
+        target (a `data:` picture, no source, or a picture at one of this origin's file routes the viewer cannot open as shown,
+        ownFileRoute's "none"), and the last word, any link above. A fifth arm, or one gone, fails here and asks for the guide's sentence to be read again."""
         build = _body(self.viewer, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "}")
         arms = [ln.strip() for ln in build.splitlines() if ln.strip().startswith("if (") and ln.strip().endswith("return false;")]
         self.assertEqual(arms, [
@@ -311,12 +330,13 @@ class PicturesWithoutTheButton(GuideSentences):
         ], "the refusal arms, as the guide's list of pictures without the button reads them")
         self.assertTrue(build.rstrip().endswith("return linkAbove(anchor) === null;"), "the last word: any link above the picture")
         self.assertEqual(build.count("return false;"), 4, "four refusals and the link's verdict; a change here is a change to the guide's sentence")
-        # the guide's count against the census: the state arm's failed half, the target arm (a `data:` picture), the floor arm and
-        # the link verdict are the four kinds the guide counts once the browser has answered; the gate arm and the fetching half are
+        # the guide's count against the census: the state arm's failed half, the target arm (a `data:` picture, and a picture at one
+        # of this origin's file routes the viewer cannot open as shown, two kinds), the floor arm and the link verdict are the five
+        # kinds the guide counts once the browser has answered; the gate arm and the fetching half are
         # its "waiting" clause (the button once loaded; a click before then opens nothing), which figureTarget's refusal makes true
         g = re.search(r"once the browser has answered for a picture, (\w+) kinds have none: a picture that failed to load, which opens nothing either;", self.links)
         assert g, "the guide's count and its first kind"
-        self.assertEqual(g.group(1), "four", "failed, data:, under the floor, inside a link holding more: the four the census maps to")
+        self.assertEqual(g.group(1), "five", "failed, data:, under the floor, this origin's file routes the viewer cannot open as shown, inside a link holding more: the five the census maps to, the target arm two of them")
         self.assertIn("as does one still on its way (a click on it before then opens nothing)", self.links, "the waiting clause")
         target = _body(self.viewer, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "}")
         self.assertIn("if (!figureHasPicture(state)) return null;", target, "which figureTarget makes true: no target while fetching, by the same rule")
@@ -333,7 +353,9 @@ class PicturesWithoutTheButton(GuideSentences):
     def test_the_builder_refuses_the_floor_the_empty_target_and_the_link_and_puts_the_button_after_a_link_holding_the_picture_alone(self):
         build = _body(self.viewer, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "}")
         self.assertIn("if (figureTooSmall(img)) return false;", build, "the floor, read from the loaded picture")
-        self.assertIn("if (figureTarget(img, filePath) === null) return false;", build, "nothing to open: a data: picture, no source")
+        self.assertIn("if (figureTarget(img, filePath) === null) return false;", build, "nothing to open: a data: picture, no source, or a picture at one of this origin's file routes the viewer cannot open as shown")
+        target = _body(self.viewer, "function figureTarget(img: Element, filePath: string): FigureTarget | null {", "}")
+        self.assertIn('if (own === "none") return null;', target, "a picture at one of this origin's file routes the viewer cannot open as shown has no target, so no button: the guide's fifth kind (the file review's round 20, regression-1)")
         self.assertIn("return linkAbove(anchor) === null;", build, "a link holding more than the picture")
         decide = _body(self.viewer, "function decideFigureControl(img: Element, filePath: string): void {", "}")
         self.assertIn("const anchor = figureAnchor(img);", decide)
@@ -362,7 +384,7 @@ class PicturesWithoutTheButton(GuideSentences):
         its href taken off) and a named target (`<a id>`, never dressed unless it still carries the plain `xlink:href` of a
         split svg anchor, which was a link and is dressed dead) are neither, so the plain click reaches openFigure, and the
         control and the picture's tooltip stand there too (linkAbove and dressFigureTitle read the same predicate, figureLinkOf;
-        the file review's round 12, correctness-1 with ui-1), which the sentence's carve-out after its "four kinds" says."""
+        the file review's round 12, correctness-1 with ui-1), which the sentence's carve-out after its "five kinds" says."""
         link_of = _body(self.viewer, "const linkOf = (t: Element | null): HTMLElement | null => {", "  };")
         self.assertIn("t.closest('[data-act=\"openpath\"], a.' + URL_LINK_CLASS + \", a.\" + FRAG_LINK_CLASS)", link_of, "linkOf's selector: the three dressed links")
         self.assertNotIn("DEAD_LINK_CLASS", link_of, "a dead anchor is none of them")
