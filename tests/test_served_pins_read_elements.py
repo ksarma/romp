@@ -27,8 +27,9 @@ variable had been outside the derivation, and the one such pin in the suite was 
 target over tuples of literals of its length, `for a, b in (("x", "y"), ...)`, read by position (round 6, TUPLOOP), and X is one
 of the kernel's served TEXTS: a call to one of its page getters, or one of its served constants (`<alias>.<_NAME>`), or a
 call with no arguments, to a Name, a self.<method> or a cls.<method>, of a function of the module whose every return statement
-returns one such text inline (round 6, RETTEXT; a form the textual census declines; the same call through any other callee,
-`T._js()`, reads nothing, and check (5) below refuses the function's returns), or a
+returns one such text inline, every function of the module with that name returning the same one (round 6, RETTEXT; a form the
+textual census declines; the same call through any other callee, `T._js()`, reads nothing, and so does a call of a name two
+functions of the module define with different returns, a method per class; check (5) below refuses such a function's returns), or a
 Name bound to either in the same function (a tuple assignment counts by position; a Name bound to a SLICE of one counts
 too, judged over the whole text, so a literal a comment spells anywhere in the text flags it and the fix is the same), or
 the variable of a `for <name> in (<text>, <text>)` loop over served texts (one row per text, inside the loop's body;
@@ -1307,14 +1308,18 @@ def _text_helpers(tree, getters, constants):
     _bind): such a call to a Name, a self.<method> or a cls.<method> (_callee) reads as the text, inline and bound, where the census
     reads the getter's call (round 6, RETTEXT). A function with a return of anything else, or of two texts, is no such helper, and a
     call with arguments, or through any other callee (`T._js()`, `obj._page()`), reads as nothing: _fail_closed's check (5) refuses
-    the helper's returns then."""
-    out = {}
+    the helper's returns then. The key is the bare name, so a name two or more functions of the module define (a method per class)
+    is a helper only where every one of them returns the same one text; where they disagree (`A._page` returns the landing and
+    `B._page` the chat page, or anything else) the name is no helper, its calls read as nothing and check (5) refuses the text
+    returns (round 6's internal check of part B: the last definition walked had won, and every call was judged against its text)."""
+    out, split = {}, set()
     for fn in ast.walk(tree):
         if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             texts = {_text(r.value, getters, constants) if r.value is not None else None for r in _own_returns(fn)}
-            if len(texts) == 1 and None not in texts:
-                out[fn.name + "()"] = _ByHelper(texts.pop())
-    return out
+            text = texts.pop() if len(texts) == 1 else None
+            if text is None or out.setdefault(fn.name + "()", _ByHelper(text)) != text:
+                split.add(fn.name)   # a definition of the name that returns anything else, or another text: no helper
+    return {key: text for key, text in out.items() if key[:-2] not in split}
 
 
 def _module_bindings(tree, getters, constants, routes):
@@ -1723,7 +1728,8 @@ def _fail_closed(tree, lines, routes, reads, getters, constants):
         (_text_helpers) is read at each call of it with no arguments to a Name, a self.<method> or a cls.<method> (_resolve), so it
         is not refused unless the module also hands the helper on uncalled (`{"login": _render_login}`, then `render()` in a loop),
         calls it with arguments, or calls it through any other callee (`T._js()`, `obj._page()`), which the census does not read
-        and counts as handing it on.
+        and counts as handing it on. A function whose name another function of the module defines with other returns is no text
+        helper (_text_helpers), so its text return is refused.
     A call to a Name the same function binds to an attribute (`seg = km._route_seg`, then `seg("/")`) calls that function, no fetch
     helper of the test's, and is not checked (tests/test_perf_stats.py's route-mark test asserts over `seg("/")` so)."""
     rows, seg = [], lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
@@ -3441,8 +3447,10 @@ class T(unittest.TestCase):
         # neither census. A call with arguments (h5) and a helper whose returns differ (h6, `_mixed` also returns "") read as
         # nothing. The textual census reads no helper call, so every row over such a text is a declined form. Dropping RETTEXT reds
         # the rows here, dropping its binding road alone reds h2, h3, h7 and h8, dropping the text helpers from either census's
-        # attribute pass reds h3 and from the base classes' pass h8, and dropping the declined marker reds the rows' form.
-        # The rows of both derivations are named, never inferred.
+        # attribute pass reds h3 and from the base classes' pass h8, and dropping the declined marker reds the rows' form. A name
+        # two classes define with different texts (`_pg`, h9 and h10) is no helper: its calls read as nothing, and check (5)
+        # refuses both returns (28, 33). Keyed by the bare name, the last definition had won, and h9 was judged against the chat
+        # page; dropping the disagreement clause reds this. The rows of both derivations are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest
 def _page():
@@ -3469,6 +3477,16 @@ def _mixed(ok=True):
 class U(T):
     def test_b(self):
         self.assertIn("h8", self.html)
+class V(unittest.TestCase):
+    def _pg(self):
+        return km._landing()
+    def test_v(self):
+        self.assertIn("h9", self._pg())
+class W(unittest.TestCase):
+    def _pg(self):
+        return km._chat_page()
+    def test_w(self):
+        self.assertIn("h10", self._pg())
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -3485,7 +3503,8 @@ class U(T):
         # with an argument (3), and `_mixed`'s text (21)
         self.assertEqual([r[:3] for r in readers], [(3, "unclassified", "_landing"), (9, "assert", "_landing"), (11, "assert", "_landing"),
                                                     (12, "assert", "_landing"), (13, "assert", "_LANDING_MOBILE_JS"), (16, "assert", "_landing"),
-                                                    (21, "unclassified", "_landing"), (25, "assert", "_landing")])
+                                                    (21, "unclassified", "_landing"), (25, "assert", "_landing"), (28, "unclassified", "_landing"),
+                                                    (33, "unclassified", "_chat_page")])
 
 
     def test_a_fetched_page_bound_where_the_census_does_not_read_it_is_refused(self):
