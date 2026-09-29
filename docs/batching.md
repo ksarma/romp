@@ -287,7 +287,9 @@ subject; `verify` refuses the branch otherwise.
    credential file, an agent's socket), and a leg can read `/proc/<pid>/environ` of the runner and
    of your other processes, your shell and sessions included. Nothing a leg leaves in its checkout
    reaches a leg of another job: no file in the clone's `.git` (a hook, an attributes file, a
-   replace ref) and no ignored file (bytecode, `node_modules`). The legs of one job share its
+   replace ref) and no ignored file (bytecode, `node_modules`). Nor does a branch or tag a leg
+   writes into your repository: each job's clone holds the sha alone, with no branch and no tag of
+   yours, as CI's checkout fetches the pushed sha alone. The legs of one job share its
    checkout, as CI's steps do. The machine itself stays shared, and a leg can leave a file there
    that a later leg reads: `/tmp` outside each TMPDIR, `/dev/shm`, `/run/user/<uid>`, the npm and
    Playwright caches, your passwd home, tmux's socket directory (tmux ignores TMPDIR), `--python`'s

@@ -239,6 +239,9 @@ def parent_ignored():
 
 
 root = checkout_root(os.getcwd())
+# the refs this leg's checkout holds, when the test asks (the focused re-check's ruling 4: each clone holds none)
+refs = (sorted(subprocess.run(["git", "-C", root, "for-each-ref", "--format=%%(refname)"], stdout=subprocess.PIPE, text=True,
+                              check=True).stdout.split()) if ctl.get("record_refs") and root else None)
 # Round 2, Class B: the TMPDIR of every leg that ran before this one (read from the calls already recorded) that still
 # exists now: each leg's own is removed when it ends, so none should.
 earlier = [json.loads(line)["values"].get("TMPDIR") for line in open(LOG)] if os.path.exists(LOG) else []
@@ -266,7 +269,7 @@ with open(LOG, "a") as f:
                         "ignored": sorted(n for n in ("SIGHUP", "SIGINT") if signal.getsignal(getattr(signal, n)) == signal.SIG_IGN),
                         # and the runner's: its pid (this leg's parent, since env execs the command) and what it ignores
                         "parent": os.getppid(), "parent_ignored": parent_ignored(),
-                        "state": state}) + "\n")
+                        "state": state, "refs": refs}) + "\n")
 act = ctl.get("action", {}).get(leg)
 if act == "commit":
     subprocess.run(["git", "-C", ctl["tree"], "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null",
@@ -350,6 +353,12 @@ elif act == "corrupt":                           # a blob of the sha rewritten i
     data = b"OTHER = 2\n"
     with open(obj, "wb") as f:
         f.write(zlib.compress(b"blob " + str(len(data)).encode() + b"\0" + data))
+elif act == "refs":                              # a tag and a branch written into the BATCHER's repository, found from the clone
+    with open(os.path.join(root, ".git", "objects", "info", "alternates")) as fh:
+        common = os.path.dirname(fh.read().split("\n")[0].rstrip("/"))
+    head = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+    for ref in ("refs/tags/leaked-tag", "refs/heads/leaked-branch"):
+        subprocess.run(["git", "--git-dir", common, "update-ref", ref, head], check=True)
 elif act == "home":
     with open(os.path.join(home, ".leftover"), "w") as f:
         f.write("a test that wrote into HOME\n")
@@ -2005,8 +2014,9 @@ class Checkout(_Base):
         self.assertEqual(os.listdir(self.trees()), [], "the checkout and its marker are gone")
 
     def git_wrapper(self, w, when):
-        """A git ahead of the real one on the runner's PATH that, on the run's first clone, waits (up to a minute) until
-        the test lets it go, `when` "before" or "after" running the real clone, having marked that it is waiting."""
+        """A git ahead of the real one on the runner's PATH that, on the run's first checkout's git init (make_checkout
+        makes each clone with git init since the focused re-check's ruling 4), waits (up to a minute) until the test lets
+        it go, `when` "before" or "after" running the real init, having marked that it is waiting."""
         marks = os.path.join(w.tmp, "marks")
         os.makedirs(marks)
         real = shutil.which("git", path=w.env["PATH"])
@@ -2014,7 +2024,7 @@ class Checkout(_Base):
         os.makedirs(wrap)
         with open(os.path.join(wrap, "git"), "w") as f:
             f.write("#!/bin/sh\n"
-                    "case \" $* \" in *\" clone \"*)\n"
+                    "case \" $* \" in *\" init \"*)\n"
                     "  if [ ! -e '%(m)s/once' ]; then\n"
                     "    : > '%(m)s/once'\n"
                     "    rc=0\n"
@@ -2028,6 +2038,24 @@ class Checkout(_Base):
                     "exec '%(real)s' \"$@\"\n" % {"m": marks, "when": when, "real": real})
         os.chmod(os.path.join(wrap, "git"), 0o755)
         return marks, dict(w.env, PATH=wrap + os.pathsep + w.env["PATH"])
+
+    def test_a_branch_or_tag_a_leg_writes_into_the_batchers_repository_reaches_no_later_job(self):
+        """The focused re-check at the round-2 fix head, its B finding (ruling 4): the pytest leg finds the batcher's
+        repository through its clone's objects/info/alternates and writes a tag and a branch there. Every leg, in every
+        job's checkout, sees no ref at all, since each clone holds the sha alone, no branch and no tag, as CI's checkout
+        fetches the pushed sha alone. At the round-2 fix head each clone copied every branch and tag of that repository,
+        and every later job's clone held the two the leg wrote."""
+        w = self.w
+        w.ctl({"action": {PYTEST_LEG: "refs"}, "record_refs": True})
+        p = w.run(check=0)
+        self.assertEqual(sorted(w.git("for-each-ref", "--format=%(refname)", "refs/tags", "refs/heads").split()),
+                         ["refs/heads/leaked-branch", "refs/heads/main", "refs/tags/leaked-tag"],
+                         "the leg's refs landed in the batcher's repository: %s" % (p.stdout + p.stderr))
+        calls = w.calls()
+        first = [c["root"] for c in calls if c["leg"] == PYTEST_LEG][0]
+        self.assertTrue([c for c in calls if c["root"] != first], "legs of later jobs ran, in checkouts of their own")
+        for c in calls:
+            self.assertEqual(c["refs"], [], "%s's checkout holds no ref" % c["leg"])
 
     def test_a_stop_during_the_checkout_or_between_its_marker_and_the_clone_leaves_nothing_under_trees(self):
         """Round 2, extra5-2, keyed on events: the runner is stopped while its first clone waits, once after the real
@@ -2623,7 +2651,7 @@ sys.exit(1)
 
     def test_a_later_jobs_fresh_checkout_that_is_not_the_shas_tree_makes_the_run_invalid(self):
         """Round 2, decision 13: each later group's fresh checkout is verified against the sha's tree as the first one is.
-        The clone reads the batcher's object store (git clone --shared), and git checks out a loose object without
+        The clone reads the batcher's object store (its objects/info/alternates), and git checks out a loose object without
         checking its hash, so the pytest leg rewrites kernel/other.py's blob there: the shell job's fresh checkout holds
         other bytes, the run is invalid naming the file, and no later leg runs. Before round 2 the one checkout was made
         before any leg, and this run passed."""

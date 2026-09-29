@@ -221,15 +221,17 @@ Closed: a leg's TMPDIR, private HOME and private state root are its own and are 
 leaves there reaches a later leg. Nothing it leaves in its checkout reaches a leg of another job, since each job's
 legs start from a fresh clone verified against the sha's tree: no file in the clone's .git (a hook, info/attributes,
 info/exclude, config, a ref or refs/replace, packed-refs, objects/info/alternates) and no ignored file (bytecode,
-node_modules, dist). Shared: the legs of one job share its checkout, as CI's steps in one job do. The re-read after
+node_modules, dist). Nor does a branch or tag a leg writes into the batcher's repository, which it can find through
+its clone's alternates: each clone holds the sha alone, no branch and no tag of that repository (make_checkout), as
+CI's checkout fetches the pushed sha alone. Shared: the legs of one job share its checkout, as CI's steps in one job do. The re-read after
 each leg makes the run invalid when it finds one of the changes it checks for (above); anything else a leg leaves in
 that checkout (a hook or an attributes file in the clone's .git, a replace ref, an ignored file other than one the
 deps leg adds outside vscode-extension/node_modules) reaches the later legs of its job, as it would reach CI's later
 steps. Open, because the runner runs on the batcher's machine as the batcher's user (the stated outside): /tmp outside
 each TMPDIR, /dev/shm, /run/user/<uid>, the shared npm and Playwright caches, the passwd home (the home directory the
 password database names, which is not HOME and which a leg can write to), tmux's socket directory (tmux ignores
-TMPDIR), --python's directory, which leads the PATH of every leg outside the two venvs, and the batcher's repository,
-whose objects every clone reads (a rewritten object of the sha fails the next job's verification). A leg can leave a
+TMPDIR), --python's directory, which leads the PATH of every leg outside the two venvs, and the batcher's repository's
+object store, which every clone reads (a rewritten object of the sha fails the next job's verification). A leg can leave a
 file in any of these that a later leg reads.
 
 The pane bench (tests/ui-bench.test.mjs), the Browser legs step (scripts/ci-browser-legs.sh: its roster checks, and
@@ -1140,10 +1142,14 @@ def _random_tail(n=8):
 
 
 def make_checkout(tree, sha):
-    """(path, marker, seconds): `git clone -q --shared --no-checkout` of the batcher's repository (its common dir) into
-    <state dir>/sweeps/trees/<sha12>-<random>, then `checkout -q --detach <sha>` there with hooks off. A clone copies
-    none of the batcher's repository config, info/attributes, info/exclude, hooks, sparse patterns, index flags or
-    refs/replace, and a leg's git writes land in the clone. The marker beside it, written first, holds the full sha,
+    """(path, marker, seconds): a private repository at <state dir>/sweeps/trees/<sha12>-<random> that reads the
+    batcher's objects (their common dir's objects, named in its objects/info/alternates, as `git clone --shared` names
+    them) and holds none of their refs, with `origin` naming their common dir, then `checkout -q --detach <sha>` there
+    with hooks off: the sha alone, with no branch and no tag, as CI's checkout fetches the pushed sha alone, so a branch
+    or tag a leg writes into the batcher's repository reaches no later job's checkout (the focused re-check's ruling 4:
+    a clone copied every branch and tag, and such refs crossed to every later job). It copies none of the batcher's
+    repository config, info/attributes, info/exclude, hooks, sparse patterns, index flags or refs/replace either, and a
+    leg's git writes land in it. The marker beside it, written first, holds the full sha,
     so a later run can tell whether that sha's lock is held (sweep_stale_checkouts). Any exception between the marker's
     create and the end of the checkout, the Stopped of a stop signal included, removes the partial checkout and its
     marker before it propagates (round 2, extra5-2)."""
@@ -1171,8 +1177,13 @@ def make_checkout(tree, sha):
         else:
             raise Refused("could not name a checkout under %s" % parent)
         path = os.path.join(parent, name)
-        p = subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", common, path], env=_git_env(), text=True,
+        p = subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q", path], env=_git_env(), text=True,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if p.returncode == 0:
+            # the batcher's objects, read where they are as --shared reads them, and none of their refs
+            with open(os.path.join(path, ".git", "objects", "info", "alternates"), "w") as f:
+                f.write(os.path.join(common, "objects") + "\n")
+            p = git(path, "remote", "add", "origin", common, check=False)
         if p.returncode == 0:
             p = git(path, "-c", "core.hooksPath=" + os.devnull, "checkout", "-q", "--detach", sha, check=False)
         if p.returncode != 0:
@@ -1792,8 +1803,8 @@ def _tokenized(name, leg, value, ctx):
 # a runner before them, which shared one HOME, state root, TMPDIR and checkout across the legs, reads as recorded under
 # the same leg environment (body item 9's rule: a leg-environment change changes the hash).
 LEG_SCRATCH = "each leg: a fresh TMPDIR of its own, HOME and XDG_STATE_HOME under it, removed when the leg ends"
-LEG_CHECKOUT = ("the legs whose steps one ci.yml job holds: one fresh verified clone, in the job's step order, npm ci "
-                "where the job runs it; each job's legs their own")
+LEG_CHECKOUT = ("the legs whose steps one ci.yml job holds: one fresh verified clone of the sha alone, no branch and no "
+                "tag, in the job's step order, npm ci where the job runs it; each job's legs their own")
 
 
 def leg_env_doc(ctx):
