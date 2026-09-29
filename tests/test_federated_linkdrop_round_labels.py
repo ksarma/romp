@@ -6,7 +6,7 @@ on the three per-branch guards).
 
 A PER-BRANCH GUARD, DELETED AT LANDING. Two numberings meet in the family's comments, docstrings and messages: the MAINTAINER's
 rounds on PR 857 are the rulings the reviewer filed (the maintainer's rounds 1 to 7 at this writing); the AUTHOR's passes are
-the build-and-verify passes before, between and after them, numbered 1 to 11 by the PR body's convention paragraph, which maps
+the build-and-verify passes before, between and after them, numbered from 1 by the PR body's convention paragraph, which maps
 the pipeline's commit labels to them. Before pass 10 the tree said "round N" in the author's pipeline's own numbering, which
 matched neither, and 47 lines credited a sixth round no ruling then existed for; the sweep gave every mention its referent (the
 maintainer's round N, or the author's pass P), and this module keeps it so over the lines this branch adds. Its job is done
