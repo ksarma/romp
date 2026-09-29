@@ -45,7 +45,9 @@ untracked test the tracked .gitignore covers. The checkout's path is longer than
 length the deepest session-host socket path depends on, is unchanged, the run's and each leg's own. Each checkout is
 removed when its job's legs end, and TMPDIR (the run's, and the running leg's) and the checkout in use are removed on
 every exit path: SIGTERM, SIGHUP and SIGINT (Ctrl-C) stop each leg's process group, the runner exiting 128 plus the signal's
-number, and on Linux the runner is a child subreaper that kills whatever a leg left
+number, except that SIGHUP or SIGINT the runner was started with ignored (nohup, a shell's background job) stays ignored,
+since its caller chose not to have the run stopped by it, while SIGTERM always stops it (round 2, the owner's build
+question 5; each leg still starts with both at their default action), and on Linux the runner is a child subreaper that kills whatever a leg left
 running, a descendant that left the group included. A stop signal that arrives during that cleanup does not cut it
 short: the step it interrupted runs again from its start and the steps after it run too (round 2, correctness-3; a
 venv whose tree changed is still retired), and one that arrives while a checkout is being made removes what was made
@@ -1488,6 +1490,10 @@ def _plant_for_tests(path):
 # "stopped by signal N" and exits 128 + N. SIGINT is one of them (round 2, decision 14), so Ctrl-C stops a run the same
 # way instead of raising KeyboardInterrupt, which main does not catch.
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+# The stop signals a runner leaves ignored when its caller started it with them ignored (round 2, the owner's build
+# question 5): nohup ignores SIGHUP, and a non-interactive shell starts a background job with SIGINT ignored, each because
+# the caller chose not to have the job stopped by it. SIGTERM is not among them: it always stops a run.
+IGNORE_INHERITED = (signal.SIGHUP, signal.SIGINT)
 
 
 class Stopped(BaseException):
@@ -1508,12 +1514,19 @@ def _on_stop(signum, _frame):
 
 # Whether install_stop_handlers made this process a child subreaper; wait_leg reads it.
 _subreaper = False
+# The stop signals install_stop_handlers left ignored, as the runner's caller started it (IGNORE_INHERITED); run_leg
+# reads it.
+_kept_ignored = ()
 
 
 def install_stop_handlers():
-    """SIGTERM, SIGHUP and SIGINT (STOP_SIGNALS) raise Stopped, so every exit path runs the cleanup, whether or not
-    the runner's parent left the signal ignored (nohup ignores SIGHUP, a non-interactive shell's background job
-    SIGINT): each of the three stops a run. SIGCHLD gets its default action; and on Linux the runner becomes a child
+    """SIGTERM, SIGHUP and SIGINT (STOP_SIGNALS) raise Stopped, so every exit path runs the cleanup; but SIGHUP or SIGINT
+    that the runner's caller started it with ignored (IGNORE_INHERITED: nohup ignores SIGHUP, a non-interactive shell's
+    background job SIGINT) is left ignored, since the caller chose not to have the run stopped by it (round 2, the
+    owner's build question 5; before it the runner caught all three whatever its caller had chosen). SIGTERM always
+    stops a run. The legs do not inherit an ignore the runner kept: each starts with SIGHUP and SIGINT at their default
+    action (run_leg), as they start when the runner catches the two and as CI's steps start, so a leg's tests run the
+    same however the runner was started. SIGCHLD gets its default action; and on Linux the runner becomes a child
     subreaper (PR_SET_CHILD_SUBREAPER), so every orphaned descendant of a leg, in its process group or not (setsid:
     Playwright's browsers, the kernel's session scopes), is reparented to the runner instead of to init: the runner
     reaps it as soon as it exits while the leg runs (wait_leg), so it does not stay in the leg's group as a defunct
@@ -1523,16 +1536,29 @@ def install_stop_handlers():
     reaps every child itself: every exit status, the leg's and each subprocess.run's, would read 0, and wait_leg, which
     blocks until some child is waitable, would wait until the runner had no child left (a leg's daemon kept it waiting
     until it exited). The default action is set here, before the runner starts any child, and the legs inherit it."""
-    global _subreaper
+    global _subreaper, _kept_ignored
     signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    kept = []
     for s in STOP_SIGNALS:
+        if s in IGNORE_INHERITED and signal.getsignal(s) == signal.SIG_IGN:
+            kept.append(s)
+            continue
         signal.signal(s, _on_stop)
+    _kept_ignored = tuple(kept)
     if sys.platform.startswith("linux"):
         try:
             import ctypes
             _subreaper = ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
         except (OSError, AttributeError):
             pass
+
+
+def _default_kept_signals():
+    """In a leg's process, between its fork and its exec: each stop signal the runner kept ignored (_kept_ignored) back at
+    its default action, as a leg starts when the runner catches it (an exec resets a caught signal to its default action
+    and keeps an ignored one ignored). The runner starts legs from its one thread, so nothing else runs in the child."""
+    for s in _kept_ignored:
+        signal.signal(s, signal.SIG_DFL)
 
 
 def _children():
@@ -3370,9 +3396,12 @@ def run_leg(tree, name, rec, wraps, ctx, logdir):
                     name, rec.get("cwd") or ".", " ".join(shlex.quote(a) for a in leg_argv(wrap, env, rec["cmd"], shown=True))))
                 out.flush()
                 # The wrap (or env itself) runs with the runner's environment; the leg gets exactly `env`. The leg is
-                # its own process group, so a stop reaches all of it (stop_leg).
+                # its own process group, so a stop reaches all of it (stop_leg). A stop signal the runner kept ignored
+                # (install_stop_handlers) is set back to its default action in the leg's process before it execs, so no
+                # leg inherits the runner's caller's ignore (the owner's build question 5).
                 p = subprocess.Popen(argv, cwd=cwd, env=dict(os.environ), stdin=subprocess.DEVNULL, stdout=out,
-                                     stderr=subprocess.STDOUT, start_new_session=True)
+                                     stderr=subprocess.STDOUT, start_new_session=True,
+                                     preexec_fn=_default_kept_signals if _kept_ignored else None)
                 try:
                     rc = wait_leg(p)
                 except BaseException:

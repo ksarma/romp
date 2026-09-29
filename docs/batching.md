@@ -300,7 +300,10 @@ subject; `verify` refuses the branch otherwise.
    leaves the head unable to pass (the runner exits 1 for such a run, not 3). A pass inside an
    invalid run counts for nothing, since the checkout or a venv changed under it, and an invalid run
    that failed no leg needs no flake. A re-run of a leg (`--leg`) is refused while the newest full
-   run is invalid, so the flake for a failure in an invalid run is spent on a full run. A leg that
+   run is invalid, so the flake for a failure in an invalid run is spent on a full run. SIGTERM
+   stops the runner, and so do SIGHUP and Ctrl-C (SIGINT) unless it was started with them ignored
+   (under `nohup`, or as a shell's background job), which it keeps; a stopped run removes its
+   checkouts and TMPDIRs, and the legs start with both signals at their default action either way. A leg that
    fails is written to the result as soon as it exits, so stopping the runner during the re-read
    after it, or during that write itself, keeps the failure (a stop inside the write lets it finish
    first, as it does for the write of an invalid mark); a stop in the moments after the leg exits
