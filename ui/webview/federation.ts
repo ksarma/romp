@@ -2265,9 +2265,10 @@ export class FederationManager {
   // base is absent or holds no gen: held:feed:<gen>.<rev> from the pair beside conn.feedRaw, held:bars:<gen>.<rev>
   // from the receiver's bars base (ViewDeltas.held), on a first dial and a redial alike (a kernel that stamps its frames
   // reads the member at the compose on either; no kernel in this repo stamps a gen yet, so nothing declares one today:
-  // Conn.feedHeld says what the pair does). Never the page's caps string: the page's held members are the pair it holds for its
-  // LOCAL kernel, which this host's kernel would count a miss, and its hold words (readyGate, chatResume) are holds
-  // on the page's own socket that this manager never answers; an older remote kernel ignores the words it does not
+  // Conn.feedHeld says what the pair does). Never the page's caps string: the page's hold word readyGate is a hold on
+  // its own socket; once the page's caps carry a held member (the pair the page holds for its LOCAL kernel, which a
+  // kernel that reads held members would count a miss) or the design's chatResume hold word, those are the page's too,
+  // never a remote dial's (no page's caps carry either today). An older remote kernel ignores the words it does not
   // know. `delta` stays among the page's terms on purpose: it puts the remote's timeline bars on the view-delta
   // path, where a change costs one patch instead of the whole bars frame and its 60 s repost (kernel.py
   // _DEDUP_REPOST_S) per remote host.

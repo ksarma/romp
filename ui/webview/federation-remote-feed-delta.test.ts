@@ -142,12 +142,14 @@ test("every remote dial announces caps=feedDelta beside the page's terms, the re
 });
 
 // The caps term is REMOTE_DIAL_CAPS and nothing of the page's (2026-09-19): the page's caps string is never a source for a
-// remote dial. Its two hold words are the shim's on its OWN socket (readyGate: the kernel sends a client that announces it
+// remote dial. Its hold word readyGate is the shim's on its OWN socket (the kernel sends a client that announces it
 // nothing until its bundle's ready, and this manager posts its own ready on a first dial's open and dials a redial as
-// ready from accept) and the chat page's (chatResume, a hold this manager never answers), and a held member the page
-// states is the pair the PAGE holds for its LOCAL kernel, which the remote kernel would count a miss. These pin the
-// negative: terms carrying each of those yield exactly feedDelta on the first dial and the redial, and the three
-// no-caps corners (a page without __rompDialTerms, terms carrying no caps field, an empty caps string) yield the same.
+// ready from accept). Once the page's caps carry the design's chatResume (the chat page's hold, which this manager would
+// never answer) or a held member (the pair the PAGE holds for its LOCAL kernel, which a kernel that reads held members
+// would count a miss), those are the page's too; no page's caps carry either today, and today's __rompDialTerms returns
+// no caps field, so these pin the negative against a synthetic terms.caps: terms carrying each of those yield exactly
+// feedDelta on the first dial and the redial, and the three no-caps corners (a page without __rompDialTerms, terms
+// carrying no caps field, an empty caps string) yield the same.
 const capsOf = (ws: FakeWS) => qOf(ws.url).get("caps");
 /** dial, ack the ready, drop the socket and let the watchdog redial: [the first dial's caps, the redial's] */
 function firstAndRedial(fm: any): [string | null, string | null] {
@@ -602,8 +604,9 @@ test("late timers on a conn whose own replacement socket is CONNECTING, then OPE
 // (gen, 0) at the full, advanced by each delta that applies. connect()'s per-dial reset is gated per base, so a base holding
 // a pair survives the redial and remoteDialUrl writes it as held:feed:<gen>.<rev> beside REMOTE_DIAL_CAPS, on both redial
 // roads, with reconnect=1 and without, and the remote composes the feed from the declared rev instead of serving it whole.
-// A base holding no gen (every kernel in this repo today) is reset as before and declares nothing (tests 5 and 8 above
-// stand unchanged). The pair is read from the base alone: the page's own terms may carry a held:feed member (the pair the
+// A base holding no gen (every kernel in this repo today) is reset as before and declares nothing (the redial-forgets
+// test above, "a redial on the same conn forgets the host's raw base with the dead socket", and the vintage-guard test
+// below stand unchanged). The pair is read from the base alone: the page's own terms may carry a held:feed member (the pair the
 // page holds for its LOCAL kernel) and it never reaches a remote dial. The composed frame that answers a declaration (base
 // r, rev R, through R, gen g, newGen g2) applies onto the surviving base; a stamped delta whose gen differs, or whose base
 // is above the held rev, posts needFullFeed carrying the held pair on the arriving conn and applies nothing. The gens

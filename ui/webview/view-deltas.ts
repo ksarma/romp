@@ -59,10 +59,11 @@ const slotOf = (s: any): Slot | null => s === "feed" || s === "bars" ? s : null;
  *  carrying one onto a base holding a gen is REFUSED by both roads (the receiver's gen gate below, applyRemoteFeedDelta's),
  *  never read as a gen-less delta (the author's pass 4, 2026-09-20: unparseable is not absent). */
 export const GEN_MAX = 64;
-/** A generation stamp as a frame carries it, or undefined for a frame that carries none. The kernel mints a gen as its
- *  boot's random token (16 hex characters) and a decimal counter joined by '-', a string that holds neither '.' (the held
- *  member's own separator: the kernel parses held:<slot>:<gen>.<rev> at its last '.') nor ',' (the caps term's), so a
- *  non-empty string free of both, at most GEN_MAX characters, is a gen. Anything else (a number, an empty string, a
+/** A generation stamp as a frame carries it, or undefined for a frame that carries none. A kernel that stamps its frames
+ *  would mint a gen as its boot's random token (16 hex characters) and a decimal counter joined by '-', a string that
+ *  holds neither '.' (the held member's own separator: such a kernel would parse held:<slot>:<gen>.<rev> at its last
+ *  '.') nor ',' (the caps term's); no kernel in this repo does yet (Conn.feedHeld, federation.ts). So a non-empty
+ *  string free of both, at most GEN_MAX characters, is a gen. Anything else (a number, an empty string, a
  *  string carrying either separator, one over GEN_MAX) is a value this reader cannot read: undefined, the same answer
  *  as for a frame that carries no gen key, so a CALLER that must tell the two apart reads the key's presence
  *  (frame.gen !== undefined) where the difference matters, and it matters wherever a pair is held (the author's pass 4, 2026-09-20:
