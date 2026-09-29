@@ -3341,11 +3341,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // it, 12 of 12 (with the control shown 5, under the text-size flyout 6 and under the Outline popover 1, the flyout and the
   // popover closed by the right press's mousedown before the left press began), where 09f58bec6's gate opened all 12 on the left
   // press's own verdict; Firefox and Chromium open on that chord at neither head, 0 of 10 each, and on a device the right press's
-  // native context menu, which Playwright's headless WebKit does not show, presumably takes the left click, not measured. And the
-  // refusal of a mouse's or a pen's record whose pointer left this window with a button down costs one class of press: a press
-  // whose pointer left this window with a button down, by the events this window heard, is refused once, its click opening
-  // nothing and revealing the control, and the next click opens. Two costs of that class are measured (Playwright's engines, on
-  // Linux). The first, in Firefox: a press on the control dragged out of the viewer's frame, into the other pane or onto the top
+  // native context menu, which Playwright's headless WebKit does not show, presumably takes the left click, not measured. And a
+  // press whose pointer left this window with a button down, by the events this window heard, is refused once, its click
+  // opening nothing and revealing the control, and the next click opens: the retired held arm refused it by marking its record,
+  // and the own-chain allowlist refuses it by that pointerout in its chain. Two costs of that class are measured, at bef9ff8fc
+  // under the held arm (Playwright's engines, on Linux), each the allowlist's the same. The first, in Firefox: a press on the control dragged out of the viewer's frame, into the other pane or onto the top
   // page's bar, then brought back and released on the control, 8 of 8 (the Files pane 4, the chat 4), where 343ee2eb5's gate
   // opened all 8; Chromium and WebKit keep a held left press's pointer in the frame it began in, send no such pointerout for it
   // and opened all 8, and no other gesture of that probe changed in any of the three engines, a click, a double click, a press
