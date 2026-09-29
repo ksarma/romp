@@ -23,8 +23,9 @@
 // a batch head that main has moved under passes both parts and fails the count on the other PRs' files, the gate's
 // residual, disclosed here and in the plan and not closed, with a third part named for the maintainer in the PR body: the
 // author's closing pass after the file review's round 4, attribution-and-gates-2 with records-2; and the checks keyed on the
-// delta run in no CI job and in none after the merge, since the shell job that runs this module checks the pull request out
-// at depth 1 with no origin/main and a landed follow-on's diff is some later branch's, so where landing is gated the prose
+// delta run in no CI job and in none after the merge, since the vendored-tooling job that runs this module checks the pull
+// request out at depth 1 with no origin/main and a landed follow-on's diff is some later branch's, so where landing is gated
+// the prose
 // alone carries L6 and the re-aimed count, re-derived by hand at the merged head: the file review's round 5, correctness-4,
 // the plan's Tests paragraph stating it once with the checkouts, as a rule over those checks whose count is derived (every
 // check this module keys on the delta runs through one door, `gated`, which records it, and the attribution module exports
@@ -882,8 +883,9 @@ test('the re-aimed sentence: its count is the number of pre-existing test module
  *  names the follow-on (claimants, above). A name, not the property that makes a module a browser leg (a call of the shared
  *  launcher's inBrowser through any binding, or a playwright package named), which a census would read off each module's tree
  *  with the compiler; PR 887 landed without the one it carried (kept on the fork's branch ci-browser-legs-census for a
- *  follow-up whose design note comes first), so no check in the tree reads that property. This module runs in CI's Shell job
- *  with no compiler and reads no property, a spelling read here being a second definition, so this derivation stays a name
+ *  follow-up whose design note comes first), so no check in the tree reads that property. This module runs in CI's
+ *  vendored-tooling job with no compiler and reads no property, a spelling read here being a second definition, so this
+ *  derivation stays a name
  *  (rewritten at the landing merge with main at 1d591384e, where PR 887 had landed without its census). The plan's
  *  disclosure says so and names the modules of the follow-on's diff the property reaches and the name does not,
  *  ui/webview/file-trail.test.ts and ui/webview/file-view-text-size.test.ts, which nothing here holds (the file review's round

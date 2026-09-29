@@ -4,8 +4,9 @@
 // (the file review's round 9, correctness-1 with tests-1 and ui-1: both homes had keyed the closed set over the control's
 // rules on LINES at column zero carrying the class and a brace, so a rule written the way the sheets already write them, an
 // indented rule inside an at-rule block or a grouped selector wrapped across lines, was outside the population the set
-// closed). A plain module with no dependency, so CI's Shell job, which runs tools/*.test.mjs with no npm ci, loads it as the
-// webview test bundle does (esbuild bundles it into the .ts test; ui/webview/css-rules.d.mts types it for the typecheck). It
+// closed). A plain module with no dependency, so CI's vendored-tooling job, which runs tools/*.test.mjs with no npm ci, loads
+// it as the webview test bundle does (esbuild bundles it into the .ts test; ui/webview/css-rules.d.mts types it for the
+// typecheck). It
 // lives under ui/, the tree the bundles read, since a ui test may not import from tools/, hooks/ or tests/: the kernel's
 // bundle-staleness inputs read ui/, vendor/ and vscode-extension/ alone, and tests/test_lab_dist.py derives the trees the
 // bundles' imports reach, the test bundles' among them, from the exported esbuild configs and holds them to those three (the

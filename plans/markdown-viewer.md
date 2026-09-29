@@ -9549,8 +9549,9 @@ carries the suffix -browser before .test.ts and whose own text names this follow
 (that property, a call of the shared launcher's inBrowser through any binding or a playwright package named, is what a
 census of browser legs would read off each module's tree with the compiler, and PR 887 landed without the census of
 browser legs it had carried, which is kept on the fork's branch ci-browser-legs-census for a follow-up whose design note
-comes first, so no check in the tree reads that property: the compiler is installed in the vscode-extension job alone,
-and a spelling read in the Shell job would be a second definition; the modules of this follow-on's
+comes first, so no check in the tree reads that property: the compiler is installed in the vscode-extension and
+served-pages jobs alone, and a spelling read in the vendored-tooling job would be a second definition; the modules
+of this follow-on's
 diff that the property reaches and the name does not, which this pin therefore holds to nothing, are
 ui/webview/file-trail.test.ts, whose Reload case launches through the shared helper, and
 ui/webview/file-view-text-size.test.ts, whose bar case launches through a harness of its own; the file review's round
