@@ -31,7 +31,8 @@ the author's pass 7), or a `self.<attr>` bound to one in any method of the same 
 round 6, CLS: a class attribute had been outside the derivation, 83 rows in four suite modules) or of an in-module base class, nearest
 first (round 6, INHERIT; the textual census does not read inheritance, so such a row is a declined form), or a body FETCHED by a literal path
 (the author's pass 8, 2026-09-20: `_, body = _serve_get("/sw.js", ...)`, `page = self._get_text("/")`, through `.read(...)` and
-`.decode(...)`, alone or by tuple unpack; the fixer pass of the author's pass 8: a FORMATTED url too, `with urllib.request.urlopen(
+`.decode(...)`, alone or by tuple unpack, and since round 6 a `.decode(...)` or `.read(...)` of any served text read inline or bound
+from a fetched tuple's position, `body = resp[1].decode()`, a form the textual census declines (PEEL, correctness-1); the fixer pass of the author's pass 8: a FORMATTED url too, `with urllib.request.urlopen(
 "http://127.0.0.1:%d/timeline?token=testtok" % self.port) as r:` binding `r` and `body = r.read().decode(...)` after it, the
 route the url's path, and only where the query carries `token=`, since a token-less fetch of a page route is answered by the
 handler's gate with the paste-the-token page, a text the route walk does not map), which is the text of the getter the
@@ -744,7 +745,9 @@ def _placed_tuple_uses(fn):
 
 def _resolve(node, names, attrs, getters, constants):
     """The served text a node stands for: a getter call or constant inline, a Name bound in the function, a self.<attr> bound in
-    the class, a fetched tuple's body position by a constant index (`resp[1]`, _position_key); None otherwise."""
+    the class, a fetched tuple's body position by a constant index (`resp[1]`, _position_key), or a `.decode(...)` or `.read(...)`
+    chain over any of those (`body.decode()`, `resp[1].decode("utf-8")`: a conversion of a served text is that text; round 6,
+    PEEL, correctness-1); None otherwise."""
     t = _text(node, getters, constants)
     if not t and isinstance(node, ast.Name):
         t = names.get(node.id)
@@ -753,6 +756,8 @@ def _resolve(node, names, attrs, getters, constants):
     if not t and isinstance(node, ast.Subscript):
         key = _position_key(node)
         t = (names if key[0] == "names" else attrs).get(key[1]) if key else None
+    if not t and isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("decode", "read"):
+        t = _resolve(node.func.value, names, attrs, getters, constants)   # PEEL
     return t
 
 
@@ -793,6 +798,12 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
     for t, v in pairs:
         g = _text(v, getters, constants)
         via_slice = fetched = False
+        if not g and isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and v.func.attr in ("decode", "read") \
+                and isinstance(v.func.value, ast.Subscript):
+            # `body = resp[1].decode()`, a conversion of a fetched tuple's body position: that text (round 6, PEEL; it had bound
+            # nothing, so every read of `body` was in neither census); the textual census reads it no more than the position
+            g = _resolve(v, names, attrs, getters, constants)
+            via_slice = bool(g)
         if not g and isinstance(v, ast.Subscript):
             # `body = resp[1]`, a fetched tuple's body position, the text itself; or `fn = html[a:b]`, a slice of a bound text, judged
             # over the whole text; the textual census reads neither
@@ -944,7 +955,8 @@ def rows_of(path, getters, constants, routes=None):
     test module; form is "in" for a membership, else the position method; readable is whether the row's form is one the textual
     census reads (the author's pass 8, 2026-09-20): the literal's source segment is a plain literal or a run of them (re.fullmatch over _LIT:
     no backslash, not triple-quoted, not a loop or comprehension variable) and the container is not a name bound to a slice, a
-    subscript (`resp[1]`) or a name bound to or unpacked from a fetched tuple's position; served
+    subscript (`resp[1]`), a name bound to or unpacked from a fetched tuple's position (or a conversion of one), an inherited
+    attribute (_base_attrs) or a `.decode(...)`/`.read(...)` call (round 6); served
     is whether the text is a FETCHED body (_fetched), judged as Handler._send serves it (judged_texts; the rulings at the merge of
     main's login cookie split, 2026-09-28)."""
     tree, lines = _parsed(path)
@@ -985,7 +997,8 @@ def rows_of(path, getters, constants, routes=None):
                 _bind(targets, value, names, attrs, getters, constants, sliced, routes, reads)
             text_of = lambda x: _resolve(x, names, attrs, getters, constants)
             readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced) and not isinstance(x, ast.Subscript) \
-                and not (isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id == "self" and x.attr in inherited)
+                and not (isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id == "self" and x.attr in inherited) \
+                and not (isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and x.func.attr in ("decode", "read"))   # PEEL: declined
             rows = []
             for node in ast.walk(fn):
                 for lit, x in _memberships(node):
@@ -1231,7 +1244,7 @@ def readers_of(path, getters, constants, routes=None):
     `<pattern>.<fn>(X)` with the pattern a Name bound by re.compile in the module (`regex`); `X[a:b]` with both bounds Names a
     `for` over a `served_css.<fn>(...)` iterable binds (`span-slice`: offsets the parser derived) and any other subscript of X
     (`slice`); any other str method on X (`method`, the method's name in the source column); X.encode/decode/read (`conversion`:
-    bytes to text and back, no content read); X handed whole to any other `self.assert*` (`assert`: a whole-text compare); X handed
+    the call itself reads no content, and a read over its result is a row over the text it converts: round 6, PEEL); X handed whole to any other `self.assert*` (`assert`: a whole-text compare); X handed
     whole to a callable of the stated allowlist _VALUE_USES (json.dumps, len, print, isinstance, a file's write, repr, str, type,
     bool, and by qualified name a child process's argument vector, subprocess.run, check_output and Popen) or as the ARGUMENT of
     another string's str method (`other.replace("__X__", X)`: spliced or compared, not read) (`value-use`: the text is not read at that
@@ -1282,7 +1295,8 @@ def readers_of(path, getters, constants, routes=None):
                                  or isinstance(f, ast.Name) and f.id in parser_names and f.id in _VIEWS)
 
     def text_of(x, names, attrs, derived):
-        """The served text a node reads: the text itself, or the text a view or a copy of it derives from."""
+        """The served text a node reads: the text itself (a `.decode(...)` or `.read(...)` of it too, _resolve), or the text a view or
+        a copy of it derives from."""
         t = _resolve(x, names, attrs, getters, constants)
         if t:
             return t
@@ -1813,7 +1827,8 @@ class ServedPinsReadElements(unittest.TestCase):
         # and (the fixer pass) by a formatted url with the token in its query, bound by the with-item's `as` target; a token-less
         # url and an unmapped path bind nothing. The fixer pass of the author's pass 9: a binding at module level (MOD) and an alias of a bound Name
         # or self.<attr> (alias, al2), each a row and a site. The merge of main's login cookie split (2026-09-28): a fetch by a
-        # concatenation led by the whole path (f10) is a row and a site, and one led by a name (f12) binds nothing. The module is built over EVERY derived
+        # concatenation led by the whole path (f10) is a row and a site, and one led by a name (f12) binds nothing. Round 6 (PEEL): a
+        # membership over a conversion of a bound fetched body (f13) is a row, a declined form. The module is built over EVERY derived
         # getter, so a new getter is pinned by construction, and every expectation fails on an empty derivation
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         css = sorted(c for c in constants if c.endswith("_CSS"))[0]   # one constant of each kind, derived
@@ -1887,6 +1902,7 @@ class T(unittest.TestCase):
         self.assertIn("f10", fb)
         pb = self._get(prefix + "/chat?token=x")
         self.assertIn("f12", pb)
+        self.assertIn("f13", fb.decode())
 '''
         loop = "        for pg in (%s):\n" % ", ".join("km.%s()" % g for g in getters)
         tail = '''            self.assertIn("a1", pg, "one row per text")
@@ -1928,7 +1944,8 @@ def test_module_level():
                     (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in"),   # the fetched forms (the author's pass 8)
                     (51, "f7", "_chat_page", "in"),   # a formatted url with the token, bound by the with-item's `as` (the fixer pass of the author's pass 8)
                     (58, "m1", "_feed_page", "in"), (60, "m2", "_feed_page", "in"), (62, "m3", "_landing", "in"),   # a module-level binding and two aliases (the fixer pass of the author's pass 9)
-                    (64, "f10", "_landing", "in")]   # a fetch by a concatenation led by the whole path (the merge of main's login cookie split)
+                    (64, "f10", "_landing", "in"),   # a fetch by a concatenation led by the whole path (the merge of main's login cookie split)
+                    (67, "f13", "_landing", "in")]   # a conversion of a bound fetched body, inline (round 6, PEEL)
         expected += [(L + 1, "a1", g, "in") for g in getters] + [(L + 2, "a2", g, "index") for g in getters]
         expected += [(L + 5, "a4", "_feed_page", "index"), (L + 5, "a5", "_feed_page", "index"), (L + 6, "a6", "_feed_page", "index"), (L + 6, "a7", "_feed_page", "index"),
                      (L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
@@ -1937,7 +1954,7 @@ def test_module_level():
         self.assertNotIn(("a3", "in"), {(r[1], r[3]) for r in rows}, "the loop variable is bound to the loop's body only")
         self.assertNotIn(("b3", "in"), {(r[1], r[3]) for r in rows}, "a loop whose iterable mixes a text with something else binds nothing")
         # a row over a fetched body is marked served, judged as Handler._send serves the page (judged_texts); every other row is not
-        self.assertEqual({(r[0], r[1]) for r in rows if r[5]}, {(38, "f1"), (40, "f2"), (42, "f3"), (51, "f7"), (64, "f10")})
+        self.assertEqual({(r[0], r[1]) for r in rows if r[5]}, {(38, "f1"), (40, "f2"), (42, "f3"), (51, "f7"), (64, "f10"), (67, "f13")})
         # the author's pass 8 (2026-09-20): a fetch of an unmapped path, a body passed through served_css.js_code, and a method call on another
         # object with a route-shaped literal (path.split("/")) bind nothing; the fixer pass: nor a formatted url of a page route with
         # no token in its query (the gate's paste-the-token page, f8), nor one of a path the dispatch does not map (f9)
@@ -1950,7 +1967,8 @@ def test_module_level():
         self.assertEqual((url('"/chat" + rest'), url('prefix + "/chat?token=x"'), url('"chat?token=" + tok'), url('"/?token=%s" % tok')), (None, None, None, None))
         # the author's pass 8 (2026-09-20): the rows the textual census declines, by form: a loop or comprehension literal (p, q, r, a4 to a7),
         # a name bound to a slice (h), a literal with a backslash and a triple-quoted one; every other row is readable
-        declined = {(15, "p"), (15, "q"), (17, "r"), (28, "h"), (L + 5, "a4"), (L + 5, "a5"), (L + 6, "a6"), (L + 6, "a7"), (34, "y\tz"), (35, "tq")}
+        # round 6 (PEEL, correctness-1, the refuter's first caution): a membership over a conversion call (f13) is declined too
+        declined = {(15, "p"), (15, "q"), (17, "r"), (28, "h"), (L + 5, "a4"), (L + 5, "a5"), (L + 6, "a6"), (L + 6, "a7"), (34, "y\tz"), (35, "tq"), (67, "f13")}
         self.assertEqual({(r[0], r[1]) for r in rows if not r[4]}, declined)
         # the textual census reads the inline forms, the one-line bound form (a Name, a self.<attr>), the tuple binding (by
         # position, an item that is no served text binding nothing), the bare assert and assertTrue lines, the position forms,
@@ -1968,8 +1986,10 @@ def test_module_level():
                            (L + 19, "x1", "_landing", "in"), (L + 19, "x2", "_landing", "in"), (L + 20, "x3", "_landing", "in")]
         self.assertEqual(sites, expected_sites)
         self.assertTrue(set(sites) <= {r[:4] for r in rows if r[4]}, "every site is a readable row")
-        # the containers the module pins, whatever the name: the getters, the constants, and `other` and `dyn` are not containers
-        self.assertEqual(containers, {(g, True) for g in getters} | {("_LANDING_MOBILE_JS", False), (css, False), (html, False), (script, False), (mark, False)})
+        # the containers the module pins, whatever the name: the getters, the constants, and `other` and `dyn` are not containers;
+        # `fb.decode()` (f13) is one by shape, `<alias>.<name>()`, and no served text, so it is no site
+        self.assertEqual(containers, {(g, True) for g in getters} | {("_LANDING_MOBILE_JS", False), (css, False), (html, False), (script, False), (mark, False),
+                                                                     ("decode", True)})
 
     @unittest.skipUnless(sys.version_info[:2] == _CENSUS_CELL, _ONE_CELL_REASON)
     def test_every_reader_of_a_served_page_is_the_parser_or_a_stated_read(self):
@@ -2964,6 +2984,42 @@ class X(Elsewhere):
                                 (23, "i4", "_chat_page", "in", True, False)])
         self.assertEqual(sites, [(18, "i3", "_feed_page", "in"), (23, "i4", "_chat_page", "in")])
         self.assertEqual([r[:3] for r in readers], [(16, "assert", "_landing"), (17, "assert", "_chat_page"), (18, "assert", "_feed_page"), (23, "assert", "_chat_page")])
+
+
+    def test_a_conversion_of_a_served_text_is_read_as_that_text(self):
+        # round 6 (B.1, PEEL, correctness-1): a `.decode(...)` or `.read(...)` of a served text is that text. Neither census had
+        # followed a conversion except as the whole value of a Name assignment over a fetched name, so `body = resp[1].decode()`
+        # bound nothing and every read of `body` was in neither census (e1, e2), and a read over a conversion inline was a
+        # conversion row alone (e3, e4). The textual census reads neither form, so each row is a declined form (the form-space
+        # pin holds the inline one, f13). Dropping PEEL reds the rows and the reads here. The rows of both derivations are named,
+        # never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import re, unittest
+class T(unittest.TestCase):
+    def _req(self, path):
+        return r.status, r.read(), r.headers
+    def test_a(self):
+        resp = self._req("/chat?token=x")
+        body = resp[1].decode()
+        self.assertIn("e1", body)
+        re.search("e2", body)
+        with urllib.request.urlopen("http://127.0.0.1:%d/?token=x" % self.port) as r:
+            re.search("e3", r.read().decode("utf-8"))
+        self.assertIn("e4", resp[1].decode())
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = rows_of(f.name, getters, constants, routes)
+            sites, _ = textual_census(f.name, getters, constants, routes)
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(rows, [(8, "e1", "_chat_page", "in", False, True), (12, "e4", "_chat_page", "in", False, True)])
+        self.assertEqual(sites, [])
+        self.assertEqual([r[:3] for r in readers], [(7, "conversion", "_chat_page"), (8, "assert", "_chat_page"), (9, "regex", "_chat_page"),
+                                                    (11, "conversion", "_landing"), (11, "conversion", "_landing"), (11, "regex", "_landing"),
+                                                    (12, "assert", "_chat_page"), (12, "conversion", "_chat_page")])
 
 
 if __name__ == "__main__":
