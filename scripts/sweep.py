@@ -159,10 +159,16 @@ that leaves a bracket open, while one read short that closes its brackets (a par
 the served leg's pytest, which exits 4 unless a test has exactly that id; a node id's brackets must balance, so a
 parametrize id whose own brackets do not (such as "a[") is refused; a SUBSKIPPED line whose node id could start at more
 than one place is refused, which a "] tests/" or ") tests/" in the subtest's description or in the skip's reason can
-make it, and so is one whose node id holds " tests/"; and a reason or message that runs on to a line starting with an
-upper-case word, an optional description and then "tests" before a slash, a space or the line's end (such as "ALL tests
-of this file need node_modules") is read as a kind the reader does not read. Under pytest 8 a subtest's skip prints
-as a SKIPPED line of its whole test, the same node id. And three cases fall outside the claim. A skip for want of the deps whose reason DEPS_SKIP does not match runs in no leg; the
+make it, and so is one whose node id holds " tests/"; a log that holds more than one short-summary header line (a
+skip reason or a failure message that quotes one) is refused, since which one opens pytest's own summary is not known;
+and a reason or message that runs on to a line starting with an upper-case word that is none of pytest's kinds, an
+optional description and then "tests" before a slash, a space or the line's end (such as "ALL tests of this file need
+node_modules") is read as a kind the reader does not read. Under pytest 8 a subtest's skip prints as a SKIPPED line of
+its whole test, the same node id. One summary pytest writes correctly is read wrong without a refusal: a reason or
+message that runs on to a line of a kind the reader does read is read as that kind, so a skip line there (a failure
+message or a skip reason quoting an inner pytest's SKIPPED line, say) adds its node id to the set when DEPS_SKIP
+matches its reason, and the served leg's pytest then exits 4 unless a test has exactly that id, which it then runs
+again. And three cases fall outside the claim. A skip for want of the deps whose reason DEPS_SKIP does not match runs in no leg; the
 pytest leg's record lists every other skip outside the served globs with its reason (deps_skipped.unselected), so such
 a miss can be seen. A test that does not skip without node_modules but takes another road runs there on that road
 only: two real-tree pins, in tests/test_lab_dist.py and tests/test_kernel_bundle_staleness.py, read esbuild.js under tests/lab_dist_stub.py's stand-in for a missing package,
@@ -3220,10 +3226,13 @@ def deps_skipped(path, served_files, others=None):
     DEPS_SKIP did not select, so a deps reason it misses can be seen in the record rather than run in no leg unnoticed.
     (None, why) when the set is not known, and the served leg, which would run it, is then red naming why rather than
     run without it: the log cannot be read; it holds no closing summary line (pytest did not finish, so its summary of
-    skips is not whole); or its short summary holds a line this reader does not read, each named in why. The reader is
-    closed: a line shaped like a kind that is none of the kinds, a skip line that does not name exactly one test
-    (_skip_line), and a non-blank line before any kind line are not read. A line of no kind's shape after a kind line
-    runs its reason or message on."""
+    skips is not whole); it holds more than one short-summary header line (a skip reason or a failure message can quote
+    one, and which one opens pytest's own summary is then not known: read from the last, a quoted header followed by a
+    quoted skip line dropped every skip before it with no refusal); or its short summary holds a line this reader does
+    not read, each named in why. The reader is closed: a line shaped like a kind that is none of the kinds, a skip line
+    that does not name exactly one test (_skip_line), and a non-blank line before any kind line are not read. A line of
+    no kind's shape after a kind line runs its reason or message on; a reason or message that runs on to a line of a
+    kind the reader reads is read as that kind (the module docstring discloses it)."""
     data = _read_log(path) if path else None
     if data is None:
         return None, "the pytest leg's log cannot be read"
@@ -3232,6 +3241,11 @@ def deps_skipped(path, served_files, others=None):
                       "of the extension's node_modules or a browser are not known")
     lines = data.split("\n")
     heads = [i for i, line in enumerate(lines) if _SUMMARY_HEAD.fullmatch(line.strip())]
+    if len(heads) > 1:
+        return None, ("the pytest leg's log holds %d short-summary header lines (lines %s), and a skip reason or a failure "
+                      "message can quote one, so which opens pytest's own short summary, and the tests it skipped for want "
+                      "of the extension's node_modules or a browser, are not known"
+                      % (len(heads), ", ".join(str(i + 1) for i in heads[:5]) + (", ..." if len(heads) > 5 else "")))
     skips, cur, seen, unread = [], None, False, []
     for line in lines[heads[-1] + 1:] if heads else ():
         if _SKIP_KIND.match(line):

@@ -5086,13 +5086,23 @@ SUBTEST_SKIP_TREE = {
 }
 
 
+# The focused re-check at the round-2 fix head, its C finding: a skip whose reason quotes pytest's short-summary header
+# and a skip line after it. Synthetic data only.
+QUOTED_HEAD_TREE = {
+    "test_a_deps.py": "import pytest\n\n\ndef test_a_deps():\n    pytest.skip('extension deps absent (npm ci not run here)')\n",
+    "test_b_quotes.py": ("import pytest\n\n\ndef test_b_quotes():\n"
+                         "    pytest.skip('inner output:\\n=== short test summary info ===\\n'\n"
+                         "                'SKIPPED tests/test_ghost.py::test_g - Skipped: macOS only')\n"),
+}
+
 class ShortSummaryReader(unittest.TestCase):
     """Round 2, Class C: deps_skipped reads the pytest leg's short summary closed. A SUBSKIPPED line (pytest 9's subtests)
     is a skip under the same rule, naming the test the subtest belongs to, which the served leg runs whole; a line it does
     not read makes the set not known, naming the line, and the served leg is then red rather than run with a set read
     wrong: a line shaped like a kind that is none of pytest's kinds, a skip line whose node id it cannot find, a
     SUBSKIPPED line whose node id could start at more than one place (decision 5), a node id whose brackets do not
-    balance, and a non-blank line before any kind line. The SUBSKIPPED forms are copied from real pytest 9.1.1 output;
+    balance, a non-blank line before any kind line, and a log holding more than one short-summary header line (the
+    focused re-check's ruling 3). The SUBSKIPPED forms are copied from real pytest 9.1.1 output;
     every other summary here is written as pytest writes one. Synthetic data only."""
 
     def log(self, *lines, close="3 passed, 2 skipped in 0.01s"):
@@ -5159,6 +5169,44 @@ class ShortSummaryReader(unittest.TestCase):
                                                                "tests/test_b_sub.py::Other::test_b_msg", "tests/test_e.py::test_e"], None))
         self.assertEqual([o[0] for o in others], ["tests/test_c_fixture.py::test_a_unrelated",
                                                   "tests/test_b_sub.py::Other::test_a_first"])
+
+    def test_a_log_holding_two_short_summary_header_lines_leaves_the_set_not_known(self):
+        """Real pytest, the pytest leg's own command, serial and under xdist, over a tree where one test skips for want of
+        the deps and another skips with a reason that quotes pytest's short-summary header and a skip line: the log holds
+        two header lines, and the set is not known, naming both. At the round-2 fix head the reader read from the last
+        header, the quoted one, and returned an empty set with no refusal, so the deps skip ran in no leg."""
+        tmp = tempfile.mkdtemp(prefix="sweepsr-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        checkout = os.path.join(tmp, "checkout")
+        os.makedirs(os.path.join(checkout, "tests"))
+        for name, text in QUOTED_HEAD_TREE.items():
+            with open(os.path.join(checkout, "tests", name), "w") as f:
+                f.write(text)
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": tmp, "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8", "CI": "true"}
+        for workers in (0, 2):
+            with self.subTest(workers=workers):
+                p = subprocess.run(sweep.pytest_cmd(sys.executable, workers), cwd=checkout, env=env, text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=300)
+                log = os.path.join(tmp, "pytest-%d.log" % workers)
+                with open(log, "w") as f:
+                    f.write(p.stdout)
+                self.assertEqual(p.returncode, 0, p.stdout[-3000:])
+                heads = [line for line in p.stdout.split("\n") if "short test summary info" in line]
+                self.assertEqual(len(heads), 2, "pytest printed its own header and the quoted one: %s" % p.stdout[-3000:])
+                ids, why = sweep.deps_skipped(log, [])
+                self.assertIsNone(ids, "the set is not known: %s" % p.stdout[-3000:])
+                self.assertIn("holds 2 short-summary header lines", why)
+
+    def test_a_skip_line_a_message_runs_on_to_is_read_as_a_skip(self):
+        """The disclosed case, its witness (the module docstring): a failure message running on to a line of a kind the
+        reader reads is read as that kind, so a quoted SKIPPED line whose reason the rule reads adds its test to the set,
+        a test that did not skip (here one that does not exist, which the served leg's pytest refuses, exit 4)."""
+        path = self.log("FAILED tests/test_a.py::test_a - AssertionError: inner run output:",
+                        "SKIPPED tests/test_ghost.py::test_g - Skipped: npm ci not run here",
+                        "done",
+                        "SKIPPED tests/test_b.py::test_b - Skipped: macOS only",
+                        close="1 failed, 1 passed, 1 skipped in 0.01s")
+        self.assertEqual(sweep.deps_skipped(path, []), (["tests/test_ghost.py::test_g"], None))
 
     def test_a_summary_line_of_a_kind_the_reader_does_not_read_makes_the_set_not_known(self):
         """A line shaped like a kind (an upper-case word, a description as a subtest word has, a node id) that is none of

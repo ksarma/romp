@@ -244,10 +244,17 @@ subject; `verify` refuses the branch otherwise.
    short and handed to the served leg's pytest, which exits 4 unless a test has exactly that id);
    a parametrize id whose own brackets do not balance, such as `a[`; a `SUBSKIPPED` line whose
    node id could start at more than one place, which `] tests/` or `) tests/` in its subtest's
-   description or in its skip's reason can make it, or whose node id holds ` tests/`; and a
-   reason or message running on to a line that starts with an upper-case word and then `tests`
-   before a slash, a space or the line's end (such as `ALL tests of this file ...`), which the
-   reader takes for a line of a kind pytest does not write. That covers the skips whose reasons
+   description or in its skip's reason can make it, or whose node id holds ` tests/`; a log that
+   holds more than one short-summary header line (a skip reason or a failure message that quotes
+   one), since which one opens pytest's own summary is then not known; and a reason or message
+   running on to a line that starts with an upper-case word that is none of pytest's kinds and
+   then `tests` before a slash, a space or the line's end (such as `ALL tests of this file ...`),
+   which the reader takes for a line of a kind pytest does not write. One summary pytest writes
+   correctly is read wrong with no refusal: a reason or message running on to a line of a kind
+   the reader reads is read as that kind, so a `SKIPPED` line there (a failure message or a skip
+   reason quoting an inner pytest's output, say) adds its test to the set when the rule reads its
+   reason, and the served leg's pytest then exits 4 unless a test has exactly that id, which it
+   then runs again. That covers the skips whose reasons
    the runner's rule reads, and three cases fall outside it: a skip for want of the deps in other words runs in no leg (the pytest leg's record lists
    every other skip outside the served files with its reason, so it can be seen); two real-tree pins in
    `tests/test_lab_dist.py` and `tests/test_kernel_bundle_staleness.py` do not skip without
