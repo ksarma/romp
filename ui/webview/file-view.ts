@@ -3527,7 +3527,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   /** The allowlist: whether a chain is one the viewer's own gestures make, the grammar above widened three ways: a tap's mouseup
    *  of detail 1 or 2; the focus arriving anywhere before a press's mousedown and anywhere in a tap before its pointerup; and during a
    *  finger's contact the mouse's pointerout, pointerover, mouseout and mouseover to no element with no button. An element's blur
-   *  that no element's focus follows before the pointerup or the mouseup is refused. */
+   *  that no element's focus follows before the next pointerup or mouseup is refused, and a blur of the window anywhere. */
   const ownChain = (c0: readonly string[], t: string | null): boolean => {
     const c = runsCollapsed(c0.filter((x) => x !== "keydown"));
     if (!blursPaired(c)) return false;

@@ -8694,15 +8694,20 @@ extra7-2), the outbound
 mark of a picture with no control excepted, which has no stacking level of its own, a stated boundary (its round 17, extra7-1); a same-origin parent's own
 chrome over the frame is not read), read at the gesture's start, at the press in the window's capture phase, before the popover's own capture listener closes it,
 and at the first keydown (repeat false) of Enter or Space, the press's verdict taken by its click along that gesture's own chain
-of events as the viewer's window hears them, keyed on thirteen events of that window's capture phase (pointerdown, mousedown,
-mouseup, pointerup, pointercancel, keydown, dragstart, touchend, touchcancel, pointerout, mouseout, blur and click) and never on
+of events as the viewer's window hears them, keyed on events of that window's capture phase, the gate's own listeners on ten
+(pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown, dragstart, touchend, touchcancel and click) and its chain
+listener on twenty-one (pointerdown, pointerup, pointercancel, pointerover, pointerout, pointerenter, pointerleave, pointermove,
+mousedown, mouseup, mouseover, mouseout, mousemove, touchstart, touchend, touchcancel, dragstart, contextmenu, auxclick, blur and
+focus), twenty-three types in all (the file review's round 20), and never on
 time: a click by
 a pointer refuses where
 a record still stands under its own pointerId, a press whose pointerup the viewer's window never heard and so with no heard chain to
 the click, whatever its verdict, and with none reads the press a one-click slot took at the last pointerup, only right after a
 mouseup of the primary button whose detail, the click count, is above 0 (the tail: in the three engines measured every pointer's
 click came right after such a mouseup, the lone click below alone excepted, and every mouseup with no click after it carried
-detail 0), the slot's press only when a click typed as the slot's pointerup was carries that pointerup's pointerId, and a
+detail 0), the slot's press only when a click typed as the slot's pointerup was carries that pointerup's pointerId and only
+when the chain of events the viewer's window heard from the slot's press to the click is one the viewer's own gestures make
+(the own-chain allowlist, below), and a
 touch-order pen's slot (a primary pen whose own mousedown had not come by its pointerup: iPadOS's Pencil and Android's and
 ChromeOS's styluses, read and not run) only after that pen's compatibility mousedown and by a click typed pen under the pen's
 pointerId or by one with no pointerId, the wait for that mousedown defensive in every gesture a browser here drives, since none
@@ -8717,11 +8722,10 @@ click the viewer's window will not hear, so no later click takes the slot's pres
 record standing through it ends by the record rule, its own pointerup handing it to the slot, and in WebKit's left press chorded
 into a held right press whose context menu default runs, which render.ts prevents only for a folder link or a selection, the right
 button's mouseup finds the left press's record standing, and that press's own pointerup and its mouseup of detail 0 leave no
-click; the file review's round 19, correctness-1), by a mouseout to no element of the viewer's document while a tap's
-compatibility mousedown is due, which clears that flag too, since that tap's compatibility events went to another document (the
-file review's round 19, extra8-2), by a blur of the viewer's window while that mousedown is due, which clears that flag too,
-since another document's element took the focus with that tap's compatibility mousedown (its extra5-1, extra8-1 and extra8-2,
-with the coordinator's decisions on them), and by the click that takes it, and never by time; a
+click; the file review's round 19, correctness-1), and by the click that takes it, and never by time (a mouseout to no element
+of the viewer's document and a blur of the viewer's window while a tap's compatibility mousedown was due emptied it too, the
+file review's round 19, extra8-2 and its extra5-1, extra8-1 and extra8-2, until its round 20 retired both rules, the allowlist
+refusing every chain that carries those events there); a
 key's or a script's
 click reads neither and is read at the click; and a
 primary press ends every earlier record whatever its pointer type, a record ends at its own pointerup, which hands it to the slot,
@@ -8734,14 +8738,14 @@ that clear dropped, and green under this gate with it dropped; the closing check
 round 18), and WebKit sends the
 mouse's next press after a press whose pointerup never came, a drag in another pane among them, as a mousedown with no
 pointerdown, and that mousedown empties the slot too unless it is the compatibility mousedown of the one-finger tap, or of the
-touch-order pen, whose pointerup filled the slot, and a touchend or a touchcancel marks every touch record refused, a mouse's
-or a pen's pointerout with a button down and no relatedTarget, its pointer leaving the viewer's window with the press held, every
-mouse and pen record, and the mouse's pointerout with no button down and no relatedTarget, which while a mouse's or a pen's record
-stands is a release of a mouse or a pen the viewer's window did not hear, every mouse and pen record too (the file review's
-round 19, extra5-1 and extra8-1), and a blur of the viewer's window itself, the focus leaving its document, which while a
-mouse's or a pen's record stands shows another document's press or a focus move during that press, every mouse and pen record as
-well (its extra5-1, extra8-1 and extra8-2, with the coordinator's decisions on them), an element's blur inside the document
-ending nothing, the record standing, since a deleted record would send its pointer's click to the slot (a gate deleting the
+touch-order pen, whose pointerup filled the slot, and a touchend or a touchcancel marks every touch record refused, the record
+standing (three rules that marked every mouse and pen record refused the same way, a mouse's or a pen's pointerout with a button
+down and no relatedTarget, its pointer leaving the viewer's window with the press held, the closing check at 142ade155 after the
+fixes for the file review's round 18, and two of the file review's round 19, extra5-1, extra8-1 and extra8-2, the mouse's
+pointerout with no button down and no relatedTarget, a release the viewer's window did not hear, and a blur of the viewer's
+window itself, were retired in its round 20, with the coordinator's decision 3 on it, since each of those events lands in the
+chain of every press whose record it marked and a click can still take, and the allowlist admits none of them there), since a
+deleted record would send its pointer's click to the slot (a gate deleting the
 mouse's and the pen's records at the leave opened 17,280 clicks the gate at 343ee2eb5 refuses by depth 6 of the search of the
 closed direction, a click under the deleted record's pointerId taking another pointer's shown slot, where marking them opens none;
 in the three engines measured a tap's click after its
@@ -8749,17 +8753,12 @@ press's pointerup finds that press in the slot: Chromium's tap click carries the
 press's, while in Playwright's headless WebKit on Linux (WPE's MiniBrowser) under touch emulation, a stand-in for WPE and
 WebKitGTK browsers on a touchscreen, a tap's click
 carries pointerId 1 of type mouse where its press carried the touch's, a type other than the slot's; iOS WebKit's source gives an
-iPhone tap's click the touch's own pointerId, read and not run on a device; the slot's clears but that mousedown's, the
-mouseup's, the mouseout's and the blur's are defensive, the slot refilled at every pointerup, read by no key's or script's
-click, and a click whose press the viewer's window did not hear refused by that mousedown's clear, the mouseup's, the
-mouseout's, the blur's, the tail, the slot's pointerId test, the refusal of a record still standing at the click or the refusal
-of a record whose pointer left the viewer's window, with a button down or, the mouse's, with none, or whose window lost the
-focus, what is left of the residual and the third order below aside, the mouseup's clear of the tap's flag, the mouseout's and
-the blur's defensive too, since each empties the slot and only a pointerup fills it and sets the flag again (a gate without any
-one of them reds no test), the mouseout's condition on the flag defensive in every order an engine was measured to send,
-a mouseout that empties the slot whatever the flag giving the same verdict on every recorded row and differing only on orders no
-engine was measured to send, a slot a mouse's or a pen's pointerup filled and a mouseout to no element between a tap's own
-mousedown and its click, each pinned by a row of its node guard, and the tail's condition on the mouseup's
+iPhone tap's click the touch's own pointerId, read and not run on a device; the slot's clears but that mousedown's and the
+mouseup's are defensive, the slot refilled at every pointerup, read by no key's or script's click, and a click whose press the
+viewer's window did not hear refused by that mousedown's clear, the mouseup's, the tail, the slot's pointerId test, the refusal
+of a record still standing at the click or the own-chain allowlist, what is left of the residual and the third order below
+aside, the mouseup's clear of the tap's flag defensive too, since it empties the slot and only a pointerup fills it and sets the
+flag again (a gate without it reds no test), and the tail's condition on the mouseup's
 detail defensive under the mouseup's clear in every event order, a tail set by any primary mouseup with that clear kept reddening
 no test, and load-bearing once that clear is dropped (the file review's round 19, tests-1); that mousedown's clear of the
 slot is pinned: before it, a tap on another document's element over the picture that went away during the press, whose
@@ -8780,99 +8779,125 @@ that mousedown, red at 1a6470e72 too, whose gate had no mouseup's clear; and the
 pinned by browser cells in Firefox and WebKit and a node guard, red at 142ade155, at 1a6470e72 and at 09f58bec6: in WebKit the mouse
 held on the control or on the picture, and in Firefox the mouse pressed on the control and released in the other pane, then another
 document's tap on an element over the control that hides at that tap's compatibility mousedown sent the viewer's window a mouseup of
-detail 1 and a click alone, which read the mouse's record; each opened the tab with the sign covered at the tap's start; the blur's
-rule refuses those cells too where the viewer's window held the focus, as it does in them, so WebKit's run again with an element
-that cancels that mousedown, where no blur comes, red under a gate whose click reads its own standing record alone; and the
-mouseout's rule is pinned as a whole by a node guard, red at ddb446fae and under a gate without that rule, and by browser cells
-in Firefox, red at ddb446fae and under a gate without that rule and without the blur's rule, which refuses them too where the
-viewer's window held the focus, as it does in them, and by the same cells with an element that cancels its mousedown, where no
-blur comes, red under a gate without that rule alone, its two clears each defensive given the other wherever that tap's
-compatibility mousedown reaches the viewer's window (with
-the slot's clear dropped alone the flag's clear lets that mousedown empty the slot, and no test is red): in Firefox, after the
-viewer's own tap whose compatibility events another document's element took and which started in the viewer, the element first
-hit at the compatibility mousedown or a mouse resting in the viewer, the viewer's window heard a mouseout to no element, and a tap
-on that element over the control, which goes away during the press, took that tap's slot and opened the tab with the sign covered
-at its start, the rule ending at the tap's own mousedown, so the mouseout Firefox sends 20 to 35 ms after the viewer's own tap's
-click finds the flag clear (the file review's round 19, extra8-2); the blur's rule is pinned by a node guard alone, every cell
-of the legs where the focus leaves the viewer's window during a press or while a tap's compatibility mousedown is due being
-refused by another rule too, its rows of a mouse's and a pen's held press, of Firefox's and WebKit's tap and of the
-two costs red at d61eb027d and under a gate without the blur listener, the row of a press begun with the control covered red
-under a gate whose blur marks the records accepted, its test of the target, its test of the pointer type, its condition on
-the flag and its marking in place of deleting each pinned by a row red under a gate without that part, and its two clears
-together by the three tap rows, red under a gate whose blur leaves the slot and the flag alone, each clear defensive given the
-other;
-the residual, which no input or focus event the viewer hears tells from
-the viewer's own tap: an element of another same-origin document shown over the picture during the viewer's tap takes that tap's
-compatibility events and click, and a tap on that element, which goes away during the press, then reaches the viewer as a
-mousedown, a mouseup of detail 1 and a click and takes the slot the viewer's tap filled, in WebKit, and in Firefox where that
-element is laid out before the tap's compatibility mousemove and no mouse rests in the viewer, each where no blur of the
-viewer's window comes while that tap's compatibility mousedown is due, that is, where the element cancels that mousedown, the
-viewer's window did not hold the focus, the focus sat inside a nested frame of the viewer's own document or, in WebKit, the
-element listens for no mouse event (where the tap's compatibility events start in the viewer, Firefox sends the viewer's window
-a mouseout to no element before that click, and the gate empties the slot there, and where the viewer's window held the focus
-and the element takes the tap's mousedown without cancelling it, that window hears its blur while that mousedown is due, and the
-gate empties the slot there too), the closing check at 142ade155 measuring the class's element shapes its probe drove in the
-dashboard's shape,
-Firefox 16 of 16 in the shape the mouseout's rule now closes, the element first hit at the compatibility mousedown, and WebKit 7 of
-7, the residual,
-and 0 of 36 in Chromium under a candidate of this gate with the slot's pointerId test, whose foreign click carries its own touch's
-pointerId, the same probe under the gate at ddb446fae reading Firefox 16 of 16, WebKit 7 of 7 and Chromium 0 of 51 and every
-other order of the class it drives opening nothing, and a probe of the file review's round 19 under this gate's rules but the
-blur's reading, on the Files pane and the chat, Firefox's shapes whose compatibility events start in the viewer 0 of 48 (48 of
-48 under the gate at
-ddb446fae) and its laid-out shape with no mouse in the viewer 12 of 12 with the element hidden at the covered tap's pointerup (0 of
-12 hidden at its pointerdown), WebKit 24 of 24 covered opens with an element listening for no mouse event and Chromium 0 of 16,
-and a measurement of the blur's rule in that round reading, with the viewer's window focused, Firefox's laid-out shape 0 of 36
-with an element that cancels no mousedown, where 36 of 36 opened without that rule, and 12 of 12 at both with one that cancels
-it, WebKit's shapes shown at the pointerup 0 of 56 with an element that listens for click or mousedown, where 56 of 56 opened
-without it, and 24 of 24 at both with one that listens for no mouse event and with one that cancels its mousedown, Chromium 0 of
-36 at both, and nothing changing with the viewer's window unfocused (Firefox 12 of 12, WebKit 52 of 52), the laid-out shape by
-reading the one a finger's tap on a touch-only device produces for an element added at the tap's pointerdown,
-since a finger's press lasts longer than a frame, the input events the viewer hears in what is left of that shape its own tap's, in the same
-order, with no blur of its window between them, only coordinates and time differing,
-a check of these fixes finding two more orders of the class outside the residual, open at 142ade155, at
-1a6470e72 and at 09f58bec6: in WebKit the mouse held on the control or on the picture, or in Firefox the mouse pressed on the
-control and released over another pane, then a tap on another document's element over the control that hides at that tap's
-compatibility mousedown, heard as a mouseup of detail 1 and a click alone, whose click read the mouse's record, WebKit 22 of 22 and
-Firefox 7 of 7, a mouseup with no pointerup since that record's pointerdown telling it from the mouse's own click, closed by the
-refusal of a record still standing at a click (under this gate WebKit 0 of 22 and Firefox 0 of 7, the next click opening), and in
-Firefox, after that release, a mouse click on such an element, whose pointerup handed the mouse's record to the slot and opened,
-10 of 10 and 10 of 10 again at 343ee2eb5, closed by the refusal of a mouse's or a pen's record whose pointer left the viewer's
-window with a button down, Firefox sending the viewer's window a pointerout with no relatedTarget as the press left its frame
-(under this gate 0 of 10, the next click opening; its browser cells in Firefox and a node guard, red at 343ee2eb5 and at
-09f58bec6, the cells run again with an element that cancels that click's mousedown, where no blur comes, red under a gate without
-that refusal alone), Chromium opening neither, and a later check finding a third, open in WebKit and in one shape in Chromium in the
-timings measured under this gate's rules but the blur's and, in WebKit, at 142ade155, at 09f58bec6 and at 343ee2eb5, which the
-blur's rule closes where the viewer's window held the focus and the element takes that click's mousedown without cancelling it,
-what is left for the owner: the mouse pressed on the control, any button, and held while
-the top page hides the viewer's frame and shows it again, then a mouse click on another document's element over the control that
-hides at that click's mousedown or its pointerdown, whose pointerup under pointerId 1 hands the held press's record to the slot and
-whose click takes it, in Chromium a pen's press and click in the same order (CDP) too, WebKit, which sends no pointerout there,
-opening it at every timing under this gate's rules but the blur's, 3,700 of 3,700 in a later probe of these fixes and 60 of 60
+detail 1 and a click alone, which read the mouse's record; each opened the tab with the sign covered at the tap's start, and
+the retired blur's rule refused those cells too where the viewer's window held the focus, so WebKit's run again with an element
+that cancels that mousedown, where no blur comes, were red under a gate whose click reads its own standing record alone, as
+bef9ff8fc measured them; since the file review's round 20 the node guards of the tail, the slot's pointerId test, the touch
+records' refusal, the mouseup's clear and two of the touch-order pen's conditions red their rows only together with M-OFF, the
+allowlist admitting every chain, since the allowlist refuses every order those guards drive, so those rules are defensive under
+it (file-view.ts's gate comment names which reds need it), and the node guards and browser cells of the retired mouseout's rule
+and the retired blur's rule stand as the allowlist refusing their orders: in Firefox, after the viewer's own tap whose
+compatibility events another document's element took and which started in the viewer, the element first hit at the
+compatibility mousedown or a mouse resting in the viewer, the viewer's window hears a mouseout to no element, and a tap on that
+element over the control, which goes away during the press, took that tap's slot and opened the tab with the sign covered at its
+start, red at ddb446fae (the file review's round 19, extra8-2), which the allowlist refuses by that mouseout in the tap's chain,
+the mouseout Firefox sends 20 to 35 ms after the viewer's own tap's click falling in no chain a click reads; and the blur guard's
+rows of a mouse's and a pen's held press and of Firefox's and WebKit's tap, red at d61eb027d, are red under M-OFF, its row of an
+element's blur with no focus after it now extra5-1's closure with the focus not back and a cost, and its rows of a blur between a
+mouse click's pointerup and its click and of a finger held while the focus moves costs of the allowlist (below);
+the own-chain allowlist (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions
+on them): the chain listener, one function on each of its twenty-one types, starts a chain at every primary pointerdown and
+records every later event of those types as a token, its type, for a pointer event its pointer type and whether a button is
+down, for an over or an out whether its relatedTarget is an element or none, for a blur or a focus whether its target is the
+window, the document or an element, for a mousedown its button and for a mouseup its button and its detail capped at 2, a token
+equal to the one before it dropped and, in a run of moves, a token the run already holds, a chain that reaches 1,024 tokens
+refusing its click; nothing else is read, no other event type (a keydown, which the gate's own listener hears, is admitted
+anywhere in a chain; no focusin, focusout, pointer capture, wheel or scroll) and no coordinate, pressure, size or time; and a
+click takes the slot only where the grammar the execution check of that round wrote and the coordinator ruled admits the chain
+under the slot's pointer type: a mouse's or a pen's press is its pointerdown with a button down, the focus arriving (a focus of
+the document, the window or an element, or an element's blur that an element's focus follows), its mousedown of the left button,
+then only its own moves and its boundary events to an element with the button down (a pen's also the mouse-typed ones Chromium
+sends) and the focus arriving, then its pointerup and a mouseup of detail 1 or 2; a tap by a finger, or by a pen in the touch
+order, is its pointerdown, a touchstart where one comes, its own moves and boundary events to an element with the contact down (a
+finger's also the focus arriving and the mouse's pointerout, pointerover, mouseout and mouseover to no element with no button
+down), its pointerup, its own pointerouts and pointerleaves to no element and a touchend where they come, at most one
+compatibility boundary pair (a mouseout and a mouseover to elements, or a mouseover from no element), one or more mousemoves with
+no button down, the mousedown, the focus arriving and a mouseup of detail 1, or of 1 or 2 for a finger's; anywhere an element's
+blur that no element's focus follows before the next pointerup or mouseup is refused, and every other chain is refused by
+construction, a mouse event with no button down inside a press, a mouse-typed pointer event inside a tap but those four of a
+finger's, a tap with no compatibility mousemove, a window's blur, a drag, a context menu, an auxclick, a cancel, a second
+pointerdown, a boundary event to no element with the button down and any sign the grammar does not name, each such click opening
+nothing and revealing the control, the next click opening; the residual, the covered clicks whose chain the allowlist admits,
+two shapes of the class. First, an element of another same-origin document shown over the picture during the viewer's tap takes
+that tap's compatibility events and click, and a tap on that element, which goes away during the press, then reaches the viewer
+as that tap's compatibility events, a mouseup of detail 1 and a click and takes the slot the viewer's tap filled, where the chain
+from the viewer's tap's pointerdown to that click is one the viewer's own tap makes, and the tab opens with the sign covered at
+that tap's start: over the round's recorded rows replayed through the gate (the execution check's replay, equal to the browser
+in each product it built), 69 covered clicks in Firefox, where that element is laid out and hidden with a layout flush before
+the tap's compatibility mousemove, 33 with the own tap's chain and 36 with a compatibility mouseover from no element and the
+focus arriving, 255 in WebKit, 167 with the own tap's chain and 88 with the focus arriving, 38 of them with that mouseover, and
+none in Chromium, whose foreign click carries its own touch's pointerId, each measured shape's chain a measured own gesture's,
+the 74 with that mouseover and the focus arriving carrying the chain of the viewer's own tap on the picture with the mouse last
+outside the viewer and the focus in a nested frame, the other pane or the top page (the execution check's census; the
+coordinator's decision 10); the allowlist refuses of that shape Firefox's tap whose element hid with no layout flush before its
+compatibility mousemove, which Firefox hit-tests against the layout from before the hide and sends to the hidden element, so the
+viewer's window hears a compatibility mousedown with no mousemove (extra5-2, 42 covered clicks open at bef9ff8fc; whether a
+finger's tap on a real Firefox touchscreen leaves the hide unflushed is unmeasured), WebKit's delayed hover update after a scroll
+under a resting mouse, the mouse's pointerout, pointerover and pointermove with no button down inside the tap (extra6-1, 81),
+and what the retired rules of the file review's round 19 refused, Firefox's mouseout to no element where the tap's compatibility
+events start in the viewer and the blur of the viewer's window where it held the focus and the element takes the tap's
+mousedown without cancelling it; the earlier measurements stand as they were taken, the closing check at 142ade155 measuring the
+class's element shapes its probe drove in the dashboard's shape, Firefox 16 of 16 in the shape the retired mouseout's rule
+closed, the element first hit at the compatibility mousedown, WebKit 7 of 7 and Chromium 0 of 36 under a candidate of this gate
+with the slot's pointerId test, the same probe under the gate at ddb446fae reading Firefox 16 of 16, WebKit 7 of 7 and
+Chromium 0 of 51 and every other order of the class it drives opening nothing, a probe of the file review's round 19 under
+bef9ff8fc's rules but the blur's reading, on the Files pane and the chat, Firefox's shapes whose compatibility events start in
+the viewer 0 of 48 (48 of 48 under the gate at ddb446fae) and its laid-out shape with no mouse in the viewer 12 of 12 with the
+element hidden at the covered tap's pointerup (0 of 12 hidden at its pointerdown), WebKit 24 of 24 covered opens with an element
+listening for no mouse event and Chromium 0 of 16, and a measurement of the blur's rule in that round reading, with the viewer's
+window focused, Firefox's laid-out shape 0 of 36 with an element that cancels no mousedown, where 36 of 36 opened without that
+rule, and 12 of 12 at both with one that cancels it, WebKit's shapes shown at the pointerup 0 of 56 with an element that listens
+for click or mousedown, where 56 of 56 opened without it, and 24 of 24 at both with one that listens for no mouse event and with
+one that cancels its mousedown, Chromium 0 of 36 at both, and nothing changing with the viewer's window unfocused (Firefox 12 of
+12, WebKit 52 of 52), the laid-out shape by reading the one a finger's tap on a touch-only device produces for an element added
+at the tap's pointerdown, since a finger's press lasts longer than a frame. A check of these fixes found two more orders of the
+class outside the residual, open at 142ade155, at 1a6470e72 and at 09f58bec6: in WebKit the mouse held on the control or on the
+picture, or in Firefox the mouse pressed on the control and released over another pane, then a tap on another document's element
+over the control that hides at that tap's compatibility mousedown, heard as a mouseup of detail 1 and a click alone, whose click
+read the mouse's record, WebKit 22 of 22 and Firefox 7 of 7, a mouseup with no pointerup since that record's pointerdown telling
+it from the mouse's own click, closed by the refusal of a record still standing at a click (under this gate WebKit 0 of 22 and
+Firefox 0 of 7, the next click opening), and in Firefox, after that release, a mouse click on such an element, whose pointerup
+handed the mouse's record to the slot and opened, 10 of 10 and 10 of 10 again at 343ee2eb5, refused by the allowlist, since the
+pointerout with no relatedTarget and a button down that Firefox sent the viewer's window as the press left its frame lands in the
+press's chain (the retired held arm refused it by marking the record, 0 of 10 at bef9ff8fc; its browser cells in Firefox and a
+node guard, red at 343ee2eb5 and at 09f58bec6), Chromium opening neither; and a later check found a third, open in WebKit and in
+one shape in Chromium in the timings measured under bef9ff8fc's rules but the blur's and, in WebKit, at 142ade155, at 09f58bec6
+and at 343ee2eb5: the mouse pressed on the control, any button, and held while the top page hides the viewer's frame and shows it
+again, then a mouse click on another document's element over the control that hides at that click's mousedown or its
+pointerdown, whose pointerup under pointerId 1 hands the held press's record to the slot and whose click takes it, in Chromium a
+pen's press and click in the same order (CDP) too, as measured before the allowlist WebKit, which sends no pointerout there,
+opening it at every timing under bef9ff8fc's rules but the blur's, 3,700 of 3,700 in a later probe of these fixes and 60 of 60
 in that check's probe, and under the blur's rule 0 of 3,700 with the viewer's window focused and an element that does not cancel
-its mousedown, 3,700 of 3,700 with one that does and 72 of 72 with the viewer's window unfocused, Chromium, which
-after such a release sends the mouse's pointerout with no button down when a redraw finds the frame hidden after the release or
-when a redraw or a pointer move comes between the element's appearing under the pointer and the click, refusing it under this
-gate's leave rule (in the later probe the gate at ddb446fae opened 1,526 of 3,700, and a probe of the file review's round 19
-under this gate's rules but the blur's 0 of 3,700; its extra5-1 and extra8-1) but, in the timings measured, in its still shape,
-runs of several
-short hides with the pointer still not measured under these rules, the frame shown again before any redraw
-finds it hidden, the pointer still and the click in the frame the element appeared, with the frame shown at the release, under
-the gate without the blur's rule, 85 of 225 still clicks of a mouse, each with the release within 12 ms of the hide, and 64 of
-180 of a pen, and none with the frame shown 300 ms later, with a redraw between the element's appearing and the click, or with a
-moved click, the blur's rule closing that shape where the viewer's window held the focus and the element does not cancel that
-click's mousedown (0 of 225 where 72 of 225 opened without it, a pen's 0 of 30 where 18 of 30 opened, and 78 of 225 at both with
-an element that cancels it, 9 of 36 at both with one that cancels its pointerdown and 15 of 72 at both with the viewer's window
-unfocused), and Firefox never, 0 of 2,600 on the Files
-pane and the chat, no input or focus event the gate listens to coming between that press and that click where the element
-cancels that click's mousedown and the pointer stays still, or where the viewer's window did not hold the focus or the focus sat
-inside a nested frame of the viewer's own document (WebKit 3 of 3 in a check of that measurement), so no input or focus event
-the viewer hears telling it from the viewer's own there, the one sign outside those events an intersection observer's report of
-the control leaving the viewport and coming back (in Chromium's still shape before the covered pointerup in 28 of the 85 opens),
-not read by the gate; and in the residual by reading a second finger resting on another
-document
-during the viewer's tap and a tap whose click the engine withholds, in Firefox and WebKit, and a foreign tap by the same pen under
-the same pointerId; reaching it needs an element that appears over the picture during a tap, and where the viewer's window held
+its mousedown, 3,700 of 3,700 with one that does and 72 of 72 with the viewer's window unfocused, Chromium, which after such a
+release sends the mouse's pointerout with no button down when a redraw finds the frame hidden after the release or when a redraw
+or a pointer move comes between the element's appearing under the pointer and the click, refusing it under the retired leave's
+arm for no button (in the later probe the gate at ddb446fae opened 1,526 of 3,700, and a probe of the file review's round 19
+under bef9ff8fc's rules but the blur's 0 of 3,700; its extra5-1 and extra8-1) but, in the timings measured, in its still shape,
+runs of several short hides with the pointer still not measured under those rules, the frame shown again before any redraw finds
+it hidden, the pointer still and the click in the frame the element appeared, with the frame shown at the release, under the
+gate without the blur's rule, 85 of 225 still clicks of a mouse, each with the release within 12 ms of the hide, and 64 of 180 of
+a pen, and none with the frame shown 300 ms later, with a redraw between the element's appearing and the click, or with a moved
+click, the blur's rule closing that shape where the viewer's window held the focus and the element does not cancel that click's
+mousedown (0 of 225 where 72 of 225 opened without it, a pen's 0 of 30 where 18 of 30 opened, and 78 of 225 at both with an
+element that cancels it, 9 of 36 at both with one that cancels its pointerdown and 15 of 72 at both with the viewer's window
+unfocused), and Firefox never, 0 of 2,600 on the Files pane and the chat. Second, the residual's other shape, what is left of
+that third order under the allowlist over the round's rows: WebKit's still pointer, 679, whose chain is the viewer's own click's;
+Chromium's still pointer, 286 of a mouse and 15 of a pen; and Chromium's still pointer with the focus fixup's element blur and the
+focus back before the covered pointerup, 119, whose chain two own gestures make, the viewer's own press held while the top page
+hides and shows the frame (the fixup's blur, then retakeAfterHide's focus) and a plain click on the picture while a text input of
+the viewer's document holds the focus (the input's blur, the focus moving on), admitted by the coordinator's decision 2; the
+pointer staying still from the press through the click, and, where the viewer's window held the focus, the element cancelling
+that click's mousedown or the focus sitting inside a nested frame of the viewer's own document, since otherwise the window's blur
+lands in the chain; there the tab opens with the sign covered at the other document's click; the allowlist refuses of
+it, each open at bef9ff8fc, WebKit's moved click, a mouse's pointermove with no button down inside the held press or, after a held
+move, a pointerout with no button down to an element and its pointerover (extra7-1, 2,536 covered clicks), Chromium's focus
+fixup's element blur with the focus not back at the covered pointerup (extra5-1, 43 of a mouse and 9 of a pen), and a pen's press
+with the mouse's pointerout with no button down to an element (44); the one sign outside the allowlist's events there an
+intersection observer's report of the control leaving the viewport and coming back (in Chromium's still shape before the covered
+pointerup in 28 of the 85 opens of a mouse measured under bef9ff8fc's rules but the blur's), not read by the gate. So the
+residual in all, over the round's rows: Chromium 420, Firefox 69, WebKit 934. In the residual by reading: a second finger resting
+on another document during the viewer's tap and a tap whose click the engine withholds, in Firefox and WebKit, a foreign tap by the
+same pen under the same pointerId, and WebKit's hover update landing inside a finger's slow tap; reaching it needs an element that appears over the picture during a tap, and where the viewer's window held
 the focus a cover that cancels its mousedown and appears over the picture during a tap, while the elements of the dashboard's top
 page that cancel a press are the pane gutters, which cancel their mousedown and sit between the panes, never over one, and the
 update banner's drag handle, which cancels its pointerdown, a cover that opened nothing in WebKit in the third order's
@@ -8896,20 +8921,22 @@ click that finds a record still standing under its own pointerId is refused, whi
 drive leaves (no cell of either leg changed with that refusal); the measured costs, each a refusal once that reveals the
 control, the next click opening: that refusal's in WebKit, a left click chorded into a held right press, whose pointerup WebKit
 holds until the last button's release, refused whatever covers or shows the control, a cost measured in the road probe, 12 of
-12, where 09f58bec6's gate opened all 12, Firefox and Chromium opening on that chord at neither head; the refusal of a mouse's or
-a pen's record whose pointer left the viewer's window with a button down costs one class of press, a press whose pointer left the
-viewer's window with a button down, by the events the viewer heard, refused once and revealing the control, the next click
-opening: its first cost, in Firefox,
+12, where 09f58bec6's gate opened all 12, Firefox and Chromium opening on that chord at neither head; a press whose pointer left
+the viewer's window with a button down, by the events the viewer heard, refused once and revealing the control, the next click
+opening, the retired held arm's cost, which the allowlist pays the same by that pointerout in the press's chain, measured under
+the held arm: its first cost, in Firefox,
 the viewer's own press on the control dragged out of its frame, into another pane or onto the top page, and brought back and
 released on the control, 8 of 8 in a probe of these fixes, where
 343ee2eb5's gate opened all 8 (its cost cell), while Chromium and WebKit, which keep a held left press in the frame it began in,
 open it, no other gesture of that probe that never leaves the frame changing in any of the three engines, a press held while an
 element of the top page covered its point and went away among them, and its second cost, in Chromium, found by a later check and
 with no cell, a press on the control or the picture held while the top page hides the viewer's frame and shows it again, then
-released there, refused only when the frame's next redraw came while it was hidden, since only such a redraw brings that
-pointerout with the button down, and opened otherwise, 168 of 168 such presses refused and none of the 232 others in a later probe
-of these fixes that stamped that redraw, and all 11 of that check's own probe refused, where 343ee2eb5's gate opened all 11; and
-the leave's arm for no button and the mouseout's clear, two rules of the file review's round 19, cost nothing measured, the
+released there, refused under the held arm only when the frame's next redraw came while it was hidden, since only such a redraw
+brings that pointerout with the button down, and opened otherwise, 168 of 168 such presses refused and none of the 232 others in a
+later probe of these fixes that stamped that redraw, and all 11 of that check's own probe refused, where 343ee2eb5's gate opened
+all 11, the allowlist refusing those by the same pointerout and some of the others by the focus fixup's blur with the focus not
+back, its own cost below; the retired leave's arm for no button and mouseout's clear, two rules of the file review's round 19,
+cost nothing measured, the
 leave's arm for no button newly refusing none of the
 viewer's own presses held on the control while the top page hid the frame and showed it again (Chromium 238 of 550 and 236 of
 400 opened, the rest refused by the leave's first arm, and a pen's press held so 72 of 150, each as at ddb446fae), no cell of a
@@ -8919,20 +8946,22 @@ viewer's window, on a device with both, refused once by reading, and the mouseou
 own taps (Firefox 84 of 84, WebKit 36 of 36, Chromium 16 of 16), of two taps 0 to 150 ms apart or of a tap as the mouse moves
 out of the viewer (18 of 18), a tap whose compatibility mousedown went to another document sending that document its click too,
 by reading, so the viewer's own click never follows such a mouseout, and no tap or chain cell of either leg changing under the
-two; the blur's rule costs one class of press, a focus move out of the viewer's window during the viewer's own press, or between
-a tap's pointerup and its compatibility mousedown, refusing that press once, visibly, the next click opening, whatever moves the
+two; the retired blur's rule cost one class of press, which the allowlist pays the same, a focus move out of the viewer's window
+during the viewer's own press, or between a tap's pointerup and its compatibility mousedown, refusing that press once, visibly,
+the next click opening, whatever moves the
 focus, the page, a peer frame, a nested frame of the viewer's own document, another tab brought to the front (in Firefox, which
 sends the framed document that blur) or a modal dialog the page opens (a measurement of that round and a check of it: a mouse
 press held while the page or a peer frame moves the focus refused in Chromium 18 of 18, Firefox 14 of 14 and WebKit 18 of 18 for
 each mover, a pen's press so in Chromium 14 of 14, the focus moved at a mouse click's own pointerdown and at a tap's pointerup
 18 of 18, 14 of 14 and 18 of 18 each, and the nested frame, the tab and the dialog in the check), while a finger held while the
-focus moves (Chromium 0 of 14 refused), the focus moved at a mouse click's pointerup (0 of 18, 0 of 14, 0 of 18), the first own
+focus moves (Chromium 0 of 14 refused) and the focus moved at a mouse click's pointerup (0 of 18, 0 of 14, 0 of 18), which that
+rule refused none of, the allowlist refuses, since it admits a blur of the window nowhere, costs of it below, and the first own
 click after a focus move (0 of the 141 that followed a real blur), the first own tap (0 of 132) and the cells with no focus move
 (0 of 164) changed nothing, Firefox's blur after the viewer's own open, the opened tab taking the focus after that open's click,
 counted apart and refusing nothing, Firefox's phone rows left out since Playwright's Firefox mouse click under isMobile opened
 nothing there under either gate, the closed direction adding no open (a search from this gate without the rule to it closed at
 depth 13, and one from the gate at ddb446fae, a literal enumeration and 60,000,000 random walks found none, each seeing the
-opens of a gate whose blur marks the records accepted), and the viewer's window holding the focus the rule needs after a click
+opens of a gate whose blur marks the records accepted), and the viewer's window holding the focus that blur needs after a click
 or a tap in its text, its picture or a field of its own document, after the open's landing and, in Chromium and WebKit, after
 another tab comes to the front and back, never from a press on the web control, whose mousedown the viewer cancels; the primary
 press's clear's cost on a device with a
@@ -8949,10 +8978,22 @@ other pressed before it or during it, opens nothing and reveals the control, and
 28 of 28, WebKit 12 of 12 and its chord of a left click into a held right press 4 of 4), since one of the two presses sends its
 mousedown with no pointerdown before it, which ends every record and empties the slot, and where the left's release is held
 past its click the refusal of a standing record refuses it as well, WebKit's chord of a left click into a held right press the
-one member that refusal added (the file review's round 19, extra7-1); the file review's round 17, tests-1 with regression-1, its round 18,
-extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them, the closing check after those fixes, the
-closing check at 142ade155 after the fixes for the file review's round 18, and the file review's round 19, extra5-1, extra8-1
-and extra8-2, with the coordinator's decisions on them);
+one member that refusal added (the file review's round 19, extra7-1); and the own-chain allowlist's costs, measured (the file
+review's round 20: the rulings pass's census and the execution check's, Playwright's engines on Linux, touch emulated), each a
+refusal once that reveals the control, the next click opening: the viewer's own press held across a short hide of its frame with
+the focus not back at the release, released within about 10 ms of the show with the body box focused or held on the control
+while the viewer's own input holds the focus (Chromium, 60 of 360 mouse presses and 36 of 72 pen presses of the check's grid),
+whose chain is extra5-1's with the focus not back; a 2,000 px block inserted above the picture during a held press and removed
+(WebKit, 3 of 3), whose chain carries the mouse's boundary events with no button down; and, refused where bef9ff8fc's gate opened
+them, the focus moved between a mouse click's pointerup and its click (Chromium 18, Firefox 14, WebKit 18) and a finger held
+while the focus moves (Chromium 14), since the allowlist admits a blur of the window nowhere; and by reading, not measured,
+WebKit's hover update landing inside a finger's slow tap after the content moved under a resting mouse, an eraser or a barrel
+button, a capture handler that moves the focus at a press in a way no census drove, a touch-order pen's double tap's second tap,
+a press whose chain passes the cap of 1,024 tokens and any event of an engine not measured (the file review's round 17, tests-1
+with regression-1, its round 18, extra5-1, extra5-2 and correctness-1, with the coordinator's decisions on them, the closing
+check after those fixes, the closing check at 142ade155 after the fixes for the file review's round 18, the file review's round
+19, extra5-1, extra8-1 and extra8-2, and its round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's
+decisions on them);
 a refused gesture opens nothing and scrolls the sign into view (`revealSign`, block and inline "nearest", the same-origin frames and
 a pinch zoom's visual viewport included), moving no focus, so the next gesture opens; where the reveal cannot put the sign on the
 screen the gate stays closed, stated limits measured in Chromium: the chat page's modal framed by the dashboard under a pinch zoom of
@@ -9321,15 +9362,20 @@ hybrid page, WebKit's touch whose pointerup the viewer never heard and its cost 
 another document's tap after the viewer's tap whose mouseup of detail 0 ended its chain, and another document's tap after a mouse's
 press whose pointerup the viewer never heard, each in Firefox on the hybrid page and in WebKit on a phone's pages and the hybrid
 page, and another document's mouse click after a mouse's press whose pointer left the viewer's frame with the button down, with the
-cost cell of the viewer's own press dragged out of its frame and back, in Firefox on the hybrid page, the first cost of the refusal
-of a record whose pointer left the viewer's window with a button down, which refuses such a press once and reveals the control,
-the next click opening, and that refusal's second cost, a press held in Chromium while the top page hides the viewer's frame and
-shows it again, then released there, refused only when the frame's next redraw came while it was hidden, having no cell, and,
+cost cell of the viewer's own press dragged out of its frame and back, in Firefox on the hybrid page, the first cost of refusing
+a press whose pointer left the viewer's window with a button down, once, revealing the control, the next click opening, the
+retired held arm's cost and the allowlist's the same, and the second, a press held in Chromium while the top page hides the
+viewer's frame and shows it again, then released there, refused when the frame's next redraw came while it was hidden, having no
+cell, and,
 since the fixes for the file review's round 19 (extra8-2), Firefox's tap whose compatibility events went to another document,
 the element first hit at the compatibility mousedown or a mouse resting in the viewer, on the hybrid page (the Chromium leg runs
 the same module's cells of another document's tap whose click carries another touch's pointerId, and, since those fixes'
 extra5-1 and extra8-1, its cells of a press released where the viewer did not hear it while the top page hid the frame, a
-mouse's moved click and a pen's still click, on the hybrid page's Files pane),
+mouse's moved click and a pen's still click, on the hybrid page's Files pane), and, since the fixes for the file review's round 20
+(extra5-1, extra5-2, extra6-1 and extra7-1), the own-chain allowlist's cells on the hybrid page's Files pane, WebKit's moved click
+under an element that cancels its mousedown and its held-move form, WebKit's hover update and Firefox's unflushed hide, each
+covered click refused in each of three runs and opened in every run at bef9ff8fc (the Chromium leg runs the same module's cell of
+extra5-1's still shape with the focus not back),
 each engine launched through real-viewer-leg.ts's inBrowser with the engine named; the cells are ui/webview/file-figure-open-taps.ts's,
 a module of the cells alone that the Chromium leg runs too, so one set reads all three engines; and two cases of WebKit's alone that read window errors, the Files
 pane's as its Comments aside opens beside a document of top-level tables, and the chat modal's, the Files pane's and the feed

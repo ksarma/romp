@@ -3413,9 +3413,10 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // two-finger touch on the picture with the control shown, and with the control above the top page's window at the tap's start; red at
 // 0f998a3b9 after the right click, the middle click and the two-finger touch, whose gate left the slot alone at the tap's mousedown,
 // so its click took the slot that pointerup had filled, the reads a private witness kept out of the tree.
-// The chain rule's cells (the closing check at 142ade155 after the fixes for the file review's round 18), the gate keyed on
-// thirteen events of the window's capture phase (pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown, dragstart,
-// touchend, touchcancel, pointerout, mouseout, blur and click), on the hybrid page in the dashboard's shape with the viewer's
+// The chain rule's cells (the closing check at 142ade155 after the fixes for the file review's round 18), the gate's own
+// listeners hearing ten events of the window's capture phase (pointerdown, mousedown, mouseup, pointerup, pointercancel, keydown,
+// dragstart, touchend, touchcancel and click) and its chain listener twenty-one, twenty-three types in all (file-figure-open-taps.ts
+// names them; the file review's round 20), on the hybrid page in the dashboard's shape with the viewer's
 // frame beside another pane's frame over a bar of the top page: Chromium gives each touch a pointerId of its own, and after the
 // viewer's own tap on the picture filled the slot and sent no click to the viewer, with a second finger resting on the top
 // page's bar or in the other pane (CDP touch; Chromium sends no click after a two-finger touch), with an element of the top
@@ -3423,54 +3424,63 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // document's tap sends the viewer its compatibility mousedown, mouseup and click under its own touch's pointerId: it opens
 // nothing and the next click opens once, red at 142ade155 and, on the chat and the Files pane, under a gate without the slot's
 // pointerId test (a click typed as the slot's pointerup was must carry that pointerup's pointerId), the second finger's cells
-// under that gate alone and the element's under one without that test, the mouseout listener and the blur's rule, since at this
-// head Chromium sends the viewer a mouseout to no element in the element's shapes and the element takes the focus where the
-// viewer's window held it, so the mouseout's rule and the blur's rule close them too, the reads a private witness kept out of
-// the tree. In WebKit, and in Firefox where the element is laid out before the tap's compatibility mousemove and no
-// mouse rests in the viewer, whose clicks carry the fields of the viewer's own tap's and whose input events here are that
-// tap's, the element's shapes are the residual where no blur of the viewer's window comes while the tap's compatibility
-// mousedown is due (the element cancels that mousedown, the viewer's window did not hold the focus, the focus sat in a nested
-// frame of the viewer's own document, or, in WebKit, the element listens for no mouse event), and the second finger's by
-// reading (the closing check at 142ade155 measured the class's element shapes its probe drove, opening in Firefox 16 of 16
-// times in the shape the mouseout's rule now closes, the element first hit at the compatibility mousedown, and in WebKit 7 of
-// 7, the residual), while in Chromium it opened 0 of 36 times in that check's measurements under a candidate of this gate with
-// the slot's pointerId test, and 0 of 51 under the gate at ddb446fae in the same probe; where the tap's compatibility events
-// start in the viewer, Firefox sends the viewer a mouseout to no element and the gate empties the slot (the file review's round
-// 19, extra8-2; the engines leg's cells of it), where the viewer's window held the focus and the element takes the tap's
-// mousedown without cancelling it the gate's blur rule empties it (the same round's extra5-1, extra8-1 and extra8-2, measured
-// in a probe kept out of the tree, file-view.ts's gate comment stating the figures), and a probe of that round under this
-// gate's rules but the blur's read Firefox's laid-out shape with no mouse in the viewer 12 of 12 with the element hidden at the
-// covered tap's pointerup (0 of 12 hidden at its pointerdown) and the shapes whose compatibility events start in the viewer 0
-// of 48, WebKit 24 of 24 with an element listening for no mouse event and Chromium 0 of 16; whether to accept the residual is
-// the owner's decision. Two more orders of the class outside the residual, found by a check of these fixes, opened in Firefox
-// and WebKit and not in Chromium, at 142ade155, at 1a6470e72 and at 09f58bec6: the first, a mouse's press whose pointerup the
-// viewer never heard and then another document's tap, is closed by the gate's refusal of a record still standing at a click
-// (the engines leg's cells of it), and the second, in Firefox alone, by the gate's refusal of a mouse's or a pen's record whose
-// pointer left the viewer's window with a button down (the engines leg's cells of it; the gate comment and the engines leg
-// state them). That refusal costs one class of press: a press whose pointer left the viewer's window with a button down, by the
-// events the viewer heard, is refused once, its click opening nothing and revealing the control, and the next click opens once.
-// Its first cost, measured in Firefox, is a press dragged out of the frame and back (the engines leg's cost cell), and its
-// second, measured in Chromium, found by a later check and with no cell, a press on the control or the picture held while the
-// top page hides the viewer's frame and shows it again, then released there, refused only when the frame's next redraw came
-// while it was hidden, which alone brings that pointerout with the button down, and opened otherwise, 168 of 168 such presses
-// refused and none of the 232 others in a later probe of these fixes that stamped that redraw, and all 11 of that check's own
-// probe refused, where 343ee2eb5's gate opened all 11. The later check found a third order of the class outside the residual:
-// the mouse held on the control while the top page hides the viewer's frame and shows it again, then another document's mouse
-// click on an element over the control that hides at that click's press, open in WebKit and in one shape in Chromium in the
-// timings measured under this gate's rules but the blur's, which closes it where the viewer's window held the focus and the
-// element takes that click's mousedown without cancelling it, what is left for the owner (the gate comment states it), WebKit
-// opening it at every timing without the blur's rule, 3,700 of 3,700 in a later probe of these fixes, and 0 of 3,700 under it
-// where the viewer's window held the focus and the element does not cancel its mousedown, Chromium 1,526 of 3,700 in that probe
-// under the gate at ddb446fae and 0 of 3,700 under this gate's rules but the blur's, its moved-click and redraw shapes refused
-// by the leave's arm for no button (the frame-hide cells below), and opening it, in the timings measured, only in its still
-// shape, 85 of 225 still clicks of a mouse and 64 of 180 of a pen with the frame shown at the release under the gate without
-// the blur's rule, with no cell, the blur's rule closing that shape where the viewer's window held the focus and the element
-// does not cancel its mousedown, runs of several short hides with the pointer still not measured under these rules, and Firefox
-// never, 0 of 2,600 on the Files pane and the chat. The shape whose compatibility mousedown alone the element takes is not in
-// the residual: there Firefox and WebKit send the viewer that tap's mouseup of detail 0, and a mouseup other than a primary one
-// of detail above 0 empties the slot and clears the tap's flag (the engines leg's cells of it), while Chromium sends the viewer
-// no mouseup and its cell above is closed by the slot's pointerId test, the mouseout's rule and the blur's rule alike. The
-// gate's cost measured in WebKit, the same at 142ade155:
+// under that gate alone and the element's under one without that test, the mouseout listener and the blur's rule, since
+// Chromium sends the viewer a mouseout to no element in the element's shapes and the element takes the focus where the
+// viewer's window held it, so the mouseout's rule and the blur's rule closed them too, as bef9ff8fc measured them, before the
+// file review's round 20 retired those two rules for the own-chain allowlist, which refuses those chains by the same mouseout
+// and blur; the reads a private witness kept out of the tree. The residual, the covered clicks whose chain the own-chain
+// allowlist admits (the file review's round 20; the gate comment and the engines leg state it with its figures): in WebKit and
+// in Firefox, the element's shapes where the element is laid out and hidden with a layout flush before the tap's compatibility
+// mousemove and the chain from the viewer's tap's pointerdown to the foreign click is one the viewer's own tap makes, so the
+// tab opens with the control covered at that tap's start, over the round's recorded rows Firefox 69 and WebKit 255, each
+// measured shape's chain a measured own gesture's, the 74 with a compatibility mouseover from no element and the focus arriving
+// carrying the chain of the viewer's own tap with the mouse last outside the viewer and the focus elsewhere (the coordinator's
+// decision 10); the second finger's by reading; and in Chromium none, the foreign tap's click carrying its own touch's pointerId
+// (the closing check at 142ade155 measured the class's element shapes its probe drove, opening in Firefox 16 of 16 times in
+// the shape the retired mouseout's rule closed, the element first hit at the compatibility mousedown, and in WebKit 7 of 7,
+// while in Chromium it opened 0 of 36 times under a candidate of this gate with the slot's pointerId test, and 0 of 51 under
+// the gate at ddb446fae in the same probe). The allowlist refuses of the class Firefox's unflushed hide, a compatibility
+// mousedown with no mousemove (extra5-2, 42 covered clicks open at bef9ff8fc), WebKit's delayed hover update after a scroll
+// under a resting mouse (extra6-1, 81), and what the retired rules of the file review's round 19 refused, Firefox's mouseout to
+// no element where the tap's compatibility events start in the viewer (the engines leg's cells of it) and the blur of the
+// viewer's window where it held the focus and the element takes the tap's mousedown without cancelling it (a probe of that
+// round under bef9ff8fc's rules but the blur's read Firefox's laid-out shape with no mouse in the viewer 12 of 12 with the
+// element hidden at the covered tap's pointerup, 0 of 12 hidden at its pointerdown, and the shapes whose compatibility events
+// start in the viewer 0 of 48, WebKit 24 of 24 with an element listening for no mouse event and Chromium 0 of 16); whether to
+// accept the residual is the owner's decision. Two more orders of the class outside the residual, found by a check of these
+// fixes, opened in Firefox and WebKit and not in Chromium, at 142ade155, at 1a6470e72 and at 09f58bec6: the first, a mouse's
+// press whose pointerup the viewer never heard and then another document's tap, is closed by the gate's refusal of a record
+// still standing at a click (the engines leg's cells of it), and the second, in Firefox alone, is refused by the allowlist,
+// the pointerout with a button down that Firefox sends as the press leaves the viewer's frame landing in the press's chain,
+// which the retired held arm refused by marking the record (the engines leg's cells of it; the gate comment and the engines
+// leg state them). A press whose pointer left the viewer's window with a button down, by the events the viewer heard, is
+// refused once so, its click opening nothing and revealing the control, and the next click opens once, the retired held arm's
+// cost, which the allowlist pays the same: its first cost, measured in Firefox, is a press dragged out of the frame and back
+// (the engines leg's cost cell), and its second, measured in Chromium under the held arm, found by a later check and with no
+// cell, a press on the control or the picture held while the top page hides the viewer's frame and shows it again, then
+// released there, refused when the frame's next redraw came while it was hidden, which alone brings that pointerout with the
+// button down, 168 of 168 such presses refused and none of the 232 others in a later probe of these fixes that stamped that
+// redraw, and all 11 of that check's own probe refused, where 343ee2eb5's gate opened all 11. The later check found a third
+// order of the class outside the residual: the mouse held on the control while the top page hides the viewer's frame and shows
+// it again, then another document's mouse click on an element over the control that hides at that click's press, open in
+// WebKit and in one shape in Chromium in the timings measured under bef9ff8fc's rules but the blur's, WebKit opening it at every
+// timing without the blur's rule, 3,700 of 3,700 in a later probe of these fixes, and 0 of 3,700 under it where the viewer's
+// window held the focus and the element does not cancel its mousedown, Chromium 1,526 of 3,700 in that probe under the gate at
+// ddb446fae and 0 of 3,700 under bef9ff8fc's rules but the blur's, its moved-click and redraw shapes refused by the retired
+// leave's arm for no button (the frame-hide cells below), and opening it, in the timings measured, only in its still shape, 85
+// of 225 still clicks of a mouse and 64 of 180 of a pen with the frame shown at the release under the gate without the blur's
+// rule, runs of several short hides with the pointer still not measured under those rules, and Firefox never, 0 of 2,600 on the
+// Files pane and the chat. Under the allowlist (the round's replay), what is left of that order is WebKit's still pointer, 679,
+// Chromium's still pointer, 286 of a mouse and 15 of a pen, and Chromium's still pointer with the focus fixup's element blur and
+// the focus back before the covered pointerup, 119, whose chain the viewer's own press held across the same hide makes, and so
+// does a plain click on the picture while a text input of the viewer holds the focus (the coordinator's decision 2), with no
+// cell; it refuses WebKit's moved click (extra7-1, 2,536 covered clicks), Chromium's focus fixup's element blur with the focus
+// not back (extra5-1, 43 of a mouse and 9 of a pen; the allowlist's cell below) and a pen's press with the mouse's pointerout
+// with no button down to an element (44). So the residual in all, over the round's rows: Chromium 420, Firefox 69, WebKit 934.
+// The shape whose compatibility mousedown alone the element takes is not in the residual: there Firefox and WebKit send the
+// viewer that tap's mouseup of detail 0, and a mouseup other than a primary one of detail above 0 empties the slot and clears
+// the tap's flag (the engines leg's cells of it), while Chromium sends the viewer no mouseup and its cell above is closed by the
+// slot's pointerId test and the allowlist alike. The gate's cost measured in WebKit, the same at 142ade155:
 // WebKit's tap whose pointerup another document's element takes, refused and revealing the control with the next tap opening
 // (the engines leg's cost cell). The chain rule's other costs, stated by reading, none measured, each a refusal that reveals
 // the control: a Firefox touchscreen whose tap's click carried another pointerId than its pointerup's, every tap refused there
@@ -3483,31 +3493,40 @@ for (const surface of ["chat", "pane"] as Surface[]) {
 // primary button, refused while Enter or Space on the control still opens, and so is a pointer's click after whose pointerup a
 // mouseup other than a primary one of detail above 0 came, an order none of the three engines measured sends before a click,
 // and a pointer's click that finds a record still standing under its own pointerId, which no gesture of the viewer's own that
-// the legs drive leaves. The measured costs, each a refusal once that reveals the control, the next click opening: the refusal
-// of a press whose pointer left, its two above; the refusal of a standing record's, in WebKit alone, a left click chorded into
+// the legs drive leaves. The measured costs, each a refusal once that reveals the control, the next click opening: a press
+// whose pointer left, its two above; the refusal of a standing record's, in WebKit alone, a left click chorded into
 // a held right press; the mousedown's clear's, in the three engines, a left click with another mouse button held, the other
 // pressed before it or during it (Chromium 16 of 16, Firefox 28 of 28, WebKit 12 of 12 and its chord of a left click into a
-// held right press 4 of 4; the file review's round 19, extra7-1); the leave's arm for no button and the mouseout's clear, two
-// rules of the file review's round 19, none measured, no cell of this leg changing under them; and the blur's rule, one class
-// of press, a focus move out of the viewer's window during the viewer's own press, or between a tap's pointerup and its
-// compatibility mousedown, whether the page, a peer frame, a nested frame of the viewer's own document, another tab brought to
-// the front or a modal dialog moves it, refused once, measured in a probe kept out of the tree, the other tab in Firefox
-// alone, no cell of this leg changing under it (file-view.ts's gate comment states each).
+// held right press 4 of 4; the file review's round 19, extra7-1); and the own-chain allowlist's (the file review's
+// round 20: the rulings pass's census and the execution check's, Playwright's engines on Linux, touch emulated), the viewer's own
+// press held across a short hide of its frame with the focus not back at the release (Chromium, 60 of 360 mouse presses and 36
+// of 72 pen presses of the check's grid), a 2,000 px block inserted above the picture during a held press and removed (WebKit, 3
+// of 3), and two own gestures of a focus move that round 19's measurement of the blur's rule drove, which bef9ff8fc's gate
+// opened, the focus moved between a mouse click's pointerup and its click (Chromium 18, Firefox 14, WebKit 18) and a finger held
+// while the focus moves (Chromium 14); the retired blur's rule's own cost, a focus move out of the viewer's window during the
+// viewer's own press or between a tap's pointerup and its compatibility mousedown, refused once, the allowlist pays the same,
+// and the retired leave's arm for no button and mouseout's clear cost nothing measured, no cell of this leg changing under them
+// (file-view.ts's gate comment states each).
 // The frame-hide cells (the file review's round 19, extra5-1 and extra8-1), on the hybrid page's Files pane in the same shape:
 // a press on the control held while the top page hides the viewer's frame, released at once on the top page, the frame shown
 // again at once or 300 ms later, then another document's click on an element over the control that hides at that click's
 // mousedown, the mouse's click moved onto the control or a pen's still click (CDP pen). Before that click Chromium sends the
-// viewer the mouse's pointerout with no relatedTarget and no button down, each cell's precondition, which the gate reads as a
-// release it did not hear, so the click opens nothing and reveals the control, and the next click opens once; red at ddb446fae,
-// whose gate read no pointerout with no button down, and under a gate without that arm and without the blur's rule, the pen's
-// cell also under one whose arm marks the mouse's records alone and that reads no blur, since the blur's rule refuses these
-// cells too, the viewer's window holding the focus in them and hearing a blur, both asserted (they read the same under a gate
-// without that arm alone and opened under one without both). Each shape runs again with an element that cancels that click's
-// mousedown, so the focus stays in the viewer and no blur comes (asserted): those three cells are red under a gate without that
-// arm alone, the pen's also under one whose arm marks the mouse's records alone. The reads are a private witness kept out of
-// the tree.
+// viewer the mouse's pointerout with no relatedTarget and no button down, each cell's precondition, which lands in the held
+// press's chain, so the allowlist refuses the click (the retired leave's arm for no button read it as a release it did not
+// hear), and it opens nothing and reveals the control, and the next click opens once; red at ddb446fae, whose gate read no
+// pointerout with no button down, and, as bef9ff8fc measured them, under a gate without that arm and without the blur's rule,
+// the pen's cell also under one whose arm marks the mouse's records alone and that reads no blur, since the blur's rule refused
+// these cells too, the viewer's window holding the focus in them and hearing a blur, both asserted (they read the same under a
+// gate without that arm alone and opened under one without both). Each shape runs again with an element that cancels that
+// click's mousedown, so the focus stays in the viewer and no blur comes (asserted): those three cells were red at bef9ff8fc under
+// a gate without that arm alone, the pen's also under one whose arm marks the mouse's records alone. The own-chain allowlist's
+// cell (file-figure-open-taps.ts allowlistCells; the file review's round 20, extra5-1), in the same shape, run three times:
+// extra5-1's still shape with the focus not back, a text input of the viewer focused, the frame hidden across a rendering
+// update so the focus fixup blurs the input, and a still click on an element over the control that cancels its mousedown, the
+// viewer hearing the input's blur and no focus after it, opens nothing and the next click opens once, the covered click opened
+// in every run at bef9ff8fc. The reads are a private witness kept out of the tree.
 for (const device of ["phone", "hybrid"] as TapCellDevice[]) for (const surface of ["chat", "pane"] as TapSurface[]) {
-  test("in Chromium on " + (device === "phone" ? "a phone's pages (hasTouch and isMobile at a device scale of 1, the kernel's viewport meta)" : "a hybrid page (hasTouch with a mouse)") + ", the " + (surface === "chat" ? "chat modal" : "Files pane") + ": the one gate's tap cells (the file review's round 17, tests-1 with regression-1; its round 18, extra5-2, with the coordinator's decisions" + (device === "hybrid" ? "; the closing check at 142ade155 after the fixes for the file review's round 18" : "") + (device === "hybrid" && surface === "pane" ? "; and the file review's round 19, extra5-1 and extra8-1, with the coordinator's decisions on them" : "") + "): a tap on a loaded remote picture with its control in view opens once, on its control once, on a remote picture that wears the mark once; with the control out of view the first tap opens nothing and reveals it and the next opens once; a double tap there opens nothing, its second click of detail 2; under the text-size flyout or the Outline popover a tap opens nothing and closes it and the next opens once; " + (device === "hybrid" ? "after a right press of the mouse, or a mouse drag of the picture, with the control shown, then the flyout over the control, a tap opens nothing and the next opens once; on this page and on a plain page, after a mouse drag of the picture with the control shown, then the flyout or the Outline popover over the control, a click of the mouse on the picture opens nothing and the next opens once, and after a drag a click of the mouse on the same picture or on another, its control shown and uncovered, opens once; after a right click on the picture or a press on the control released beside the picture, with the control shown, then a drag in another pane, then the flyout over the control, opened by a script's click or by Enter on its button, a click of the mouse on the picture opens nothing and the next opens once, and with no cover the first click opens once; on this page, a finger held on the picture, the mouse's click beside it, the finger lifted, then the mouse's press on the picture with the control out of view or under the flyout, a finger's swipe while it is held, and the release opens nothing, and so does each of those presses with no finger before it; in the dashboard's shape, a tap on another document's element over the control, gone at its pointerup, opens nothing and the next click opens once, after nothing, after a right or a middle click or a two-finger touch on the picture with the control shown, and with the control above the top page's window at the tap's start; in the dashboard's shape beside another pane, another document's tap whose click carries another touch's pointerId, after the viewer's own tap with a second finger resting on the top page's bar or in the other pane, or with an element of the top page appearing over the picture, opens nothing and the next click opens once; " : "") + (device === "hybrid" && surface === "pane" ? "a press on the control held while the top page hides the viewer's frame, released at once on the top page, the frame shown again at once or 300 ms later, then another document's click on an element over the control that hides at that click's mousedown, the mouse's click moved onto the control or a pen's still click, the viewer hearing the mouse's pointerout with no relatedTarget and no button down before it, opens nothing and the next click opens once; " : "") + "Enter on the control opens once, after a refused tap too; a press with no click (a two-finger touch) begun out of view then Enter in view opens once, and one begun shown then the flyout over the control then a script's click opens nothing (every tap cell but the other-document cells and the chain rule's cells reading the same at 0ab74924c as at the fix, by design, Chromium's tap click carrying its press's pointerId; the cells of a finger beside the mouse red at ef686b029 and under A18-M, whose gate took a verdict at the finger's compatibility mousedown, and the other-document cells after a right click, a middle click or a two-finger touch red at 0f998a3b9, whose gate left the slot alone at the tap's mousedown, " + (device === "hybrid" ? "the chain rule's cells red at 142ade155 and under a gate without the slot's pointerId test, the second finger's alone and the element's with the mouseout listener and the blur's rule dropped too, " : "") + (device === "hybrid" && surface === "pane" ? "the frame-hide cells red at ddb446fae and under a gate that reads neither a pointerout with no button down nor a blur of the window, the pen's also under one whose arm for no button marks the mouse's records alone and that reads no blur, those with an element that cancels its mousedown, where no blur comes, under a gate without that arm alone, the pen's also under one whose arm marks the mouse's records alone, " : "") + "their reads a private witness kept out of the tree; the Enter cells red under a gate that reads a key's click as a pointer's, the press cells under one that lets a key's or a script's click read the slot with the keydown's clear dropped)", { timeout: 900000 }, async (t) => {
+  test("in Chromium on " + (device === "phone" ? "a phone's pages (hasTouch and isMobile at a device scale of 1, the kernel's viewport meta)" : "a hybrid page (hasTouch with a mouse)") + ", the " + (surface === "chat" ? "chat modal" : "Files pane") + ": the one gate's tap cells (the file review's round 17, tests-1 with regression-1; its round 18, extra5-2, with the coordinator's decisions" + (device === "hybrid" ? "; the closing check at 142ade155 after the fixes for the file review's round 18" : "") + (device === "hybrid" && surface === "pane" ? "; and the file review's round 19, extra5-1 and extra8-1, with the coordinator's decisions on them" : "") + "): a tap on a loaded remote picture with its control in view opens once, on its control once, on a remote picture that wears the mark once; with the control out of view the first tap opens nothing and reveals it and the next opens once; a double tap there opens nothing, its second click of detail 2; under the text-size flyout or the Outline popover a tap opens nothing and closes it and the next opens once; " + (device === "hybrid" ? "after a right press of the mouse, or a mouse drag of the picture, with the control shown, then the flyout over the control, a tap opens nothing and the next opens once; on this page and on a plain page, after a mouse drag of the picture with the control shown, then the flyout or the Outline popover over the control, a click of the mouse on the picture opens nothing and the next opens once, and after a drag a click of the mouse on the same picture or on another, its control shown and uncovered, opens once; after a right click on the picture or a press on the control released beside the picture, with the control shown, then a drag in another pane, then the flyout over the control, opened by a script's click or by Enter on its button, a click of the mouse on the picture opens nothing and the next opens once, and with no cover the first click opens once; on this page, a finger held on the picture, the mouse's click beside it, the finger lifted, then the mouse's press on the picture with the control out of view or under the flyout, a finger's swipe while it is held, and the release opens nothing, and so does each of those presses with no finger before it; in the dashboard's shape, a tap on another document's element over the control, gone at its pointerup, opens nothing and the next click opens once, after nothing, after a right or a middle click or a two-finger touch on the picture with the control shown, and with the control above the top page's window at the tap's start; in the dashboard's shape beside another pane, another document's tap whose click carries another touch's pointerId, after the viewer's own tap with a second finger resting on the top page's bar or in the other pane, or with an element of the top page appearing over the picture, opens nothing and the next click opens once; " : "") + (device === "hybrid" && surface === "pane" ? "a press on the control held while the top page hides the viewer's frame, released at once on the top page, the frame shown again at once or 300 ms later, then another document's click on an element over the control that hides at that click's mousedown, the mouse's click moved onto the control or a pen's still click, the viewer hearing the mouse's pointerout with no relatedTarget and no button down before it, opens nothing and the next click opens once; " : "") + "Enter on the control opens once, after a refused tap too; a press with no click (a two-finger touch) begun out of view then Enter in view opens once, and one begun shown then the flyout over the control then a script's click opens nothing (every tap cell but the other-document cells and the chain rule's cells reading the same at 0ab74924c as at the fix, by design, Chromium's tap click carrying its press's pointerId; the cells of a finger beside the mouse red at ef686b029 and under A18-M, whose gate took a verdict at the finger's compatibility mousedown, and the other-document cells after a right click, a middle click or a two-finger touch red at 0f998a3b9, whose gate left the slot alone at the tap's mousedown, " + (device === "hybrid" ? "the chain rule's cells red at 142ade155 and under a gate without the slot's pointerId test, the second finger's alone and the element's with the mouseout listener and the blur's rule dropped too, as bef9ff8fc measured it, " : "") + (device === "hybrid" && surface === "pane" ? "the frame-hide cells red at ddb446fae and under a gate that reads neither a pointerout with no button down nor a blur of the window, the pen's also under one whose arm for no button marks the mouse's records alone and that reads no blur, those with an element that cancels its mousedown, where no blur comes, under a gate without that arm alone, the pen's also under one whose arm marks the mouse's records alone, all as bef9ff8fc measured them, before the file review's round 20 retired those rules for the own-chain allowlist, " : "") + "their reads a private witness kept out of the tree; the Enter cells red under a gate that reads a key's click as a pointer's, the press cells under one that lets a key's or a script's click read the slot with the keydown's clear dropped)", { timeout: 900000 }, async (t) => {
     let cells: Array<[string, unknown, unknown]> = [];
     let ran = false;
     await inBrowser(t, async (browser) => {
