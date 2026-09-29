@@ -42,7 +42,7 @@ press began inside the sheet is not a backdrop tap: Chromium and WebKit dispatch
 of the press and the release, and before the guard both gestures closed the sheet with the answer; Firefox retargets it
 to the textarea), and a plain tap on the backdrop, press and release both on it, then dismisses. In Chromium, through the
 driver's DevTools touch input, a finger pressed just outside the box's left edge and lifted just inside it (6px out and 6px
-in, and from the window's edge, under 8px from the box's at the phone's width, and 5px in, at 900 and at 508) leaves the sheet up with its answer and sends nothing, and a finger's tap on the
+in, and 10px out, past the window's left edge at the phone's width, and 5px in, at 900 and at 508) leaves the sheet up with its answer and sends nothing, and a finger's tap on the
 backdrop still dismisses (the maintainer's round 2, ui-1: a touch pointer is captured to the node it pressed, so until the
 builders gave a backdrop press's capture back, the release was read on the overlay wherever the finger lifted and the sheet
 closed with the answer; touch in Firefox and WebKit, which Playwright cannot drive with moves, and on iOS is a stated
@@ -353,16 +353,16 @@ class ReplySheetServed(unittest.TestCase):
                 self.assertEqual(m["hitAtSend"], "target", where + label + ": a finger at Send's painted centre reaches Send: %r" % (m,))
         # THE TOUCH ROAD (the maintainer's round 2, ui-1), Chromium only (the driver's touch goes through the DevTools protocol;
         # Playwright drives no touch moves in Firefox or WebKit, where touch is a stated residual, and iOS is unmeasured): a finger
-        # pressed just outside the box's left edge (6px out, and from the window's edge, which at the phone's width is under 8px
-        # from the box's) and lifted just inside it, at 900 and 508, leaves the sheet up with its answer and posts nothing (a touch pointer is captured to the node it pressed, so until the builders gave a backdrop press's capture
+        # pressed just outside the box's left edge (6px and 10px out, the ruling's distances; at the phone's width the 10px press
+        # lies just past the window's left edge) and lifted just inside it, at 900 and 508, leaves the sheet up with its answer and posts nothing (a touch pointer is captured to the node it pressed, so until the builders gave a backdrop press's capture
         # back, the pointerup's target was the overlay wherever the finger lifted and the sheet closed with the answer); a finger's
         # tap on the backdrop still dismisses
         if engine == "chromium":
             tr = r.get("touch", {"error": "the touch step did not run"})
             with self.subTest(road="a finger pressed on the backdrop and lifted inside the sheet"):
                 self.assertNotIn("error", tr, where + "the touch step ran to its end: %r" % (tr,))
-                self.assertEqual([(g["h"], g["in"]) for g in tr["straddles"]], [(900, 6), (900, 5), (508, 6), (508, 5)],
-                                 where + "the four straddles ran: %r" % (tr,))
+                self.assertEqual([(g["h"], g["out"], g["in"]) for g in tr["straddles"]], [(900, 6, 6), (900, 10, 5), (508, 6, 6), (508, 10, 5)],
+                                 where + "the four straddles ran, each pressed at the ruling's distance from the box's edge: %r" % (tr,))
                 for g in tr["straddles"]:
                     label = "at %d, a finger pressed %.1fpx left of the box's edge and lifted %dpx inside it" % (g["h"], g["out"], g["in"])
                     self.assertGreaterEqual(g["out"], 5, where + label + ": the press lies on the backdrop, clear of the box's edge: %r" % (g,))

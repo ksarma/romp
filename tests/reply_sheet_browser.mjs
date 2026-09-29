@@ -417,8 +417,9 @@ try {
   }
   // THE TOUCH ROAD (the maintainer's round 2, ui-1), in Chromium through the DevTools protocol's touch input (Playwright drives no
   // touch moves in Firefox or WebKit, where touch is a stated residual): a finger pressed just outside the box's left edge and
-  // lifted just inside it, at the answer box's height, 6px out and 6px in, then from the window's edge (10px out where the
-  // window allows it) and 5px in, at rest at 900 and with the keyboard up at 508; then a finger's tap on the backdrop. A touch pointer is implicitly captured to the node it pressed, so
+  // lifted just inside it, at the answer box's height, 6px out and 6px in, then 10px out and 5px in (the ruling's distances; at
+  // the phone's width that press lies just past the window's left edge), at rest at 900 and with the keyboard up at 508; then a
+  // finger's tap on the backdrop. A touch pointer is implicitly captured to the node it pressed, so
   // until the builders gave a backdrop press's capture back, the pointerup's target was the overlay wherever the finger lifted and
   // the straddle closed the sheet with the answer. On the third todo's sheet (the one the boundary step left up), the answer typed
   // before each gesture; a gesture that closed the sheet is recorded and the sheet reopened for the next. Its own failure is
@@ -445,12 +446,13 @@ try {
       const touched = [];
       for (const [h, kb] of [[TALL, false], [KEYBOARD_UP, true]]) {
         await setHeight(h, kb);
-        // the press on the backdrop left of the box, never off the window: at the phone's width the box's left edge is under 8px
-        // from the window's, so the ruling's 10px press is taken at the window's edge; the distance used is recorded
+        // the press on the backdrop left of the box at the ruling's distances, unclamped: at the phone's width the box's left edge
+        // is under 8px from the window's, so the 10px press lies just past the window's left edge (x under 0), which the protocol
+        // accepts and Chromium delivers to the overlay; the distance used is recorded
         for (const [out1, in1] of [[6, 6], [10, 5]]) {
           await ready();
           const p = await points();
-          const x = Math.max(1, p.boxLeft - out1);
+          const x = p.boxLeft - out1;
           await touch([{ x, y: p.inputY }, { x: p.boxLeft + in1, y: p.inputY }]);
           touched.push({ h, out: +(p.boxLeft - x).toFixed(1), in: in1, at: p, ...(await state()) });
         }

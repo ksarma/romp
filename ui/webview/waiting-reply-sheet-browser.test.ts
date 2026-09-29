@@ -1003,8 +1003,9 @@ for (const name of ["chromium", "firefox", "webkit"]) {
   // lifted inside it; the builders give that capture back on a backdrop press (the ruling's form R2). Driven at 900 (at rest)
   // and 508 (the keyboard up), on the short ask with the forty-line detail and an answer typed: the mouse's reverse drags in
   // every engine; in Chromium a finger through the DevTools protocol's touch input, pressed 6px left of the box's edge and lifted
-  // 6px inside it, and pressed at the window's edge and lifted 5px inside it (the ruling's second press was 10px out, but at the
-  // phone's width the box's left edge is under 8px from the window's, so the press is taken at the window's edge), at the answer
+  // 6px inside it, and pressed 10px left of it and lifted 5px inside it (the ruling's two presses, taken as ruled: at the phone's
+  // width the box's left edge is under 8px from the window's, so the 10px press lies just past the window's left edge, a point
+  // the protocol accepts and Chromium delivers to the overlay, as the ruling's own measurement took it), at the answer
   // box's height (touch in Firefox and WebKit, and on iOS, is a stated residual: Playwright drives no touch moves there); after each the sheet stands with the answer and nothing is
   // posted. At the head before this fix every one of these closed the sheet with the answer. Then a plain tap on the backdrop
   // still dismisses: the mouse's in every engine, a finger's in Chromium
@@ -1030,11 +1031,12 @@ for (const name of ["chromium", "firefox", "webkit"]) {
           ["the mouse pressed on the backdrop and released on the answer box", (p) => mouseDrag(p.back, p.input)],
           ["the mouse pressed on the backdrop and released on the title", (p) => mouseDrag(p.back, p.title)],
         ];
-        // the finger's press lies on the backdrop left of the box, never off the window: at the phone's width the box's left edge
-        // is under 8px from the window's, so the ruling's 10px press is taken at the window's edge (the ruled 6px press fits)
+        // the finger's press lies on the backdrop left of the box at the ruling's distances, unclamped: at the phone's width the
+        // box's left edge is under 8px from the window's, so the 10px press lies just past the window's left edge (x under 0), which
+        // the protocol accepts and Chromium delivers to the overlay; it closed the sheet at a6e7f1cfa and under the target-read form
         if (name === "chromium") roads.push(
-          ["a finger pressed 6px left of the box's edge and lifted 6px inside it", (p) => touch([{ x: Math.max(1, p.boxLeft - 6), y: p.input.y }, { x: p.boxLeft + 6, y: p.input.y }])],
-          ["a finger pressed at the window's edge (10px left of the box's edge where the window allows it) and lifted 5px inside the box", (p) => touch([{ x: Math.max(1, p.boxLeft - 10), y: p.input.y }, { x: p.boxLeft + 5, y: p.input.y }])],
+          ["a finger pressed 6px left of the box's edge and lifted 6px inside it", (p) => touch([{ x: p.boxLeft - 6, y: p.input.y }, { x: p.boxLeft + 6, y: p.input.y }])],
+          ["a finger pressed 10px left of the box's edge (past the window's left edge at the phone's width) and lifted 5px inside it", (p) => touch([{ x: p.boxLeft - 10, y: p.input.y }, { x: p.boxLeft + 5, y: p.input.y }])],
         );
         for (const [what, road] of roads) {
           await t.test(`at ${h}: ${what}`, async () => {
