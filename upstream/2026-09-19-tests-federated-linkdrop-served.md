@@ -1,7 +1,7 @@
 ---
 title: A served lab drives a remote link dropping and returning mid-session against the per-connection reassembler
 status: candidate
-where: tests/test_federated_linkdrop_{driver_bound,driver_parsed_served,mint,round_labels,served}.py, tests/review_round_labels_rule.py, tests/test_review_round_labels_rule.py
+where: tests/test_federated_linkdrop_{driver_bound,driver_parsed_served,mint,round_labels,served}.py, tests/{,test_}review_round_labels_rule.py, upstream/2026-09-19-tests-federated-linkdrop-served.md
 added: 2026-09-19
 pr: 857
 tier: docs
