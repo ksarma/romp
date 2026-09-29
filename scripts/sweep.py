@@ -174,9 +174,11 @@ allowlist applies after them (`env -i`), so nothing a wrap sets reaches the leg.
 govern: files stay readable at their absolute paths (a credential file, an agent's socket), and every leg can
 read /proc/<pid>/environ of the runner and of every other process of the batcher's user, since the legs run
 as that user. The result records the allowlist's hash (runner.leg_env), and a reader refuses a result
-recorded under another; the hash covers what the runner itself sets and that the served leg adds its step's env:
-block, not the values of that block, which are the swept sha's own (as the SDK's pin is) and are recorded in the
-leg's env_set. The result also records the versions of node, npm, bats, git and gitleaks the legs found, and, per
+recorded under another; the hash covers what the runner itself sets, that the served leg adds its step's env:
+block, and the shape each leg runs in (its own TMPDIR, HOME and state root; one checkout per ci.yml job, the steps it
+groups by), so a result written before round 2's fixes, whose legs shared all four, reads as recorded under another
+(decision 15); not the values of that env: block, which are the swept sha's own (as the SDK's pin is) and are recorded
+in the leg's env_set, nor the job grouping, which is the sha's ci.yml's and is recorded (runner.checkout.groups). The result also records the versions of node, npm, bats, git and gitleaks the legs found, and, per
 leg, the names it left in its private HOME (runner.home_left, {leg: names}; a setup's are in its own record), with
 home_empty true when no leg and no setup left anything; recorded only.
 
@@ -1636,27 +1638,50 @@ def _tokenized(name, leg, value, ctx):
     return value
 
 
+# Round 2, decision 15: the leg environment the hash names changed with round 2's fixes (each leg's own TMPDIR, HOME and
+# state root, Class B; one fresh checkout per ci.yml job, decision 13), so the hash names both, and no result written by
+# a runner before them, which shared one HOME, state root, TMPDIR and checkout across the legs, reads as recorded under
+# the same leg environment (body item 9's rule: a leg-environment change changes the hash).
+LEG_SCRATCH = "each leg: a fresh TMPDIR of its own, HOME and XDG_STATE_HOME under it, removed when the leg ends"
+LEG_CHECKOUT = ("the legs whose steps one ci.yml job holds: one fresh verified clone, in the job's step order, npm ci "
+                "where the job runs it; each job's legs their own")
+
+
+def leg_env_doc(ctx):
+    """What leg_env_hash hashes: the allowed names, per leg the sorted NAME=VALUE pairs the runner sets, each value
+    tokenized (_tokenized), the step whose env: block the served leg adds, and the shape each leg runs in (LEG_SCRATCH,
+    and LEG_CHECKOUT with the steps the legs are grouped by, LEG_STEPS, and the legs of a checkout of their own)."""
+    return {"allow": sorted(LEG_ALLOW),
+            "set": {leg: sorted("%s=%s" % (k, _tokenized(k, leg, v, ctx)) for k, v in leg_sets(leg, ctx, from_ci=False).items())
+                    for leg in LEGS},
+            "from_ci": {SERVED_LEG: "the env: block of %s's step %r" % (CI_WORKFLOW, SERVED_STEP)},
+            "scratch": LEG_SCRATCH,
+            "checkout": {"per": LEG_CHECKOUT, "steps": dict(LEG_STEPS), "own": list(OWN_CHECKOUT_LEGS)}}
+
+
 def leg_env_hash(ctx):
-    """sha256 over the allowed names, per leg the sorted NAME=VALUE pairs the runner sets, each value tokenized
-    (_tokenized), and the step whose env: block the served leg adds: it identifies the runner's allowlist and set
-    values, which depend only on its code, and not on the machine, the batcher's environment or the run. The values of
-    the served step's env: block are not hashed: they are the swept sha's own, read from its ci.yml as the SDK's pin is,
-    and each run records them (the served leg's env_set, runner.served)."""
-    doc = {"allow": sorted(LEG_ALLOW),
-           "set": {leg: sorted("%s=%s" % (k, _tokenized(k, leg, v, ctx)) for k, v in leg_sets(leg, ctx, from_ci=False).items())
-                   for leg in LEGS},
-           "from_ci": {SERVED_LEG: "the env: block of %s's step %r" % (CI_WORKFLOW, SERVED_STEP)}}
-    return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()
+    """sha256 over leg_env_doc: it identifies the runner's allowlist, set values and the shape the legs run in, which
+    depend only on its code, and not on the machine, the batcher's environment or the run. The values of the served
+    step's env: block are not hashed: they are the swept sha's own, read from its ci.yml as the SDK's pin is, and each
+    run records them (the served leg's env_set, runner.served); nor is the job grouping, which is the sha's ci.yml's
+    and each run records (runner.checkout.groups)."""
+    return hashlib.sha256(json.dumps(leg_env_doc(ctx), sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def policy_doc():
+    """leg_env_doc over placeholder values (policy_hash)."""
+    t = os.path.join(os.sep + "nonexistent", TMPDIR_PREFIX + "0" * TMPDIR_TAIL)
+    return leg_env_doc({"tmpdir": t, "home": os.path.join(t, "home"), "xdg": os.path.join(t, "xdg-state"),
+                        "npm_cache": os.sep + "nonexistent-npm-cache", "browsers": os.sep + "nonexistent-browsers",
+                        "path": os.sep + "nonexistent-path", "pytest_path": os.sep + "nonexistent-pytest-path",
+                        "served_path": os.sep + "nonexistent-served-path"})
 
 
 def policy_hash():
-    """The leg environment hash this runner records, computed over placeholder values: what a reader compares a
-    result's recorded hash with (a result made under another allowlist or other set values is not the same gate)."""
-    t = os.path.join(os.sep + "nonexistent", TMPDIR_PREFIX + "0" * TMPDIR_TAIL)
-    return leg_env_hash({"tmpdir": t, "home": os.path.join(t, "home"), "xdg": os.path.join(t, "xdg-state"),
-                         "npm_cache": os.sep + "nonexistent-npm-cache", "browsers": os.sep + "nonexistent-browsers",
-                         "path": os.sep + "nonexistent-path", "pytest_path": os.sep + "nonexistent-pytest-path",
-                         "served_path": os.sep + "nonexistent-served-path"})
+    """The leg environment hash this runner records, computed over placeholder values (policy_doc): what a reader
+    compares a result's recorded hash with (a result made under another allowlist, other set values or another shape
+    of leg is not the same gate)."""
+    return hashlib.sha256(json.dumps(policy_doc(), sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def recorded_hash(result):

@@ -2760,6 +2760,34 @@ class LegEnvironment(_Base):
             self.assertIsNotNone(got, "the result records the leg environment's allowlist and hash")
             self.assertEqual(got, {"allow": list(sweep.LEG_ALLOW), "hash": sweep.policy_hash()})
 
+    def test_a_result_recorded_under_the_leg_environment_before_round_2_reads_as_another(self):
+        """Round 2, decision 15: the leg environment hash names each leg's own TMPDIR, HOME and state root and the one
+        fresh checkout per ci.yml job (policy_doc's scratch and checkout), so a result recorded under the hash of the same
+        document without those two entries (what the runner before round 2 hashed and recorded as its policy hash, the
+        same value, checked by execution when this was built) reads as recorded under another leg environment: the
+        reader reads it invalid, and a --leg re-run over it is refused. A runner that leaves the two entries out of the
+        hash reds this."""
+        import hashlib
+        doc = sweep.policy_doc()
+        self.assertEqual((doc["scratch"], doc["checkout"]["steps"], doc["checkout"]["own"]),
+                         (sweep.LEG_SCRATCH, sweep.LEG_STEPS, list(sweep.OWN_CHECKOUT_LEGS)))
+        before = {k: v for k, v in doc.items() if k not in ("scratch", "checkout")}
+        old = hashlib.sha256(json.dumps(before, sort_keys=True).encode("utf-8")).hexdigest()
+        self.assertNotEqual(old, sweep.policy_hash(), "the two entries are hashed")
+        w = self.w
+        w.ctl({"rc": {"bats": 1}})
+        w.run(check=1)
+        data = w.data()
+        data["runs"][-1]["runner"]["leg_env"]["hash"] = old
+        with open(w.result_path(), "w") as f:
+            json.dump(data, f)
+        a = sweep.assess(w.head(), env=w.env)
+        self.assertEqual(a["case"], "invalid")
+        self.assertIn("recorded under another leg environment (hash %s" % old[:12], a["line"])
+        w.ctl({})
+        p = w.run("--leg", "bats", "--flake", Runner.FLAKE, check=2)
+        self.assertIn("was recorded under another leg environment (hash %s" % old[:12], p.stderr)
+
     def test_the_tool_versions_are_recorded_and_run_no_leg(self):
         w = self.w
         w.run(check=0)
