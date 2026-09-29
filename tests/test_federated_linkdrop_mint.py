@@ -1231,7 +1231,8 @@ class OldHubMintIsPrivate(unittest.TestCase):
         on a synthetic source of each form it refuses and on the allowed spellings (import os, import subprocess,
         subprocess.run(...) called, subprocess.PIPE read, os.path.join, a sibling imported by any spelling, getattr on
         anything but os with a name that is no reflective name, a member an import binds read as a value, a chain rooted at a
-        sibling's binding, compile as an attribute, the words in a docstring), so an empty census is a red and not a pass. The module object itself
+        sibling's binding, the package's own binding read as a value, compile as an attribute, the words in a docstring), so an
+        empty census is a red and not a pass. The module object itself
         passed or bound anywhere (`getattr(subprocess, ...)` included, though the recorder would see that lookup) is a bare
         read and refused, and since the maintainer's round 7 so is every module an import binding resolves to: the road is
         the module reaching a name, not what is then done with it. What the census cannot see is the rule in the module
@@ -1385,6 +1386,9 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  ('import sys\ndef f():\n    _s = sys\n    return _s._getframe(0)\n', "sys read as a value: an import binding resolves it to the module sys"),
                  ('import http.server\n_h = http.server\n', "http.server read as a value: an import binding resolves it to the module http.server"),
                  ('from unittest import mock\n_b = mock.builtins\n', "mock.builtins read as a value: an import binding resolves it to the module builtins"),
+                 # a from-import that binds a MEMBER which the module's own import table resolves to a module (mock's `import sys`): the
+                 # import passes _reach, since sys is allowed, so only the module arm refuses the read of the name it binds
+                 ('from unittest.mock import sys as _s\n_x = _s\n', "_s read as a value: an import binding resolves it to the module sys"),
                  # the reflective-name layer (the maintainer's round 7): a REFLECTIVE_CALLS name as an attribute of any receiver, compile
                  # excepted (a sibling-rooted chain and a container reach exec with no rebinding the module arm reads; the round's plant
                  # reaches __import__), a reflective name as a string constant handed to an attribute builtin (the round's three plants, then
@@ -1449,8 +1453,10 @@ class OldHubMintIsPrivate(unittest.TestCase):
                    'import time\nimport http.server\nimport urllib.request\nfrom unittest import mock\nfrom pathlib import Path\nfrom unittest.mock import patch as _patch\nfrom sys import path as _syspath\n'
                    'def k():\n    time.monotonic()\n    time.sleep(1)\n    mock.patch.object(a, "b", c)\n    http.server.ThreadingHTTPServer\n    urllib.request.urlopen(u)\n    subprocess.PIPE\n    subprocess.os.path\n    Path.home()\n'
                    # the module arm's reach (the maintainer's round 7, extra4-1): a MEMBER an import binds read as a value is no module; a chain
-                   # rooted at a sibling's binding is not resolved, since the sibling is censused itself (the stated outside, NOT refused)
+                   # rooted at a sibling's binding, and the package's own binding, are not resolved, since the siblings are censused themselves
+                   # (the stated outside, NOT refused)
                    '    _P = Path\n    _sib = lab_dist.os\n'
+                   'import tests.lab_dist\ndef t():\n    return tests\n'
                    # the reflective-name layer's stated outside (the maintainer's round 7): compile as an attribute, as lab_dist calls re.compile
                    'import re\ndef c():\n    return re.compile("a")\n'
                    # the residual's road (4) after the recorder is lifted, stated and NOT refused: a callable deferred past it from inside a function body
@@ -1460,8 +1466,8 @@ class OldHubMintIsPrivate(unittest.TestCase):
                                                                                                           "hasattr, a module's own "
                                                                                                           "definition or an allowed module reached through a binding, a source-less module's member the set reads, as an attribute or as a from-import "
                                                                                                           "binding; `patch` from unittest.mock is mock's own definition and stays the disclosed class; a member an import binds read as a value "
-                                                                                                          "(`_P = Path`), which is no module; a sibling handed to getattr and a chain rooted at a sibling's binding read as a value, which the module "
-                                                                                                          "arm does not resolve (the stated outside); compile as an attribute (`re.compile`), the reflective-name layer's stated outside; a "
+                                                                                                          "(`_P = Path`), which is no module; a sibling handed to getattr, a chain rooted at a sibling's binding and the package's own binding read "
+                                                                                                          "as a value, which the module arm does not resolve (the stated outside); compile as an attribute (`re.compile`), the reflective-name layer's stated outside; a "
                                                                                                           "callable deferred by a timer inside a function body, the residual's road (4) after the recorder "
                                                                                                           "is lifted), and the words in a docstring, are not refused")
         mods = _lab_modules()
