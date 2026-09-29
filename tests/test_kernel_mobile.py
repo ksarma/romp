@@ -1038,6 +1038,17 @@ for (const [s, deep, pan] of [[2, 590, 422], [1.5, 495.2, 281.33], [1.1, 250, 15
   for (const t of ['swap508', 'refit', 'refit2']) r6step(f, t, 336 / 2, 40, 2); }
 { const f = 'swapRefit1.5'; r6rest(f); r6step(f, 'kb508up', 336 / 1.5, 555.74, 1.5);
   for (const t of ['swap471', 'refit']) r6step(f, t, 373 / 1.5, 83, 1.5); }
+// the stance's third cost (disclosed in the fit() comment): a keyboard re-raised with no pan under a light zoom s0 (the value in
+// force its re-raise bound, 0), a zoom alone to s1 about the band's top, then that keyboard panned down to s1's share. With no
+// hold (the keyboard's first raise at s0 stores the reading less the share) and with a hold of 83 from scale 1
+for (const [s0, s1] of [[1.05, 1.1], [1.05, 1.06], [1.01, 1.02], [1.003, 1.01]]) {
+  let f = 'zoomThenPanDown-' + s0 + '-' + s1; r6rest(f);
+  r6step(f, 'A1-kbUpPan', 508 / s0, 83, s0); r6step(f, 'A2-kbDown', 844 / s0, 0, s0); r6step(f, 'A3-kbUpNoPan', 508 / s0, 0, s0);
+  r6step(f, 'Z-zoomAlone', 508 / s1, 0, s1); r6step(f, 'P-panDown', 508 / s1, r6share(s1), s1);
+  f = 'zoomThenPanDown-hold83-' + s0 + '-' + s1; r6rest(f); r6step(f, 'E1-kbUp', 508, 83, 1);
+  r6step(f, 'E2-kbDownLZ', 844 / s0, 0, s0); r6step(f, 'E3-kbUpNoPanLZ', 508 / s0, 0, s0);
+  r6step(f, 'Z-zoomAlone', 508 / s1, 0, s1); r6step(f, 'P-panDown', 508 / s1, r6share(s1), s1);
+}
 // the 0px road clears the written-hold flag where it clears the hold (the maintainer's round 6 ruling, 2026-09-29, the flag's
 // clearing rule): a hold of 83 at scale 1 (the band 460, the flag set), the pointer fine with the visual viewport at rest (the 0px
 // road clears the hold and the flag), then coarse again under a real pinch with the same keyboard up, the nohold family's three
@@ -1782,6 +1793,33 @@ class MobileFitExecutes(unittest.TestCase):
             self.assertEqual([px(t[k]["appTop"]) for k in (raise_,) + repeats], want,
                              "the raise, the swap's run by the stance, then the refit at the same report by the pan rule: %r" % (t,))
             self.assertEqual([below(t[k]) for k in repeats], gaps, "the composer below the visible band's bottom: %r" % (t,))
+
+    def test_a_pan_down_after_a_zoom_alone_keeps_the_value_and_opens_a_band(self):
+        # DISCLOSED, the stance's third cost, and these cells are its witness (the fit() comment names them): the pan rule governs a
+        # pan of a keyboard raised at the current zoom, and a zoom alone ends that, so a pan of the same keyboard down inside the new
+        # zoom's share takes the stance and keeps the value, and a band opens under the composer. The keyboard re-raised with no
+        # pan under a light zoom (the value in force its re-raise bound, 0), a zoom alone about the band's top, then the pan down to
+        # the new zoom's share: 30.55 px from 1.05 to 1.1, 19.02 from 1.05 to 1.06, 6.59 from 1.01 to 1.02 and 3.33 from 1.003 to
+        # 1.01, the same with no hold and with a hold of 83 from scale 1. Whether the rule governs a pan after a zoom alone over a
+        # re-raise bound is the maintainer's call; these cells pin the built behaviour so a change to it is made on purpose (the
+        # pan rule without its current-zoom and zoom-alone gates publishes the hold bounded into the reading's interval there, no band).
+        px = self._r6_px
+
+        def band(st):   # how far the composer's bottom sits above the visible band's bottom: the band under the composer
+            return round((st["offsetTop"] + st["height"]) - (px(st["appTop"]) + px(st["appH"])), 2)
+
+        for s0, s1, gap in (("1.05", "1.1", 30.55), ("1.05", "1.06", 19.02), ("1.01", "1.02", 6.59), ("1.003", "1.01", 3.33)):
+            for fam, reraise in (("zoomThenPanDown-%s-%s" % (s0, s1), "A3-kbUpNoPan"), ("zoomThenPanDown-hold83-%s-%s" % (s0, s1), "E3-kbUpNoPanLZ")):
+                t = self._r6(fam)
+                z, p = t["Z-zoomAlone"], t["P-panDown"]
+                self.assertEqual({round(t[k]["height"] * t[k]["scale"]) for k in (reraise, "Z-zoomAlone", "P-panDown")}, {508},
+                                 "the cell's premise: the same keyboard throughout, so the zoom is a zoom alone and the pan a pan: %r" % (t,))
+                self.assertNotEqual(z["scale"], t[reraise]["scale"], "the cell's premise: the zoom changed the scale")
+                self.assertEqual(p["scale"], z["scale"], "the cell's premise: the pan at the new zoom")
+                self.assertEqual(self._r6_interval(p)[0], -1, "the cell's premise: the pan lies inside the new zoom's share: %r" % (p,))
+                self.assertEqual([px(t[k]["appTop"]) for k in (reraise, "Z-zoomAlone", "P-panDown")], [0, 0, 0],
+                                 "the re-raise bound, kept through the zoom alone and the pan: %r" % (t,))
+                self.assertEqual(band(p), gap, "the band under the composer after the pan down: %r" % (p,))
 
     def test_every_stance_cell_of_the_extended_families_publishes_the_stance_value(self):
         # round 6's extended families' stance cells (the maintainer's round 6 ruling, 2026-09-29), ported into the driver so the tree

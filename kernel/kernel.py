@@ -70673,12 +70673,18 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // note above: its share is the whole of its pan), except after a pan the rule re-bounded: the rule's value is published and not
 // stored, so a zoom alone then publishes from the value in force and the shell moves by the difference (disclosed, a design call
 // not taken here: a pan to the share at 1.05 publishes 40 px, and a zoom alone to 1.1 about the band's centre then publishes 0, a
-// band of 5 px under the composer; test_kernel_mobile's zoomAfterPan cell pins it); and a drag past the value plus the share
-// publishes the excess, which nothing stores. Two costs of the stance, each measured in round 6: a zoom alone leaves the composer below the visible band's bottom by
-// the zoom's own magnification (12 px at 1.05 about the band's centre, served); and where the rule does not apply (after a zoom
+// band of 5 px under the composer, and the zoom back to 1.05 at the same pan 0 again, a band of 16 px; test_kernel_mobile's
+// zoomAfterPan cell pins both); and a drag past the value plus the share
+// publishes the excess, which nothing stores. Three costs of the stance, each measured in round 6: a zoom alone leaves the composer below the visible band's bottom by
+// the zoom's own magnification (12 px at 1.05 about the band's centre, served); where the rule does not apply (after a zoom
 // alone, for example, or over a value a drag wrote), a pan of the same keyboard above the value keeps it where the share reaches it, the composer below the band's bottom by
 // the drag until the keyboard goes down (a hold of 83 from scale 1, pinched to 2 and dragged to the top: 83 px published where the
-// reading allows 0, the composer 337 px below the band's bottom where 0 px leaves 254; node cells). Everything the hold road
+// reading allows 0, the composer 337 px below the band's bottom where 0 px leaves 254; node cells); and after a zoom alone a pan
+// of the same keyboard DOWN inside the new zoom's share keeps the value too, so a band opens under the composer, the class the
+// pan rule closes for a keyboard raised at the current zoom (a keyboard re-raised with no pan under a light zoom, the value in
+// force its re-raise bound 0, then a zoom alone about the band's top and a pan down to the new zoom's share: 30.55 px from 1.05
+// to 1.1, 19.02 px from 1.05 to 1.06, 6.59 px from 1.01 to 1.02 and 3.33 px from 1.003 to 1.01, and the same bands for a hold
+// of 83 from scale 1 re-raised so; node cells, test_kernel_mobile's zoomThenPanDown cells pin them). Everything the hold road
 // publishes is CLAMPED AT USE to the layout
 // viewport's height less h (the author's pass 2,
 // 2026-09-19): the same run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since
