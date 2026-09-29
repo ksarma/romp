@@ -2038,22 +2038,25 @@ def _route_table_renderers(tree, scopes):
     capture: `scopes`' binders, so a `.get` read under that name elsewhere could be some other object's), a subscript store or deletion
     (`_PAGE_RENDERERS[p] = page` reads the name and writes the table), another method, the table or its `.get` passed on (a `.get`
     with a starred argument, which can carry a default, and a membership test chained past the table, which hands the table to the
-    next operand's `__contains__`, among them), a `**` entry or a renderer that is not a plain name. The roads that write the table
-    without naming it where this walk reads a name are loud too, each by one syntactic check that no line of kernel.py meets today
-    (the reviewer's round-7 findings extra8-1 and extra8-2, and the builtins roads the check on the reviewer's round-7 fix pass found
-    still passing): a star import (`from m import *` binds whatever m's `__all__` lists); a
+    next operand's `__contains__`, among them), a `**` entry or a renderer that is not a plain name. Of the roads that write the table
+    without naming it where this walk reads a name, the census refuses these and only these, each by one syntactic check that no line
+    of kernel.py meets today (the reviewer's round-7 findings extra8-1 and extra8-2, and the builtins and frame roads the checks on
+    the reviewer's round-7 fix pass found still passing): a star import (`from m import *` binds whatever m's `__all__` lists); a
     reference to `globals` other than a `globals().get(...)` read with one string-constant key (the two live reads, of
     `_JUDGE_MODEL_VALUES` and `_MODEL_VALUES`, are that shape; a computed key could fetch the table and write through it); any
     reference to `vars`, `locals`, `exec` or `eval`, and any attribute `.globals`, `.vars`, `.locals`, `.exec` or `.eval` (keyed on
     references, not calls, so `e = exec`, `builtins.exec(...)` and `builtins.globals()[k] = v` are read); an import of the builtins
     module, or of any of those five names from any module (`import builtins as b`, `from builtins import exec as run`, which bind
     them under another name); the builtins namespace reached as `__builtins__`, a name or an attribute, or by the string
-    `'builtins'` or `'__builtins__'` (`__builtins__['exec']`, `sys.modules['builtins']`); and the table reached as an attribute or
-    by its name as a string (the module-object road: `sys.modules[__name__]._PAGE_RENDERERS`, `setattr(m, '_PAGE_RENDERERS', ...)`).
-    THE BOUND, the roads no one syntactic check refuses and this census does not read: a getattr or setattr whose name is computed or
-    names a builtin such as exec, a `__dict__` write with a computed name, the `__import__` and importlib roads, and a write from
-    another module (sys.modules has 10 live uses in kernel.py and `__dict__` 1, a read of glob's module dict, so neither can be
-    refused by name). Returns (renderer names, ids of the `.get` calls)."""
+    `'builtins'` or `'__builtins__'` (`__builtins__['exec']`, `sys.modules['builtins']`); a function's or a frame's namespace, the
+    attribute `__globals__`, `f_globals`, `f_locals` or `f_builtins` or that name as a string (`_x_page.__globals__[k] = v`,
+    `sys._getframe().f_globals[k] = v`; kernel.py walks frames by `f_back` twice and reads none of the four); and the table reached
+    as an attribute or by its name as a string (the module-object road: `sys.modules[__name__]._PAGE_RENDERERS`,
+    `setattr(m, '_PAGE_RENDERERS', ...)`).
+    THE BOUND: every other road is unread, among them a getattr or setattr whose name is computed or names a builtin such as exec,
+    a `__dict__` write with a computed name, the `__import__` and importlib roads, and a write from another module (sys.modules has
+    10 live uses in kernel.py and `__dict__` 1, a read of glob's module dict, so neither can be refused by name). Returns (renderer
+    names, ids of the `.get` calls)."""
     defs = [n for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == _ROUTE_TABLE for t in n.targets)]
     if len(defs) != 1 or len(defs[0].targets) != 1 or not isinstance(defs[0].value, ast.Dict):
         raise AssertionError("kernel.py: %s is not one module-level dict literal (%d bindings); classify it here" % (_ROUTE_TABLE, len(defs)))
@@ -2085,6 +2088,7 @@ def _route_table_renderers(tree, scopes):
 _NAMESPACE_ROADS = ("vars", "locals", "exec", "eval")   # a reference to any of these can write the module's namespace or run code that does
 _NAMESPACE_ATTRS = ("globals",) + _NAMESPACE_ROADS   # the same five as attributes (builtins.globals, builtins.exec) and as imported names
 _BUILTINS_NAMES = ("builtins", "__builtins__")   # the builtins module and the builtins namespace, spelled as strings (sys.modules['builtins'])
+_FRAME_ROADS = ("__globals__", "f_globals", "f_locals", "f_builtins")   # a function's or a frame's namespace: writable by a computed key, or reaching exec
 
 
 def _refuse_dynamic_table_roads(tree, parent):
@@ -2122,6 +2126,11 @@ def _refuse_dynamic_table_roads(tree, parent):
             raise AssertionError("kernel.py line %d: the builtins namespace reached as __builtins__ or by its name as a string "
                                  "(__builtins__['exec'], sys.modules['builtins']), whose exec, eval and globals can write %s; "
                                  "classify it here" % (n.lineno, _ROUTE_TABLE))
+        if (isinstance(n, ast.Attribute) and n.attr in _FRAME_ROADS) or (isinstance(n, ast.Constant) and n.value in _FRAME_ROADS):
+            name = n.attr if isinstance(n, ast.Attribute) else n.value
+            raise AssertionError("kernel.py line %d: a function's or a frame's namespace reached as %s (an attribute or its name as a "
+                                 "string: f.__globals__[k] = v, sys._getframe().f_globals[k] = v, a frame's f_builtins['exec']), which "
+                                 "writes %s by a computed name; classify it here" % (n.lineno, name, _ROUTE_TABLE))
         if (isinstance(n, ast.Attribute) and n.attr == _ROUTE_TABLE) or (isinstance(n, ast.Constant) and n.value == _ROUTE_TABLE):
             raise AssertionError("kernel.py line %d: %s reached as an attribute or by its name as a string (a module-object write: "
                                  "sys.modules[__name__].%s, setattr(m, '%s', ...)); classify it here" % (n.lineno, _ROUTE_TABLE, _ROUTE_TABLE, _ROUTE_TABLE))
@@ -2598,6 +2607,14 @@ class StampCensusResolvesByBinding(unittest.TestCase):
                  (None, "sys.modules[__name__].__builtins__['exec'](_code)", r"the builtins namespace reached as __builtins__ or by its name as a string"),
                  (None, "getattr(sys.modules['builtins'], 'exec')(_code)", r"the builtins namespace reached as __builtins__ or by its name as a string"),
                  (None, "getattr(sys.modules[__name__], '__builtins__')['exec'](_code)", r"the builtins namespace reached as __builtins__ or by its name as a string"),
+                 # the check on the reviewer's round-7 tidy pass: a function's or a frame's namespace, each refused by one more syntactic check
+                 (None, "_x_page.__globals__[_key] = _PAGES", r"a function's or a frame's namespace reached as __globals__"),
+                 (None, "_x_page.__globals__.update(_PAGES)", r"a function's or a frame's namespace reached as __globals__"),
+                 (None, "getattr(_x_page, '__globals__')[_key] = _PAGES", r"a function's or a frame's namespace reached as __globals__"),
+                 (None, "sys._getframe().f_globals[_key] = _PAGES", r"a function's or a frame's namespace reached as f_globals"),
+                 (None, "sys._getframe().f_back.f_globals[_key] = _PAGES", r"a function's or a frame's namespace reached as f_globals"),
+                 (None, "sys._getframe(1).f_locals[_key] = _PAGES", r"a function's or a frame's namespace reached as f_locals"),
+                 (None, "sys._getframe().f_builtins['exec'](_code)", r"a function's or a frame's namespace reached as f_builtins"),
                  (None, "sys.modules[__name__]._PAGE_RENDERERS['/x'] = _x_page", r"_PAGE_RENDERERS reached as an attribute or by its name as a string"),
                  (None, "setattr(sys.modules[__name__], '_PAGE_RENDERERS', _PAGES)", r"_PAGE_RENDERERS reached as an attribute or by its name as a string"))
         do_get = "    _page = _PAGE_RENDERERS.get(self.path)\n    return self._send(200, _page(), \"text/html\")\n"

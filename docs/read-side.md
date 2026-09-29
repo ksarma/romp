@@ -297,8 +297,7 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   (the kernel's 403 line, which a pane url answers only to a browser holding
   no session cookie this kernel accepts, since a page opens on that cookie
   alone; its 500 page; a proxy's 502 body) is a failure like an error page:
-  re-parked with the retry control (since 2026-09-19; the 200 scope since review round 4
-  the same day). On the desktop layout a pane a flip promoted is judged the
+  re-parked with the retry control (since 2026-09-19). On the desktop layout a pane a flip promoted is judged the
   same way (its promotion arms the same load listener and 30 s backstop): the
   episode's first failure hands the url back to `data-src` and promotes once
   more; the second is the bound, which drops a document the kernel sent (the
