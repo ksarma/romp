@@ -9387,7 +9387,11 @@ at dcaa80ec4, and, since a check of that build, the double slash and params spel
 there too and the relay route in its host's session, while a host-prefixed sid at the /file route and a pin beside the
 path wear no control and open nothing, red at d140285a4, and, since the file review's round 20, regression-2, a v, a t
 and a download of 0, which the route does not read or act on, open there too, the v at the relay route as well, red at
-bef9ff8fc, while a download of 1 wears no control and opens nothing, and a /file address on another origin or on this
+bef9ff8fc, while a download of 1 wears no control and opens nothing, and, since the same round's tests-2, for the file and
+relay forms a Cmd/Ctrl-click on the picture after the control's open and Back, its ctrlKey read back, opens one tab at the
+viewer's own capped URL in the session the address names, the viewer staying on the report, red at dcaa80ec4 and, alone of
+the forms' reads, under a gate that sends that click to the web arm or opens the tab in the shown file's session, and a
+/file address on another origin or on this
 host at another port still opens a web tab, while ui/webview/file-figure-open.test.ts runs the classifier over those
 forms and more in CI, and derives from kernel.py the names the route reads) and, since the fixes
 for that round's extra9-1 (with the coordinator's decision 4), ui/webview/file-figure-open-stacking.ts (the one gate's stacking

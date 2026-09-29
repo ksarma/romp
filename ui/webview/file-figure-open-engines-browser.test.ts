@@ -207,6 +207,11 @@
 // nothing on a click or a Cmd/Ctrl-click. A name the route does not read, a cache-buster v or a t, and a download of 0 leave
 // the file to open, at the /file route and the relay's, while a download of 1, which the route answers as an attachment,
 // wears no control and opens nothing (the file review's round 20, regression-2, with the coordinator's decision 7 on it).
+// For the file and relay forms, after the control's open and Back, a Cmd/Ctrl-click on the picture, its ctrlKey read back at the
+// document, opens one tab at the viewer's own capped URL, the whole prefix with the session the address names, and the viewer
+// stays on the report (the file review's round 20, tests-2): red at dcaa80ec4 in the three engines, where it opened a tab at the
+// address as written, and, alone of the forms' reads, under a gate that sends that modified click to the web arm, by the key
+// test or by the event's own modifier fields, or that opens the tab in the shown file's session.
 // The first four forms red at dcaa80ec4, where each opened a tab at the address as
 // written, which carries no cap, so the kernel's cap rule refuses it; the next five red at d140285a4, where the respelled
 // forms opened a tab whose address kept the author's cap, the relay's route and the host-prefixed sid a tab at the address as
