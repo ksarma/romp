@@ -2091,9 +2091,10 @@ class LinkProxyEnds(unittest.TestCase):
     stop() is held to end every thread the splice started, drop() being the call that releases them (main's thread-stop
     census reads the joins in stop() and would read them the same with the drop() call gone), and to fail naming any
     thread still alive at its bound; a pair is held to stay up through a quiet spell longer than the 5 s timeout its
-    upstream connect is handed; the port the splice reports is held to be bound from its construction until stop(); and
-    drop() is held to return only once the closed listener has stopped listening, so a dial straight after it is refused
-    and a resume() straight after it listens alone and splices every dial."""
+    upstream connect is handed; the port the splice reports is held to be bound from its construction until stop();
+    drop() is held to return only once the accept loop of the listener it closed has ended; a dial straight after a
+    drop() is held to be refused on Linux and not to connect elsewhere; and a resume() straight after a drop() is held to
+    leave one socket listening, a count read on Linux only, and to splice every dial, on every system."""
 
     QUIET_S = 6.0   # a quiet spell longer than the 5 s timeout the splice's upstream connect is handed
     CYCLES = 5   # drop cycles per window pin: a drop that lands just before the accept loop enters its select misses the window
