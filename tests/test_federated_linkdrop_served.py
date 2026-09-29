@@ -2092,9 +2092,10 @@ class LinkProxyEnds(unittest.TestCase):
     census reads the joins in stop() and would read them the same with the drop() call gone), and to fail naming any
     thread still alive at its bound; a pair is held to stay up through a quiet spell longer than the 5 s timeout its
     upstream connect is handed; the port the splice reports is held to be bound from its construction until stop();
-    drop() is held to return only once the accept loop of the listener it closed has ended; a dial straight after a
-    drop() is held to be refused on Linux and not to connect elsewhere; and a resume() straight after a drop() is held to
-    leave one socket listening, a count read on Linux only, and to splice every dial, on every system."""
+    drop() is held to return only once the accept loop of the listener it closed has ended, and to fail naming that loop
+    if it outlives drop()'s bound; a dial straight after a drop() is held to be refused on Linux and not to connect
+    elsewhere; and a resume() straight after a drop() is held to leave one socket listening, a count read on Linux only,
+    and to splice every dial, on every system."""
 
     QUIET_S = 6.0   # a quiet spell longer than the 5 s timeout the splice's upstream connect is handed
     CYCLES = 5   # drop cycles per window pin: a drop that lands just before the accept loop enters its select misses the window
@@ -2369,6 +2370,29 @@ class LinkProxyEnds(unittest.TestCase):
         with self.assertRaises(AssertionError) as cm:
             p.stop()
         self.assertIn("linkproxy-accept", str(cm.exception))
+
+    def test_drop_fails_naming_the_accept_loop_alive_at_its_bound(self):
+        """drop() waits for the accept loop of the listener it closed, within STOP_BOUND_S, and past that bound raises
+        naming the loop, as stop() does. Here the loop holds a connection it accepted at the lock where it registers the
+        pair (the gate, which opens only once the test is done), so it outlives drop()'s bound. A timed join that returned
+        in silence would let drop() return with the loop still running, and nothing would say so."""
+        srv = self._target()
+        p = self._proxy(srv)
+        at_lock, go = threading.Event(), threading.Event()
+        p._lock = _GatedLock(at_lock, go)
+        self.addCleanup(p.stop)
+        self.addCleanup(go.set)   # before stop(): the loop, let through, sees the drop at the registration and returns
+        p.listen()
+        c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.addCleanup(c.close)
+        c.settimeout(5)
+        c.connect(("127.0.0.1", p.port))
+        self.assertTrue(at_lock.wait(5), "the accept loop reached the lock where it registers the pair")
+        p.STOP_BOUND_S = 0.5   # inside the gate's 5 s wait, so the loop is still held when drop()'s bound comes
+        with self.assertRaises(AssertionError, msg="drop() returned in silence with the accept loop alive past its bound") as cm:
+            p.drop()
+        self.assertIn("linkproxy-accept", str(cm.exception))
+        del p.STOP_BOUND_S   # stop(), in the cleanup, joins within the class's bound
 
     def test_a_pair_accepted_across_the_drop_is_closed_by_the_accept_loop(self):
         """The accept loop has passed its drop check with a connection in hand when stop()'s drop() sweeps the pairs, and
