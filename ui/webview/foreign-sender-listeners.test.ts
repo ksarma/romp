@@ -1279,6 +1279,10 @@ test("the addEventListener census reads what it claims: every way around the lit
     "[\"click\"].forEach(function (k) { k = \"message\"; window.addEventListener(k, f); });",
     "[\"click\"].forEach(function (a, k) { window.addEventListener(k, f); });",
     "import { NOT_EXPORTED_HERE } from \"./keybindings\"; window.addEventListener(NOT_EXPORTED_HERE, f);",
+    // PR 923 round 2: an ambient const binds nothing at run time (esbuild drops the declare), so its value cannot be read
+    // as the event type; at run time the name is whatever global of that name holds, so a message listener can register
+    // with no check. declC returns null for it, and eventTypes cannot resolve it. 1d9a9d631 read the ambient const's value
+    "declare const EV = \"click\"; window.addEventListener(EV, f);",
     // a var anywhere in the enclosing function binds the name for the whole function, over an outer const
     "const EV7 = \"click\"; function g7(x: boolean) { if (x) { var EV7 = \"message\"; } window.addEventListener(EV7, f); } g7(true);",
     "const T = \"click\"; function g() { for (var T of [\"message\"]) { /* */ } window.addEventListener(T, f); }",
@@ -1327,10 +1331,10 @@ test("the addEventListener census reads what it claims: every way around the lit
     "class C { m() { [\"click\"].forEach((k) => { use(this); window.addEventListener(k, f); }); } }",
     "const L = [\"pointerup\", \"pointercancel\"]; L.forEach((t) => el.addEventListener(t, f)); for (const t of L) el.removeEventListener(t, f);",
     "const T = \"click\"; function g() { { const T = \"keydown\"; window.addEventListener(T, f); } }",
-    // a function declared in a block does not bind the name outside it, so the event name is no message type: in a module
-    // the checker resolves T to the outer const "click", and in a sloppy script Annex B hoists the block function so T is a
-    // function object. (This row has no handler and no socket, so the socket proof's clause 0 does not run on it; esbuild
-    // does build the block function.)
+    // the event name is no message type either way: the census reads T as the outer const "click" (strict: true binds
+    // every file strictly, so the block function does not bind T at the call), and the bundle hoists the block function
+    // (Annex B) so at run time T is a function object. (This row has no handler and no socket, so the socket proof's clause 0
+    // does not run on it; esbuild does build the block function.)
     "const T = \"click\"; function g() { if (f) { function T() { /* */ } } window.addEventListener(T, f); }",
   ];
   for (const src of accepted) assert.deepEqual(loose(src), [], "accepted: " + src);
@@ -1441,8 +1445,10 @@ test("an imported event name is read from the one file esbuild bundles for its b
 // (refKind), never by spelling: an identifier is a window when its checker symbol IS the global table's symbol for the
 // name (an augmented global still counting; globalThis by its symbol name, which the library gives no declaration to
 // anchor identity; a local that shadows the name with a run-time binding is not the window, while a shadow that binds
-// nothing at run time, a module-local `declare var window` esbuild drops, is the raw global window and is read as one),
-// and a window-name global the source augmented with a declaration outside the default lib is refused outright:
+// nothing at run time, a module-local `declare var window` (or `declare var document`) esbuild drops, is the raw global
+// window (or document) and is read as one), and a window-name global the source augmented with a declaration outside the
+// default lib is refused outright. A name the checker gives more than one declaration is read as a window when any of its
+// variable declarations' initialisers binds one, fail closed:
 //   - this page's own window: window, self, globalThis and frames (which a browser answers with the window itself);
 //     any of them reached through another (window.self, window.frames); this page's document's defaultView
 //     (document, or this window's document, or a local initialised to one); a local initialised to any of
@@ -1492,10 +1498,12 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     resolved by the checker, agrees with it (a name the checker cannot resolve refuses); and the WebSocket that new
 //     calls resolves to a library global, every declaration of it in a TypeScript default lib or under
 //     node_modules/@types, a project .d.ts declaration refusing. Where the checker's scopes may not be the page's the
-//     proof refuses: a syntax or binder error in the file; in any file, a function declaration of ANY name, async and
-//     generators included, declared in a block, which a sloppy-mode file can hoist into its enclosing function (a file
-//     TypeScript calls a module can run as sloppy code: esbuild bundles a .cjs or .cts file with no import or export
-//     statement, and a TypeScript file whose only module syntax is import x = require(...) or export =, as CommonJS);
+//     proof refuses: a syntax or binder error in the file; in any file, a function declaration of ANY name declared in a
+//     block, refused by its position (a plain one a sloppy-mode file hoists into its enclosing function past the checker's
+//     block scope; an async, generator or async-generator one, which Annex B never hoists, refused all the same so the rule
+//     needs no case on the kind: a file TypeScript calls a module can run as sloppy code, esbuild bundling a .cjs or .cts
+//     file with no import or export statement, and a TypeScript file whose only module syntax is import x = require(...) or
+//     export =, as CommonJS);
 //     and, in a file TypeScript calls no module, a top-level declaration of a name the new expression reads (its
 //     WebSocket, and in new window.WebSocket(...) the window), which the checker merges with the library's declarations
 //     or sets apart.
@@ -1540,6 +1548,12 @@ test("an imported event name is read from the one file esbuild bundles for its b
 //     a receiver: refKind does not follow an import), and one reached through a chain of more than five names, a local
 //     alias counting as one. An onmessage handler set on such a receiver is refused (the census resolves it to nothing);
 //     a method read off it, or a member written on it, under a computed key is not;
+//   - a window a name holds through more than one declaration where no initialiser the checker resolves shows it: a var
+//     redeclared with a window initialiser the checker split into a symbol of its own (var w = window beside function w in
+//     a JavaScript script, where the use resolves to the function symbol and no variable declaration of the use's symbol
+//     binds a window), and a redeclared var whose window is a call's result or another unresolvable expression
+//     (var w = 0; var w = getWin()). A var whose window initialiser the checker DOES resolve, decoy beside it or not
+//     (var w = 0; var w = window), is read as the window and refused;
 //   - the body element reached other than as a document's body: a query for it, a frameset,
 //     document.documentElement.lastElementChild. A member written on it under a computed key sets its window's handler;
 //   - an event's source under a computed key (e.source[k] = f): source cannot join the event members above, since two
@@ -1628,9 +1642,12 @@ function thisIsGlobal(n: any): boolean {
  *  window or another by name; a member by memberKind; an indexed window (frames[0], window[0]) is a frame's, another; a
  *  local variable the checker resolves to, followed through its initialiser (a const w = window hops to window), or
  *  destructured from one (patternKind); an import is not followed (a window imported from another module is on the unseen
- *  list). A name declared more than once is a window only when every one of its variable declarations that has an
- *  initialiser binds a window (var w = window; var w = window). A parameter, a name with no variable declaration bound to
- *  a window, or a name the checker cannot resolve is null. Nested more than four deep, null. */
+ *  list). A name the checker gives more than one declaration is a window when ANY of its variable declarations that has an
+ *  initialiser binds a window (var w = window; var w = window; var w = 0; var w = window), fail closed, since at run time
+ *  one of the initialisers runs last; that includes a parameter a var of the name redeclares with a window initialiser.
+ *  A name none of whose resolved initialisers is a window, or which the checker cannot resolve, is null; a window a
+ *  declaration the checker split off holds (var w = window beside function w in a JavaScript script, the variable a symbol
+ *  of its own) is on the unseen list. Nested more than four deep, null. */
 function refKind(n: any, res: Res, depth = 0, noThis = false): RefKind | null {
   n = unwrap(n);
   if (depth > 4) return null;
@@ -1657,7 +1674,11 @@ function refKind(n: any, res: Res, depth = 0, noThis = false): RefKind | null {
   // so it falls through to the raw global, this page's own window (window, self, globalThis, frames) or another (top,
   // parent, opener). Every road then reads it as that window, the same as a use with no shadow: a computed write on it is
   // refused (the receiver is a window), a literal onmessage on this page's own is a census site. 0 live.
-  if (WINDOW_GLOBALS.has(n.text) && bindsNothingAtRuntime(s)) return WINDOW_NAMES.has(n.text) ? "window" : "otherWindow";
+  if (bindsNothingAtRuntime(s)) {
+    if (WINDOW_NAMES.has(n.text)) return "window";
+    if (OTHER_WINDOW_NAMES.has(n.text)) return "otherWindow";
+    if (n.text === "document") return "document";
+  }
   if (s.flags & ts.SymbolFlags.Alias) return null;   // an import: a window imported from another module is unseen
   const ds = s.declarations || [];
   if (ds.length === 1) {
@@ -1671,16 +1692,17 @@ function refKind(n: any, res: Res, depth = 0, noThis = false): RefKind | null {
     if (!ts.isVariableDeclaration(d) || !d.initializer) return null;
     return refKind(d.initializer, res, depth + 1, noThis);
   }
-  // more than one declaration (a redeclared var w = window; var w = window, and a JavaScript script's top-level var, which
-  // the checker gives a second expando declaration beside its variable declaration): at run time the last-executed
-  // initialiser wins, so the name is a window only when EVERY variable declaration that has an initialiser binds a window;
-  // then it is that window whatever the order the initialisers ran. A declaration whose initialiser binds something else
-  // (a socket beside a window, var ws = new WebSocket; var ws = window) leaves it unresolved for the socket proof; a
-  // declaration with no initialiser (var w;), and a function or expando declaration, carry no run-time value and are not
-  // read. 0 live.
+  // more than one declaration (a redeclared var w = window; var w = window; a decoy beside a window,
+  // var w = 0; var w = window; and a JavaScript script's top-level var the file writes a member onto, which the checker
+  // records a second, expando declaration for): read the name as a window when ANY of its variable declarations' initialisers
+  // binds one, fail closed, since at run time any one of them can be the initialiser that runs last. A name none of whose
+  // initialisers binds a window (a socket beside a socket, var ws = new WebSocket; var ws = new WebSocket) is left
+  // unresolved for the socket proof; a decoy that only fails to bind a window (var ws = new WebSocket; var ws = window) is
+  // read as the window it becomes at run time. A declaration whose initialiser binds a non-window value shows nothing on its
+  // own; a declaration with no initialiser (var w;) carries no value. 0 live.
   const kinds: Array<RefKind | null> = ds.filter((d: any) => ts.isVariableDeclaration(d) && d.initializer).map((d: any) => refKind(d.initializer, res, depth + 1, noThis));
-  if (kinds.length && kinds.every((k) => k === "window")) return "window";
-  if (kinds.length && kinds.every((k) => k === "window" || k === "otherWindow")) return "otherWindow";
+  if (kinds.some((k) => k === "window")) return "window";
+  if (kinds.some((k) => k === "window" || k === "otherWindow")) return "otherWindow";
   return null;
 }
 /** The kind destructuring `pattern` from something of kind `from` binds `name` to: each key by memberKind, at any depth
@@ -1802,9 +1824,10 @@ function namesNoBinding(n: any): boolean {
 //   - allowJs, so the .js modules are in it (checkJs stays off, so for a JavaScript file TypeScript reports its syntax
 //     errors and, of its binder's and checker's errors, only those on its list for plain JavaScript: most strict-mode
 //     errors, and one type error, a === or !== whose operand is an object, array, regular-expression, function or class
-//     literal (TS2839). A word strict code reserves used as a name is dropped in a JavaScript SCRIPT (TS1212) but kept
-//     in a JavaScript MODULE (TS1214, on the list); a duplicate identifier is dropped. The proof's clause 0 reads the
-//     binder's own list);
+//     literal (TS2839). A word strict code reserves used as a name is dropped in a JavaScript SCRIPT (TS1212) but kept in a
+//     JavaScript MODULE outside a class (TS1214, on the list); inside a class body it is TS1213, off the list and dropped
+//     even in a module; a duplicate identifier is dropped. The proof's clause 0 reads the binder's own list, so it sees the
+//     reserved word wherever TypeScript's diagnostic drops it);
 //   - target ESNext, so the checker scopes a parameter's default as the page runs it: under the tsconfig's ES2021,
 //     TypeScript resolves a name in a parameter's default to a var of the function's body when a parameter holds a
 //     class expression with a static field, for the sake of its own down-levelled output, and at ESNext it does not
@@ -1918,8 +1941,10 @@ function fixtureChecked(file: string, src: string): Checked {
 // ── the checker's answers for the road census ──
 //
 // The road census decides "is this name the page's own window", "is it another window", and "what does this name bind
-// to" through TypeScript's binder, the same checker the socket proof reads, never by a hand-written scope walk. A
-// resolver holds the program the census reads the file in (censusProgram for a ui/ file, fixtureChecked for a test row),
+// to" through TypeScript's binder, the same checker the socket proof reads. Two arms stay by position, not by the binder:
+// thisIsGlobal decides the `this` window arm (a plain function's or the file's own `this` is the global object), and
+// writesName gates the event-name forEach arm by spelling; every other arm reads the checker. A resolver holds the
+// program the census reads the file in (censusProgram for a ui/ file, fixtureChecked for a test row),
 // maps a node of the census's own parse to that program by span, and answers three questions:
 //   - windowKind(symbol, name): the name is the page's own window when the symbol the checker resolves the identifier to
 //     IS the global table's symbol for that name (checker.resolveName over the program's globals), for window, self,
@@ -1936,10 +1961,14 @@ function fixtureChecked(file: string, src: string): Checked {
 //     source augments a window global (an expando, a `declare global`) is one the census cannot trust is the browser's
 //     own, as with the WebSocket precondition, so refKind records it and looseRoads refuses outright. Live cost 0:
 //     window, self, frames, parent, top and opener each have one lib.dom.d.ts declaration and globalThis none, so an
-//     augmentation of any of them (globalThis included, held by name identity) is the source's and refuses.
-//   - declC(node): the declaration the checker resolves an identifier to (the listener, event-name and timer arms read it): null for a
-//     global or a name every declaration of which is in a .d.ts (no run-time binding of its own), else the declaration,
-//     a binding element climbed to its variable declaration's root. The listener, event-name and timer arms read it.
+//     augmentation of any of them is the source's and refuses. A JavaScript expando merges into globalThis's symbol too
+//     (held by name identity), and refuses; a `declare global { var globalThis }` does not merge (kept apart, no program
+//     error), so it adds no declaration to the global and records no augmentation.
+//   - declC(node): the declaration the checker resolves an identifier to: null for a global or a name that binds nothing at
+//     run time (bindsNothingAtRuntime: its every declaration ambient (`declare`) or in a .d.ts, both of which esbuild drops),
+//     else the declaration, a binding element climbed to its variable declaration's root. The listener, event-name, timer and
+//     detach-value arms read it (sitesIn's listenerOf, eventTypes and listOf, the timer arm, and setsNoHandler's undefined
+//     check); an ambient const in a .ts file resolves to nothing here, so its value is no event name.
 type Res = {
   checked: () => Checked;
   toProg: (n: any) => any;
@@ -1974,12 +2003,15 @@ function resolver(localSf: any, checked: () => Checked): Res {
   // The global table's symbol for `name`, or null. It is the symbol resolveName finds at the global scope, but ONLY the
   // library's own: one with a default-lib declaration (window, self, frames, top, parent, opener, document, each one
   // lib.dom.d.ts declaration, augmented or not), or globalThis, which the library gives no declaration of its own and
-  // which is recognised by its symbol name (escapedName "globalThis") whatever its declarations. A local of the name that
-  // shadows the global in a script file (const frames = []) is a different symbol with no library declaration, so it is
-  // not the global; a JavaScript expando or a `declare global` MERGES into the library symbol (globalThis's included,
-  // which stays globalThis by name), so the global stays the global and extraDecl catches the augmentation. globalThis by
-  // its declaration count would fail open: a .js expando gives its symbol a declaration and no lib declaration, so a
-  // count test drops it out and a computed write on it passes; identity by name holds it and refuses the augmentation.
+  // which is recognised by its symbol name (escapedName "globalThis") whatever its declarations. A MODULE-scoped local of
+  // the name (const frames = [] in a module) is a different symbol with no library declaration, so it is not the global; a
+  // script's top-level local is not kept apart the same way (a .ts script's use of a top-level const frames resolves to the
+  // library global, with a TS2451; a .js script's merges into the library symbol), so it is read as the window. A
+  // JavaScript expando MERGES into the library symbol (globalThis's included, which stays globalThis by name), and a
+  // `declare global` merges for a name the library declares (self, window) but not for globalThis (kept apart, no program
+  // error), so the global stays the global and extraDecl catches the expando augmentation. globalThis by its declaration
+  // count would fail open: a .js expando gives its symbol a declaration and no lib declaration, so a count test drops it
+  // out and a computed write on it passes; identity by name holds it and refuses the augmentation.
   const gsym = (name: string): any => {
     if (!gcache.has(name)) {
       const s = prog().checker.resolveName(name, undefined, ts.SymbolFlags.Value, false) || null;
@@ -2002,7 +2034,7 @@ function resolver(localSf: any, checked: () => Checked): Res {
     const s = symAt(n);
     if (!s) return null;
     const ds = s.declarations || [];
-    if (!ds.length || ds.every((d: any) => d.getSourceFile().isDeclarationFile)) return null;
+    if (!ds.length || bindsNothingAtRuntime(s)) return null;
     let d = ds[0];
     while (ts.isBindingElement(d) || ts.isObjectBindingPattern(d) || ts.isArrayBindingPattern(d)) d = d.parent;
     return d;
@@ -2056,17 +2088,18 @@ function ctorRefusal(v: any, c: Checked, at: (n: any) => string): string | null 
  *     sets a duplicate declaration apart as a symbol of its own and reports sloppy-only code as strict code's errors (a
  *     with statement, a labelled function, delete of a name, eval or arguments declared or assigned, a word strict code
  *     reserves used as a name), and a label on any declaration statement too, though strict code allows one on a var
- *     statement; this clause refuses every one. And in any file, no function declaration of ANY name, async and
- *     generators included, is declared in a block, that is anywhere but directly in a file, a module body or a
- *     function's body (so an if statement's clause, a case clause and a nested block are all refused). A sloppy-mode
- *     file hoists such a function into its enclosing function (Annex B), past the checker's block scope; the proof does
- *     not decide which files the page runs as sloppy code, since a file TypeScript calls a module can be one (esbuild
- *     bundles a script, and the kernel inlines one, as sloppy code unless it opens with "use strict", and esbuild
- *     bundles as sloppy CommonJS a .cjs or .cts file with no import or export statement and a TypeScript file whose only
- *     module syntax is import x = require(...) or export =, each a module to TypeScript), so it refuses this in every
- *     file. An if statement's clause directly in a function body is a case where the checker binds the function in that
- *     function, as sloppy code does, so the two agree there; the guard refuses it all the same, by position, without
- *     casing on whether the bindings diverge.
+ *     statement; this clause refuses every one. And in any file, no function declaration of ANY name is declared in a
+ *     block, that is anywhere but directly in a file, a module body or a function's body (so an if statement's clause, a
+ *     case clause and a nested block are all refused). Refused by position, without casing on the kind: a sloppy-mode file
+ *     hoists a PLAIN block function into its enclosing function (Annex B), past the checker's block scope; an async,
+ *     generator or async-generator one Annex B never hoists, so it diverges from the checker in no file, but it is refused
+ *     all the same. The proof does not decide which files the page runs as sloppy code, since a file TypeScript calls a
+ *     module can be one (esbuild bundles a script, and the kernel inlines one, as sloppy code unless it opens with "use
+ *     strict", and esbuild bundles as sloppy CommonJS a .cjs or .cts file with no import or export statement and a
+ *     TypeScript file whose only module syntax is import x = require(...) or export =, each a module to TypeScript), so it
+ *     refuses this in every file. An if statement's clause directly in a function body is a case where the checker binds
+ *     the plain function in that function, as sloppy code does, so the two agree there; the guard refuses it all the same,
+ *     by position, without casing on whether the bindings diverge.
  *  1. The checker's symbol for `recv` has exactly one declaration: a let, const or var statement's own, with a plain
  *     name (no loop head's, for head's or catch clause's, no parameter, no destructuring pattern), in this file,
  *     neither ambient (isAmbient) nor a namespace's export (isNamespaceExport), neither of which is a run-time binding
@@ -2122,16 +2155,17 @@ function socketRefusal(recv: any, sfRead: any, checked: () => Checked): string |
   let blockFn: any = null;
   const blockFns = (n: any): void => {
     if (blockFn) return;
-    // any function declaration, of any name, async and generators included, that is not at a file's top level, in a
-    // module body, or directly in a function body (so an if statement's clause, a case clause, a nested block): a
-    // sloppy-mode file can hoist it into its enclosing function (Annex B) past the checker's block scope, and the proof
-    // does not decide which files the page runs as sloppy code, so it refuses this in every file.
+    // any function declaration, of any name and kind, that is not at a file's top level, in a module body, or directly in a
+    // function body (so an if statement's clause, a case clause, a nested block): refused by its position. A sloppy-mode
+    // file hoists a PLAIN block function into its enclosing function (Annex B) past the checker's block scope; an async,
+    // generator or async-generator one Annex B never hoists, so it diverges in no file, but it is refused all the same, and
+    // the proof does not decide which files the page runs as sloppy code, so this is refused in every file.
     if (ts.isFunctionDeclaration(n) && n.name
         && !(ts.isSourceFile(n.parent) || ts.isModuleBlock(n.parent) || (ts.isBlock(n.parent) && ts.isFunctionLike(n.parent.parent)))) blockFn = n;
     else ts.forEachChild(n, blockFns);
   };
   blockFns(sf);   // in every file: the proof does not decide which files the page runs as sloppy code
-  if (blockFn) return "a function " + blockFn.name.text + " is declared in a block at " + at(blockFn) + ", not at a file's top level, in a module body or directly in a function body, where a sloppy-mode file can hoist it into its enclosing function past the checker's block scope, so the proof refuses it in every file";
+  if (blockFn) return "a function " + blockFn.name.text + " is declared in a block at " + at(blockFn) + ", not at a file's top level, in a module body or directly in a function body, where the proof refuses it in every file (a plain one a sloppy-mode file hoists into its enclosing function past the checker's block scope; an async or generator one by its position alone, Annex B not hoisting it)";
   // 1. one declaration, a let, const or var statement's own
   const sym = checker.getSymbolAtLocation(id);
   if (!sym) return name + " at " + at(id) + " resolves to no symbol";
@@ -2590,6 +2624,20 @@ test("the road census reads what it claims: every road around the spelled regist
     // socket
     ["export {}; declare var frames: any;\nframes.onmessage = function (e: MessageEvent) { void e; };", undefined, 1],
     ["export {}; declare var self: any;\nself.onmessage = function (e: MessageEvent) { void e; };", undefined, 1],
+    // PR 923 round 2: a name the checker gives more than one declaration, at least one of them a variable declaration whose
+    // initialiser is a window (var ws = new WebSocket(u); var ws = window): at run time one of the initialisers runs last,
+    // so the name can be the page's own window, and an onmessage handler on it is a census site, not an unprovable socket.
+    // refKind reads the name as a window when ANY initialiser binds one, fail closed; the socket proof (two declarations)
+    // never runs here. b1bae88f7 and 1d9a9d631 refused these as unprovable sockets, reading the name as unresolved. In a
+    // block, a for head, a conditional block (fail closed when the window branch may not run), a for's comma-list var, and a
+    // catch clause whose var of the name binds the window
+    ["var ws = new WebSocket(u); var ws = window; ws.onmessage = f;", "webview/probe.js", 1],
+    ["var ws = new WebSocket(u); var ws: any = window; ws.onmessage = f;", undefined, 1],
+    ["var ws = new WebSocket(u); { var ws = window; } ws.onmessage = f;", "webview/probe.js", 1],
+    ["function g() { var ws = new WebSocket(u); if (c) { var ws = window; } ws.onmessage = f; }", "webview/probe.js", 1],
+    ["var ws = new WebSocket(u); for (var ws = window; false; ) {} ws.onmessage = f;", "webview/probe.js", 1],
+    ["var ws = new WebSocket(u); try { throw 0; } catch (ws) { var ws = window; } ws.onmessage = f;", "webview/probe.js", 1],
+    ["function g() { var ws = new WebSocket(u); for (var i = 0, ws = window; false;) {} ws.onmessage = f; } g();", "webview/probe.js", 1],
   ];
   const missed: string[] = [];
   for (const [src, file, sites] of handlerOk) {
@@ -2663,14 +2711,12 @@ test("the road census reads what it claims: every road around the spelled regist
       // below too)
       ["class WebSocket { constructor() { return window; } } const ws = new WebSocket(u); ws.onmessage = f;"],
       ["function g(WebSocket: any) { const ws = new WebSocket(u); ws.onmessage = f; }"],
-      // a var of the socket's name declared again in its var scope, or in a for...in or for...of head there: a second
-      // declaration of the checker's symbol (clause 1), or a write (clause 3)
-      ["var ws = new WebSocket(u); var ws = window; ws.onmessage = f;", "webview/probe.js"],
-      ["var ws = new WebSocket(u); var ws: any = window; ws.onmessage = f;"],
+      // a var of the socket's name declared again in a for...in or for...of head, whose declaration has no initialiser to
+      // bind a window (the receiver stays unresolved, the socket refused for its two declarations). A var redeclared with a
+      // window initialiser (var ws = new WebSocket; var ws = window) is read as the window it becomes at run time and is a
+      // census site, in handlerOk below.
       ["var ws = new WebSocket(u); for (var ws of [window]) {} ws.onmessage = f;", "webview/probe.js"],
       ["var ws = new WebSocket(u); for (var ws in o) {} ws.onmessage = f;", "webview/probe.js"],
-      ["var ws = new WebSocket(u); { var ws = window; } ws.onmessage = f;", "webview/probe.js"],
-      ["function g() { var ws = new WebSocket(u); if (c) { var ws = window; } ws.onmessage = f; }", "webview/probe.js"],
       // one declaration proves a socket: a second one bound to new WebSocket(...) refuses too, and a catch parameter
       // that holds the receiver is what the checker resolves it to
       ["var ws = new WebSocket(u); var ws = new WebSocket(u2); ws.onmessage = f;", "webview/probe.js"],
@@ -2685,7 +2731,6 @@ test("the road census reads what it claims: every road around the spelled regist
       ["var ws = new WebSocket(u); for (var [ws] of [[window]]) {} ws.onmessage = f;", "webview/probe.js"],
       ["var ws = new WebSocket(u); for (var { length: ws } in { ab: 1 }) {} ws.onmessage = f;", "webview/probe.js"],
       ["let ws = new WebSocket(u); for (ws of [window]) {} ws.onmessage = f;", "webview/probe.js"],
-      ["var ws = new WebSocket(u); for (var ws = window; false; ) {} ws.onmessage = f;", "webview/probe.js"],
       // a parameter, plain or destructured, and a catch parameter, whether the receiver is read before or after the
       // var: the checker's symbol is the parameter merged with the var, or the catch parameter
       ["function g(ws) { if (0) { var ws = new WebSocket(u); } ws.onmessage = f; } g(window);", "webview/probe.js"],
@@ -2807,21 +2852,19 @@ test("the road census reads what it claims: every road around the spelled regist
       ["let ws = new WebSocket(u); function h() { { let ws; { async function ws() {} } } ws = window; } h(); ws.onmessage = f;", "webview/probe.js"],
       ["let ws = new WebSocket(u); function h() { { let ws; { function* ws() {} } } ws = window; } h(); ws.onmessage = f;", "webview/probe.js"],
       // in JavaScript, a second write, plain and logical, and a catch parameter beside a var of its name in a block;
-      // and a class expression's and a function expression's own name, a block function beside a var, a catch
-      // parameter's var, a case block's let, a labelled function, writes from a default, a field and a static block, a
-      // for head's second var, an if statement's function, an ambient function, and an export list in a namespace
+      // and a class expression's and a function expression's own name, a block function beside a var, a labelled
+      // function, writes from a default, a field and a static block, an if statement's function, an ambient function,
+      // and an export list in a namespace
       ["let ws = new WebSocket(u); ws = window; ws.onmessage = f;", "webview/probe.js"],
       ["let ws = new WebSocket(u); ws ||= window; ws.onmessage = f;", "webview/probe.js"],
       ["try { throw window; } catch (ws) { if (0) { var ws = new WebSocket(u); } ws.onmessage = f; }", "webview/probe.js"],
       ["const ws = new WebSocket(u); const C = class ws { static m() { ws.onmessage = f; } }; C.m();", "webview/probe.js"],
       ["const ws = new WebSocket(u); const g = function ws() { ws.onmessage = f; }; g();", "webview/probe.js"],
       ["function g() { var ws = new WebSocket(u); { function ws() {} } ws.onmessage = f; } g();", "webview/probe.js"],
-      ["var ws = new WebSocket(u); try { throw 0; } catch (ws) { var ws = window; } ws.onmessage = f;", "webview/probe.js"],
       ["var ws = new WebSocket(u); lbl: function ws() {} ws.onmessage = f;", "webview/probe.js"],
       ["let ws = new WebSocket(u); function h(a = (ws = window)) {} h(); ws.onmessage = f;", "webview/probe.js"],
       ["let ws = new WebSocket(u); class K { x = (ws = window); } new K(); ws.onmessage = f;", "webview/probe.js"],
       ["let ws = new WebSocket(u); class K { static { ws = window; } } ws.onmessage = f;", "webview/probe.js"],
-      ["function g() { var ws = new WebSocket(u); for (var i = 0, ws = window; false;) {} ws.onmessage = f; } g();", "webview/probe.js"],
       ["var ws = new WebSocket(u); if (1) function ws() {} ws.onmessage = f;", "webview/probe.js"],
       ["var ws = new WebSocket(u); declare function ws(): void; ws.onmessage = f;"],
       ["namespace N { var ws: any = new WebSocket(u); export { ws }; export function arm() { ws.onmessage = f; } } (N as any).ws = window; N.arm();"],
@@ -2861,8 +2904,9 @@ test("the road census reads what it claims: every road around the spelled regist
       ["function c(u: string) { let ws: WebSocket; ws.onmessage = f; try { ws = new WebSocket(u); } catch (e) { return; } }"],
       ["function c(u: string) { let ws: WebSocket; try { ws = new WebSocket(u); } catch (e) { return; } g(); function g() { ws.onmessage = f; } }"],
       ["function c(u: string) { let ws: WebSocket; try { ws = new WebSocket(u); } catch (e) { return; } ws = new WebSocket(u); ws.onmessage = f; }"],
-      // clause 0, in any file: a function declaration of ANY name (async and generators included) declared in a block,
-      // which a sloppy-mode file can hoist into its enclosing function. In a script: five shapes, the fifth an Annex B
+      // clause 0, in any file: a function declaration of ANY name and kind declared in a block, refused by its position (a
+      // sloppy-mode file hoists a plain one into its enclosing function; an async or generator one Annex B never hoists,
+      // refused all the same). In a script: five shapes, the fifth an Annex B
       // shape whose unbundled run copies the window into the function's var at the declaration, where the receiver reads
       // it; the fifth under use strict; and a block function WebSocket or window. In a module: the same five shapes,
       // whose writes the checker reads as writes to another binding than the socket's. In a file TypeScript calls a
@@ -2967,6 +3011,12 @@ test("the road census reads what it claims: every road around the spelled regist
       ["const { body } = document; body[k] = f;"], ["const { body: b } = document; b[k] = f;"], ["el.ownerDocument.body[k] = f;"],
       ["const { document: { body } } = window; body[k] = f;"], ["frame.contentDocument.body[k] = f;"],
       ["Reflect.set(HTMLBodyElement.prototype, k, f, document.body);"],
+      // PR 923 round 2: a module-local `declare var document: any` shadows document for the checker only; esbuild drops it,
+      // so at run time document is the raw global, and a computed write on its body sets the window's handler. bindsNothingAtRuntime
+      // reads that the shadow's declarations are all ambient, so refKind reads document as this page's document (memberKind
+      // gives its body), and the body arm sees the write. b1bae88f7 and 1d9a9d631 read the shadow as unresolved and missed it
+      ["export {}; declare var document: any;\ndocument.body[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
+      ["export {}; declare var document: any;\ndocument.body[\"on\" + \"message\"] = function (e: MessageEvent) { void e; };"],
       ["e.view[k] = f;"], ["Reflect.set(e.view, k, f);"], ["Object.assign(ev.view, { [k]: f });"], ["e.target[k] = f;"],
       ["ev.currentTarget[k] = f;"], ["e.srcElement[k] = f;"],
       // A2 (PR 923): an async or generator function named frames in a block, then a computed onmessage write on the
@@ -2991,13 +3041,23 @@ test("the road census reads what it claims: every road around the spelled regist
       ["export {}; declare var top: any;\ntop[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
       ["export {}; declare var parent: any;\nparent[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
       ["export {}; declare var opener: any;\nopener[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
-      // PR 923: a name declared more than once, every initialiser a window (a redeclared var w = window; var w = window; and
-      // a JavaScript script's top-level var, which the checker gives a second, expando declaration beside the variable
-      // one): at run time the last initialiser wins and the name is that window, so a computed write on it is seen.
-      // b1bae88f7 returned null for any name with more than one declaration and missed it.
+      // PR 923: a name declared more than once, at least one variable declaration's initialiser a window (a redeclared
+      // var w = window; var w = window; and a JavaScript script's top-level var the file writes a member onto, which the
+      // checker records a second, expando declaration for): refKind reads it as the window when ANY initialiser binds one,
+      // so a computed write on it is seen. b1bae88f7 returned null for any name with more than one declaration and missed it.
       ["export {}; var w: any = window;\nvar w: any = window;\nw[[\"on\", \"message\"].join(\"\")] = function (e: unknown) { void e; };"],
       ["var w = self;\nvar w = self;\nw[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
       ["var w = window;\nw[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      // PR 923 round 2: a decoy that is not a window (0) sits beside a window initialiser under the same name. b1bae88f7 and
+      // 1d9a9d631 read the name as a window only when EVERY initialiser bound one, so the decoy made it unresolved and the
+      // computed write went unrefused (the strictness-v1 and diff-v1 escapes); the last initialiser to run at run time is the
+      // window, so refKind now reads the name as a window when ANY initialiser binds one and refuses the write. Also a name a
+      // window initialiser aliases to itself (var w = window; var w = w), which recurses to the depth cap on the second
+      // initialiser but is a window through the first
+      ["export {}; var frames: any = 0;\nvar frames: any = window;\n(frames as any)[[\"on\", \"message\"].join(\"\")] = function (e: MessageEvent) { void e; };"],
+      ["var w = 0;\nvar w = window;\nw[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
+      ["export {}; var w: any = 0;\nvar w: any = window;\nw[[\"on\", \"message\"].join(\"\")] = function (e: unknown) { void e; };"],
+      ["var w = window;\nvar w = w;\nw[[\"on\", \"message\"].join(\"\")] = function (e) { void e; };", "webview/probe.js"],
       // PR 923: globalThis carries no lib.dom declaration, so its identity is by symbol name, not by a declaration count; a
       // .js file's computed write is its own expando declaration, and the write is seen. A count test would drop globalThis
       // out once it has any declaration and let the write through. b1bae88f7's count test accepted it.
@@ -3072,9 +3132,9 @@ test("the road census reads what it claims: every road around the spelled regist
     // TypeScript module whose only module syntax is import x = require(...)
     ["let ws: WebSocket =\n  new WebSocket(u);\nws.onmessage = f;", "the file does not parse as TypeScript reads it (Type annotations can only be used in TypeScript files., at :1)", "webview/probe.js"],
     ["var ws = new WebSocket(u);\nclass ws {}\nws.onmessage = f;", "TypeScript's binder reports an error at :1 (Duplicate identifier 'ws'.), where its scopes are not the page's", "webview/probe.js"],
-    ["let ws = new WebSocket(u);\nfunction g() { { ws = window; function ws() {} } ws.onmessage = f; }\ng();", "a function ws is declared in a block at :2, not at a file's top level, in a module body or directly in a function body, where a sloppy-mode file can hoist it into its enclosing function past the checker's block scope, so the proof refuses it in every file", "webview/probe.js"],
-    ["{\n  function window() {}\n}\nconst ws = new window.WebSocket(u);\nws.onmessage = f;", "a function window is declared in a block at :2, not at a file's top level, in a module body or directly in a function body, where a sloppy-mode file can hoist it into its enclosing function past the checker's block scope, so the proof refuses it in every file", "webview/probe.cjs"],
-    ["import y = require(\"./y\");\nlet ws: any = new WebSocket(u);\nfunction h() { if (1) function ws() {} ws = window; }\nh(); ws.onmessage = f;", "a function ws is declared in a block at :3, not at a file's top level, in a module body or directly in a function body, where a sloppy-mode file can hoist it into its enclosing function past the checker's block scope, so the proof refuses it in every file"],
+    ["let ws = new WebSocket(u);\nfunction g() { { ws = window; function ws() {} } ws.onmessage = f; }\ng();", "a function ws is declared in a block at :2, not at a file's top level, in a module body or directly in a function body, where the proof refuses it in every file (a plain one a sloppy-mode file hoists into its enclosing function past the checker's block scope; an async or generator one by its position alone, Annex B not hoisting it)", "webview/probe.js"],
+    ["{\n  function window() {}\n}\nconst ws = new window.WebSocket(u);\nws.onmessage = f;", "a function window is declared in a block at :2, not at a file's top level, in a module body or directly in a function body, where the proof refuses it in every file (a plain one a sloppy-mode file hoists into its enclosing function past the checker's block scope; an async or generator one by its position alone, Annex B not hoisting it)", "webview/probe.cjs"],
+    ["import y = require(\"./y\");\nlet ws: any = new WebSocket(u);\nfunction h() { if (1) function ws() {} ws = window; }\nh(); ws.onmessage = f;", "a function ws is declared in a block at :3, not at a file's top level, in a module body or directly in a function body, where the proof refuses it in every file (a plain one a sloppy-mode file hoists into its enclosing function past the checker's block scope; an async or generator one by its position alone, Annex B not hoisting it)"],
     // clause 1: no symbol, no declaration, two declarations, a declaration that is no let, const or var statement's own
     // (a for head's, a catch clause's parameter), an ambient one, a namespace's export
     ["ws.onmessage = f;", "ws at :1 resolves to no symbol"],
@@ -3151,7 +3211,7 @@ test("the socket proof refuses a reference the checker resolves to the declarati
     ["an onmessage handler on a receiver the census cannot resolve to this page's window or to a socket: ws at :2 is its declaration's symbol to the checker and no reference to the language service"]);
 });
 
-test("the socket proof refuses a constructor or a new X.WebSocket base a project .d.ts declares (B1, B2, which bd5cf71fd accepts), and a computed write on a window or on globalThis a JavaScript expando augments (the window write bd5cf71fd refuses for its computed name too, the augmentation refusal this head's; the globalThis write, which b1bae88f7's declaration-count identity let through, refused here by name identity); each needs a second file", () => {
+test("the socket proof refuses a constructor or a new X.WebSocket base a project .d.ts declares (B1, B2, which bd5cf71fd accepts), and a computed write on a window or on globalThis a JavaScript expando augments (the window write bd5cf71fd refuses for its computed name too, and b1bae88f7 added the augmentation refusal; the globalThis write, which b1bae88f7's declaration-count identity let through, b1bae88f7 accepted and 1d9a9d631 refuses by name identity)", () => {
   // B1: a ui/ .d.ts augments interface Window with a WebSocket member, so frames.WebSocket carries a project declaration
   // beside lib.dom's; the constructor is no library global (clause 4).
   const b1 = censusProgram([
@@ -3171,8 +3231,9 @@ test("the socket proof refuses a constructor or a new X.WebSocket base a project
     .some((l) => /whose win at .* has a declaration outside the default lib and @types/.test(l.why)), "B2: win is a project declaration, so its .WebSocket is not the library's");
   // the window expando: a top-level window.foo = 1 in a .js file adds a JavaScript expando declaration to the global
   // window, program-wide. A .ts file's computed write on window is seen by identity (the augmented global is still the
-  // window): it is refused for its computed name (bd5cf71fd, which reads window by spelling, refuses it too) and, this
-  // head, outright for the augmentation. The row is red at both heads; the augmentation refusal is what this head adds.
+  // window): it is refused for its computed name (bd5cf71fd, which reads window by spelling, refuses it too) and outright
+  // for the augmentation. The write is refused for its computed name at bd5cf71fd and b1bae88f7 both; b1bae88f7 added the
+  // augmentation refusal (with extraDecl), so it stands here unchanged.
   const expUse = "export const k = \"on\" + \"message\";\nexport const f = function (e: unknown) { void e; };\n(window as any)[k] = f;\n";
   const exp = censusProgram([
     ["webview/zz-exp.js", "window.foo = 1;\n"],
