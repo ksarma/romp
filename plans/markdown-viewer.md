@@ -8803,9 +8803,8 @@ the mouseout Firefox sends 20 to 35 ms after the viewer's own tap's click fallin
 rows of a mouse's and a pen's held press and of Firefox's and WebKit's tap, red at d61eb027d, are red under M-OFF, its row of an
 element's blur with no focus after it now extra5-1's closure with the focus not back and a cost, and its rows of the window's
 blur alone between a mouse click's pointerup and its click and in a finger's contact refused, since the focus-leaving read-outs
-take only the orders the engines send while an element of the viewer's document holds the focus, each with an element's or the
-document's blur first, and Chromium and WebKit send the window's blur alone when no element holds it, a measured cost below (the
-admit guard carries those orders, and the
+take only the orders with an element's or the document's blur first, and Chromium and WebKit send the window's blur alone when no
+element of the viewer's document holds the focus, a measured cost below (the admit guard carries those orders, and the
 rows of the same focus move before a press's pointerup and after a tap's are refused, costs below);
 the own-chain allowlist (the file review's round 20, extra5-1, extra5-2, extra6-1 and extra7-1, with the coordinator's decisions
 on them): the chain listener, one function on each type of CHAIN_TYPES, starts a chain at every primary pointerdown and
@@ -8827,9 +8826,9 @@ compatibility boundary pair (a mouseout and a mouseover to elements, or a mouseo
 no button down, the mousedown, the focus arriving and a mouseup of detail 1, or of 1 or 2 for a finger's; anywhere an element's
 blur that no element's focus follows before the next pointerup or mouseup is refused; before the grammar reads a chain, four
 read-outs take out the tokens of four more own gestures (the fixes for that round, the coordinator's ruling on the allowlist's
-build): between a mouse's pointerup and its mouseup, the focus leaving this window, whole, in one of the engines' three orders (an
-element's blur and the window's, Chromium and WebKit; an element's, the document's and the window's, or the document's and the
-window's, Firefox), the focus moved at the click's release; in a finger's tap before its pointerup, one run of the focus leaving
+build): between a mouse's pointerup and its mouseup, the focus leaving this window, whole, in one of the three orders with an
+element's or the document's blur first (an element's blur and the window's, Chromium and WebKit; an element's, the document's and
+the window's, or the document's and the window's, Firefox), the focus moved at the click's release; in a finger's tap before its pointerup, one run of the focus leaving
 in one of those orders, a finger held while the focus moves, and the mouse's pointermoves and mousemoves with no button down, the
 mouse moving during the tap; and in a mouse's press between its mousedown and its pointerup, a finger's pointermoves with the
 contact down, a resting finger moving during the click; and every other chain is refused by

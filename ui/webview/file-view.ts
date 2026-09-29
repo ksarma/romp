@@ -3184,8 +3184,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   an element's blur that no element's focus follows before the next pointerup or mouseup is refused. Before the grammar reads
   //   a chain, four read-outs take out the tokens of four more own gestures (the fixes for the file review's round 20, the
   //   coordinator's ruling on the allowlist's build): between a mouse's pointerup and its mouseup, the focus leaving this window,
-  //   whole, in one of the engines' three orders (an element's blur and the window's, Chromium and WebKit; an element's, the
-  //   document's and the window's, or the document's and the window's, Firefox), the focus moved at the click's release; in a
+  //   whole, in one of the three orders with an element's or the document's blur first (an element's blur and the window's,
+  //   Chromium and WebKit; an element's, the document's and the window's, or the document's and the window's, Firefox), the
+  //   focus moved at the click's release; in a
   //   finger's tap before its pointerup, one run of the focus leaving in one of those orders, a finger held while the focus
   //   moves, and the mouse's pointermoves and mousemoves with no button down, the mouse moving during the tap; and in a mouse's
   //   press between its mousedown and its pointerup, a finger's pointermoves with the contact down, a resting finger moving
@@ -3293,9 +3294,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // press, of Firefox's and WebKit's tap and of the two costs are red at d61eb027d, which read no blur, and under M-OFF; its row
   // of an element's blur with no focus after it is now extra5-1's closure with the focus not back and a cost, and its rows of the
   // window's blur alone between a mouse click's pointerup and its click and in a finger's contact are refused, since the
-  // focus-leaving read-outs take only the orders the engines send while an element of the viewer's document holds the focus,
-  // each with an element's or the document's blur first, and Chromium and WebKit send the window's blur alone when no element
-  // holds it, a measured cost below (the admit guard
+  // focus-leaving read-outs take only the orders with an element's or the document's blur first, and Chromium and WebKit send
+  // the window's blur alone when no element of the viewer's document holds the focus, a measured cost below (the admit guard
   // carries those orders, and the rows of the same focus move before a press's pointerup and after a tap's are refused, costs
   // below); its row of a press begun with the control covered is read at the press, and its row of a record left standing
   // refuses as a standing record does.
@@ -3697,14 +3697,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     else ok = false;
     return ok && blursPaired(t);
   };
-  /** The focus leaving this window in each order the engines send it: an element's blur, the document's and the window's (Firefox);
-   *  an element's and the window's (Chromium and WebKit); the document's and the window's (Firefox). */
+  /** The focus leaving this window in each order with an element's or the document's blur first: an element's blur, the
+   *  document's and the window's (Firefox); an element's and the window's (Chromium and WebKit); the document's and the window's
+   *  (Firefox). The window's blur alone, which Chromium and WebKit send when no element of the viewer's document holds the focus,
+   *  is not among them, a measured cost (the gate's comment). */
   const FOCUS_LEAVING: readonly (readonly string[])[] = [["blur:E", "blur:D", "blur:W"], ["blur:E", "blur:W"], ["blur:D", "blur:W"]];
   const sameTokens = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
   const isFocusLeaving = (a: readonly string[]): boolean => FOCUS_LEAVING.some((l) => sameTokens(a, l));
   const focusLeavingRun = (c: readonly string[], end: number): [number, number] | null => { for (let i = 0; i < end; i++) for (const l of FOCUS_LEAVING) if (i + l.length <= end && sameTokens(c.slice(i, i + l.length), l)) return [i, i + l.length]; return null; };
   /** The chain with the tokens of four more own gestures read out, before the grammar and its three widenings read it: between a
-   *  mouse's pointerup and its mouseup, the focus leaving this window, whole, in one of the engines' orders; in a finger's tap
+   *  mouse's pointerup and its mouseup, the focus leaving this window, whole, in one of the orders with an element's or the
+   *  document's blur first (FOCUS_LEAVING); in a finger's tap
    *  before its pointerup, one run of the focus leaving this window, and the mouse's pointermoves and mousemoves with no button
    *  down; and in a mouse's press between its mousedown and its pointerup, a finger's pointermoves with the contact down. */
   const ownChainReadOut = (c0: readonly string[], t: string | null): string[] => {
