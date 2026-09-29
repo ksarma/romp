@@ -138,10 +138,10 @@ an operand, a returned or yielded fetch, an annotated assignment and an await.
 
 A fetch by a url spelled otherwise than the census reads it, where the url's static path is a page route and whole, is REFUSED too
 (round 6, _fail_closed's check (2), extra8-3): a `%`-format, an f-string or a `.format` url handed to a fetch helper, and an
-f-string url or a `Request` object handed to urlopen.
+f-string url or a `Request` object handed to urlopen, and (FC2X, narrowed) a url whose path is not whole but whose static part is a
+page route other than the landing's `/` (`"/chat" + rest`, `"/chat%s" % q`).
 
-Bound: a concatenation whose literal stops before the query (`"/chat" + rest`: its path is not whole), a formatted
-url whose query carries no `token=` (tests/test_kernel.py's token-less fetch of `/`, answered with the paste-the-token page), a
+Bound: a formatted url whose query carries no `token=` (tests/test_kernel.py's token-less fetch of `/`, answered with the paste-the-token page), a
 membership asserted through a helper (`_has(self, lit, body)` in tests/test_files_pane.py and tests/test_settings_page.py, whose
 formatted fetches bind a name no form here reads), a fetch of a path the dispatch does not map to a getter
 call (a JSON or text/plain API body, a `/dist/` bundle, a `/media/` file: outside the derivation, and not comment-satisfiable
@@ -1613,10 +1613,12 @@ def _fail_closed(tree, lines, routes, reads):
         inline as an argument or an operand (`self.assertIn("x", self._get_text("/"))`), a returned or yielded fetch, an
         annotated assignment and an await are refused.
     (2) a fetch whose url is spelled otherwise than the census reads it, where the url's static path (_spelled_path) is a page
-        route and the path is whole: to an attribute urlopen, an f-string or a `.format` url, or a `Request` object wrapping any
+        route, whole or not (a concatenation stopping before the query, `"/chat" + rest`, a hole after a route, `"/chat%s" % q`;
+        round 6, FC2X in its narrowed form), except the landing's `/` when the path is not whole (a hole right after the leading
+        slash, `"/%s/x" % name`, can make any path): to an attribute urlopen, an f-string or a `.format` url, or a `Request` object wrapping any
         spelled url (a `%`-formatted literal handed to urlopen itself is read, or stated where its query carries no token); to a
         Name, a self.<method> or a cls.<method> the module does not define or whose returns place a read (_response_reads), a
-        `%`-format, an f-string or a `.format` url.
+        `%`-format, an f-string, a `.format` url or such a concatenation.
     A call to a Name the same function binds to an attribute (`seg = km._route_seg`, then `seg("/")`) calls that function, no fetch
     helper of the test's, and is not checked (tests/test_perf_stats.py's route-mark test asserts over `seg("/")` so)."""
     rows, seg = [], lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
@@ -1676,7 +1678,7 @@ def _fail_closed(tree, lines, routes, reads):
             if not req and isinstance(a0, ast.BinOp) and isinstance(a0.op, ast.Mod):
                 continue   # a %-formatted literal to urlopen: read (_url_route), or a stated token-less url
             sp = _spelled_path(a0.args[0] if req else a0)
-            if sp and sp[2] and sp[1] in routes:
+            if sp and sp[1] in routes and (sp[2] or sp[1] != "/"):
                 rows.append((node.lineno, "unclassified", str(routes[sp[1]]), "fetch by a url the census does not read (%s%s): %s" % ("Request " if req else "", sp[0], seg(node))))
             continue
         callee = _callee(node)
@@ -1686,7 +1688,7 @@ def _fail_closed(tree, lines, routes, reads):
         if helper is not None and not helper - {"refused"}:
             continue   # a helper of the module whose returns place no read: no fetch helper (_fetched)
         sp = _spelled_path(a0)
-        if sp and sp[2] and sp[1] in routes:
+        if sp and sp[1] in routes and (sp[2] or sp[1] != "/"):
             rows.append((node.lineno, "unclassified", str(routes[sp[1]]), "fetch by a url the census does not read (%s): %s" % (sp[0], seg(node))))
     return rows
 
@@ -3375,9 +3377,9 @@ class T(unittest.TestCase):
         # `.format` url handed to a fetch helper, an f-string url or a `Request` object handed to urlopen, had fetched a page into
         # neither census. Each is refused now where the url's static path (_spelled_path) is a page route and whole: an
         # unclassified row at the call (9 to 14, and 18 through a helper the module does not define). A `%`-formatted url handed to
-        # urlopen is read (16), a helper whose returns place no read is no fetch helper (19), a path that is no route (20) and a
-        # path that is not whole (21, a concatenation; 22, a hole right after the slash) are no row. Dropping the check reds the
-        # rows here. The rows are named, never inferred.
+        # urlopen is read (16), a helper whose returns place no read is no fetch helper (19), and a path that is no route (20) and
+        # a hole right after the slash (22) are no row; a concatenation stopping before the query (21) is refused since FC2X (the
+        # next test). Dropping the check reds the rows here. The rows are named, never inferred.
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''import unittest, urllib.request
 class T(unittest.TestCase):
@@ -3411,7 +3413,8 @@ class T(unittest.TestCase):
         where = "fetch by a url the census does not read (%s)"
         self.assertEqual([(r[0], r[2], r[3].split(":")[0]) for r in readers if r[1] == "unclassified"],
                          [(9, "_chat_page", where % "percent"), (10, "_chat_page", where % "fstring"), (11, "_chat_page", where % "format"),
-                          (12, "_chat_page", where % "fstring"), (14, "_chat_page", where % "Request percent"), (18, "_sw_js", where % "percent")])
+                          (12, "_chat_page", where % "fstring"), (14, "_chat_page", where % "Request percent"), (18, "_sw_js", where % "percent"),
+                          (21, "_chat_page", where % "concat")])
         # the url's static path, as the check reads it: the path to its `?` (whole) or to its first hole (not whole), a
         # concatenation's never whole, and a literal that is no path none
         sp = lambda text: _spelled_path(ast.parse(text, mode="eval").body)
@@ -3419,6 +3422,39 @@ class T(unittest.TestCase):
                           sp('"http://127.0.0.1:" + str(p)'), sp('"/%s/x" % m'), sp('"x%s" % m'), sp('page')],
                          [("percent", "/chat", True), ("fstring", "/chat", True), ("format", "/c/", False), ("concat", "/chat", False), None,
                           ("percent", "/", False), None, None])
+
+
+    def test_a_url_whose_static_part_is_a_page_route_is_refused(self):
+        # round 6 (B.2, FC2X in the narrowed form the coordinator ruled at 0 live): a url whose path is not whole, a concatenation
+        # stopping before its query (`"/chat" + rest`) or a hole right after a route (`"/chat%s" % q`), is refused where its static
+        # part is a page route (8, 9, and 10 through a helper the module does not define), since the url may be that page with a
+        # query appended. The landing's `/` alone is no such part: a hole right after the leading slash can make any path (11, 12;
+        # the live case is tests/test_session_host.py's
+        # `OSError("/%s/the-path" % marker, "text")`, the one false refusal the unnarrowed check measured). Dropping the check reds
+        # 8 to 10, and dropping the narrowing reds 11 and 12. The rows are named, never inferred.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''import unittest, urllib.request
+class T(unittest.TestCase):
+    def _get_text(self, path):
+        with urllib.request.urlopen(path) as r:
+            return r.read().decode()
+    def test_a(self):
+        rest = "?token=x"
+        page = self._get_text("/chat" + rest)
+        page = self._get_text("/chat%s" % rest)
+        fetch("/sw.js" + rest)
+        self._get_text("/%s/the-path" % marker)
+        OSError("/%s/the-path" % marker, "text")
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            readers = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        where = "fetch by a url the census does not read (%s)"
+        self.assertEqual([(r[0], r[2], r[3].split(":")[0]) for r in readers if r[1] == "unclassified"],
+                         [(8, "_chat_page", where % "concat"), (9, "_chat_page", where % "percent"), (10, "_sw_js", where % "concat")])
 
 
 if __name__ == "__main__":
